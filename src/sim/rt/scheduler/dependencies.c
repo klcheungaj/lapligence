@@ -677,10 +677,10 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
                 const llg_wait_dependency_t* dependency = &payload->dependencies[i];
                 if (dependency->sig == target) {
                     if (dependency->width) {
-                        sv4_t value = sv4_part_select(dependency->value ? *dependency->value : *target,
+                        sv4_t selected = sv4_part_select(dependency->value ? *dependency->value : *target,
                             (int64_t)dependency->lsb + dependency->width - 1, dependency->lsb);
-                        if (!sv4_same(payload->last[i], value)) wake = 1;
-                        sv4_move(&payload->last[i], &value);
+                        if (!sv4_same(payload->last[i], selected)) wake = 1;
+                        sv4_move(&payload->last[i], &selected);
                     } else wake = 1;
                 }
             }

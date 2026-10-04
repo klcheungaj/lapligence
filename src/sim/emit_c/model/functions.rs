@@ -60,6 +60,11 @@ pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
     for (idx, form) in f.formals.iter().enumerate() {
         if form.native_value.is_some() && form.is_address() {
             params.push(("llg_value_t*".to_owned(), format!("o{idx}")));
+        } else if form.real_array.is_some() && form.is_address() {
+            params.push((
+                "double*".to_owned(),
+                format!("{}{idx}", if form.is_ref() { "r" } else { "o" }),
+            ));
         } else if form.fixed_array.is_some() && form.is_address() {
             params.push((
                 "llg_fixed_array_t*".to_owned(),
@@ -76,6 +81,11 @@ pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
                     "void **"
                 };
                 params.push((ty.to_owned(), format!("r{idx}")));
+            } else if form.real {
+                // A real reference borrows the actual's numeric cell; writes
+                // publish through `llg_ba_d` on that address.
+                let qualifier = if form.is_const_ref() { "const " } else { "" };
+                params.push((format!("{qualifier}double*"), format!("r{idx}")));
             } else {
                 let qualifier = if form.is_const_ref() { "const " } else { "" };
                 params.push((format!("{qualifier}llg_ref_t*"), format!("r{idx}")));
@@ -103,6 +113,8 @@ pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
             params.push((
                 (if form.native_value.is_some() {
                     "llg_value_t*"
+                } else if form.real_array.is_some() {
+                    "double*"
                 } else if form.fixed_array.is_some() {
                     "llg_fixed_array_t*"
                 } else if form.string {

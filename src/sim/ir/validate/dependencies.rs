@@ -23,10 +23,9 @@ impl Validator<'_> {
             .get(index)
             .is_some_and(|array| array.activation)
             && !self.function.get().is_some_and(|function| {
-                function
-                    .formals
-                    .iter()
-                    .any(|formal| formal.fixed_array == Some(index))
+                function.formals.iter().any(|formal| {
+                    formal.fixed_array == Some(index) || formal.real_array == Some(index)
+                })
             })
             && !self
                 .fixed_activations

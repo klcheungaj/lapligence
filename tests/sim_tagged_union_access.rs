@@ -43,7 +43,7 @@ fn assert_inactive_access(
         .join(format!("{fixture}.sv"));
     let expected_stderr = format!(
         "llg: runtime error: access to inactive tagged-union member {member} at {}:{source_location}\nllg: $finish at {finish}\n",
-        source.display()
+        sim_harness::source_display(&source)
     );
     assert_eq!(
         stderr, expected_stderr,

@@ -177,9 +177,9 @@ void llg_fixed_array_destroy(void* object) {
         llg_clocking_forget_signal(&cell->value);
         sv4_destroy(&cell->value);
         while (cell->inertial) {
-            struct llg_fixed_inertial* next = cell->inertial->next;
+            struct llg_fixed_inertial* inertial_next = cell->inertial->next;
             free(cell->inertial);
-            cell->inertial = next;
+            cell->inertial = inertial_next;
         }
         free(cell);
         cell = next;
@@ -648,5 +648,44 @@ void llg_fixed_array_merge(llg_fixed_array_t* dst, const llg_fixed_array_t* left
     llg_fixed_range_t* range = llg_checked_calloc(1, sizeof(*range), "fixed conditional range");
     range->count = dst->total; range->image = image; snapshot->ranges = range;
     fixed_array_apply(dst, snapshot);
+    llg_value_scope_end(scope);
+}
+
+void llg_real_cells_order(double* cells, uint64_t count, uint64_t element_cells,
+                          int method) {
+    if (!cells || count < 2 || !element_cells) return;
+    if (count > SIZE_MAX / (2 * sizeof(size_t)) ||
+        element_cells > SIZE_MAX / sizeof(double) / count)
+        llg_fatal_allocation("real array reorder", (size_t)count,
+                             (size_t)element_cells);
+    size_t elements = (size_t)count;
+    size_t width = (size_t)element_cells;
+    size_t total = elements * width;
+    if (total > (SIZE_MAX - 2 * elements * sizeof(size_t)) / sizeof(double))
+        llg_fatal_allocation("real array reorder", elements, width);
+    // The workspace belongs to the process unwind stack: a publication that
+    // ends the current coroutine still releases it.
+    llg_value_scope_t* scope = llg_value_scope_begin_object(
+        total * sizeof(double) + 2 * elements * sizeof(size_t), NULL);
+    double* moved = (double*)llg_value_scope_object(scope);
+    size_t* order = (size_t*)(moved + total);
+    int changed = 1;
+    if (method == LLG_CONTAINER_METHOD_REVERSE) {
+        for (size_t i = 0; i < elements; ++i) order[i] = elements - 1 - i;
+    } else if ((method == LLG_CONTAINER_METHOD_SORT ||
+                method == LLG_CONTAINER_METHOD_RSORT) && width == 1) {
+        changed = llg_real_sort_order(cells, elements,
+                                      method == LLG_CONTAINER_METHOD_RSORT,
+                                      order);
+    } else {
+        fixed_bad_state("invalid real array reorder");
+    }
+    if (changed) {
+        for (size_t i = 0; i < elements; ++i)
+            memcpy(moved + i * width, cells + order[i] * width,
+                   width * sizeof(double));
+        for (size_t cell = 0; cell < total; ++cell)
+            llg_ba_d(&cells[cell], moved[cell]);
+    }
     llg_value_scope_end(scope);
 }

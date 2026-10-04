@@ -207,6 +207,9 @@ impl<'a> Codegen<'a> {
         for (source, _) in sampled_sources {
             model.init_steps.push(IrInitStep::RegisterSampled(source));
         }
+        for source in &self.sampled_real_signals {
+            model.init_steps.push(IrInitStep::RegisterSampled(*source));
+        }
 
         let active_initializations: Vec<IrInitialization> = model
             .init_steps

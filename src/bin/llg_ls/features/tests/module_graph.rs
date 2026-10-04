@@ -124,10 +124,16 @@ fn navigation_capture_keeps_repeated_instance_labels_and_scoped_references() {
         let actual = text.find("(clk)").unwrap() as u32 + 1;
         let target = definition_at(&analysis, hp("/virtual/top.sv"), line as u32, label)
             .expect("port label definition");
-        assert_eq!(target.uri.path(), hp("/virtual/leaf.sv"));
+        assert_eq!(
+            uri_file_path(&target.uri),
+            std::path::Path::new(hp("/virtual/leaf.sv"))
+        );
         let target = definition_at(&analysis, hp("/virtual/top.sv"), line as u32, actual)
             .expect("actual definition");
-        assert_eq!(target.uri.path(), hp("/virtual/top.sv"));
+        assert_eq!(
+            uri_file_path(&target.uri),
+            std::path::Path::new(hp("/virtual/top.sv"))
+        );
         assert_eq!(target.range.start.line, 0);
     }
     let reference = leaf.lines().nth(1).unwrap().find("= value").unwrap() as u32 + 2;

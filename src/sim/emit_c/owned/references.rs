@@ -22,6 +22,62 @@ impl Frame<'_, '_> {
         Err(pending(&format!("unbound typed reference {address}")))
     }
 
+    /// Whether the real reference formal named `address` is a shortreal.
+    pub(super) fn real_reference_is_short(&self, address: &str) -> Result<bool, String> {
+        self.ctx
+            .func
+            .and_then(|function| {
+                function
+                    .formals
+                    .iter()
+                    .enumerate()
+                    .find(|(index, formal)| {
+                        formal.is_ref() && formal.real && address == format!("r{index}")
+                    })
+                    .map(|(_, formal)| formal.shortreal)
+            })
+            .ok_or_else(|| pending(&format!("unbound real reference {address}")))
+    }
+
+    /// A `double*` naming the actual's real storage cell for a real `ref`
+    /// formal. An invalid element index binds a call-owned scratch cell that
+    /// reads the default 0.0 and absorbs writes, so the callee never
+    /// dereferences null and never writes outside the array.
+    pub(super) fn real_reference_argument(&mut self, lhs: &IrLhs) -> Result<String, String> {
+        if let IrLhs::Ref {
+            addr, bit: None, ..
+        } = lhs
+        {
+            return self.reference_address(addr);
+        }
+        let target = self.target(lhs)?;
+        if target.width != 0 || target.selection.is_some() || target.net.is_some() {
+            return Err("real reference argument requires real variable storage".to_owned());
+        }
+        let pointer = if target.valid == "1" {
+            self.scalar("double*", target.binding.address.clone())
+        } else {
+            let scope = self.scalar(
+                "llg_value_scope_t*",
+                "llg_value_scope_begin_object(sizeof(double), NULL)".to_owned(),
+            );
+            let scratch = self.scalar(
+                "double*",
+                format!("(double*)llg_value_scope_object({scope})"),
+            );
+            self.line(format!("*{scratch} = 0.0;"));
+            self.scalar(
+                "double*",
+                format!(
+                    "({}) ? {} : {scratch}",
+                    target.valid, target.binding.address
+                ),
+            )
+        };
+        self.release_target(target);
+        Ok(pointer)
+    }
+
     pub(super) fn reference_argument(
         &mut self,
         lhs: &IrLhs,

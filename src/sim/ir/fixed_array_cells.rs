@@ -106,3 +106,24 @@ impl IrFixedArrayOrder {
         }
     }
 }
+
+/// Reorder the first unselected dimension of a real fixed array in place
+/// (IEEE 1800-2009 7.12.2). `reverse` moves whole rows; `sort`/`rsort` need
+/// scalar real elements, compare them numerically (never as bit patterns)
+/// and keep NaN elements in place. Every moved cell is published through the
+/// ordinary real store. Real cells are not part of [`IrFixedArrayOrder`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrRealArrayOrder {
+    pub cells: IrFixedArrayCells,
+    pub method: IrFixedArrayOrderMethod,
+}
+
+impl IrRealArrayOrder {
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        self.cells.expressions(visit);
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        self.cells.expressions_mut(visit);
+    }
+}

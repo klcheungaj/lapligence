@@ -18,10 +18,16 @@ impl<'a> Codegen<'a> {
                 ));
             };
             let argument = self.lower_expr(scope_path, *argument)?;
-            if argument.is_real() || !super::super::assertions::sampled_compatible(&argument) {
+            if !super::super::assertions::sampled_compatible(&argument) {
                 return Err(format!(
-                    "$sampled argument must be a static packed expression in `{scope_path}`"
+                    "$sampled argument must be a static packed or real expression in `{scope_path}`"
                 ));
+            }
+            if argument.is_real() {
+                // A real keeps its numeric Preponed value (SV 16.9.3).
+                let mut reads = std::collections::BTreeSet::new();
+                super::super::assertions::sampled_real_reads(&self.model, &argument, &mut reads);
+                self.sampled_real_signals.extend(reads);
             }
             return Ok(IrExpr::new(
                 IrExprKind::SysFunc(Box::new(IrSysFunc::Sampled(IrSampledCall::new(
@@ -70,11 +76,36 @@ impl<'a> Codegen<'a> {
             ));
         }
         let argument = self.lower_expr(scope_path, args[0])?;
-        if argument.is_real() || !super::super::assertions::sampled_compatible(&argument) {
+        if !super::super::assertions::sampled_compatible(&argument) {
             return Err(format!(
-                "{name} argument must be a static packed expression in `{scope_path}`"
+                "{name} argument must be a static packed or real expression in `{scope_path}`"
             ));
         }
+        // A real argument's history holds its exact 64-bit IEEE image, which
+        // `$past` decodes and `$stable`/`$changed` compare as reals. `$rose`
+        // and `$fell` read a least significant bit, which a real lacks.
+        let real = argument.is_real();
+        if real && matches!(kind, IrSampledFunc::Rose | IrSampledFunc::Fell) {
+            return Err(format!(
+                "{name} of a real expression is illegal in `{scope_path}`: a real has no least significant bit"
+            ));
+        }
+        let (kind, argument) = if real {
+            let image = IrExpr::new(
+                IrExprKind::SysFunc(Box::new(IrSysFunc::RealToBits(Box::new(argument)))),
+                64,
+                false,
+                None,
+            );
+            let kind = match kind {
+                IrSampledFunc::Stable => IrSampledFunc::RealStable,
+                IrSampledFunc::Changed => IrSampledFunc::RealChanged,
+                kind => kind,
+            };
+            (kind, image)
+        } else {
+            (kind, argument)
+        };
 
         let mut ticks = 0;
         let mut gate = None;
@@ -167,7 +198,7 @@ impl<'a> Codegen<'a> {
         } else {
             (1, false)
         };
-        Ok(IrExpr::new(
+        let call = IrExpr::new(
             IrExprKind::SysFunc(Box::new(IrSysFunc::Sampled(IrSampledCall::new(
                 kind,
                 argument,
@@ -177,7 +208,17 @@ impl<'a> Codegen<'a> {
             width,
             signed,
             None,
-        ))
+        );
+        Ok(if real && kind == IrSampledFunc::Past {
+            IrExpr::new(
+                IrExprKind::SysFunc(Box::new(IrSysFunc::BitsToReal(Box::new(call)))),
+                0,
+                false,
+                None,
+            )
+        } else {
+            call
+        })
     }
 
     /// Lower system-function expressions ($system/$clog2/$time/$stime/$bits/

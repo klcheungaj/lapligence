@@ -232,8 +232,11 @@ Macros, includes and their edition-specific behavior are counted in §11.
   reversed bounds, element selections, rows, slices, whole copies and overlapping
   self-assignment retain logical coordinates. Whole-array values are SV-only;
   admitted fixed integral calls/ports, patterns and operators have the limits in
-  §§3, 5, 7 and 9. Native/resizable elements, general real-array expressions,
-  and records wider than the packed limit remain restricted. Integral arrays
+  §§3, 5, 7 and 9. Real/shortreal arrays copy, compare numerically, merge
+  under an ambiguous conditional (equal elements kept, others 0.0) and pass
+  through subroutine formals, results and locals as numeric cells (SIM-005);
+  element-wise real-array expressions are limited to 4,096 elements. Native/
+  resizable elements and records wider than the packed limit remain restricted. Integral arrays
   through 16,777,216 cells copy, compare, select rows, pass through formals and
   module ports, and stream without packed flattening; arrays of unpacked
   records beyond the packed limit copy, compare, merge, pass through function
@@ -257,10 +260,21 @@ Macros, includes and their edition-specific behavior are counted in §11.
   V §6.2.1; SV §§6.8, 6.21, 10.5 **[2001/SV-2005]**.
 - 🟨 **Real types** — `real`/`realtime`/`shortreal` support scalar/fixed-array
   storage, parameters, scalar ports, value calls, arithmetic, ordinary `case`,
-  waits, any-change events and changed-write notification. Generic containers
-  support real/shortreal leaves; automatic real storage survives admitted blocking
-  mailbox delivery. Queued automatic-real writes, general real-reference calls
-  and real sampled/method callbacks remain rejected. V §3.9 **[1995]**.
+  waits, any-change events and changed-write notification. `ref`/`const ref`
+  formals alias real variables, locals, formals, record members and fixed-array
+  elements (constant or run-time index) through nested calls, recursion and
+  suspension, notifying the cell's waiters on every write; real fixed arrays
+  cross input/output/inout/ref formals and results. Output/inout actuals that
+  select a real fixed-array element freeze their selectors before the call and
+  copy back into that cell (an out-of-range index reads 0.0 and copies
+  nowhere; `real_element_copyout`). Real arrays sort, reverse
+  and locate numerically (NaN keys keep their positions) and `$sampled`,
+  `$past`, `$stable` and `$changed` keep real samples numeric
+  ([sim_005](../tests/fixtures/sim/feature_completion/sim_005/readme.md)).
+  Generic containers support real/shortreal leaves; automatic real storage
+  survives admitted blocking mailbox delivery. Refs to real queue, dynamic and
+  associative elements (SIM-008) and keyed real `min/max/unique` remain
+  rejected; NBAs to automatic reals are illegal. V §3.9 **[1995]**.
 - 🟦 **Typedefs and enums** — Simple/packed aliases resolve through the frontend.
   Enums retain nominal identity, base width and sparse signed declaration-order
   values. `first/last/next/prev/num/name` support wrapping counts, owned names and
@@ -787,8 +801,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   semantics are retained; identity/copy preserves Z. V §§3.1, 4.2.3, 4.4–4.5
   **[1995/2001]**.
 - 🟨 **Real operations** — Admitted arithmetic, relational/logical/conditional,
-  numeric casts and ordinary `case` comparisons have paths. Bitwise, reduction,
-  shifts, concatenation, case equality and real selects reject. V §4.1.1 **[1995]**.
+  numeric casts and ordinary `case` comparisons have paths. Real-to-integral
+  conversion rounds half away from zero and keeps the low target bits;
+  nonfinite reals convert to 0. Bitwise, reduction, shifts, concatenation,
+  case equality (also over real arrays), real selects, real edge descriptors
+  and `$rose/$fell` of reals reject as illegal. V §4.1.1 **[1995]**.
 - 🟨 **Static and dynamic casts** — Typed, size and sign casts preserve width,
   state and conversion boundaries in admitted scalar/vector and fixed contexts.
   `$cast` supports packed/real values, enum membership against the complete
@@ -856,14 +873,19 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   in both optimizer modes; SV2001 rejects fixed ordering. Repeated-key stability
   and X/Z key order are unspecified. Reverse `with`,
   const-ref receivers, record sorting without a key, fixed shuffle/locators,
-  native/real/string elements and incompatible maps are outside this fixed
-  integral profile and reject.
+  native/string elements and incompatible maps are outside this fixed
+  integral profile and reject. Stored real/shortreal arrays and rows
+  `sort`/`rsort`/`reverse` in place by one numeric runtime reorder (stable;
+  NaN keys keep their positions); a real `with` key rejects (SIM-005).
   SV §7.12.2 **[SV-2009]**.
 - 🟨 **Resizable-container methods** — Packed reductions/`with` callbacks,
   locators, min/max/unique result queues, sort/rsort/reverse/shuffle are present.
   Queue/dynamic `sort`/`rsort` evaluate each `with` key once in index order, then
   stable merge-sort in O(n log n); elements with an X/Z key stay in place.
-  Callbacks require packed items and cannot capture automatic locals/formals;
+  Callbacks require packed or real items and cannot capture automatic
+  locals/formals. Real queues and dynamic arrays sort/rsort/reverse/shuffle in
+  place and support `find*` with a `with` clause plus unkeyed
+  `min/max/unique/unique_index`, comparing numerically (SIM-005); other
   generic leaf storage does not remove method/result limits. Shuffle uses its
   container seed API, not full process/object RNG integration.
   SV §7.12 **[SV-2005]**.
@@ -1070,7 +1092,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   integral arrays/records/unions, admitted unpacked members/elements (including
   members of unpacked-record array elements, with runtime indices bound once at
   the call) and retained packed queue cells. Removal/reallocation preserves a queue reference's original
-  detached cell. String/chandle references use native storage. General native/
+  detached cell. String/chandle references use native storage; real/shortreal
+  references bind the actual's numeric cell (SIM-005). General native/
   resizable aggregates, non-packed queue references and reference-formal NBAs
   remain restricted. Fixed packed scanner destinations retain checked selected
   views through ref formals. Subroutine actuals must be
@@ -1463,8 +1486,10 @@ rules; graph/lowering support alone is not executable acceptance.
 🟨 **Sampled functions** — `$sampled/$rose/$fell/$stable/$changed/$past` and
 2009 global-clock history/status forms support packed explicit/default edge
 domains, gated/initial history, Preponed reads and LSB/X/Z edge rules; `$past`
-counts only clock time steps strictly before its evaluation. Future global
-forms, complex clocks and real-valued sampling remain rejected. Future global
+counts only clock time steps strictly before its evaluation. Real arguments
+keep numeric samples: `$past` returns the exact sampled real and
+`$stable/$changed` compare with real `==`; `$rose/$fell` of a real are
+illegal. Future global forms and complex clocks remain rejected. Future global
 functions are legal in SV2009 property/sequence contexts under §16.9.4, with
 global clocking, nonnesting and match-item restrictions and delayed assertion
 actions; their rejection is an implementation gap. Procedural and action-block

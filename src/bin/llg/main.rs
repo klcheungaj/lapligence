@@ -455,7 +455,17 @@ fn run(options: DriverOptions) -> i32 {
             return 1;
         }
     };
-    status.code().unwrap_or(1)
+    model_exit_code(status.code())
+}
+
+/// The driver status for a model run. A model that exits normally with a
+/// status in the portable 0-255 range reports it unchanged. Termination by a
+/// signal (`None` on Unix) or any status outside that range becomes 1: a
+/// Windows crash status such as 0xC0000409, which `abort()` produces through
+/// the C runtime's fast-fail, would otherwise be truncated to an unrelated
+/// low byte (9) by `ExitCode`.
+fn model_exit_code(code: Option<i32>) -> i32 {
+    code.filter(|code| u8::try_from(*code).is_ok()).unwrap_or(1)
 }
 
 /// Directory name for the generated model (the design name, sanitized).
@@ -479,6 +489,18 @@ fn gen_name(gen: &sim::codegen::GeneratedModel) -> String {
 mod tests {
     use super::*;
     use crate::cli::parse_args;
+
+    #[test]
+    fn model_exit_codes_keep_byte_statuses_and_map_crashes_to_one() {
+        assert_eq!(model_exit_code(Some(0)), 0);
+        assert_eq!(model_exit_code(Some(1)), 1);
+        assert_eq!(model_exit_code(Some(255)), 255);
+        assert_eq!(model_exit_code(None), 1);
+        assert_eq!(model_exit_code(Some(-1)), 1);
+        assert_eq!(model_exit_code(Some(256)), 1);
+        // STATUS_STACK_BUFFER_OVERRUN from abort() on Windows.
+        assert_eq!(model_exit_code(Some(0xC000_0409_u32 as i32)), 1);
+    }
 
     #[test]
     fn export_budget_defaults_to_the_simulator_policy() {

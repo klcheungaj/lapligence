@@ -118,8 +118,11 @@ impl<'a> Codegen<'a> {
         let has_ret = ret.is_some() || ret_chandle || ret_string;
         // Slang binds an assignment to the function name directly to the
         // subroutine symbol; that symbol is the return-storage identity.
-        let ret_var =
-            (has_ret || self.nonflatten_function(ft) || self.native_return(ft)).then_some(ft);
+        let ret_var = (has_ret
+            || self.nonflatten_function(ft)
+            || self.native_return(ft)
+            || self.real_array_return(ft))
+        .then_some(ft);
         self.bind_native_function(inst, ft);
         let body = self
             .func_body(ft)
@@ -428,7 +431,10 @@ impl<'a> Codegen<'a> {
             }
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
-            if self.fixed_formal_array(*io).is_some() || self.is_native_declaration(*io) {
+            if self.fixed_formal_array(*io).is_some()
+                || self.is_native_declaration(*io)
+                || self.real_formal_array(*io).is_some()
+            {
                 continue;
             }
             if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "event") {
@@ -1081,11 +1087,9 @@ impl<'a> Codegen<'a> {
                 // by `NativeValueDeclare` (see `native_values`).
                 return Ok(());
             }
-            if self
-                .array_globals
-                .get(&node)
-                .is_some_and(|array| self.model.arrays[array.ir].sparse())
-            {
+            if self.array_globals.get(&node).is_some_and(|array| {
+                self.model.arrays[array.ir].sparse() || self.model.arrays[array.ir].real
+            }) {
                 return Ok(());
             }
             self.explicit_local_lifetime(node)?;

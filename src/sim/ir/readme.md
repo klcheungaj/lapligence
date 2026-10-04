@@ -125,6 +125,25 @@ equal values and otherwise yields `""` or null. Native record conditionals
 lower to ordinary `If` statements over captured leaves, never to
 `IrFixedValue`.
 
+## Real references, real arrays and real sampling (SIM-005)
+
+Reals stay numeric and never enter the integral fixed-value contract.
+`IrCallArg::RefAddr` with width 0 binds a real `ref` formal (`IrFormal::real`
+plus `Ref` mode) to one real cell: a real signal, real local/formal storage, a
+whole real array element, or a forwarded real reference (`IrLhs::Ref` width
+0, writable only through a real ref formal). The C ABI is a `double*`; writes
+are ordinary real stores. `IrFormal::real_array` names real fixed-array
+storage of a formal or result (an `IrArray` with `real`); automatic storage is
+an activation declared by `FixedArrayDeclare` and emitted as a lexical
+`double` buffer, never `llg_fixed_array_t`. Its operands are
+`IrCallArg::RealArray` (whole storage: copied for inputs/outputs, aliased for
+`ref`), `RealArrayValues` (declaration-order element values for an input) and
+`RealArrayCall` (a nested real-array result, like `NativeCall`).
+`IrStmt::RealArrayOrder` reorders stored real cells numerically.
+`IrSampledFunc::RealStable/RealChanged` and `$past` over a real keep the
+argument's exact 64-bit IEEE image in the history domain and compare or decode
+it as a real; `$sampled` of a real reads a numeric Preponed snapshot.
+
 ## Bounded packed selection chains
 
 `IrElemSel::PackedChain(Vec<IrPackedSelect>)` stores successive fixed-array-element

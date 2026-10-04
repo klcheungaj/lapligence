@@ -18,7 +18,7 @@ fn storage_write_remainder_cells_run_in_both_optimizer_modes() {
     let expected_stderr = format!(
         "Warning: {}:101:33 non-void function 'hier_result' does not return a value\n\
          llg: $finish at time 4000 at tb:153:9\n",
-        source.display()
+        sim_harness::source_display(&source)
     );
 
     for optimized in [false, true] {

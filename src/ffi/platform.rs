@@ -110,6 +110,35 @@ pub fn resolves_symlinked_paths() -> bool {
     cfg!(unix)
 }
 
+/// Rewrites every CRLF pair as LF; a lone CR is kept.
+pub fn crlf_to_lf(bytes: Vec<u8>) -> Vec<u8> {
+    if !bytes.windows(2).any(|pair| pair == b"\r\n") {
+        return bytes;
+    }
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut iter = bytes.iter().copied().peekable();
+    while let Some(byte) = iter.next() {
+        if byte == b'\r' && iter.peek() == Some(&b'\n') {
+            continue;
+        }
+        normalized.push(byte);
+    }
+    normalized
+}
+
+/// Text a generated model or `llg` wrote to its console or to a text-mode
+/// file, with the host's native line ending rewritten to LF. Simulators keep
+/// the OS-native newline, so Windows output ends lines with CRLF; this gives
+/// tests and tools one LF spelling to compare against. Other hosts already
+/// write LF, and their bytes are returned unchanged.
+pub fn native_text_to_lf(bytes: Vec<u8>) -> Vec<u8> {
+    if cfg!(windows) {
+        crlf_to_lf(bytes)
+    } else {
+        bytes
+    }
+}
+
 #[cfg(windows)]
 mod host {
     use std::ffi::OsString;
@@ -264,6 +293,20 @@ mod tests {
         } else {
             // A backslash is an ordinary name character on POSIX hosts.
             assert_eq!(windows, r"C:\work\llg.toml");
+        }
+    }
+
+    #[test]
+    fn crlf_pairs_become_lf_and_lone_carriage_returns_stay() {
+        assert_eq!(crlf_to_lf(b"a\r\nb\r\n".to_vec()), b"a\nb\n");
+        assert_eq!(crlf_to_lf(b"a\rb\r\r\n\n".to_vec()), b"a\rb\r\n\n");
+        assert_eq!(crlf_to_lf(b"plain\n".to_vec()), b"plain\n");
+        assert_eq!(crlf_to_lf(Vec::new()), b"");
+        let native = native_text_to_lf(b"x\r\n".to_vec());
+        if cfg!(windows) {
+            assert_eq!(native, b"x\n");
+        } else {
+            assert_eq!(native, b"x\r\n");
         }
     }
 

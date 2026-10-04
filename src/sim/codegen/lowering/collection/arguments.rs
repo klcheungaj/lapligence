@@ -33,7 +33,10 @@ impl<'a> Codegen<'a> {
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             let (w, s, two_state, real, shortreal, is_event, is_string) = match self.kind(*io) {
                 NodeKind::FuncArg { ty, .. } => {
-                    if self.fixed_formal_array(*io).is_some() || self.is_native_declaration(*io) {
+                    if self.fixed_formal_array(*io).is_some()
+                        || self.is_native_declaration(*io)
+                        || self.real_formal_array(*io).is_some()
+                    {
                         (0, false, false, false, false, false, false)
                     } else if ty.kind == "event" {
                         (0, false, false, false, false, true, false)
@@ -365,6 +368,101 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    /// Bind a `real`/`shortreal` reference formal to the actual's numeric
+    /// storage cell. The callee reads and writes that `double` directly, so a
+    /// write notifies the cell's waiters immediately and no value ever passes
+    /// through a packed (bit-pattern) representation. Only stable storage is
+    /// admitted here: variables, locals, formals, forwarded references and
+    /// fixed unpacked-array elements. Resizable-container elements need
+    /// retained cells and are rejected explicitly.
+    fn lower_real_ref_arg(
+        &mut self,
+        scope_path: &str,
+        bound: &BoundArg,
+        const_ref: bool,
+    ) -> Result<IrCallArg, String> {
+        if self.container_of_ref_actual(bound.expr) {
+            return Err(format!(
+                "ref actual in `{scope_path}` names a real resizable-container element, \
+                 which has no retained reference cell"
+            ));
+        }
+        let lhs = self.lower_ref_actual_lhs(scope_path, bound.expr)?;
+        let read = self.lower_expr(scope_path, bound.expr)?;
+        let mismatch =
+            || format!("ref actual type does not exactly match formal in `{scope_path}`");
+        if !read.is_real() {
+            return Err(mismatch());
+        }
+        let shortreal = match &lhs {
+            IrLhs::Whole(index) => {
+                let signal = &self.model.signals[*index];
+                if signal.net_driver.is_some() || !signal.net_alias.is_empty() {
+                    return Err(format!("ref actual in `{scope_path}` must be a variable"));
+                }
+                match signal.ty {
+                    IrType::Real { shortreal } => Some(shortreal),
+                    IrType::Packed { .. } => return Err(mismatch()),
+                }
+            }
+            IrLhs::WholeRef {
+                width: 0,
+                shortreal,
+                ..
+            } => Some(*shortreal),
+            IrLhs::ArrayElem {
+                arr,
+                elem_sel: IrElemSel::Whole,
+                ..
+            } if self.model.arrays[*arr].real => Some(self.model.arrays[*arr].shortreal),
+            // A forwarded real reference keeps the type the frontend matched.
+            IrLhs::Ref {
+                width: 0,
+                bit: None,
+                ..
+            } => None,
+            _ => {
+                return Err(format!(
+                    "ref actual in `{scope_path}` must be a real variable or unpacked element"
+                ))
+            }
+        };
+        if shortreal.is_some_and(|shortreal| shortreal != bound.shortreal) {
+            return Err(mismatch());
+        }
+        let actual_const = matches!(
+            lhs,
+            IrLhs::Ref {
+                const_ref: true,
+                ..
+            }
+        );
+        if actual_const && !const_ref {
+            return Err(format!(
+                "const ref actual cannot bind to writable ref formal in `{scope_path}`"
+            ));
+        }
+        Ok(IrCallArg::RefAddr {
+            addr: "typed_real_reference".to_owned(),
+            width: 0,
+            signed: false,
+            two_state: false,
+            const_ref: actual_const,
+            lhs: Box::new(lhs),
+            read: Box::new(read),
+        })
+    }
+
+    /// Whether a ref actual selects an element of a resizable container.
+    fn container_of_ref_actual(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. } | ExprKind::ArraySelect { base, .. },
+            ) => self.container_of(*base).is_some(),
+            _ => false,
+        }
+    }
+
     pub(in super::super) fn lower_ref_arg(
         &mut self,
         scope_path: &str,
@@ -407,6 +505,10 @@ impl<'a> Codegen<'a> {
                     ));
                 }
             }
+        }
+
+        if bound.real {
+            return self.lower_real_ref_arg(scope_path, bound, const_ref);
         }
 
         // Queue elements cannot be represented by a stable `sv4_t *`: any
@@ -924,9 +1026,12 @@ impl<'a> Codegen<'a> {
                     .arrays
                     .get(arr)
                     .ok_or_else(|| format!("subroutine actual array {arr} is out of bounds"))?;
-                if array.real {
+                // A real element is a whole `double` cell (width 0); the
+                // read and the copy-out use the ordinary real element path.
+                if array.real && !matches!(elem_sel, IrElemSel::Whole) {
                     return Err(
-                        "real unpacked-array output/inout actuals are not supported".to_string()
+                        "real unpacked-array output/inout actuals cannot select within an element"
+                            .to_string(),
                     );
                 }
                 let indices = indices

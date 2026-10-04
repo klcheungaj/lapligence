@@ -72,7 +72,7 @@ fn reject_fixture_tagged_access(
         .join(fixture_file);
     let expected_stderr = format!(
         "llg: runtime error: access to inactive tagged-union member {member} at {}:{location}\nllg: $finish at {finish}\n",
-        source.display()
+        sim_harness::source_display(&source)
     );
     assert_eq!(
         output.status.code(),

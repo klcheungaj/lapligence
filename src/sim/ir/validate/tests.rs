@@ -5,6 +5,7 @@ mod fixed_array_cells;
 mod fixed_array_reductions;
 mod fixed_streams;
 mod native_values;
+mod real_values;
 mod sequential_predicates;
 
 fn valid_model() -> IrModel {
@@ -538,6 +539,7 @@ fn evaluated_waits_require_valid_helpers_and_dependencies() {
             args: vec![packed_const(1, 1)],
             context: None,
             item: false,
+            real_item: false,
         }],
         vec![IrStmt::WaitEvents {
             specs: vec![(
@@ -560,6 +562,7 @@ fn evaluated_waits_require_valid_helpers_and_dependencies() {
         args: vec![packed_const(1, 1)],
         context: None,
         item: false,
+        real_item: false,
     });
     model.signals[0].omit = true;
     assert!(model

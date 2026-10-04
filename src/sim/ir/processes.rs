@@ -29,6 +29,9 @@ pub enum IrPreFn {
         args: Vec<IrExpr>,
         context: Option<IrEventContext>,
         item: bool,
+        /// The iterator item is a real value (`double __llg_method_item`)
+        /// rather than a packed one; only meaningful with `item`.
+        real_item: bool,
     },
     /// `static void c_name(llg_frame_t* frame) { ... }` for a deferred
     /// nonblocking event assignment. Captured values and selectors are read

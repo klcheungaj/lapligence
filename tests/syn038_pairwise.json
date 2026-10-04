@@ -826,7 +826,7 @@
       "stdout": "result=1\n",
       "stderr": "Warning: {absolute_fixture_path}:10:27 non-void function 'f' does not return a value\n",
       "stderr_mode": "derived",
-      "stderr_anchors": ["non-void function 'f' does not return a value\\n", "source.display()"],
+      "stderr_anchors": ["non-void function 'f' does not return a value\\n", "sim_harness::source_display(&source)"],
       "tokens": ["static_return_continuous", "--edition", "2009", "non-void function 'f' does not return a value"],
       "runner": "tests/sim_syn038_static_return_continuous.rs",
       "cli_helper_chain": ["assert_exact_cli", "invoke", "fixture_path"]
@@ -1059,7 +1059,7 @@
       "stdout": "storage_write_remainders=passed\n",
       "stderr": "Warning: {absolute_fixture_path}:101:33 non-void function 'hier_result' does not return a value\nllg: $finish at time 4000 at tb:153:9\n",
       "stderr_mode": "derived",
-      "stderr_anchors": ["non-void function 'hier_result' does not return a value", "llg: $finish at time 4000 at tb:153:9\\n", "source.display()"],
+      "stderr_anchors": ["non-void function 'hier_result' does not return a value", "llg: $finish at time 4000 at tb:153:9\\n", "sim_harness::source_display(&source)"],
       "tokens": ["storage_write_remainders", "--edition", "2009"],
       "runner": "tests/sim_syn038_storage_write_remainders.rs",
       "oracle_mode": "derived",

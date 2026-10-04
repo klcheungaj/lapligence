@@ -14,6 +14,9 @@ mod sim_003;
 #[path = "sim_feature_completion/sim_004.rs"]
 mod sim_004;
 
+#[path = "sim_feature_completion/sim_005.rs"]
+mod sim_005;
+
 #[path = "sim_feature_completion/rtl_001.rs"]
 mod rtl_001;
 

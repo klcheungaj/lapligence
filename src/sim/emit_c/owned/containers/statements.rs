@@ -77,6 +77,25 @@ pub(super) fn render(
             src,
             method,
             callback,
+        } if ctx.model.containers[*src].element.is_real() => {
+            let function = if ctx.model.containers[*dst].element.is_packed() {
+                "llg_real_method_assign_indices"
+            } else {
+                "llg_real_method_assign_values"
+            };
+            let source = name(ctx, *src);
+            format!(
+                "    {function}(&{}, {source}.data, {source}.size, {}, {}, NULL);\n",
+                name(ctx, *dst),
+                method_code(*method),
+                callback.as_deref().unwrap_or("NULL")
+            )
+        }
+        IrContainerStmt::MethodAssign {
+            dst,
+            src,
+            method,
+            callback,
         } => {
             let function = match ctx.model.containers[*src].kind {
                 IrContainerKind::Dynamic => "llg_dyn_method_assign",
@@ -89,6 +108,30 @@ pub(super) fn render(
                 name(ctx, *src),
                 method_code(*method),
                 callback.as_deref().unwrap_or("NULL")
+            )
+        }
+        IrContainerStmt::Method {
+            container,
+            method,
+            callback,
+        } if !ctx.model.containers[*container].element.is_packed() => {
+            // Real elements reorder numerically inside the value container.
+            if callback.is_some() {
+                return Err(
+                    "keyed array methods over non-packed elements are not supported".into(),
+                );
+            }
+            let function = match ctx.model.containers[*container].kind {
+                IrContainerKind::Dynamic => "llg_dyn_value_method",
+                IrContainerKind::Queue { .. } => "llg_queue_value_method",
+                IrContainerKind::Associative { .. } => {
+                    return Err("in-place array method cannot target an associative array".into())
+                }
+            };
+            format!(
+                "    {function}(&{}, {});\n",
+                name(ctx, *container),
+                method_code(*method)
             )
         }
         IrContainerStmt::Method {

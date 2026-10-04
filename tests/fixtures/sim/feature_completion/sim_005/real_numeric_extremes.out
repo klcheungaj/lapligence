@@ -1,0 +1,19 @@
+int inf 0
+int -inf 0
+int nan 0
+rtoi nan 0
+int 1e20 1661992960
+longint 1e20 7766279631452241920
+byte 300.6 45
+round -0.5 -1 0.5 1 1.5 2 -2.5 -3
+rtoi -1.9 -1 2.7 2
+short 2^24+1 16777216.0
+short overflow 7f800000
+short subnormal 00000001
+short -0 80000000
+max 7fefffffffffffff 1
+min 0000000000000001 0000000000000000
+neg zero 8000000000000000 1
+nan 0 1 0 0
+inf 1 1
+payload nan 0

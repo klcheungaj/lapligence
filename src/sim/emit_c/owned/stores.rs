@@ -61,6 +61,45 @@ impl<'a, 'm> Frame<'a, 'm> {
         Ok(pointer)
     }
 
+    /// A fresh lexical `double` buffer, every cell +0.0, for a real
+    /// activation array. Its value scope owns the cells, so suspension keeps
+    /// them alive and lexical exit or cancellation releases them.
+    pub(super) fn new_real_array(&mut self, index: usize) -> String {
+        let total = self.ctx.model.array(index).total;
+        let pointer = self.scalar(
+            "double*",
+            format!(
+                "(double*)llg_value_scope_object(llg_value_scope_begin_object(sizeof(double) * {total}ULL, NULL))"
+            ),
+        );
+        // Value-scope objects are zero-filled, and all-zero bits are +0.0.
+        pointer
+    }
+
+    /// The `double*` base of whole real-array storage: a lexical buffer, a
+    /// bound real-array formal or the model-global cells.
+    pub(super) fn real_array_base(&self, index: usize) -> Result<String, String> {
+        let array = self.ctx.model.array(index);
+        if !array.real {
+            return Err("real-array operand requires real storage".to_owned());
+        }
+        if array.activation {
+            self.fixed_array_address(index)
+        } else {
+            Ok(array.c_name.clone())
+        }
+    }
+
+    /// Publish `count` cells into whole real-array storage. Every cell goes
+    /// through the ordinary real store, so waiters, forces and monitors see
+    /// copy-out exactly like element assignments.
+    pub(super) fn publish_real_cells(&mut self, target: &str, source: &str, count: u64) {
+        let (cell, declaration) = self.loop_variable("uint64_t", "real_cell");
+        self.line(format!(
+            "for ({declaration} = 0; {cell} < {count}ULL; ++{cell}) llg_ba_d(&({target})[{cell}], ({source})[{cell}]);"
+        ));
+    }
+
     pub(super) fn fixed_array_address(&self, index: usize) -> Result<String, String> {
         let array = self.ctx.model.array(index);
         if array.activation {
@@ -138,7 +177,9 @@ impl<'a, 'm> Frame<'a, 'm> {
             },
             format!(
                 "({valid}) ? {} : NULL",
-                if array.sparse() {
+                if array.real && array.activation {
+                    format!("&({})[{linear}]", self.fixed_array_address(array_index)?)
+                } else if array.sparse() {
                     format!(
                         "{}({}, {linear})",
                         if writable {
@@ -322,6 +363,33 @@ impl<'a, 'm> Frame<'a, 'm> {
                     return Err("cannot write a const reference".to_owned());
                 }
                 let address = self.reference_address(addr)?;
+                if *width == 0 {
+                    // A real reference is the actual's `double` cell: the
+                    // ordinary real store publishes and notifies through it.
+                    if bit.is_some() {
+                        return Err("a real reference has no bit selection".to_owned());
+                    }
+                    let shortreal = self.real_reference_is_short(addr)?;
+                    return Ok(Target {
+                        reference_scopes: Vec::new(),
+                        binding: Binding {
+                            address,
+                            width: 0,
+                            signed: false,
+                            two_state: false,
+                            shortreal,
+                            automatic: false,
+                        },
+                        valid: "1".to_owned(),
+                        width: 0,
+                        signed: false,
+                        selection: None,
+                        net: None,
+                        sequence_local: false,
+                        reference: None,
+                        tagged_commit: None,
+                    });
+                }
                 let selection = bit
                     .as_ref()
                     .map(|index| self.index(index).map(Selection::Bit))

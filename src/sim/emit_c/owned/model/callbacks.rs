@@ -162,6 +162,7 @@ fn render_with_frame(
             args,
             context,
             item,
+            real_item,
         } => {
             frame.read_only_callback = true;
             frame.item_callback = *item;
@@ -189,10 +190,10 @@ fn render_with_frame(
             frame.line("if (0) goto _llg_return;");
             frame.line("_llg_return: ;");
             frame.line("llg_value_scopes_end_since(_llg_frame_base);");
-            let item_params = if *item {
-                "sv4_t __llg_method_item, sv4_t __llg_method_index, "
-            } else {
-                ""
+            let item_params = match (*item, *real_item) {
+                (true, true) => "double __llg_method_item, sv4_t __llg_method_index, ",
+                (true, false) => "sv4_t __llg_method_item, sv4_t __llg_method_index, ",
+                (false, _) => "",
             };
             Ok((
                 format!(

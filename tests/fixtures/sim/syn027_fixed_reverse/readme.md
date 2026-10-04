@@ -18,7 +18,8 @@ SystemVerilog array method call. It runs in SV2009 and must reject in 2001.
 Expected element order follows IEEE 1800-2009 §7.12.2; the method is absent
 from IEEE 1364-2001.
 
-`unselected_real.sv` is a legal SystemVerilog method use excluded by llg's
-fixed integral scope; rejection is a supported-profile boundary, not an IEEE
-syntax error. Existing completion fixtures separately check illegal `with`
-and read-only const-ref receivers.
+`real_elements.sv` reverses a real fixed array (SIM-005 admits real fixed
+arrays). Expected output from §7.12.2: {1.5, -0.0, -2.25} becomes
+`-2.25 -0.00 1.50`, and the middle element keeps the -0.0 image
+`8000000000000000`. Existing completion fixtures separately check illegal
+`with` and read-only const-ref receivers.

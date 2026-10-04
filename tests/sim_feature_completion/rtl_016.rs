@@ -10,7 +10,7 @@ fn source_stderr(fixture: &str, template: &str) -> String {
         .join("tests/fixtures/sim")
         .join(SUITE)
         .join(format!("{fixture}.sv"));
-    template.replace("{source}", &source.display().to_string())
+    template.replace("{source}", &super::sim_harness::source_display(&source))
 }
 
 /// Run a fixture whose run-time errors make it exit 1. All its results are on

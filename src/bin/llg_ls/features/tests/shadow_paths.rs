@@ -7,7 +7,7 @@ fn shadow_path_round_trips_absolute_paths() {
     let base = process_shadow_base();
     for real in [
         hp("/repo/rtl/top.sv"),
-        "/tmp/proj/sub dir/top.sv",
+        hp("/tmp/proj/sub dir/top.sv"),
         hp("/a/b/c/d.sv"),
         hp("/workspaces/llg/src/bin/llg/features.rs"),
     ] {

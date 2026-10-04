@@ -64,11 +64,13 @@ fn reverse_is_rejected_in_verilog_2001() {
 }
 
 #[test]
-fn real_elements_remain_outside_fixed_integral_scope() {
-    sim_cli::reject_case_with_args(
+fn real_elements_reverse_numerically() {
+    sim_cli::run_case_with_args(
         "syn027_fixed_reverse",
-        "unselected_real",
-        "requires a supported fixed element",
+        "real_elements",
+        "-2.25 -0.00 1.50 8000000000000000\n",
+        "llg: $finish at time 0 at tb:12:5\n",
+        &[],
         &["--edition", "2009"],
     );
 }

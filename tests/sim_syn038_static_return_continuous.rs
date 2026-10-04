@@ -113,7 +113,7 @@ fn static_function_result_accepts_hierarchical_continuous_variable_assignment() 
     let source = fixture_path();
     let expected_stderr = format!(
         "Warning: {}:10:27 non-void function 'f' does not return a value\n",
-        source.display()
+        sim_harness::source_display(&source)
     );
     assert_exact_cli(None, 0, "result=1\n", &expected_stderr);
 }
@@ -124,8 +124,8 @@ fn continuous_assignment_call_reads_the_same_driven_static_result() {
     let expected_stderr = format!(
         "Warning: {}:4:8 module definition is unused\n\
 Warning: {}:43:27 non-void function 'f' does not return a value\n",
-        source.display(),
-        source.display()
+        sim_harness::source_display(&source),
+        sim_harness::source_display(&source)
     );
     assert!(
         llg::sim::build::cmake_available(),
@@ -334,7 +334,7 @@ fn package_task_static_local_keeps_its_owned_variable_identity() {
 #[test]
 fn static_function_result_rejects_duplicate_continuous_drivers() {
     let source = fixture_path();
-    let source = source.display();
+    let source = sim_harness::source_display(&source);
     let expected_stderr = format!(
         "Warning: {source}:10:27 non-void function 'f' does not return a value\n\
 Warning: {source}:18:12 cannot have multiple continuous assignments to variable 'f'\n\
@@ -346,7 +346,7 @@ llg: codegen error: semantic error: multiple continuous assignments to variable 
 #[test]
 fn static_function_result_rejects_warning_only_mixed_driver() {
     let source = fixture_path();
-    let source = source.display();
+    let source = sim_harness::source_display(&source);
     let expected_stderr = format!(
         "Warning: {source}:16:12 cannot mix continuous and procedural assignments to variable 'f'\n\
 Warning: {source}:27:13 cannot mix continuous and procedural assignments to variable 'f'\n\

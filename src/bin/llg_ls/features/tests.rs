@@ -29,6 +29,13 @@ mod packages;
 mod parameter_connections;
 mod shadow_paths;
 
+/// The host path a `file:` URI names. `Url::path` keeps the URI spelling
+/// (`/C:/x/top.sv` on Windows), which only equals the path on Unix.
+fn uri_file_path(uri: &tower_lsp::lsp_types::Url) -> std::path::PathBuf {
+    uri.to_file_path()
+        .unwrap_or_else(|()| panic!("not a file URI: {uri}"))
+}
+
 /// Serializes tests that temporarily change the process working directory.
 static ANALYSIS_CWD_LOCK: Mutex<()> = Mutex::new(());
 

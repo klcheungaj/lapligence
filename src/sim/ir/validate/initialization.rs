@@ -196,8 +196,8 @@ impl Validator<'_> {
                 let Some(signal) = self.model.signals.get(*sig) else {
                     return self.fail(path, format!("sampled signal index {sig} is out of bounds"));
                 };
-                if !matches!(signal.ty, IrType::Packed { .. }) {
-                    return self.fail(path, "sampled source must be a packed signal");
+                if signal.net_driver.is_some() && matches!(signal.ty, IrType::Real { .. }) {
+                    return self.fail(path, "sampled real source must be a variable");
                 }
             }
             IrInitStep::Initialize(initialization) => match &initialization.target {

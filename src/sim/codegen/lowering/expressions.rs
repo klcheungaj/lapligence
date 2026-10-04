@@ -23,7 +23,7 @@ mod operations;
 mod streaming;
 mod system_functions;
 
-fn inside_array_index_vectors(dims: &[(i32, i32)]) -> Vec<Vec<i32>> {
+pub(super) fn inside_array_index_vectors(dims: &[(i32, i32)]) -> Vec<Vec<i32>> {
     fn visit(
         dims: &[(i32, i32)],
         dimension: usize,

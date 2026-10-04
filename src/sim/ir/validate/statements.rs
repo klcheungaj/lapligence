@@ -207,7 +207,7 @@ impl Validator<'_> {
                     .model
                     .arrays
                     .get(*index)
-                    .is_none_or(|array| !array.activation || !array.sparse())
+                    .is_none_or(|array| !array.activation || !(array.sparse() || array.real))
                 {
                     return self.fail(path, "invalid activation fixed array declaration");
                 }
@@ -221,6 +221,16 @@ impl Validator<'_> {
             }
             IrStmt::FixedArrayOrder(order) => {
                 self.validate_fixed_array_order(order, formals, path)?;
+            }
+            IrStmt::RealArrayOrder(order) => {
+                let shape = self.validate_fixed_array_cells(&order.cells, formals, path, true)?;
+                let array = &self.model.arrays[order.cells.array];
+                if !array.real
+                    || (order.method != IrFixedArrayOrderMethod::Reverse
+                        && shape.element_cells != 1)
+                {
+                    return self.fail(path, "real-array ordering needs real scalar elements");
+                }
             }
             IrStmt::FixedArrayFill { array, value, nba } => {
                 self.validate_fixed_activation(*array, path)?;
@@ -1433,6 +1443,11 @@ impl Validator<'_> {
                                 .get(*signal)
                                 .is_some_and(|signal| matches!(signal.ty, IrType::Real { .. })),
                             IrLhs::WholeRef { width, .. } => *width == 0,
+                            IrLhs::ArrayElem {
+                                arr,
+                                elem_sel: IrElemSel::Whole,
+                                ..
+                            } => self.model.arrays.get(*arr).is_some_and(|array| array.real),
                             _ => false,
                         };
                         if !is_real_target {
