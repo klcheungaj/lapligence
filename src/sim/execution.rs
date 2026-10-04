@@ -678,7 +678,8 @@ fn collect_effects(
             | IrStmt::StreamAssign { nba: true, .. }
             | IrStmt::Assign { nba: true, .. }
             | IrStmt::DelayedAssign { .. }
-            | IrStmt::DelayedStringAssign { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
+            | IrStmt::DelayedStringAssign { .. }
+            | IrStmt::DelayedChandleAssign { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
                 ScheduleRegion::NonblockingAssign,
             )),
             IrStmt::ClockingDrive { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
@@ -1114,6 +1115,9 @@ fn collect_statement_expression_effects(
             rhs.expressions(&mut |expression| {
                 collect_expression_effects(ir, expression, effects, visited_calls)
             });
+        }
+        IrStmt::DelayedChandleAssign { rhs, .. } => {
+            collect_chandle_effects(ir, rhs, effects, visited_calls)
         }
         IrStmt::EventAssign { .. }
         | IrStmt::EventCapture { .. }

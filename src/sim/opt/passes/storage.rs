@@ -508,6 +508,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         IrStmt::DelayedStringAssign { rhs, .. } => {
             rhs.expressions(&mut |expr| collect_expr_reads(expr, model, rw));
         }
+        IrStmt::DelayedChandleAssign { rhs, .. } => {
+            rhs.expressions(&mut |expr| collect_expr_reads(expr, model, rw));
+        }
         IrStmt::PcaAssign {
             sig, enable, value, ..
         }

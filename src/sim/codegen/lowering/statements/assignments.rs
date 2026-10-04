@@ -410,7 +410,64 @@ impl EmitCtx<'_, '_> {
             .get(1)
             .copied()
             .ok_or_else(|| "assignment without RHS".to_string())?;
-        if self.cg.is_string_expr(&self.path, lhs) {
+        if self.cg.native_record_target(lhs) {
+            return self.lower_delayed_native_record(h, lhs, rhs, blocking, scaled_ticks);
+        }
+        let string_target = self.cg.is_string_expr(&self.path, lhs);
+        let chandle_target = !string_target && self.cg.is_chandle_expr(&self.path, lhs);
+        if !blocking && (string_target || chandle_target) {
+            return Ok(vec![self.cg.lower_native_nba(
+                &self.path,
+                lhs,
+                rhs,
+                scaled_ticks,
+            )?]);
+        }
+        if chandle_target {
+            // The blocking form captures the value before suspending and
+            // resolves its destination when the delay completes.
+            let value = self.cg.lower_chandle(&self.path, rhs)?;
+            let tmp = format!("_ch{}", h.0);
+            let write = self.cg.lower_object_assignment(
+                &self.path,
+                lhs,
+                rhs,
+                true,
+                Operation::Assignment,
+            )?;
+            let Some(IrStmt::Object(write)) = write else {
+                return Err(format!(
+                    "blocking delayed chandle assignment in `{}` has no chandle destination",
+                    self.path
+                ));
+            };
+            let write = match *write {
+                IrObjectStmt::ChandleAssign(index, _) => {
+                    IrObjectStmt::ChandleAssign(index, IrChandleExpr::LocalRead(tmp.clone()))
+                }
+                IrObjectStmt::ChandleAssignLocal(name, _) => {
+                    IrObjectStmt::ChandleAssignLocal(name, IrChandleExpr::LocalRead(tmp.clone()))
+                }
+                _ => {
+                    return Err(format!(
+                        "blocking delayed assignment in `{}` supports only chandle destinations",
+                        self.path
+                    ))
+                }
+            };
+            self.saw_wait = true;
+            return Ok(vec![IrStmt::Block(vec![
+                IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                    tmp,
+                    Some(value),
+                ))),
+                IrStmt::Delay {
+                    ticks: scaled_ticks,
+                },
+                IrStmt::Object(Box::new(write)),
+            ])]);
+        }
+        if string_target {
             self.cg.ensure_string_actual_writable(&self.path, lhs)?;
             let target = self
                 .cg
@@ -418,19 +475,6 @@ impl EmitCtx<'_, '_> {
                 .trim_start_matches('&')
                 .to_owned();
             let value = self.cg.lower_string(&self.path, rhs)?;
-            if !blocking {
-                if self.cg.proc_local_target(lhs).is_some() {
-                    return Err(
-                        "nonblocking delayed assignment requires persistent string storage"
-                            .to_owned(),
-                    );
-                }
-                return Ok(vec![IrStmt::DelayedStringAssign {
-                    target,
-                    rhs: value,
-                    ticks: scaled_ticks,
-                }]);
-            }
             self.saw_wait = true;
             let tmp = format!("_st{}", h.0);
             return Ok(vec![IrStmt::Block(vec![
