@@ -100,6 +100,17 @@ files and suite declarations. Coordinate the affected hunk with its owner and th
 integration orchestrator; keep changes additive and small, and use separate
 native build trees. Feature work need not wait for the entire GMP track.
 
+## `llg.toml` coverage
+
+One schema (`llg::config`) serves `llg` and `llg_ls`. Library `config::tests` own
+schema, path-resolution, unknown-key and error-context cases; `llg` `settings::tests`
+own command line > config > environment precedence (scalars replace, repeatable
+lists replace, files replace sources, boolean opposites); `llg_config_cli` runs the
+public driver against `fixtures/config_cli` for discovery, `--config`, missing/bad
+files and per-kind overrides; `dump_tokens`/`lsp_stdio` prove the server accepts
+driver-only keys and rejects unknown ones atomically. A new key needs coverage in
+each layer it touches.
+
 ## LSP acceptance and fixtures
 
 `lsp_stdio.rs` and its domain modules launch `llg_ls` over framed standard JSON-RPC,

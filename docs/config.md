@@ -1,16 +1,157 @@
-# llg.toml — User Configuration
+# llg.toml — Configuration for `llg` and `llg_ls`
 
-Every workspace root is an independent analysis root with its own effective
-`llg.toml` (schema `1`), loaded from the root directory unless the client
-overrides the path via `initializationOptions`
-(`{ "llg": { "protocolVersion": 1, "configFiles": [{ "workspaceUri": …,
-"path": … }] } }`). A missing file uses safe defaults (root as the sole
-source directory, recursive `.v`/`.sv`, built-in excludes). The file is
-watched and any parsed-config change hot-reloads the root — no server
-restart required. Unknown fields or an unknown `schema_version` reject the
-whole config atomically (a misspelled key cannot silently change analysis);
-a malformed `defines`/`param_overrides` entry is dropped with a warning
-instead. Relative paths resolve from the directory containing `llg.toml`.
+One TOML file (schema `1`) drives both tools: the `llg` simulator driver and
+the `llg_ls` language server. Its keys follow `llg`'s command-line options,
+written as snake_case keys grouped in tables, with arrays for repeatable
+options. A key only one tool uses is still accepted, validated and ignored by
+the other (the tables below say which tool uses each key), so a single file
+can serve a project's editor and its simulation runs. The schema is implemented
+once, in the library (`llg::config`), and both binaries use it.
+
+## Discovery and paths
+
+- **`llg`**: `--config <path>` names the file explicitly (relative to the
+  current directory); a missing explicit file is an error. Otherwise
+  `llg.toml` in the **current directory** is read when present; a missing
+  default file is not an error. There is no search through parent directories:
+  the driver acts on the directory it is started in, so the file that applies
+  is always the visible one. With no arguments and no `llg.toml`, `llg` prints
+  usage and exits 2.
+- **`llg_ls`**: every workspace root is an independent analysis root with its
+  own effective `llg.toml`, loaded from the root directory unless the client
+  overrides the path via `initializationOptions`
+  (`{ "llg": { "protocolVersion": 1, "configFiles": [{ "workspaceUri": …,
+  "path": … }] } }`). `llg_ls --dump-tokens <PATH>` uses the same loader: the
+  `llg.toml` of the directory (or of the nearest ancestor of the file) given.
+  A missing file uses safe defaults (root as the sole source directory,
+  recursive `.v`/`.sv`, built-in excludes). The server watches the file and any
+  parsed-config change hot-reloads the root, with no restart.
+- Relative paths inside the file resolve from the directory containing it;
+  absolute paths are accepted. Program names (`build.cc`, `build.cmake`,
+  `build.launcher`, `build.generator`) and flag strings are not paths.
+  Defaults that the file does not set keep their command-line meaning (for
+  example the output directory `build` is relative to the current directory).
+
+## Precedence in `llg`
+
+Highest first: **command line, `llg.toml`, environment fallbacks, built-in
+defaults.** The file supplies defaults for the command-line options, so it
+ranks exactly where the option would: above `$LLG_CC`, `$LLG_CFLAGS`,
+`$LLG_CMAKE`, `$LLG_RUNTIME_CACHE_DIR`, `$CMAKE_BUILD_PARALLEL_LEVEL` and
+`$CMAKE_GENERATOR` (use the option or an unset key to let the environment
+decide).
+
+- A scalar given on the command line replaces the file's value.
+- A **repeatable option given on the command line replaces the file's whole
+  list** for that option; it never appends. (`-I`, `-D`, `--param-override`,
+  `--define-system-task`, `--libmap`, `--libfile`, `--library-order`,
+  `--dpi-lib`, the plusargs after `--`.) An explicit `--` with nothing after it
+  clears the file's `simulator.plusargs`.
+- Source files named on the command line replace **all** of the file's
+  sources (`sources.files` and the `sources.directories` discovery); the
+  source directories then also stop being include directories. Without
+  command-line files, the sources are `sources.files` plus every `.v`/`.sv`
+  found under `sources.directories` (only when the file names directories
+  explicitly; the language server's implicit `["."]` default does not make
+  `llg` scan the directory) with `sources.include`/`exclude`. Source
+  directories are include-search directories, as in the language server;
+  `-I` replaces only `compile.include_dirs`.
+- Booleans have explicit opposites so the command line can override either
+  value: `--gen-only`/`--no-gen-only`, `--no-opt`/`--opt`, `--lint`/`--no-lint`.
+  `--no-lint` also cancels `lint.json`. `--lint-json [<path>]` chooses its own
+  destination (stdout without a path) instead of the file's `lint.json_file`.
+- `--lint-config <file>` (the legacy `llg-lint.toml` rule file) replaces the
+  `[lint]` rule settings of `llg.toml`; without it, the `[lint]` rules
+  (`enabled`, `rules.<id>`) of `llg.toml` apply to `llg --lint`.
+- `--help` and `--version` act before any file is read. `--config` and
+  `--lint-config` are command-line only.
+
+## Errors
+
+A config problem stops `llg` with exit code 1 and a message naming the file
+and key, for example
+`llg: invalid config /proj/llg.toml: invalid llg.toml at line 3, key
+`compile.topp`: unknown field `topp`, expected one of …`. Unknown keys, an
+unknown `schema_version`, wrong types and out-of-range values reject the whole
+file atomically in both tools; a misspelled key cannot silently change a run
+or an analysis. Entry-level problems (a malformed `defines` entry, an invalid
+`param_overrides` name) are dropped with a warning (`llg` prints
+`llg: warning: <file>: …` to stderr; the server publishes them against the TOML
+URI). Missing configured directories also warn. The file read is bounded to
+1 MiB.
+
+## Key reference
+
+Tool column: **both** = used by `llg` and `llg_ls`; **llg** = used by the
+driver, accepted and ignored by `llg_ls`; **ls** = used by the language
+server, accepted and ignored by `llg`.
+
+| Key | Type | Tool | Notes |
+|---|---|---|---|
+| `schema_version` | integer | both | required, must be `1` |
+| `sources.directories` | strings | both | source directories; `llg` discovers only when set |
+| `sources.include` / `sources.exclude` | globs | both | discovery filters |
+| `sources.files` | strings | llg | explicit source files (`<file.sv>...`) |
+| `compile.top` | string | both | `--top` (`llg` also takes `module:config`) |
+| `compile.edition` | `"2001"` \| `"2009"` | llg | `--edition`; the server compiles 2009 |
+| `compile.compilation_units` | `"separate"` \| `"merged"` | llg | `--compilation-units`; the server always separates |
+| `compile.include_dirs` | strings | both | `-I` |
+| `compile.defines` | `NAME[=VALUE]` strings | both | `-D` |
+| `compile.param_overrides` | table | both | `--param-override`/`-G`, `NAME = "value"` or integer |
+| `compile.system_tasks` | strings | llg | `--define-system-task` prototypes |
+| `libraries.map_files` | strings | llg | `--libmap` |
+| `libraries.files` | `[lib=]path` strings | llg | `--libfile`; only the path is resolved |
+| `libraries.order` | strings | llg | `--library-order` |
+| `libraries.default` | string | llg | `--default-library` |
+| `lint.enabled`, `lint.rules.<id>` | | both | rule switches/severities (`llg` applies them with `--lint`) |
+| `lint.run` | bool | llg | `--lint` |
+| `lint.json` | bool | llg | `--lint-json` (stdout) |
+| `lint.json_file` | string | llg | `--lint-json <path>`; implies `json` |
+| `analysis.max_file_bytes`, `analysis.max_total_input_bytes` | integers | ls | input budgets |
+| `simulator.stop_policy` | `"resume"` \| `"exit"` | llg | `--stop-policy` |
+| `simulator.max_export_mib` | 1 to 16384 | llg | `--max-export-mib` |
+| `simulator.optimize` | bool | llg | `--no-opt` is `optimize = false` |
+| `simulator.plusargs` | strings | llg | arguments after `--` |
+| `build.gen_only` | bool | llg | `--gen-only` |
+| `build.generator`, `build.launcher`, `build.cc`, `build.cmake` | strings | llg | `--generator`, `--launcher`, `--cc`, `--cmake` |
+| `build.cflags` | string | llg | `--cflags` (empty clears `$LLG_CFLAGS`) |
+| `build.model_opt_level` | `O0` `O1` `O2` `O3` `Os` | llg | `--model-opt-level` |
+| `build.jobs` | positive integer | llg | `--build-jobs` |
+| `build.dpi_libs` | strings | llg | `--dpi-lib` |
+| `output.out_dir` | string | llg | `--out-dir` |
+| `output.runtime_cache` | string | llg | `--runtime-cache` |
+
+Command-line-only: `--config`, `--lint-config`, `--help`, `--version`, and the
+negations `--no-gen-only`, `--opt`, `--no-lint`.
+
+```toml
+schema_version = 1
+
+[sources]
+directories = ["rtl", "tb"]      # llg runs every .v/.sv found here
+exclude = ["**/generated/**"]
+
+[compile]
+top = "tb"
+include_dirs = ["../common/includes"]
+defines = ["WIDTH=8", "ENABLE_SIM"]
+
+[compile.param_overrides]
+W = 16
+
+[lint]
+run = true
+
+[simulator]
+stop_policy = "exit"
+
+[build]
+model_opt_level = "O2"
+jobs = 8
+
+[output]
+out_dir = "build/sim_out"
+```
 
 ## `schema_version`
 
@@ -19,7 +160,11 @@ Required integer; must be `1`.
 ## `[sources]` — source discovery
 
 - `directories` (array of strings) — source directories; each is also an
-  include-search directory. Default `["."]`; may point outside the workspace.
+  include-search directory. Default `["."]` for `llg_ls`; may point outside the
+  workspace. `llg` discovers sources here only when the key is set.
+- `files` (array of strings, `llg` only) — explicit source files, the
+  equivalent of the command-line `<file.sv>...`. Ignored by `llg_ls`, which
+  discovers sources from `directories`.
 - `include` (array of globs) — root-relative include globs evaluated against
   each source directory. Only `.v`/`.sv` files become compilation units
   (`.vh`/`.svh` and other extensions enter analysis only through include
@@ -29,7 +174,15 @@ Required integer; must be `1`.
 
 ## `[compile]` — compilation inputs
 
-- `top` (string) — elaboration top module (auto-detected when omitted).
+- `top` (string) — elaboration top module (auto-detected when omitted); `llg`
+  also accepts `module:config`.
+- `edition` (`"2001"` or `"2009"`, `llg` only) — language edition
+  (`--edition`, default 2009). `llg_ls` always compiles the 2009 edition.
+- `compilation_units` (`"separate"` or `"merged"`, `llg` only) — compilation-unit
+  grouping (`--compilation-units`, default `separate`). `merged` preserves each
+  source buffer's identity while sharing preprocessing and `$unit` scope;
+  library sources group per library, in admission order, separately from work
+  sources. `llg_ls` always uses `separate`.
 - `include_dirs` (array of strings) — additional include-search directories
   (may be external); source directories are already include dirs.
 - `defines` (array of `NAME` or `NAME=VALUE`) — preprocessor defines applied
@@ -38,27 +191,39 @@ Required integer; must be `1`.
 - `param_overrides` (table, `NAME = <string | integer>`) — top-level parameter
   overrides (`-PNAME=VALUE`, equivalent to `top -GNAME=value`); they apply to
   the top-level instances only, and an override no top module declares is
-  reported as an error.
+  reported as an error. `llg` accepts the same overrides with
+  `--param-override NAME=VALUE` (`-G`).
+- `system_tasks` (array of strings, `llg` only) — VPI system task/function
+  prototypes (`--define-system-task`).
 
-The simulator driver selects compilation-unit grouping independently with
-`--compilation-units separate|merged`. The default is `separate`, matching the
-language-server admission model; `merged` is explicit and preserves each
-source buffer's identity while sharing preprocessing and `$unit` scope.
-Library sources (`--libmap`, `--libfile`) follow the same mode; merged mode
-groups them per library, in admission order, separately from work sources.
-The same driver accepts repeated `--include-dir <path>`/`-I <path>` and
-`--define <NAME[=VALUE]>`/`-D <NAME[=VALUE]>` options. Include roots are
-canonicalized and bounded before Slang sees them; a macro-expanded include
-that resolves outside the source file's parent or these explicit roots is
-left to the cache-only frontend and therefore produces a source diagnostic
-without reading the host path.
+Include roots are canonicalized and bounded before Slang sees them; a
+macro-expanded include that resolves outside the source file's parent or these
+explicit roots is left to the cache-only frontend and therefore produces a
+source diagnostic without reading the host path.
+
+## `[libraries]` — library admission (`llg` only)
+
+- `map_files` (array of strings) — library map files (`--libmap`).
+- `files` (array of `[library=]path`) — explicit library sources
+  (`--libfile`); only the path part is resolved against the config directory.
+- `order` (array of library names) — default configuration search order
+  (`--library-order`).
+- `default` (string) — name of the default source library (`--default-library`,
+  default `work`).
 
 ## `[lint]` — linter configuration
 
 - `enabled` (bool) — global switch; `false` disables every rule (a per-rule
   entry can re-enable individual rules).
 - `rules.<id>` (table per rule) — `enabled` (bool) and `severity`
-  (`"error"` | `"warning"` | `"info"`). Unknown rule ids are errors.
+  (`"error"` | `"warning"` | `"info"`). Unknown rule ids are errors. `llg`
+  applies `enabled` and `rules` when linting (`--lint`), unless
+  `--lint-config` supplies a rule file instead.
+- `run` (bool, `llg` only) — run the linter before simulation (`--lint`).
+- `json` (bool, `llg` only) — report lint as JSON on stdout and exit
+  (`--lint-json`); implies `run`.
+- `json_file` (string, `llg` only) — write the JSON report to this file
+  (`--lint-json <path>`); implies `json`.
 
 Default rules (enabled; find `[lint.rules.<id>]` snippets below):
 
@@ -119,7 +284,36 @@ enabled = false
 severity = "error"
 ```
 
-## `[analysis]` — input-size safeguards
+## `[simulator]` — simulation behavior (`llg` only)
+
+- `stop_policy` (`"resume"` or `"exit"`) — `$stop` handling (`--stop-policy`,
+  default `resume`).
+- `max_export_mib` (integer 1 to 16384) — frontend export budget for the
+  elaborated design (`--max-export-mib`, default 4096).
+- `optimize` (bool) — simulator IR optimization passes; `false` is `--no-opt`.
+- `plusargs` (array of strings) — arguments passed to the generated simulator
+  (the arguments after `--`).
+
+## `[build]` — model build (`llg` only)
+
+- `gen_only` (bool) — emit the model sources without building (`--gen-only`).
+- `generator`, `launcher`, `cc`, `cmake` (strings) — CMake generator, C compiler
+  launcher, C compiler and CMake program. Programs are looked up by name, not
+  resolved against the config directory.
+- `cflags` (string) — extra C compiler flags (`--cflags`); an empty string
+  clears `$LLG_CFLAGS`.
+- `model_opt_level` (`"O0"`, `"O1"`, `"O2"`, `"O3"`, `"Os"`) — model/runtime C
+  optimization (`--model-opt-level`, default `O3`).
+- `jobs` (positive integer) — parallel compile jobs (`--build-jobs`).
+- `dpi_libs` (array of strings) — explicit DPI-C libraries (`--dpi-lib`).
+
+## `[output]` — output locations (`llg` only)
+
+- `out_dir` (string) — output root; the model goes to `<out_dir>/sim/<design>`
+  (`--out-dir`, default `build`).
+- `runtime_cache` (string) — runtime archive cache (`--runtime-cache`).
+
+## `[analysis]` — input-size safeguards (`llg_ls` only)
 
 - `max_file_bytes` (positive integer) — maximum UTF-8 buffer or on-disk byte
   length of one unique compilation unit or resolved include, including a

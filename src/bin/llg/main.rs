@@ -3,11 +3,19 @@
 //! Usage:
 //!
 //! ```text
-//! llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
-//! generate: --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt  --stop-policy <resume|exit>  --max-export-mib <MiB>
+//! llg [generate options] [build options] [<file.sv>...] [-- <plusargs>...]
+//! generate: --config <file>  --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --no-lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-gen-only  --no-opt  --opt  --stop-policy <resume|exit>  --max-export-mib <MiB>
 //! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
 //! output:   --out-dir <dir>  --runtime-cache <dir>
 //! ```
+//!
+//! Configuration: `llg.toml` in the current directory (or the file named by
+//! `--config`, which must exist) supplies defaults for the options above; see
+//! `docs/config.md` and `settings.rs` for the key list and the precedence
+//! (command line > config file > environment > built-in default; a repeatable
+//! option on the command line replaces the file's whole list; files named on
+//! the command line replace the file's sources). With no arguments and no
+//! `llg.toml` the driver prints usage and exits 2.
 //!
 //! `--lint` runs the shared linter (`core::lint`) over the compiled design
 //! after elaboration and before codegen: each finding prints to stderr as
@@ -66,78 +74,20 @@
 //! (unless `--gen-only`), and run the resulting simulator (stdout inherits;
 //! the exit code is the simulator's).
 
-use std::path::PathBuf;
 use std::process::Command;
 
 use llg::core::compile;
-use llg::ffi::slang::{NATIVE_HARD_MAX_OUTPUT_BYTES, SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES};
+use llg::ffi::slang::NATIVE_HARD_MAX_OUTPUT_BYTES;
 use llg::sim;
 
-const MIB: u64 = 1024 * 1024;
+mod cli;
+mod settings;
 
-/// Default output root: models go to `build/sim/<design>` and the runtime
-/// cache to `build/llg-runtime-cache`, both under the current directory.
-const DEFAULT_OUT_DIR: &str = "build";
-
-#[derive(Debug)]
-struct DriverOptions {
-    top: Option<String>,
-    edition: compile::LanguageEdition,
-    compilation_unit_mode: compile::CompilationUnitMode,
-    include_dirs: Vec<String>,
-    defines: Vec<String>,
-    system_subroutines: Vec<String>,
-    library_map_files: Vec<String>,
-    library_files: Vec<String>,
-    library_order: Vec<String>,
-    default_library: Option<String>,
-    files: Vec<String>,
-    runtime_args: Vec<String>,
-    lint_mode: bool,
-    lint_json_mode: bool,
-    lint_json_path: Option<PathBuf>,
-    lint_config_path: Option<PathBuf>,
-    generator: Option<String>,
-    dpi_libraries: Vec<PathBuf>,
-    launcher: Option<String>,
-    cc: Option<String>,
-    cflags: Option<String>,
-    model_opt_level: sim::build::ModelOptLevel,
-    cmake: Option<String>,
-    build_jobs: Option<usize>,
-    out_dir: PathBuf,
-    runtime_cache: Option<PathBuf>,
-    gen_only: bool,
-    no_opt: bool,
-    stop_policy: StopPolicy,
-    max_export_bytes: u64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StopPolicy {
-    Resume,
-    Exit,
-}
-
-impl StopPolicy {
-    fn parse(value: &str) -> Result<Self, &'static str> {
-        match value {
-            "resume" => Ok(Self::Resume),
-            "exit" => Ok(Self::Exit),
-            _ => Err("expected resume or exit"),
-        }
-    }
-
-    const fn env_value(self) -> &'static str {
-        match self {
-            Self::Resume => "resume",
-            Self::Exit => "exit",
-        }
-    }
-}
+use cli::MIB;
+use settings::{DriverOptions, SettingsError};
 
 fn main() -> std::process::ExitCode {
-    let code = match parse_args(std::env::args().skip(1).collect()) {
+    let code = match start(std::env::args().skip(1).collect()) {
         Ok(options) => {
             let memory_report = llg::memory_limit::install();
             let _memory_guard = memory_report.guard;
@@ -148,362 +98,32 @@ fn main() -> std::process::ExitCode {
     std::process::ExitCode::from(code as u8)
 }
 
-fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
-    if args.is_empty() {
+/// Parse the command line, apply `llg.toml` and return the effective options,
+/// or the exit code when the driver should stop (help, usage or config error).
+fn start(args: Vec<String>) -> Result<DriverOptions, i32> {
+    let no_arguments = args.is_empty();
+    let cli = cli::parse_args(args)?;
+    let config = settings::load_config(cli.config_path.as_deref()).map_err(config_failure)?;
+    if no_arguments && config.is_none() {
+        eprintln!("{}", cli::USAGE);
+        return Err(2);
+    }
+    let options = settings::resolve(cli, config.as_ref()).map_err(config_failure)?;
+    if options.files.is_empty() {
         eprintln!(
-            "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]\n\
-             generate: --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt  --max-export-mib <MiB>\n\
-             build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>\n\
-             output:   --out-dir <dir>  --runtime-cache <dir>\n\
-             stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)"
+            "llg: no source files given (name them on the command line or in llg.toml \
+             `sources.files`/`sources.directories`)"
         );
         return Err(2);
     }
+    Ok(options)
+}
 
-    let mut top: Option<String> = None;
-    let mut edition = compile::LanguageEdition::default();
-    let mut compilation_unit_mode = compile::CompilationUnitMode::default();
-    let mut include_dirs: Vec<String> = Vec::new();
-    let mut defines: Vec<String> = Vec::new();
-    let mut system_subroutines: Vec<String> = Vec::new();
-    let mut library_map_files: Vec<String> = Vec::new();
-    let mut library_files: Vec<String> = Vec::new();
-    let mut library_order: Vec<String> = Vec::new();
-    let mut default_library: Option<String> = None;
-    let mut files: Vec<String> = Vec::new();
-    let mut runtime_args: Vec<String> = Vec::new();
-    let mut lint_mode = false;
-    let mut lint_json_mode = false;
-    let mut lint_json_path: Option<PathBuf> = None;
-    let mut lint_config_path: Option<PathBuf> = None;
-    let mut generator: Option<String> = None;
-    let mut dpi_libraries: Vec<PathBuf> = Vec::new();
-    let mut launcher: Option<String> = None;
-    let mut cc: Option<String> = None;
-    let mut cflags: Option<String> = None;
-    let mut model_opt_level = sim::build::ModelOptLevel::default();
-    let mut cmake: Option<String> = None;
-    let mut build_jobs: Option<usize> = None;
-    let mut out_dir = PathBuf::from(DEFAULT_OUT_DIR);
-    let mut runtime_cache: Option<PathBuf> = None;
-    let mut gen_only = false;
-    let mut no_opt = false;
-    let mut stop_policy = StopPolicy::Resume;
-    let mut max_export_bytes = SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES;
-    let mut it = args.into_iter().peekable();
-    while let Some(a) = it.next() {
-        if a == "--" {
-            runtime_args.extend(it);
-            break;
-        }
-        match a.as_str() {
-            "--help" | "-h" => {
-                println!(
-                    "Lapligence Verilog/SystemVerilog simulator
-
-Usage: llg [OPTIONS] <file.sv>... [-- <plusargs>...]
-
-Options:
-  -h, --help                 Print help and exit
-  -V, --version              Print the package version and exit
-      --top <module[:config]> Select the top module or configured design
-      --edition <2001|2009> Select the language edition (default: 2009)
-      --compilation-units <separate|merged>
-                              Select compilation-unit grouping (default: separate)
-  -I, --include-dir <path>   Add an include-search directory
-  -D, --define <NAME[=VALUE]> Define a preprocessor macro
-      --define-system-task <prototype>
-                              Define a VPI system task/function prototype
-      --libmap <file>        Admit a library map file (repeatable)
-      -v, --libfile <[library=]file>
-                              Admit a source file into a named library (repeatable)
-      -L, --library-order <library>[,<library>...]
-                              Set the default configuration library search order
-      --default-library <name>
-                              Name the default source library (default: work)
-      --lint                 Run lint before simulation
-      --lint-json [<path>]   Report lint as JSON and exit
-      --lint-config <file>   Load lint configuration
-      --gen-only             Emit C model sources without building
-      --no-opt               Disable simulator optimization passes
-      --stop-policy <resume|exit>
-                              Handle `$stop` by resuming (default) or exiting
-      --max-export-mib <MiB> Frontend export budget for the elaborated design
-                              (default: {export_default}, at most {export_ceiling})
-      --                    Pass remaining arguments to the generated simulator
-      --generator <backend>  Select the CMake generator
-      --launcher <program>   Select the CMake C compiler launcher
-      --dpi-lib <path>       Link one explicit DPI-C library (repeatable)
-      --cc <program>         C compiler for the model (default: $LLG_CC, $CC, cc)
-      --cflags <flags>       Extra C compiler flags (default: $LLG_CFLAGS)
-                              Appended after the model optimization level
-      --model-opt-level <O0|O1|O2|O3|Os>
-                              Model/runtime C optimization (default: {model_opt_default})
-                              MSVC: O0=/Od, O1/Os=/O1, O2/O3=/O2
-      --cmake <program>      CMake program (default: $LLG_CMAKE, cmake)
-      --build-jobs <N>       Parallel compile jobs (default: $CMAKE_BUILD_PARALLEL_LEVEL,
-                              available CPUs)
-      --out-dir <dir>        Output root; the model goes to <dir>/sim/<design>
-                              (default: build)
-      --runtime-cache <dir>  Runtime archive cache (default: $LLG_RUNTIME_CACHE_DIR,
-                              <out-dir>/llg-runtime-cache)",
-                    model_opt_default = sim::build::DEFAULT_MODEL_OPT_LEVEL
-                        .gnu_flag()
-                        .trim_start_matches('-'),
-                    export_default = SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES / MIB,
-                    export_ceiling = NATIVE_HARD_MAX_OUTPUT_BYTES / MIB,
-                );
-                return Err(0);
-            }
-            "--version" | "-V" => {
-                println!("llg {}", env!("CARGO_PKG_VERSION"));
-                return Err(0);
-            }
-            "--top" | "-top" => top = it.next(),
-            "--edition" => match it.next() {
-                Some(value) => match value.parse() {
-                    Ok(value) => edition = value,
-                    Err(error) => {
-                        eprintln!("llg: {error}");
-                        return Err(2);
-                    }
-                },
-                None => {
-                    eprintln!("llg: --edition requires 2001 or 2009");
-                    return Err(2);
-                }
-            },
-            "--compilation-units" | "--compilation-unit-mode" => match it.next() {
-                Some(value) => match value.parse() {
-                    Ok(value) => compilation_unit_mode = value,
-                    Err(error) => {
-                        eprintln!("llg: {error}");
-                        return Err(2);
-                    }
-                },
-                None => {
-                    eprintln!("llg: --compilation-units requires separate or merged");
-                    return Err(2);
-                }
-            },
-            "--include-dir" | "-I" => match it.next() {
-                Some(path) if !path.is_empty() => include_dirs.push(path),
-                _ => {
-                    eprintln!("llg: --include-dir requires a path");
-                    return Err(2);
-                }
-            },
-            "--define" | "-D" => match it.next() {
-                Some(define) if !define.is_empty() => defines.push(define),
-                _ => {
-                    eprintln!("llg: --define requires NAME or NAME=VALUE");
-                    return Err(2);
-                }
-            },
-            "--define-system-task" => match it.next() {
-                Some(prototype) if !prototype.is_empty() => system_subroutines.push(prototype),
-                _ => {
-                    eprintln!("llg: --define-system-task requires a prototype");
-                    return Err(2);
-                }
-            },
-            "--libmap" | "--library-map" => match it.next() {
-                Some(path) if !path.is_empty() => library_map_files.push(path),
-                _ => {
-                    eprintln!("llg: --libmap requires a file path");
-                    return Err(2);
-                }
-            },
-            "--libfile" | "-v" => match it.next() {
-                Some(path) if !path.is_empty() => library_files.push(path),
-                _ => {
-                    eprintln!("llg: --libfile requires [library=]file");
-                    return Err(2);
-                }
-            },
-            "--library-order" | "-L" => match it.next() {
-                Some(value) if !value.is_empty() => {
-                    let names = value
-                        .split(',')
-                        .filter(|name| !name.is_empty())
-                        .map(str::to_owned)
-                        .collect::<Vec<_>>();
-                    if names.is_empty() {
-                        eprintln!("llg: --library-order requires a library name");
-                        return Err(2);
-                    }
-                    library_order.extend(names);
-                }
-                _ => {
-                    eprintln!("llg: --library-order requires a library name");
-                    return Err(2);
-                }
-            },
-            "--default-library" | "--defaultLibName" => match it.next() {
-                Some(value) if !value.is_empty() => default_library = Some(value),
-                _ => {
-                    eprintln!("llg: --default-library requires a library name");
-                    return Err(2);
-                }
-            },
-            "--generator" | "-generator" => match it.next() {
-                Some(g) => generator = Some(g),
-                None => {
-                    eprintln!("llg: --generator requires a backend name");
-                    return Err(2);
-                }
-            },
-            "--dpi-lib" => match it.next() {
-                Some(path) if !path.is_empty() => dpi_libraries.push(PathBuf::from(path)),
-                _ => {
-                    eprintln!("llg: --dpi-lib requires a library path");
-                    return Err(2);
-                }
-            },
-            "--launcher" => match it.next() {
-                Some(value) if !value.is_empty() => launcher = Some(value),
-                _ => {
-                    eprintln!("llg: --launcher requires a program name");
-                    return Err(2);
-                }
-            },
-            "--cc" => match it.next() {
-                Some(value) if !value.is_empty() => cc = Some(value),
-                _ => {
-                    eprintln!("llg: --cc requires a compiler program");
-                    return Err(2);
-                }
-            },
-            // Empty flags are meaningful: they clear an inherited $LLG_CFLAGS.
-            "--cflags" => match it.next() {
-                Some(value) => cflags = Some(value),
-                None => {
-                    eprintln!("llg: --cflags requires a flag string");
-                    return Err(2);
-                }
-            },
-            "--cmake" => match it.next() {
-                Some(value) if !value.is_empty() => cmake = Some(value),
-                _ => {
-                    eprintln!("llg: --cmake requires a program");
-                    return Err(2);
-                }
-            },
-            "--build-jobs" => match it.next().map(|value| value.parse::<usize>()) {
-                Some(Ok(value)) if value > 0 => build_jobs = Some(value),
-                _ => {
-                    eprintln!("llg: --build-jobs requires a positive integer");
-                    return Err(2);
-                }
-            },
-            "--model-opt-level" => match it.next().as_deref().map(sim::build::ModelOptLevel::parse)
-            {
-                Some(Ok(value)) => model_opt_level = value,
-                _ => {
-                    eprintln!("llg: --model-opt-level requires O0, O1, O2, O3 or Os");
-                    return Err(2);
-                }
-            },
-            "--out-dir" => match it.next() {
-                Some(value) if !value.is_empty() => out_dir = PathBuf::from(value),
-                _ => {
-                    eprintln!("llg: --out-dir requires a directory");
-                    return Err(2);
-                }
-            },
-            "--runtime-cache" => match it.next() {
-                Some(value) if !value.is_empty() => runtime_cache = Some(PathBuf::from(value)),
-                _ => {
-                    eprintln!("llg: --runtime-cache requires a directory");
-                    return Err(2);
-                }
-            },
-            "--max-export-mib" => match it.next().map(|value| value.parse::<u64>()) {
-                Some(Ok(mib)) if (1..=NATIVE_HARD_MAX_OUTPUT_BYTES / MIB).contains(&mib) => {
-                    max_export_bytes = mib * MIB;
-                }
-                _ => {
-                    eprintln!(
-                        "llg: --max-export-mib requires an integer from 1 to {}",
-                        NATIVE_HARD_MAX_OUTPUT_BYTES / MIB
-                    );
-                    return Err(2);
-                }
-            },
-            "--gen-only" | "-gen-only" => gen_only = true,
-            "--no-opt" => no_opt = true,
-            "--stop-policy" => match it.next() {
-                Some(value) => match StopPolicy::parse(&value) {
-                    Ok(policy) => stop_policy = policy,
-                    Err(error) => {
-                        eprintln!("llg: --stop-policy {error}");
-                        return Err(2);
-                    }
-                },
-                None => {
-                    eprintln!("llg: --stop-policy requires resume or exit");
-                    return Err(2);
-                }
-            },
-            "--lint" | "-lint" => lint_mode = true,
-            "--lint-json" | "-lint-json" => {
-                lint_mode = true;
-                lint_json_mode = true;
-                // The optional output path is the next token when it does not
-                // start with `-`; otherwise the JSON goes to stdout.
-                if let Some(next) = it.peek() {
-                    if !next.starts_with('-') {
-                        lint_json_path = it.next().map(PathBuf::from);
-                    }
-                }
-            }
-            "--lint-config" => match it.next() {
-                Some(p) => lint_config_path = Some(PathBuf::from(p)),
-                None => {
-                    eprintln!("llg: --lint-config requires a file path");
-                    return Err(2);
-                }
-            },
-            _ => files.push(a),
-        }
+fn config_failure(error: SettingsError) -> i32 {
+    for line in error.0.lines() {
+        eprintln!("llg: {line}");
     }
-    if files.is_empty() {
-        eprintln!("llg: no source files given");
-        return Err(2);
-    }
-
-    Ok(DriverOptions {
-        top,
-        edition,
-        compilation_unit_mode,
-        include_dirs,
-        defines,
-        system_subroutines,
-        library_map_files,
-        library_files,
-        library_order,
-        default_library,
-        files,
-        runtime_args,
-        lint_mode,
-        lint_json_mode,
-        lint_json_path,
-        lint_config_path,
-        generator,
-        dpi_libraries,
-        launcher,
-        cc,
-        cflags,
-        model_opt_level,
-        cmake,
-        build_jobs,
-        out_dir,
-        runtime_cache,
-        gen_only,
-        no_opt,
-        stop_policy,
-        max_export_bytes,
-    })
+    1
 }
 
 /// Explain how to raise an exhausted frontend export budget. The native
@@ -551,6 +171,7 @@ fn run(options: DriverOptions) -> i32 {
         compilation_unit_mode,
         include_dirs,
         defines,
+        param_overrides,
         system_subroutines,
         library_map_files,
         library_files,
@@ -562,6 +183,7 @@ fn run(options: DriverOptions) -> i32 {
         lint_json_mode,
         lint_json_path,
         lint_config_path,
+        lint_config: config_lint,
         generator,
         dpi_libraries,
         launcher,
@@ -576,11 +198,14 @@ fn run(options: DriverOptions) -> i32 {
         no_opt,
         stop_policy,
         max_export_bytes,
+        cli_build_options,
     } = options;
-    // 0. Optional lint config: read + parse before compiling so a missing or
-    //    malformed file aborts fast and with a clear message.
-    let mut lint_config = llg::core::lint::LintConfig::new();
+    // 0. Lint rule settings: the `llg.toml` `[lint]` rules, replaced entirely
+    //    by an explicit `--lint-config` file. Read + parse before compiling so
+    //    a missing or malformed file aborts fast and with a clear message.
+    let mut lint_config = config_lint;
     if let Some(path) = &lint_config_path {
+        lint_config = llg::core::lint::LintConfig::new();
         let text = match std::fs::read_to_string(path) {
             Ok(t) => t,
             Err(e) => {
@@ -607,6 +232,7 @@ fn run(options: DriverOptions) -> i32 {
         compilation_unit_mode,
         include_dirs,
         defines,
+        param_overrides,
         system_subroutines,
         library_map_files,
         library_files,
@@ -766,14 +392,7 @@ fn run(options: DriverOptions) -> i32 {
     let out_dir = out_root.join("sim").join(gen_name(&gen));
     let model = gen.sources();
     if gen_only {
-        if generator.is_some()
-            || launcher.is_some()
-            || cc.is_some()
-            || cflags.is_some()
-            || cmake.is_some()
-            || build_jobs.is_some()
-            || runtime_cache.is_some()
-        {
+        if cli_build_options {
             eprintln!("llg: warning: build options ignored with --gen-only");
         }
         let opts = sim::build::CmakeBuildOpts {
@@ -854,18 +473,19 @@ fn gen_name(gen: &sim::codegen::GeneratedModel) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::parse_args;
 
     #[test]
     fn export_budget_defaults_to_the_simulator_policy() {
         let options = parse_args(vec!["design.sv".to_owned()]).unwrap();
-        assert_eq!(options.max_export_bytes, SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES);
+        assert_eq!(options.max_export_bytes, None);
         let options = parse_args(vec![
             "--max-export-mib".to_owned(),
             "1".to_owned(),
             "design.sv".to_owned(),
         ])
         .unwrap();
-        assert_eq!(options.max_export_bytes, MIB);
+        assert_eq!(options.max_export_bytes, Some(MIB));
     }
 
     #[test]
