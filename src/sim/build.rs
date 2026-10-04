@@ -22,7 +22,10 @@
 //!
 //! Generator selection: [`CmakeBuildOpts::generator`] > `$CMAKE_GENERATOR` >
 //! none (cmake picks its default generator for the host). The optional
-//! [`CmakeBuildOpts::launcher`] is forwarded without selecting a default.
+//! [`CmakeBuildOpts::launcher`] > `$LLG_C_LAUNCHER` > none is forwarded as
+//! `CMAKE_C_COMPILER_LAUNCHER` without selecting a default. (The `llg` driver
+//! layers `llg.toml` below the variable before it fills the option: command
+//! line > `$LLG_C_LAUNCHER` > `build.launcher`.)
 //!
 //! Normal builds compile the runtime into a cache (see
 //! [`CmakeBuildOpts::runtime_cache_dir`]) and
@@ -40,6 +43,12 @@
 //!
 //! - `LLG_CC` / `CC` — C compiler handed to CMake as `-DCMAKE_C_COMPILER`;
 //!   falls back to `cc`.
+//! - `LLG_C_LAUNCHER` — C compiler launcher (for example `ccache`) handed to
+//!   CMake as `-DCMAKE_C_COMPILER_LAUNCHER` for the runtime archive and the
+//!   model; `LLG_CC` must stay one program, so a launcher needs its own
+//!   variable. An empty value means none; the `--launcher` option wins, and an
+//!   explicit empty option value suppresses the variable. It never affects the
+//!   root `build.rs` Slang build (that uses `LLG_CCACHE`).
 //! - `LLG_CFLAGS` — extra whitespace-separated compiler flags appended to
 //!   `-DCMAKE_C_FLAGS` (e.g. sanitizer flags).  Flags containing a double
 //!   quote are rejected: they cannot be passed through the CMake cache
@@ -274,8 +283,9 @@ pub struct CmakeBuildOpts {
     /// no ambient linker search path can silently select a different ABI.
     pub dpi_libraries: Vec<PathBuf>,
     /// Optional C compiler launcher handed to CMake as
-    /// `CMAKE_C_COMPILER_LAUNCHER` (for example `ccache` or `sccache`). No
-    /// launcher is selected when this is `None`.
+    /// `CMAKE_C_COMPILER_LAUNCHER` (for example `ccache` or `sccache`). `None`
+    /// uses `$LLG_C_LAUNCHER`, and no launcher is selected when that is unset
+    /// or empty; an explicit empty value suppresses the environment variable.
     pub launcher: Option<String>,
     /// Runtime archive cache root. `None` uses `$LLG_RUNTIME_CACHE_DIR`, then
     /// `build/llg-runtime-cache` under the current directory. Relative paths
@@ -298,6 +308,10 @@ pub struct CmakeBuildOpts {
     /// host's available parallelism. `Some(0)` is treated as unset.
     pub build_jobs: Option<usize>,
 }
+
+/// Environment fallback for [`CmakeBuildOpts::launcher`]. `LLG_CC` must stay a
+/// single program, so a compiler launcher such as `ccache` has its own variable.
+pub const C_LAUNCHER_ENV: &str = "LLG_C_LAUNCHER";
 
 /// Environment variable CMake itself reads for its default build parallelism;
 /// honored here so users, CI and the test harness keep control.
@@ -508,7 +522,7 @@ pub fn build_model_cmake_with_opts(
     }
     configure.arg(format!(
         "-DCMAKE_C_COMPILER_LAUNCHER={}",
-        opts.launcher.as_deref().unwrap_or("")
+        resolve_launcher(opts)
     ));
     configure
         .arg(format!("-DCMAKE_C_COMPILER={cc}"))
@@ -927,7 +941,7 @@ fn prepare_runtime_cache(
         .arg(format!("-DCMAKE_C_FLAGS:STRING={flags}"))
         .arg(format!(
             "-DCMAKE_C_COMPILER_LAUNCHER={}",
-            opts.launcher.as_deref().unwrap_or("")
+            resolve_launcher(opts)
         ));
     let launch_error = |source| BuildError::CmakeLaunch {
         program: cmake_prog.to_owned(),
@@ -1043,6 +1057,7 @@ fn runtime_cache_key_with_compiler(
 ) -> String {
     let mut hash = 0xcbf29ce484222325u64;
     let generator = generator_for(opts).unwrap_or_default();
+    let launcher = resolve_launcher(opts);
     for text in [
         RUNTIME_CMAKELISTS_TEMPLATE,
         include_str!("build/value.rs"),
@@ -1074,7 +1089,7 @@ fn runtime_cache_key_with_compiler(
         compiler,
         target,
         &generator,
-        opts.launcher.as_deref().unwrap_or(""),
+        &launcher,
         std::env::consts::OS,
         std::env::consts::ARCH,
     ] {
@@ -1338,6 +1353,24 @@ fn generator_for(opts: &CmakeBuildOpts) -> Option<String> {
     opts.generator
         .clone()
         .or_else(|| std::env::var("CMAKE_GENERATOR").ok())
+}
+
+/// Launcher precedence shared by the environment fallback and the tests:
+/// explicit option (an empty one means none) > `$LLG_C_LAUNCHER` > none.
+fn launcher_from(explicit: Option<&str>, env_value: Option<&str>) -> String {
+    explicit
+        .or(env_value)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// `CMAKE_C_COMPILER_LAUNCHER` value; empty selects no launcher.
+fn resolve_launcher(opts: &CmakeBuildOpts) -> String {
+    launcher_from(
+        opts.launcher.as_deref(),
+        std::env::var(C_LAUNCHER_ENV).ok().as_deref(),
+    )
 }
 
 /// Explicit option, else `$LLG_CC`, else `$CC`, else `cc`.
@@ -1694,6 +1727,16 @@ mod tests {
         assert!(validate_model_abi(&[("model.c", &duplicate)]).is_err());
         assert!(!CMAKELISTS_TEMPLATE.contains("MODEL_WIDTH"));
         assert!(!RUNTIME_CMAKELISTS_TEMPLATE.contains("MODEL_WIDTH"));
+    }
+
+    #[test]
+    fn launcher_precedence_is_option_then_environment_then_none() {
+        assert_eq!(launcher_from(None, None), "");
+        assert_eq!(launcher_from(None, Some("ccache")), "ccache");
+        assert_eq!(launcher_from(None, Some("  ")), "");
+        assert_eq!(launcher_from(Some("sccache"), Some("ccache")), "sccache");
+        assert_eq!(launcher_from(Some(""), Some("ccache")), "");
+        assert_eq!(launcher_from(Some("sccache"), None), "sccache");
     }
 
     #[test]

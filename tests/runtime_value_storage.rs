@@ -66,6 +66,14 @@ fn run_storage_tests(label: &str, options: &[String]) {
     if let Ok(flags) = std::env::var("LLG_CFLAGS") {
         configure.arg(format!("-DCMAKE_C_FLAGS:STRING={flags}"));
     }
+    // Same launcher variable as generated models (`sim::build`), so a compiler
+    // cache serves these probe builds too.
+    if let Some(launcher) = std::env::var("LLG_C_LAUNCHER")
+        .ok()
+        .filter(|launcher| !launcher.trim().is_empty())
+    {
+        configure.arg(format!("-DCMAKE_C_COMPILER_LAUNCHER={}", launcher.trim()));
+    }
     let mut build = Command::new(&cmake);
     build
         .arg("--build")

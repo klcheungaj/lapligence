@@ -517,7 +517,8 @@ support; the corresponding execution tests must also pass.
 - Nextest defaults to 8 concurrent tests; `--profile max-threads` opts into 32.
   CI sets `NEXTEST_PROFILE=ci`, which runs one test per available logical CPU.
   Release-target CI builds a `cargo nextest archive` per platform and runs it in
-  separate `test`/`linux-test` jobs; the equivalent local form is
+  separate `test`/`linux-test` jobs (CI caching: compiled third-party dependencies and
+  generated-model ccache only, see [CI](AGENTS.md#ci-and-release-gate)); the equivalent local form is
   `cargo nextest archive --locked --all-features --cargo-profile release --archive-file F`
   then `cargo nextest run --archive-file F --workspace-remap ROOT --extract-to ROOT`
   with ROOT the absolute checkout path used for the build.
@@ -604,7 +605,28 @@ export LLG_CC="$PWD/scripts/sccache-cc.sh"  # uses LLG_SCCACHE_CC, otherwise cc
 # Or select a launcher for an individual model:
 target/quick/llg --launcher "$PWD/scripts/sccache.sh" --top tb design.sv
 # ccache works through the same --launcher option: --launcher ccache
+# Or one environment variable for every model build in this shell and for the
+# tests (LLG_CC must stay a single program, so it cannot carry a launcher):
+export LLG_C_LAUNCHER=ccache CCACHE_BASEDIR=/build CCACHE_NOHASHDIR=1
 ```
+
+`LLG_C_LAUNCHER` mirrors `--launcher`: `--launcher` > `$LLG_C_LAUNCHER` >
+`build.launcher` > none in `llg` (the shared CLI > environment > config rule);
+library callers of `sim::build` get option > `$LLG_C_LAUNCHER` > none. An empty
+variable is unset and an explicit empty library option suppresses it. `sim::build` forwards it as
+`CMAKE_C_COMPILER_LAUNCHER` for the runtime archive and the model, and it is
+part of the runtime cache key. It never reaches the root `build.rs` Slang/fmt/
+wrapper build, which only reads `LLG_CCACHE`. Test directories are unique per
+process, so ccache needs `CCACHE_BASEDIR` set to a common parent of those
+directories (the test scratch root, `LLG_TEST_BUILD_DIR`/`--test-work-dir`, or
+the temp dir) and `CCACHE_NOHASHDIR=1`; without them paths enter the hash and
+every build misses. Harness paths that build a model through `sim::build` or
+the `llg` binary (`tests/support/sim.rs`, `tests/support/sim_cli.rs`,
+`sim_cmake`) and the `runtime_value_storage` CMake probes honour it. Probes that
+compile runtime C directly with `$LLG_CC`/`$CC` (`runtime_values`,
+`runtime_random`, `runtime_rng`, `runtime_containers`, `sim_dpi`, `sim_waveform`,
+`sim_feature_completion/sim_004`) run one compiler command each and do not use
+the launcher.
 
 `LLG_CCACHE` now rejects invalid values or a missing requested executable instead
 of continuing uncached. Changing the launcher reconfigures the native CMake cache
@@ -624,6 +646,7 @@ Script regression checks (fake tools; no Rust/native build required):
 ```sh
 python3 -m unittest discover -s scripts -p test_dev_env.py
 python3 -m unittest discover -s scripts -p test_run_tests.py
+python3 -m unittest discover -s scripts -p test_ci_cache.py  # CI ccache/prune helpers
 ```
 
 Native launcher selection and CMake cache-state regressions run with

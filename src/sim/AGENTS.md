@@ -132,8 +132,12 @@ Windows default with `/STACK`. Re-measure before changing either value; see
 `src/sim/rt/llg_rt.h`.
 
 `CmakeBuildOpts.generator`/`--generator` overrides `CMAKE_GENERATOR`, then host
-default. `launcher`/`--launcher` forwards `CMAKE_C_COMPILER_LAUNCHER` without inventing
-a default. Repeatable `dpi_libraries`/`--dpi-lib` accepts validated explicit link
+default. `launcher`/`--launcher` > `LLG_C_LAUNCHER` > none forwards
+`CMAKE_C_COMPILER_LAUNCHER` (`LLG_CC` must remain one program, so a launcher such as
+ccache needs this variable; an empty variable is none and an explicit empty library
+option suppresses it; the `llg` driver's order is CLI > `LLG_C_LAUNCHER` >
+`build.launcher`, resolved in `settings::layered` before it fills the option). It reaches the runtime archive and model compiles, is part of the
+runtime cache key, and never touches the root `build.rs` Slang build (`LLG_CCACHE`). Repeatable `dpi_libraries`/`--dpi-lib` accepts validated explicit link
 files; include `svdpi.h` in generated output. `generate_model_sources`/`--gen-only`
 writes sources/CMake without building. `CmakeBuildOpts` `cmake`/`cc`/`cflags`
 (`--cmake`/`--cc`/`--cflags`) win over `LLG_CMAKE`, `LLG_CC`/`CC` and

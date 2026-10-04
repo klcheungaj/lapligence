@@ -67,7 +67,8 @@
 //!   e.g. `Ninja`, `"Unix Makefiles"`); it overrides `$CMAKE_GENERATOR`,
 //!   which overrides `build.generator`.
 //! - `--launcher <program>` selects `CMAKE_C_COMPILER_LAUNCHER` (for example,
-//!   `ccache` or `sccache`). No launcher is selected by default.
+//!   `ccache` or `sccache`): `--launcher` > `$LLG_C_LAUNCHER` >
+//!   `build.launcher` > none.
 //!   Tool invocation options are ignored with a warning under `--gen-only`.
 //! - `--gen-only` stops after emitting the model + runtime +
 //!   `CMakeLists.txt` into `<out-dir>/sim/<design>` (prints the directory,
