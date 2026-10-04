@@ -263,6 +263,11 @@ pub struct Db {
     /// Direction of each captured modport port. This is kept separately from
     /// `NodeKind::ModPort` so the frontend-neutral node shape remains stable.
     modport_directions: HashMap<NodeId, Direction>,
+    /// Port expression of each modport expression port `.p(expr)`
+    /// (SV 25.5.4), keyed by the modport-port declaration. References to
+    /// such a port keep the port as their target; consumers read or write
+    /// this expression in the interface instance instead.
+    modport_expressions: HashMap<NodeId, NodeId>,
     /// Statically initialized virtual-interface variables and their concrete
     /// interface instances. Runtime reassignment remains outside this map.
     virtual_interface_targets: HashMap<NodeId, NodeId>,
@@ -324,6 +329,7 @@ impl Db {
             clocking_blocks: HashMap::new(),
             clocking_vars: HashMap::new(),
             modport_directions: HashMap::new(),
+            modport_expressions: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
             dpi_imports: HashMap::new(),
             implicit_nets: HashSet::new(),
@@ -390,6 +396,7 @@ impl Db {
             clocking_blocks: HashMap::new(),
             clocking_vars: HashMap::new(),
             modport_directions: HashMap::new(),
+            modport_expressions: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
             dpi_imports: HashMap::new(),
             implicit_nets: HashSet::new(),
@@ -623,6 +630,17 @@ impl Db {
     /// modport-port declaration rather than the enclosing view.
     pub fn modport_port_direction(&self, id: NodeId) -> Option<Direction> {
         self.modport_directions.get(&id).copied()
+    }
+
+    /// Return the port expression of a modport expression port `.p(expr)`.
+    /// A simple modport port (no expression) returns `None`; its references
+    /// already resolve to the interface member itself.
+    pub fn modport_port_expression(&self, id: NodeId) -> Option<NodeId> {
+        self.modport_expressions.get(&id).copied()
+    }
+
+    pub(crate) fn modport_expression_entries(&self) -> &HashMap<NodeId, NodeId> {
+        &self.modport_expressions
     }
 
     /// Return the concrete interface instance statically bound to a virtual

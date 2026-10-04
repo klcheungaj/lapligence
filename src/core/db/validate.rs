@@ -317,6 +317,20 @@ impl Validator<'_> {
             }
         }
 
+        for (port, expression) in self.db.modport_expression_entries() {
+            let path = format!("modport_expressions[{}]", port.0);
+            let node = self.node(*port, &path)?;
+            if !matches!(node.kind, NodeKind::ModPort)
+                || self.db.modport_port_direction(*port).is_none()
+            {
+                return self.fail(path, "metadata key is not a modport port");
+            }
+            let expression_node = self.node(*expression, &path)?;
+            if !matches!(expression_node.kind, NodeKind::Expr(_)) {
+                return self.fail(path, "modport port expression is not an expression");
+            }
+        }
+
         for call in self.db.method_calls_with_clause_nodes() {
             let node = self.node(*call, &format!("method_calls_with_clause[{}]", call.0))?;
             if !matches!(node.kind, NodeKind::MethodCall { .. }) {

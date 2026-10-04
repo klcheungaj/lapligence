@@ -953,6 +953,13 @@ impl<'a> Codegen<'a> {
                 // node, which is not itself a runtime signal. Keep that
                 // metadata as the fallback after following the target so
                 // packed ref-formal indices retain their declared direction.
+                // A modport expression port is numbered by its expression's
+                // self-determined type (SV 25.5.4), e.g. `[7:4]` for `r[7:4]`.
+                if let Some(expression) = self.modport_expression_target(base) {
+                    return self
+                        .packed_ranges_for_base(expression)
+                        .or_else(|| self.db.packed_dimensions(base).map(ToOwned::to_owned));
+                }
                 target
                     .and_then(|target| self.packed_ranges_for_base(target))
                     .or_else(|| self.db.packed_dimensions(base).map(ToOwned::to_owned))

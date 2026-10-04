@@ -1,6 +1,6 @@
 //! Safe, owned Rust facade over the Slang C ABI.
 //!
-//! [`compile`] receives the finished capture through the ABI v11 record
+//! [`compile`] receives the finished capture through the ABI v12 record
 //! stream (see the `stream` module) and owns every decoded record. No Slang
 //! pointer or native allocation escapes it.
 
@@ -34,7 +34,7 @@ use values::{
 mod stream;
 use stream::{sink_for, StreamBuilder};
 
-const ABI_VERSION: u32 = 11;
+const ABI_VERSION: u32 = 12;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
