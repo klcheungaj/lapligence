@@ -1,0 +1,16 @@
+1 w=St0 s=St1 ww=StX wa=0 wo=1 t1=Pu1
+2 yp=1
+5 y=0
+11 w=We1 s=St1 ww=St1 wa=1 wo=1 t1=Pu1
+13 y=1
+21 w=63X s=St1 ww=StX wa=x wo=1 t1=Pu1
+23 y=x
+31 w=St0 s=St1 ww=StX wa=0 wo=1 t1=Pu1
+35 y=0
+52 w=63X s=St1 ww=StX wa=x wo=1 t1=Pu1
+54 y=x
+62 w=We1 s=St0 ww=StX wa=0 wo=1 t1=Pu1
+63 yp=0
+64 y=1
+72 w=We1 s=StX ww=StX wa=x wo=1 t1=Pu1
+73 yp=x

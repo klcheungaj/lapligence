@@ -402,9 +402,34 @@ Input-port links into a net-array formal and `unconnected_drive` pulls on one
 the packed width limit they keep the older per-element storage write, which
 bypasses the formal's internal drivers.
 
+Gate and UDP outputs on net-array cells use the same per-cell groups (RTL-020:
+a UDP driving one bit of a 200,000-cell `wire [7:0]` array generated 328 MB of
+`model.c` and did not finish compiling in 500 s); variable arrays connected to
+UDP inputs use descriptor storage and stay small.
+
 The intended direction is a descriptor-backed net-array cell table with a
 loop over a contiguous RHS view, keeping per-cell resolution state but not
 per-cell generated code.
+
+## Gate and UDP array elements emit one process function each
+
+**Status:** open; found by RTL-020.
+
+Each element of a gate or UDP instance array is lowered to its own
+continuous process, and each process gets its own C function because the
+elements read and write different constant bits, so exact body sharing does
+not merge them. A 4,096-element mux UDP array produces 9.8 MB of `model.c`
+(about 2.4 KB per element) after RTL-020's dense-index lookup, which already
+removed the per-evaluation input copies (15.8 MB before). Evaluation cost per
+element is constant; the cost is C size and compile time, linear in the
+element count.
+
+Reproduce with `mux3 m[4095:0] (y, sel, a, b);` over 4,096-bit vectors and
+`--gen-only`, then measure `model.c`.
+
+The intended direction is one shared process body per array declaration,
+parameterized by the element's bit offsets, like the table-driven
+procedural-continuous-assignment batches.
 
 ## Release does not restore a variable's continuous driver
 
