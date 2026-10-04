@@ -21,6 +21,7 @@ and payloads; escaping or unproven cells retain stable heap owners. Feature guar
 | `model.rs`, `model/` | Storage, zero-time initialization, procedures and host lifecycle API. |
 | `assertions/`, `assertions.rs`, `assertion_tasks.rs`, `clocking.rs`, `qualifiers.rs` | Sampled/local assertion values, controls, clocking operands and branch diagnostics. |
 | `native.rs`, `strings.rs`, `objects.rs` | Native payloads, byte strings and typed handles. |
+| `native_values.rs` | Descriptor tables, registered roots and leaf addresses of native record values (SIM-003). |
 | `containers.rs`, `containers/` | Ordered operands, keys, item snapshots and mutations. |
 | `input.rs`, `native_tasks.rs` | File/plusarg targets, text, queue/random calls and VPI arguments. |
 | `native_access.rs`, `references.rs`, `mailboxes.rs` | Member/ref resolution, retained identities and message transfers. |
