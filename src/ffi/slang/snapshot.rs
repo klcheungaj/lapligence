@@ -39,6 +39,8 @@ pub(super) fn decode_snapshot(
         udp_table_count: 0,
         udp_rows: ptr::null(),
         udp_row_count: 0,
+        source_libraries: ptr::null(),
+        source_library_count: 0,
     };
     let mut error = ptr::null_mut();
     // SAFETY: owner contains a live snapshot and output pointers are writable.
@@ -109,6 +111,12 @@ pub(super) fn decode_snapshot(
         "UDP tables",
     )?;
     enforce_count(view.udp_row_count, limits.max_semantic_edges, "UDP rows")?;
+    // Each library record names one distinct semantic node.
+    enforce_count(
+        view.source_library_count,
+        limits.max_semantic_nodes,
+        "source library records",
+    )?;
 
     let mut output_bytes = 0_u64;
     for (count, size) in [
@@ -139,6 +147,10 @@ pub(super) fn decode_snapshot(
         (view.type_member_count, std::mem::size_of::<RawTypeMember>()),
         (view.udp_table_count, std::mem::size_of::<RawUdpTable>()),
         (view.udp_row_count, std::mem::size_of::<RawUdpRow>()),
+        (
+            view.source_library_count,
+            std::mem::size_of::<RawSourceLibrary>(),
+        ),
     ] {
         let bytes = count
             .checked_mul(size as u64)
@@ -219,6 +231,14 @@ pub(super) fn decode_snapshot(
         unsafe { foreign_slice(view.udp_tables, view.udp_table_count, "UDP tables")? };
     // SAFETY: same snapshot-view contract as above.
     let raw_udp_rows = unsafe { foreign_slice(view.udp_rows, view.udp_row_count, "UDP rows")? };
+    // SAFETY: same snapshot-view contract as above.
+    let raw_source_libraries = unsafe {
+        foreign_slice(
+            view.source_libraries,
+            view.source_library_count,
+            "source library records",
+        )?
+    };
 
     for item in raw_files {
         charge_output_string(&mut output_bytes, item.name, limits.max_output_bytes)?;
@@ -265,6 +285,9 @@ pub(super) fn decode_snapshot(
     }
     for item in raw_udp_rows {
         charge_output_string(&mut output_bytes, item.inputs, limits.max_output_bytes)?;
+    }
+    for item in raw_source_libraries {
+        charge_output_string(&mut output_bytes, item.library, limits.max_output_bytes)?;
     }
 
     let mut file_ids = HashSet::with_capacity(raw_files.len());
@@ -317,6 +340,7 @@ pub(super) fn decode_snapshot(
         limits.max_semantic_edges,
     )?;
     let lexical_tokens = decode_lexical_tokens(raw_lexical_tokens, &files, &semantic_nodes)?;
+    let source_libraries = decode_source_libraries(raw_source_libraries, semantic_nodes.len())?;
 
     drop(unexpected_error);
     Ok(Snapshot {
@@ -335,5 +359,34 @@ pub(super) fn decode_snapshot(
         type_ranges,
         type_members,
         udp_tables,
+        source_libraries,
     })
+}
+
+/// Copy library records, rejecting unknown or repeated nodes and empty names.
+pub(super) fn decode_source_libraries(
+    raw: &[RawSourceLibrary],
+    semantic_node_count: usize,
+) -> Result<Vec<SourceLibraryBinding>, SlangError> {
+    let mut seen = HashSet::with_capacity(raw.len());
+    let mut bindings = Vec::with_capacity(raw.len());
+    for item in raw {
+        let known =
+            usize::try_from(item.semantic_id).is_ok_and(|index| index < semantic_node_count);
+        if !known || !seen.insert(item.semantic_id) {
+            return Err(invalid_native(
+                "source library record names an invalid or repeated semantic node",
+            ));
+        }
+        // SAFETY: native strings borrow from the live snapshot.
+        let library = unsafe { copy_string(item.library, "source library name")? };
+        if library.is_empty() {
+            return Err(invalid_native("source library record has an empty name"));
+        }
+        bindings.push(SourceLibraryBinding {
+            semantic_id: item.semantic_id,
+            library,
+        });
+    }
+    Ok(bindings)
 }

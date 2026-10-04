@@ -255,6 +255,62 @@ impl<'a> Codegen<'a> {
         self.display_paths.get(path).map_or(path, String::as_str)
     }
 
+    /// `%l` text for code owned by `scope` (SV §33.7): `library.cell` of the
+    /// nearest enclosing instance's bound definition, or `library.$unit`
+    /// outside a design element, matching the frontend formatter. Captured
+    /// databases always carry the library; synthetic ones fall back to the
+    /// default library name.
+    pub(in super::super) fn library_binding(&self, scope: NodeId) -> String {
+        const DEFAULT_SOURCE_LIBRARY: &str = "work";
+        let mut current = Some(scope);
+        while let Some(id) = current {
+            let library = self.db.source_library(id).unwrap_or(DEFAULT_SOURCE_LIBRARY);
+            if let NodeKind::ModuleInst { def_name, .. } = self.kind(id) {
+                return format!("{library}.{}", strip_lib(def_name));
+            }
+            if self.is_runtime_environment(id) {
+                return format!("{library}.$unit");
+            }
+            current = self.node(id).parent;
+        }
+        format!("{DEFAULT_SOURCE_LIBRARY}.$unit")
+    }
+
+    /// Replace `%l`/`%L` in a literal runtime format with the static library
+    /// binding of `path`'s scope. Other specifications, including `%%`, are
+    /// copied unchanged; a path without a registered scope keeps the format.
+    pub(in super::super) fn bind_library_format(&self, path: &str, format: Vec<u8>) -> Vec<u8> {
+        let Some(scope) = self.scope_nodes.get(path) else {
+            return format;
+        };
+        if !format.contains(&b'%') {
+            return format;
+        }
+        let binding = self.library_binding(*scope).replace('%', "%%");
+        let mut bound = Vec::with_capacity(format.len());
+        let mut index = 0;
+        while index < format.len() {
+            if format[index] != b'%' {
+                bound.push(format[index]);
+                index += 1;
+                continue;
+            }
+            // Same specification grammar as display lowering: flags, width
+            // and precision digits, then one conversion character.
+            let mut end = index + 1;
+            while end < format.len() && matches!(format[end], b'-' | b'.' | b'0'..=b'9') {
+                end += 1;
+            }
+            if end < format.len() && matches!(format[end], b'l' | b'L') {
+                bound.extend_from_slice(binding.as_bytes());
+            } else {
+                bound.extend_from_slice(&format[index..(end + 1).min(format.len())]);
+            }
+            index = end + 1;
+        }
+        bound
+    }
+
     pub(in super::super) fn c_path_ident(&self, path: &str) -> String {
         match self.c_paths.get(path) {
             Some(parts) => path_ident(&parts.iter().map(String::as_str).collect::<Vec<_>>()),

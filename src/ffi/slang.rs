@@ -26,7 +26,7 @@ use values::{
     decode_constants, decode_instances, decode_parameters, decode_types, validate_parameter_windows,
 };
 
-const ABI_VERSION: u32 = 8;
+const ABI_VERSION: u32 = 9;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1059,6 +1059,14 @@ pub struct UdpTable {
     pub rows: Vec<UdpRow>,
 }
 
+/// Source library recorded for one elaborated instance, package or
+/// compilation-unit semantic node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceLibraryBinding {
+    pub semantic_id: u64,
+    pub library: String,
+}
+
 /// Fully owned observations from one Slang compilation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
@@ -1079,6 +1087,8 @@ pub struct Snapshot {
     pub type_ranges: Vec<TypeRange>,
     pub type_members: Vec<TypeMember>,
     pub udp_tables: Vec<UdpTable>,
+    /// At most one source library per semantic node, in capture order.
+    pub source_libraries: Vec<SourceLibraryBinding>,
 }
 
 impl Snapshot {
@@ -1286,6 +1296,13 @@ struct RawUdpTable {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+struct RawSourceLibrary {
+    semantic_id: u64,
+    library: RawString,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 struct RawUdpRow {
     inputs: RawString,
     state: u32,
@@ -1406,6 +1423,8 @@ struct RawSnapshotView {
     udp_table_count: u64,
     udp_rows: *const RawUdpRow,
     udp_row_count: u64,
+    source_libraries: *const RawSourceLibrary,
+    source_library_count: u64,
 }
 
 #[repr(C)]

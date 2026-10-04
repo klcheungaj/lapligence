@@ -28,6 +28,28 @@ fn fixture_path(suite: &str, fixture: &str) -> PathBuf {
 /// Generation validates semantic and execution IR before owned whole-model emission.
 /// This supplements, rather than replaces, public CLI acceptance of the same fixture.
 pub(crate) fn run_case_after_db_drop(suite: &str, fixture: &str, expected: &str) {
+    let source = fixture_path(suite, fixture);
+    run_compile_opts_after_db_drop(
+        suite,
+        fixture,
+        llg::core::compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        },
+        expected,
+    );
+}
+
+/// [`run_case_after_db_drop`] for a fixture compiled with explicit options,
+/// such as library maps and a configuration top. `opts.files` must name the
+/// fixture itself so its owned source text can be checked after the drop.
+pub(crate) fn run_compile_opts_after_db_drop(
+    suite: &str,
+    fixture: &str,
+    opts: llg::core::compile::CompileOpts,
+    expected: &str,
+) {
     use llg::core::{compile, db::Db};
     use llg::sim::{build, codegen, opt::OptConfig};
 
@@ -39,12 +61,8 @@ pub(crate) fn run_case_after_db_drop(suite: &str, fixture: &str, expected: &str)
     let source_text = std::fs::read_to_string(&source).expect("read checked fixture");
     let value_config = llg::sim::value_backend::ValueConfig::from_env().expect("value selection");
     let models = sim_harness::with_frontend_temp_cwd("owned-feature", |_| {
-        let compiled = compile::compile_checked(&compile::CompileOpts {
-            files: vec![source.to_string_lossy().into_owned()],
-            top: Some("tb".to_owned()),
-            ..Default::default()
-        })
-        .map_err(|error| format!("compile: {error}"))?;
+        let compiled =
+            compile::compile_checked(&opts).map_err(|error| format!("compile: {error}"))?;
         let database =
             Db::from_slang(&compiled.snapshot).map_err(|error| format!("database: {error}"))?;
         drop(compiled);
@@ -105,6 +123,75 @@ pub(crate) fn run_case_after_db_drop(suite: &str, fixture: &str, expected: &str)
             assert_case_output(output, &label, expected, "", &[]);
         }
     }
+}
+
+/// Resolve companion inputs (library maps, library sources, configurations)
+/// named relative to the suite directory. Each must be a checked-in file. An
+/// argument equal to an input name, or `library=name`, becomes its absolute
+/// path, so maps keep their own directory as the relative base.
+fn resolve_input_args(suite: &str, inputs: &[&str], args: &[&str]) -> Vec<String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim")
+        .join(suite);
+    let absolute = |name: &str| {
+        let path = root.join(name);
+        assert!(path.is_file(), "missing fixture input: {}", path.display());
+        path.to_string_lossy().into_owned()
+    };
+    for input in inputs {
+        absolute(input);
+    }
+    args.iter()
+        .map(|arg| {
+            if inputs.contains(arg) {
+                return absolute(arg);
+            }
+            match arg.split_once('=') {
+                Some((library, name)) if inputs.contains(&name) => {
+                    format!("{library}={}", absolute(name))
+                }
+                _ => (*arg).to_owned(),
+            }
+        })
+        .collect()
+}
+
+/// Run a fixture whose command also names checked-in companion inputs, in
+/// both optimizer modes with explicit child environment controls (for
+/// example the value backend). See [`resolve_input_args`].
+pub(crate) fn run_case_with_inputs(
+    suite: &str,
+    fixture: &str,
+    inputs: &[&str],
+    expected: &str,
+    expected_stderr: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) {
+    assert!(
+        llg::sim::build::cmake_available(),
+        "CLI tests require CMake"
+    );
+    let args = resolve_input_args(suite, inputs, args);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    for optimized in [false, true] {
+        let output = invoke_with_env(suite, fixture, optimized, &args, envs, &[]);
+        let label = format!("{suite}/{fixture}, optimized={optimized}, env={envs:?}");
+        assert_case_output(output, &label, expected, expected_stderr, &[]);
+    }
+}
+
+/// Reject a fixture whose command names checked-in companion inputs.
+pub(crate) fn reject_case_with_inputs(
+    suite: &str,
+    fixture: &str,
+    inputs: &[&str],
+    diagnostic: &str,
+    args: &[&str],
+) {
+    let args = resolve_input_args(suite, inputs, args);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    reject_case_with_args(suite, fixture, diagnostic, &args);
 }
 
 fn invoke_with_args(suite: &str, fixture: &str, optimized: bool, args: &[&str]) -> Output {

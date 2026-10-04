@@ -182,6 +182,7 @@ impl<'a> Codegen<'a> {
         let display_path = self.instance_path_of(inst);
         self.display_paths.insert(path.to_owned(), display_path);
         self.instance_paths.insert(inst, path.to_owned());
+        self.scope_nodes.insert(path.to_owned(), inst);
         let components = if self.is_runtime_environment(inst) {
             vec![path.to_owned()]
         } else {
@@ -348,6 +349,25 @@ impl<'a> Codegen<'a> {
                 NodeKind::GenScopeArray => self.collect_gen_scope_array(*c, path)?,
                 NodeKind::GenScope => self.collect_gen_scope(*c, path)?,
                 _ => {}
+            }
+        }
+        // The frontend reports a repeated instance name only as a warning
+        // when a bind injects it (SV §23.11 places bound instances in the
+        // target's name space, where a repeated name is illegal).
+        let mut child_names: HashSet<&str> = HashSet::new();
+        for c in &self.node(inst).children {
+            if matches!(self.kind(*c), NodeKind::ModuleInst { .. })
+                && !child_names.insert(self.node(*c).name.as_str())
+            {
+                let node = self.node(*c);
+                return Err(format!(
+                    "duplicate instance name `{}` in `{}` at {}:{}:{}; bound and declared instances share the target scope's name space (SV 23.11)",
+                    node.name,
+                    self.display_path(path),
+                    node.file.as_deref().unwrap_or("<unknown>"),
+                    node.line,
+                    node.col
+                ));
             }
         }
         for c in &self.node(inst).children {
@@ -525,6 +545,7 @@ impl<'a> Codegen<'a> {
         });
         self.c_paths.insert(gs_path.clone(), components);
         self.gen_scope_paths.insert(gs, gs_path.clone());
+        self.scope_nodes.insert(gs_path.clone(), gs);
         let mut gseen: HashSet<String> = HashSet::new();
         for c in &self.node(gs).children {
             let nid = *c;

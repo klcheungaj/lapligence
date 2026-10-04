@@ -117,6 +117,17 @@ def source_references(text: str, source: str, *, public_cli_only: bool = False) 
                 name = stem if Path(stem).suffix in (".v", ".sv") else f"{stem}.sv"
                 add(f"tests/fixtures/sim/{suite}/{name}", m.start())
 
+    for m in re.finditer(
+        r'sim_cli::(?:run|reject)_case_with_inputs\(\s*'
+        + r'(' + ATOM + r')\s*,\s*(?:' + ATOM + r')\s*,\s*&\s*\[([^\]]*)\]',
+        text,
+    ):
+        suite = atom(m[1])
+        for input_match in re.finditer(ATOM, m[2]):
+            name = atom(input_match[0])
+            if suite is not None and name is not None:
+                add(f"tests/fixtures/sim/{suite}/{name}", m.start())
+
     if public_cli_only:
         return refs
 

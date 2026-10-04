@@ -256,6 +256,7 @@ struct LlgSlangSnapshot {
   std::vector<LlgSlangTypeMember> type_members;
   std::vector<LlgSlangUdpTable> udp_tables;
   std::vector<LlgSlangUdpRow> udp_rows;
+  std::vector<LlgSlangSourceLibrary> source_libraries;
 };
 
 namespace {
@@ -999,6 +1000,16 @@ struct Capture {
     output.instances[static_cast<size_t>(id)].parameter_count =
         output.parameters.size() - parameterStart;
     scanScope(input.body, id);
+  }
+
+  // Records the library that `%l` and configuration bindings report for one
+  // scope node. Callers record each node once; the table is bounded by the
+  // semantic node limit and charged like every other export record.
+  void sourceLibrary(uint64_t id, const SourceLibrary* library) {
+    if (!library)
+      return;
+    chargeRecord(output, sizeof(LlgSlangSourceLibrary));
+    output.source_libraries.push_back({id, storeString(output, library->name)});
   }
 
   uint64_t ensureSemantic(const void* identity) {
@@ -2008,6 +2019,9 @@ public:
         }
       }
     }
+    if constexpr (std::same_as<T, InstanceSymbol> || std::same_as<T, PackageSymbol> ||
+                  std::same_as<T, CompilationUnitSymbol>)
+      capture.sourceLibrary(id, symbol.getSourceLibrary());
     if constexpr (std::same_as<T, InstanceSymbol>) {
       const auto drive = symbol.getDefinition().unconnectedDrive;
       if (drive == UnconnectedDrive::Pull0)
@@ -4733,10 +4747,23 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
       compilation.addSyntaxTree(std::move(tree));
     }
   }
+  // Library sources follow the selected compilation-unit mode: merged mode
+  // shares one preprocessor and `$unit` per library in admission order, while
+  // separate mode gives every library file its own, like any other source.
+  const bool mergedUnits =
+      (request.flags & LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS) != 0;
   for (auto& group : libraryBufferGroups) {
-    auto tree = syntax::SyntaxTree::fromBuffers(group.second, sourceManager, parseOptions);
-    tree->isLibraryUnit = true;
-    compilation.addSyntaxTree(std::move(tree));
+    if (mergedUnits) {
+      auto tree = syntax::SyntaxTree::fromBuffers(group.second, sourceManager, parseOptions);
+      tree->isLibraryUnit = true;
+      compilation.addSyntaxTree(std::move(tree));
+      continue;
+    }
+    for (const SourceBuffer& buffer : group.second) {
+      auto tree = syntax::SyntaxTree::fromBuffer(buffer, sourceManager, parseOptions);
+      tree->isLibraryUnit = true;
+      compilation.addSyntaxTree(std::move(tree));
+    }
   }
   for (auto& buffer : libraryMapBuffers) {
     auto tree = syntax::SyntaxTree::fromLibraryMapBuffer(buffer, sourceManager, parseOptions);
@@ -4934,6 +4961,8 @@ extern "C" uint32_t llg_slang_snapshot_view(const LlgSlangSnapshot* snapshot,
       static_cast<uint64_t>(snapshot->udp_tables.size()),
       dataOrNull(snapshot->udp_rows),
       static_cast<uint64_t>(snapshot->udp_rows.size()),
+      dataOrNull(snapshot->source_libraries),
+      static_cast<uint64_t>(snapshot->source_libraries.size()),
   };
   return LLG_SLANG_STATUS_OK;
 }

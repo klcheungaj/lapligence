@@ -116,6 +116,10 @@ pub struct CompileOpts {
     /// Already-admitted library map buffers. Their names provide the relative
     /// base for paths in `include` and `library` clauses.
     pub library_maps: Vec<OwnedSource>,
+    /// Logical directories that exist for in-memory library maps even when no
+    /// admitted buffer lies below them, so a map `-incdir` can select an empty
+    /// directory. Path-mode maps consult the filesystem instead.
+    pub logical_directories: Vec<String>,
     /// Explicit library files, in `library=path` or `path` form.
     pub library_files: Vec<String>,
     /// Already-admitted named library sources.
@@ -699,6 +703,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
             &opts.library_maps,
             &opts.defines,
             opts.edition,
+            &opts.logical_directories,
             &mut library_include_dirs,
             &mut buffers,
             source_count,
@@ -737,8 +742,20 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
             0,
         )?;
     }
+    // Library sources follow the compilation-unit mode the frontend applies:
+    // merged mode shares macros among one library's sources in admission
+    // order, while separate mode starts every source from the defines.
+    let mut merged_library_macros = HashMap::new();
+    let merged_libraries = matches!(opts.compilation_unit_mode, CompilationUnitMode::Merged);
     for root in library_owned.clone() {
-        let mut library_macros = macro_environment_from_defines(&opts.defines);
+        let shared = merged_libraries && !root.is_library_map;
+        let mut library_macros = if shared {
+            merged_library_macros
+                .remove(&root.library)
+                .unwrap_or_else(|| macro_environment_from_defines(&opts.defines))
+        } else {
+            macro_environment_from_defines(&opts.defines)
+        };
         let mut include_dirs = include_dirs.clone();
         include_dirs.extend(
             library_include_dirs
@@ -764,6 +781,9 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
             &expansion_budget,
             0,
         )?;
+        if shared {
+            merged_library_macros.insert(root.library.clone(), library_macros);
+        }
     }
     if owned.len().saturating_add(library_owned.len()) > effective_source_count_limit(opts.limits) {
         return Err(StartupError::new(
@@ -855,6 +875,7 @@ pub fn compile_sources(
         &opts.library_maps,
         &opts.defines,
         opts.edition,
+        &opts.logical_directories,
         &mut library_include_dirs,
         &mut owned,
         &mut library_owned,
@@ -885,6 +906,7 @@ fn preflight_options(opts: &CompileOpts) -> Result<(), StartupError> {
         || opts.system_subroutines.len() > MAX_OPTIONS
         || opts.library_map_files.len() > MAX_OPTIONS
         || opts.library_maps.len() > MAX_OPTIONS
+        || opts.logical_directories.len() > MAX_OPTIONS
         || opts.library_files.len() > MAX_OPTIONS
         || opts.library_sources.len() > MAX_OPTIONS
         || opts.library_order.len() > MAX_OPTIONS
@@ -903,6 +925,7 @@ fn preflight_options(opts: &CompileOpts) -> Result<(), StartupError> {
         .chain(opts.library_include_dirs.iter().map(|entry| &entry.path))
         .chain(&opts.system_subroutines)
         .chain(&opts.library_map_files)
+        .chain(&opts.logical_directories)
         .chain(&opts.library_files)
         .chain(&opts.library_order)
         .map(|value| value.len() as u64)
@@ -1686,6 +1709,7 @@ fn admit_in_memory_library_maps(
         maps,
         &[],
         LanguageEdition::SystemVerilog2009,
+        &[],
         &mut Vec::new(),
         sources,
         library_sources,
@@ -1701,6 +1725,7 @@ fn admit_in_memory_library_maps_with_dirs(
     maps: &[OwnedSource],
     defines: &[String],
     edition: LanguageEdition,
+    logical_directories: &[String],
     library_include_dirs: &mut Vec<LibraryIncludeDir>,
     sources: &mut Vec<OwnedSource>,
     library_sources: &mut Vec<LibrarySource>,
@@ -1717,6 +1742,7 @@ fn admit_in_memory_library_maps_with_dirs(
         maps,
         defines,
         edition,
+        logical_directories,
         library_include_dirs,
         &mut buffers,
         *source_count,
@@ -1731,6 +1757,7 @@ fn collect_in_memory_library_maps(
     maps: &[OwnedSource],
     defines: &[String],
     edition: LanguageEdition,
+    logical_directories: &[String],
     library_include_dirs: &mut Vec<LibraryIncludeDir>,
     buffers: &mut LibraryMapBuffers<'_>,
     source_count: usize,
@@ -1843,9 +1870,14 @@ fn collect_in_memory_library_maps(
 
         for entry in entries {
             for dir in &entry.include_dirs {
-                for path in
-                    logical_map_include_dirs(&base, dir, buffers.sources, buffers.libraries, work)?
-                {
+                for path in logical_map_include_dirs(
+                    &base,
+                    dir,
+                    buffers.sources,
+                    buffers.libraries,
+                    logical_directories,
+                    work,
+                )? {
                     charge_library_include_dir_entry(
                         library_include_dirs.len(),
                         &entry.library,
@@ -3535,6 +3567,7 @@ fn logical_map_include_dirs(
     spec: &str,
     sources: &[OwnedSource],
     libraries: &[LibrarySource],
+    logical_directories: &[String],
     work: &mut LibraryMapWorkBudget,
 ) -> Result<Vec<String>, StartupError> {
     if spec.is_empty() || spec.contains('$') {
@@ -3546,14 +3579,22 @@ fn logical_map_include_dirs(
     let pattern = logical_map_pattern_key(base, spec, work)?;
     let mut directories = Vec::new();
     let mut seen = HashSet::new();
-    for name in sources
+    // A buffer name contributes its ancestors; an admitted logical directory
+    // also contributes itself, which is how an empty directory is represented.
+    let candidates = sources
         .iter()
-        .map(|source| source.name.as_str())
-        .chain(libraries.iter().map(|source| source.name.as_str()))
-    {
+        .map(|source| (source.name.as_str(), false))
+        .chain(libraries.iter().map(|source| (source.name.as_str(), false)))
+        .chain(logical_directories.iter().map(|name| (name.as_str(), true)));
+    for (name, is_directory) in candidates {
         work.charge(1, "logical include directory candidate")?;
         let key = logical_path_key(Path::new(name), work, "logical include directory candidate")?;
-        for end in 1..key.len() {
+        let last = if is_directory {
+            key.len()
+        } else {
+            key.len().saturating_sub(1)
+        };
+        for end in 1..=last {
             work.charge(1, "logical include directory ancestor")?;
             if logical_path_pattern_matches(&pattern, &key[..end], work)? {
                 let path = key[..end].join("/");

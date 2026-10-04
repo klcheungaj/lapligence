@@ -251,11 +251,21 @@ impl EmitCtx<'_, '_> {
                     c_fmt.push_str(&spec[..spec.len() - conv.len_utf8()]);
                     c_fmt.push(conversion);
                 }
-                'm' | 'l' => {
-                    // `%m` and `%l` are scope/library queries and consume no
-                    // value argument.
+                'm' => {
+                    // `%m` is a scope query and consumes no value argument.
                     c_fmt.push_str(&spec[..spec.len() - conv.len_utf8()]);
                     c_fmt.push(conversion);
+                }
+                'l' => {
+                    // The library binding is static per scope, so it becomes
+                    // literal format text.
+                    for ch in self.cg.library_binding(self.inst).chars() {
+                        c_fmt.push_str(&if ch == '%' {
+                            "%%".to_owned()
+                        } else {
+                            escaped_char(ch)
+                        });
+                    }
                 }
                 '%' => c_fmt.push_str(&spec),
                 other => {
@@ -494,7 +504,12 @@ impl EmitCtx<'_, '_> {
                 'p' => {
                     self.require_format_arg(name, conversion, arg_idx, display_args, true)?;
                 }
-                'm' | 'l' | '%' => {}
+                'l' => {
+                    // Static per scope, so it becomes literal format text.
+                    normalized.push_str(&self.cg.library_binding(self.inst).replace('%', "%%"));
+                    continue;
+                }
+                'm' | '%' => {}
                 other => {
                     return Err(format!(
                         "unsupported {name} format specifier `%{other}` in `{}`",
@@ -502,7 +517,7 @@ impl EmitCtx<'_, '_> {
                     ));
                 }
             }
-            if !matches!(lower, 'm' | 'l' | '%') {
+            if !matches!(lower, 'm' | '%') {
                 arg_idx += 1;
             }
             normalized.push_str(&spec);

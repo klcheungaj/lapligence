@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 8u
+#define LLG_SLANG_ABI_VERSION 9u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangSnapshot LlgSlangSnapshot;
@@ -963,6 +963,14 @@ typedef struct {
   LlgSlangString text;
 } LlgSlangLexicalToken;
 
+/* Source library of an elaborated instance (its definition's library), a
+ * package, or a compilation unit, keyed by semantic node. At most one record
+ * per node; nodes without a library have none. */
+typedef struct {
+  uint64_t semantic_id;
+  LlgSlangString library;
+} LlgSlangSourceLibrary;
+
 typedef struct {
   uint32_t abi_version;
   uint32_t flags;
@@ -996,6 +1004,8 @@ typedef struct {
   uint64_t udp_table_count;
   const LlgSlangUdpRow* udp_rows;
   uint64_t udp_row_count;
+  const LlgSlangSourceLibrary* source_libraries;
+  uint64_t source_library_count;
 } LlgSlangSnapshotView;
 
 typedef struct {

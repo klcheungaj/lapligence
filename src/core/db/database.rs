@@ -179,6 +179,10 @@ pub struct Db {
     /// Definition-level pull behavior for omitted input ports, copied from
     /// the frontend's directive state while the snapshot is imported.
     unconnected_drives: HashMap<NodeId, UnconnectedDrive>,
+    /// Source library of each elaborated instance (its selected definition's
+    /// library), package and compilation unit, copied from the frontend's
+    /// library binding so `%l` survives snapshot destruction.
+    source_libraries: HashMap<NodeId, String>,
     tops: Vec<NodeId>,
     flat_modules: Vec<NodeId>,
     packages: Vec<NodeId>,
@@ -275,6 +279,7 @@ impl Db {
             conditional_pattern_fields: HashMap::new(),
             program_instances: HashSet::new(),
             unconnected_drives: HashMap::new(),
+            source_libraries: HashMap::new(),
             tops: Vec::new(),
             flat_modules: Vec::new(),
             packages: Vec::new(),
@@ -338,6 +343,7 @@ impl Db {
             conditional_pattern_fields: HashMap::new(),
             program_instances: HashSet::new(),
             unconnected_drives: HashMap::new(),
+            source_libraries: HashMap::new(),
             tops,
             flat_modules: Vec::new(),
             packages: Vec::new(),
@@ -447,6 +453,12 @@ impl Db {
     /// metadata and therefore report `false`.
     pub fn is_program_instance(&self, id: NodeId) -> bool {
         self.program_instances.contains(&id)
+    }
+
+    /// Library that bound an elaborated instance's definition, or that holds
+    /// a package or compilation unit. Synthetic test databases have none.
+    pub fn source_library(&self, id: NodeId) -> Option<&str> {
+        self.source_libraries.get(&id).map(String::as_str)
     }
 
     /// Return the definition-level pull value for omitted input ports on an

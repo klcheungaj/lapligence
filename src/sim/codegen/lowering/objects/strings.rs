@@ -197,7 +197,12 @@ impl Codegen<'_> {
                 let Some((format, values)) = args.split_first() else {
                     return Err(format!("$sformatf requires a format argument in `{path}`"));
                 };
-                let format = self.lower_string(path, *format)?;
+                let format = match self.lower_string(path, *format)? {
+                    IrStringExpr::Literal(text) => {
+                        IrStringExpr::Literal(self.bind_library_format(path, text))
+                    }
+                    dynamic => dynamic,
+                };
                 let args = values
                     .iter()
                     .map(|value| self.lower_format_arg(path, *value))
