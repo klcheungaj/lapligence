@@ -16,8 +16,10 @@ static int check_file_io(void) {
     if (llg_file_descriptor(test_value(sv4_from_u64(0, 32, 1))) != 0u) return fail("zero accepted");
     if (llg_file_descriptor(test_value(sv4_fill(2, 32, 1))) != 0u) return fail("unknown accepted");
 
+    /* Binary mode keeps the byte position portable: a text-mode newline is
+       CRLF on Windows (IEEE 1800-2009 21.3.1), which would move the tell. */
     uint32_t descriptor = llg_file_open(
-        llg_string_bytes("boundary.txt", 12), llg_string_bytes("w+", 2), 1);
+        llg_string_bytes("boundary.txt", 12), llg_string_bytes("w+b", 3), 1);
     if (!(descriptor & 0x80000000u)) return fail("ordinary FD tag");
     llg_fmt_arg_t arg = { LLG_FMT_PACKED, 0, { .packed = sv4_from_u64(7, 32, 1) } };
     llg_file_display_typed(descriptor, "probe=%0d", &arg, 1, "probe", 1);
