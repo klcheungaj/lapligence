@@ -3002,23 +3002,29 @@ mod tests {
     fn temporary_hardlink_insertion_is_rejected_before_staging_write() {
         let root = temporary_tree();
         let repository = root.join("repo");
-        let outside = root.join("outside.txt");
         fs::create_dir_all(&repository).expect("create repository");
         fs::write(repository.join("alpha.txt"), "one\nold\n").expect("write source");
-        fs::write(&outside, "outside\n").expect("write outside sentinel");
         let repository = canonical_repository("test", &root, &repository).expect("canonical repo");
         let target = repository.join("alpha.txt");
         let base = canonical_digest(b"one\nold\n");
         let applied = canonical_digest(b"one\nnew\n");
         let parent = repository.clone();
+        // A fresh name: hard_link never replaces an existing destination.
+        let linked = root.join("linked-staging.txt");
+        let mut inserted = false;
         let mut hook = |point, temporary_name: PathBuf| {
             if point == AtomicReplacePoint::AfterTemporaryCheck {
                 // Anonymous Linux staging has no pathname to link. The
                 // fallback platforms still expose a name, and must reject
                 // this insertion before writing through the staging handle.
-                let result = fs::hard_link(parent.join(temporary_name), &outside);
+                inserted = fs::hard_link(parent.join(temporary_name), &linked).is_ok();
                 #[cfg(target_os = "linux")]
-                assert!(result.is_err(), "anonymous staging unexpectedly had a name");
+                assert!(!inserted, "anonymous staging unexpectedly had a name");
+                #[cfg(not(target_os = "linux"))]
+                assert!(
+                    inserted,
+                    "named staging should accept the inserted hard link"
+                );
             }
         };
 
@@ -3032,23 +3038,20 @@ mod tests {
             &root.join("alpha.patch"),
             &mut hook,
         );
-        #[cfg(target_os = "linux")]
-        {
-            result.expect("anonymous staging should not be externally linkable");
-            assert_eq!(fs::read_to_string(&outside).unwrap(), "outside\n");
-            assert_eq!(
-                fs::read_to_string(repository.join("alpha.txt")).unwrap(),
-                "one\nnew\n"
-            );
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
+        if inserted {
             let error = result.expect_err("temporary hard link should fail closed");
-            assert!(error.to_string().contains("hard link"));
-            assert_eq!(fs::read_to_string(&outside).unwrap(), "outside\n");
+            assert!(error.to_string().contains("hard link"), "{error}");
+            assert_eq!(fs::read_to_string(&linked).unwrap(), "");
             assert_eq!(
                 fs::read_to_string(repository.join("alpha.txt")).unwrap(),
                 "one\nold\n"
+            );
+        } else {
+            result.expect("unlinkable staging should not be externally linkable");
+            assert!(!linked.exists());
+            assert_eq!(
+                fs::read_to_string(repository.join("alpha.txt")).unwrap(),
+                "one\nnew\n"
             );
         }
 

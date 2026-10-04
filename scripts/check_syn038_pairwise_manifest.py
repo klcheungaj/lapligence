@@ -819,7 +819,8 @@ def main() -> int:
         if args.refresh_baseline:
             for key in ("baseline_counts", "catalog_sha256", "rule_basis_sha256"):
                 source[key] = manifest[key]
-            args.manifest.write_text(format_source(source), encoding="utf-8", newline="\n")
+            with args.manifest.open("w", encoding="utf-8", newline="\n") as destination:
+                destination.write(format_source(source))
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
         print(f"SYN-038 pairwise manifest: {exc}", file=sys.stderr)
         return 1

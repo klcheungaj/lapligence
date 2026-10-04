@@ -81,7 +81,7 @@ fn repeated_mutation_evaluates_and_publishes_each_iteration() {
     assert_eq!(small.lines().count(), large.lines().count());
     let start = small.find("for (").unwrap();
     let read = small.find("sv4_copy(").unwrap();
-    let write = small.find("llg_ba(").unwrap();
+    let write = small.find("llg_ba_from(").unwrap();
     let append = small.find("sv4_concat_to(").unwrap();
     assert!(start < read && read < write && write < append);
     let (expanded, _) = render_count(REPEAT_VALUE_MIN_COUNT - 1);

@@ -867,7 +867,11 @@ impl<'a, 'm> Frame<'a, 'm> {
                         binding.signed,
                     );
                     self.set_selected(selection, &updated.code, &value.code);
-                    self.line(format!("llg_ba({}, {});", binding.address, updated.code));
+                    self.line(format!(
+                        "llg_ba_from({}, {});",
+                        binding.address,
+                        updated.address()
+                    ));
                     self.discard(updated);
                 }
             }
@@ -880,7 +884,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                     "llg_nba_net_after(&{name}, {slot}, {}, {ticks});",
                     value.code
                 ),
-                (None, false) => format!("llg_ba({}, {});", binding.address, value.code),
+                (None, false) => format!("llg_ba_from({}, {});", binding.address, value.address()),
                 (None, true) => format!(
                     "llg_nba_after({}, {}, {ticks});",
                     binding.address, value.code

@@ -292,7 +292,7 @@ environment through):
 | `LLG_ZERO_LOOP_LIMIT` | Maximum region passes at one time step (default 10000000). |
 | `LLG_PROCESS_STEP_LIMIT` | Maximum loop steps one process may run at one time step (default 10000000). |
 | `LLG_ALLOW_SYSTEM` | `1`, `true`, `yes` or `on` enables `$system`. |
-| `LLG_VPI_PLUGIN` | VPI plugin libraries to load, separated by `:` (`;` on Windows). |
+| `LLG_VPI_PLUGIN` | VPI plugin libraries to load, separated by `:` (`;` on Windows). Plugins resolve `vpi_*` from the model at load time; on macOS link them with `-undefined dynamic_lookup`. |
 
 Both `llg` and `llg_ls`:
 

@@ -4,6 +4,8 @@ use llg::sim::codegen::{generate_from_db_with_codegen_options, CodegenOptions};
 use llg::sim::execution::ExecutionAnalysisOptions;
 use llg::sim::opt::OptConfig;
 
+#[path = "support/c_compiler.rs"]
+mod c_compiler;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -342,6 +344,10 @@ fn generated_coroutines_pass_gcc_jump_initialization_check() {
     };
     if !version.status.success() {
         eprintln!("SKIP: gcc not available");
+        return;
+    }
+    if !c_compiler::is_gnu_gcc("gcc") {
+        eprintln!("SKIP: gcc is not GNU GCC; -Wjump-misses-init is GCC-only");
         return;
     }
     let c = render_source_with_execution_options(

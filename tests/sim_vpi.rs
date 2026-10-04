@@ -28,10 +28,16 @@ fn compile_plugin(dir: &Path, source_name: &str) -> PathBuf {
     fs::write(&source_path, fixture(source_name)).expect("write VPI plugin source");
     let output_path = dir.join("libllg_vpi_test.so");
     let compiler = std::env::var("CC").unwrap_or_else(|_| "cc".to_owned());
-    let output = Command::new(compiler)
-        .args([
-            "-std=c11", "-Wall", "-Wextra", "-Werror", "-fPIC", "-shared",
-        ])
+    let mut command = Command::new(compiler);
+    command.args([
+        "-std=c11", "-Wall", "-Wextra", "-Werror", "-fPIC", "-shared",
+    ]);
+    // Mach-O shared libraries must resolve every symbol at link time unless
+    // told otherwise; the vpi_* routines come from the loading model.
+    if cfg!(target_os = "macos") {
+        command.args(["-undefined", "dynamic_lookup"]);
+    }
+    let output = command
         .args(["-I", dir.to_str().expect("temporary path is UTF-8")])
         .args([
             source_path.to_str().expect("plugin path is UTF-8"),

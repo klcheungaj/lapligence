@@ -5,6 +5,8 @@ use llg::core::compile::{self, CompileOpts};
 use llg::core::db::Db;
 use llg::sim;
 
+#[path = "support/c_compiler.rs"]
+mod c_compiler;
 #[path = "support/generated_c_lint.rs"]
 mod generated_c_lint;
 
@@ -33,7 +35,7 @@ fn syntax_check(compiler: &str, model: &str, fixture: &Path, mode: &str) {
         "-Wno-unused-function",
         "-Wno-misleading-indentation",
     ]);
-    if compiler == "gcc" {
+    if c_compiler::is_gnu_gcc(compiler) {
         command.arg("-Werror=jump-misses-init");
     }
     if mode.contains("compact") {

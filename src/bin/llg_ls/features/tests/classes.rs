@@ -210,8 +210,7 @@ fn completion_after_class_scope_prefix_offers_members() {
 #[test]
 fn analyze_full_pipeline_classes() {
     let _guards = analysis_guards();
-    let dir = std::env::temp_dir().join(format!("llg_llg_bin_class_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let dir = resolved_temp_dir(&format!("llg_llg_bin_class_{}", std::process::id()));
     let orig_cwd = std::env::current_dir().expect("current dir");
     let _restore = TempDirGuard {
         dir: dir.clone(),

@@ -34,6 +34,7 @@ fn pure_callback_inlines_owned_formals_without_native_writes() {
     assert!(frame.body().contains("sv4_add_to("));
     assert!(!frame.body().contains("f_increment("));
     assert!(!frame.body().contains("llg_ba("));
+    assert!(!frame.body().contains("llg_ba_from("));
 }
 
 #[test]
@@ -109,6 +110,7 @@ fn static_formal_copies_are_private_in_read_only_callbacks() {
     let value = frame.expression(&call).unwrap();
     frame.discard(value);
     assert!(!frame.body().contains("llg_ba(&G_value"));
+    assert!(!frame.body().contains("llg_ba_from(&G_value"));
     assert!(frame.body().contains("sv4_add_to("));
 }
 
@@ -169,12 +171,13 @@ fn streaming_prepares_all_values_before_any_publication() {
     assert_eq!(writes.len(), 2);
     assert_eq!(frame.body().matches("sv4_unstream_to(").count(), 1);
     assert!(!frame.body().contains("llg_ba("));
+    assert!(!frame.body().contains("llg_ba_from("));
     for (target, value) in writes {
         frame.store(&target, value, false, "0").unwrap();
         frame.release_target(target);
     }
     assert!(frame.slots.iter().all(|used| !used));
-    assert_eq!(frame.body().matches("llg_ba(&G_value,").count(), 2);
+    assert_eq!(frame.body().matches("llg_ba_from(&G_value,").count(), 2);
 }
 
 #[test]
@@ -365,7 +368,7 @@ fn qualified_case_compares_candidates_before_running_selected_body() {
     );
     assert!(
         frame.body().find("llg_unique_priority_check(").unwrap()
-            < frame.body().find("llg_ba(").unwrap()
+            < frame.body().find("llg_ba_from(").unwrap()
     );
     assert!(frame.slots.iter().all(|used| !used));
 }

@@ -12,8 +12,7 @@ use super::*;
 #[test]
 fn analyze_full_pipeline_named_param_overrides_resolve_to_child() {
     let _guards = analysis_guards();
-    let dir = std::env::temp_dir().join(format!("llg_llg_bin_param_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let dir = resolved_temp_dir(&format!("llg_llg_bin_param_{}", std::process::id()));
     let orig_cwd = std::env::current_dir().expect("current dir");
     let _restore = TempDirGuard {
         dir: dir.clone(),
@@ -121,8 +120,7 @@ fn analyze_full_pipeline_named_param_overrides_resolve_to_child() {
 #[test]
 fn analyze_full_pipeline_multiline_named_param_overrides_resolve_to_child() {
     let _guards = analysis_guards();
-    let dir = std::env::temp_dir().join(format!("llg_llg_bin_mlparam_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let dir = resolved_temp_dir(&format!("llg_llg_bin_mlparam_{}", std::process::id()));
     let orig_cwd = std::env::current_dir().expect("current dir");
     let _restore = TempDirGuard {
         dir: dir.clone(),
