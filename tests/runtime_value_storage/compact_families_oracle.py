@@ -57,8 +57,8 @@ def oracle(op, a, b, c):
             planes = tuple((plane << count) & mask for plane in a[:3])
         return value(*planes, w, s)
     if op <= 12:
-        ones = bits.bit_count()
-        zeros = w - ones - (x | z).bit_count()
+        ones = bin(bits).count("1")
+        zeros = w - ones - bin(x | z).count("1")
         if op == 10:
             return value(ones, 0, 0, 32, 1)
         if op in (11, 12):
