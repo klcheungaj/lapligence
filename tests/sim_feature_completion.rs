@@ -8,6 +8,9 @@ mod sim_harness;
 #[path = "sim_feature_completion/fnd_003.rs"]
 mod fnd_003;
 
+#[path = "sim_feature_completion/sim_003.rs"]
+mod sim_003;
+
 #[path = "sim_feature_completion/rtl_001.rs"]
 mod rtl_001;
 
