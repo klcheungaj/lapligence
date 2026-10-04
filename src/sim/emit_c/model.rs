@@ -761,7 +761,13 @@ fn render_model(
     out.push_str("#include \"llg_container.h\"\n");
     out.push_str("#include \"llg_string.h\"\n");
     if model.funcs.iter().any(|func| func.dpi_import().is_some()) {
-        out.push_str("#include \"svdpi.h\"\n");
+        // DPI code is linked into the simulator executable, never imported
+        // from a DLL; without these svdpi.h marks its declarations
+        // __declspec(dllimport) on Windows toolchains, which GCC and MSVC
+        // report as ignored on its typedefs.
+        out.push_str(
+            "#define DPI_PROTOTYPES\n#define XXTERN DPI_EXTERN\n#define EETERN DPI_EXTERN\n#include \"svdpi.h\"\n",
+        );
     }
     if model.waveform {
         out.push_str("#include \"llg_wave.h\"\n");
