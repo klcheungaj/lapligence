@@ -39,8 +39,9 @@ Compiler and operating-system conditionals (`_WIN32`, `_MSC_VER`, `__APPLE__`,
 `llg_compiler.h`, `llg_platform.h` and `llg_platform_native.h`; every other
 runtime source, the emitter's generated C and the runtime probes call their
 neutral names. Exceptions: `llg_co.h` stays a self-contained two-file library
-with its own `LLG_CO_*` macros, and bundled third-party sources (`gtkwave/`,
-`vendor/zlib`) keep upstream conditionals. Layer functions are `static inline`
+with its own `LLG_CO_*` macros, and bundled third-party sources (`vendor/libfst`,
+`vendor/zlib`) keep upstream conditionals; required libfst changes are tracked
+patches in `patches/libfst`. Layer functions are `static inline`
 so hot paths (waveform ring, atomics) pay nothing. Public headers and generated
 models may include only `llg_compiler.h`; `llg_platform_native.h` brings in
 `<windows.h>` and is limited to the waveform writer and VPI bridge. MSVC uses
