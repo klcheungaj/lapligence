@@ -215,6 +215,14 @@ impl<'a> Codegen<'a> {
                             "descriptor-transported fixed-array formals or result",
                         );
                     }
+                    if self.real_array_return(ft)
+                        || self
+                            .func_formals(ft)
+                            .iter()
+                            .any(|(formal, _)| self.real_array_shape(*formal).is_some())
+                    {
+                        needs_process(process, "real fixed-array formals or result");
+                    }
                     self.check_event_node(
                         body,
                         scope_path,

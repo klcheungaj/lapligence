@@ -61,6 +61,48 @@ impl<'a, 'm> Frame<'a, 'm> {
         Ok(pointer)
     }
 
+    /// A fresh, zero-filled (0.0) lexical `double` buffer for a real
+    /// activation array. Its value scope owns the cells, so suspension keeps
+    /// them alive and lexical exit or cancellation releases them.
+    pub(super) fn new_real_array(&mut self, index: usize) -> String {
+        let total = self.ctx.model.array(index).total;
+        let pointer = self.scalar(
+            "double*",
+            format!(
+                "(double*)llg_value_scope_object(llg_value_scope_begin_object(sizeof(double) * {total}ULL, NULL))"
+            ),
+        );
+        let (cell, declaration) = self.loop_variable("uint64_t", "real_cell");
+        self.line(format!(
+            "for ({declaration} = 0; {cell} < {total}ULL; ++{cell}) {pointer}[{cell}] = 0.0;"
+        ));
+        pointer
+    }
+
+    /// The `double*` base of whole real-array storage: a lexical buffer, a
+    /// bound real-array formal or the model-global cells.
+    pub(super) fn real_array_base(&self, index: usize) -> Result<String, String> {
+        let array = self.ctx.model.array(index);
+        if !array.real {
+            return Err("real-array operand requires real storage".to_owned());
+        }
+        if array.activation {
+            self.fixed_array_address(index)
+        } else {
+            Ok(array.c_name.clone())
+        }
+    }
+
+    /// Publish `count` cells into whole real-array storage. Every cell goes
+    /// through the ordinary real store, so waiters, forces and monitors see
+    /// copy-out exactly like element assignments.
+    pub(super) fn publish_real_cells(&mut self, target: &str, source: &str, count: u64) {
+        let (cell, declaration) = self.loop_variable("uint64_t", "real_cell");
+        self.line(format!(
+            "for ({declaration} = 0; {cell} < {count}ULL; ++{cell}) llg_ba_d(&({target})[{cell}], ({source})[{cell}]);"
+        ));
+    }
+
     pub(super) fn fixed_array_address(&self, index: usize) -> Result<String, String> {
         let array = self.ctx.model.array(index);
         if array.activation {
@@ -138,7 +180,9 @@ impl<'a, 'm> Frame<'a, 'm> {
             },
             format!(
                 "({valid}) ? {} : NULL",
-                if array.sparse() {
+                if array.real && array.activation {
+                    format!("&({})[{linear}]", self.fixed_array_address(array_index)?)
+                } else if array.sparse() {
                     format!(
                         "{}({}, {linear})",
                         if writable {

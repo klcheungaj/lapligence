@@ -29,6 +29,21 @@ pub enum IrCallArg {
         value: usize,
         call: Box<IrCall>,
     },
+    /// Whole real fixed-array storage (index into the model's arrays) for a
+    /// real-array formal. Inputs and outputs use a fresh call-owned copy
+    /// (outputs publish back after return); a `ref` passes the cells.
+    RealArray(usize),
+    /// Input real-array formal built from declaration-order element values
+    /// evaluated in order at the call (patterns, conditionals, selections).
+    RealArrayValues(Vec<IrExpr>),
+    /// Input real-array formal fed by a real-array-result call evaluated at
+    /// this operand. `array` is the lexical result storage the inner call
+    /// writes through its trailing `RealArray(array)` operand; it is declared
+    /// by this operand and handed to the outer callee.
+    RealArrayCall {
+        array: usize,
+        call: Box<IrCall>,
+    },
     /// Input formal value, captured once before the next input is evaluated.
     /// Later defaults can read its call-local binding from `call_argument_name`.
     Val(IrExpr),
@@ -350,6 +365,12 @@ impl IrCallArg {
                     argument.expressions(visit);
                 }
             }
+            Self::RealArrayValues(values) => values.iter().for_each(visit),
+            Self::RealArrayCall { call, .. } => {
+                for argument in &call.args {
+                    argument.expressions(visit);
+                }
+            }
             _ => {}
         }
     }
@@ -401,6 +422,12 @@ impl IrCallArg {
                 }
             }
             Self::NativeCall { call, .. } => {
+                for argument in &mut call.args {
+                    argument.expressions_mut(visit);
+                }
+            }
+            Self::RealArrayValues(values) => values.iter_mut().for_each(visit),
+            Self::RealArrayCall { call, .. } => {
                 for argument in &mut call.args {
                     argument.expressions_mut(visit);
                 }

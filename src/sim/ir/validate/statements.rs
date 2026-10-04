@@ -206,7 +206,7 @@ impl Validator<'_> {
                     .model
                     .arrays
                     .get(*index)
-                    .is_none_or(|array| !array.activation || !array.sparse())
+                    .is_none_or(|array| !array.activation || !(array.sparse() || array.real))
                 {
                     return self.fail(path, "invalid activation fixed array declaration");
                 }

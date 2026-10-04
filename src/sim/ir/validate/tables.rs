@@ -953,6 +953,20 @@ impl Validator<'_> {
                         return self.fail(&path, "invalid descriptor formal storage");
                     }
                 }
+                if let Some(array) = formal.real_array {
+                    if self.model.arrays.get(array).is_none_or(|array| !array.real)
+                        || formal.width != 0
+                        || formal.real
+                        || formal.string
+                        || formal.chandle
+                        || formal.fixed_array.is_some()
+                        || formal.native_value.is_some()
+                        || formal.fixed_shape.is_some()
+                        || formal.fixed_default.is_some()
+                    {
+                        return self.fail(&path, "invalid real-array formal storage");
+                    }
+                }
                 if let Some(value) = &formal.fixed_default {
                     self.validate_storage_default(value, formal.width, formal.signed, &path)?;
                 }
@@ -980,6 +994,7 @@ impl Validator<'_> {
                 }
                 if formal.fixed_array.is_none()
                     && formal.native_value.is_none()
+                    && formal.real_array.is_none()
                     && !formal.chandle
                     && !formal.event
                     && !formal.real

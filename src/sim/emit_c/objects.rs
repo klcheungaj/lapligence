@@ -313,9 +313,12 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
                     }
                     IrCallArg::FixedValue(_)
                     | IrCallArg::FixedArray(_)
+                    | IrCallArg::RealArray(_)
+                    | IrCallArg::RealArrayValues(_)
                     | IrCallArg::NativeValue(_)
                     | IrCallArg::NativeLeaves { .. }
                     | IrCallArg::NativeCall { .. }
+                    | IrCallArg::RealArrayCall { .. }
                     | IrCallArg::EventVal(_) => {
                         Err("event argument requires the ownership emitter".to_owned())
                     }
@@ -982,9 +985,12 @@ fn render_typed_call(
             IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => addr.clone(),
             IrCallArg::FixedValue(_)
             | IrCallArg::FixedArray(_)
+            | IrCallArg::RealArray(_)
+            | IrCallArg::RealArrayValues(_)
             | IrCallArg::NativeValue(_)
             | IrCallArg::NativeLeaves { .. }
             | IrCallArg::NativeCall { .. }
+            | IrCallArg::RealArrayCall { .. }
             | IrCallArg::EventVal(_) => {
                 return Err("event argument requires the ownership emitter".to_owned())
             }

@@ -176,7 +176,77 @@ impl Validator<'_> {
             {
                 return self.fail(&arg_path, "native-value formal and operand must match");
             }
+            if formal.real_array.is_some()
+                != matches!(
+                    arg,
+                    IrCallArg::RealArray(_)
+                        | IrCallArg::RealArrayValues(_)
+                        | IrCallArg::RealArrayCall { .. }
+                )
+            {
+                return self.fail(&arg_path, "real-array formal and operand must match");
+            }
             match arg {
+                IrCallArg::RealArray(array) => {
+                    self.validate_fixed_activation(*array, &arg_path)?;
+                    let expected = formal
+                        .real_array
+                        .and_then(|array| self.model.arrays.get(array));
+                    let actual = self.model.arrays.get(*array);
+                    if !actual.zip(expected).is_some_and(|(actual, expected)| {
+                        actual.real
+                            && expected.real
+                            && actual.shortreal == expected.shortreal
+                            && actual.total == expected.total
+                    }) {
+                        return self.fail(&arg_path, "real-array operand shape mismatch");
+                    }
+                }
+                IrCallArg::RealArrayCall { array, call } => {
+                    let expected = formal
+                        .real_array
+                        .and_then(|array| self.model.arrays.get(array));
+                    let result = self.model.arrays.get(*array);
+                    if formal.is_address()
+                        || !result.zip(expected).is_some_and(|(result, expected)| {
+                            result.real
+                                && result.activation
+                                && result.shortreal == expected.shortreal
+                                && result.total == expected.total
+                        })
+                        || !call.args.iter().any(
+                            |argument| matches!(argument, IrCallArg::RealArray(index) if index == array),
+                        )
+                    {
+                        return self.fail(&arg_path, "real-array call operand requires an owned result");
+                    }
+                    self.fixed_activations
+                        .borrow_mut()
+                        .push(HashSet::from([*array]));
+                    let valid = self.validate_stmt(&IrStmt::Call(call.clone()), formals, &arg_path);
+                    self.fixed_activations.borrow_mut().pop();
+                    valid?;
+                }
+                IrCallArg::RealArrayValues(values) => {
+                    let expected = formal
+                        .real_array
+                        .and_then(|array| self.model.arrays.get(array));
+                    if formal.is_address()
+                        || expected.is_none_or(|expected| expected.total != values.len() as u64)
+                    {
+                        return self.fail(
+                            &arg_path,
+                            "real-array values require an input formal of the same size",
+                        );
+                    }
+                    for (index, value) in values.iter().enumerate() {
+                        let path = format!("{arg_path}.values[{index}]");
+                        self.validate_expr(value, formals, &path)?;
+                        if !value.is_real() {
+                            return self.fail(path, "real-array element value must be real");
+                        }
+                    }
+                }
                 IrCallArg::NativeCall { value, call } => {
                     let expected = formal
                         .native_value

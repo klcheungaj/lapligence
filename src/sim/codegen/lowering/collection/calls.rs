@@ -145,6 +145,23 @@ impl<'a> Codegen<'a> {
                 }
                 continue;
             }
+            if self.real_formal_array(*io).is_some() {
+                let argument = self.real_array_argument(scope_path, *io, bound[idx].expr)?;
+                if *is_out
+                    || matches!(
+                        self.kind(*io),
+                        NodeKind::FuncArg {
+                            direction: DbDirection::Ref,
+                            ..
+                        }
+                    )
+                {
+                    out_args.push(argument);
+                } else {
+                    in_args.push(argument);
+                }
+                continue;
+            }
             if self.fixed_formal_array(*io).is_some() {
                 let argument = IrCallArg::FixedValue(Box::new(
                     self.lower_fixed_value(scope_path, bound[idx].expr)?,
@@ -310,7 +327,10 @@ impl<'a> Codegen<'a> {
             }
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
-            if self.fixed_formal_array(*io).is_some() || self.is_native_declaration(*io) {
+            if self.fixed_formal_array(*io).is_some()
+                || self.is_native_declaration(*io)
+                || self.real_formal_array(*io).is_some()
+            {
                 continue;
             }
             let is_ref = matches!(
@@ -377,6 +397,7 @@ impl<'a> Codegen<'a> {
         if ret_val.is_none()
             && !self.nonflatten_function(ft)
             && !self.native_return(ft)
+            && !self.real_array_return(ft)
             && !is_class_constructor
             && !self.lowering_assertion_match_item
         {

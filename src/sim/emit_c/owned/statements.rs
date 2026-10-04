@@ -100,7 +100,11 @@ impl Frame<'_, '_> {
             IrStmt::Located { statement, .. } => return self.statement(statement),
             IrStmt::Nop => self.line(";"),
             IrStmt::FixedArrayDeclare(index) => {
-                let pointer = self.new_fixed_array(*index)?;
+                let pointer = if self.ctx.model.array(*index).real {
+                    self.new_real_array(*index)
+                } else {
+                    self.new_fixed_array(*index)?
+                };
                 self.fixed_arrays.insert(*index, pointer);
             }
             IrStmt::NativeValueDeclare(index) => {

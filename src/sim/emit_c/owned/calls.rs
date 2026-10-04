@@ -262,6 +262,7 @@ impl Frame<'_, '_> {
         let mut fixed_copyouts = Vec::new();
         let mut native_copyouts = Vec::new();
         let mut string_copyouts = Vec::new();
+        let mut real_copyouts = Vec::new();
         // The IR stores arguments in the C ABI order (addresses, inputs).
         // Evaluate this explicit order, never nested C argument expressions.
         let order = function
@@ -359,6 +360,51 @@ impl Frame<'_, '_> {
                 IrCallArg::NativeLeaves { ty, leaves } => {
                     let storage = self.new_native_value(*ty);
                     self.native_leaves_into(&storage, *ty, leaves)?;
+                    parameters.push(storage);
+                }
+                IrCallArg::RealArray(array) => {
+                    let actual = self.real_array_base(*array)?;
+                    if formal.is_ref() {
+                        parameters.push(actual);
+                        continue;
+                    }
+                    let shape = formal
+                        .real_array
+                        .ok_or("real-array operand requires a real-array formal")?;
+                    let total = self.ctx.model.array(shape).total;
+                    let storage = self.new_real_array(shape);
+                    if matches!(formal.mode, IrFormalMode::Input | IrFormalMode::Inout) {
+                        self.line(format!(
+                            "memcpy({storage}, {actual}, sizeof(double) * {total}ULL);"
+                        ));
+                    }
+                    if formal.is_out {
+                        real_copyouts.push((actual, storage.clone(), total));
+                    }
+                    parameters.push(storage);
+                }
+                IrCallArg::RealArrayCall { array, call } => {
+                    // The inner result is a fresh lexical array that only this
+                    // operand references, so the callee may own it directly.
+                    let storage = self.new_real_array(*array);
+                    self.fixed_arrays.insert(*array, storage.clone());
+                    self.call_statement(call)?;
+                    parameters.push(storage);
+                }
+                IrCallArg::RealArrayValues(values) => {
+                    let shape = formal
+                        .real_array
+                        .ok_or("real-array values require a real-array formal")?;
+                    let shortreal = self.ctx.model.array(shape).shortreal;
+                    let storage = self.new_real_array(shape);
+                    for (cell, value) in values.iter().enumerate() {
+                        let value = self.expression(value)?;
+                        self.line(format!(
+                            "{storage}[{cell}] = {};",
+                            round_shortreal(value.real(), shortreal)
+                        ));
+                        self.discard(value);
+                    }
                     parameters.push(storage);
                 }
                 IrCallArg::FixedArray(array) => {
@@ -607,6 +653,9 @@ impl Frame<'_, '_> {
                 "llg_fixed_array_copy({target}, {storage}, {}, 0);",
                 u8::from(two_state)
             ));
+        }
+        for (target, storage, count) in real_copyouts {
+            self.publish_real_cells(&target, &storage, count);
         }
         for (target, storage) in native_copyouts {
             self.line(format!("llg_native_value_copy({target}, {storage});"));

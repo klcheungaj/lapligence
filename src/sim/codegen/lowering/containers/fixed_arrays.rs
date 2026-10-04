@@ -1391,6 +1391,9 @@ impl<'a> Codegen<'a> {
             }
             return Ok(values);
         }
+        if let Some(values) = self.p30_real_source_values(path, rhs, target_dims, captures)? {
+            return Ok(values);
+        }
         // Calls, conditional values, and activation expressions do not have
         // a storage view. Lower their complete fixed payload once, then split
         // it into declaration-order elements after the view-specific cases

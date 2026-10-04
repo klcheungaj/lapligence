@@ -311,6 +311,30 @@ fn render_function(
             }
             continue;
         }
+        if let Some(array) = formal.real_array {
+            let parameter = format!(
+                "{}{index}",
+                if formal.is_ref() {
+                    "r"
+                } else if formal.is_out {
+                    "o"
+                } else {
+                    "a"
+                }
+            );
+            if formal.is_ref() || ctx.model.array(array).activation {
+                frame.fixed_arrays.insert(array, parameter);
+            } else if matches!(formal.mode, IrFormalMode::Input | IrFormalMode::Inout) {
+                // Static subroutine storage keeps its own cells; the caller's
+                // fresh copy is consumed on entry.
+                let total = ctx.model.array(array).total;
+                frame.line(format!(
+                    "memcpy({}, {parameter}, sizeof(double) * {total}ULL);",
+                    ctx.model.array(array).c_name
+                ));
+            }
+            continue;
+        }
         if let Some(array) = formal.fixed_array {
             let parameter = format!(
                 "{}{index}",
@@ -407,6 +431,16 @@ fn render_function(
         {
             let address = frame.native_value_address(value)?;
             frame.line(format!("llg_native_value_copy(o{index}, {address});"));
+        }
+        if let Some(array) = formal
+            .real_array
+            .filter(|array| !ctx.model.array(*array).activation && formal.is_out)
+        {
+            let total = ctx.model.array(array).total;
+            frame.line(format!(
+                "memcpy(o{index}, {}, sizeof(double) * {total}ULL);",
+                ctx.model.array(array).c_name
+            ));
         }
         if let Some(array) = formal
             .fixed_array

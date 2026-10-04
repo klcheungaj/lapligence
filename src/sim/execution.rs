@@ -1320,8 +1320,16 @@ fn collect_argument_effects(
         IrCallArg::FixedValue(value) => {
             collect_fixed_value_effects(ir, value, effects, visited_calls)
         }
-        IrCallArg::FixedArray(_) | IrCallArg::NativeValue(_) | IrCallArg::EventVal(_) => {}
-        IrCallArg::NativeCall { call, .. } => {
+        IrCallArg::FixedArray(_)
+        | IrCallArg::RealArray(_)
+        | IrCallArg::NativeValue(_)
+        | IrCallArg::EventVal(_) => {}
+        IrCallArg::RealArrayValues(values) => {
+            for value in values {
+                collect_expression_effects(ir, value, effects, visited_calls);
+            }
+        }
+        IrCallArg::NativeCall { call, .. } | IrCallArg::RealArrayCall { call, .. } => {
             for argument in &call.args {
                 collect_argument_effects(ir, argument, effects, visited_calls);
             }

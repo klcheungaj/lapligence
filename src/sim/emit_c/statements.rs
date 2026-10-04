@@ -1318,7 +1318,7 @@ fn render_stmt_scoped(
                     IrCallArg::ChandleVal(value) => {
                         call_args.push(super::objects::chandle(ctx, value)?)
                     }
-                    IrCallArg::FixedValue(_) | IrCallArg::FixedArray(_) | IrCallArg::NativeValue(_) | IrCallArg::NativeLeaves { .. } | IrCallArg::NativeCall { .. } | IrCallArg::EventVal(_) => {
+                    IrCallArg::FixedValue(_) | IrCallArg::FixedArray(_) | IrCallArg::RealArray(_) | IrCallArg::RealArrayValues(_) | IrCallArg::NativeValue(_) | IrCallArg::NativeLeaves { .. } | IrCallArg::NativeCall { .. } | IrCallArg::RealArrayCall { .. } | IrCallArg::EventVal(_) => {
                         return Err("event argument requires the ownership emitter".to_string());
                     }
                     IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => {

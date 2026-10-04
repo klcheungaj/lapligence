@@ -33,7 +33,10 @@ impl<'a> Codegen<'a> {
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             let (w, s, two_state, real, shortreal, is_event, is_string) = match self.kind(*io) {
                 NodeKind::FuncArg { ty, .. } => {
-                    if self.fixed_formal_array(*io).is_some() || self.is_native_declaration(*io) {
+                    if self.fixed_formal_array(*io).is_some()
+                        || self.is_native_declaration(*io)
+                        || self.real_formal_array(*io).is_some()
+                    {
                         (0, false, false, false, false, false, false)
                     } else if ty.kind == "event" {
                         (0, false, false, false, false, true, false)
