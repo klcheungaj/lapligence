@@ -114,6 +114,7 @@ impl CellEligibility {
                 args,
                 context: None,
                 item: false,
+                real_item: false,
                 ..
             }) => {
                 for expression in args {

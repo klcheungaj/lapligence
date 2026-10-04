@@ -1232,8 +1232,17 @@ impl Validator<'_> {
                 }
                 IrSysFunc::Sampled(call) => {
                     self.validate_expr(&call.argument, formals, &format!("{path}.argument"))?;
-                    if call.argument.is_real() {
+                    // Only `$sampled` reads a real directly; history domains keep
+                    // a real argument as its exact 64-bit IEEE image.
+                    if call.argument.is_real() && call.kind != IrSampledFunc::Sampled {
                         return self.fail(path, "sampled-value argument must be packed");
+                    }
+                    if matches!(
+                        call.kind,
+                        IrSampledFunc::RealStable | IrSampledFunc::RealChanged
+                    ) && call.argument.width != 64
+                    {
+                        return self.fail(path, "real sampled status needs a 64-bit real image");
                     }
                     match call.kind {
                         crate::sim::ir::IrSampledFunc::Sampled => {
@@ -1264,7 +1273,9 @@ impl Validator<'_> {
                         IrSampledFunc::Rose
                         | IrSampledFunc::Fell
                         | IrSampledFunc::Stable
-                        | IrSampledFunc::Changed => {
+                        | IrSampledFunc::Changed
+                        | IrSampledFunc::RealStable
+                        | IrSampledFunc::RealChanged => {
                             if call.domain.is_none() || call.ticks != 0 {
                                 return self.fail(path, "sampled status requires a valid domain");
                             }

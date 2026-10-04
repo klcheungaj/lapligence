@@ -84,7 +84,10 @@ impl Frame<'_, '_> {
                     return Ok(self.read_binding(&binding));
                 }
                 let signal = self.ctx.model.signal(*index);
-                if self.sampled_reads && signal.ty.width() != 0 {
+                if self.sampled_reads && matches!(signal.ty, IrType::Real { .. }) {
+                    // Real variables keep their own numeric Preponed snapshot.
+                    self.value(format!("llg_sampled_real(&{})", signal.c_name), 0, false)
+                } else if self.sampled_reads && signal.ty.width() != 0 {
                     let addr = if signal.net_alias.is_empty() {
                         format!("&{}", signal.c_name)
                     } else {
@@ -108,7 +111,12 @@ impl Frame<'_, '_> {
                 if self.item_callback
                     && matches!(name.as_str(), "__llg_method_item" | "__llg_method_index") =>
             {
-                self.value(format!("sv4_clone(&{name})"), expr.width, expr.signed)
+                if expr.width == 0 {
+                    // A real iterator item is a by-value double parameter.
+                    self.value(name.clone(), 0, false)
+                } else {
+                    self.value(format!("sv4_clone(&{name})"), expr.width, expr.signed)
+                }
             }
             IrExprKind::LocalRead(name) => {
                 let binding = self.resolve_lookup(name)?;
@@ -130,7 +138,10 @@ impl Frame<'_, '_> {
                     .formals
                     .get(*index)
                     .ok_or_else(|| "invalid formal index".to_owned())?;
-                if formal.is_ref() {
+                if formal.is_ref() && formal.real {
+                    // The referenced cell already holds a rounded shortreal.
+                    self.value(format!("(*r{index})"), 0, false)
+                } else if formal.is_ref() {
                     // A forwarded descriptor may be a checked tagged view, so
                     // runtime reads must preserve its tag diagnostic path.
                     self.value(

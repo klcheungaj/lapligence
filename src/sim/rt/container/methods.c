@@ -481,3 +481,245 @@ void llg_queue_method(llg_queue_t* queue, int method,
         llg_notify(queue->notify, queue->contents_dependency,
                    queue->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
 }
+
+// True when real key `later` must be placed before `earlier`; strictness
+// keeps equal keys (including -0.0 and +0.0) in their original order.
+static int llg_real_sort_before(const double* keys, int descending,
+                                size_t later, size_t earlier) {
+    return descending ? keys[later] > keys[earlier]
+                      : keys[later] < keys[earlier];
+}
+
+// Stable bottom-up merge of order[0, count) by real keys.
+static void llg_real_sort_merge(const double* keys, int descending,
+                                size_t* order, size_t* scratch, size_t count) {
+    size_t* source = order;
+    size_t* target = scratch;
+    for (size_t run = 1; run < count; run *= 2) {
+        for (size_t low = 0; low < count; low += 2 * run) {
+            size_t middle = low + run < count ? low + run : count;
+            size_t high = low + 2 * run < count ? low + 2 * run : count;
+            size_t left = low, right = middle, out = low;
+            while (left < middle && right < high) {
+                if (llg_real_sort_before(keys, descending, source[right],
+                                         source[left]))
+                    target[out++] = source[right++];
+                else
+                    target[out++] = source[left++];
+            }
+            while (left < middle) target[out++] = source[left++];
+            while (right < high) target[out++] = source[right++];
+        }
+        size_t* swap = source;
+        source = target;
+        target = swap;
+    }
+    if (source != order) memcpy(order, source, count * sizeof(*order));
+}
+
+int llg_real_sort_order(const double* keys, size_t count, int descending,
+                        size_t* order) {
+    if (count && (!keys || !order))
+        llg_container_fatal("malformed real ordering workspace");
+    for (size_t i = 0; i < count; ++i) order[i] = i;
+    size_t start = 0;
+    for (size_t i = 0; i <= count; ++i) {
+        // A NaN key is the only value unequal to itself.
+        if (i < count && keys[i] == keys[i]) continue;
+        if (i - start > 1)
+            llg_real_sort_merge(keys, descending, order + start,
+                                order + count + start, i - start);
+        start = i + 1;
+    }
+    for (size_t i = 0; i < count; ++i)
+        if (order[i] != i) return 1;
+    return 0;
+}
+
+static int llg_real_value_reorder(llg_value_t* data, size_t count,
+                                  const llg_value_desc_t* element, int method) {
+    if (count && (!data || !element || element->kind != LLG_VALUE_REAL))
+        llg_container_fatal("array method requires real container elements");
+    if (count < 2) return 0;
+    if (method == LLG_CONTAINER_METHOD_REVERSE ||
+        method == LLG_CONTAINER_METHOD_SHUFFLE) {
+        int changed = 0;
+        if (method == LLG_CONTAINER_METHOD_REVERSE) {
+            for (size_t left = 0; left < count / 2; ++left) {
+                size_t right = count - left - 1;
+                llg_value_t value = data[left];
+                data[left] = data[right];
+                data[right] = value;
+                changed = 1;
+            }
+            return changed;
+        }
+        for (size_t index = count; index > 1; --index) {
+            if (index > UINT32_MAX)
+                llg_container_fatal("shuffle size exceeds random range");
+            if (!llg_container_rng_initialized) llg_container_seed(0);
+            size_t other = (size_t)llg_rng_state_uniform(
+                &llg_container_rng_state, (uint32_t)(index - 1), 0);
+            if (other == index - 1) continue;
+            llg_value_t value = data[other];
+            data[other] = data[index - 1];
+            data[index - 1] = value;
+            changed = 1;
+        }
+        return changed;
+    }
+    if (method != LLG_CONTAINER_METHOD_SORT &&
+        method != LLG_CONTAINER_METHOD_RSORT)
+        llg_container_fatal("invalid in-place real array method");
+    double* keys = llg_alloc_items(count, sizeof(*keys));
+    size_t* order = llg_alloc_items(count, 2 * sizeof(*order));
+    for (size_t i = 0; i < count; ++i) keys[i] = data[i].value.real;
+    int changed = llg_real_sort_order(keys, count,
+                                      method == LLG_CONTAINER_METHOD_RSORT,
+                                      order);
+    for (size_t i = 0; changed && i < count; ++i) {
+        if (order[i] == i) continue;
+        llg_value_t saved = data[i];
+        size_t hole = i;
+        for (;;) {
+            size_t source = order[hole];
+            order[hole] = hole;
+            if (source == i) {
+                data[hole] = saved;
+                break;
+            }
+            data[hole] = data[source];
+            hole = source;
+        }
+    }
+    free(order);
+    free(keys);
+    return changed;
+}
+
+void llg_dyn_value_method(llg_dyn_value_array_t* array, int method) {
+    if (!array) llg_container_fatal("null dynamic-array method target");
+    if (llg_real_value_reorder(array->data, array->size, array->element,
+                               method))
+        llg_notify(array->notify, array->contents_dependency,
+                   array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+}
+
+void llg_queue_value_method(llg_queue_value_array_t* queue, int method) {
+    if (!queue) llg_container_fatal("null queue method target");
+    if (llg_real_value_reorder(queue->data, queue->size, queue->element,
+                               method)) {
+        llg_queue_value_invalidate_refs(queue);
+        llg_notify(queue->notify, queue->contents_dependency,
+                   queue->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+    }
+}
+
+// Positions of the real elements selected by a queue-valued method, in the
+// result order. Returns the number of positions written to `selected`.
+static size_t llg_real_method_select(const llg_value_t* data, size_t count,
+                                     int method,
+                                     llg_container_real_eval_fn eval,
+                                     void* context, size_t* selected) {
+    if (count && !data) llg_container_fatal("malformed real array-method source");
+    if (method < LLG_CONTAINER_METHOD_FIND ||
+        method > LLG_CONTAINER_METHOD_UNIQUE_INDEX)
+        llg_container_fatal("invalid queue-valued array method");
+    size_t chosen = 0;
+    if (llg_method_is_locator(method)) {
+        if (!eval) llg_container_fatal("array locator method requires a with clause");
+        for (size_t step = 0; step < count; ++step) {
+            size_t index = llg_method_is_last(method) ? count - 1 - step : step;
+            sv4_t item_index = sv4_from_u64((uint64_t)index, 32, 1);
+            sv4_t truth = (sv4_t)SV4_EMPTY;
+            eval(&truth, data[index].value.real, item_index, context);
+            int known_true = sv4_to_bool(truth);
+            sv4_destroy(&truth);
+            sv4_destroy(&item_index);
+            if (!known_true) continue;
+            selected[chosen++] = index;
+            if (llg_method_is_first_only(method)) break;
+        }
+        return chosen;
+    }
+    if (eval) llg_container_fatal("keyed real min/max/unique are not supported");
+    if (method == LLG_CONTAINER_METHOD_MIN || method == LLG_CONTAINER_METHOD_MAX) {
+        if (!count) return 0;
+        size_t best = SIZE_MAX;
+        for (size_t index = 0; index < count; ++index) {
+            double value = data[index].value.real;
+            if (value != value) continue;
+            if (best == SIZE_MAX ||
+                (method == LLG_CONTAINER_METHOD_MIN ? value < data[best].value.real
+                                                    : value > data[best].value.real))
+                best = index;
+        }
+        selected[chosen++] = best == SIZE_MAX ? 0 : best;
+        return chosen;
+    }
+    // unique/unique_index: the first occurrence of every numerically distinct
+    // value, in source order, in O(n log n). NaN never equals itself.
+    if (!count) return 0;
+    double* keys = llg_alloc_items(count, sizeof(*keys));
+    size_t* positions = llg_alloc_items(count, sizeof(*positions));
+    size_t* order = llg_alloc_items(count, 2 * sizeof(*order));
+    unsigned char* keep = llg_alloc_items(count, sizeof(*keep));
+    size_t known = 0;
+    // Branch-free compaction: every iteration stores, and a NaN slot is
+    // overwritten by the next known value. Conditional stores here made GCC
+    // -O2 report the keys as maybe-uninitialized at the sort call.
+    for (size_t index = 0; index < count; ++index) {
+        double value = data[index].value.real;
+        int is_nan = value != value;
+        keep[index] = (unsigned char)is_nan;
+        keys[known] = value;
+        positions[known] = index;
+        known += !is_nan;
+    }
+    (void)llg_real_sort_order(keys, known, 0, order);
+    for (size_t rank = 0; rank < known; ++rank)
+        if (rank == 0 || keys[order[rank]] != keys[order[rank - 1]])
+            keep[positions[order[rank]]] = 1;
+    for (size_t index = 0; index < count; ++index)
+        if (keep[index]) selected[chosen++] = index;
+    free(keep);
+    free(order);
+    free(positions);
+    free(keys);
+    return chosen;
+}
+
+void llg_real_method_assign_values(llg_queue_value_array_t* dst,
+                                   const llg_value_t* data, size_t count,
+                                   int method, llg_container_real_eval_fn eval,
+                                   void* context) {
+    if (!dst || llg_method_is_index(method))
+        llg_container_fatal("malformed real array-method result");
+    size_t* selected = llg_alloc_items(count ? count : 1, sizeof(*selected));
+    double* values = llg_alloc_items(count ? count : 1, sizeof(*values));
+    size_t chosen = llg_real_method_select(data, count, method, eval, context,
+                                           selected);
+    for (size_t index = 0; index < chosen; ++index)
+        values[index] = data[selected[index]].value.real;
+    llg_queue_value_assign_reals(dst, values, chosen);
+    free(values);
+    free(selected);
+}
+
+void llg_real_method_assign_indices(llg_queue_t* dst_indices,
+                                    const llg_value_t* data, size_t count,
+                                    int method, llg_container_real_eval_fn eval,
+                                    void* context) {
+    if (!dst_indices || !llg_method_is_index(method))
+        llg_container_fatal("malformed real array-method index result");
+    size_t* selected = llg_alloc_items(count ? count : 1, sizeof(*selected));
+    size_t chosen = llg_real_method_select(data, count, method, eval, context,
+                                           selected);
+    sv4_t* indices = llg_alloc_items(chosen ? chosen : 1, sizeof(*indices));
+    for (size_t index = 0; index < chosen; ++index)
+        indices[index] = sv4_from_u64((uint64_t)selected[index], 32, 1);
+    llg_queue_assign_values(dst_indices, indices, chosen);
+    sv4_destroy_array(indices, chosen);
+    free(indices);
+    free(selected);
+}

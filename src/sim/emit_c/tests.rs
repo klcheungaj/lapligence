@@ -198,6 +198,7 @@ fn runtime_width_limit_is_a_backend_policy_not_an_ir_invariant() {
             args: vec![expression],
             context: None,
             item: false,
+            real_item: false,
         };
         model.validate_pre_fn(&helper, None).unwrap();
         assert!(render_pre_fn(&ctx, &helper)
@@ -343,6 +344,7 @@ fn detached_fragments_reject_missing_storage_before_rendering() {
         args: vec![expression],
         context: None,
         item: false,
+        real_item: false,
     };
     assert!(matches!(
         render_pre_fn(&ctx, &helper),
@@ -550,6 +552,7 @@ fn evaluated_event_emits_owned_context_and_contextual_callback() {
             args: vec![callback_value],
             context: Some(context),
             item: false,
+            real_item: false,
         }],
         vec![IrStmt::WaitEvents {
             specs: vec![(

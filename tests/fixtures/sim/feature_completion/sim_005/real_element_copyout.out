@@ -1,0 +1,7 @@
+bump 0.50 0.25
+put 3eaaaaab
+twice 0.50
+after 0.50
+move 10.25 0.00 i 0
+invalid 0.50 0.50 0.25
+timed 1.75 wakes 1

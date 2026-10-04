@@ -63,11 +63,15 @@ impl<'a> Codegen<'a> {
                 "container method with-clause in `{path}` has no iterator binding"
             ));
         };
-        let Some((source_width, source_signed, _source_two_state)) =
-            self.model.containers[container].element.packed()
+        let real_item = self.model.containers[container].element.is_real();
+        let Some((source_width, source_signed, _source_two_state)) = self.model.containers
+            [container]
+            .element
+            .packed()
+            .or(real_item.then_some((0, false, false)))
         else {
             return Err(format!(
-                "container method with-clause in `{path}` requires a packed element type"
+                "container method with-clause in `{path}` requires a packed or real element type"
             ));
         };
         let (index_width, index_signed) = match self.model.containers[container].kind {
@@ -109,6 +113,7 @@ impl<'a> Codegen<'a> {
                 args: vec![value],
                 context: None,
                 item: true,
+                real_item,
             });
         Ok(Some((
             callback,
@@ -157,7 +162,41 @@ impl<'a> Codegen<'a> {
                 "array method `{name}` in `{path}` returns a queue and requires a queue destination"
             ));
         }
-        if !self.model.containers[source.ir].element.is_packed()
+        let real_source = self.model.containers[source.ir].element.is_real()
+            && !matches!(
+                self.model.containers[source.ir].kind,
+                IrContainerKind::Associative { .. }
+            );
+        if real_source {
+            let index_result = matches!(
+                method,
+                IrContainerMethod::FindIndex
+                    | IrContainerMethod::FindFirstIndex
+                    | IrContainerMethod::FindLastIndex
+                    | IrContainerMethod::UniqueIndex
+            );
+            let destination = &self.model.containers[dst].element;
+            if destination.is_packed() != index_result
+                || (!index_result && *destination != self.model.containers[source.ir].element)
+            {
+                return Err(format!(
+                    "array method `{name}` in `{path}` requires a queue of the result element type"
+                ));
+            }
+            if self.db.method_call_has_with_clause(rhs)
+                && matches!(
+                    method,
+                    IrContainerMethod::Min
+                        | IrContainerMethod::Max
+                        | IrContainerMethod::Unique
+                        | IrContainerMethod::UniqueIndex
+                )
+            {
+                return Err(format!(
+                    "array method `{name}` with a `with` clause over real elements in `{path}` is not supported"
+                ));
+            }
+        } else if !self.model.containers[source.ir].element.is_packed()
             || !self.model.containers[dst].element.is_packed()
         {
             return Err(format!(

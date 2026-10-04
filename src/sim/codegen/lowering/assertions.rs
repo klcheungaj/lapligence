@@ -1868,6 +1868,8 @@ pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
                 && sampled_compatible(width_expr)
         }
         IrExprKind::BitStreamCast { a, .. } => sampled_compatible(a),
+        IrExprKind::RealBin { a, b, .. } => sampled_compatible(a) && sampled_compatible(b),
+        IrExprKind::RealUn { a, .. } | IrExprKind::CastToReal { a, .. } => sampled_compatible(a),
         IrExprKind::SysFunc(function) => match &**function {
             crate::sim::ir::IrSysFunc::Sampled(call) => sampled_compatible(&call.argument),
             _ => false,
@@ -1918,4 +1920,36 @@ fn property_truth(value: IrExpr) -> IrExpr {
         false,
         None,
     )
+}
+
+/// Real signals read by a sampled expression (see [`sampled_compatible`]).
+pub(super) fn sampled_real_reads(
+    model: &IrModel,
+    expression: &IrExpr,
+    reads: &mut std::collections::BTreeSet<usize>,
+) {
+    match expression.kind() {
+        IrExprKind::SigRead(signal) => {
+            if matches!(model.signals[*signal].ty, IrType::Real { .. }) {
+                reads.insert(*signal);
+            }
+        }
+        IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
+            sampled_real_reads(model, a, reads);
+            sampled_real_reads(model, b, reads);
+        }
+        IrExprKind::Un { a, .. }
+        | IrExprKind::RealUn { a, .. }
+        | IrExprKind::CastToReal { a, .. }
+        | IrExprKind::CastToPacked { a }
+        | IrExprKind::Resize { a }
+        | IrExprKind::Convert { a }
+        | IrExprKind::ToTwoState { a } => sampled_real_reads(model, a, reads),
+        IrExprKind::Mux { sel, a, b } => {
+            sampled_real_reads(model, sel, reads);
+            sampled_real_reads(model, a, reads);
+            sampled_real_reads(model, b, reads);
+        }
+        _ => {}
+    }
 }

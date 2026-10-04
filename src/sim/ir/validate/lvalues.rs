@@ -202,6 +202,12 @@ impl Validator<'_> {
                 if *const_ref {
                     return self.fail(path, "const reference cannot be an assignment target");
                 }
+                if *width == 0 {
+                    if bit.is_some() || real_ref_formal(formals, addr).is_none() {
+                        return self.fail(path, "real reference target requires a real ref formal");
+                    }
+                    return Ok(());
+                }
                 self.validate_width(*width, path)?;
                 if let Some(index) = bit {
                     if *width != 1 || *signed {
@@ -286,4 +292,12 @@ impl Validator<'_> {
         }
         Ok(())
     }
+}
+
+/// The real `ref` formal a typed reference address (`rN`) names, if any.
+pub(super) fn real_ref_formal<'f>(formals: &'f [IrFormal], addr: &str) -> Option<&'f IrFormal> {
+    let index: usize = addr.strip_prefix('r')?.parse().ok()?;
+    formals
+        .get(index)
+        .filter(|formal| formal.is_ref() && formal.real)
 }

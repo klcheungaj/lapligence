@@ -636,6 +636,11 @@ pub enum IrSampledFunc {
     Stable,
     Changed,
     Past,
+    /// `$stable`/`$changed` of a real argument: the domain history holds the
+    /// argument's exact 64-bit IEEE image and the two samples compare as
+    /// reals with `==` (so -0.0 equals 0.0 and NaN never equals itself).
+    RealStable,
+    RealChanged,
 }
 
 /// One sampled-value call. `ticks` is meaningful only for [`IrSampledFunc::Past`].

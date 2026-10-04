@@ -555,6 +555,36 @@ sv4_t llg_queue_reduce_with(const llg_queue_t* queue, int operation,
 void llg_queue_method_assign(llg_queue_t* dst, const llg_queue_t* src,
                              int method, llg_container_eval_fn eval,
                              void* context);
+/* Stable order of real keys, ascending or (when `descending`) descending:
+ * on return order[i] names the original position whose key belongs at i.
+ * `order` holds 2 * count entries (the upper half is merge scratch). NaN keys
+ * are unordered and keep their positions; the keys between them sort
+ * independently, like unknown packed keys. Returns whether any key moves. */
+int llg_real_sort_order(const double* keys, size_t count, int descending,
+                        size_t* order);
+/* In-place sort/rsort/reverse/shuffle of a resizable container whose
+ * elements are real/shortreal values (LLG_CONTAINER_METHOD_*). Values are
+ * compared numerically, never as bit patterns. */
+void llg_dyn_value_method(llg_dyn_value_array_t* array, int method);
+/* `with` evaluator over a real iterator item; `out` receives the packed
+ * truth of the clause. `context` is borrowed for the callback. */
+typedef void (*llg_container_real_eval_fn)(sv4_t* out, double item,
+                                           sv4_t index, void* context);
+/* Queue-valued locator methods over `count` real elements (find*, min, max,
+ * unique). Value results replace the real queue `dst`; the *_index forms
+ * replace the integral queue `dst_indices`. find* select items whose clause
+ * is known true; min/max/unique compare values numerically without a clause
+ * (NaN is unordered: it is skipped by min/max unless every element is NaN,
+ * and every NaN is unique). The source elements are borrowed. */
+void llg_real_method_assign_values(llg_queue_value_array_t* dst,
+                                   const llg_value_t* data, size_t count,
+                                   int method, llg_container_real_eval_fn eval,
+                                   void* context);
+void llg_real_method_assign_indices(llg_queue_t* dst_indices,
+                                    const llg_value_t* data, size_t count,
+                                    int method, llg_container_real_eval_fn eval,
+                                    void* context);
+void llg_queue_value_method(llg_queue_value_array_t* queue, int method);
 void llg_queue_method(llg_queue_t* queue, int method,
                       llg_container_eval_fn eval, void* context);
 /* Retain an element independently of queue membership. Acquisitions of the

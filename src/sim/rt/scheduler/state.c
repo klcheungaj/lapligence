@@ -94,6 +94,14 @@ typedef struct llg_sampled_value {
     struct llg_sampled_history* history;
 } llg_sampled_value_t;
 
+/* Preponed snapshot of one real variable; the value is numeric, never a
+ * packed bit image. */
+typedef struct llg_sampled_real {
+    struct llg_sampled_real* next;
+    double* signal;
+    double value;
+} llg_sampled_real_t;
+
 typedef struct llg_sampled_history {
     struct llg_sampled_history* next;
     uint64_t time;
@@ -352,6 +360,7 @@ typedef struct {
     uint64_t callback_sequence;
     llg_region_callback_t* callbacks; // sorted by time, region, issue order
     llg_sampled_value_t* sampled;
+    llg_sampled_real_t* sampled_reals;
     llg_sampled_domain_t* sampled_domains;
     uint64_t sampled_domain_sequence;
     llg_clocking_edge_t* clocking_edges;

@@ -642,8 +642,9 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
         }
         IrInitStep::RegisterSampled(index) => {
             let signal = model.signal(*index);
-            if signal.ty.width() == 0 {
-                return Err(pending("real-valued sampling registrations"));
+            if matches!(signal.ty, IrType::Real { .. }) {
+                frame.line(format!("llg_sampled_register_real(&{});", signal.c_name));
+                return Ok(());
             }
             frame.line(format!(
                 "llg_sampled_register({});",

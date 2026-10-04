@@ -1588,6 +1588,10 @@ int llg_cancel_region_callback(llg_region_callback_id_t id);
 void llg_sampled_register(sv4_t* signal);
 const sv4_t* llg_sampled_value(const sv4_t* signal);
 int llg_sampled_copy(const sv4_t* signal, sv4_t* out);
+// Real variables keep their own numeric Preponed snapshot. Reading an
+// unregistered real reports the same controlled diagnostic and yields 0.0.
+void llg_sampled_register_real(double* signal);
+double llg_sampled_real(const double* signal);
 /// One explicit sampled clock/history domain. The callback is evaluated at a
 /// matching clock edge using the immutable Preponed signal snapshots.
 typedef sv4_t (*llg_sampled_domain_eval_fn)(void* data);
@@ -1595,7 +1599,8 @@ int llg_sampled_domain_register(uint64_t identity, sv4_t* clock, int edge,
                                 llg_sampled_domain_eval_fn value,
                                 llg_sampled_domain_eval_fn gate, void* data);
 sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks);
-/// `kind`: 0 rose, 1 fell, 2 stable, 3 changed.
+/// `kind`: 0 rose, 1 fell, 2 stable, 3 changed; 4 stable and 5 changed
+/// compare 64-bit real images numerically (`==` on the decoded reals).
 int llg_sampled_domain_status(uint64_t identity, int kind);
 // Clocking input copies. Observed copies are queued into the current time
 // slot's observed region; history copies read the preponed sample at or before
@@ -1701,6 +1706,12 @@ void llg_ref_nba_masked(llg_ref_t* ref, sv4_t value, sv4_t mask, uint64_t ticks)
 void llg_ref_write_bit(llg_ref_t* ref, uint64_t index, sv4_t value);
 void llg_nba_d(double* target, double value);
 void llg_ba_d(double* target, double value);
+// Reorder `count` elements of `element_cells` contiguous real cells in place
+// (LLG_CONTAINER_METHOD_REVERSE/SORT/RSORT; sorting needs one-cell elements).
+// Keys compare numerically and NaN keys keep their positions. The new order is
+// snapshotted first, then every cell publishes through llg_ba_d.
+void llg_real_cells_order(double* cells, uint64_t count, uint64_t element_cells,
+                          int method);
 
 // Procedural continuous assignments. Each generated assignment site has a
 // stable identity; executing a new site replaces the target's active binding.

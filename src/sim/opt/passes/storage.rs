@@ -712,6 +712,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         IrStmt::FixedArrayOrder(order) => {
             order.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
+        IrStmt::RealArrayOrder(order) => {
+            order.expressions(&mut |child| collect_expr_reads(child, model, rw))
+        }
         IrStmt::FixedValueAssign { dst, src, .. } => {
             src.expressions(&mut |child| collect_expr_reads(child, model, rw));
             // Descriptor operand calls can write through address formals.
@@ -771,7 +774,9 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
                     leaf.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
                 }
             }
-            IrCallArg::NativeCall { call, .. } => collect_call_rw(call, model, rw),
+            IrCallArg::NativeCall { call, .. } | IrCallArg::RealArrayCall { call, .. } => {
+                collect_call_rw(call, model, rw)
+            }
             IrCallArg::OutAddr(addr) => {
                 // `&G_sig` / `G_sig`: a passed output/inout actual both reads
                 // and writes its target (function-scope names never match).
@@ -832,8 +837,14 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
                     read.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
                 }
             }
+            IrCallArg::RealArrayValues(values) => {
+                for value in values {
+                    collect_expr_reads(value, model, rw);
+                }
+            }
             IrCallArg::ChandleVal(_)
             | IrCallArg::FixedArray(_)
+            | IrCallArg::RealArray(_)
             | IrCallArg::NativeValue(_)
             | IrCallArg::EventVal(_)
             | IrCallArg::ChandleAddr(_)
@@ -1261,7 +1272,7 @@ fn collect_call_rw_readonly(function: usize, args: &[IrCallArg], model: &IrModel
                     leaf.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
                 }
             }
-            IrCallArg::NativeCall { call, .. } => {
+            IrCallArg::NativeCall { call, .. } | IrCallArg::RealArrayCall { call, .. } => {
                 collect_call_rw_readonly(call.function_index(), &call.args, model, rw)
             }
             IrCallArg::OutAddr(addr) => {
@@ -1316,8 +1327,14 @@ fn collect_call_rw_readonly(function: usize, args: &[IrCallArg], model: &IrModel
                     read.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
                 }
             }
+            IrCallArg::RealArrayValues(values) => {
+                for value in values {
+                    collect_expr_reads(value, model, rw);
+                }
+            }
             IrCallArg::ChandleVal(_)
             | IrCallArg::FixedArray(_)
+            | IrCallArg::RealArray(_)
             | IrCallArg::NativeValue(_)
             | IrCallArg::EventVal(_)
             | IrCallArg::ChandleAddr(_)

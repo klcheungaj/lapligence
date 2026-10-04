@@ -138,6 +138,9 @@ fn ident_children(e: &mut IrExpr) {
                 match arg {
                     IrCallArg::FixedValue(value) => value.expressions_mut(&mut ident_expr),
                     IrCallArg::Val(ex) => ident_expr(ex),
+                    IrCallArg::RealArrayValues(values) => {
+                        values.iter_mut().for_each(&mut ident_expr)
+                    }
                     IrCallArg::StringVal(value) => {
                         value.expressions_mut(&mut |child| ident_expr(child));
                     }
@@ -146,7 +149,7 @@ fn ident_children(e: &mut IrExpr) {
                             leaf.expressions_mut(&mut |child| ident_expr(child));
                         }
                     }
-                    IrCallArg::NativeCall { .. } => {
+                    IrCallArg::NativeCall { .. } | IrCallArg::RealArrayCall { .. } => {
                         arg.expressions_mut(&mut |child| ident_expr(child));
                     }
                     IrCallArg::OutTemp {
@@ -176,6 +179,7 @@ fn ident_children(e: &mut IrExpr) {
                     | IrCallArg::StringRefAddr { .. }
                     | IrCallArg::ChandleVal(_)
                     | IrCallArg::FixedArray(_)
+                    | IrCallArg::RealArray(_)
                     | IrCallArg::NativeValue(_)
                     | IrCallArg::EventVal(_)
                     | IrCallArg::ChandleAddr(_)

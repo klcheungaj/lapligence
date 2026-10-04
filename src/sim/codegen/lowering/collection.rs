@@ -45,6 +45,7 @@ pub(super) use packed_elements::Select;
 mod port_net_types;
 mod ports;
 mod processes;
+mod real_arrays;
 mod return_flow;
 mod signatures;
 mod strength_views;

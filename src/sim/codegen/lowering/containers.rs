@@ -19,6 +19,7 @@ mod initialization;
 mod methods;
 mod patterns;
 mod queries;
+mod real_array_values;
 mod selects;
 mod streaming;
 

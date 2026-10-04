@@ -25,6 +25,10 @@ pub struct IrFormal {
     /// Descriptor-backed native value bound to this formal in the callee
     /// (`llg_value_t*`); index into [`super::IrModel::native_values`].
     pub(in crate::sim) native_value: Option<usize>,
+    /// Real fixed-array storage bound to this formal in the callee (a
+    /// `double*` C parameter); index into [`super::IrModel::arrays`]. Real
+    /// arrays keep numeric cells and never use the packed fixed-value ABI.
+    pub(in crate::sim) real_array: Option<usize>,
     pub(in crate::sim) fixed_shape: Option<IrContainerElement>,
     /// Default fixed payload, preserving each unpacked leaf's state domain.
     pub(in crate::sim) fixed_default: Option<IrConst>,
@@ -92,6 +96,7 @@ impl IrFormal {
             ref_static: false,
             fixed_array: None,
             native_value: None,
+            real_array: None,
             fixed_shape: None,
             fixed_default: None,
             width,
@@ -116,6 +121,9 @@ impl IrFormal {
     }
     pub fn native_value(&self) -> Option<usize> {
         self.native_value
+    }
+    pub fn real_array(&self) -> Option<usize> {
+        self.real_array
     }
     pub fn is_const_ref(&self) -> bool {
         self.is_ref() && self.const_ref

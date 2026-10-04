@@ -176,7 +176,77 @@ impl Validator<'_> {
             {
                 return self.fail(&arg_path, "native-value formal and operand must match");
             }
+            if formal.real_array.is_some()
+                != matches!(
+                    arg,
+                    IrCallArg::RealArray(_)
+                        | IrCallArg::RealArrayValues(_)
+                        | IrCallArg::RealArrayCall { .. }
+                )
+            {
+                return self.fail(&arg_path, "real-array formal and operand must match");
+            }
             match arg {
+                IrCallArg::RealArray(array) => {
+                    self.validate_fixed_activation(*array, &arg_path)?;
+                    let expected = formal
+                        .real_array
+                        .and_then(|array| self.model.arrays.get(array));
+                    let actual = self.model.arrays.get(*array);
+                    if !actual.zip(expected).is_some_and(|(actual, expected)| {
+                        actual.real
+                            && expected.real
+                            && actual.shortreal == expected.shortreal
+                            && actual.total == expected.total
+                    }) {
+                        return self.fail(&arg_path, "real-array operand shape mismatch");
+                    }
+                }
+                IrCallArg::RealArrayCall { array, call } => {
+                    let expected = formal
+                        .real_array
+                        .and_then(|array| self.model.arrays.get(array));
+                    let result = self.model.arrays.get(*array);
+                    if formal.is_address()
+                        || !result.zip(expected).is_some_and(|(result, expected)| {
+                            result.real
+                                && result.activation
+                                && result.shortreal == expected.shortreal
+                                && result.total == expected.total
+                        })
+                        || !call.args.iter().any(
+                            |argument| matches!(argument, IrCallArg::RealArray(index) if index == array),
+                        )
+                    {
+                        return self.fail(&arg_path, "real-array call operand requires an owned result");
+                    }
+                    self.fixed_activations
+                        .borrow_mut()
+                        .push(HashSet::from([*array]));
+                    let valid = self.validate_stmt(&IrStmt::Call(call.clone()), formals, &arg_path);
+                    self.fixed_activations.borrow_mut().pop();
+                    valid?;
+                }
+                IrCallArg::RealArrayValues(values) => {
+                    let expected = formal
+                        .real_array
+                        .and_then(|array| self.model.arrays.get(array));
+                    if formal.is_address()
+                        || expected.is_none_or(|expected| expected.total != values.len() as u64)
+                    {
+                        return self.fail(
+                            &arg_path,
+                            "real-array values require an input formal of the same size",
+                        );
+                    }
+                    for (index, value) in values.iter().enumerate() {
+                        let path = format!("{arg_path}.values[{index}]");
+                        self.validate_expr(value, formals, &path)?;
+                        if !value.is_real() {
+                            return self.fail(path, "real-array element value must be real");
+                        }
+                    }
+                }
                 IrCallArg::NativeCall { value, call } => {
                     let expected = formal
                         .native_value
@@ -357,6 +427,12 @@ impl Validator<'_> {
                         return self
                             .fail(arg_path, "output/inout formal requires an output address");
                     }
+                    if formal.real {
+                        self.validate_real_ref_actual(
+                            lhs, read, *width, *const_ref, formal, formals, &arg_path,
+                        )?;
+                        continue;
+                    }
                     if addr.is_empty() {
                         return self.fail(arg_path, "reference address must not be empty");
                     }
@@ -447,6 +523,67 @@ impl Validator<'_> {
             }
         }
         Ok(())
+    }
+
+    /// A real reference operand names one real storage cell: a real signal,
+    /// real local/formal storage, a whole real array element, or a forwarded
+    /// real reference formal of the enclosing function.
+    #[allow(clippy::too_many_arguments)]
+    fn validate_real_ref_actual(
+        &self,
+        lhs: &IrLhs,
+        read: &IrExpr,
+        width: u32,
+        const_ref: bool,
+        formal: &IrFormal,
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
+        if width != 0 || !read.is_real() {
+            return self.fail(path, "real reference operand must carry a real value");
+        }
+        if const_ref && !formal.const_ref {
+            return self.fail(path, "const reference cannot bind to a writable ref formal");
+        }
+        let real_storage = match lhs {
+            IrLhs::Whole(signal) => self
+                .model
+                .signals
+                .get(*signal)
+                .is_some_and(|signal| matches!(signal.ty, IrType::Real { .. })),
+            IrLhs::WholeRef { width: 0, .. } => true,
+            IrLhs::ArrayElem {
+                arr,
+                elem_sel: IrElemSel::Whole,
+                ..
+            } => self.model.arrays.get(*arr).is_some_and(|array| array.real),
+            IrLhs::Ref {
+                addr,
+                width: 0,
+                bit: None,
+                const_ref: actual_const,
+                ..
+            } => {
+                if *actual_const && !formal.const_ref {
+                    return self.fail(path, "const reference cannot bind to a writable ref formal");
+                }
+                // A const real reference is not an assignment target, so it is
+                // checked here rather than through `validate_lhs`.
+                return match super::lvalues::real_ref_formal(formals, addr) {
+                    Some(_) => self.validate_expr(read, formals, &format!("{path}.read")),
+                    None => self.fail(path, "forwarded real reference names no real ref formal"),
+                };
+            }
+            _ => false,
+        };
+        if !real_storage {
+            return self.fail(
+                path,
+                "real reference operand requires real variable storage",
+            );
+        }
+        self.validate_lhs(lhs, formals, &format!("{path}.lhs"))?;
+        self.validate_expr(read, formals, &format!("{path}.read"))
     }
 
     fn validate_ref_actual_lhs(

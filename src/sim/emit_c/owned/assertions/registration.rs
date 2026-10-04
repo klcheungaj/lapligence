@@ -19,6 +19,11 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
                     "    llg_sampled_register(&{});\n",
                     signal_name(model, index)
                 ));
+            } else if !signal.omit && matches!(signal.ty, IrType::Real { .. }) {
+                out.push_str(&format!(
+                    "    llg_sampled_register_real(&{});\n",
+                    signal.c_name
+                ));
             }
         }
     }
