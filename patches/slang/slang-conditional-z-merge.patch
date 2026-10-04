@@ -1,7 +1,166 @@
 diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/expressions/OperatorExpressions.cpp
 --- a/source/ast/expressions/OperatorExpressions.cpp
 +++ b/source/ast/expressions/OperatorExpressions.cpp
-@@ -1633,14 +1633,30 @@
+@@ -12,6 +12,7 @@
+ #include "slang/ast/Compilation.h"
+ #include "slang/ast/EvalContext.h"
+ #include "slang/ast/Patterns.h"
++#include "slang/ast/expressions/CallExpression.h"
+ #include "slang/ast/expressions/ConversionExpression.h"
+ #include "slang/ast/expressions/MiscExpressions.h"
+ #include "slang/ast/statements/ConditionalStatements.h"
+@@ -215,7 +216,8 @@
+ 
+ Expression& UnaryExpression::fromSyntax(Compilation& compilation,
+                                         const PrefixUnaryExpressionSyntax& syntax,
+-                                        const ASTContext& context) {
++                                        const ASTContext& context,
++                                        const Type* assignmentTarget) {
+     auto op = OpInfo::getUnary(syntax.kind);
+     bitmask<ASTFlags> extraFlags;
+     if (OpInfo::isLValue(op))
+@@ -289,6 +291,26 @@
+     }
+ 
+     if (!good) {
++        // IEEE 1800-2009 11.11: overloads apply only where the built-in operator is illegal.
++        Expression* overloaded = nullptr;
++        if (syntax.kind == SyntaxKind::UnaryPlusExpression ||
++            syntax.kind == SyntaxKind::UnaryMinusExpression) {
++            Expression* operands[] = {&operand};
++            overloaded = CallExpression::tryOverloadedOperator(context, syntax.operatorToken.kind,
++                                                               operands, assignmentTarget,
++                                                               syntax.sourceRange(),
++                                                               syntax.operatorToken.range());
++        }
++        else if (syntax.kind == SyntaxKind::UnaryPreincrementExpression ||
++                 syntax.kind == SyntaxKind::UnaryPredecrementExpression) {
++            overloaded = CallExpression::tryOverloadedIncDec(context, syntax.operatorToken.kind,
++                                                             /* isPostfix */ false, operand,
++                                                             syntax.sourceRange(),
++                                                             syntax.operatorToken.range());
++        }
++        if (overloaded)
++            return *overloaded;
++
+         auto& diag = context.addDiag(diag::BadUnaryExpression, syntax.operatorToken.location());
+         diag << *type;
+         diag << operand.sourceRange;
+@@ -321,6 +343,13 @@
+     }
+ 
+     if (!type->isNumeric()) {
++        // IEEE 1800-2009 11.11: overloads apply only where the built-in operator is illegal.
++        if (auto overloaded = CallExpression::tryOverloadedIncDec(
++                context, syntax.operatorToken.kind, /* isPostfix */ true, operand,
++                syntax.sourceRange(), syntax.operatorToken.range())) {
++            return *overloaded;
++        }
++
+         auto& diag = context.addDiag(diag::BadUnaryExpression, syntax.operatorToken.location());
+         diag << *type;
+         diag << operand.sourceRange;
+@@ -511,7 +540,8 @@
+ 
+ Expression& BinaryExpression::fromSyntax(Compilation& compilation,
+                                          const BinaryExpressionSyntax& syntax,
+-                                         const ASTContext& context) {
++                                         const ASTContext& context,
++                                         const Type* assignmentTarget) {
+     // If we are allowed unbounded literals here, pass that along to subexpressions.
+     bitmask<ASTFlags> flags = ASTFlags::None;
+     if (context.flags.has(ASTFlags::AllowUnboundedLiteral) &&
+@@ -584,7 +614,7 @@
+     }
+ 
+     auto& result = fromComponents(*lhs, *rhs, op, syntax.operatorToken.range(),
+-                                  syntax.sourceRange(), context);
++                                  syntax.sourceRange(), context, assignmentTarget);
+     context.setAttributes(result, syntax.attributes);
+ 
+     return result;
+@@ -718,9 +748,43 @@
+     }
+ }
+ 
++// The overload_operator token for binary operators that IEEE 1800-2009 11.11
++// allows to be overloaded.
++static std::optional<TokenKind> overloadOperatorToken(BinaryOperator op) {
++    switch (op) {
++        case BinaryOperator::Add:
++            return TokenKind::Plus;
++        case BinaryOperator::Subtract:
++            return TokenKind::Minus;
++        case BinaryOperator::Multiply:
++            return TokenKind::Star;
++        case BinaryOperator::Divide:
++            return TokenKind::Slash;
++        case BinaryOperator::Mod:
++            return TokenKind::Percent;
++        case BinaryOperator::Power:
++            return TokenKind::DoubleStar;
++        case BinaryOperator::Equality:
++            return TokenKind::DoubleEquals;
++        case BinaryOperator::Inequality:
++            return TokenKind::ExclamationEquals;
++        case BinaryOperator::LessThan:
++            return TokenKind::LessThan;
++        case BinaryOperator::LessThanEqual:
++            return TokenKind::LessThanEquals;
++        case BinaryOperator::GreaterThan:
++            return TokenKind::GreaterThan;
++        case BinaryOperator::GreaterThanEqual:
++            return TokenKind::GreaterThanEquals;
++        default:
++            return std::nullopt;
++    }
++}
++
+ Expression& BinaryExpression::fromComponents(Expression& lhs, Expression& rhs, BinaryOperator op,
+                                              SourceRange opRange, SourceRange sourceRange,
+-                                             const ASTContext& context) {
++                                             const ASTContext& context,
++                                             const Type* assignmentTarget) {
+     auto& compilation = context.getCompilation();
+     const Type* lt = lhs.type;
+     const Type* rt = rhs.type;
+@@ -827,11 +891,14 @@
+             result->type = singleBitType(compilation, lt, rt);
+ 
+             // Result type is fixed but the two operands affect each other as they would in
+-            // other context-determined operators.
+-            auto nt = (good && !bothNumeric) ? &compilation.getStringType()
+-                                             : OpInfo::binaryType(compilation, lt, rt, false);
+-            contextDetermined(context, result->left_, result, *nt, opRange);
+-            contextDetermined(context, result->right_, result, *nt, opRange);
++            // other context-determined operators. Illegal operands are left untouched so an
++            // operator overload can still receive them.
++            if (good) {
++                auto nt = !bothNumeric ? &compilation.getStringType()
++                                       : OpInfo::binaryType(compilation, lt, rt, false);
++                contextDetermined(context, result->left_, result, *nt, opRange);
++                contextDetermined(context, result->right_, result, *nt, opRange);
++            }
+             break;
+         }
+         case BinaryOperator::LogicalAnd:
+@@ -946,6 +1013,15 @@
+     }
+ 
+     if (!good) {
++        // IEEE 1800-2009 11.11: overloads apply only where the built-in operator is illegal.
++        if (auto overloadOp = overloadOperatorToken(op)) {
++            Expression* operands[] = {&lhs, &rhs};
++            if (auto overloaded = CallExpression::tryOverloadedOperator(
++                    context, *overloadOp, operands, assignmentTarget, sourceRange, opRange)) {
++                return *overloaded;
++            }
++        }
++
+         auto& diag = context.addDiag(diag::BadBinaryExpression, opRange);
+         diag << *lt << *rt;
+         diag << lhs.sourceRange;
+@@ -1633,14 +1709,30 @@
  
      // When the conditional predicate is unknown, there are rules to combine both sides
      // and return the hybrid result.
@@ -35,11 +194,10 @@ diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/express
  
          auto combineArrays = [&](auto& result, auto& la, auto& ra) -> ConstantValue {
              ConstantValue defaultElement = type->getArrayElementType()->getDefaultValue();
-@@ -1670,6 +1686,25 @@
-             if (la.size() == ra.size() && type->isArray()) {
+@@ -1671,6 +1763,25 @@
                  std::vector<ConstantValue> result(la.size());
                  return combineArrays(result, la, ra);
-+            }
+             }
 +            if (la.size() == ra.size() &&
 +                type->getCanonicalType().kind == SymbolKind::UnpackedStructType) {
 +                const auto& fields = type->getCanonicalType().as<UnpackedStructType>().fields;
@@ -58,9 +216,10 @@ diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/express
 +                                        fields[i]->getType().getDefaultValue());
 +                }
 +                return result;
-             }
++            }
          }
          else if (cvl.isQueue()) {
+             auto& la = *cvl.queue();
 diff --git a/tests/unittests/ast/ExpressionTests.cpp b/tests/unittests/ast/ExpressionTests.cpp
 --- a/tests/unittests/ast/ExpressionTests.cpp
 +++ b/tests/unittests/ast/ExpressionTests.cpp

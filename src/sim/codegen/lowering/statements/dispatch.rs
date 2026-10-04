@@ -131,6 +131,9 @@ impl EmitCtx<'_, '_> {
                         }
                         continue;
                     }
+                    if crate::sim::semantic::is_declaration_only_member(self.cg.db, *s) {
+                        continue;
+                    }
                     body.extend(self.lower_stmt(*s)?);
                 }
                 if named {

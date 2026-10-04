@@ -260,6 +260,7 @@ impl<'a> Codegen<'a> {
             let output_width = widths[*out_pos];
 
             let mut lhs = raw_lhs.clone();
+            let mut structural_terminal = None;
             let alias_bindings = self.alias_lvalue_bindings(g, terms[*out_pos].expr)?;
             let mut alias_terminals = HashMap::new();
             if let Some(bindings) = &alias_bindings {
@@ -330,6 +331,7 @@ impl<'a> Codegen<'a> {
                     self.add_structural_driver_for_terminal(group, g, driver_strengths, terminal)?;
                 }
                 lhs = self.remap_structural_lhs_for_terminal(lhs, g, terminal);
+                structural_terminal = Some((group, terminal));
                 if let Some(unmapped) =
                     self.unmapped_structural_group_for_terminal(&raw_lhs, g, terminal)
                 {
@@ -363,12 +365,19 @@ impl<'a> Codegen<'a> {
                     input_values.push(expr);
                 }
             }
+            let mut enable_halves = None;
             let value = match op {
                 GateOp::Pull(ones) => const_bits_expr(output_width, ones),
-                GateOp::Copy => input_values
-                    .into_iter()
-                    .next()
-                    .expect("buf/not shape checked"),
+                // IEEE 1364-2001 Table 34: `buf` outputs x for a z input, so a
+                // Z data bit must not pass through as an absent contribution.
+                // `data | data` normalizes Z to X like the enable gates below.
+                GateOp::Copy => {
+                    let data = input_values
+                        .into_iter()
+                        .next()
+                        .expect("buf/not shape checked");
+                    bin_expr(IrBinOp::BitOr, data.clone(), data)
+                }
                 GateOp::Not => bitneg_full_width(
                     input_values
                         .into_iter()
@@ -419,18 +428,40 @@ impl<'a> Codegen<'a> {
                     } else {
                         data
                     };
-                    let z = const_z_expr(output_width);
-                    let (a, b) = if active_high { (data, z) } else { (z, data) };
-                    IrExpr::new(
-                        IrExprKind::Mux {
-                            sel: Box::new(en),
-                            a: Box::new(a),
-                            b: Box::new(b),
-                        },
-                        output_width,
-                        false,
-                        None,
-                    )
+                    let enable_mux = |data: IrExpr, off: IrExpr| {
+                        let (a, b) = if active_high {
+                            (data, off)
+                        } else {
+                            (off, data)
+                        };
+                        IrExpr::new(
+                            IrExprKind::Mux {
+                                sel: Box::new(en.clone()),
+                                a: Box::new(a),
+                                b: Box::new(b),
+                            },
+                            output_width,
+                            false,
+                            None,
+                        )
+                    };
+                    // An unknown enable gives L (0 or Z) or H (1 or Z), not X
+                    // (IEEE 1364-2001 7.4 and 7.10.2). Without a gate delay,
+                    // split the output into a strength0-only and a
+                    // strength1-only contribution: the disabled arm drives the
+                    // value that slot cannot carry, so an unknown enable
+                    // merges a known data bit into one-sided X. Delayed gates
+                    // keep one slot so each transition retains its single
+                    // rise/fall/turn-off delay.
+                    if scaled_delay.is_none()
+                        && (alias_bindings.is_some() || structural_terminal.is_some())
+                    {
+                        enable_halves = Some((
+                            enable_mux(data.clone(), const_bits_expr(output_width, true)),
+                            enable_mux(data.clone(), const_bits_expr(output_width, false)),
+                        ));
+                    }
+                    enable_mux(data, const_z_expr(output_width))
                 }
                 GateOp::Udp => udp_value(
                     &mut self.model,
@@ -440,7 +471,32 @@ impl<'a> Codegen<'a> {
                     &input_values,
                 )?,
             };
-            let mut body = if let Some(bindings) = alias_bindings {
+            let mut body = if let (Some(bindings), Some((zero_side, one_side))) =
+                (&alias_bindings, &enable_halves)
+            {
+                let mut groups = bindings
+                    .iter()
+                    .map(|(binding, _)| binding.group())
+                    .collect::<Vec<_>>();
+                groups.sort_unstable();
+                groups.dedup();
+                for group in groups {
+                    self.split_enable_driver(g, group, driver_strengths)?;
+                }
+                let mut body = Vec::new();
+                for (side, terminal) in [(zero_side, 0), (one_side, ENABLE_ONE_SIDE_TERMINAL)] {
+                    for (driver, rhs) in
+                        self.alias_driver_assignments(g, bindings, side, |_| terminal)?
+                    {
+                        body.push(IrStmt::Assign {
+                            lhs: IrLhs::Whole(driver),
+                            rhs,
+                            nba: false,
+                        });
+                    }
+                }
+                body
+            } else if let Some(bindings) = alias_bindings {
                 let value_name = format!("_alias_gate_value_{}_{}", g.index(), output_ordinal);
                 let value_read = IrExpr::new(
                     IrExprKind::LocalRead(value_name.clone()),
@@ -486,6 +542,24 @@ impl<'a> Codegen<'a> {
                     rhs: value,
                     delay,
                 }]
+            } else if let (Some((group, 0)), Some((zero_side, one_side))) =
+                (structural_terminal, enable_halves)
+            {
+                self.split_enable_driver(g, group, driver_strengths)?;
+                let one_lhs =
+                    self.remap_structural_lhs_for_terminal(raw_lhs, g, ENABLE_ONE_SIDE_TERMINAL);
+                vec![
+                    IrStmt::Assign {
+                        lhs,
+                        rhs: zero_side,
+                        nba: false,
+                    },
+                    IrStmt::Assign {
+                        lhs: one_lhs,
+                        rhs: one_side,
+                        nba: false,
+                    },
+                ]
             } else {
                 vec![IrStmt::Assign {
                     lhs,
@@ -517,7 +591,34 @@ impl<'a> Codegen<'a> {
         }
         Ok(())
     }
+
+    /// Give an undelayed enable gate a second driver slot in `group`: the
+    /// primary slot keeps only strength0 and the new slot only strength1.
+    fn split_enable_driver(
+        &mut self,
+        gate: NodeId,
+        group: usize,
+        (strength0, strength1): (u8, u8),
+    ) -> Result<(), String> {
+        let primary = self
+            .structural_driver_signal(gate, group)
+            .and_then(|signal| self.model.signals.get(signal))
+            .and_then(|signal| signal.net_driver)
+            .ok_or_else(|| "enable gate has no primary structural driver".to_owned())?;
+        self.model.net_groups[primary.0].driver_strengths[primary.1] = (strength0, 0);
+        self.add_structural_driver_for_terminal(
+            group,
+            gate,
+            (0, strength1),
+            ENABLE_ONE_SIDE_TERMINAL,
+        )?;
+        Ok(())
+    }
 }
+
+/// Terminal key of the strength1-only slot of a split enable gate. Enable
+/// gates have one output, which always uses terminal 0.
+const ENABLE_ONE_SIDE_TERMINAL: usize = 1;
 
 /// Retain the definition once and evaluate its rows against captured scalar inputs.
 fn udp_value(model: &mut IrModel, table: &UdpTable, inputs: &[IrExpr]) -> Result<IrExpr, String> {

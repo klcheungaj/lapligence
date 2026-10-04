@@ -1,0 +1,40 @@
+add 127
+add2 -6
+sub -128
+sub2 125
+mul -128
+mul2 9
+div 42
+div2 127
+div0 127
+mod -2
+mod2 1
+pow -27
+pow2 -128
+neg 127
+neg2 3
+pos -3
+nest 0
+addi 120
+addi2 109
+rel 0 1 1 0
+eqi 1 0 1
+inc 126
+inc2 127
+dec -128
+arr 3 4
+comp 110
+comp2 113
+comp3 -113
+comp4 37
+comp5 1
+comp6 6
+init 100
+real 3
+real2 -128
+intx 15
+big 5
+cast 127
+arg 127
+ret -5
+loop 10 100

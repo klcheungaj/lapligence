@@ -135,6 +135,11 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
                     format!("{}__overlap_scratch", g.c_name),
                 )
             };
+        let strength_view = g
+            .strength_view
+            .and_then(|view| model.signals.get(view))
+            .filter(|signal| !signal.omit)
+            .map_or_else(|| "NULL".to_owned(), |signal| format!("&{}", signal.c_name));
         out.push_str(&format!(
             "static llg_net_t {} = {{ .resolved = {resolved_init}, .width = {}, \
              .is_signed = {}, .resolution = {}, .n_drivers = {}, \
@@ -143,7 +148,8 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
              .overlap_scratch = {scratch_ptr}, .index_root = -1, \
              .propagation_enabled = {}, .propagation = NULL, \
              .propagation_rise = {}, .propagation_fall = {}, \
-             .propagation_turn_off = {}, .aliases = NULL }};\n",
+             .propagation_turn_off = {}, .aliases = NULL, \
+             .strength = {strength_view} }};\n",
             g.c_name,
             g.width,
             g.signed as u8,

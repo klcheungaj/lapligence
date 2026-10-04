@@ -81,9 +81,11 @@ fn delayed_driver_updates_preserve_strength_and_release_semantics() {
 
 #[test]
 fn separate_transition_delays_select_rise_fall_and_turn_off() {
+    // At t19 the multi-output `buf` keeps x: a z input drives x (IEEE
+    // 1364-2001 Table 34), so there is no turn-off transition.
     run_case(
         "inertial_transition_delays",
-        "t6 0 00 zz00 0000 zz00\nt9 1 11 zz11 1111 zz11\nt12 x xx zzxx xxxx zzxx\nt19 z zz zzxx zzzz zzzz\n",
+        "t6 0 00 zz00 0000 zz00\nt9 1 11 zz11 1111 zz11\nt12 x xx zzxx xxxx zzxx\nt19 z xx zzxx zzzz zzzz\n",
     );
     for fixture in [
         "inertial_continuous_two_delays",

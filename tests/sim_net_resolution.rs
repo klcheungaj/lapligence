@@ -562,10 +562,12 @@ fn hierarchical_procedural_net_assignment_remains_illegal() {
 
 #[test]
 fn mixed_structural_drivers_and_selected_cross_hierarchy_resolve_with_optimizer_parity() {
+    // The last line releases every source, but each `buf` with a z input
+    // still drives x (IEEE 1364-2001 Table 34).
     sim_cli::run_case(
         "net_resolution",
         "mixed_structural",
-        "mixed=x01/0101\nselected=0f\nmixed=x01/0101\nselected=0z\nmixed=zzz/0101\n",
+        "mixed=x01/0101\nselected=0f\nmixed=x01/0101\nselected=0z\nmixed=xxx/0101\n",
         "",
         &[],
     );
@@ -584,10 +586,12 @@ fn output_port_net_strength_survives_parent_net_resolution() {
 
 #[test]
 fn mixed_structural_drivers_cover_biased_nets_with_optimizer_parity() {
+    // Released: each `buf` sees z and drives a strong x (IEEE 1364-2001
+    // Table 34), which also overrides the tri0/tri1 pulls; supplies win.
     sim_cli::run_case(
         "net_resolution",
         "mixed_biased_structural",
-        "first=xxx01\nagree=11101\nreleased=z0101\n",
+        "first=xxx01\nagree=11101\nreleased=xxx01\n",
         "",
         &[],
     );
@@ -650,7 +654,9 @@ module tb;
     end
 endmodule
 "#;
-    let expected = "first=1000\nsecond=011x\nreleased=zzz0\nforced=1\nrestored=0\n";
+    // IEEE 1364-2001 Table 34: a `buf` with a z input drives x, so the
+    // released wire and wand nets read x while the collapsed port is z.
+    let expected = "first=1000\nsecond=011x\nreleased=xxz0\nforced=1\nrestored=0\n";
     sim_harness::with_frontend_temp_cwd("strength_structural", |dir| {
         let path = dir.join("tb.sv");
         std::fs::write(&path, source).map_err(|error| error.to_string())?;

@@ -274,6 +274,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                         crate::sim::ir::IrDisplayArg::Real(value) => {
                             Ok(crate::sim::ir::IrDisplayArg::Real(capture(value)))
                         }
+                        crate::sim::ir::IrDisplayArg::Strength(value) => {
+                            Ok(crate::sim::ir::IrDisplayArg::Strength(capture(value)))
+                        }
                         crate::sim::ir::IrDisplayArg::String(_) => Err(
                             "string value arguments in deferred immediate assertion actions are not supported"
                                 .to_owned(),
@@ -313,6 +316,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                         }
                         crate::sim::ir::IrDisplayArg::Real(value) => {
                             Ok(crate::sim::ir::IrDisplayArg::Real(capture(value)))
+                        }
+                        crate::sim::ir::IrDisplayArg::Strength(value) => {
+                            Ok(crate::sim::ir::IrDisplayArg::Strength(capture(value)))
                         }
                         crate::sim::ir::IrDisplayArg::String(_) => Err(
                             "string value arguments in deferred immediate assertion actions are not supported"

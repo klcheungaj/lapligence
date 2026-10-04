@@ -37,6 +37,9 @@ including leaves that name alias views, net-array cells or their selected bits.
 `collection/continuous_feedback.rs` repeats a zero-delay driver in place when
 its own write can change one of its operands; other drivers keep the plain
 sensitivity loop.
+`collection/strength_views.rs` maps a `%v` operand to the resolved group bits
+it reads and creates, on first use, a two-state strength-view signal for each
+of those groups; nets that no `%v` reads have none.
 
 Packed record member selections use the recursive descriptor and guarded typed
 selection steps, including runtime indexed part-selects. Fixed record net arrays

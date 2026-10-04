@@ -825,7 +825,13 @@ impl EmitCtx<'_, '_> {
                     let (fmt, display_args) =
                         self.parse_display_call(name, display_args_source, default_radix)?;
                     let reads = if !strobe {
-                        self.collect_monitor_reads(display_args_source)?
+                        let mut reads = self.collect_monitor_reads(display_args_source)?;
+                        for read in self.cg.strength_view_dependencies(&display_args) {
+                            if !reads.contains(&read) {
+                                reads.push(read);
+                            }
+                        }
+                        reads
                     } else {
                         Vec::new()
                     };

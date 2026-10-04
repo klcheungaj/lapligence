@@ -46,6 +46,10 @@ pub(super) fn render_typed_display(
                 "_display_args[{index}].kind = LLG_FMT_PACKED;\n        _display_args[{index}].time_unit_fs = {time_unit_fs}ULL;\n        _display_args[{index}].value.packed = {};",
                 render_expr(ctx, value)?.code
             ),
+            IrDisplayArg::Strength(value) => format!(
+                "_display_args[{index}].kind = LLG_FMT_STRENGTH;\n        _display_args[{index}].value.packed = {};",
+                render_expr(ctx, value)?.code
+            ),
             IrDisplayArg::Real(value) => format!(
                 "_display_args[{index}].kind = LLG_FMT_REAL;\n        _display_args[{index}].time_unit_fs = {time_unit_fs}ULL;\n        _display_args[{index}].value.real = {};",
                 render_expr(ctx, value)?.code
@@ -121,6 +125,10 @@ pub(super) fn render_severity(
         let assignment = match arg {
             IrDisplayArg::Packed(value) => format!(
                 "_severity_args[{index}].kind = LLG_FMT_PACKED;\n        _severity_args[{index}].value.packed = {};",
+                render_expr(ctx, value)?.code
+            ),
+            IrDisplayArg::Strength(value) => format!(
+                "_severity_args[{index}].kind = LLG_FMT_STRENGTH;\n        _severity_args[{index}].value.packed = {};",
                 render_expr(ctx, value)?.code
             ),
             IrDisplayArg::Real(value) => format!(

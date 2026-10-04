@@ -431,9 +431,9 @@ impl CellEligibility {
             } => {
                 for arg in args {
                     match arg {
-                        IrDisplayArg::Packed(value) | IrDisplayArg::Real(value) => {
-                            self.expression(ctx, value)
-                        }
+                        IrDisplayArg::Packed(value)
+                        | IrDisplayArg::Real(value)
+                        | IrDisplayArg::Strength(value) => self.expression(ctx, value),
                         IrDisplayArg::String(value) => self.string(ctx, value),
                     }
                 }

@@ -44,6 +44,9 @@ mod rtl_010;
 #[path = "sim_feature_completion/rtl_011.rs"]
 mod rtl_011;
 
+#[path = "sim_feature_completion/rtl_012.rs"]
+mod rtl_012;
+
 #[path = "sim_feature_completion/rtl_013.rs"]
 mod rtl_013;
 
@@ -52,6 +55,9 @@ mod rtl_015;
 
 #[path = "sim_feature_completion/rtl_016.rs"]
 mod rtl_016;
+
+#[path = "sim_feature_completion/rtl_017.rs"]
+mod rtl_017;
 
 #[test]
 fn component_fixture_integrity() {
