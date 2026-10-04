@@ -727,7 +727,7 @@ impl<'a> Codegen<'a> {
                             full_name,
                             name,
                             def_name.clone(),
-                            node.file.clone(),
+                            node.file().map(str::to_owned),
                             node.line,
                         );
                         object.time_unit_fs = self.timescale_of_node(id).unit_fs;
@@ -772,7 +772,7 @@ impl<'a> Codegen<'a> {
                             full_name,
                             name,
                             definition_name: None,
-                            file: node.file.clone(),
+                            file: node.file().map(str::to_owned),
                             line: node.line,
                             kind,
                             width,
@@ -808,7 +808,7 @@ impl<'a> Codegen<'a> {
                             full_name,
                             name,
                             definition_name: None,
-                            file: node.file.clone(),
+                            file: node.file().map(str::to_owned),
                             line: node.line,
                             kind: IrVpiObjectKind::RegArray,
                             width: array.elem_width,

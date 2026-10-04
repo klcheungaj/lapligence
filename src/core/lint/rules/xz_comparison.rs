@@ -48,13 +48,18 @@ impl LintRule for XzLogicalEqualityRule {
             let message =
                 "logical equality compares a literal containing X/Z/?; use === or !== instead"
                     .to_string();
-            if !diagnostics_seen.insert((node.file.clone(), line, col, message.clone())) {
+            if !diagnostics_seen.insert((
+                node.file().map(str::to_owned),
+                line,
+                col,
+                message.clone(),
+            )) {
                 continue;
             }
             out.push(LintDiag {
                 rule: "xz-logical-equality".to_string(),
                 severity: LintSeverity::Warning,
-                file: node.file.clone(),
+                file: node.file().map(str::to_owned),
                 line,
                 col,
                 message,

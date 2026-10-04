@@ -81,13 +81,18 @@ impl LintRule for IncompleteSensitivityListRule {
                 "incomplete sensitivity list: missing signals: {}",
                 missing.into_iter().collect::<Vec<_>>().join(", ")
             );
-            if !diagnostics_seen.insert((event_node.file.clone(), line, col, message.clone())) {
+            if !diagnostics_seen.insert((
+                event_node.file().map(str::to_owned),
+                line,
+                col,
+                message.clone(),
+            )) {
                 continue;
             }
             out.push(LintDiag {
                 rule: "incomplete-sensitivity-list".to_string(),
                 severity: LintSeverity::Warning,
-                file: event_node.file.clone(),
+                file: event_node.file().map(str::to_owned),
                 line,
                 col,
                 message,

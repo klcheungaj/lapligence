@@ -371,7 +371,7 @@ fn instance_from_db(db: &db::Db, id: NodeId) -> InstanceModel {
     } else {
         node.full_name.clone()
     };
-    let file = node.file.clone();
+    let file = node.file().map(str::to_owned);
     let line = node.line;
     let col = node.col;
 
@@ -444,7 +444,7 @@ fn instance_from_db(db: &db::Db, id: NodeId) -> InstanceModel {
                 name: db.node(*c).name.clone(),
                 is_task: *is_task,
                 automatic: *automatic,
-                file: db.node(*c).file.clone(),
+                file: db.node(*c).file().map(str::to_owned),
                 line: db.node(*c).line,
                 col: db.node(*c).col,
                 ret: ret.clone(),
@@ -546,7 +546,7 @@ fn module_def_from_db(db: &db::Db, id: NodeId) -> ModuleDef {
     };
     ModuleDef {
         name,
-        file: node.file.clone(),
+        file: node.file().map(str::to_owned),
         line: node.line,
         col: node.col,
         end_line: node.end_line,
@@ -579,7 +579,7 @@ fn package_from_db(db: &db::Db, id: NodeId) -> PackageDef {
             db::NodeKind::EnumConst { value } => Some(EnumConstDef {
                 name: db.node(c).name.clone(),
                 value: value.clone(),
-                file: db.node(c).file.clone(),
+                file: db.node(c).file().map(str::to_owned),
                 line: db.node(c).line,
                 col: db.node(c).col,
             }),
@@ -588,7 +588,7 @@ fn package_from_db(db: &db::Db, id: NodeId) -> PackageDef {
         .collect();
     PackageDef {
         name: node.name.clone(),
-        file: node.file.clone(),
+        file: node.file().map(str::to_owned),
         line: node.line,
         col: node.col,
         params,
@@ -627,7 +627,7 @@ fn class_from_db(db: &db::Db, id: NodeId) -> ClassDef {
                     name,
                     is_task: *is_task,
                     automatic: *automatic,
-                    file: db.node(*c).file.clone(),
+                    file: db.node(*c).file().map(str::to_owned),
                     line: db.node(*c).line,
                     col: db.node(*c).col,
                     ret,
@@ -660,7 +660,7 @@ fn class_from_db(db: &db::Db, id: NodeId) -> ClassDef {
         .collect();
     ClassDef {
         name: node.name.clone(),
-        file: node.file.clone(),
+        file: node.file().map(str::to_owned),
         line: node.line,
         col: node.col,
         methods,

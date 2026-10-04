@@ -503,6 +503,8 @@ impl<'a> SourceLines<'a> {
 
 struct SourcePositionFile<'a> {
     file: &'a crate::ffi::slang::File,
+    /// One shared name per file; every node located in it clones the handle.
+    name: Option<std::sync::Arc<str>>,
     lines: Option<SourceLines<'a>>,
 }
 
@@ -514,9 +516,11 @@ impl<'a> SourcePositions<'a> {
     pub(super) fn new(snapshot: &'a SlangSnapshot) -> Self {
         let mut files = HashMap::with_capacity(snapshot.files.len());
         for file in &snapshot.files {
-            files
-                .entry(file.id)
-                .or_insert(SourcePositionFile { file, lines: None });
+            files.entry(file.id).or_insert(SourcePositionFile {
+                file,
+                name: None,
+                lines: None,
+            });
         }
         Self { files }
     }
@@ -524,7 +528,7 @@ impl<'a> SourcePositions<'a> {
     pub(super) fn position(
         &mut self,
         node: &SemanticNode,
-    ) -> Result<(Option<String>, u32, u32, u32, u32), DbError> {
+    ) -> Result<(Option<std::sync::Arc<str>>, u32, u32, u32, u32), DbError> {
         let Some(range) = node.range else {
             return Ok((None, 0, 0, 0, 0));
         };
@@ -541,8 +545,11 @@ impl<'a> SourcePositions<'a> {
             .get_or_insert_with(|| SourceLines::new(&file.file.text));
         let (line, column) = lines.position(start)?;
         let (end_line, end_column) = lines.position(end)?;
+        let name = file
+            .name
+            .get_or_insert_with(|| std::sync::Arc::from(file.file.name.as_str()));
         Ok((
-            Some(file.file.name.clone()),
+            Some(std::sync::Arc::clone(name)),
             line,
             column,
             end_line,
@@ -554,7 +561,7 @@ impl<'a> SourcePositions<'a> {
 pub(super) fn source_position(
     snapshot: &SlangSnapshot,
     node: &SemanticNode,
-) -> Result<(Option<String>, u32, u32, u32, u32), DbError> {
+) -> Result<(Option<std::sync::Arc<str>>, u32, u32, u32, u32), DbError> {
     SourcePositions::new(snapshot).position(node)
 }
 
@@ -686,5 +693,14 @@ mod source_position_tests {
         drop(output);
         db.validate().unwrap();
         assert_eq!(db.source_text("indexed_source.sv"), Some(source));
+        let mut located = db.nodes().iter().filter_map(|node| node.file.as_ref());
+        let first = located.next().expect("located node");
+        assert_eq!(&**first, "indexed_source.sv");
+        let mut count = 1;
+        for name in located {
+            assert!(std::sync::Arc::ptr_eq(first, name));
+            count += 1;
+        }
+        assert!(count > 32);
     }
 }

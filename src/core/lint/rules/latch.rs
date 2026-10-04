@@ -39,7 +39,7 @@ impl LintRule for IncompleteCaseRule {
                 out.push(LintDiag {
                     rule: "incomplete-case".to_string(),
                     severity: LintSeverity::Warning,
-                    file: node.file.clone(),
+                    file: node.file().map(str::to_owned),
                     line: node.line,
                     col: node.col,
                     message: "case without default in combinational process may infer a latch"
