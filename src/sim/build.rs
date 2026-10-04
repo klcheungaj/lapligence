@@ -584,7 +584,7 @@ pub fn generate_model_sources_with_opts(
 
 /// File names [`super::write_sim_sources`] always writes (must mirror its
 /// fixed list there) plus this module's own `CMakeLists.txt`.
-const FIXED_SOURCE_NAMES: [&str; 20] = [
+const FIXED_SOURCE_NAMES: [&str; 23] = [
     "llg_rt.h",
     "llg_rt.c",
     "llg_value.h",
@@ -603,6 +603,9 @@ const FIXED_SOURCE_NAMES: [&str; 20] = [
     "llg_string.h",
     "llg_string.c",
     "svdpi.h",
+    "llg_compiler.h",
+    "llg_platform.h",
+    "llg_platform_native.h",
     "CMakeLists.txt",
     "llg_value_build.h",
 ];
@@ -1077,7 +1080,10 @@ fn runtime_cache_key_with_compiler(
             hash = hash.wrapping_mul(0x100000001b3);
         }
     }
-    for (name, source) in super::rt::value_backend_sources(opts.value_config.backend) {
+    for (name, source) in super::rt::platform_headers()
+        .iter()
+        .chain(super::rt::value_backend_sources(opts.value_config.backend))
+    {
         for byte in name.bytes().chain(source.bytes()) {
             hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
         }

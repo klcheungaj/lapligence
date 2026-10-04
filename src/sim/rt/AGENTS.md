@@ -32,6 +32,22 @@ operands borrow for the call. Preserve requested-sign resize versus source-sign
 cast. Test against live legacy, Python integers and exhaustive small states,
 with both kernel configurations; never import a legacy descriptor as a fallback.
 
+## Platform layer
+
+Compiler and operating-system conditionals (`_WIN32`, `_MSC_VER`, `__APPLE__`,
+`__unix__`, `__GNUC__`, `__clang__`, feature-test macros) live only in
+`llg_compiler.h`, `llg_platform.h` and `llg_platform_native.h`; every other
+runtime source, the emitter's generated C and the runtime probes call their
+neutral names. Exceptions: `llg_co.h` stays a self-contained two-file library
+with its own `LLG_CO_*` macros, and bundled third-party sources (`gtkwave/`,
+`vendor/zlib`) keep upstream conditionals. Layer functions are `static inline`
+so hot paths (waveform ring, atomics) pay nothing. Public headers and generated
+models may include only `llg_compiler.h`; `llg_platform_native.h` brings in
+`<windows.h>` and is limited to the waveform writer and VPI bridge. MSVC uses
+Interlocked intrinsics, not `<stdatomic.h>` (which needs
+`/experimental:c11atomics` and VS 2022 17.5+). Add a service to the layer
+before adding a conditional anywhere else.
+
 ## Values and native owners
 
 The default legacy `LLG_VALUE_ABI_VERSION` is 4, independent of model width.

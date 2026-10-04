@@ -37,6 +37,7 @@ exit or cancellation. All payload operations use the public value facade.
 | `llg_container.h/.c`, `container/` | Dynamic arrays, queues, associative storage and retained element identities. |
 | `llg_rt.h/.c`, `scheduler/` | IEEE region scheduling, processes, events, assignments, synchronization, assertions, I/O and VPI. |
 | `llg_wave.h/.c` | Optional asynchronous VCD/FST output with one producer/writer and flush/close barriers. |
+| `llg_compiler.h`, `llg_platform.h`, `llg_platform_native.h` | The platform layer: every compiler and OS conditional (atomics, threads, dynamic libraries, host paths/directories, stack limit, console log process) behind neutral inline functions. `llg_compiler.h` is safe for generated models; the other two are private to runtime `.c` files. |
 | `gtkwave/` | Pinned libfst, compression support and provenance; included only for waveform models. |
 | `vendor/zlib` (submodule) | zlib v1.3.2 sources libfst needs, embedded by `waveform_sources()` and written under `zlib/` only for waveform models. |
 | `llg_rt_selftest.c`, `llg_wave_selftest.c` | Value/scheduler checks and VCD/FST lifecycle/reader checks. |

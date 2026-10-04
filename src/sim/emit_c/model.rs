@@ -769,9 +769,6 @@ fn render_model(
     out.push_str(
         "\n#include <stdio.h>\n#include <stdlib.h>\n#include <math.h>\n#include <string.h>\n\n",
     );
-    if !sharing.bodies.is_empty() || !pca_tables.operands.is_empty() {
-        out.push_str("#if defined(__GNUC__) && !defined(__clang__)\n#define LLG_MODEL_SHARED __attribute__((noipa))\n#elif defined(__clang__)\n#define LLG_MODEL_SHARED __attribute__((noinline))\n#elif defined(_MSC_VER)\n#define LLG_MODEL_SHARED __declspec(noinline)\n#else\n#define LLG_MODEL_SHARED\n#endif\n");
-    }
     let constant_declarations_at = out.len();
     let mut entries = BTreeSet::new();
     for artifact in coroutine_functions

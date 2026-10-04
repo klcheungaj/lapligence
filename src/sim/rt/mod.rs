@@ -204,6 +204,20 @@ pub fn value_backend_sources(
     }
 }
 
+/// The platform layer: `llg_compiler.h` (compiler attributes, safe for
+/// generated models) and the runtime-private `llg_platform.h` /
+/// `llg_platform_native.h`, which own every operating-system conditional.
+pub fn platform_headers() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("llg_compiler.h", include_str!("llg_compiler.h")),
+        ("llg_platform.h", include_str!("llg_platform.h")),
+        (
+            "llg_platform_native.h",
+            include_str!("llg_platform_native.h"),
+        ),
+    ]
+}
+
 /// Scheduler-independent legacy `$random` and `$dist_*` implementations.
 /// Compile together with generated models or as a standalone C11 module.
 pub fn random_sources() -> (&'static str, &'static str) {
