@@ -273,6 +273,9 @@ pub enum IrStmt {
         src: Box<IrFixedValue>,
         nba: bool,
     },
+    /// Reverse or sort stored fixed-array cells in place, without a packed
+    /// receiver value.
+    FixedArrayOrder(Box<IrFixedArrayOrder>),
     /// Evaluate one default-pattern value and replace the complete array.
     FixedArrayFill {
         array: usize,

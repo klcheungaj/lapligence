@@ -605,7 +605,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                              _inside_result = sv4_logor(_inside_result, {comparison}); }} ",
                         ));
                     }
-                    IrInsideItem::FixedArray { .. } => {
+                    IrInsideItem::FixedArray { .. } | IrInsideItem::Cells(_) => {
                         return Err(
                             "fixed-array inside items require structured whole-model emission"
                                 .to_owned(),

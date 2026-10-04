@@ -201,7 +201,10 @@ impl<'a> Codegen<'a> {
             self.kind(node),
             NodeKind::Array { .. }
                 | NodeKind::Expr(
-                    ExprKind::Ref { .. } | ExprKind::HierPath { .. } | ExprKind::ArraySelect { .. }
+                    ExprKind::Ref { .. }
+                        | ExprKind::HierPath { .. }
+                        | ExprKind::ArraySelect { .. }
+                        | ExprKind::BitSelect { .. }
                 )
         );
         if storage_array {
@@ -235,6 +238,21 @@ impl<'a> Codegen<'a> {
                         }
                         return Ok(());
                     }
+                }
+            }
+            if let Some((_, cells)) = self.fixed_array_cells(path, node)? {
+                let storage = &self.model.arrays[cells.array];
+                let selected = cells.shape(&self.model).map(|shape| shape.cells);
+                // Small dense arrays keep one straight-line comparison per
+                // cell; selections and larger or descriptor storage loop.
+                if !cells.prefix.is_empty()
+                    || storage.sparse()
+                    || selected.is_none_or(|cells| {
+                        cells > super::super::containers::FIXED_CELL_UNROLL_LIMIT
+                    })
+                {
+                    out.push(IrInsideItem::Cells(cells));
+                    return Ok(());
                 }
             }
             if let Some(array) = self.array_of(node).cloned() {

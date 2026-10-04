@@ -394,6 +394,25 @@ void llg_dyn_method(llg_dyn_array_t* array, int method,
                     llg_container_eval_fn eval, void* context);
 void llg_container_seed(uint64_t seed);
 
+/* Fixed-array sort workspace for generated models. The model evaluates each
+ * element's key once, in declaration order, into `keys`; llg_fixed_order_sort
+ * then stores in order[i] the original position of the element that belongs
+ * at position i (stable; unknown keys stay in place, as for container sort).
+ * `row` saves one element of `row_cells` cells while the model applies a
+ * permutation cycle through its own storage writes. Allocation failure is
+ * fatal; destroy releases every owner and accepts a partially used workspace. */
+typedef struct llg_fixed_order_t {
+    sv4_t* keys;
+    size_t* order;
+    sv4_t* row;
+    size_t count;
+    size_t row_cells;
+} llg_fixed_order_t;
+void llg_fixed_order_init(llg_fixed_order_t* order, uint64_t count,
+                          uint64_t row_cells);
+int llg_fixed_order_sort(llg_fixed_order_t* order, int descending);
+void llg_fixed_order_destroy(void* order);
+
 struct llg_queue_t {
     sv4_t* data;
     uint64_t* element_ids;

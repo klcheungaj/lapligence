@@ -178,6 +178,9 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
                         }
                     }
                     IrInsideItem::Container { .. } => {}
+                    IrInsideItem::Cells(cells) => {
+                        cells.expressions_mut(&mut |child| walk_expr_mut(child, f))
+                    }
                     IrInsideItem::FixedArray { value, .. } => walk_expr_mut(value, f),
                 }
             }
@@ -410,6 +413,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             init: Some(init), ..
         } => walk_expr_mut(init, f),
         IrStmt::FixedArrayFill { value, .. } => walk_expr_mut(value, f),
+        IrStmt::FixedArrayOrder(order) => {
+            order.expressions_mut(&mut |child| walk_expr_mut(child, f))
+        }
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
         | IrStmt::ClockingDrive { lhs, rhs, .. }

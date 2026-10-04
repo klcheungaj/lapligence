@@ -1848,7 +1848,8 @@ pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
                         low.as_ref().is_none_or(sampled_compatible)
                             && high.as_ref().is_none_or(sampled_compatible)
                     }
-                    crate::sim::ir::IrInsideItem::Container { .. } => false,
+                    crate::sim::ir::IrInsideItem::Container { .. }
+                    | crate::sim::ir::IrInsideItem::Cells(_) => false,
                     crate::sim::ir::IrInsideItem::FixedArray { value, .. } => {
                         sampled_compatible(value)
                     }

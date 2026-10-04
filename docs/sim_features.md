@@ -595,7 +595,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
 - 🟨 **Loop declarations and `foreach`** — Packed/real loop locals preserve
   shadowing and admitted fork captures. Fixed foreach retains mixed packed/
   unpacked dimensions, omitted slots, singleton/implicit vectors, declared/formal
-  bounds and signed endpoint guards. Iterators are automatic, lexical and
+  bounds and signed endpoint guards, including descriptor-backed arrays (to 16M
+  cells) traversed in place. Iterators are automatic, lexical and
   read-only. Dynamic/queue and integral/string-keyed associative traversal have
   separate paths. Nested resizable traversal, string/shared/native captures and
   illegal iterator writes remain rejected. SV §§12.7.1, 12.7.3 **[SV-2005]**.
@@ -743,8 +744,11 @@ Macros, includes and their edition-specific behavior are counted in §11.
   and signed extension apply. SV §11.4.6 **[SV-2005]**.
 - 🟨 **Set membership** — `inside` supports scalar/range/wildcard and admitted
   real/string contexts. Fixed-array values, including calls, conditionals, casts,
-  rows and members, are captured once and traversed with leaf signedness intact;
-  packed dynamic/queue/associative storage has separate traversal. Packed values
+  rows and members, are captured once and traversed with leaf signedness intact.
+  Stored arrays and selected rows, including descriptor-backed storage, are
+  traversed cell by cell in one loop (small dense whole arrays unroll); an
+  unknown row selector reads default elements. Packed dynamic/queue/associative
+  storage has separate traversal. Packed values
   are single set items; casts are not bypassed; unpacked structures are illegal
   member bags. Definite matches dominate an X fallback. Recursive/native objects,
   unsupported resizable value expressions and over-limit payloads reject.
@@ -755,15 +759,22 @@ Macros, includes and their edition-specific behavior are counted in §11.
   first-element seeding preserves singleton X/Z. Maps may capture automatic
   locals/formals and distinct nested iterators. `index`, `index()`, `index(1)`
   and checked dynamic dimensions address the live fixed unpacked iterator
-  with declared bounds. Packed, higher and unvisited dimensions reject;
-  native/string/real/resizable maps also reject. Receiver capacity is defined above.
+  with declared bounds. Selected last-dimension rows, including descriptor-backed
+  rows, reduce cell by cell in place. Packed, higher and unvisited dimensions reject;
+  native/string/real/resizable maps also reject. Receiver capacity is defined above;
+  a map whose item is a row wider than the packed limit rejects.
   SV §§7.12.3–7.12.4 **[SV-2005]**.
 - 🟨 **Fixed ordering** — `reverse()` moves immediate integral/fixed-record
   elements in declaration order; rows move whole. `sort()`/`rsort()` accept
   integral elements or fixed row/record `with` integral keys, preserving
   signed/enum keys and non-key fields. Selected receiver coordinates are
-  captured once; swaps reread live storage and snapshot overlapping elements.
-  Automatic locals/formals are represented. Reverse qualification covers
+  captured once. Each element's key is evaluated once from its original
+  position, so `item.index` names the element's own index, before any element
+  moves. Stored receivers of more than 16 elements, descriptor-backed arrays (to
+  16M cells), selected rows and rows of oversized arrays reorder in place with a
+  stable O(n log n) cell-wise loop and per-cell publication; smaller receivers and
+  packed-value locals/formals use a straight-line schedule. A `with` key over a row
+  wider than the packed limit rejects. Automatic locals/formals are represented. Reverse qualification covers
   1/2/3/17 elements, negative/reversed bounds, selected 2-D/3-D rows, unpacked
   records, input/inout/ref formals, and settled reader notifications in both
   optimizer modes; SV2001 rejects the method. Integral `with` keys may query the
@@ -1152,7 +1163,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
 - 🟨 **Data/array queries** — `$typename/$isunbounded/$bits`,
   `$left/$right/$low/$high/$increment/$size/$dimensions/$unpacked_dimensions`
   use represented packed, fixed-array, dynamic/queue, associative-integral and
-  string metadata. Nested runtime dimensions remain unsupported. Associative
+  string metadata. Fixed queries cover selected rows, declared formal bounds and
+  descriptor-backed arrays; an out-of-range or unknown dimension yields X.
+  Nested runtime dimensions remain unsupported. Associative
   dimension bounds require integral index types; string/wildcard bounds are
   prohibited by SV §20.7. SV §§20.6–20.7 **[SV-2005]**.
 - 🟦 **Bit and math helpers** — `$onehot/$onehot0/$countones/$isunknown` use

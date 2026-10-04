@@ -103,6 +103,9 @@ pub enum IrInsideItem {
         value: IrExpr,
         elements: Vec<IrInsideArrayElement>,
     },
+    /// Every stored cell below a selected prefix of a fixed array, traversed
+    /// in declaration order without forming one packed value.
+    Cells(IrFixedArrayCells),
 }
 
 /// Assignment target, mirroring the pre-IR LHS analysis outcomes.

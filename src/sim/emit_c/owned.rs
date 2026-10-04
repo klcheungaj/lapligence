@@ -24,6 +24,7 @@ mod control;
 mod event_waits;
 mod events;
 mod expressions;
+mod fixed_array_cells;
 mod fixed_array_reductions;
 mod fixed_values;
 mod force;

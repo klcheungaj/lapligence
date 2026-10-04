@@ -278,27 +278,14 @@ static void llg_sort_merge(const llg_sort_ctx_t* ctx, size_t* order,
     if (source != order) memcpy(order, source, count * sizeof(*order));
 }
 
-// Returns whether any element moved. `item.index` is the element's position
-// before sorting (LRM 7.12.4), so keys do not depend on the sort progress.
-static int llg_method_sort(sv4_t* data, uint64_t* element_ids, size_t count,
-                           llg_container_eval_fn eval, void* context,
-                           int descending) {
-    if (count < 2) return 0;
-    size_t* order = llg_alloc_items(count, 2 * sizeof(*order));
-    size_t* scratch = order + count;
+// Order the positions [0, count) of `keys`: on return order[i] names the
+// original position whose element belongs at i. `scratch` holds count entries.
+// Returns whether any element moves.
+static int llg_sort_permutation(const sv4_t* keys, size_t count,
+                                int descending, size_t* order,
+                                size_t* scratch) {
     for (size_t i = 0; i < count; ++i) order[i] = i;
-
-    sv4_t* owned_keys = NULL;
-    if (eval) {
-        owned_keys = llg_alloc_items(count, sizeof(*owned_keys));
-        for (size_t i = 0; i < count; ++i) owned_keys[i] = (sv4_t)SV4_EMPTY;
-        for (size_t i = 0; i < count; ++i) {
-            sv4_t index = sv4_from_u64((uint64_t)i, 32, 1);
-            eval(&owned_keys[i], data[i], index, context);
-            sv4_destroy(&index);
-        }
-    }
-    const sv4_t* keys = owned_keys ? owned_keys : data;
+    if (count < 2) return 0;
 
     uint32_t shape_width = llg_sv4_width(keys[0]);
     int shape_signed = llg_sv4_signed(keys[0]) != 0;
@@ -323,11 +310,37 @@ static int llg_method_sort(sv4_t* data, uint64_t* element_ids, size_t count,
             llg_sort_merge(&ctx, order + start, scratch, i - start);
         start = i + 1;
     }
+    free(fast);
 
-    int changed = 0;
-    for (size_t i = 0; i < count; ++i) {
+    for (size_t i = 0; i < count; ++i)
+        if (order[i] != i) return 1;
+    return 0;
+}
+
+// Returns whether any element moved. `item.index` is the element's position
+// before sorting (LRM 7.12.4), so keys do not depend on the sort progress.
+static int llg_method_sort(sv4_t* data, uint64_t* element_ids, size_t count,
+                           llg_container_eval_fn eval, void* context,
+                           int descending) {
+    if (count < 2) return 0;
+    size_t* order = llg_alloc_items(count, 2 * sizeof(*order));
+    size_t* scratch = order + count;
+
+    sv4_t* owned_keys = NULL;
+    if (eval) {
+        owned_keys = llg_alloc_items(count, sizeof(*owned_keys));
+        for (size_t i = 0; i < count; ++i) owned_keys[i] = (sv4_t)SV4_EMPTY;
+        for (size_t i = 0; i < count; ++i) {
+            sv4_t index = sv4_from_u64((uint64_t)i, 32, 1);
+            eval(&owned_keys[i], data[i], index, context);
+            sv4_destroy(&index);
+        }
+    }
+    const sv4_t* keys = owned_keys ? owned_keys : data;
+    int changed = llg_sort_permutation(keys, count, descending, order, scratch);
+
+    for (size_t i = 0; changed && i < count; ++i) {
         if (order[i] == i) continue;
-        changed = 1;
         sv4_t saved = SV4_EMPTY;
         sv4_move(&saved, &data[i]);
         uint64_t saved_id = element_ids ? element_ids[i] : 0;
@@ -346,13 +359,52 @@ static int llg_method_sort(sv4_t* data, uint64_t* element_ids, size_t count,
         }
     }
 
-    free(fast);
     if (owned_keys) {
         sv4_destroy_array(owned_keys, count);
         free(owned_keys);
     }
     free(order);
     return changed;
+}
+
+void llg_fixed_order_init(llg_fixed_order_t* order, uint64_t count,
+                          uint64_t row_cells) {
+    if (!order) llg_container_fatal("null fixed-array ordering workspace");
+    size_t elements = llg_checked_count(count, 2 * sizeof(size_t));
+    size_t cells = llg_checked_count(row_cells, sizeof(sv4_t));
+    order->count = elements;
+    order->row_cells = cells;
+    order->keys = llg_alloc_items(elements, sizeof(*order->keys));
+    order->order = llg_alloc_items(elements, 2 * sizeof(*order->order));
+    order->row = llg_alloc_items(cells, sizeof(*order->row));
+    for (size_t i = 0; i < elements; ++i) order->keys[i] = (sv4_t)SV4_EMPTY;
+    for (size_t i = 0; i < cells; ++i) order->row[i] = (sv4_t)SV4_EMPTY;
+}
+
+int llg_fixed_order_sort(llg_fixed_order_t* order, int descending) {
+    if (!order || (order->count && (!order->keys || !order->order)))
+        llg_container_fatal("malformed fixed-array ordering workspace");
+    return llg_sort_permutation(order->keys, order->count, descending,
+                                order->order, order->order + order->count);
+}
+
+void llg_fixed_order_destroy(void* object) {
+    llg_fixed_order_t* order = object;
+    if (!order) return;
+    if (order->keys) {
+        sv4_destroy_array(order->keys, order->count);
+        free(order->keys);
+    }
+    if (order->row) {
+        sv4_destroy_array(order->row, order->row_cells);
+        free(order->row);
+    }
+    free(order->order);
+    order->keys = NULL;
+    order->row = NULL;
+    order->order = NULL;
+    order->count = 0;
+    order->row_cells = 0;
 }
 
 static int llg_method_reorder(sv4_t* data, uint64_t* element_ids,

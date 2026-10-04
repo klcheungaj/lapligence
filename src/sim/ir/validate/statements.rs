@@ -194,6 +194,9 @@ impl Validator<'_> {
                     return self.fail(path, "duplicate fixed activation declaration");
                 }
             }
+            IrStmt::FixedArrayOrder(order) => {
+                self.validate_fixed_array_order(order, formals, path)?;
+            }
             IrStmt::FixedArrayFill { array, value, nba } => {
                 self.validate_fixed_activation(*array, path)?;
                 let array = self

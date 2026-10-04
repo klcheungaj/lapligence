@@ -327,7 +327,7 @@ fn render_stmt_scoped(
             start.as_ref(),
             finish.as_ref(),
         )?,
-        IrStmt::FixedValueAssign { .. } | IrStmt::FixedArrayDeclare(_) | IrStmt::FixedArrayCopy { .. } | IrStmt::FixedArrayFill { .. } => return Err("fixed-array copies require owned whole-model emission".to_owned()),
+        IrStmt::FixedValueAssign { .. } | IrStmt::FixedArrayDeclare(_) | IrStmt::FixedArrayCopy { .. } | IrStmt::FixedArrayFill { .. } | IrStmt::FixedArrayOrder(_) => return Err("fixed-array copies require owned whole-model emission".to_owned()),
         IrStmt::Container(operation) => super::containers::statement(ctx, operation)?,
         IrStmt::StreamAssign { nba: true, .. } => {
             return Err("nonblocking streaming assignments require whole-model emission".to_owned())

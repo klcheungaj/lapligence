@@ -173,6 +173,15 @@ modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane), the matrix
 and tristate fixtures in both editions. Negatives cover supply-net, selected
 vector-bit, highz-pair and pullup-strength0 forms.
 
+RTL-014's fixed loop, method, membership and query fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_014::)'`. Positive fixtures run in
+both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane),
+most also after Db destruction; descriptor methods also bound generated model
+size. Unspecified equal-key and unknown-key orders are checked only through
+permutation invariants. Negatives cover read-only iterators and receivers,
+reverse `with`, record sort and set members, iterator dimensions, IEEE 2001
+methods and the packed limit for row keys.
+
 RTL-013's sensitivity and always-writer fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_013::)'`. Positive fixtures run in
 both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane),

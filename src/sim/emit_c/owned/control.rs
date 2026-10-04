@@ -452,6 +452,7 @@ impl Frame<'_, '_> {
                     self.line("}");
                     matched
                 }
+                IrInsideItem::Cells(cells) => self.inside_cells(&source, cells)?,
                 IrInsideItem::FixedArray { value, elements } => {
                     let value = self.expression(value)?;
                     let matched = self.value("sv4_from_u64(0, 1, 0)".to_owned(), 1, false);
