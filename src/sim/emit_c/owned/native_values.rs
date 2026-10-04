@@ -29,9 +29,9 @@ pub(in crate::sim::emit_c) fn native_type_tables(
         ));
     }
     for value in model.native_values.iter().filter(|value| !value.activation) {
-        declarations.push_str(&format!("static llg_value_t {};\n", value.c_name));
+        declarations.push_str(&format!("static llg_native_root_t {};\n", value.c_name));
         checks.push_str(&format!(
-            "    llg_native_value_init(&{}, &{});\n",
+            "    llg_native_root_init(&{}, &{});\n",
             value.c_name,
             native_type_descriptor(value.ty)
         ));
@@ -45,7 +45,7 @@ pub(in crate::sim::emit_c) fn native_value_teardown(model: &IrModel) -> String {
         .native_values
         .iter()
         .filter(|value| !value.activation)
-        .map(|value| format!("    llg_native_value_destroy(&{});\n", value.c_name))
+        .map(|value| format!("    llg_native_root_destroy(&{});\n", value.c_name))
         .collect()
 }
 
@@ -63,16 +63,16 @@ impl Frame<'_, '_> {
     /// Create one default-constructed activation value owned by the current
     /// lexical scope and return its `llg_value_t*` expression.
     pub(super) fn new_native_value(&mut self, ty: usize) -> String {
-        let pointer = self.scalar(
-            "llg_value_t*",
-            "(llg_value_t*)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_value_t), llg_native_value_destroy))"
+        let root = self.scalar(
+            "llg_native_root_t*",
+            "(llg_native_root_t*)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_native_root_t), llg_native_root_destroy))"
                 .to_owned(),
         );
         self.line(format!(
-            "llg_native_value_init({pointer}, &{});",
+            "llg_native_root_init({root}, &{});",
             native_type_descriptor(ty)
         ));
-        pointer
+        format!("(&{root}->value)")
     }
 
     pub(super) fn native_value_address(&self, index: usize) -> Result<String, String> {
@@ -88,7 +88,7 @@ impl Frame<'_, '_> {
                 .cloned()
                 .ok_or_else(|| "native value used before its lexical declaration".to_owned())
         } else {
-            Ok(format!("&{}", value.c_name))
+            Ok(format!("(&{}.value)", value.c_name))
         }
     }
 

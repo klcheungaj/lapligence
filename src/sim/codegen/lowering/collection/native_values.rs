@@ -264,6 +264,35 @@ impl Codegen<'_> {
         self.native_temporary(node)
     }
 
+    /// The first activation native value of the enclosing subroutine that a
+    /// fork branch references; branch processes cannot address it.
+    pub(in super::super) fn native_activation_capture(&self, branch: NodeId) -> Option<String> {
+        let mut pending = vec![branch];
+        while let Some(node) = pending.pop() {
+            let targets: Vec<NodeId> = match self.kind(node) {
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) => vec![*target],
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                    refs.iter().flatten().copied().collect()
+                }
+                _ => Vec::new(),
+            };
+            for target in targets {
+                if self
+                    .native_roots
+                    .get(&target)
+                    .is_some_and(|value| self.model.native_values[*value].activation)
+                    && !self.node_is_within(target, branch)
+                {
+                    return Some(self.node(target).name.clone());
+                }
+            }
+            pending.extend(self.node(node).children.iter().copied());
+        }
+        None
+    }
+
     /// Whether a function result uses descriptor-backed native storage.
     pub(in super::super) fn native_return(&self, function: NodeId) -> bool {
         matches!(self.kind(function), NodeKind::FuncTask { ret: Some(_), .. })
@@ -443,17 +472,53 @@ impl Codegen<'_> {
         if let Some(leaf) = layout.leaves.iter().find(|leaf| leaf.path == path) {
             return Ok(Some((value, leaf.clone())));
         }
-        if layout
-            .leaves
-            .iter()
-            .any(|leaf| leaf.path.starts_with(&path))
-        {
+        if layout.leaves.iter().any(|leaf| {
+            leaf.path.starts_with(&path)
+                || (path.starts_with(&leaf.path)
+                    && matches!(leaf.ty, IrClassFieldType::Packed { .. }))
+        }) {
+            // A sub-record, or a selection inside a packed leaf that the
+            // fixed projections lower.
             return Ok(None);
         }
         Err(format!(
             "native record selection `{}` does not name a member",
             aggregate_path_suffix(&path)
         ))
+    }
+
+    /// The packed leaf whose path is a prefix of a native selection, with the
+    /// remaining member/index path and the leaf type descriptor.
+    #[allow(clippy::type_complexity)]
+    pub(in super::super) fn native_packed_leaf_prefix(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<(usize, NativeLeaf, Vec<AggregatePathPart>, TypeDescriptor)>, String> {
+        let Some((value, path)) = self.native_path_of(node)? else {
+            return Ok(None);
+        };
+        let layout = self.native_layout_of_value(value)?;
+        let Some(leaf) = layout.leaves.iter().find(|leaf| {
+            path.starts_with(&leaf.path) && matches!(leaf.ty, IrClassFieldType::Packed { .. })
+        }) else {
+            return Ok(None);
+        };
+        let descriptor = Self::descriptor_at_path(&layout.descriptor, &leaf.path)
+            .ok_or("native packed leaf has no type")?;
+        Ok(Some((
+            value,
+            leaf.clone(),
+            path[leaf.path.len()..].to_vec(),
+            descriptor,
+        )))
+    }
+
+    pub(in super::super) fn native_leaf_target_of(
+        &mut self,
+        value: usize,
+        leaf: &NativeLeaf,
+    ) -> IrLhs {
+        self.native_leaf_lhs(value, leaf)
     }
 
     /// Model-level access name of one native leaf, shared by all uses.
@@ -1225,12 +1290,15 @@ impl Codegen<'_> {
         if self.native_path_of(left)?.is_none() && self.native_path_of(right)?.is_none() {
             return Ok(None);
         }
-        let (Some((left, _)), Some((right, _))) =
-            (self.native_endpoint(left)?, self.native_endpoint(right)?)
-        else {
-            return Err(format!(
-                "native record comparison in `{path}` needs record variables on both sides"
-            ));
+        let (left, right) = match (self.native_endpoint(left)?, self.native_endpoint(right)?) {
+            (Some((left, _)), Some((right, _))) => (left, right),
+            // Scalar members of native values compare as scalars.
+            (None, None) => return Ok(None),
+            _ => {
+                return Err(format!(
+                    "native record comparison in `{path}` needs record variables on both sides"
+                ))
+            }
         };
         let left = self.endpoint_leaves(&left)?;
         let right = self.endpoint_leaves(&right)?;

@@ -226,6 +226,35 @@ static void check_trace(void) {
     llg_native_value_destroy(&value);
 }
 
+static void check_roots(void) {
+    static const llg_value_member_desc_t members[] = {{&opaque_desc}, {&string_desc}};
+    static const llg_value_desc_t record = {LLG_VALUE_AGGREGATE, 4, 0, 0, 0, 0, 2, NULL, members, 2};
+    int objects[3];
+    llg_native_root_t roots[3];
+    CHECK(llg_native_roots_count() == 0);
+    for (size_t i = 0; i < 3; ++i) {
+        llg_native_root_init(&roots[i], &record);
+        roots[i].value.value.items[0].value.handle = &objects[i];
+        set_string(&roots[i].value.value.items[1].value.string, "rooted");
+    }
+    CHECK(llg_native_roots_count() == 3);
+    trace_log_t log = {0};
+    llg_native_roots_trace(record_handle, &log);
+    CHECK(log.visits == 3);
+    /* Unlinking the middle root keeps the others enumerable. */
+    llg_native_root_destroy(&roots[1]);
+    llg_native_root_destroy(&roots[1]);
+    CHECK(llg_native_roots_count() == 2);
+    trace_log_t after = {0};
+    llg_native_roots_trace(record_handle, &after);
+    CHECK(after.visits == 2);
+    CHECK((after.seen[0] == &objects[0] || after.seen[0] == &objects[2]) &&
+          after.seen[0] != after.seen[1]);
+    llg_native_root_destroy(&roots[2]);
+    llg_native_root_destroy(&roots[0]);
+    CHECK(llg_native_roots_count() == 0);
+}
+
 int main(void) {
     check_validation();
     check_policies();
@@ -233,6 +262,7 @@ int main(void) {
     check_repeated_construction();
     check_failed_copy_is_atomic();
     check_trace();
+    check_roots();
     CHECK(value_test_live() == 0);
     return 0;
 }

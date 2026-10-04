@@ -437,3 +437,36 @@ void llg_native_value_copy(llg_value_t* dst, const llg_value_t* src) {
     if (!llg_native_value_try_copy(dst, src))
         llg_container_fatal("container allocation failed");
 }
+
+static llg_native_root_t* llg_native_roots_head;
+static size_t llg_native_roots_live;
+
+void llg_native_root_init(llg_native_root_t* root, const llg_value_desc_t* desc) {
+    if (!root) llg_container_fatal("missing native root");
+    memset(root, 0, sizeof(*root));
+    llg_native_value_init(&root->value, desc);
+    root->next = llg_native_roots_head;
+    if (llg_native_roots_head) llg_native_roots_head->prev = root;
+    llg_native_roots_head = root;
+    ++llg_native_roots_live;
+}
+
+void llg_native_root_destroy(void* opaque) {
+    llg_native_root_t* root = (llg_native_root_t*)opaque;
+    if (!root) return;
+    llg_value_drop(&root->value);
+    if (root->prev || root->next || llg_native_roots_head == root) {
+        if (root->prev) root->prev->next = root->next;
+        else llg_native_roots_head = root->next;
+        if (root->next) root->next->prev = root->prev;
+        root->prev = root->next = NULL;
+        --llg_native_roots_live;
+    }
+}
+
+size_t llg_native_roots_count(void) { return llg_native_roots_live; }
+
+void llg_native_roots_trace(llg_value_visit_fn visit, void* context) {
+    for (llg_native_root_t* root = llg_native_roots_head; root; root = root->next)
+        llg_value_trace(&root->value, visit, context);
+}

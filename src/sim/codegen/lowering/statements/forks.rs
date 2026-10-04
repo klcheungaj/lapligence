@@ -48,6 +48,15 @@ impl EmitCtx<'_, '_> {
         let target = target
             .map(|target| self.cg.activation_target(target))
             .transpose()?;
+        if let Some(name) = branches
+            .iter()
+            .find_map(|branch| self.cg.native_activation_capture(*branch))
+        {
+            return Err(format!(
+                "fork branch in `{}` references native record `{name}` of the enclosing activation; capturing native subroutine storage in a fork is not supported",
+                self.path
+            ));
+        }
         let capture_targets = branches
             .iter()
             .map(|branch| self.cg.fork_capture_targets(*branch))

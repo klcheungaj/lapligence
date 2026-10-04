@@ -138,6 +138,28 @@ void llg_native_value_destroy(void* value);
 int llg_native_value_try_copy(llg_value_t* dst, const llg_value_t* src);
 void llg_native_value_copy(llg_value_t* dst, const llg_value_t* src);
 
+/* Explicit native roots. Every live descriptor-backed value owned by model
+ * storage, an activation scope or a call temporary is one registered root, so
+ * a collector can enumerate the identity handles they keep reachable without
+ * scanning C stacks. `value` is the first member: a root is addressed by its
+ * value. init default-constructs and links the root; destroy releases the
+ * value and unlinks it (registered value-scope objects use it as their
+ * destructor, so lexical exit, cancellation and model close all unregister).
+ * Destroying an unlinked root is a no-op. The registry is per process and
+ * single-threaded, like the scheduler. */
+typedef struct llg_native_root_t {
+    llg_value_t value;
+    struct llg_native_root_t* prev;
+    struct llg_native_root_t* next;
+} llg_native_root_t;
+
+void llg_native_root_init(llg_native_root_t* root, const llg_value_desc_t* desc);
+void llg_native_root_destroy(void* root);
+/* Number of live roots; zero after a model closes without native leaks. */
+size_t llg_native_roots_count(void);
+/* Trace the identity handles of every live root (see llg_value_trace). */
+void llg_native_roots_trace(llg_value_visit_fn visit, void* context);
+
 struct llg_dyn_value_array_t {
     llg_value_t* data;
     size_t size;
