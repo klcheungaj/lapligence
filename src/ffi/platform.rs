@@ -247,7 +247,7 @@ mod tests {
         assert!(path.is_absolute());
         assert!(!path.to_string_lossy().starts_with(r"\\?\"));
         assert_eq!(
-            canonicalize(&path.join("Cargo.toml")).expect("canonical manifest"),
+            canonicalize(path.join("Cargo.toml")).expect("canonical manifest"),
             path.join("Cargo.toml")
         );
     }
