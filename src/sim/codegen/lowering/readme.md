@@ -55,7 +55,10 @@ storage, validation, dependency and owned-emission operations.
 
 Selected module references normalize to canonical storage plus ordered packed
 selection steps. Composing bit, part and indexed selections preserves each
-intermediate bound, including fixed-array element/member roots. The same typed
+intermediate bound, including fixed-array element/member roots. Selections of a
+whole multidimensional packed value, or of a packed array of records, address
+whole elements through `packed_geometry.rs`; an in-range constant chain lowers
+to one part-select of its root and one runtime step to an indexed part-select. The same typed
 projection supplies reads, mutations, NBA capture and call copy-out; module
 connections require constant selectors and keep subroutine ref-actual legality
 separate.

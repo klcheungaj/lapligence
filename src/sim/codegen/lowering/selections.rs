@@ -1,5 +1,6 @@
 //! Selections.
 
+use super::packed_geometry::PackedSelectDim;
 use super::*;
 use crate::sim::ir::{IrPackedSelect, IrTaggedMemberGuard, IrTaggedSelectStep};
 
@@ -626,8 +627,12 @@ impl<'a> Codegen<'a> {
         {
             return Ok(None);
         }
-        let (relative_lsb, width) =
-            self.packed_selection_offset(&member.packed_ranges, indices, &member.name)?;
+        let (relative_lsb, width) = self.packed_selection_offset(
+            &member.packed_ranges,
+            indices,
+            member.width,
+            &member.name,
+        )?;
         let lsb = member
             .lsb
             .checked_add(relative_lsb)
@@ -655,8 +660,12 @@ impl<'a> Codegen<'a> {
         {
             return Ok(None);
         }
-        let (relative_lsb, width) =
-            self.packed_selection_offset(&member.packed_ranges, indices, &member.name)?;
+        let (relative_lsb, width) = self.packed_selection_offset(
+            &member.packed_ranges,
+            indices,
+            member.width,
+            &member.name,
+        )?;
         let lsb = member
             .lsb
             .checked_add(relative_lsb)
@@ -683,72 +692,11 @@ impl<'a> Codegen<'a> {
             return Ok(None);
         }
 
-        let stride = member.packed_ranges[1..]
-            .iter()
-            .try_fold(1u32, |stride, dimension| {
-                let extent = dimension
-                    .left
-                    .abs_diff(dimension.right)
-                    .checked_add(1)
-                    .and_then(|extent| u32::try_from(extent).ok())?;
-                stride.checked_mul(extent)
-            })
-            .ok_or_else(|| format!("packed member `{}` stride overflows", member.name))?;
-        let first_extent = range
-            .left
-            .abs_diff(range.right)
-            .checked_add(1)
-            .and_then(|extent| u32::try_from(extent).ok())
-            .ok_or_else(|| format!("packed member `{}` extent overflows", member.name))?;
-        if first_extent.checked_mul(stride) != Some(member.width) {
-            return Err(format!(
-                "packed member `{}` dimensions disagree with its width",
-                member.name
-            ));
-        }
-
-        let mut index = self.lower_expr(path, indices[0])?;
-        if index.is_real() || stride == 0 {
-            return Err(
-                "packed selection requires an integral index and nonzero stride".to_owned(),
-            );
-        }
-        if index.fill.is_some()
-            || matches!(&index.kind, IrExprKind::Fill(_))
-            || matches!(&index.kind, IrExprKind::Const(value) if value.fill.is_some())
-        {
-            let width = index.width;
-            index = IrExpr::new(
-                IrExprKind::Concat { parts: vec![index] },
-                width,
-                false,
-                None,
-            );
-        }
-
-        let right = lhs_integer_expr(range.right);
-        let multiply_bits = u32::BITS - (stride - 1).leading_zeros();
-        let arithmetic_width = index
-            .width
-            .max(right.width)
-            .checked_add(2)
-            .and_then(|width| width.checked_add(multiply_bits))
-            .filter(|width| *width <= LLG_MAX_WIDTH)
-            .ok_or_else(|| {
-                "packed selection index arithmetic exceeds the supported limit".to_owned()
-            })?;
-        let index = IrExpr::convert_to(index, arithmetic_width, true);
-        let right = IrExpr::convert_to(right, arithmetic_width, true);
-        let relative = if range.left < range.right {
-            bin_expr(IrBinOp::Sub, right, index)
-        } else {
-            bin_expr(IrBinOp::Sub, index, right)
-        };
-        let scaled = bin_expr(
-            IrBinOp::Mul,
-            relative,
-            IrExpr::convert_to(lhs_integer_expr(i128::from(stride)), arithmetic_width, true),
-        );
+        let dim = PackedSelectDim::new(member.width, Some(range))
+            .map_err(|error| format!("packed member `{}`: {error}", member.name))?;
+        let index = self.lower_expr(path, indices[0])?;
+        let scaled = dim.lsb_expr(index, 0)?;
+        let stride = dim.stride;
         Ok(Some((parameter, member, scaled, stride)))
     }
 
@@ -774,29 +722,13 @@ impl<'a> Codegen<'a> {
                 member.name
             ));
         }
-        let inner_width = member.packed_ranges[1..]
-            .iter()
-            .try_fold(1u128, |width, dimension| {
-                dimension
-                    .left
-                    .abs_diff(dimension.right)
-                    .checked_add(1)
-                    .and_then(|extent| width.checked_mul(extent))
-            })
-            .ok_or_else(|| format!("packed-member `{}` width overflows", member.name))?;
-        let left_slot = self.packed_range_slot(*range, left, &member.name)?;
-        let right_slot = self.packed_range_slot(*range, right, &member.name)?;
-        let first_slot = left_slot.min(right_slot);
-        let extent = left_slot
-            .abs_diff(right_slot)
-            .checked_add(1)
-            .ok_or_else(|| format!("packed-member `{}` select width overflows", member.name))?;
-        let relative_lsb = first_slot
-            .checked_mul(inner_width)
-            .ok_or_else(|| format!("packed-member `{}` offset overflows", member.name))?;
-        let width = extent
-            .checked_mul(inner_width)
-            .ok_or_else(|| format!("packed-member `{}` select width overflows", member.name))?;
+        let dim = PackedSelectDim::new(member.width, Some(*range))
+            .map_err(|error| format!("packed-member `{}`: {error}", member.name))?;
+        let (relative_lsb, width) = dim
+            .part(left, right)
+            .map_err(|error| format!("packed-member `{}`: {error}", member.name))?;
+        let relative_lsb = u128::try_from(relative_lsb)
+            .map_err(|_| format!("packed-member `{}` select offset is negative", member.name))?;
         let lsb = u128::from(member.lsb)
             .checked_add(relative_lsb)
             .ok_or_else(|| format!("packed-member `{}` offset overflows", member.name))?;
@@ -805,8 +737,7 @@ impl<'a> Codegen<'a> {
             member,
             u32::try_from(lsb)
                 .map_err(|_| "packed-member select offset does not fit in u32".to_string())?,
-            u32::try_from(width)
-                .map_err(|_| "packed-member select width does not fit in u32".to_string())?,
+            width,
         )))
     }
 
@@ -834,45 +765,31 @@ impl<'a> Codegen<'a> {
             .map_err(|_| format!("packed-member `{member_name}` select offset is negative"))
     }
 
+    /// Constant element indices on the leading dimensions of a `width`-bit
+    /// packed value, as an LSB-relative `(lsb, width)` slice.
     fn packed_selection_offset(
         &self,
         dimensions: &[crate::core::db::PackedRange],
         indices: &[NodeId],
+        width: u32,
         label: &str,
     ) -> Result<(u32, u32), String> {
-        let mut remaining = dimensions
-            .iter()
-            .try_fold(1u128, |width, range| {
-                range
-                    .left
-                    .abs_diff(range.right)
-                    .checked_add(1)
-                    .and_then(|extent| width.checked_mul(extent))
-            })
-            .ok_or_else(|| format!("packed select width overflows for `{label}`"))?;
-        let mut lsb = 0u128;
+        let mut lsb = 0u32;
+        let mut width = width;
         for (range, index_node) in dimensions.iter().zip(indices) {
-            let extent = range
-                .left
-                .abs_diff(range.right)
-                .checked_add(1)
-                .ok_or_else(|| format!("packed select dimension overflows for `{label}`"))?;
             let index = self.eval_bound_i128(*index_node)?;
-            let slot = self.packed_range_slot(*range, index, label)?;
-            remaining /= extent;
-            lsb = lsb
-                .checked_add(
-                    slot.checked_mul(remaining)
-                        .ok_or_else(|| format!("packed select offset overflows for `{label}`"))?,
-                )
+            // Report an out-of-range label with its declared bounds.
+            self.packed_range_slot(*range, index, label)?;
+            let dim = PackedSelectDim::new(width, Some(*range))
+                .map_err(|error| format!("packed select of `{label}`: {error}"))?;
+            let (offset, stride) = dim.element(index)?;
+            lsb = u32::try_from(offset)
+                .ok()
+                .and_then(|offset| lsb.checked_add(offset))
                 .ok_or_else(|| format!("packed select offset overflows for `{label}`"))?;
+            width = stride;
         }
-        Ok((
-            u32::try_from(lsb)
-                .map_err(|_| format!("packed select offset does not fit in u32 for `{label}`"))?,
-            u32::try_from(remaining)
-                .map_err(|_| format!("packed select width does not fit in u32 for `{label}`"))?,
-        ))
+        Ok((lsb, width))
     }
 
     /// Resolve a select on a multidimensional packed declaration to its
@@ -910,7 +827,8 @@ impl<'a> Codegen<'a> {
             .signal_of(target)
             .cloned()
             .ok_or_else(|| "packed select target is not a signal".to_string())?;
-        let (lsb, width) = self.packed_selection_offset(dimensions, indices, "signal")?;
+        let (lsb, width) =
+            self.packed_selection_offset(dimensions, indices, info.width, "signal")?;
         Ok(Some((info, lsb, width)))
     }
 
@@ -933,10 +851,14 @@ impl<'a> Codegen<'a> {
         match self.kind(base) {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 let mut ranges = self.packed_ranges_for_base(*base)?;
-                if indices.len() > ranges.len() {
+                // An unpacked array's packed ranges are its element's; only
+                // the indices past its unpacked dimensions select packed ones.
+                let unpacked = self.array_of(*base).map_or(0, |array| array.dims.len());
+                let packed = indices.len().saturating_sub(unpacked);
+                if packed > ranges.len() {
                     return None;
                 }
-                ranges.drain(..indices.len());
+                ranges.drain(..packed);
                 Some(ranges)
             }
             NodeKind::Expr(ExprKind::HierPath { .. }) => self
@@ -991,18 +913,20 @@ impl<'a> Codegen<'a> {
             .is_some_and(|range| range.left < range.right)
     }
 
+    /// Bit offset of `index` in a one-dimensional packed value, whose
+    /// elements are single bits. Selects whose elements may be wider go
+    /// through [`PackedSelectDim`].
     pub(super) fn packed_relative_bound(&self, base: NodeId, index: i128) -> Result<i128, String> {
         let Some(range) = self.packed_range_for_base(base) else {
             return Ok(index);
         };
-        if range.left < range.right {
-            range.right.checked_sub(index)
-        } else {
-            index.checked_sub(range.right)
-        }
-        .ok_or_else(|| "packed select offset overflows".into())
+        PackedSelectDim { range, stride: 1 }
+            .element_offset(index)
+            .ok_or_else(|| "packed select offset overflows".into())
     }
 
+    /// Runtime bit offset of `index` in a one-dimensional packed value; see
+    /// [`packed_relative_bound`](Self::packed_relative_bound).
     pub(super) fn lower_packed_index(
         &mut self,
         path: &str,

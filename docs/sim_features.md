@@ -414,7 +414,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   parameterized interfaces, member references and modport views are represented.
   `.name` and `.*` connection shorthands retain their resolved links. Modport
   expression ports `.p(expr)` read, write and wake through their expression
-  (part-selects, concatenation lvalues, constant and runtime element selects,
+  (part-selects, concatenation lvalues, constant and runtime element and
+  indexed part-selects,
   inout drivers of interface nets that resolve with other drivers); illegal
   targets and writer conflicts reject. Runtime virtual handles are covered in
   §12. SV §§23.3.2, 25.3, 25.5 **[SV-2005]**.
@@ -792,9 +793,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟦 **Concatenation, replication and selection** — Preserve order and
   self-determined widths, including singleton-concatenation unsigned/fill
   boundaries. Packed multidimensional, bit/part/indexed-part chains beneath
-  fixed-array elements support constant/runtime indices. Out-of-range/X/Z reads
+  fixed-array elements and on whole packed signals, nets, ports, locals, formals,
+  aliases and modport expression ports support constant/runtime indices; a
+  range or element select addresses whole elements of its dimension, including
+  packed arrays of structures and unions. Out-of-range/X/Z reads
   produce X positions; writes affect only in-range positions. Ordinary part
-  selects remain unsigned. V §§4.1.14, 4.2.1–4.2.2 **[1995/2001]**.
+  selects remain unsigned; an element select keeps its element type's sign.
+  Member access through a packed-array element (`ps[i].f`) rejects
+  ([known issue](known_issues.md#member-access-through-packed-array-elements)). V §§4.1.14, 4.2.1–4.2.2 **[1995/2001]**.
 - 🟦 **Packed strings and sign conversion** — Eight-bit ASCII vectors support
   literals/escapes, assignment, comparison, concatenation and padding/truncation.
   `$signed`/`$unsigned`, resolved sign/self-determined width rules and X/Z

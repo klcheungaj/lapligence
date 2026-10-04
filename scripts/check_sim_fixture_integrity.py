@@ -209,8 +209,8 @@ def feature_completion_errors(root: Path, tracked: set[str] | None = None) -> li
         errors.append(f"untracked {suite}")
     for directory in directories:
         task = directory.name
-        if not re.fullmatch(r"(?:fnd|rtl|sim|adv)_\d{3}[a-z]?", task):
-            errors.append(f"{directory.relative_to(root)}: use an ASCII task slug (e.g. rtl_001)")
+        if not re.fullmatch(r"(?:fnd|rtl|sim|adv)_\d{3}[a-z]?|ki_[a-z][a-z0-9]*(?:_[a-z0-9]+)*", task):
+            errors.append(f"{directory.relative_to(root)}: use an ASCII task slug (e.g. rtl_001 or ki_packed_range)")
         source = f"tests/sim_feature_completion/{task}.rs"
         if task not in declarations or not (root / source).is_file():
             errors.append(f"{task}: missing explicit module declaration or file: {source}")

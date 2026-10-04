@@ -1,5 +1,6 @@
 //! Nets.
 
+use super::super::packed_geometry::PackedSelectDim;
 use super::net_collapse::NetPoint;
 use super::*;
 
@@ -225,6 +226,52 @@ impl<'a> Codegen<'a> {
         usize::try_from(slot).map_err(|_| "packed select slot overflows".into())
     }
 
+    /// The bits of the outer-dimension elements `labels` of `base`, in
+    /// MSB-to-LSB order. Each element covers `stride` adjacent bits of the
+    /// base view, so `w[3:2]` of `wire [3:0][7:0] w` names 16 bits.
+    fn alias_packed_element_bits(
+        &self,
+        alias: NodeId,
+        base: NodeId,
+        labels: impl Iterator<Item = Option<i128>>,
+        outside: &str,
+    ) -> Result<Option<Vec<AliasBit>>, String> {
+        let Some(range) = self
+            .packed_ranges_for_base(base)
+            .and_then(|ranges| ranges.first().copied())
+        else {
+            return Ok(None);
+        };
+        let bits = self.alias_expression_bit_view(alias, base)?;
+        let view_width = u32::try_from(bits.len()).map_err(|_| {
+            self.alias_error(alias, "has a packed projection wider than the runtime")
+        })?;
+        let dim = PackedSelectDim::new(view_width, Some(range))
+            .map_err(|error| self.alias_error(alias, &error))?;
+        let stride = usize::try_from(dim.stride)
+            .map_err(|_| self.alias_error(alias, "has an overflowing packed projection"))?;
+        let mut result = Vec::new();
+        for label in labels {
+            let label = label
+                .ok_or_else(|| self.alias_error(alias, "has an overflowing packed selection"))?;
+            let slot = self.packed_logical_slot(range, label)?;
+            result.try_reserve(stride).map_err(|_| {
+                self.alias_error(alias, "cannot allocate a packed selection projection")
+            })?;
+            for bit in 0..stride {
+                let position = slot
+                    .checked_mul(stride)
+                    .and_then(|position| position.checked_add(bit))
+                    .ok_or_else(|| self.alias_error(alias, outside))?;
+                result.push(
+                    self.alias_view_bit(alias, &bits, position)?
+                        .ok_or_else(|| self.alias_error(alias, outside))?,
+                );
+            }
+        }
+        Ok(Some(result))
+    }
+
     fn alias_packed_range_bits(
         &self,
         alias: NodeId,
@@ -232,39 +279,21 @@ impl<'a> Codegen<'a> {
         left: i128,
         right: i128,
     ) -> Result<Option<Vec<AliasBit>>, String> {
-        let Some(ranges) = self.packed_ranges_for_base(base) else {
-            return Ok(None);
-        };
-        let Some(range) = ranges.as_slice().first().copied() else {
-            return Ok(None);
-        };
-        if ranges.len() != 1 {
-            return Err(self.alias_error(
-                alias,
-                "has an unsupported multidimensional packed part-select",
-            ));
-        }
-        let bits = self.alias_expression_bit_view(alias, base)?;
-        let left_slot = self.packed_logical_slot(range, left)?;
-        let right_slot = self.packed_logical_slot(range, right)?;
-        if left_slot >= bits.len() || right_slot >= bits.len() {
-            return Err(self.alias_error(alias, "has a packed part-select outside its net"));
-        }
-        let step = if left_slot <= right_slot { 1 } else { -1 };
-        let width = left_slot.abs_diff(right_slot) + 1;
-        (0..width)
-            .map(|offset| {
-                let position = if step > 0 {
-                    left_slot + offset
-                } else {
-                    left_slot - offset
-                };
-                self.alias_view_bit(alias, &bits, position)?.ok_or_else(|| {
-                    self.alias_error(alias, "has a packed part-select outside its net")
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map(Some)
+        let step = if left <= right { 1 } else { -1 };
+        let count = left
+            .abs_diff(right)
+            .checked_add(1)
+            .ok_or_else(|| self.alias_error(alias, "has an overflowing part-select"))?;
+        self.alias_packed_element_bits(
+            alias,
+            base,
+            (0..count).map(|offset| {
+                i128::try_from(offset)
+                    .ok()
+                    .and_then(|offset| left.checked_add(offset * step))
+            }),
+            "has a packed part-select outside its net",
+        )
     }
 
     fn alias_packed_indexed_bits(
@@ -275,30 +304,19 @@ impl<'a> Codegen<'a> {
         width_expr: NodeId,
         neg: bool,
     ) -> Result<Option<Vec<AliasBit>>, String> {
-        let Some(ranges) = self.packed_ranges_for_base(base) else {
+        let Some(range) = self
+            .packed_ranges_for_base(base)
+            .and_then(|ranges| ranges.first().copied())
+        else {
             return Ok(None);
         };
-        let Some(range) = ranges.as_slice().first().copied() else {
-            return Ok(None);
-        };
-        if ranges.len() != 1 {
-            return Err(self.alias_error(
-                alias,
-                "has an unsupported multidimensional packed indexed select",
-            ));
-        }
-        let bits = self.alias_expression_bit_view(alias, base)?;
         let width = self.eval_bound_i128(width_expr)?;
-        let width = usize::try_from(width)
+        let width = u32::try_from(width)
             .ok()
             .filter(|width| *width != 0)
             .ok_or_else(|| self.alias_error(alias, "has an invalid indexed part-select width"))?;
-        if width > bits.len() {
-            return Err(self.alias_error(alias, "has an indexed part-select outside its net"));
-        }
         let start = self.eval_bound_i128(base_expr)?;
-        let span = i128::try_from(width - 1)
-            .map_err(|_| self.alias_error(alias, "has an overflowing indexed part-select"))?;
+        let span = i128::from(width - 1);
         // Return MSB-to-LSB order, not the direction in which the interval
         // was specified. For [0:N], [base -: W] is [base-W+1 : base].
         let ascending = range.left < range.right;
@@ -310,23 +328,12 @@ impl<'a> Codegen<'a> {
         };
         let start = start
             .ok_or_else(|| self.alias_error(alias, "has an overflowing indexed part-select"))?;
-        let mut result = Vec::new();
-        result.try_reserve_exact(width).map_err(|_| {
-            self.alias_error(alias, "cannot allocate indexed part-select projection")
-        })?;
-        for offset in 0..width {
-            let label = start
-                .checked_add(i128::try_from(offset).unwrap_or(i128::MAX) * step)
-                .ok_or_else(|| self.alias_error(alias, "has an overflowing indexed part-select"))?;
-            let position = self.packed_logical_slot(range, label)?;
-            let bit = self
-                .alias_view_bit(alias, &bits, position)?
-                .ok_or_else(|| {
-                    self.alias_error(alias, "has an indexed part-select outside its net")
-                })?;
-            result.push(bit);
-        }
-        Ok(Some(result))
+        self.alias_packed_element_bits(
+            alias,
+            base,
+            (0..i128::from(width)).map(|offset| start.checked_add(offset * step)),
+            "has an indexed part-select outside its net",
+        )
     }
 
     fn alias_packed_projection_bits(

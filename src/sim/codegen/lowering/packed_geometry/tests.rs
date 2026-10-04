@@ -114,16 +114,53 @@ fn packed_coordinates_never_truncate_unsigned_indices_or_expand_fill_one() {
 
 #[test]
 fn packed_dimensions_keep_residual_element_stride() {
-    let (_, stride) = packed_dimension(64, Some(PackedRange { left: 1, right: 0 })).unwrap();
-    assert_eq!(stride, 32);
-    let (_, stride) = packed_dimension(stride, Some(PackedRange { left: 3, right: 0 })).unwrap();
-    assert_eq!(stride, 8);
-    assert_eq!(packed_selection_width(2, stride).unwrap(), 16);
-    let (range, stride) = packed_dimension(32, None).unwrap();
-    assert_eq!((range.left, range.right, stride), (31, 0, 1));
-    assert!(packed_dimension(1, None).is_err());
-    assert!(packed_dimension(9, Some(PackedRange { left: 3, right: 0 })).is_err());
-    assert!(packed_selection_width(0, 8).is_err());
-    assert!(packed_selection_width(u128::MAX, 8).is_err());
-    assert!(packed_selection_width(u128::from(LLG_MAX_WIDTH) + 1, 1).is_err());
+    let outer = PackedSelectDim::new(64, Some(PackedRange { left: 1, right: 0 })).unwrap();
+    assert_eq!(outer.stride, 32);
+    let inner =
+        PackedSelectDim::new(outer.stride, Some(PackedRange { left: 3, right: 0 })).unwrap();
+    assert_eq!(inner.stride, 8);
+    assert_eq!(inner.indexed_width(2).unwrap(), 16);
+    let atom = PackedSelectDim::new(32, None).unwrap();
+    assert_eq!((atom.range.left, atom.range.right, atom.stride), (31, 0, 1));
+    let bit = PackedSelectDim::new(1, None).unwrap();
+    assert_eq!((bit.range.left, bit.range.right, bit.stride), (0, 0, 1));
+    assert!(PackedSelectDim::new(0, None).is_err());
+    assert!(PackedSelectDim::new(9, Some(PackedRange { left: 3, right: 0 })).is_err());
+    assert!(inner.indexed_width(0).is_err());
+    assert!(atom.indexed_width(LLG_MAX_WIDTH + 1).is_err());
+    assert!(inner.indexed_width(u32::MAX).is_err());
+}
+
+/// Element labels map to whole elements of the outer dimension: hand-derived
+/// from IEEE 1800-2009 7.4.5 for `logic [3:0][7:0]`, `logic [0:3][7:0]` and
+/// `logic [4:1][3:0]`.
+#[test]
+fn range_selects_cover_whole_elements_in_both_directions() {
+    let descending = PackedSelectDim::new(32, Some(PackedRange { left: 3, right: 0 })).unwrap();
+    assert_eq!(descending.part(3, 2).unwrap(), (16, 16));
+    assert_eq!(descending.part(1, 0).unwrap(), (0, 16));
+    assert_eq!(descending.element(2).unwrap(), (16, 8));
+    assert_eq!(descending.indexed(2, 2, false).unwrap(), (16, 16));
+    assert_eq!(descending.indexed(2, 2, true).unwrap(), (8, 16));
+    // Out-of-range labels keep their offsets so runtime clipping can apply.
+    assert_eq!(descending.indexed(3, 2, false).unwrap(), (24, 16));
+    assert_eq!(descending.indexed(0, 2, true).unwrap(), (-8, 16));
+    assert!(descending.part(2, 3).is_err());
+
+    let ascending = PackedSelectDim::new(32, Some(PackedRange { left: 0, right: 3 })).unwrap();
+    assert_eq!(ascending.part(0, 1).unwrap(), (16, 16));
+    assert_eq!(ascending.element(3).unwrap(), (0, 8));
+    assert_eq!(ascending.indexed(1, 2, false).unwrap(), (8, 16));
+    assert_eq!(ascending.indexed(2, 2, true).unwrap(), (8, 16));
+    assert!(ascending.part(1, 0).is_err());
+
+    let offset = PackedSelectDim::new(16, Some(PackedRange { left: 4, right: 1 })).unwrap();
+    assert_eq!(offset.part(3, 2).unwrap(), (4, 8));
+    assert_eq!(offset.indexed(4, 2, true).unwrap(), (8, 8));
+    assert_eq!(offset.element_offset(0), Some(-1));
+
+    // A one-dimensional vector keeps one bit per label.
+    let vector = PackedSelectDim::new(8, Some(PackedRange { left: 7, right: 0 })).unwrap();
+    assert_eq!(vector.part(5, 2).unwrap(), (2, 4));
+    assert_eq!(vector.indexed(1, 3, false).unwrap(), (1, 3));
 }

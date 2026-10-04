@@ -282,6 +282,7 @@ mod assertion_context;
 mod clocking_context;
 mod delays;
 mod initialization;
+mod packed_geometry;
 mod references;
 mod selections;
 
