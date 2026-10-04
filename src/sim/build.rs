@@ -465,7 +465,8 @@ pub fn build_model_cmake(out_dir: &Path, extra: &[(&str, &str)]) -> Result<PathB
 }
 
 /// Build the simulation model in `out_dir` with CMake and per-call options;
-/// returns the path of the resulting executable (`<out_dir>/build/bin/sim`).
+/// returns the path of the resulting executable (`<out_dir>/build/bin/sim`,
+/// with the host executable suffix).
 pub fn build_model_cmake_with_opts(
     out_dir: &Path,
     extra: &[(&str, &str)],
@@ -1385,16 +1386,23 @@ fn output_tail(output: &std::process::Output) -> String {
     joined
 }
 
+/// File name of the generated executable. CMake builds the model for the host
+/// running llg, so the host suffix applies (`sim.exe` on Windows).
+fn sim_exe_name() -> String {
+    format!("sim{}", std::env::consts::EXE_SUFFIX)
+}
+
 /// Locate the built executable: `<build>/bin/sim` first, then a recursive
 /// search under `<build>/bin/` (multi-config generators may add per-config
 /// subdirectories).  Deterministic order on all paths.
 fn find_sim_exe(bin_dir: &Path) -> Result<PathBuf, BuildError> {
-    let direct = bin_dir.join("sim");
+    let name = sim_exe_name();
+    let direct = bin_dir.join(&name);
     if direct.is_file() {
         return Ok(direct);
     }
     let mut found = Vec::new();
-    collect_named_files(bin_dir, "sim", &mut found);
+    collect_named_files(bin_dir, &name, &mut found);
     if let Some(path) = found.first() {
         return Ok(path.clone());
     }
@@ -1774,6 +1782,30 @@ mod tests {
         assert!(lock_path.is_file());
 
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sim_executable_lookup_uses_the_host_executable_suffix() {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let unique = NEXT.fetch_add(1, Ordering::Relaxed);
+        let bin =
+            std::env::temp_dir().join(format!("llg-find-sim-exe-{}-{unique}", std::process::id()));
+        let name = format!("sim{}", std::env::consts::EXE_SUFFIX);
+        // Multi-config generators place the executable in a configuration
+        // directory; a same-stem file with another extension is not it.
+        std::fs::create_dir_all(bin.join("Release")).unwrap();
+        std::fs::write(bin.join("Release").join(&name), b"").unwrap();
+        std::fs::write(bin.join("sim.pdb"), b"").unwrap();
+        assert_eq!(find_sim_exe(&bin).unwrap(), bin.join("Release").join(&name));
+
+        std::fs::write(bin.join(&name), b"").unwrap();
+        assert_eq!(find_sim_exe(&bin).unwrap(), bin.join(&name));
+
+        std::fs::remove_dir_all(&bin).unwrap();
+        assert!(matches!(
+            find_sim_exe(&bin),
+            Err(BuildError::ExecutableNotFound { .. })
+        ));
     }
 
     #[test]
