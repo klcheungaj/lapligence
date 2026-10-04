@@ -388,11 +388,11 @@ pub(super) fn capture_lhs_indices_with_prefix(
                 **index = capture(ctx, index, declarations, next, index_prefix)?;
             }
             IrLhs::Bit(_, index, _) => {
-                *index = Box::new(capture(ctx, index, declarations, next, index_prefix)?);
+                **index = capture(ctx, index, declarations, next, index_prefix)?;
             }
             IrLhs::IdxPart(_, base, width_expr, _, _, _) => {
-                *base = Box::new(capture(ctx, base, declarations, next, index_prefix)?);
-                *width_expr = Box::new(capture(ctx, width_expr, declarations, next, index_prefix)?);
+                **base = capture(ctx, base, declarations, next, index_prefix)?;
+                **width_expr = capture(ctx, width_expr, declarations, next, index_prefix)?;
             }
             IrLhs::ArrayElem {
                 indices, elem_sel, ..

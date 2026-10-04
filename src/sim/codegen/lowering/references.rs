@@ -179,7 +179,7 @@ impl<'a> Codegen<'a> {
                             arr,
                             indices,
                             elem_sel: IrElemSel::Indexed {
-                                base: base,
+                                base,
                                 width: selected_width,
                                 negative,
                             },

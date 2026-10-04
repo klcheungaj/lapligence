@@ -502,10 +502,13 @@ impl<'a> SourceLines<'a> {
     }
 }
 
+/// Shared file name plus one-based start line/column and end line/column.
+pub(super) type SourcePosition = (Option<Arc<str>>, u32, u32, u32, u32);
+
 struct SourcePositionFile<'a> {
     file: &'a crate::ffi::slang::File,
     /// One shared name per file; every node located in it clones the handle.
-    name: Option<std::sync::Arc<str>>,
+    name: Option<Arc<str>>,
     lines: Option<SourceLines<'a>>,
 }
 
@@ -526,10 +529,7 @@ impl<'a> SourcePositions<'a> {
         Self { files }
     }
 
-    pub(super) fn position(
-        &mut self,
-        node: &SemanticNode,
-    ) -> Result<(Option<std::sync::Arc<str>>, u32, u32, u32, u32), DbError> {
+    pub(super) fn position(&mut self, node: &SemanticNode) -> Result<SourcePosition, DbError> {
         let Some(range) = node.range else {
             return Ok((None, 0, 0, 0, 0));
         };
@@ -562,7 +562,7 @@ impl<'a> SourcePositions<'a> {
 pub(super) fn source_position(
     snapshot: &SlangSnapshot,
     node: &SemanticNode,
-) -> Result<(Option<std::sync::Arc<str>>, u32, u32, u32, u32), DbError> {
+) -> Result<SourcePosition, DbError> {
     SourcePositions::new(snapshot).position(node)
 }
 
