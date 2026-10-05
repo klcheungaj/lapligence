@@ -14,6 +14,18 @@ pub enum IrCallArg {
     /// Inputs receive a fresh caller copy; outputs and results are written
     /// in place and copied back by the caller after return.
     NativeValue(usize),
+    /// Whole caller container passed to a container formal. The call gives
+    /// the callee fresh storage: inputs and inouts copy the actual in,
+    /// outputs and results are copied back after the callee returns.
+    Container(usize),
+    /// Input container formal built at the call from element values evaluated
+    /// in order (an assignment pattern in expression position). `container`
+    /// is an activation container of the formal's storage type that names
+    /// the element type; the call creates its storage.
+    ContainerValues {
+        container: usize,
+        values: Vec<IrExpr>,
+    },
     /// Input native-value formal of type `ty` (index into the model's native
     /// types) built from leaf values evaluated in order at the call; leaves
     /// not listed keep their typed default.
@@ -365,7 +377,9 @@ impl IrCallArg {
                     argument.expressions(visit);
                 }
             }
-            Self::RealArrayValues(values) => values.iter().for_each(visit),
+            Self::RealArrayValues(values) | Self::ContainerValues { values, .. } => {
+                values.iter().for_each(visit)
+            }
             Self::RealArrayCall { call, .. } => {
                 for argument in &call.args {
                     argument.expressions(visit);
@@ -426,7 +440,9 @@ impl IrCallArg {
                     argument.expressions_mut(visit);
                 }
             }
-            Self::RealArrayValues(values) => values.iter_mut().for_each(visit),
+            Self::RealArrayValues(values) | Self::ContainerValues { values, .. } => {
+                values.iter_mut().for_each(visit)
+            }
             Self::RealArrayCall { call, .. } => {
                 for argument in &mut call.args {
                     argument.expressions_mut(visit);

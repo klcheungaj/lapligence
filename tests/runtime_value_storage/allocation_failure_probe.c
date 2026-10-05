@@ -1,6 +1,7 @@
 /* Fatal allocation failure inside runtime-reachable packed operations, with
  * either selected backend: constructors, wide copies, X/Z storage growth and
- * a container element capture. The tracked allocator injects the failure. */
+ * a container element capture and a whole record element copy. The tracked
+ * allocator injects the failure. */
 #include "llg_container.h"
 #include "probe.h"
 #include <string.h>
@@ -29,6 +30,20 @@ int main(int argc, char** argv) {
         value_test_fail_allocation_after(1);
         llg_queue_push_back(&queue, wide);
         llg_queue_destroy(&queue);
+    } else if (strcmp(argv[1], "record_queue") == 0) {
+        /* A whole record element copied into a queue (SIM-006). */
+        static const llg_value_desc_t wide_desc = {LLG_VALUE_PACKED, 0, 129, 0, 0, 0, 0, NULL, NULL, 0};
+        static const llg_value_member_desc_t members[] = {{&wide_desc}, {&wide_desc}};
+        static const llg_value_desc_t record_desc = {
+            LLG_VALUE_AGGREGATE, 1, 0, 0, 0, 0, 2, NULL, members, 2};
+        llg_queue_value_array_t queue;
+        llg_value_t record = {0};
+        llg_queue_value_init(&queue, &record_desc, UINT64_MAX);
+        llg_native_value_init(&record, &record_desc);
+        value_test_fail_allocation_after(1);
+        llg_queue_value_push_value(&queue, 1, &record);
+        llg_native_value_destroy(&record);
+        llg_queue_value_destroy(&queue);
     } else {
         CHECK(0);
     }

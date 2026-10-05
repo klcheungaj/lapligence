@@ -30,6 +30,9 @@ impl Codegen<'_> {
         if self.is_process_self_call(node) {
             return Ok(IrProcessExpr::SelfHandle);
         }
+        if let Some(handle) = self.lower_container_process_query(path, node)? {
+            return Ok(IrProcessExpr::Handle(Box::new(handle)));
+        }
         let target = self.process_target_node(node);
         if let Some(function) = &self.func {
             if let Some(value) = target.and_then(|target| function.process_read.get(&target)) {

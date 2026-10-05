@@ -8,6 +8,11 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrStringExpr, String> {
+        if self.element_leaf_kind(node) == Some(IrClassFieldType::String) {
+            if let Some((name, _)) = self.element_leaf_symbol(path, node, false)? {
+                return Ok(IrStringExpr::LocalRead(name));
+            }
+        }
         if let Some(target) = self.class_field_string_lvalue(path, node)? {
             return Ok(IrStringExpr::LocalRead(target));
         }
@@ -90,6 +95,16 @@ impl Codegen<'_> {
             let mut out_args = Vec::new();
             let mut in_args = Vec::new();
             for (idx, (io, is_out)) in formals.iter().enumerate() {
+                if self.is_subroutine_container(*io) {
+                    let argument =
+                        self.container_call_argument(path, *io, bound[idx].expr, None)?;
+                    if *is_out {
+                        out_args.push(argument);
+                    } else {
+                        in_args.push(argument);
+                    }
+                    continue;
+                }
                 if self.is_native_declaration(*io) {
                     let argument = self.native_expression_argument(path, *io, bound[idx].expr)?;
                     if *is_out {
@@ -178,6 +193,7 @@ impl Codegen<'_> {
                         | IrCallArg::StringRefAddr { .. }
                         | IrCallArg::StringOutTemp { .. }
                         | IrCallArg::NativeValue(_)
+                        | IrCallArg::Container(_)
                         | IrCallArg::NativeLeaves { .. }
                 )
             });

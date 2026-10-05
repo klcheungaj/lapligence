@@ -30,38 +30,6 @@ fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>, Strin
     Ok((run.stdout, run.warnings, run.model_c))
 }
 
-/// Compile + codegen only (no model build): the codegen error message, when
-/// the design must be rejected at lowering. Returns `Err` when the frontend
-/// itself rejects the design (the message then starts with "COMPILE-ERROR:").
-fn codegen_error(sv: &str, top: &str, tag: &str) -> Result<String, String> {
-    sim_harness::with_temp_cwd(tag, |dir| {
-        let src = dir.join("tb.sv");
-        std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some(top.to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!(
-                "COMPILE-ERROR: {}",
-                out.diagnostics
-                    .iter()
-                    .map(|d| d.message.clone())
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            ));
-        }
-        let db =
-            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
-        match sim::codegen::generate(&db) {
-            Ok(_) => Err("design was expected to be rejected".to_string()),
-            Err(e) => Ok(e.to_string()),
-        }
-    })
-}
-
 /// (a) Handshake: a producer triggers `ev` at t=5 while two consumers wait on
 /// it.  Every current waiter wakes on the trigger.
 #[test]
@@ -428,24 +396,8 @@ endmodule
         "named-event edge control must report ExprMustBeIntegral: {diagnostics:?}"
     );
 
-    // Dynamic event storage is a distinct lifetime/container boundary. Keep
-    // its lowering diagnostic exact rather than accepting a copied pulse.
-    let err = codegen_error(
-        r#"module tb;
-    event ev[];
-    initial begin
-        -> ev[0];
-    end
-endmodule
-"#,
-        "tb",
-        "reject-dynamic-array",
-    )
-    .expect("dynamic event arrays should reach lowering");
-    assert!(
-        err.contains("unsupported storage kind"),
-        "expected an explicit dynamic event-array lowering reject, got: {err}"
-    );
+    // Dynamic, queue and associative event storage executes as identity
+    // containers; `sim_feature_completion::sim_006` covers it.
 }
 
 #[test]

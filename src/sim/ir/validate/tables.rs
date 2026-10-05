@@ -813,9 +813,20 @@ impl Validator<'_> {
                 );
             }
             if !access.item_path.is_empty()
-                && !matches!(access.kind, IrNativeAccessKind::ValueItem { .. })
+                && !matches!(
+                    access.kind,
+                    IrNativeAccessKind::ValueItem { .. } | IrNativeAccessKind::ElementItem { .. }
+                )
             {
                 return self.fail(&path, "only native value items carry an item path");
+            }
+            if matches!(access.receiver, IrChandleExpr::ContainerElement { .. })
+                != matches!(access.kind, IrNativeAccessKind::ElementItem { .. })
+            {
+                return self.fail(
+                    &path,
+                    "container element locators address element items only",
+                );
             }
             match access.kind {
                 IrNativeAccessKind::ClassField { class, field } => {
@@ -837,6 +848,9 @@ impl Validator<'_> {
                     {
                         return self.fail(&path, "interface member reference is out of bounds");
                     }
+                }
+                IrNativeAccessKind::ElementItem { ty } => {
+                    self.validate_element_leaf(&access.receiver, &access.item_path, ty, &path)?;
                 }
                 IrNativeAccessKind::ValueItem { value, ty } => {
                     self.validate_native_leaf(value, &access.item_path, ty, &path)?;
@@ -967,6 +981,23 @@ impl Validator<'_> {
                         return self.fail(&path, "invalid real-array formal storage");
                     }
                 }
+                if let Some(container) = formal.container {
+                    if self.model.containers.get(container).is_none()
+                        || formal.is_ref()
+                        || formal.width != 0
+                        || formal.real
+                        || formal.string
+                        || formal.chandle
+                        || formal.event
+                        || formal.fixed_array.is_some()
+                        || formal.native_value.is_some()
+                        || formal.real_array.is_some()
+                        || formal.fixed_shape.is_some()
+                        || formal.fixed_default.is_some()
+                    {
+                        return self.fail(&path, "invalid container formal storage");
+                    }
+                }
                 if let Some(value) = &formal.fixed_default {
                     self.validate_storage_default(value, formal.width, formal.signed, &path)?;
                 }
@@ -994,6 +1025,7 @@ impl Validator<'_> {
                 }
                 if formal.fixed_array.is_none()
                     && formal.native_value.is_none()
+                    && formal.container.is_none()
                     && formal.real_array.is_none()
                     && !formal.chandle
                     && !formal.event

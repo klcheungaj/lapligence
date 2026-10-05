@@ -370,7 +370,7 @@ pub struct DpiImportInfo {
 /// Unpacked-array metadata captured at build time, kept out of the
 /// [`NodeKind::Array`] variant so `core::model` (which binds the variant's
 /// `ty` field) does not have to change.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ArrayMeta {
     pub kind: ArrayKind,
     pub dims: Vec<Option<(i32, i32)>>,

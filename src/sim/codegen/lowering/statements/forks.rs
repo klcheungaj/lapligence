@@ -53,7 +53,7 @@ impl EmitCtx<'_, '_> {
             .find_map(|branch| self.cg.native_activation_capture(*branch))
         {
             return Err(format!(
-                "fork branch in `{}` references native record `{name}` of the enclosing activation; capturing native subroutine storage in a fork is not supported",
+                "fork branch in `{}` references native record or container `{name}` of the enclosing activation; capturing native subroutine storage in a fork is not supported (SIM-010)",
                 self.path
             ));
         }

@@ -85,7 +85,11 @@ impl EmitCtx<'_, '_> {
                     .check_overloaded_update_target(&self.path, *target)?;
             }
         }
-        if let Some(target) = self.cg.event_target_of(lhs) {
+        if let Some(target) = self
+            .cg
+            .event_target_of(lhs)
+            .filter(|target| !self.cg.container_globals.contains_key(&target.declaration))
+        {
             if op != Operation::Assignment {
                 return Err(format!(
                     "compound assignment to named event `{}` in `{}` is not supported",
@@ -103,6 +107,15 @@ impl EmitCtx<'_, '_> {
             let target = self.cg.event_ref_of(&target, &self.path)?;
             let source = if let Some(source) = self.cg.event_target_of(rhs) {
                 Some(self.cg.event_ref_of(&source, &self.path)?)
+            } else if let Some((container, back)) = self
+                .cg
+                .queue_pop_call(rhs)
+                .filter(|(container, _)| self.cg.model.containers[*container].element.is_event())
+            {
+                Some(IrEventRef::Handle(Box::new(IrChandleExpr::QueuePop {
+                    container,
+                    back,
+                })))
             } else if self.cg.is_null_event_expression(rhs) {
                 None
             } else {
@@ -334,6 +347,14 @@ impl EmitCtx<'_, '_> {
                 ))
             }
         };
+        if self.cg.is_container_element(operand) {
+            let increment = matches!(op, Operation::PostIncrement | Operation::PreIncrement);
+            return self.cg.lower_container_element_update(
+                &self.path,
+                operand,
+                &mut |_, current| Ok(inc_dec_value(current, increment)),
+            );
+        }
         let lhs = self.cg.lower_lhs(&self.path, operand)?;
         if matches!(
             lhs,
@@ -359,41 +380,7 @@ impl EmitCtx<'_, '_> {
         }
         let current = self.cg.lower_expr(&self.path, operand)?;
         let increment = matches!(op, Operation::PostIncrement | Operation::PreIncrement);
-        let rhs = if current.is_real() {
-            real_bin_expr(
-                if increment {
-                    IrRealBinOp::Add
-                } else {
-                    IrRealBinOp::Sub
-                },
-                current,
-                real_literal_expr(1.0),
-            )
-        } else {
-            let one = IrExpr::new(
-                IrExprKind::Const(IrConst {
-                    bits: vec![1],
-                    x: vec![0],
-                    z: vec![0],
-                    width: 32,
-                    signed: true,
-                    real: None,
-                    fill: None,
-                }),
-                32,
-                true,
-                None,
-            );
-            common_bin_expr(
-                if increment {
-                    IrBinOp::Add
-                } else {
-                    IrBinOp::Sub
-                },
-                current,
-                one,
-            )
-        };
+        let rhs = inc_dec_value(current, increment);
         let rhs = apply_lhs_assignment_context(&self.cg.model, &lhs, rhs);
         Ok(IrStmt::Assign {
             lhs,
@@ -1169,4 +1156,42 @@ impl EmitCtx<'_, '_> {
         let lhs = target(h, &mut slots, lhs);
         (slots, lhs)
     }
+}
+
+/// `current + 1` or `current - 1`, in real or packed arithmetic.
+fn inc_dec_value(current: IrExpr, increment: bool) -> IrExpr {
+    if current.is_real() {
+        return real_bin_expr(
+            if increment {
+                IrRealBinOp::Add
+            } else {
+                IrRealBinOp::Sub
+            },
+            current,
+            real_literal_expr(1.0),
+        );
+    }
+    let one = IrExpr::new(
+        IrExprKind::Const(IrConst {
+            bits: vec![1],
+            x: vec![0],
+            z: vec![0],
+            width: 32,
+            signed: true,
+            real: None,
+            fill: None,
+        }),
+        32,
+        true,
+        None,
+    );
+    common_bin_expr(
+        if increment {
+            IrBinOp::Add
+        } else {
+            IrBinOp::Sub
+        },
+        current,
+        one,
+    )
 }

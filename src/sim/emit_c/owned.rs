@@ -147,6 +147,9 @@ pub(super) struct Frame<'a, 'm> {
     fixed_arrays: HashMap<usize, String>,
     /// Activation native values bound in this frame (`llg_value_t*` expressions).
     native_values: HashMap<usize, String>,
+    /// Activation containers bound in this frame (container lvalue
+    /// expressions, such as `(*ptr)`).
+    containers: HashMap<usize, String>,
     slots: Vec<bool>,
     next_name: usize,
     bindings: Vec<HashMap<String, Binding>>,
@@ -174,6 +177,9 @@ pub(super) struct Frame<'a, 'm> {
     cancellation_points: usize,
     may_disable: HashMap<usize, bool>,
     access_stack: Vec<String>,
+    /// Containers written in place through element-item accesses during the
+    /// current statement; their readers are notified once it completes.
+    pending_touches: Vec<(String, &'static str)>,
     construction_stack: Vec<usize>,
     layout: FrameLayout,
     declarations: Vec<DeferredDeclaration>,
@@ -306,6 +312,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             code: String::new(),
             fixed_arrays: HashMap::new(),
             native_values: HashMap::new(),
+            containers: HashMap::new(),
             slots: Vec::new(),
             next_name: 0,
             bindings: vec![HashMap::new()],
@@ -328,6 +335,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             cancellation_points: 0,
             may_disable: HashMap::new(),
             access_stack: Vec::new(),
+            pending_touches: Vec::new(),
             construction_stack: Vec::new(),
             layout: FrameLayout::with_backend(storage, ctx.value_backend),
             declarations: Vec::new(),
@@ -1156,10 +1164,12 @@ impl<'a, 'm> Frame<'a, 'm> {
             let loads = self
                 .cached_fields
                 .prologue_loads(|name| self.layout.field_access(name));
+            let mut layout = self.layout;
+            layout.release_emission_state();
             Ok(CoroutineBody {
                 body: format!("{loads}{rewritten}"),
                 cached_locals: self.cached_fields.locals(),
-                layout: self.layout,
+                layout,
             })
         }
     }

@@ -109,6 +109,19 @@ through copy-out/cancellation; snapshot/disconnect removed identities before
 structural mutation. Destruction cannot free pinned cells, and ref lists are
 borrowed. Alias reads never publish or mutate resolved storage.
 
+Identity-handle elements (SIM-006) copy the handle: events, opaque objects and
+borrowed chandles are never duplicated; `LLG_VALUE_PROCESS` handles are counted
+through `llg_value_handle_hooks_t` (retain on copy, release on drop, a pop moves
+the reference out). The scheduler installs the hooks at init and never clears
+them; `event_new` creates scheduler-owned events for new event elements (Table
+6-7), freed in `llg_rt_cleanup`, while missing or invalid reads yield null
+(Table 7-1). Element locators (`container/value_elements.c`) return borrowed
+element pointers valid until the next structural change; callers write members
+in place and then call the container's `*_touch`. Associative reads through an
+invalid key or of a nonexistent entry warn (SV 7.8.6) unless an explicit default
+is set; invalid-key writes warn and do nothing. Activation and class-property
+containers run without dependencies or notification.
+
 ## Scheduler, process and event invariants
 
 ### Frame-resident cells

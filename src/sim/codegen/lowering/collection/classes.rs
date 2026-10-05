@@ -172,6 +172,15 @@ impl<'a> Codegen<'a> {
             let class_index = self.class_nodes[&class];
             let mut fields = Vec::new();
             for child in self.node(class).children.clone() {
+                if let Some(meta) = self
+                    .db
+                    .array_meta(child)
+                    .filter(|meta| !matches!(meta.kind(), ArrayKind::Static))
+                    .cloned()
+                {
+                    self.collect_class_container(class_index, child, &meta, &mut fields)?;
+                    continue;
+                }
                 let NodeKind::Var { ty } = self.kind(child) else {
                     continue;
                 };
@@ -313,6 +322,7 @@ impl<'a> Codegen<'a> {
                         ident(&self.node(child).name)
                     ),
                     ty: field_ty,
+                    container: None,
                 });
                 self.class_fields.insert(child, (class_index, field_index));
             }
@@ -352,6 +362,13 @@ impl<'a> Codegen<'a> {
                         *index += inherited.len();
                     }
                 }
+                for container in &mut self.model.containers {
+                    if let Some((owner, index)) = container.class_field.as_mut() {
+                        if *owner == class_index {
+                            *index += inherited.len();
+                        }
+                    }
+                }
                 let mut fields = inherited;
                 fields.extend(
                     self.model.classes[class_index].fields[..own_len]
@@ -366,6 +383,49 @@ impl<'a> Codegen<'a> {
                 return Err("class inheritance layout contains a cycle".to_owned());
             }
         }
+        Ok(())
+    }
+
+    /// A resizable-container class property (SV 8.5, 7.5-7.10). A static
+    /// property is one model-global container; an instance property is one
+    /// container per object, created with the object and addressed through
+    /// the receiver of the class's own methods.
+    fn collect_class_container(
+        &mut self,
+        class_index: usize,
+        child: NodeId,
+        meta: &crate::core::db::ArrayMeta,
+        fields: &mut Vec<IrClassField>,
+    ) -> Result<(), String> {
+        let name = self.node(child).name.clone();
+        let descriptor = self
+            .query_descriptor(child)
+            .ok_or_else(|| format!("class property `{name}` has no recursive type descriptor"))?;
+        let TypeShape::Container { element, .. } = &descriptor.shape else {
+            return Err(format!(
+                "class property `{name}` has a non-container type descriptor"
+            ));
+        };
+        let element = lower_container_element(element)?;
+        let path = format!("llg_class{class_index}");
+        let info = self.container_from_meta(&path, &name, child, meta, element)?;
+        if self.db.variable_lifetime(child) != VariableLifetime::Static {
+            if meta.initializer().is_some() {
+                return Err(format!(
+                    "initializer of class container property `{name}` is not supported"
+                ));
+            }
+            let field_index = fields.len();
+            self.model.containers[info.ir].class_field = Some((class_index, field_index));
+            self.model.containers[info.ir].c_name =
+                format!("S_llg_class_container_{class_index}_{field_index}");
+            fields.push(IrClassField {
+                c_name: format!("f_{class_index}_{field_index}_{}", ident(&name)),
+                ty: IrClassFieldType::Chandle,
+                container: Some(info.ir),
+            });
+        }
+        self.container_globals.insert(child, info);
         Ok(())
     }
 }

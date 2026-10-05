@@ -15,6 +15,7 @@ use crate::sim::execution::{
 use crate::sim::ir::{
     IrConcurrentAssertionKind, IrFunc, IrModel, IrProcessKind, IrSequence, IrType, IrVpiObjectKind,
 };
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 mod interfaces;
@@ -96,11 +97,24 @@ pub fn render(execution: &ExecutionModel) -> Result<String, EmitError> {
 pub(crate) fn render_with_symbols(
     execution: &ExecutionModel,
 ) -> Result<BoundedIdentifiers, EmitError> {
-    render_with_value_config(execution, crate::sim::value_backend::ValueConfig::default())
+    render_cow(
+        Cow::Borrowed(execution),
+        crate::sim::value_backend::ValueConfig::default(),
+    )
 }
 
+/// Render a model that the caller no longer needs. Each process's typed
+/// operations are released as soon as its body is rendered, and a changed
+/// arena-callee set is reanalyzed in place instead of on a copy.
 pub(crate) fn render_with_value_config(
-    execution: &ExecutionModel,
+    execution: ExecutionModel,
+    config: crate::sim::value_backend::ValueConfig,
+) -> Result<BoundedIdentifiers, EmitError> {
+    render_cow(Cow::Owned(execution), config)
+}
+
+fn render_cow(
+    execution: Cow<'_, ExecutionModel>,
     config: crate::sim::value_backend::ValueConfig,
 ) -> Result<BoundedIdentifiers, EmitError> {
     config.validate().map_err(EmitError::new)?;
@@ -117,7 +131,7 @@ pub(in crate::sim::emit_c) fn render_with_sharing_threshold(
     threshold: usize,
 ) -> Result<String, EmitError> {
     Ok(render_bounded(
-        execution,
+        Cow::Borrowed(execution),
         threshold,
         crate::sim::value_backend::ValueConfig::default(),
     )?
@@ -130,7 +144,7 @@ thread_local! {
 }
 
 fn render_bounded(
-    execution: &ExecutionModel,
+    execution: Cow<'_, ExecutionModel>,
     threshold: usize,
     config: crate::sim::value_backend::ValueConfig,
 ) -> Result<BoundedIdentifiers, EmitError> {
@@ -148,7 +162,7 @@ fn render_bounded(
     super::owned::model::check_model(execution.ir()).map_err(EmitError::new)?;
     let prepare_stage = crate::profile::Stage::new("render.prepare");
     let (_, upper_bounds) = render_coroutine_functions(
-        execution,
+        &execution,
         config.backend,
         &super::constants::PackedConstants::default(),
     )
@@ -165,13 +179,15 @@ fn render_bounded(
         return render_model(execution, threshold, config).map_err(EmitError::new);
     }
     #[cfg(test)]
-    PREPARE_MODEL_CLONES.with(|count| count.set(count.get() + 1));
-    let mut execution = execution.clone();
+    if matches!(execution, Cow::Borrowed(_)) {
+        PREPARE_MODEL_CLONES.with(|count| count.set(count.get() + 1));
+    }
+    let mut execution = execution.into_owned();
     execution
         .reanalyze_with_forced_arena_callees(&forced)
         .map_err(EmitError::InvalidIr)?;
     drop(prepare_stage);
-    render_model(&execution, threshold, config).map_err(EmitError::new)
+    render_model(Cow::Owned(execution), threshold, config).map_err(EmitError::new)
 }
 
 struct CoroutineArtifact {
@@ -186,12 +202,24 @@ struct CoroutineArtifact {
     shared_entry: Option<String>,
     pca_batches: Vec<super::statements::pca_batches::Batch>,
     net_batches: Vec<super::owned::net_batches::NetBatch>,
+    /// A process whose operations include a conditional PCA drive; sharing
+    /// keys it by driver shape instead of source location. Recorded at
+    /// rendering because the operations may be released afterwards.
+    pca_driver: bool,
     /// Resume points of a recursive subprogram's coroutine, numbered during
     /// emission; other coroutines take their sites from the analysis.
     recursive_sites: Option<usize>,
 }
 
 type CoroutineArtifacts = BTreeMap<usize, CoroutineArtifact>;
+
+/// Rendered bodies stay alive until sharing and assembly, so release the
+/// growth slack of the builder that produced them. For many-instance designs
+/// the slack alone was about as large as the rendered text.
+fn retained(mut source: String) -> String {
+    source.shrink_to_fit();
+    source
+}
 type CoroutineUpperBounds = BTreeMap<usize, usize>;
 
 /// Suspension-site location for coroutine backtraces: physical, with the
@@ -230,7 +258,7 @@ fn render_coroutine_functions(
         artifacts.insert(
             index,
             CoroutineArtifact {
-                source,
+                source: retained(source),
                 layout,
                 frame_type: format!("{}_frame_t", function.c_name),
                 desc_name: format!("{}_desc", function.c_name),
@@ -241,6 +269,7 @@ fn render_coroutine_functions(
                 shared_entry: None,
                 pca_batches: Vec::new(),
                 net_batches: Vec::new(),
+                pca_driver: false,
                 recursive_sites: None,
             },
         );
@@ -274,7 +303,7 @@ fn render_recursive_functions(
         artifacts.insert(
             index,
             CoroutineArtifact {
-                source,
+                source: retained(source),
                 layout,
                 frame_type: format!("{}_co_frame_t", function.c_name),
                 desc_name: format!("{}_co_desc", function.c_name),
@@ -285,6 +314,7 @@ fn render_recursive_functions(
                 shared_entry: None,
                 pca_batches: Vec::new(),
                 net_batches: Vec::new(),
+                pca_driver: false,
                 recursive_sites: Some(sites),
             },
         );
@@ -292,12 +322,37 @@ fn render_recursive_functions(
     Ok(artifacts)
 }
 
+/// Render every non-final process as a coroutine. An owned model releases
+/// each process's typed operations once its body exists, so the rendered
+/// text does not accumulate on top of the complete execution IR.
 fn render_coroutine_processes(
-    execution: &ExecutionModel,
+    execution: &mut Cow<'_, ExecutionModel>,
     backend: crate::sim::value_backend::ValueBackend,
     constants: &super::constants::PackedConstants,
     upper_bounds: &BTreeMap<usize, usize>,
 ) -> Result<Vec<Option<CoroutineArtifact>>, String> {
+    let count = execution.processes().len();
+    let mut artifacts = Vec::with_capacity(count);
+    for index in 0..count {
+        let artifact =
+            render_coroutine_process(execution, index, backend, constants, upper_bounds)?;
+        if artifact.is_some() {
+            if let Cow::Owned(execution) = execution {
+                execution.release_process_operations(index);
+            }
+        }
+        artifacts.push(artifact);
+    }
+    Ok(artifacts)
+}
+
+fn render_coroutine_process(
+    execution: &ExecutionModel,
+    index: usize,
+    backend: crate::sim::value_backend::ValueBackend,
+    constants: &super::constants::PackedConstants,
+    upper_bounds: &BTreeMap<usize, usize>,
+) -> Result<Option<CoroutineArtifact>, String> {
     let model = execution.ir();
     let ctx = RCtx {
         value_backend: backend,
@@ -307,40 +362,40 @@ fn render_coroutine_processes(
         activation_label: None,
         constants: Some(constants),
     };
-    execution
-        .processes()
-        .iter()
-        .enumerate()
-        .map(|(index, executable)| {
-            let process = &model.processes[executable.semantic_process];
-            if process.kind() == IrProcessKind::Final {
-                return Ok(None);
-            }
-            let (source, layout, pca_batches, net_batches) =
-                super::owned::model::coroutine_process(
-                    &ctx,
-                    process,
-                    index,
-                    executable,
-                    execution.analysis(),
-                    upper_bounds,
-                )?;
-            Ok(Some(CoroutineArtifact {
-                source,
-                layout,
-                frame_type: format!("{}_frame_t", process.c_name),
-                desc_name: format!("{}_desc", process.c_name),
-                display_name: process.label().to_owned(),
-                location: origin_location(process.origin()),
-                owner: CoroutineId::Process(index),
-                root: true,
-                shared_entry: None,
-                pca_batches,
-                net_batches,
-                recursive_sites: None,
-            }))
+    let executable = &execution.processes()[index];
+    let process = &model.processes[executable.semantic_process];
+    if process.kind() == IrProcessKind::Final {
+        return Ok(None);
+    }
+    let (source, layout, pca_batches, net_batches) = super::owned::model::coroutine_process(
+        &ctx,
+        process,
+        index,
+        executable,
+        execution.analysis(),
+        upper_bounds,
+    )?;
+    let pca_driver = executable.blocks.iter().any(|block| {
+        block.operations.iter().any(|statement| {
+            matches!(statement, crate::sim::ir::IrStmt::If { then_, .. }
+                if then_.iter().any(|statement| matches!(statement, crate::sim::ir::IrStmt::PcaDrive { .. })))
         })
-        .collect()
+    });
+    Ok(Some(CoroutineArtifact {
+        source: retained(source),
+        layout,
+        frame_type: format!("{}_frame_t", process.c_name),
+        desc_name: format!("{}_desc", process.c_name),
+        display_name: process.label().to_owned(),
+        location: origin_location(process.origin()),
+        owner: CoroutineId::Process(index),
+        root: true,
+        shared_entry: None,
+        pca_batches,
+        net_batches,
+        pca_driver,
+        recursive_sites: None,
+    }))
 }
 
 fn render_coroutine_branches(
@@ -388,7 +443,7 @@ fn render_coroutine_branches(
             artifacts.insert(
                 owner,
                 CoroutineArtifact {
-                    source,
+                    source: retained(source),
                     layout,
                     frame_type: format!("{name}_frame_t"),
                     desc_name: format!("{name}_desc"),
@@ -399,6 +454,7 @@ fn render_coroutine_branches(
                     shared_entry: None,
                     pca_batches: Vec::new(),
                     net_batches: Vec::new(),
+                    pca_driver: false,
                     recursive_sites: None,
                 },
             );
@@ -421,7 +477,7 @@ fn render_coroutine_branches(
             artifacts.insert(
                 owner,
                 CoroutineArtifact {
-                    source,
+                    source: retained(source),
                     layout,
                     frame_type: format!("{name}_frame_t"),
                     desc_name: format!("{name}_desc"),
@@ -432,6 +488,7 @@ fn render_coroutine_branches(
                     shared_entry: None,
                     pca_batches: Vec::new(),
                     net_batches: Vec::new(),
+                    pca_driver: false,
                     recursive_sites: None,
                 },
             );
@@ -672,17 +729,22 @@ fn share_frame_types(
 }
 
 fn render_model(
-    execution: &ExecutionModel,
+    mut execution: Cow<'_, ExecutionModel>,
     threshold: usize,
     config: crate::sim::value_backend::ValueConfig,
 ) -> Result<BoundedIdentifiers, String> {
-    let model = execution.ir();
     let artifact_stage = crate::profile::Stage::new("render.artifacts");
     let constants = super::constants::PackedConstants::default();
     let (mut coroutine_functions, frame_upper_bounds) =
-        render_coroutine_functions(execution, config.backend, &constants)?;
-    let mut coroutine_processes =
-        render_coroutine_processes(execution, config.backend, &constants, &frame_upper_bounds)?;
+        render_coroutine_functions(&execution, config.backend, &constants)?;
+    let mut coroutine_processes = render_coroutine_processes(
+        &mut execution,
+        config.backend,
+        &constants,
+        &frame_upper_bounds,
+    )?;
+    let execution: &ExecutionModel = &execution;
+    let model = execution.ir();
     let mut coroutine_branches =
         render_coroutine_branches(execution, config.backend, &constants, &frame_upper_bounds)?;
     let mut recursive_functions =
@@ -708,7 +770,10 @@ fn render_model(
                 activation_label: None,
                 constants: Some(&constants),
             };
-            plain_functions.insert(index, super::owned::model::function(&ctx, function)?);
+            plain_functions.insert(
+                index,
+                retained(super::owned::model::function(&ctx, function)?),
+            );
         }
     }
     let mut pca_tables =
@@ -849,6 +914,26 @@ fn render_model(
         out.push_str(super::owned::containers::key_adapters());
     }
     super::owned::native::helpers(&mut out);
+    out.push_str(&super::containers::activation_drop_helpers(model));
+    // Container storage and descriptor tables precede class layouts, whose
+    // constructors create per-object container properties.
+    // Activation descriptors are inserted here once the whole model is
+    // rendered: storage prepared for a formal that no call instantiates
+    // (an uncalled function, or only pattern actuals) leaves its tables
+    // unreferenced, and C compilers warn about unused static constants.
+    let activation_descriptors_at = out.len();
+    let mut activation_descriptors = Vec::new();
+    for container in &model.containers {
+        let declaration = super::containers::declaration_and_init(container)?.0;
+        if container.activation && container.class_field.is_none() {
+            if !declaration.is_empty() {
+                activation_descriptors
+                    .push((format!("{}_llg_value_", container.c_name), declaration));
+            }
+        } else {
+            out.push_str(&declaration);
+        }
+    }
     render_class_decls(model, &mut out);
     super::owned::udp::tables(model, &mut out);
     render_signal_decls(model, &mut out);
@@ -856,9 +941,6 @@ fn render_model(
     render_vpi_compile_calls(model, &mut out);
     render_static_local_decls(model, &mut out);
     super::owned::model::persistent_returns(model, &mut out);
-    for container in &model.containers {
-        out.push_str(&super::containers::declaration_and_init(container)?.0);
-    }
     out.push_str(&super::owned::native_values::native_type_tables(model)?.0);
     for object in &model.objects {
         if object.ty == crate::sim::ir::IrObjectType::String {
@@ -922,7 +1004,11 @@ fn render_model(
                 array.c_name, array.elem_width, u8::from(array.signed), part_count, array.c_name));
         }
     }
-    for container in &model.containers {
+    for container in model
+        .containers
+        .iter()
+        .filter(|container| container.is_global_storage())
+    {
         out.push_str(&format!(
             "static sv4_t {}_llg_contents_dep = SV4_EMPTY;\n\
              static sv4_t {}_llg_shape_dep = SV4_EMPTY;\n",
@@ -981,18 +1067,21 @@ fn render_model(
                 function: index,
                 helper,
             };
-            if let Some(artifact) = coroutine_branches.get(&owner) {
-                out.push_str(&artifact.source);
+            if let Some(artifact) = coroutine_branches.get_mut(&owner) {
+                out.push_str(&std::mem::take(&mut artifact.source));
             } else {
                 out.push_str(&super::owned::model::pre_function(&ctx, pre)?);
             }
         }
-        if let Some(artifact) = coroutine_functions.get(&index) {
-            out.push_str(&artifact.source);
-        } else if let Some(artifact) = recursive_functions.get(&index) {
-            out.push_str(&artifact.source);
+        if let Some(artifact) = coroutine_functions.get_mut(&index) {
+            out.push_str(&std::mem::take(&mut artifact.source));
+        } else if let Some(artifact) = recursive_functions.get_mut(&index) {
+            out.push_str(&std::mem::take(&mut artifact.source));
         } else {
-            out.push_str(&plain_functions[&index]);
+            let source = plain_functions
+                .remove(&index)
+                .ok_or_else(|| format!("missing rendered function {}", f.c_name))?;
+            out.push_str(&source);
         }
     }
     render_virtual_interface_call_bodies(model, &mut out);
@@ -1006,18 +1095,28 @@ fn render_model(
                 process: executable.semantic_process,
                 helper,
             };
-            if let Some(artifact) = coroutine_branches.get(&owner) {
-                out.push_str(&artifact.source);
+            if let Some(artifact) = coroutine_branches.get_mut(&owner) {
+                out.push_str(&std::mem::take(&mut artifact.source));
             } else {
                 out.push_str(&super::owned::model::pre_function(&ctx, pre)?);
             }
         }
-        if let Some(artifact) = &coroutine_processes[index] {
-            out.push_str(&artifact.source);
+        if let Some(artifact) = &mut coroutine_processes[index] {
+            out.push_str(&std::mem::take(&mut artifact.source));
         } else {
             out.push_str(&super::owned::model::process(&ctx, p, executable)?);
         }
     }
+    // Every body has been moved into the model text; release the artifacts
+    // and their frame layouts before the remaining sections and the
+    // identifier pass.
+    drop((
+        coroutine_functions,
+        recursive_functions,
+        coroutine_processes,
+        coroutine_branches,
+        plain_functions,
+    ));
     out.push_str(&sharing.bodies);
     out.push_str(&super::owned::assertions::callbacks(
         model,
@@ -1028,6 +1127,8 @@ fn render_model(
     super::owned::model::storage_lifecycle(model, &constants, config.backend, &mut out)?;
     out.push_str(&constants.lifecycle());
     out.push_str(&super::owned::model::main(execution, &sharing.spawns)?);
+    let referenced = referenced_descriptor_tables(&out, &activation_descriptors);
+    out.insert_str(activation_descriptors_at, &referenced);
     out.insert_str(constant_declarations_at, &constants.declarations());
     let external = model
         .funcs
@@ -1037,6 +1138,29 @@ fn render_model(
     drop(assemble_stage);
     let _identifiers_stage = crate::profile::Stage::new("render.identifiers");
     Ok(bound_identifiers(out, &external))
+}
+
+/// The descriptor tables in `tables` (each with the identifier prefix of its
+/// names) that `rendered` references. `rendered` excludes the tables, so any
+/// occurrence of one of a table's names is a use.
+fn referenced_descriptor_tables(rendered: &str, tables: &[(String, String)]) -> String {
+    if tables.is_empty() {
+        return String::new();
+    }
+    let identifiers = c_identifiers(rendered).collect::<std::collections::HashSet<_>>();
+    tables
+        .iter()
+        .filter(|(prefix, declaration)| {
+            c_identifiers(declaration)
+                .any(|name| name.starts_with(prefix.as_str()) && identifiers.contains(name))
+        })
+        .map(|(_, declaration)| declaration.as_str())
+        .collect()
+}
+
+fn c_identifiers(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
+        .filter(|token| token.starts_with(|ch: char| ch == '_' || ch.is_ascii_alphabetic()))
 }
 
 #[cfg(test)]

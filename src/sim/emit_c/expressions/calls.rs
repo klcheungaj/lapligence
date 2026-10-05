@@ -90,7 +90,9 @@ pub(super) fn render_call_expr(
             | IrCallArg::FixedArray(_)
             | IrCallArg::RealArray(_)
             | IrCallArg::RealArrayValues(_)
+            | IrCallArg::ContainerValues { .. }
             | IrCallArg::NativeValue(_)
+            | IrCallArg::Container(_)
             | IrCallArg::NativeLeaves { .. }
             | IrCallArg::NativeCall { .. }
             | IrCallArg::RealArrayCall { .. }

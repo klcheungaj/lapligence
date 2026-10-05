@@ -23,7 +23,14 @@ impl Validator<'_> {
         match &expr.kind {
             IrExprKind::Container(operation) => {
                 operation.validate(self.model, self.string_return.get())?;
+                let real_pop = matches!(
+                    operation.as_ref(),
+                    IrContainerExpr::QueuePopFront(container)
+                        | IrContainerExpr::QueuePopBack(container)
+                        if self.model.containers.get(*container).is_some_and(|container| container.element.is_real())
+                );
                 if (expr.width == 0
+                    && !real_pop
                     && !matches!(
                         operation.as_ref(),
                         IrContainerExpr::GetReal { .. } | IrContainerExpr::GetStringReal { .. }
@@ -35,6 +42,7 @@ impl Validator<'_> {
                 let expected = match operation.as_ref() {
                     IrContainerExpr::Stream { .. } => (expr.width, expr.signed),
                     IrContainerExpr::Size(_)
+                    | IrContainerExpr::NestedSize { .. }
                     | IrContainerExpr::AssocTraverse { .. }
                     | IrContainerExpr::AssocTraverseString { .. }
                     | IrContainerExpr::AssocTraverseStringLocal { .. } => (32, true),

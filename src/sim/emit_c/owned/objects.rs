@@ -61,6 +61,14 @@ impl Frame<'_, '_> {
                 "_this".to_owned()
             }
             IrChandleExpr::Null => "NULL".to_owned(),
+            IrChandleExpr::EventObject(event) => {
+                let address = self.event_address(event)?;
+                let pointer = self.scalar("llg_event_t*", address);
+                return Ok(self.scalar(
+                    "void*",
+                    format!("{pointer} ? (void*){pointer}->object : NULL"),
+                ));
+            }
             IrChandleExpr::Read(index) => self.ctx.model.objects[*index].c_name.clone(),
             IrChandleExpr::LocalRead(name) => format!(
                 "*({})",
@@ -85,7 +93,9 @@ impl Frame<'_, '_> {
                 }
             }
             IrChandleExpr::ContainerGet { container, index } => {
-                let container = self.ctx.model.containers[*container].clone();
+                let container_name = self.container_name(*container)?;
+                let mut container = self.ctx.model.containers[*container].clone();
+                container.c_name = container_name;
                 let index = self.expression(index)?;
                 let function = match container.kind {
                     IrContainerKind::Dynamic => "llg_dyn_value_get_chandle",
@@ -99,8 +109,33 @@ impl Frame<'_, '_> {
                 self.discard(index);
                 return Ok(value);
             }
+            IrChandleExpr::Mailbox(mailbox) => return self.mailbox_handle(mailbox),
+            IrChandleExpr::ContainerElement {
+                container,
+                indices,
+                key,
+                write,
+            } => return self.container_element(*container, indices, key.as_deref(), *write),
+            IrChandleExpr::Process(process) => {
+                // The retained temporary stays alive until its lexical scope
+                // ends, after the consuming element store has retained it.
+                let value = self.process_value(process)?;
+                return Ok(self.scalar("void*", format!("(void*)*({})", value.address)));
+            }
+            IrChandleExpr::QueuePop { container, back } => {
+                if self.read_only_callback {
+                    return Err(pending("mutating container query in a read-only callback"));
+                }
+                let name = self.container_name(*container)?;
+                return Ok(self.scalar(
+                    "void*",
+                    format!("llg_queue_value_pop_chandle(&{name}, {})", i32::from(*back)),
+                ));
+            }
             IrChandleExpr::ContainerGetNested { container, indices } => {
-                let container = self.ctx.model.containers[*container].clone();
+                let container_name = self.container_name(*container)?;
+                let mut container = self.ctx.model.containers[*container].clone();
+                container.c_name = container_name;
                 let (list, values) = self.container_indices(indices)?;
                 let function = match container.kind {
                     IrContainerKind::Dynamic => "llg_dyn_value_get_nested_chandle",
@@ -123,7 +158,7 @@ impl Frame<'_, '_> {
                 return Ok(value);
             }
             IrChandleExpr::AssociativeGet { container, key } => {
-                let name = self.ctx.model.containers[*container].c_name.clone();
+                let name = self.container_name(*container)?;
                 let key = self.string(key)?;
                 let value = self.scalar(
                     "void*",
@@ -170,7 +205,27 @@ impl Frame<'_, '_> {
                 "*({})",
                 self.native_lookup(name, NativeKind::Process)?.address
             ),
-            IrProcessExpr::FormalRead(_) => return Err(pending("process-handle formal ABI")),
+            IrProcessExpr::FormalRead(index) => format!(
+                "(llg_process_handle_t*){}",
+                self.chandle(&IrChandleExpr::FormalRead(*index))?
+            ),
+            IrProcessExpr::Handle(handle) => {
+                if let IrChandleExpr::QueuePop { container, back } = handle.as_ref() {
+                    if self.read_only_callback {
+                        return Err(pending("mutating container query in a read-only callback"));
+                    }
+                    // The popped element's reference moves into the result.
+                    let name = self.container_name(*container)?;
+                    let result = self.native_reserve(NativeKind::Process);
+                    self.line(format!(
+                        "llg_queue_value_pop_process_to((void**){}, &{name}, {});",
+                        result.address,
+                        i32::from(*back)
+                    ));
+                    return Ok(result);
+                }
+                format!("(llg_process_handle_t*){}", self.chandle(handle)?)
+            }
         };
         let result = self.native_reserve(NativeKind::Process);
         self.line(format!("llg_process_assign({}, {source});", result.address));
@@ -414,5 +469,76 @@ impl Frame<'_, '_> {
         });
         self.discard(value);
         Ok(())
+    }
+}
+
+impl Frame<'_, '_> {
+    /// Address of one element of descriptor-backed container storage for an
+    /// element-item access. A missing or invalid element resolves to a fresh
+    /// default value owned by the current lexical scope, so reads see the
+    /// Table 7-1 default and writes to it are discarded (SV 7.4.6, 7.8.6).
+    fn container_element(
+        &mut self,
+        container: usize,
+        indices: &[IrExpr],
+        key: Option<&IrStringExpr>,
+        write: bool,
+    ) -> Result<String, String> {
+        if write && self.read_only_callback {
+            return Err(pending("container element writes in read-only callbacks"));
+        }
+        let storage = self.ctx.model.containers[container].clone();
+        let name = self.container_name(container)?;
+        let (call, depth, touch) = match storage.kind {
+            IrContainerKind::Associative {
+                key: IrAssocKey::String,
+            } => {
+                let key = key.ok_or("string-keyed element locator requires a key")?;
+                let key = self.string(key)?;
+                let call = format!(
+                    "llg_assoc_value_element_string(&{name}, ({})->data, ({})->len, {})",
+                    key.address,
+                    key.address,
+                    i32::from(write)
+                );
+                let element = self.scalar("llg_value_t*", call);
+                self.native_discard(key);
+                (element, 1, "llg_assoc_value_touch")
+            }
+            kind => {
+                let (list, values) = self.container_indices(indices)?;
+                let call = match kind {
+                    IrContainerKind::Dynamic => {
+                        format!("llg_dyn_value_element(&{name}, {list}, {})", indices.len())
+                    }
+                    IrContainerKind::Queue { .. } => format!(
+                        "llg_queue_value_element(&{name}, {list}, {})",
+                        indices.len()
+                    ),
+                    IrContainerKind::Associative { .. } => format!(
+                        "llg_assoc_value_element_integral(&{name}, {list}, {}, {})",
+                        indices.len(),
+                        i32::from(write)
+                    ),
+                };
+                let element = self.scalar("llg_value_t*", call);
+                for value in values {
+                    self.discard(value);
+                }
+                let touch = match kind {
+                    IrContainerKind::Dynamic => "llg_dyn_value_touch",
+                    IrContainerKind::Queue { .. } => "llg_queue_value_touch",
+                    IrContainerKind::Associative { .. } => "llg_assoc_value_touch",
+                };
+                (element, indices.len(), touch)
+            }
+        };
+        self.line(format!(
+            "if (!{call}) {{ {call} = (llg_value_t*)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_value_t), llg_native_value_destroy)); llg_native_value_init({call}, llg_value_element_desc({name}.element, {depth})); }}"
+        ));
+        if write {
+            self.pending_touches.push((name, touch));
+        }
+        Ok(call)
     }
 }

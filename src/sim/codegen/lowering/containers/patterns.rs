@@ -174,10 +174,7 @@ impl<'a> Codegen<'a> {
         }
         let kind = self.model.containers[container].kind.clone();
         let element = self.model.containers[container].element.clone();
-        if matches!(
-            &element,
-            IrContainerElement::String | IrContainerElement::Chandle
-        ) {
+        if element.is_string() || element.is_handle() {
             return self.lower_associative_object_pattern(path, container, operands, element);
         }
         let mut seen_integral = Vec::<i128>::new();
@@ -402,10 +399,10 @@ impl<'a> Codegen<'a> {
                             key: IrStringExpr::Literal(bytes),
                             value: self.lower_string(path, value)?,
                         },
-                        IrContainerElement::Chandle => IrContainerStmt::SetStringChandle {
+                        element if element.is_handle() => IrContainerStmt::SetStringChandle {
                             container,
                             key: IrStringExpr::Literal(bytes),
-                            value: self.lower_chandle(path, value)?,
+                            value: self.lower_container_handle(path, element, value)?,
                         },
                         _ => unreachable!(),
                     }
@@ -438,10 +435,10 @@ impl<'a> Codegen<'a> {
                             index,
                             value: self.lower_string(path, value)?,
                         },
-                        IrContainerElement::Chandle => IrContainerStmt::SetChandleValue {
+                        element if element.is_handle() => IrContainerStmt::SetChandleValue {
                             container,
                             index,
-                            value: self.lower_chandle(path, value)?,
+                            value: self.lower_container_handle(path, element, value)?,
                         },
                         _ => unreachable!(),
                     }
@@ -460,9 +457,9 @@ impl<'a> Codegen<'a> {
                     container,
                     value: self.lower_string(path, value)?,
                 }),
-                IrContainerElement::Chandle => Box::new(IrContainerStmt::SetDefaultChandle {
+                element if element.is_handle() => Box::new(IrContainerStmt::SetDefaultChandle {
                     container,
-                    value: self.lower_chandle(path, value)?,
+                    value: self.lower_container_handle(path, element, value)?,
                 }),
                 _ => unreachable!(),
             }));
@@ -519,10 +516,10 @@ impl<'a> Codegen<'a> {
                     values,
                 })))
             }
-            IrContainerElement::Chandle => {
+            element if element.is_handle() => {
                 let values = source_values
                     .into_iter()
-                    .map(|value| self.lower_chandle(path, value))
+                    .map(|value| self.lower_container_handle(path, &element, value))
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(IrStmt::Container(Box::new(IrContainerStmt::AssignChandleValues {
                     container,
@@ -568,5 +565,69 @@ impl<'a> Codegen<'a> {
             values: rewritten,
         })));
         Ok(IrStmt::Block(captures))
+    }
+
+    /// Source of a nested container element write (`q.push_back(src)`,
+    /// `c[i] = src`): a dynamic-array variable passes directly; a pattern or
+    /// an unpacked concatenation is first built in a fresh dynamic-array
+    /// temporary declared by `prelude`.
+    pub(in super::super) fn nested_container_source(
+        &mut self,
+        path: &str,
+        container: usize,
+        depth: usize,
+        value: NodeId,
+        prelude: &mut Vec<IrStmt>,
+    ) -> Result<usize, String> {
+        if let Some(source) = self.container_of(self.p30_unwrap_cast(value)) {
+            if matches!(
+                self.model.containers[source.ir].kind,
+                IrContainerKind::Dynamic
+            ) {
+                return Ok(source.ir);
+            }
+            return Err(format!(
+                "nested container write in `{path}` from a queue or associative variable is not supported; use a dynamic array, pattern or concatenation"
+            ));
+        }
+        let Some(IrContainerElement::Container { element, .. }) =
+            self.container_element_type(container, depth)
+        else {
+            return Err(format!(
+                "nested container write in `{path}` does not select a container element"
+            ));
+        };
+        let temporary = self.model.containers.len();
+        self.model.containers.push(IrContainer {
+            c_name: format!("S_llg_container_{temporary}"),
+            element: *element,
+            kind: IrContainerKind::Dynamic,
+            initial_size: None,
+            activation: true,
+            class_field: None,
+        });
+        prelude.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+            temporary,
+        ))));
+        let source = self.p30_unwrap_cast(value);
+        let concat = match self.kind(source) {
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Concat,
+                operands,
+                ..
+            }) if operands
+                .iter()
+                .all(|operand| self.container_of(*operand).is_none()) =>
+            {
+                Some(operands.clone())
+            }
+            _ => None,
+        };
+        prelude.push(match concat {
+            // `{a, b}` lists the new elements in order (SV 10.10).
+            Some(operands) => self.lower_container_source_values(path, temporary, operands)?,
+            None => self.lower_container_into(path, value, temporary, value)?,
+        });
+        Ok(temporary)
     }
 }

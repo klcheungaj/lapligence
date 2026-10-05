@@ -248,6 +248,14 @@ impl Frame<'_, '_> {
                             )
                         }
                     }
+                    IrDependency::ContainerContents(index)
+                    | IrDependency::ContainerShape(index)
+                        if !self.ctx.model.containers[*index].is_global_storage() =>
+                    {
+                        return Err(pending(
+                            "monitoring resizable containers in subroutine storage",
+                        ))
+                    }
                     IrDependency::ContainerContents(index) => (
                         "LLG_FMT_PACKED",
                         format!(

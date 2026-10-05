@@ -312,7 +312,9 @@ impl Frame<'_, '_> {
         }
         if let IrExprKind::Container(expression) = read.kind() {
             if let IrContainerExpr::Get { container, index } = expression.as_ref() {
-                let container = self.ctx.model.containers[*container].clone();
+                let container_name = self.container_name(*container)?;
+                let mut container = self.ctx.model.containers[*container].clone();
+                container.c_name = container_name;
                 if matches!(container.kind, IrContainerKind::Queue { .. })
                     && container.element.is_packed()
                 {

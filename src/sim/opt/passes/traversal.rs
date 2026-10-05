@@ -88,7 +88,7 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
             IrCallArg::FixedValue(value) => {
                 value.expressions_mut(&mut |child| walk_expr_mut(child, f))
             }
-            IrCallArg::RealArrayValues(values) => {
+            IrCallArg::RealArrayValues(values) | IrCallArg::ContainerValues { values, .. } => {
                 for value in values {
                     walk_expr_mut(value, f);
                 }
@@ -96,6 +96,7 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
             IrCallArg::FixedArray(_)
             | IrCallArg::RealArray(_)
             | IrCallArg::NativeValue(_)
+            | IrCallArg::Container(_)
             | IrCallArg::EventVal(_) => {}
         }
     }

@@ -74,7 +74,7 @@ impl Codegen<'_> {
         }
         if chandle_target.is_none() {
             chandle_target = self
-                .native_object_leaf(object_node, false)?
+                .native_object_leaf(path, object_node, false)?
                 .map(ChandleTarget::Local);
         }
         let string_target = self.func.as_ref().and_then(|function| {

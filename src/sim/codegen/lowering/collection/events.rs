@@ -21,9 +21,18 @@ impl<'a> Codegen<'a> {
             return Ok(());
         };
         if !matches!(metadata.kind(), ArrayKind::Static) {
-            return Err(format!(
-                "named event array `{name}` in `{path}` has unsupported storage kind"
-            ));
+            // Dynamic, queue and associative event arrays are resizable
+            // containers of event handles (SV 6.17, 7.5-7.10): elements
+            // share synchronization objects by identity.
+            let info = self.container_from_meta(
+                path,
+                &name,
+                declaration,
+                metadata,
+                IrContainerElement::Event,
+            )?;
+            self.container_globals.insert(declaration, info);
+            return Ok(());
         }
         let mut total = 1u64;
         let mut dims = Vec::with_capacity(metadata.dimensions().len());
@@ -121,6 +130,12 @@ impl<'a> Codegen<'a> {
                 declaration: node,
                 indices: Vec::new(),
             }),
+            NodeKind::FuncArg { .. } | NodeKind::Array { .. } if self.is_event_container(node) => {
+                Some(EventTarget {
+                    declaration: node,
+                    indices: Vec::new(),
+                })
+            }
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
             }) if (matches!(self.kind(*target), NodeKind::NamedEvent)
@@ -128,7 +143,8 @@ impl<'a> Codegen<'a> {
                     && (self.event_globals.contains_key(target)
                         || self.event_arrays.contains_key(target)
                         || self.db.event_array_meta(*target).is_some()))
-                || matches!(self.kind(*target), NodeKind::FuncArg { ty, .. } if ty.kind == "event") =>
+                || matches!(self.kind(*target), NodeKind::FuncArg { ty, .. } if ty.kind == "event")
+                || self.is_event_container(*target) =>
             {
                 Some(EventTarget {
                     declaration: *target,
@@ -160,6 +176,19 @@ impl<'a> Codegen<'a> {
                 }),
             _ => None,
         }
+    }
+
+    /// Whether `node` declares resizable container storage of events (at any
+    /// nesting depth), such as an event-queue formal or local.
+    fn is_event_container(&self, node: NodeId) -> bool {
+        let Some(container) = self.container_globals.get(&node) else {
+            return false;
+        };
+        let mut element = &self.model.containers[container.ir].element;
+        while let IrContainerElement::Container { element: inner, .. } = element {
+            element = inner;
+        }
+        element.is_event()
     }
 
     pub(in super::super) fn is_null_event_expression(&self, node: NodeId) -> bool {
@@ -282,6 +311,13 @@ impl<'a> Codegen<'a> {
                 ));
             }
             return Ok(event.clone());
+        }
+        if let Some(container) = self.container_globals.get(&target.declaration).cloned() {
+            return Ok(IrEventRef::Handle(Box::new(self.container_event_handle(
+                scope_path,
+                container.ir,
+                &target.indices,
+            )?)));
         }
         if matches!(
             self.kind(target.declaration),

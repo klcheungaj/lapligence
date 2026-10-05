@@ -30,6 +30,7 @@ impl<'a> Codegen<'a> {
                 self.prepare_fixed_function(*c, automatic)?;
                 self.prepare_record_function(*c, automatic)?;
                 self.prepare_native_function(inst, *c, automatic)?;
+                self.prepare_container_function(inst, *c, automatic)?;
                 self.prepare_real_array_function(*c, automatic)?;
                 let dpi = self.db.dpi_import(*c).cloned();
                 let (is_task_f, function_ret, formals) = if dpi.is_some() {
@@ -78,8 +79,10 @@ impl<'a> Codegen<'a> {
                                     fixed_array: self.fixed_formal_array(*io),
                                     native_value: self.native_formal_storage(inst, *io),
                                     real_array: self.real_formal_array(*io),
+                                    container: self.container_formal_storage(inst, *io),
                                     fixed_shape: if self.fixed_formal_array(*io).is_some()
                                         || self.is_native_declaration(*io)
+                                        || self.is_subroutine_container(*io)
                                         || self.real_formal_array(*io).is_some()
                                     {
                                         None
@@ -88,6 +91,7 @@ impl<'a> Codegen<'a> {
                                     },
                                     fixed_default: if self.fixed_formal_array(*io).is_some()
                                         || self.is_native_declaration(*io)
+                                        || self.is_subroutine_container(*io)
                                         || self.real_formal_array(*io).is_some()
                                     {
                                         None
@@ -98,6 +102,7 @@ impl<'a> Codegen<'a> {
                                     ref_static: *ref_static,
                                     width: if self.fixed_formal_array(*io).is_some()
                                         || self.is_native_declaration(*io)
+                                        || self.is_subroutine_container(*io)
                                         || self.real_formal_array(*io).is_some()
                                         || is_handle_kind(&ty.kind)
                                         || is_real_kind(&ty.kind)
@@ -202,6 +207,18 @@ impl<'a> Codegen<'a> {
                     formal.real_array = Some(array);
                     formals_ir.push(formal);
                 }
+                if let Some(container) = self
+                    .container_return(*c)
+                    .then(|| self.container_formal_storage(inst, *c))
+                    .flatten()
+                {
+                    // A container result is a trailing output formal.
+                    let mut formal =
+                        IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
+                    formal.width = 0;
+                    formal.container = Some(container);
+                    formals_ir.push(formal);
+                }
                 if let Some(value) = self
                     .native_return(*c)
                     .then(|| self.native_formal_storage(inst, *c))
@@ -222,6 +239,7 @@ impl<'a> Codegen<'a> {
                             || formal.fixed_array.is_some()
                             || formal.real_array.is_some()
                             || formal.native_value.is_some()
+                            || formal.container.is_some()
                         {
                             continue;
                         }
@@ -736,6 +754,7 @@ impl<'a> Codegen<'a> {
                 if self.nonflatten_function(ft)
                     || self.record_return(ft)
                     || self.native_return(ft)
+                    || self.container_return(ft)
                     || self.real_array_return(ft) =>
             {
                 None

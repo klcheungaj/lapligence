@@ -17,6 +17,26 @@ static void llg_container_warning(const char* message) {
     fprintf(stderr, "llg container warning: %s\n", message);
 }
 
+/* SV 7.8.6: a read through an invalid (X/Z) key or of a nonexistent entry
+ * warns and yields the default; an explicit default (SV 7.9.11) is
+ * returned without a warning. */
+static void llg_assoc_read_miss(int valid_key, int has_default) {
+    if (!valid_key)
+        llg_container_warning("invalid associative-array key read");
+    else if (!has_default)
+        llg_container_warning(
+            "associative-array read of a nonexistent entry returns the default");
+}
+
+/* Elements stored as one identity pointer: borrowed chandles, events and
+ * class-like object handles. */
+static int llg_value_is_handle_kind(const llg_value_desc_t* desc) {
+    return desc && (desc->kind == LLG_VALUE_CHANDLE ||
+                    desc->kind == LLG_VALUE_EVENT ||
+                    desc->kind == LLG_VALUE_OPAQUE ||
+                    desc->kind == LLG_VALUE_PROCESS);
+}
+
 static void llg_check_element_type(uint32_t width) {
     if (width == 0 || width > (LLG_SUPPORTED_WIDTH_LIMIT - 1u))
         llg_container_fatal("invalid packed element width");

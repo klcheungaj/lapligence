@@ -182,6 +182,7 @@ llg_string_t llg_assoc_value_get_string(const llg_assoc_value_t* array,
                                                       &found);
     if (found && array->entries[position].value.desc->kind == LLG_VALUE_STRING)
         return llg_string_clone(&array->entries[position].value.value.string);
+    llg_assoc_read_miss(1, array->has_default_value);
     return array->default_value.desc &&
                    array->default_value.desc->kind == LLG_VALUE_STRING
         ? llg_string_clone(&array->default_value.value.string)
@@ -196,6 +197,7 @@ double llg_assoc_value_get_string_real(const llg_assoc_value_t* array,
                                                       &found);
     if (found && array->entries[position].value.desc->kind == LLG_VALUE_REAL)
         return array->entries[position].value.value.real;
+    llg_assoc_read_miss(1, array->has_default_value);
     return array->default_value.desc &&
                    array->default_value.desc->kind == LLG_VALUE_REAL
         ? array->default_value.value.real
@@ -214,12 +216,11 @@ void* llg_assoc_value_get_string_chandle(const llg_assoc_value_t* array,
     int found;
     size_t position = llg_assoc_value_string_position(array, key, key_length,
                                                       &found);
-    if (found && (array->entries[position].value.desc->kind == LLG_VALUE_CHANDLE ||
-                  array->entries[position].value.desc->kind == LLG_VALUE_EVENT))
+    if (found && llg_value_is_handle_kind(array->entries[position].value.desc))
         return array->entries[position].value.value.handle;
+    llg_assoc_read_miss(1, array->has_default_value);
     return array->default_value.desc &&
-                   (array->default_value.desc->kind == LLG_VALUE_CHANDLE ||
-                    array->default_value.desc->kind == LLG_VALUE_EVENT)
+                   llg_value_is_handle_kind(array->default_value.desc)
         ? array->default_value.value.handle
         : NULL;
 }

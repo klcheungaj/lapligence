@@ -115,12 +115,12 @@ impl EmitCtx<'_, '_> {
             }
         }
         if expand
-            && formals
-                .iter()
-                .any(|(formal, _)| self.cg.is_native_declaration(*formal))
+            && formals.iter().any(|(formal, _)| {
+                self.cg.is_native_declaration(*formal) || self.cg.is_subroutine_container(*formal)
+            })
         {
             return Err(format!(
-                "task `{name}` with native record formals needs caller-environment expansion, which is not supported in `{}`",
+                "task `{name}` with native record or container formals needs caller-environment expansion, which is not supported in `{}`",
                 self.path
             ));
         }
@@ -230,6 +230,20 @@ impl EmitCtx<'_, '_> {
         let mut record_out_args = Vec::new();
         let mut record_in_args = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if self.cg.is_subroutine_container(*io) {
+                let argument = self.cg.container_call_argument(
+                    &self.path,
+                    *io,
+                    bound[idx].expr,
+                    Some(&mut before),
+                )?;
+                if *is_out {
+                    out_args.push(argument);
+                } else {
+                    in_args.push((idx, argument));
+                }
+                continue;
+            }
             if self.cg.record_declaration(*io) {
                 let address = *is_out
                     || matches!(
@@ -336,7 +350,11 @@ impl EmitCtx<'_, '_> {
                 } else {
                     in_args.push((
                         idx,
-                        IrCallArg::ChandleVal(self.cg.lower_chandle(&self.path, bound[idx].expr)?),
+                        IrCallArg::ChandleVal(self.cg.lower_handle_argument(
+                            &self.path,
+                            *io,
+                            bound[idx].expr,
+                        )?),
                     ));
                 }
                 continue;
@@ -517,6 +535,7 @@ impl EmitCtx<'_, '_> {
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if self.cg.fixed_formal_array(*io).is_some()
                 || self.cg.is_native_declaration(*io)
+                || self.cg.is_subroutine_container(*io)
                 || self.cg.real_formal_array(*io).is_some()
             {
                 continue;
@@ -571,6 +590,9 @@ impl EmitCtx<'_, '_> {
         // Formals beyond the declared ones and the extra record columns are
         // a trailing result.
         let declared = formals.len() + record_out_args.len() + record_in_args.len();
+        // Trailing column-layout record outputs precede any trailing result
+        // formal in the callee signature (see `record_formal_columns`).
+        out_args.extend(record_out_args);
         if let Some(result) = self.cg.model.funcs[fidx]
             .formals
             .last()
@@ -586,6 +608,20 @@ impl EmitCtx<'_, '_> {
         if let Some(result) = self.cg.model.funcs[fidx]
             .formals
             .last()
+            .and_then(|formal| formal.container)
+            .filter(|_| self.cg.model.funcs[fidx].formals.len() > declared)
+        {
+            // A container result discarded by a statement call still needs
+            // caller-owned result storage.
+            let temporary = self.cg.container_temporary_like(result);
+            before.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                temporary,
+            ))));
+            out_args.push(IrCallArg::Container(temporary));
+        }
+        if let Some(result) = self.cg.model.funcs[fidx]
+            .formals
+            .last()
             .and_then(|formal| formal.real_array)
             .filter(|_| self.cg.model.funcs[fidx].formals.len() > declared)
         {
@@ -596,7 +632,6 @@ impl EmitCtx<'_, '_> {
             out_args.push(IrCallArg::RealArray(temporary));
         }
         in_args.sort_by_key(|(idx, _)| *idx);
-        out_args.extend(record_out_args);
         out_args.extend(in_args.into_iter().map(|(_, argument)| argument));
         out_args.extend(record_in_args);
         let depth = parse_depth(&self.depth_arg);
@@ -1408,6 +1443,29 @@ impl EmitCtx<'_, '_> {
                             Operation::Assignment,
                         )?
                         .ok_or("native return has no record assignment")?,
+                );
+            }
+            statements.push(IrStmt::Return { value: None });
+            return Ok(IrStmt::Block(statements));
+        }
+        if let Some(result) = self
+            .func
+            .as_ref()
+            .and_then(|function| function.ret_node)
+            .filter(|node| self.cg.container_return(*node) && self.inline.is_none())
+        {
+            let mut statements = Vec::new();
+            if let Some(value) = value {
+                statements.push(
+                    self.cg
+                        .lower_container_assignment(
+                            &self.path,
+                            result,
+                            value,
+                            true,
+                            Operation::Assignment,
+                        )?
+                        .ok_or("container return has no container assignment")?,
                 );
             }
             statements.push(IrStmt::Return { value: None });

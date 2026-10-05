@@ -24,6 +24,30 @@ impl Frame<'_, '_> {
             };
             return Ok(Some((self.scalar(c_type, address), ty)));
         }
+        if let IrNativeAccessKind::ElementItem { ty } = access.kind {
+            // The locator is re-evaluated at every use: element addresses
+            // are borrowed only until the container next changes shape.
+            let element = self.chandle(&access.receiver)?;
+            let mut item = format!("((llg_value_t*){element})");
+            for (depth, step) in access.item_path.iter().enumerate() {
+                item = if depth == 0 {
+                    format!("{item}->value.items[{step}]")
+                } else {
+                    format!("{item}.value.items[{step}]")
+                };
+            }
+            if access.item_path.is_empty() {
+                return Err("element item requires an item path".to_owned());
+            }
+            let c_type = match ty {
+                IrClassFieldType::Packed { .. } => "sv4_t*",
+                IrClassFieldType::Real { .. } => "double*",
+                IrClassFieldType::String => "llg_string_t*",
+                IrClassFieldType::Chandle => "void**",
+            };
+            let address = format!("&{item}.value.{}", super::native_values::leaf_member(ty));
+            return Ok(Some((self.scalar(c_type, address), ty)));
+        }
         if self.access_stack.iter().any(|active| active == name) || self.access_stack.len() >= 256 {
             return Err("cyclic or excessively deep native storage access".to_owned());
         }
@@ -60,7 +84,9 @@ impl Frame<'_, '_> {
                     },
                 )
             }
-            IrNativeAccessKind::ValueItem { .. } => unreachable!("value items resolve above"),
+            IrNativeAccessKind::ValueItem { .. } | IrNativeAccessKind::ElementItem { .. } => {
+                unreachable!("value and element items resolve above")
+            }
         };
         let c_type = match ty {
             IrClassFieldType::Packed { .. } => "sv4_t*",

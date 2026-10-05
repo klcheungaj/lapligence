@@ -206,7 +206,9 @@ impl Frame<'_, '_> {
                 result
             }
             ContainerGet { container, index } => {
-                let container = self.ctx.model.containers[*container].clone();
+                let container_name = self.container_name(*container)?;
+                let mut container = self.ctx.model.containers[*container].clone();
+                container.c_name = container_name;
                 let index = self.expression(index)?;
                 let function = match container.kind {
                     IrContainerKind::Dynamic => "llg_dyn_value_get_string",
@@ -220,8 +222,25 @@ impl Frame<'_, '_> {
                 self.discard(index);
                 result
             }
+            QueuePop { container, back } => {
+                if self.read_only_callback {
+                    return Err(pending("mutating container query in a read-only callback"));
+                }
+                // The removed string moves into a registered result owner
+                // before the queue notifies its readers.
+                let name = self.container_name(*container)?;
+                let result = self.native_reserve(NativeKind::String);
+                self.line(format!(
+                    "llg_queue_value_pop_string_to({}, &{name}, {});",
+                    result.address,
+                    i32::from(*back)
+                ));
+                result
+            }
             ContainerGetNested { container, indices } => {
-                let container = self.ctx.model.containers[*container].clone();
+                let container_name = self.container_name(*container)?;
+                let mut container = self.ctx.model.containers[*container].clone();
+                container.c_name = container_name;
                 let (list, values) = self.container_indices(indices)?;
                 let function = match container.kind {
                     IrContainerKind::Dynamic => "llg_dyn_value_get_nested_string",
@@ -244,7 +263,7 @@ impl Frame<'_, '_> {
                 result
             }
             AssociativeGet { container, key } => {
-                let name = self.ctx.model.containers[*container].c_name.clone();
+                let name = self.container_name(*container)?;
                 let key = self.string(key)?;
                 let result = self.native_value(
                     NativeKind::String,

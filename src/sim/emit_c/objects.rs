@@ -15,7 +15,7 @@ pub(super) fn render_indices(ctx: &RCtx<'_>, indices: &[IrExpr]) -> Result<Strin
 
 pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, String> {
     Ok(match value {
-        IrStringExpr::Conditional { .. } => {
+        IrStringExpr::Conditional { .. } | IrStringExpr::QueuePop { .. } => {
             return Err("string conditionals require whole-model ownership emission".to_owned())
         }
         IrStringExpr::Literal(bytes) => {
@@ -239,6 +239,11 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
         IrChandleExpr::SemaphoreNew(_)
         | IrChandleExpr::Construct(_)
         | IrChandleExpr::Conditional { .. }
+        | IrChandleExpr::EventObject(_)
+        | IrChandleExpr::QueuePop { .. }
+        | IrChandleExpr::Mailbox(_)
+        | IrChandleExpr::Process(_)
+        | IrChandleExpr::ContainerElement { .. }
         | IrChandleExpr::InterfaceInstance { .. } => {
             return Err("typed native operations require whole-model ownership emission".to_owned())
         }
@@ -319,7 +324,9 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
                     | IrCallArg::FixedArray(_)
                     | IrCallArg::RealArray(_)
                     | IrCallArg::RealArrayValues(_)
+                    | IrCallArg::ContainerValues { .. }
                     | IrCallArg::NativeValue(_)
+                    | IrCallArg::Container(_)
                     | IrCallArg::NativeLeaves { .. }
                     | IrCallArg::NativeCall { .. }
                     | IrCallArg::RealArrayCall { .. }
@@ -431,6 +438,9 @@ pub(super) fn process(ctx: &RCtx<'_>, value: &IrProcessExpr) -> Result<String, S
     Ok(match value {
         IrProcessExpr::Null => "NULL".to_owned(),
         IrProcessExpr::SelfHandle => "llg_process_self()".to_owned(),
+        IrProcessExpr::Handle(_) => {
+            return Err("container process handles require the ownership emitter".to_owned())
+        }
         IrProcessExpr::Read(index) => ctx.model.objects[*index].c_name.clone(),
         IrProcessExpr::LocalRead(name) => name.clone(),
         IrProcessExpr::FormalRead(index) => {
@@ -991,7 +1001,9 @@ fn render_typed_call(
             | IrCallArg::FixedArray(_)
             | IrCallArg::RealArray(_)
             | IrCallArg::RealArrayValues(_)
+            | IrCallArg::ContainerValues { .. }
             | IrCallArg::NativeValue(_)
+            | IrCallArg::Container(_)
             | IrCallArg::NativeLeaves { .. }
             | IrCallArg::NativeCall { .. }
             | IrCallArg::RealArrayCall { .. }

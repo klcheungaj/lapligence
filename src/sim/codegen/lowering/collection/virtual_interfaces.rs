@@ -44,6 +44,20 @@ impl<'a> Codegen<'a> {
             && self.virtual_interface_spelling(node).is_some()
     }
 
+    /// A fixed unpacked array whose element is an identity handle stored by
+    /// the container runtime (see `is_fixed_handle_element`).
+    pub(super) fn is_fixed_handle_array(&self, node: NodeId) -> bool {
+        matches!(self.kind(node), NodeKind::Array { .. })
+            && self
+                .db
+                .array_meta(node)
+                .is_some_and(|meta| matches!(meta.kind(), ArrayKind::Static))
+            && self.db.type_descriptor(node).is_some_and(|descriptor| {
+                matches!(&descriptor.shape, TypeShape::FixedArray { element, .. }
+                    if Self::is_fixed_handle_element(element))
+            })
+    }
+
     /// Remove a modport view from a virtual-interface type spelling. Dots in
     /// parameter expressions are ignored while scanning parenthesis depth.
     pub(in super::super) fn virtual_interface_identity_from_spelling(spelling: &str) -> String {

@@ -217,6 +217,16 @@ impl ExecutionModel {
         self.validate()
     }
 
+    /// Release the typed operations of one process once a consumer that
+    /// visits each process once (C emission) no longer needs them. The model
+    /// no longer validates afterwards, so only an owner that drops it after
+    /// that pass may call this; the process shell, region and analysis remain.
+    pub(crate) fn release_process_operations(&mut self, index: usize) {
+        if let Some(process) = self.processes.get_mut(index) {
+            process.blocks = Vec::new();
+        }
+    }
+
     pub fn packed_capacity(&self) -> Result<u128, IrValidationError> {
         let mut capacity = self.ir.packed_capacity()?;
         for process in &self.processes {
@@ -1332,7 +1342,10 @@ fn collect_argument_effects(
         | IrCallArg::RealArray(_)
         | IrCallArg::NativeValue(_)
         | IrCallArg::EventVal(_) => {}
-        IrCallArg::RealArrayValues(values) => {
+        // Container outputs are copied back into caller storage after the
+        // callee returns, independent of the callee's own statements.
+        IrCallArg::Container(_) => effects.push(ExecutionEffect::ImmediateStore),
+        IrCallArg::RealArrayValues(values) | IrCallArg::ContainerValues { values, .. } => {
             for value in values {
                 collect_expression_effects(ir, value, effects, visited_calls);
             }
@@ -2110,6 +2123,7 @@ fn collect_string_effects(
         IrStringExpr::AssociativeGet { key, .. } => {
             collect_string_effects(ir, key, effects, visited_calls)
         }
+        IrStringExpr::QueuePop { .. } => effects.push(ExecutionEffect::ImmediateStore),
         IrStringExpr::EnumName { receiver, members } => {
             collect_expression_effects(ir, receiver, effects, visited_calls);
             for member in members {
@@ -2187,6 +2201,19 @@ fn collect_chandle_effects(
         }
         IrChandleExpr::AssociativeGet { key, .. } => {
             collect_string_effects(ir, key, effects, visited_calls)
+        }
+        IrChandleExpr::QueuePop { .. } => effects.push(ExecutionEffect::ImmediateStore),
+        IrChandleExpr::Mailbox(mailbox) => {
+            collect_mailbox_expr_effects(ir, mailbox, effects, visited_calls)
+        }
+        IrChandleExpr::EventObject(event) => {
+            if let crate::sim::ir::IrEventRef::Handle(handle) = event.as_ref() {
+                collect_chandle_effects(ir, handle, effects, visited_calls);
+            } else {
+                event.expressions(&mut |index| {
+                    collect_expression_effects(ir, index, effects, visited_calls)
+                });
+            }
         }
         IrChandleExpr::Call {
             function,

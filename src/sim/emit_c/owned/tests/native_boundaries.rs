@@ -14,10 +14,12 @@ fn class_model() -> IrModel {
                     signed: false,
                     two_state: false,
                 },
+                container: None,
             },
             IrClassField {
                 c_name: "text".to_owned(),
                 ty: IrClassFieldType::String,
+                container: None,
             },
         ],
     });
@@ -276,6 +278,8 @@ fn container_inside_uses_owned_items_and_ordinal_associative_reads() {
             two_state: false,
         },
         initial_size: None,
+        activation: false,
+        class_field: None,
     });
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
@@ -310,6 +314,8 @@ fn mixed_stream_publishes_each_component_before_selecting_the_next() {
             two_state: false,
         },
         initial_size: None,
+        activation: false,
+        class_field: None,
     });
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,

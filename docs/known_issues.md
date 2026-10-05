@@ -86,8 +86,9 @@ wc -lc <dir>/sim/*/model.c
 
 ## High frontend memory use during Slang wrapper capture and import
 
-**Status:** open, narrowed; capture streams into Rust and C rendering now sets
-the generation peak for this corpus (see
+**Status:** open, narrowed; capture streams into Rust. DB import and typed
+lowering set the generation peak for this corpus again since C rendering was
+reduced (see
 [High generation memory use during C emission](#high-generation-memory-use-during-c-emission)).
 
 ### Symptom
@@ -109,7 +110,11 @@ medians:
 At 20k/40k the logical export remains about 306/611 MiB. Generated `model.c`
 is byte-identical. Sampled stage RSS at 40k: native capture 1.25 GiB (before
 1.37), stream/decode 1.29 GiB (before 1.58), DB import 1.51 GiB (before 1.60),
-typed lowering 1.51 GiB and C rendering 1.56 GiB. These are
+typed lowering 1.51 GiB and C rendering 1.56 GiB (C rendering is now
+1.12 GiB). Between these measurements and `00485642` the wrapper's glibc page
+release was silently compiled out (its `__GLIBC__` test preceded every C
+library header), raising the 40k peak to 2.15 GiB at DB import; with it
+restored the 40k peak is 1.514 GiB. These are
 generation-process peaks, not generated-simulator runtime memory. Export size
 is approximately linear for this corpus; other shapes can differ.
 
@@ -176,45 +181,52 @@ budget counts captured data, not the bytes of generated `model.c`.
 
 ## High generation memory use during C emission
 
-**Status:** open; C rendering sets the generation-process peak for the
-measured corpus.
+**Status:** open, narrowed; C rendering no longer sets the generation-process
+peak for the measured corpus.
 
 ### Symptom
 
-After the frontend memory work in the preceding entry, rendering the generated
-C model is the highest-memory generation stage at every measured size. Linux
-x86-64 release, `many_processes_registers_config`, two clock edges, medians of
-three interleaved runs on 2026-10-04 (`cb15fb64`), sampled stage RSS:
+Rendering the generated C model still adds memory over the execution IR,
+linearly in design size, but stays below the frontend and lowering stages.
+Linux x86-64 release, `many_processes_registers_config`, two clock edges,
+medians of three interleaved runs on 2026-10-04 (before `b0a3a50a`, after
+`00485642`), sampled stage RSS:
 
-| Processes | Execution/optimization | C rendering | Rendering increase | Whole-run peak |
+| Processes | Execution | Render before | Render after | Whole-run peak before / after |
 | --- | --- | --- | --- | --- |
-| 5,000 | 143 MiB | 213 MiB | +70 MiB | 0.208 GiB |
-| 10,000 | 270 MiB | 409 MiB | +139 MiB | 0.399 GiB |
-| 20,000 | 526 MiB | 802 MiB | +276 MiB | 0.783 GiB |
-| 40,000 | 1,056 MiB | 1,596 MiB | +540 MiB | 1.558 GiB |
+| 5,000 | 144 MiB | 216 MiB (+66) | 157 MiB (+13) | 0.271 / 0.201 GiB |
+| 10,000 | 272 MiB | 414 MiB (+132) | 295 MiB (+23) | 0.529 / 0.388 GiB |
+| 20,000 | 530 MiB | 809 MiB (+265) | 576 MiB (+46) | 1.045 / 0.764 GiB |
+| 40,000 | 1,055 MiB | 1,607 MiB (+543) | 1,145 MiB (+90) | 2.151 / 1.514 GiB |
 
-The increase is linear in design size and exceeds the earlier stages'
-memory (native capture 1,246 MiB and DB import 1,552 MiB at 40k). These are
-generation-process peaks, not generated-simulator runtime memory. Generated
-`model.c` is byte-identical across the measurements.
+Allocator-counted live heap at 10k: the render peak fell from 323 to 148 MiB
+over a 93 MiB execution IR. The before peaks were raised by a lost glibc page
+release in the wrapper (see the frontend entry); the after peak is DB import
+or typed lowering. Render time is unchanged within host noise; whole-run
+generation time is equal or lower. Generated `model.c` and
+`model.symbols.tsv` are byte-identical at every size and across all simulator
+fixtures in both optimizer modes.
 
 ### Cause
 
-Rendering keeps the execution IR live while it builds rendered per-function
-artifacts and then assembles the whole model text in memory before writing
-it, so the execution IR, the rendered artifacts and the assembled text
-overlap. Exact sharing groups also retain rendered candidates until their
-group is resolved (see the [emitter guide](../src/sim/emit_c/AGENTS.md)).
-Sampled stage RSS includes allocator-retained pages and is not an exclusive
-allocation total for the stage.
+Every rendered coroutine body is kept until exact sharing has seen all of
+them, because a group's membership and frame-type names are only known at the
+end; for this corpus those bodies are about half of the remaining increase.
+The rest is per-coroutine frame layouts and descriptors, the shell of the
+execution IR (signals, functions, process shells; process operations are
+released as each body is rendered) and the assembled model text. Sampled stage
+RSS includes allocator-retained pages and is not an exclusive allocation
+total for the stage.
 
 ### Intended direction
 
-Stream rendered artifacts to the output files instead of assembling the whole
-model text in memory, release execution IR for functions once they are
-rendered, and keep the retained data for sharing groups compact (hashes and
-offsets rather than full text where possible). Generated `model.c` must stay
-byte-identical, including both optimizer modes and the exact sharing output.
+Normalize each body for sharing as soon as it is rendered and drop
+duplicate members' text, reconstructing it exactly only for groups below the
+sharing threshold; this requires abstracting frame-type and PCA helper names
+that are resolved after rendering. Stream the final text to `model.c` only if
+the generated-model API stops returning it in memory. Generated `model.c` must
+stay byte-identical, including both optimizer modes and the exact sharing
+output; see the [emitter guide](../src/sim/emit_c/AGENTS.md#generation-memory).
 
 ### Reproduce
 
@@ -383,15 +395,17 @@ that commit; allocation failure is fatal, so no partial image is observed.
 ## Native record values outside by-value subroutine storage
 
 **Status:** open; SIM-003 implements descriptor-backed native records for
-subroutine formals, results and locals.
+subroutine formals, results and locals; SIM-006 stores them as elements of
+queues, dynamic and associative arrays.
 
 ### Symptom
 
 Unpacked records with string, real or chandle leaves copy, compare and cross
-input/output/inout formals and results as runtime values. These legal forms
-still reject with explicit diagnostics: module-level unpacked arrays and
-queue/dynamic/associative containers of native records or strings, their
-slices, a run-time index into a native member array of an automatic record, `ref`
+input/output/inout formals and results as runtime values, and are whole or
+member-addressed elements of resizable containers (SIM-006). These legal forms
+still reject with explicit diagnostics: module-level fixed unpacked arrays of
+native records, their slices, compound or nonblocking writes to a record
+element of a resizable container, a run-time index into a native member array of an automatic record, `ref`
 formals of native record type, nonblocking writes to a static subroutine
 native record (module records and persistent strings/chandles are queued since
 SIM-004), fork-join_none capture of automatic native records,
@@ -413,13 +427,58 @@ run-time item addressing plus per-element change records.
 Run-time item paths and element change records (SIM-007), native ref aliases
 (SIM-008), a root-plus-item-path pending record for static native roots
 (a queued leaf pointer would dangle because a root replaces its leaves on
-assignment), fork capture pins (SIM-010) and
-container formals/locals (SIM-006) reuse the same descriptors and root registry.
+assignment), fork capture pins (SIM-010) reuse the same descriptors and root registry, as
+the SIM-006 container elements and container formals/locals already do.
 
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv` and
 `sim_004/neg_static_native_record_nba.sv`.
+
+## Resizable containers at subroutine, object and nesting boundaries
+
+**Status:** open; SIM-006 implements containers as subroutine formals,
+results and locals, procedural-block locals, class properties, record and
+handle elements and nested containers.
+
+### Symptom
+
+These legal forms reject with explicit diagnostics: `ref` container formals;
+a fork branch reading an automatic container of the enclosing activation; an
+instance container property selected through a handle (`h.q`) rather than
+inside the class's own methods, and an initializer on such a property; a
+container-result call used other than as a whole assignment source or a
+statement (`f()[i]`, `f().size()`); a container argument in expression
+position that is neither a variable of the formal's type nor a packed/real
+assignment pattern; event controls and monitors on subroutine or object
+containers; mutating methods of a nested container element (`q[i].push_back`;
+`q[i].size()` works); a nested element written from a queue or associative
+variable; `foreach` over a container of containers; equality of record
+elements; and compound or nonblocking writes to a record element. Reads of a
+missing nested associative element return the default without the SV 7.8.6
+warning.
+
+### Cause
+
+Container operations name their storage by a container index: model storage
+by a global, activation and object storage by a frame binding. A
+handle-qualified property, a nested element and a call result have no binding
+the operation can name without an addressed-container operand; references
+need retained element cells and fork branches need capture pins. Nested
+storage is a dynamic-array value, so queue methods on it would need dynamic
+array forms of every queue mutation.
+
+### Intended direction
+
+An addressed-container operand (receiver or parent container plus index
+path) for container statements and queries, receiver-qualified class
+properties (SIM-011), retained cells for `ref` (SIM-008), fork capture pins
+(SIM-010) and record-element comparison through the native leaf machinery
+(SIM-007).
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`.
 
 ## Real references and real-array expressions outside stable storage
 
