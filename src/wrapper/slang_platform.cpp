@@ -1,5 +1,10 @@
 #include "slang_platform.hpp"
 
+// The C library identification macros (__GLIBC__) come from the C library's
+// own headers. Without one included first, the test below is always false and
+// the glibc page release silently compiles to nothing.
+#include <cstdlib>
+
 #if defined(__GLIBC__)
 #include <malloc.h>
 #endif
