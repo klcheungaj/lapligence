@@ -1083,6 +1083,11 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
         if let NodeKind::Var { ty } | NodeKind::Array { ty } = self.kind(node) {
+            if self.node(node).parent.is_none() {
+                // A detached member declaration reached through a pattern
+                // key or a select names a record member, not a local.
+                return Ok(());
+            }
             if self.is_native_declaration(node) || self.record_declaration(node) {
                 // Native record locals are descriptor-backed values declared
                 // by `NativeValueDeclare` (see `native_values`); column-layout

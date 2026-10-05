@@ -329,7 +329,84 @@ impl Codegen<'_> {
         }
         let mut out = Vec::new();
         self.lower_record_value_into(path, &destination, rhs, nba, &mut out)?;
-        Ok(Some(IrStmt::Block(out)))
+        let mut statement = IrStmt::Block(out);
+        // A whole record member of a column-layout tagged union is checked
+        // against its tag like a member array (see
+        // `lower_p30_fixed_array_assignment`).
+        let source = self.p30_unwrap_cast(rhs);
+        if let Some(guard) = self.record_member_guard(source)? {
+            let mut inactive = Vec::new();
+            self.record_fill_all_uninitialized(path, &destination, nba, &mut inactive)?;
+            statement = IrStmt::If {
+                cond: Self::record_guard_check(guard, self.source_location(source))?,
+                then_: vec![statement],
+                els: Some(inactive),
+                check: IrUniquePriorityCheck::None,
+            };
+        }
+        if let Some(guard) = self.record_member_guard(lhs)? {
+            statement = IrStmt::If {
+                cond: Self::record_guard_check(guard, self.source_location(lhs))?,
+                then_: vec![statement],
+                els: None,
+                check: IrUniquePriorityCheck::None,
+            };
+        }
+        Ok(Some(statement))
+    }
+
+    /// Give every member of `target` its default-uninitialized value.
+    fn record_fill_all_uninitialized(
+        &mut self,
+        path: &str,
+        target: &RecordValue,
+        nba: bool,
+        out: &mut Vec<IrStmt>,
+    ) -> Result<(), String> {
+        let TypeShape::Aggregate(layout) = &target.descriptor.shape else {
+            return Err(format!("record value in `{path}` has no structure type"));
+        };
+        let layout = layout.clone();
+        if layout.kind == AggregateKind::TaggedUnion {
+            if let Some((_, RecordColumn::Cell(tag))) = target
+                .columns
+                .iter()
+                .find(|(column_path, _)| column_path.is_empty())
+            {
+                let (width, two_state) = (
+                    self.model.arrays[*tag].elem_width,
+                    self.model.arrays[*tag].two_state,
+                );
+                out.push(IrStmt::FixedArrayFill {
+                    array: self.reference_array(*tag),
+                    value: IrExpr::new(
+                        IrExprKind::Const(uniform_constant(width, false, two_state)),
+                        width,
+                        false,
+                        None,
+                    ),
+                    nba,
+                });
+            }
+        }
+        for member in &layout.members {
+            let key = AggregatePathPart::Member(member.name.clone());
+            let columns = target
+                .columns
+                .iter()
+                .filter(|(column_path, _)| column_path.first() == Some(&key))
+                .cloned()
+                .collect::<Vec<_>>();
+            if columns.is_empty() {
+                continue;
+            }
+            let member_value = RecordValue {
+                descriptor: member.descriptor.clone(),
+                columns,
+            };
+            self.record_fill_uninitialized(path, member, &member_value, nba, out)?;
+        }
+        Ok(())
     }
 
     /// Evaluate `node` into `dst`.
@@ -372,6 +449,18 @@ impl Codegen<'_> {
         Err(format!(
             "column-layout record value in `{path}` must be record storage, a pattern, a conditional or a function call"
         ))
+    }
+
+    /// The statements of a declaration initializer of record `value`.
+    pub(in crate::sim::codegen::lowering) fn lower_record_initializer(
+        &mut self,
+        path: &str,
+        value: &RecordValue,
+        initializer: NodeId,
+    ) -> Result<Vec<IrStmt>, String> {
+        let mut out = Vec::new();
+        self.lower_record_value_into(path, value, initializer, false, &mut out)?;
+        Ok(out)
     }
 
     /// Evaluate `node` once into a fresh temporary of type `descriptor`.
@@ -1195,11 +1284,17 @@ impl Codegen<'_> {
                 if self.model.arrays[*array].activation)
         });
         if !automatic {
-            if initializer.is_some() {
-                return Err(format!(
-                    "initializer of static column-layout record local `{}` in `{path}` is not supported",
-                    self.node(declaration).name
-                ));
+            // Static storage initializes once, before any process, in the
+            // static schedule; a body lowered again does not repeat it.
+            if let Some(initializer) = initializer {
+                if !self
+                    .record_initializers
+                    .iter()
+                    .any(|(registered, _)| *registered == declaration)
+                {
+                    self.reserve_initializer_order(declaration);
+                    self.record_initializers.push((declaration, initializer));
+                }
             }
             return Ok(Vec::new());
         }

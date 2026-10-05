@@ -122,6 +122,11 @@ impl Codegen<'_> {
         if let Ok(view) = self.fixed_memory_view(path, node) {
             let array = &self.model.arrays[view.array];
             if array.sparse() {
+                if self.record_guarded_source != Some(node) {
+                    if let Some(guard) = self.record_member_guard(node)? {
+                        return self.guarded_member_value(guard, node, view);
+                    }
+                }
                 return Ok(IrFixedValue::Array(view));
             }
             if !array.real && !array.is_net() && array.elem_width != 0 {
@@ -131,6 +136,34 @@ impl Codegen<'_> {
         // Dense arrays, small records and integral values fit one packed
         // value; they enter descriptor transport as cells, never per element.
         self.lower_fixed_packed(path, node)
+    }
+
+    /// A whole member array of a column-layout tagged union read as an
+    /// operand. The selector is the member's tag check: an inactive member
+    /// reports the access and merges the column with itself, which keeps
+    /// only elements without X/Z. An inactive member holds its
+    /// default-uninitialized value, because tagged expressions reset it and
+    /// every write to it is guarded, so the operand reads that value.
+    fn guarded_member_value(
+        &self,
+        guard: super::fixed_projections::RecordSelectGuard,
+        node: NodeId,
+        view: IrMemoryView,
+    ) -> Result<IrFixedValue, String> {
+        let element_cells = view
+            .dims
+            .iter()
+            .skip(1)
+            .try_fold(1u64, |total, (left, right)| {
+                total.checked_mul(u64::from(left.abs_diff(*right)) + 1)
+            })
+            .ok_or("tagged member array element count overflows")?;
+        Ok(IrFixedValue::Conditional {
+            selector: Box::new(Self::record_guard_check(guard, self.source_location(node))?),
+            left: Box::new(IrFixedValue::Array(view.clone())),
+            right: Box::new(IrFixedValue::Array(view)),
+            element_cells,
+        })
     }
 
     /// A packed bit-stream operand as descriptor cells: an array keeps its

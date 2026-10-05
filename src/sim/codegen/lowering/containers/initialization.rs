@@ -77,6 +77,36 @@ impl<'a> Codegen<'a> {
             self.declaration_inits.push(initialization);
         }
         self.model.processes.splice(0..0, descriptor_processes);
+        self.emit_record_initializers()
+    }
+
+    /// Static column-layout record initializers run column by column in the
+    /// static initialization schedule (SV 6.21, 10.5), never as one packed
+    /// payload.
+    fn emit_record_initializers(&mut self) -> Result<(), String> {
+        let initializers = std::mem::take(&mut self.record_initializers);
+        for (declaration, initializer) in initializers {
+            let name = self.node(declaration).name.clone();
+            let inst = self
+                .owner_instance(declaration)
+                .ok_or_else(|| format!("record initializer for `{name}` has no owning instance"))?;
+            self.inst = inst;
+            self.depth_arg = "0".into();
+            let path = self.instance_path_of(inst);
+            if self.db.edition() != LanguageEdition::SystemVerilog2009 {
+                return Err(format!(
+                    "initializer of column-layout record `{name}` in `{path}` requires SystemVerilog"
+                ));
+            }
+            let value = self.record_declaration_value(declaration).ok_or_else(|| {
+                format!("column-layout record `{name}` in `{path}` has no columns")
+            })?;
+            let body = self.lower_record_initializer(&path, &value, initializer)?;
+            self.record_initializer_source(declaration, initializer);
+            let identity = self.declaration_identity(declaration)?;
+            self.declaration_statements
+                .push((identity, IrStmt::Block(body)));
+        }
         Ok(())
     }
 
