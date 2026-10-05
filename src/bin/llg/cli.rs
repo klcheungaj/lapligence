@@ -16,78 +16,34 @@ pub(crate) const MIB: u64 = 1024 * 1024;
 /// Usage printed when `llg` is run without arguments. `llg` never discovers
 /// `llg.toml`, so there is nothing else to run from.
 pub(crate) const USAGE: &str = "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
-generate: --config <file>  --clear <list>  --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --no-lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-gen-only  --no-opt  --opt  --max-export-mib <MiB>
+generate: --config <file>  --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --no-lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-gen-only  --no-opt  --opt  --max-export-mib <MiB>
 build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
 output:   --out-dir <dir>  --runtime-cache <dir>
+append:   --append-<list> <value>  # adds to the list instead of replacing it; see --help
 stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)
 config:   llg.toml is read only when named with --config (see docs/config.md)";
 
-/// A repeatable option's list, as named by `--clear`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ListKey {
-    /// `sources.files` and the `sources.directories` discovery.
-    Sources,
-    IncludeDirs,
-    Defines,
-    ParamOverrides,
-    SystemTasks,
-    LibMaps,
-    LibFiles,
-    LibraryOrder,
-    DpiLibs,
-    Plusargs,
-}
-
-impl ListKey {
-    const ALL: [(&'static str, ListKey); 10] = [
-        ("sources", ListKey::Sources),
-        ("include-dirs", ListKey::IncludeDirs),
-        ("defines", ListKey::Defines),
-        ("param-overrides", ListKey::ParamOverrides),
-        ("system-tasks", ListKey::SystemTasks),
-        ("libmaps", ListKey::LibMaps),
-        ("libfiles", ListKey::LibFiles),
-        ("library-order", ListKey::LibraryOrder),
-        ("dpi-libs", ListKey::DpiLibs),
-        ("plusargs", ListKey::Plusargs),
-    ];
-
-    fn parse(name: &str) -> Option<Self> {
-        Self::ALL
-            .iter()
-            .find(|(candidate, _)| *candidate == name)
-            .map(|(_, key)| *key)
-    }
-
-    fn join(keys: &[(&str, ListKey)]) -> String {
-        keys.iter()
-            .map(|(name, _)| *name)
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-
-    fn names() -> String {
-        Self::join(&Self::ALL)
-    }
-
-    /// The names on two lines for the indented `--help` column.
-    fn names_wrapped() -> String {
-        let (first, second) = Self::ALL.split_at(Self::ALL.len() / 2);
-        format!(
-            "{},\n                              {}",
-            Self::join(first),
-            Self::join(second)
-        )
-    }
+/// Values of the `--append-<list>` options. They extend the list that the
+/// llg.toml (or, for the replace option, the command line) supplies instead of
+/// replacing it.
+#[derive(Debug, Default)]
+pub(crate) struct Appends {
+    pub files: Vec<String>,
+    pub include_dirs: Vec<String>,
+    pub defines: Vec<String>,
+    pub param_overrides: Vec<String>,
+    pub system_subroutines: Vec<String>,
+    pub library_map_files: Vec<String>,
+    pub library_files: Vec<String>,
+    pub library_order: Vec<String>,
+    pub dpi_libraries: Vec<PathBuf>,
+    pub runtime_args: Vec<String>,
 }
 
 /// The command line as given. Options absent from it stay `None`/empty.
 #[derive(Debug, Default)]
 pub(crate) struct Cli {
     pub config_path: Option<PathBuf>,
-    /// Lists named by `--clear`; their configured values are discarded before
-    /// the command-line values apply.
-    pub clear: Vec<ListKey>,
     pub top: Option<String>,
     pub edition: Option<compile::LanguageEdition>,
     pub compilation_unit_mode: Option<compile::CompilationUnitMode>,
@@ -101,7 +57,10 @@ pub(crate) struct Cli {
     pub default_library: Option<String>,
     pub files: Vec<String>,
     /// `Some` once `--` appeared, even with no arguments after it.
+    /// Arguments after `--`; `Some` (even empty) replaces the configured
+    /// plusargs.
     pub runtime_args: Option<Vec<String>>,
+    pub append: Appends,
     pub lint_mode: Option<bool>,
     pub lint_json_mode: Option<bool>,
     pub lint_json_path: Option<PathBuf>,
@@ -137,7 +96,7 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
     let mut files: Vec<String> = Vec::new();
     let mut runtime_args: Option<Vec<String>> = None;
     let mut config_path: Option<PathBuf> = None;
-    let mut clear: Vec<ListKey> = Vec::new();
+    let mut append = Appends::default();
     let mut lint_mode: Option<bool> = None;
     let mut lint_json_mode: Option<bool> = None;
     let mut lint_json_path: Option<PathBuf> = None;
@@ -171,24 +130,25 @@ Usage: llg [OPTIONS] [<file.sv>...] [-- <plusargs>...]
 
 Options and sources may also come from an llg.toml (docs/config.md), read only
 when named with --config. Precedence: command line, then environment, then the
-file, then built-in defaults. A repeatable option (-I, -D, -G, -v, -L, --libmap,
---define-system-task, --dpi-lib, <file.sv>, plusargs after --) appends to the
-file's list; --clear <list> discards the file's list first. A later NAME=VALUE
+file, then built-in defaults. A list option (-I, -D, -G, -v, -L, --libmap,
+--define-system-task, --dpi-lib, <file.sv>, plusargs after --) replaces the
+file's list when given; its --append-<list> twin adds to the list instead:
+--append-source, --append-include-dir, --append-define, --append-param-override,
+--append-define-system-task, --append-libmap, --append-libfile,
+--append-library-order, --append-dpi-lib, --append-plusarg. Given together,
+the replace values come first, then the appended ones. A later NAME=VALUE
 replaces an earlier one for the same NAME.
 
 Options:
   -h, --help                 Print help and exit
   -V, --version              Print the package version and exit
       --config <file>        Read this llg.toml (a missing file is an error)
-      --clear <list>         Drop the llg.toml values of a repeatable list
-                              (repeatable; commas allowed), one of:
-                              {clear_lists}
       --top <module[:config]> Select the top module or configured design
       --edition <2001|2009> Select the language edition (default: 2009)
       --compilation-units <separate|merged>
                               Select compilation-unit grouping (default: separate)
-  -I, --include-dir <path>   Add an include-search directory
-  -D, --define <NAME[=VALUE]> Define a preprocessor macro
+  -I, --include-dir <path>   Include-search directory (repeatable)
+  -D, --define <NAME[=VALUE]> Define a preprocessor macro (repeatable)
   -G, --param-override <NAME=VALUE>
                               Override a top-level parameter (repeatable)
       --define-system-task <prototype>
@@ -213,6 +173,7 @@ Options:
       --max-export-mib <MiB> Frontend export budget for the elaborated design
                               (default: {export_default}, at most {export_ceiling})
       --                    Pass remaining arguments to the generated simulator
+                              (replaces the llg.toml plusargs, even when empty)
       --generator <backend>  Select the CMake generator
       --launcher <program>   Select the CMake C compiler launcher
                               (default: $LLG_C_LAUNCHER, build.launcher, none)
@@ -230,7 +191,6 @@ Options:
                               (default: build)
       --runtime-cache <dir>  Runtime archive cache (default: $LLG_RUNTIME_CACHE_DIR,
                               <out-dir>/llg-runtime-cache)",
-                    clear_lists = ListKey::names_wrapped(),
                     model_opt_default = sim::build::DEFAULT_MODEL_OPT_LEVEL
                         .gnu_flag()
                         .trim_start_matches('-'),
@@ -305,19 +265,8 @@ Options:
                     return Err(2);
                 }
             },
-            "--library-order" | "-L" => match it.next() {
-                Some(value) if !value.is_empty() => {
-                    let names = value
-                        .split(',')
-                        .filter(|name| !name.is_empty())
-                        .map(str::to_owned)
-                        .collect::<Vec<_>>();
-                    if names.is_empty() {
-                        eprintln!("llg: --library-order requires a library name");
-                        return Err(2);
-                    }
-                    library_order.extend(names);
-                }
+            "--library-order" | "-L" => match it.next().as_deref().map(split_library_order) {
+                Some(Some(names)) => library_order.extend(names),
                 _ => {
                     eprintln!("llg: --library-order requires a library name");
                     return Err(2);
@@ -337,26 +286,48 @@ Options:
                     return Err(2);
                 }
             },
-            "--clear" => match it.next() {
-                Some(value) => {
-                    for name in value.split(',') {
-                        match ListKey::parse(name) {
-                            Some(key) => clear.push(key),
-                            None => {
-                                eprintln!(
-                                    "llg: --clear: unknown list `{name}` (one of: {})",
-                                    ListKey::names()
-                                );
-                                return Err(2);
-                            }
-                        }
-                    }
-                }
-                None => {
-                    eprintln!("llg: --clear requires a list name ({})", ListKey::names());
+            "--append-source" => append_value(&mut it, "--append-source", &mut append.files)?,
+            "--append-include-dir" => {
+                append_value(&mut it, "--append-include-dir", &mut append.include_dirs)?
+            }
+            "--append-define" => append_value(&mut it, "--append-define", &mut append.defines)?,
+            "--append-param-override" => match it.next() {
+                Some(entry) if valid_param_override(&entry) => append.param_overrides.push(entry),
+                _ => {
+                    eprintln!(
+                        "llg: --append-param-override requires NAME=VALUE with an identifier NAME"
+                    );
                     return Err(2);
                 }
             },
+            "--append-define-system-task" => append_value(
+                &mut it,
+                "--append-define-system-task",
+                &mut append.system_subroutines,
+            )?,
+            "--append-libmap" => {
+                append_value(&mut it, "--append-libmap", &mut append.library_map_files)?
+            }
+            "--append-libfile" => {
+                append_value(&mut it, "--append-libfile", &mut append.library_files)?
+            }
+            "--append-library-order" => match it.next().as_deref().map(split_library_order) {
+                Some(Some(names)) => append.library_order.extend(names),
+                _ => {
+                    eprintln!("llg: --append-library-order requires a library name");
+                    return Err(2);
+                }
+            },
+            "--append-dpi-lib" => match it.next() {
+                Some(path) if !path.is_empty() => append.dpi_libraries.push(PathBuf::from(path)),
+                _ => {
+                    eprintln!("llg: --append-dpi-lib requires a library path");
+                    return Err(2);
+                }
+            },
+            "--append-plusarg" => {
+                append_value(&mut it, "--append-plusarg", &mut append.runtime_args)?
+            }
             "--param-override" | "-G" => match it.next() {
                 Some(entry) if valid_param_override(&entry) => param_overrides.push(entry),
                 _ => {
@@ -493,7 +464,6 @@ Options:
     }
     Ok(Cli {
         config_path,
-        clear,
         top,
         edition,
         compilation_unit_mode,
@@ -507,6 +477,7 @@ Options:
         default_library,
         files,
         runtime_args,
+        append,
         lint_mode,
         lint_json_mode,
         lint_json_path,
@@ -526,6 +497,34 @@ Options:
         stop_policy,
         max_export_bytes,
     })
+}
+
+/// The next token of an `--append-<list>` option, which must be non-empty.
+fn append_value(
+    it: &mut impl Iterator<Item = String>,
+    flag: &str,
+    into: &mut Vec<String>,
+) -> Result<(), i32> {
+    match it.next() {
+        Some(value) if !value.is_empty() => {
+            into.push(value);
+            Ok(())
+        }
+        _ => {
+            eprintln!("llg: {flag} requires a value");
+            Err(2)
+        }
+    }
+}
+
+/// The names of a comma-separated library order, or `None` when it names none.
+fn split_library_order(value: &str) -> Option<Vec<String>> {
+    let names: Vec<String> = value
+        .split(',')
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect();
+    (!names.is_empty()).then_some(names)
 }
 
 /// `NAME=VALUE` with a SystemVerilog identifier name and a nonempty value.

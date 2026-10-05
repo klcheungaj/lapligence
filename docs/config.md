@@ -56,32 +56,49 @@ default. `LLG_MEMORY_LIMIT_MB` is an environment-only process guard with no
 option or key, so no precedence applies to it.
 
 - A scalar from a higher layer replaces the lower one.
-- **Repeatable options append.** Values given on the command line follow the
-  values of the config list (`-I`, `-D`, `--param-override`,
-  `--define-system-task`, `--libmap`, `--libfile`, `--library-order`,
-  `--dpi-lib`, source files, and the plusargs after `--`). No list has an
-  environment variable, so only the config supplies the lower layer.
-- **`--clear <list>` replaces.** It discards the config values of that list
-  before the command-line values apply, wherever it appears on the command
-  line; use it alone to empty a list. It is repeatable and accepts a comma
-  list (`--clear defines,include-dirs`). The lists: `sources`
-  (`sources.files` and the `sources.directories` discovery, which also stops
-  those directories being include directories), `include-dirs`, `defines`,
-  `param-overrides`, `system-tasks`, `libmaps`, `libfiles`, `library-order`,
-  `dpi-libs`, `plusargs`. An unknown name exits 2 and lists the valid ones.
+- **List options replace; `--append-<list>` options add.** A list option
+  given on the command line replaces the whole config list (several
+  occurrences accumulate among themselves, as before the config file existed).
+  Its `--append-<list>` twin keeps the config list and adds its values after it.
+  Given together for one list, the replacing values are the base (the config
+  list is dropped) and the appended values follow them; the order of the two
+  kinds on the command line does not matter. Without a config file the
+  appended values are the whole list. No list has an environment variable, so
+  only the config supplies the lower layer.
+
+| List | Config key | Replace | Append |
+|---|---|---|---|
+| Source files | `sources.files` and `sources.directories` discovery | `<file.sv>...` | `--append-source <file>` |
+| Include directories | `compile.include_dirs` | `-I`, `--include-dir` | `--append-include-dir <path>` |
+| Defines | `compile.defines` | `-D`, `--define` | `--append-define <NAME[=VALUE]>` |
+| Parameter overrides | `compile.param_overrides` | `-G`, `--param-override` | `--append-param-override <NAME=VALUE>` |
+| System tasks | `compile.system_tasks` | `--define-system-task` | `--append-define-system-task <prototype>` |
+| Library maps | `libraries.map_files` | `--libmap` | `--append-libmap <file>` |
+| Library files | `libraries.files` | `-v`, `--libfile` | `--append-libfile <[library=]file>` |
+| Library order | `libraries.order` | `-L`, `--library-order` | `--append-library-order <library>[,<library>...]` |
+| DPI libraries | `build.dpi_libs` | `--dpi-lib` | `--append-dpi-lib <path>` |
+| Plusargs | `simulator.plusargs` | `--` followed by the arguments | `--append-plusarg <arg>` |
+
+- **Sources and plusargs.** Source files named on the command line replace
+  `sources.files` and the discovery under `sources.directories` (and those
+  directories stop being include directories); `--append-source` adds files
+  after whatever sources apply. `--` replaces the configured plusargs even
+  when nothing follows it (it then empties them); `--append-plusarg` adds one
+  plusarg after the configured ones, or after the replacing ones when both are
+  given. Everything after `--` is a plusarg, so put `--append-plusarg` before
+  it.
 - **Duplicates.** A define (`NAME` or `NAME=VALUE`) or parameter override
-  given later replaces an earlier one with the same `NAME`, so a command-line
-  `-D LEVEL=2` overrides the file's `LEVEL=1`, and the last of repeated
-  command-line values wins. Every other list keeps the first occurrence of an
+  given later replaces an earlier one with the same `NAME`, so an appended
+  `--append-define LEVEL=2` overrides the file's `LEVEL=1`, and the last of
+  repeated values wins. Every other list keeps the first occurrence of an
   identical entry (include directories and library names compare as text,
   source files by canonical path). Plusargs are never deduplicated.
 - Sources: the config contributes `sources.files` plus every `.v`/`.sv`
   found under `sources.directories` (only when the file names directories
   explicitly; the language server's implicit `["."]` default does not make
-  `llg` scan the directory) with `sources.include`/`exclude`; files named on
-  the command line follow. Source directories are include-search directories,
-  as in the language server; `--clear include-dirs` resets only
-  `compile.include_dirs`.
+  `llg` scan the directory) with `sources.include`/`exclude`. Source
+  directories are include-search directories, as in the language server; `-I`
+  replaces only `compile.include_dirs`, not the source directories.
 - Booleans have explicit opposites so the command line can override either
   value: `--gen-only`/`--no-gen-only`, `--no-opt`/`--opt`, `--lint`/`--no-lint`.
   `--no-lint` also cancels `lint.json`. `--lint-json [<path>]` chooses its own
@@ -89,8 +106,8 @@ option or key, so no precedence applies to it.
 - `--lint-config <file>` (the legacy `llg-lint.toml` rule file) replaces the
   `[lint]` rule settings of `llg.toml`; without it, the `[lint]` rules
   (`enabled`, `rules.<id>`) of `llg.toml` apply to `llg --lint`.
-- `--help` and `--version` act before any file is read. `--config`,
-  `--clear` and `--lint-config` are command-line only.
+- `--help` and `--version` act before any file is read. `--config` and
+  `--lint-config` are command-line only.
 
 ## Errors
 
@@ -142,7 +159,7 @@ server, accepted and ignored by `llg`.
 | `simulator.stop_policy` | `"resume"` \| `"exit"` | llg | `--stop-policy` |
 | `simulator.max_export_mib` | 1 to 16384 | llg | `--max-export-mib` |
 | `simulator.optimize` | bool | llg | `--no-opt` is `optimize = false` |
-| `simulator.plusargs` | strings | llg | arguments after `--` (command-line ones append) |
+| `simulator.plusargs` | strings | llg | arguments after `--` (they replace; `--append-plusarg` adds) |
 | `build.gen_only` | bool | llg | `--gen-only` |
 | `build.generator`, `build.launcher`, `build.cc`, `build.cmake` | strings | llg | `--generator`, `--launcher`, `--cc`, `--cmake` |
 | `build.cflags` | string | llg | `--cflags` (an empty value means no flags) |
@@ -152,7 +169,7 @@ server, accepted and ignored by `llg`.
 | `output.out_dir` | string | llg | `--out-dir` |
 | `output.runtime_cache` | string | llg | `--runtime-cache` |
 
-Command-line-only: `--config`, `--clear`, `--lint-config`, `--help`, `--version`, and the
+Command-line-only: `--config`, `--lint-config`, `--help`, `--version`, and the
 negations `--no-gen-only`, `--opt`, `--no-lint`.
 
 ```toml

@@ -771,7 +771,7 @@ cargo nextest run --locked --test lsp_stdio lsp_stdio_accepts_driver_keys
 `llg_config_cli` copies `tests/fixtures/config_cli` into an isolated directory
 and runs the public `llg` from it with a written `llg.toml`: no discovery of a
 file in the current directory, explicit and missing `--config`, command-line
-override of top, append-versus-`--clear` for lists, define override,
+override of top, replace-versus-`--append-<list>` for lists, define override,
 environment-versus-config-versus-command-line compiler selection, unknown keys
 and invalid values. `config::` and `settings::` cover schema parsing, path resolution and
 the precedence rules without a simulator build.
