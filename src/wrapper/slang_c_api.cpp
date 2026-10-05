@@ -4850,10 +4850,6 @@ private:
         if (node.as<syntax::ConditionalPredicateSyntax>().conditions.size() > 1)
           report(node.sourceRange(), "conditional pattern list");
         break;
-      case SK::BlockingEventTriggerStatement:
-        if (node.as<syntax::EventTriggerStatementSyntax>().timing)
-          report(node.sourceRange(), "delayed event trigger");
-        break;
       case SK::ForLoopStatement: {
         const auto& loop = node.as<syntax::ForLoopStatementSyntax>();
         // A.6.8: one variable_assignment on each side of a condition.
@@ -4864,6 +4860,9 @@ private:
       }
       case SK::LoopGenerate: {
         const auto& loop = node.as<syntax::LoopGenerateSyntax>();
+        // A.4.2 genvar_assignment names an already declared genvar.
+        if (loop.genvar)
+          report(loop.genvar.range(), "genvar declaration in a generate loop");
         // 12.1.3.2: the loop body is `begin : name ... end`.
         if (loop.block->kind != SK::GenerateBlock ||
             !loop.block->as<syntax::GenerateBlockSyntax>().beginName)

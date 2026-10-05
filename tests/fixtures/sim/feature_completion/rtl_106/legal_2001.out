@@ -1,0 +1,15 @@
+sum=7 y4=6 r4=4 y2=2 r2=4 nb=0 and=0 gx=0000
+mem=10 100 grid=1010 part=11
+fact=120 real=3.000000 signed=-4 shift=-4
+show 3
+fork b at 2
+fork a at 3
+event at 3
+case three t=4
+casez hit
+b=6
+while i=3
+forced=99
+released=9
+nba a=10
+hits=2 at 10

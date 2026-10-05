@@ -167,3 +167,81 @@ fn lint_diagnostics_mapping() {
     assert_eq!(b_diags[0].severity, Some(DiagnosticSeverity::INFORMATION));
     assert_eq!(b_diags[0].range.start, Position::new(0, 0)); // unknown line
 }
+
+/// RTL-106: frontend diagnostics keep their physical range and add the
+/// `` `line``-mapped origin as related information, for Slang diagnostics
+/// (rich projection) and llg-owned edition diagnostics (compact projection).
+#[test]
+fn line_mapped_frontend_diagnostics_add_their_origin_as_related_information() {
+    let _guards = analysis_guards();
+    let dir = resolved_temp_dir(&format!("llg_ls_line_origin_{}", std::process::id()));
+    let orig_cwd = std::env::current_dir().expect("current dir");
+    let _restore = TempDirGuard {
+        dir: dir.clone(),
+        orig: orig_cwd,
+    };
+    std::env::set_current_dir(&dir).expect("chdir to temp dir");
+    let sv = dir.join("mapped.sv");
+    // Physical line 3 is logical orig.sv:40, so physical line 5 is 42.
+    std::fs::write(
+        &sv,
+        "module top;\n`line 40 \"orig.sv\" 0\n  logic a;\n  initial begin\n    a = undefined_name;\n  end\nendmodule\n",
+    )
+    .expect("write design");
+    let v = dir.join("mapped.v");
+    // Physical line 3 is logical gen.v:100; the later form is on line 4.
+    std::fs::write(
+        &v,
+        "module top;\n  reg r;\n`line 100 \"gen.v\" 0\n  assign r = 1'b1;\nendmodule\n",
+    )
+    .expect("write design");
+    for (file, edition, expected_line, origin) in [
+        (&sv, compile::LanguageEdition::SystemVerilog2009, 4, "orig.sv:42"),
+        (&v, compile::LanguageEdition::Verilog2001, 3, "gen.v:101"),
+    ] {
+        let path = file.to_string_lossy().into_owned();
+        let a = analyze(&CompileOpts {
+            files: vec![path.clone()],
+            edition,
+            ..Default::default()
+        });
+        let map = lsp_diagnostics(&a);
+        let diagnostic = map[&path]
+            .iter()
+            .find(|d| d.severity == Some(DiagnosticSeverity::ERROR))
+            .unwrap_or_else(|| panic!("{path}: no error in {:?}", map[&path]));
+        assert_eq!(diagnostic.range.start.line, expected_line, "{diagnostic:?}");
+        let related = diagnostic
+            .related_information
+            .as_ref()
+            .unwrap_or_else(|| panic!("{path}: no related information: {diagnostic:?}"));
+        assert_eq!(related[0].message, format!("`line origin: {origin}"));
+        assert_eq!(related[0].location.range, diagnostic.range);
+        assert_eq!(
+            related[0].location.uri,
+            Url::from_file_path(file).expect("file URI")
+        );
+    }
+}
+
+#[test]
+fn lint_diagnostics_add_their_line_mapped_origin() {
+    let lint = LintDiag {
+        rule: "incomplete-case".to_owned(),
+        logical: Some(compile::LogicalLine {
+            file: "orig.sv".to_owned(),
+            line: 12,
+        }),
+        severity: LintSeverity::Warning,
+        file: Some(hp("/x/a.sv").to_owned()),
+        line: 3,
+        col: 5,
+        message: "case without default".to_owned(),
+    };
+    let a = Analysis::new(Vec::new(), empty_design(), Vec::new(), vec![lint]);
+    let map = lsp_diagnostics(&a);
+    let diagnostic = &map[hp("/x/a.sv")][0];
+    assert_eq!(diagnostic.range.start, Position::new(2, 4));
+    let related = diagnostic.related_information.as_ref().expect("origin");
+    assert_eq!(related[0].message, "`line origin: orig.sv:12");
+}
