@@ -151,6 +151,12 @@ fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerEle
             Ok(IrContainerElement::Chandle)
         }
         TypeShape::Opaque { kind } if kind == "Event" => Ok(IrContainerElement::Event),
+        TypeShape::Opaque { kind } if kind == "Class" && descriptor.name == "process" => {
+            Ok(IrContainerElement::Opaque {
+                type_id: descriptor.id.0,
+                kind: crate::sim::ir::PROCESS_ELEMENT_KIND.to_owned(),
+            })
+        }
         TypeShape::Opaque { kind } => Ok(IrContainerElement::Opaque {
             type_id: descriptor.id.0,
             kind: kind.clone(),

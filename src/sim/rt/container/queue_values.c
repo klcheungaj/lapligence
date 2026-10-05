@@ -112,7 +112,7 @@ static llg_value_t llg_value_from_chandle(const llg_value_desc_t* desc,
     llg_value_default(&result, desc);
     if (!llg_value_is_handle_kind(desc))
         llg_container_fatal("handle value used with an incompatible queue element");
-    result.value.handle = value;
+    llg_value_store_handle(&result, value);
     return result;
 }
 

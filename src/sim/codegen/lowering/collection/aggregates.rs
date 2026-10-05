@@ -81,6 +81,16 @@ impl<'a> Codegen<'a> {
                 TypeShape::FixedArray { element, .. } if Self::fixed_descriptor_width(element).is_some())) {
             return Ok(false);
         }
+        // Resizable arrays of records are container storage whose elements
+        // own their record values; they are not per-leaf aggregate storage.
+        if matches!(self.kind(node), NodeKind::Array { .. })
+            && self
+                .db
+                .array_meta(node)
+                .is_some_and(|meta| !matches!(meta.kind(), ArrayKind::Static))
+        {
+            return Ok(false);
+        }
         let object_name = self.node(node).name.clone();
         if matches!(self.kind(node), NodeKind::Net { .. }) {
             let descriptor = self
@@ -695,13 +705,13 @@ impl<'a> Codegen<'a> {
 
     /// Fixed unpacked arrays of identity handles (chandles, virtual
     /// interfaces and class-like objects) use pointer-table container storage
-    /// so runtime selects copy identities without flattening objects.
-    /// Process handles carry reference counts and stay outside this path.
+    /// so runtime selects copy identities without flattening objects;
+    /// process elements keep their reference counts in that storage.
     pub(super) fn is_fixed_handle_element(element: &TypeDescriptor) -> bool {
         match &element.shape {
             TypeShape::Opaque { kind } => match kind.as_str() {
                 "Chandle" | "VirtualInterface" => true,
-                "Class" => element.name != "process",
+                "Class" => true,
                 _ => false,
             },
             _ => false,

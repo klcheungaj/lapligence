@@ -47,6 +47,8 @@ enum {
     LLG_VALUE_FIXED_ARRAY = 6,
     LLG_VALUE_CONTAINER = 7,
     LLG_VALUE_OPAQUE = 8,
+    /* A `process` handle: an identity whose element owns one reference. */
+    LLG_VALUE_PROCESS = 9,
 };
 
 typedef struct llg_value_desc_t llg_value_desc_t;
@@ -89,10 +91,11 @@ struct llg_value_t {
 /* Descriptor contract (SIM-003). A value descriptor is immutable static data
  * describing one recursive value type. Its storage identity decides copying:
  * DEEP values (packed, real, string, aggregate, fixed array, container) copy
- * into independent owners; IDENTITY handles (event, class/process/semaphore/
- * mailbox/virtual-interface opaque handles) share the referenced object and
- * are reported by llg_value_trace; BORROWED chandles copy the foreign pointer
- * and are neither traced nor freed by the value runtime. */
+ * into independent owners; IDENTITY handles (event, class/semaphore/mailbox/
+ * virtual-interface opaque handles and counted process handles) share the
+ * referenced object and are reported by llg_value_trace; BORROWED chandles
+ * copy the foreign pointer and are neither traced nor freed by the value
+ * runtime. */
 enum {
     LLG_VALUE_COPY_DEEP = 0,
     LLG_VALUE_COPY_IDENTITY = 1,
@@ -104,9 +107,14 @@ enum {
  * synchronization object owned by the scheduler until model close: SV Table
  * 6-7 makes a newly created event element (new[], default construction)
  * refer to a new event, while a missing or invalid element reads null
- * (Table 7-1). With no hooks installed new event elements are null. */
+ * (Table 7-1). With no hooks installed new event elements are null and
+ * process references are not counted. */
 typedef struct llg_value_handle_hooks_t {
     void* (*event_new)(void);
+    /* Reference counting for LLG_VALUE_PROCESS handles; every value holding
+     * a non-null process handle owns one reference. */
+    void (*retain)(void* handle);
+    void (*release)(void* handle);
 } llg_value_handle_hooks_t;
 void llg_value_set_handle_hooks(const llg_value_handle_hooks_t* hooks);
 
@@ -455,6 +463,10 @@ double llg_queue_value_pop_real(llg_queue_value_array_t* queue, int back);
 void llg_queue_value_pop_string_to(llg_string_t* dst,
                                    llg_queue_value_array_t* queue, int back);
 void* llg_queue_value_pop_chandle(llg_queue_value_array_t* queue, int back);
+/* Process elements transfer their reference into `*dst`, releasing the
+ * handle it previously held. */
+void llg_queue_value_pop_process_to(void** dst, llg_queue_value_array_t* queue,
+                                    int back);
 
 void llg_dyn_init(llg_dyn_array_t* array, uint32_t element_width,
                   int8_t element_signed, int element_two_state);

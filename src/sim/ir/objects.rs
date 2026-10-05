@@ -319,6 +319,9 @@ pub enum IrChandleExpr {
     /// handle). Only container element writes consume it: an event element
     /// stores this identity, never a copy of the object.
     EventObject(Box<IrEventRef>),
+    /// A process handle stored into a process element of container storage.
+    /// The element retains its own reference (see `LLG_VALUE_PROCESS`).
+    Process(Box<IrProcessExpr>),
     /// A mailbox handle (construction, read or null) stored into handle
     /// storage such as a mailbox array element. Construction allocates a
     /// runtime mailbox; reads share the existing one.
@@ -335,6 +338,10 @@ pub enum IrProcessExpr {
     Read(usize),
     LocalRead(String),
     FormalRead(usize),
+    /// A process handle held by an element of container storage; the handle
+    /// expression reads (or pops) that element. A read result is retained
+    /// like any other process value.
+    Handle(Box<IrChandleExpr>),
 }
 
 /// Element type retained by a mailbox constructor.  Mailbox messages carry
@@ -1028,6 +1035,19 @@ impl IrProcessExpr {
                 "process formal",
                 "formal index is out of bounds",
             )),
+            Self::Handle(handle) => handle.validate(model, formals, None),
+        }
+    }
+
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        if let Self::Handle(handle) = self {
+            handle.expressions(visit);
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        if let Self::Handle(handle) = self {
+            handle.expressions_mut(visit);
         }
     }
 }
@@ -1289,8 +1309,11 @@ impl IrObjectQuery {
                 a.expressions(visit);
                 b.expressions(visit);
             }
-            Self::ProcessEq(_, _) => {}
-            Self::ProcessStatus(_) => {}
+            Self::ProcessEq(a, b) => {
+                a.expressions(visit);
+                b.expressions(visit);
+            }
+            Self::ProcessStatus(value) => value.expressions(visit),
             Self::ArrayQuery(query) => query.expressions(visit),
         }
     }
@@ -1345,8 +1368,11 @@ impl IrObjectQuery {
                 a.expressions_mut(visit);
                 b.expressions_mut(visit);
             }
-            Self::ProcessEq(_, _) => {}
-            Self::ProcessStatus(_) => {}
+            Self::ProcessEq(a, b) => {
+                a.expressions_mut(visit);
+                b.expressions_mut(visit);
+            }
+            Self::ProcessStatus(value) => value.expressions_mut(visit),
             Self::ArrayQuery(query) => query.expressions_mut(visit),
         }
     }
@@ -1580,16 +1606,18 @@ impl IrObjectStmt {
                 receiver.expressions(visit);
                 visit(keys);
             }
+            Self::ChandleAssign(_, value) | Self::ChandleAssignLocal(_, value) => {
+                value.expressions(visit)
+            }
+            Self::ProcessDeclareLocal(_, Some(value))
+            | Self::ProcessAssign(_, value)
+            | Self::ProcessAssignLocal(_, value)
+            | Self::ProcessControl { target: value, .. }
+            | Self::ProcessAwait(value) => value.expressions(visit),
             Self::ChandleDeclareLocal(_, None)
-            | Self::ChandleAssign(..)
-            | Self::ChandleAssignLocal(..)
             | Self::MailboxGet(..)
             | Self::MailboxGetLocal(..)
-            | Self::ProcessDeclareLocal(..)
-            | Self::ProcessAssign(..)
-            | Self::ProcessAssignLocal(..)
-            | Self::ProcessControl { .. }
-            | Self::ProcessAwait(..) => {}
+            | Self::ProcessDeclareLocal(_, None) => {}
             Self::MailboxAssign(_, value) | Self::MailboxAssignLocal(_, value) => {
                 value.expressions(visit)
             }
@@ -1628,16 +1656,18 @@ impl IrObjectStmt {
                 receiver.expressions_mut(visit);
                 visit(keys);
             }
+            Self::ChandleAssign(_, value) | Self::ChandleAssignLocal(_, value) => {
+                value.expressions_mut(visit)
+            }
+            Self::ProcessDeclareLocal(_, Some(value))
+            | Self::ProcessAssign(_, value)
+            | Self::ProcessAssignLocal(_, value)
+            | Self::ProcessControl { target: value, .. }
+            | Self::ProcessAwait(value) => value.expressions_mut(visit),
             Self::ChandleDeclareLocal(_, None)
-            | Self::ChandleAssign(..)
-            | Self::ChandleAssignLocal(..)
             | Self::MailboxGet(..)
             | Self::MailboxGetLocal(..)
-            | Self::ProcessDeclareLocal(..)
-            | Self::ProcessAssign(..)
-            | Self::ProcessAssignLocal(..)
-            | Self::ProcessControl { .. }
-            | Self::ProcessAwait(..) => {}
+            | Self::ProcessDeclareLocal(_, None) => {}
             Self::MailboxAssign(_, value) | Self::MailboxAssignLocal(_, value) => {
                 value.expressions_mut(visit)
             }
@@ -1719,6 +1749,7 @@ impl IrChandleExpr {
             }
             Self::Null => Ok(()),
             Self::Mailbox(mailbox) => mailbox.validate(model, formals, chandle_return),
+            Self::Process(process) => process.validate(model, formals),
             Self::QueuePop { container, .. } => {
                 if !model.containers.get(*container).is_some_and(|container| {
                     container.element.is_handle()
@@ -1960,6 +1991,7 @@ impl IrChandleExpr {
             }
             Self::EventObject(event) => event.expressions(visit),
             Self::Mailbox(mailbox) => mailbox.expressions(visit),
+            Self::Process(process) => process.expressions(visit),
             _ => {}
         }
     }
@@ -1988,6 +2020,7 @@ impl IrChandleExpr {
             }
             Self::EventObject(event) => event.expressions_mut(visit),
             Self::Mailbox(mailbox) => mailbox.expressions_mut(visit),
+            Self::Process(process) => process.expressions_mut(visit),
             _ => {}
         }
     }

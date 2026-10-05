@@ -1307,8 +1307,12 @@ pub(super) fn value_descriptor_tables(
                 0,
                 0,
             ),
-            IrContainerElement::Opaque { type_id, .. } => (
-                "LLG_VALUE_OPAQUE",
+            IrContainerElement::Opaque { type_id, kind } => (
+                if kind == crate::sim::ir::PROCESS_ELEMENT_KIND {
+                    "LLG_VALUE_PROCESS"
+                } else {
+                    "LLG_VALUE_OPAQUE"
+                },
                 nominal_type_id(*type_id, container_name)?,
                 0,
                 0,

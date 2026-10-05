@@ -108,6 +108,12 @@ impl Frame<'_, '_> {
                 return Ok(value);
             }
             IrChandleExpr::Mailbox(mailbox) => return self.mailbox_handle(mailbox),
+            IrChandleExpr::Process(process) => {
+                // The retained temporary stays alive until its lexical scope
+                // ends, after the consuming element store has retained it.
+                let value = self.process_value(process)?;
+                return Ok(self.scalar("void*", format!("(void*)*({})", value.address)));
+            }
             IrChandleExpr::QueuePop { container, back } => {
                 if self.read_only_callback {
                     return Err(pending("mutating container query in a read-only callback"));
@@ -190,6 +196,23 @@ impl Frame<'_, '_> {
                 self.native_lookup(name, NativeKind::Process)?.address
             ),
             IrProcessExpr::FormalRead(_) => return Err(pending("process-handle formal ABI")),
+            IrProcessExpr::Handle(handle) => {
+                if let IrChandleExpr::QueuePop { container, back } = handle.as_ref() {
+                    if self.read_only_callback {
+                        return Err(pending("mutating container query in a read-only callback"));
+                    }
+                    // The popped element's reference moves into the result.
+                    let name = self.ctx.model.containers[*container].c_name.clone();
+                    let result = self.native_reserve(NativeKind::Process);
+                    self.line(format!(
+                        "llg_queue_value_pop_process_to((void**){}, &{name}, {});",
+                        result.address,
+                        i32::from(*back)
+                    ));
+                    return Ok(result);
+                }
+                format!("(llg_process_handle_t*){}", self.chandle(handle)?)
+            }
         };
         let result = self.native_reserve(NativeKind::Process);
         self.line(format!("llg_process_assign({}, {source});", result.address));

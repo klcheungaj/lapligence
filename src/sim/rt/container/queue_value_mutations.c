@@ -341,6 +341,8 @@ void llg_queue_value_pop_string_to(llg_string_t* dst,
 }
 
 void* llg_queue_value_pop_chandle(llg_queue_value_array_t* queue, int back) {
+    if (queue && queue->element && queue->element->kind == LLG_VALUE_PROCESS)
+        llg_container_fatal("process queue pop requires a reference destination");
     llg_value_t removed = {0};
     if (!llg_queue_value_take(queue, back, &removed)) return NULL;
     void* result = llg_value_is_handle_kind(removed.desc)
@@ -349,4 +351,22 @@ void* llg_queue_value_pop_chandle(llg_queue_value_array_t* queue, int back) {
     llg_value_drop(&removed);
     llg_queue_value_pop_notify(queue);
     return result;
+}
+
+void llg_queue_value_pop_process_to(void** dst, llg_queue_value_array_t* queue,
+                                    int back) {
+    if (!dst) llg_container_fatal("queue pop requires output storage");
+    if (!queue || !queue->element || queue->element->kind != LLG_VALUE_PROCESS)
+        llg_container_fatal("process pop used with a non-process queue");
+    llg_value_t removed = {0};
+    void* previous = *dst;
+    *dst = NULL;
+    int taken = llg_queue_value_take(queue, back, &removed);
+    if (taken) {
+        *dst = removed.value.handle; // the element's reference moves to dst
+        removed.value.handle = NULL;
+        llg_value_drop(&removed);
+    }
+    llg_value_handle_release(queue->element, previous);
+    if (taken) llg_queue_value_pop_notify(queue);
 }

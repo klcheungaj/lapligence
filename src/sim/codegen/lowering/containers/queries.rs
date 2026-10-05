@@ -137,6 +137,11 @@ impl<'a> Codegen<'a> {
         element: &IrContainerElement,
         value: NodeId,
     ) -> Result<IrChandleExpr, String> {
+        if element.is_process() {
+            return Ok(IrChandleExpr::Process(Box::new(
+                self.lower_process(path, value)?,
+            )));
+        }
         if !element.is_event() {
             // A mailbox constructor needs the element type of the mailbox
             // specialization, which only the mailbox lowering resolves.
@@ -166,6 +171,53 @@ impl<'a> Codegen<'a> {
         };
         let event = self.event_ref_of(&target, path)?;
         Ok(IrChandleExpr::EventObject(Box::new(event)))
+    }
+
+    /// Whether `node` reads or pops a `process` element of container
+    /// storage (lowered through `lower_process`, never as a chandle).
+    pub(in super::super) fn is_container_process_expr(&self, node: NodeId) -> bool {
+        if let Some((container, _)) = self.queue_pop_call(node) {
+            return self.model.containers[container].element.is_process();
+        }
+        if let Some((container, _)) = self.associative_string_element(node) {
+            return self.model.containers[container].element.is_process();
+        }
+        self.container_element_path(node)
+            .and_then(|(container, indices)| self.container_element_type(container, indices.len()))
+            .is_some_and(|element| element.is_process())
+    }
+
+    /// The element handle read by a process container access, wrapped by
+    /// the caller as `IrProcessExpr::Handle`.
+    pub(in super::super) fn lower_container_process_query(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrChandleExpr>, String> {
+        if !self.is_container_process_expr(node) {
+            return Ok(None);
+        }
+        if let Some((container, back)) = self.queue_pop_call(node) {
+            return Ok(Some(IrChandleExpr::QueuePop { container, back }));
+        }
+        if let Some((container, key)) = self.associative_string_element(node) {
+            return Ok(Some(IrChandleExpr::AssociativeGet {
+                container,
+                key: Box::new(self.lower_string(path, key)?),
+            }));
+        }
+        let Some((container, indices)) = self.container_element_path(node) else {
+            return Ok(None);
+        };
+        let mut indices = self.lower_container_path_indices(path, container, indices)?;
+        Ok(Some(if indices.len() == 1 {
+            IrChandleExpr::ContainerGet {
+                container,
+                index: Box::new(indices.remove(0)),
+            }
+        } else {
+            IrChandleExpr::ContainerGetNested { container, indices }
+        }))
     }
 
     pub(in super::super) fn is_container_chandle_expr(&self, node: NodeId) -> bool {

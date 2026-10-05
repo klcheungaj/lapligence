@@ -242,6 +242,7 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
         | IrChandleExpr::EventObject(_)
         | IrChandleExpr::QueuePop { .. }
         | IrChandleExpr::Mailbox(_)
+        | IrChandleExpr::Process(_)
         | IrChandleExpr::InterfaceInstance { .. } => {
             return Err("typed native operations require whole-model ownership emission".to_owned())
         }
@@ -434,6 +435,9 @@ pub(super) fn process(ctx: &RCtx<'_>, value: &IrProcessExpr) -> Result<String, S
     Ok(match value {
         IrProcessExpr::Null => "NULL".to_owned(),
         IrProcessExpr::SelfHandle => "llg_process_self()".to_owned(),
+        IrProcessExpr::Handle(_) => {
+            return Err("container process handles require the ownership emitter".to_owned())
+        }
         IrProcessExpr::Read(index) => ctx.model.objects[*index].c_name.clone(),
         IrProcessExpr::LocalRead(name) => name.clone(),
         IrProcessExpr::FormalRead(index) => {

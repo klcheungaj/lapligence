@@ -44,6 +44,9 @@ pub enum IrContainerElement {
     },
 }
 
+/// `IrContainerElement::Opaque` kind of a built-in `process` class handle.
+pub const PROCESS_ELEMENT_KIND: &str = "Process";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IrContainerMember {
     pub name: String,
@@ -127,7 +130,16 @@ impl IrContainerElement {
     /// class-like object handles (class, semaphore, mailbox, virtual
     /// interface). Events keep their own handle lowering.
     pub fn is_object_handle(&self) -> bool {
-        matches!(self, Self::Chandle | Self::Opaque { .. })
+        match self {
+            Self::Chandle => true,
+            Self::Opaque { kind, .. } => kind != PROCESS_ELEMENT_KIND,
+            _ => false,
+        }
+    }
+
+    /// `process` handles: identities that keep a reference count.
+    pub fn is_process(&self) -> bool {
+        matches!(self, Self::Opaque { kind, .. } if kind == PROCESS_ELEMENT_KIND)
     }
 
     /// Elements stored as one pointer-sized identity: borrowed chandles,

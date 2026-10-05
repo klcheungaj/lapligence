@@ -69,8 +69,20 @@ static void free_dynamic_events(void) {
     }
 }
 
+static void value_process_retain(void* handle) {
+    llg_process_retain((llg_process_handle_t*)handle);
+}
+
+static void value_process_release(void* handle) {
+    llg_process_release((llg_process_handle_t*)handle);
+}
+
 static void install_value_handle_hooks(void) {
-    const llg_value_handle_hooks_t hooks = {dynamic_event_new};
+    const llg_value_handle_hooks_t hooks = {
+        dynamic_event_new,
+        value_process_retain,
+        value_process_release,
+    };
     llg_value_set_handle_hooks(&hooks);
 }
 

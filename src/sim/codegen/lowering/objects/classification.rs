@@ -516,6 +516,9 @@ impl Codegen<'_> {
     /// handle. Process values are intentionally kept out of packed lowering;
     /// callers must route them through [`lower_process`].
     pub(in super::super) fn is_process_expr(&self, path: &str, node: NodeId) -> bool {
+        if self.is_container_process_expr(node) {
+            return true;
+        }
         if matches!(
             self.kind(node),
             NodeKind::Expr(ExprKind::Constant {

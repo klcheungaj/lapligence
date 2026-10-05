@@ -150,7 +150,7 @@ void llg_dyn_value_assign_chandles(llg_dyn_value_array_t* dst,
     if (count) memset(data, 0, count * sizeof(*data));
     for (size_t i = 0; i < count; ++i) {
         llg_value_default(&data[i], dst->element);
-        data[i].value.handle = values[i];
+        llg_value_store_handle(&data[i], values[i]);
     }
     llg_dyn_value_commit(dst, data, count);
 }
@@ -258,8 +258,7 @@ int llg_dyn_value_set_chandle(llg_dyn_value_array_t* array, sv4_t index,
     llg_value_t* target = llg_dyn_value_at(array, index);
     if (!target || !llg_value_is_handle_kind(target->desc))
         return 0;
-    if (target->value.handle == value) return 1;
-    target->value.handle = value;
+    if (!llg_value_store_handle(target, value)) return 1;
     llg_notify(array->notify, array->contents_dependency,
                array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
     return 1;
@@ -324,8 +323,7 @@ int llg_dyn_value_set_nested_chandle(llg_dyn_value_array_t* array,
     llg_value_t* target = llg_dyn_value_nested_at(array, indices, count);
     if (!target || !llg_value_is_handle_kind(target->desc))
         return 0;
-    if (target->value.handle == value) return 1;
-    target->value.handle = value;
+    if (!llg_value_store_handle(target, value)) return 1;
     llg_notify(array->notify, array->contents_dependency,
                array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
     return 1;

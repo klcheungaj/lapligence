@@ -540,8 +540,7 @@ int llg_assoc_value_set_nested_integral_chandle(
     llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices, count);
     if (!target || !llg_value_is_handle_kind(target->desc))
         return 0;
-    if (target->value.handle == value) return 1;
-    target->value.handle = value;
+    if (!llg_value_store_handle(target, value)) return 1;
     llg_notify(array->notify, array->contents_dependency,
                array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
     return 1;

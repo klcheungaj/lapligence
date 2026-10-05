@@ -33,7 +33,7 @@ mod validate;
 pub use containers::{
     IrAssocKey, IrAssocTraversal, IrContainer, IrContainerElement, IrContainerExpr,
     IrContainerKind, IrContainerMember, IrContainerMethod, IrContainerReduction, IrContainerStmt,
-    IrQueueBound, IrQueueSource, IrStreamSelector,
+    IrQueueBound, IrQueueSource, IrStreamSelector, PROCESS_ELEMENT_KIND,
 };
 pub use objects::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr, IrClass,

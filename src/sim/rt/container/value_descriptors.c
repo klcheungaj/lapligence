@@ -1,3 +1,33 @@
+/* Kind-specific identity operations installed by the scheduler. The container
+ * runtime is scheduler-independent: without hooks a new event element is null and
+ * process references are not counted. */
+static llg_value_handle_hooks_t llg_value_hooks;
+
+void llg_value_set_handle_hooks(const llg_value_handle_hooks_t* hooks) {
+    if (hooks) llg_value_hooks = *hooks;
+    else memset(&llg_value_hooks, 0, sizeof(llg_value_hooks));
+}
+
+static void llg_value_handle_retain(const llg_value_desc_t* desc, void* handle) {
+    if (handle && desc->kind == LLG_VALUE_PROCESS && llg_value_hooks.retain)
+        llg_value_hooks.retain(handle);
+}
+
+static void llg_value_handle_release(const llg_value_desc_t* desc, void* handle) {
+    if (handle && desc->kind == LLG_VALUE_PROCESS && llg_value_hooks.release)
+        llg_value_hooks.release(handle);
+}
+
+/* Replace the identity held by handle value `target`, keeping process
+ * reference counts balanced. Returns 0 when the identity is unchanged. */
+static int llg_value_store_handle(llg_value_t* target, void* handle) {
+    if (target->value.handle == handle) return 0;
+    llg_value_handle_retain(target->desc, handle);
+    llg_value_handle_release(target->desc, target->value.handle);
+    target->value.handle = handle;
+    return 1;
+}
+
 
 static const llg_value_desc_t* llg_value_item_desc(
     const llg_value_desc_t* desc, size_t index) {
@@ -30,6 +60,9 @@ static void llg_value_drop(llg_value_t* value) {
                 free(value->value.container);
             }
             break;
+        case LLG_VALUE_PROCESS:
+            llg_value_handle_release(desc, value->value.handle);
+            break;
         default:
             break;
     }
@@ -49,15 +82,6 @@ static void* llg_value_try_items(size_t count, size_t item_size) {
     void* items = LLG_VALUE_ITEMS_MALLOC(count * item_size);
     if (items) memset(items, 0, count * item_size);
     return items;
-}
-
-/* Kind-specific identity operations installed by the scheduler. The container
- * runtime is scheduler-independent: without hooks a new event element is null. */
-static llg_value_handle_hooks_t llg_value_hooks;
-
-void llg_value_set_handle_hooks(const llg_value_handle_hooks_t* hooks) {
-    if (hooks) llg_value_hooks = *hooks;
-    else memset(&llg_value_hooks, 0, sizeof(llg_value_hooks));
 }
 
 /* Construct the default value of `desc` into an empty `value`. On failure the
@@ -112,6 +136,7 @@ static int llg_value_try_default_mode(llg_value_t* value,
             return 1;
         case LLG_VALUE_CHANDLE:
         case LLG_VALUE_OPAQUE:
+        case LLG_VALUE_PROCESS:
             value->value.handle = NULL;
             return 1;
         default:
@@ -141,6 +166,7 @@ static int llg_value_desc_compatible(const llg_value_desc_t* dst,
         case LLG_VALUE_STRING:
         case LLG_VALUE_CHANDLE:
         case LLG_VALUE_EVENT:
+        case LLG_VALUE_PROCESS:
             return 1;
         case LLG_VALUE_AGGREGATE:
         case LLG_VALUE_CONTAINER:
@@ -205,7 +231,9 @@ static int llg_value_try_construct_copy(llg_value_t* target,
         case LLG_VALUE_CHANDLE:
         case LLG_VALUE_EVENT:
         case LLG_VALUE_OPAQUE:
+        case LLG_VALUE_PROCESS:
             target->value.handle = source->value.handle;
+            llg_value_handle_retain(target_desc, target->value.handle);
             return 1;
         case LLG_VALUE_AGGREGATE:
         case LLG_VALUE_FIXED_ARRAY:
@@ -290,6 +318,7 @@ static int llg_value_equal(const llg_value_t* a, const llg_value_t* b) {
         case LLG_VALUE_CHANDLE:
         case LLG_VALUE_EVENT:
         case LLG_VALUE_OPAQUE:
+        case LLG_VALUE_PROCESS:
             return a->value.handle == b->value.handle;
         case LLG_VALUE_AGGREGATE:
         case LLG_VALUE_FIXED_ARRAY:
@@ -339,6 +368,7 @@ int llg_value_desc_copy_policy(const llg_value_desc_t* desc) {
             return LLG_VALUE_COPY_DEEP;
         case LLG_VALUE_EVENT:
         case LLG_VALUE_OPAQUE:
+        case LLG_VALUE_PROCESS:
             return LLG_VALUE_COPY_IDENTITY;
         case LLG_VALUE_CHANDLE:
             return LLG_VALUE_COPY_BORROWED;
@@ -367,6 +397,7 @@ static int llg_value_desc_valid_at(const llg_value_desc_t* desc,
         case LLG_VALUE_CHANDLE:
         case LLG_VALUE_EVENT:
         case LLG_VALUE_OPAQUE:
+        case LLG_VALUE_PROCESS:
             return desc->item_count == 0 && !desc->element &&
                    !desc->members && desc->member_count == 0;
         case LLG_VALUE_AGGREGATE:
@@ -413,6 +444,7 @@ static void llg_value_trace_at(const llg_value_t* value,
     switch (desc->kind) {
         case LLG_VALUE_EVENT:
         case LLG_VALUE_OPAQUE:
+        case LLG_VALUE_PROCESS:
             if (value->value.handle)
                 visit((void* const*)&value->value.handle, desc, context);
             break;
