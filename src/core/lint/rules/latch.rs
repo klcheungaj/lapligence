@@ -38,6 +38,7 @@ impl LintRule for IncompleteCaseRule {
                 let node = db.node(case);
                 out.push(LintDiag {
                     rule: "incomplete-case".to_string(),
+                    logical: None,
                     severity: LintSeverity::Warning,
                     file: node.file().map(str::to_owned),
                     line: node.line,

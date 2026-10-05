@@ -63,6 +63,7 @@ impl LintRule for UndrivenSignalRule {
             }
             out.push(LintDiag {
                 rule: "undriven-signal".to_string(),
+                logical: None,
                 severity: LintSeverity::Warning,
                 file: node.file().map(str::to_owned),
                 line: node.line.max(1),

@@ -34,7 +34,9 @@ compiles those exact buffers and builds owned DB/indexes/`Analysis`. Request
 handlers neither access native objects nor start project compilation.
 
 Preserve Slang diagnostic provider, name/code, full message, primary range and
-related locations. Core diagnostics classify admission/DB failures. Publish current
+related locations. Diagnostic ranges stay on the physical buffer; a
+`` `line``-mapped position (Slang, edition or lint) adds a first related entry
+on that same range, `` `line origin: file:line``. Core diagnostics classify admission/DB failures. Publish current
 failures while serving navigation from the last-good root snapshot.
 
 Open-document semantic tokens compile the exact admitted unsaved buffer in

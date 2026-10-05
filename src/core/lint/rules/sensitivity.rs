@@ -91,6 +91,7 @@ impl LintRule for IncompleteSensitivityListRule {
             }
             out.push(LintDiag {
                 rule: "incomplete-sensitivity-list".to_string(),
+                logical: None,
                 severity: LintSeverity::Warning,
                 file: event_node.file().map(str::to_owned),
                 line,

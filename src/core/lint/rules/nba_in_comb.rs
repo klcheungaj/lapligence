@@ -47,6 +47,7 @@ impl LintRule for NbaInCombRule {
                 let node = db.node(assign);
                 out.push(LintDiag {
                     rule: "nba-in-always_comb".to_string(),
+                    logical: None,
                     severity: LintSeverity::Warning,
                     file: node.file().map(str::to_owned),
                     line: node.line,

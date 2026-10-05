@@ -264,6 +264,7 @@ impl Analysis {
             AnalysisOutcome::Fatal,
             vec![Diag {
                 severity: Severity::Fatal,
+                logical: None,
                 file: None,
                 line: 0,
                 col: 0,
@@ -788,6 +789,7 @@ pub(super) fn outcome_from_diagnostics(diagnostics: &[Diag]) -> AnalysisOutcome 
 pub(super) fn db_build_diagnostic(error: &str) -> Diag {
     Diag {
         severity: Severity::Error,
+        logical: None,
         file: None,
         line: 0,
         col: 0,
@@ -1123,6 +1125,7 @@ fn analyze_library_units_after_limit(
     analysis.outcome = AnalysisOutcome::Compile;
     analysis.diagnostics.push(Diag {
         severity: Severity::Warning,
+        logical: None,
         file: None,
         line: 0,
         col: 0,

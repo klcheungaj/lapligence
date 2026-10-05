@@ -83,13 +83,23 @@ and bodies, unnamed-block declarations and procedural initializers from semantic
 nodes; labels, `.name`, `edge`, casts, time literals, inline genvars, `[size]`,
 `localparam` ports and empty `()` from token sequences; generate constructs from
 `generate` regions. Sequence rules skip macro-expanded tokens, whose shared
-use-site range carries no order. The 2009 profile rejects 2012 covergroup bins
+use-site range carries no order; the wrapper's closed syntax profile
+(`edition_findings`) covers the grammar on macro-expanded trees and is merged
+after these rules, dropping a finding at an already reported position.
+Semantic rules also reject variables driven by continuous assignments, gate
+outputs and output/inout ports, and variable input/inout ports. The 2009 profile rejects 2012 covergroup bins
 forms. Body rules need executable capture; navigation snapshots skip them. Explicit `system_subroutines` prototypes distinguish extensions
 from standards. Directive bodies are ignored until expanded; executable for-loop
 header edges differ from navigation-only capture. Memory-storage exemptions are
 argument-specific (`$fread` and legacy PLA personality argument 0;
 `$readmem*` argument 1), never exemptions for unrelated whole-array uses of the
 same declaration. PLA syntax admission does not select a simulator PLA target.
+
+Frontend `Diag`s keep their physical `file`/`line`/`col` and carry the
+`` `line``-mapped `logical` position, filled once per compile from the
+snapshot's directives (`attach_logical_positions`); lint fills `LintDiag::logical`
+from the Db source map. Printers use `Diag::location()` so every consumer shows
+the same `` path:line:col (`line file:line)`` form.
 
 See [FFI](../ffi/AGENTS.md), [simulator](../sim/AGENTS.md),
 [LSP](../bin/llg_ls/AGENTS.md) and [lint](lint/AGENTS.md) for their contracts.

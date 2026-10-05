@@ -1,4 +1,4 @@
-//! Source-library and `` `line`` directive record receivers.
+//! Source-library, `` `line`` directive and edition-finding record receivers.
 
 use super::*;
 
@@ -78,4 +78,21 @@ pub(super) fn finish_line_directives(
         }
     }
     Ok(unique)
+}
+
+/// Copy one syntax-profile finding, rejecting unknown or unbounded ranges and
+/// empty labels.
+pub(super) fn decode_edition_finding(
+    item: &RawEditionFinding,
+    files: &[File],
+) -> Result<EditionFinding, SlangError> {
+    let range = decode_range(item.range, files)?
+        .ok_or_else(|| invalid_native("edition finding has no source range"))?;
+    // SAFETY: stream records and their strings are valid for the callback
+    // that delivered them.
+    let label = unsafe { copy_string(item.label, "edition finding label")? };
+    if label.is_empty() {
+        return Err(invalid_native("edition finding has an empty label"));
+    }
+    Ok(EditionFinding { range, label })
 }

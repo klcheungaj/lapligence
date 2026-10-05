@@ -102,11 +102,9 @@ fn parse_args(args: Vec<String>) -> Result<(Option<String>, Vec<String>), &'stat
 fn print_diagnostics(diagnostics: &[compile::Diag]) {
     for diagnostic in diagnostics {
         eprintln!(
-            "{:?}: {}:{}:{} {}",
+            "{:?}: {} {}",
             diagnostic.severity,
-            diagnostic.file.as_deref().unwrap_or(""),
-            diagnostic.line,
-            diagnostic.col,
+            diagnostic.location(),
             diagnostic.message
         );
     }

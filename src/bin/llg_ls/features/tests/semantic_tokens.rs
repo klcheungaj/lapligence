@@ -17,6 +17,7 @@ fn semantic_tokens_are_empty_for_a_file_with_a_syntax_error() {
     let mut analysis = sample_analysis();
     analysis.diagnostics.push(Diag {
         severity: Severity::Syntax,
+        logical: None,
         file: Some(hp("/x/top.sv").to_owned()),
         line: 1,
         col: 1,
@@ -36,6 +37,7 @@ fn semantic_tokens_remain_available_when_another_file_has_a_syntax_error() {
     let mut analysis = sample_analysis();
     analysis.diagnostics.push(Diag {
         severity: Severity::Syntax,
+        logical: None,
         file: Some(hp("/other/top.sv").to_owned()),
         line: 1,
         col: 1,

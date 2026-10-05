@@ -260,11 +260,9 @@ fn run(options: DriverOptions) -> i32 {
         Err(compile::CompileError::FrontendDiagnostics(diagnostics)) => {
             for d in &diagnostics {
                 eprintln!(
-                    "{:?}: {}:{}:{} {}",
+                    "{:?}: {} {}",
                     d.severity,
-                    d.file.as_deref().unwrap_or(""),
-                    d.line,
-                    d.col,
+                    d.location(),
                     llg::core::diagnostics::user_message(d)
                 );
             }
@@ -275,11 +273,9 @@ fn run(options: DriverOptions) -> i32 {
     drop(frontend_stage);
     for d in &out.diagnostics {
         eprintln!(
-            "{:?}: {}:{}:{} {}",
+            "{:?}: {} {}",
             d.severity,
-            d.file.as_deref().unwrap_or(""),
-            d.line,
-            d.col,
+            d.location(),
             llg::core::diagnostics::user_message(d)
         );
     }
@@ -345,6 +341,9 @@ fn run(options: DriverOptions) -> i32 {
                         if d.col > 0 {
                             loc.push_str(&format!(":{}", d.col));
                         }
+                    }
+                    if let Some(logical) = &d.logical {
+                        loc.push_str(&format!(" (`line {}:{})", logical.file, logical.line));
                     }
                 }
                 if !loc.is_empty() {
