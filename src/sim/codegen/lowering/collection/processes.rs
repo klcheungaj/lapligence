@@ -615,8 +615,12 @@ impl<'a> Codegen<'a> {
         }
         if !has_structural_driver
             && alias_bindings.is_none()
-            && (self.is_string_expr(path, lhs) || self.native_record_target(lhs))
+            && (self.is_string_expr(path, lhs)
+                || self.native_record_target(lhs)
+                || self.column_record_storage(lhs).is_some())
         {
+            // Column-layout records have no packed driver value either; the
+            // process copies them column by column.
             return self.emit_native_cont_assign(path, ca, lhs, rhs);
         }
         let mut lh = self.lower_lhs(path, lhs)?;

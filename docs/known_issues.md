@@ -310,7 +310,7 @@ Use the command in the frontend memory entry with `LLG_CORPUS_N` set to
 ## Remaining non-flattened fixed-value contexts
 
 **Status:** open; RTL-002 and RTL-002b implement descriptor transport for
-integral fixed arrays.
+integral fixed arrays, and RTL-101 column layout for large records.
 
 Integral variable arrays copy, compare, select rows, merge conditionals, stream
 (including multiple segments and unaligned slices), initialize and pass through
@@ -318,16 +318,22 @@ input/output/inout/ref formals and returns of static, automatic and recursive
 functions without becoming one packed value. Array-valued pattern items and
 pattern-lvalue row scatter use the same views, and so do arrays of unpacked
 records whose elements fit the packed limit (RTL-099 qualifies 1,048,576
-records). A single unpacked record or finite tagged union wider than the packed
-limit still has no descriptor layout and retains the packed payload limit as a
-value (formal, return, conditional); a record member array above the 4,096-cell
-dense threshold is expanded per cell (a 65,537-cell member generates about
-79 MB of C, and a whole-record pattern over such members fails to resolve the
-member array). So does the source of a whole-value `matches`
-wildcard or binding, which rejects with its size (RTL-016). Dense rows as
-descriptor pattern items and scatter targets, and dense arrays, packed values,
-runtime `with` ranges and nested streams as parts of an oversized stream, use
-descriptor transport (RTL-103); a resizable container operand of an oversized
+records). Unpacked records with a member array above the 4,096-cell dense
+threshold, and records or finite tagged unions wider than the packed limit,
+keep each member array and scalar leaf in its own descriptor column (RTL-101):
+they copy, compare, merge conditionals, match patterns, pass through module
+ports and subroutine formals/results/locals, and a 65,537-cell member generates
+about 10 KB of C instead of 79 MB. Column records still reject binding a whole
+value to a pattern variable (as does the oversized source of a whole-value
+`matches` binding, RTL-016), comparing or selecting from a record-returning
+call as an expression operand, static declaration initializers of column
+locals, member initializers on column member arrays, and subroutine or
+comparison use of a column record that has `real`, `string` or `chandle`
+members. Copying a whole member array out of an inactive tagged-union member
+is not guarded; element reads and writes report the inactive member at run time.
+Dense rows as descriptor pattern items and scatter targets, and dense arrays,
+packed values, runtime `with` ranges and nested streams as parts of an
+oversized stream, use descriptor transport (RTL-103); a resizable container operand of an oversized
 stream rejects (SIM-020).
 
 Fixed-array `reverse`/`sort`/`rsort`, selected-row reductions and `inside`

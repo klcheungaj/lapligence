@@ -95,9 +95,17 @@ The matching runtime entry points are the `llg_fixed_array_*` functions in
 `rt/llg_rt.h`; value payloads stay behind the `sv4_*` facade. Native, real,
 string and resizable payloads are not part of this contract: they keep their
 own container/object descriptors and must not be routed through
-`IrFixedValue` by widening its element domain. A single record or tagged union
-wider than the packed limit has no descriptor form yet (see
-[known issues](../../../docs/known_issues.md#remaining-non-flattened-fixed-value-contexts)).
+`IrFixedValue` by widening its element domain.
+
+RTL-101 extends the contract additively with `IrArray::descriptor` (default
+`false`): it forces descriptor storage regardless of extent. Column-layout
+records and tagged unions (wider than the packed limit, or with a member array
+above the dense threshold) store each member array and scalar leaf as such an
+array, a scalar leaf as one cell, and a tagged union's tag as one more cell.
+Every whole-value operation lowers to the existing per-column shapes
+(`FixedValueAssign`, `FixedValueCompare`, `IrCallArg::FixedValue` and trailing
+output formals); no IR variant changes meaning. Remaining limits are in
+[known issues](../../../docs/known_issues.md#remaining-non-flattened-fixed-value-contexts).
 
 ## Descriptor-backed native values (SIM-003)
 

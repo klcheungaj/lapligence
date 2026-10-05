@@ -395,6 +395,15 @@ for `sparse()` storage and oversized values, never a per-cell expansion; new
 writers of fixed storage must register cell intervals for the single-writer
 rule; and new net-array driver forms must be added to the `net_cells.rs`
 classification inventory.
+Column-layout records and tagged unions (RTL-101; wider than the packed limit
+or with a member array above the dense threshold) are classified in
+`collection/record_columns.rs` and lowered in
+`expressions/aggregates/columns.rs`: every integral leaf is an
+`IrArray::descriptor` column (a scalar leaf is one cell, a tag is one more
+cell), whole-value operations iterate the columns, subroutine activations keep
+their columns in `activation_records` (extra columns follow the declared
+formals, results are trailing outputs), and a consumer that reads a member
+must resolve it through `record_column_array` rather than a packed projection.
 Native records (string/real/chandle leaves, no packed width) in subroutine
 formals, results and locals use `collection/native_values.rs`: one
 `IrNativeValue` root per storage, leaf accesses by constant item path, and

@@ -236,12 +236,13 @@ fn native_payloads_remain_outside_finite_tagged_storage() {
 }
 
 #[test]
-fn oversized_payloads_are_rejected_rather_than_flattened() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_oversized_payload",
-        "fixed value payload is 1048577 bits; packed value capacity is 1048575 bits",
-    );
+fn oversized_payloads_use_column_layout_rather_than_flattening() {
+    // One bit beyond `capacity_boundary`, the union keeps its tag and each
+    // member in separate columns (RTL-101).
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/rtl_016/oversized_payload_columns.out");
+    sim_cli::run_case(SUITE, "oversized_payload_columns", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "oversized_payload_columns", expected, &[], &[]);
 }
 
 #[test]

@@ -120,6 +120,7 @@ impl<'a> Codegen<'a> {
         // subroutine symbol; that symbol is the return-storage identity.
         let ret_var = (has_ret
             || self.nonflatten_function(ft)
+            || self.record_return(ft)
             || self.native_return(ft)
             || self.real_array_return(ft))
         .then_some(ft);
@@ -1082,9 +1083,10 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
         if let NodeKind::Var { ty } | NodeKind::Array { ty } = self.kind(node) {
-            if self.is_native_declaration(node) {
+            if self.is_native_declaration(node) || self.record_declaration(node) {
                 // Native record locals are descriptor-backed values declared
-                // by `NativeValueDeclare` (see `native_values`).
+                // by `NativeValueDeclare` (see `native_values`); column-layout
+                // record locals are declared column by column.
                 return Ok(());
             }
             if self.array_globals.get(&node).is_some_and(|array| {

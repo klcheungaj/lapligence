@@ -101,6 +101,7 @@ impl Codegen<'_> {
         };
         self.model.arrays.push(crate::sim::ir::IrArray {
             activation: true,
+            descriptor: false,
             net: None,
             net_elements: Vec::new(),
             element_default: Self::fixed_descriptor_default(element),
@@ -123,6 +124,9 @@ impl Codegen<'_> {
             self.kind(node),
             NodeKind::Array { .. } | NodeKind::Var { .. }
         ) && self.descriptor_transport(node)
+            // A member array of a record is reachable through element
+            // selects as a detached declaration; it is not a local.
+            && self.node(node).parent.is_some()
         {
             output.push(node);
             return;
@@ -137,6 +141,9 @@ impl Codegen<'_> {
             .get(&node)
             .filter(|_| self.descriptor_transport(node))
             .map(|array| array.ir)
+            // A column-layout record formal or result binds its first
+            // column here; `record_formal_columns` lists the rest.
+            .or_else(|| self.record_formal_columns(node).first().copied())
     }
 
     pub(super) fn prepare_fixed_function(

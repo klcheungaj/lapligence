@@ -231,6 +231,9 @@ pub struct IrNetArray {
 pub struct IrArray {
     /// Lexical activation storage, declared by `FixedArrayDeclare`.
     pub(in crate::sim) activation: bool,
+    /// Descriptor storage regardless of extent: a column of a column-layout
+    /// record (RTL-101), so record values move one descriptor per column.
+    pub(in crate::sim) descriptor: bool,
     /// Present for a net array (dense storage published from resolved nets).
     pub(in crate::sim) net: Option<IrNetArray>,
     /// Array cells that observe a canonical resolved net signal.
@@ -302,6 +305,7 @@ impl IrArray {
             c_name,
             hdl_name,
             activation: false,
+            descriptor: false,
             net: None,
             net_elements: Vec::new(),
             element_default: None,
@@ -335,6 +339,7 @@ impl IrArray {
         !self.real
             && !self.is_net()
             && (self.activation
+                || self.descriptor
                 || self.total > LLG_DENSE_FIXED_ARRAY_CELLS
                 || self
                     .total
