@@ -34,7 +34,7 @@ pub enum CompactKernel {
     /// Portable C; no GMP discovery, headers or linkage.
     #[default]
     Portable,
-    /// GMP mpn; requires compatible 64-bit nail-free limbs.
+    /// GMP mpn; requires 64-bit nail-free limbs.
     Gmp,
 }
 

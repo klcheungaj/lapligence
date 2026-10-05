@@ -39,7 +39,7 @@ fn backend_lanes(gmp: &str) -> Vec<Vec<(&'static str, String)>> {
         ],
     ];
     if gmp.is_empty() {
-        eprintln!("BLOCKED GMP parity: set LLG_TEST_GMP_ROOT");
+        let _ = super::sim_harness::test_gmp_root("GMP parity");
     } else {
         lanes.push(vec![
             ("LLG_VALUE_BACKEND", "compact".to_owned()),

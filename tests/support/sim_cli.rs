@@ -374,7 +374,8 @@ pub(crate) fn run_case_backend_parity(
     args: &[&str],
     envs: &[(&str, &str)],
 ) {
-    let gmp = std::env::var("LLG_TEST_GMP_ROOT").unwrap_or_default();
+    let gmp = sim_harness::test_gmp_root(&format!("GMP parity for {suite}/{fixture}"))
+        .unwrap_or_default();
     for optimized in [false, true] {
         let mut controls = envs.to_vec();
         controls.extend([
@@ -396,7 +397,6 @@ pub(crate) fn run_case_backend_parity(
         );
         for kernel in ["portable", "gmp"] {
             if kernel == "gmp" && gmp.is_empty() {
-                eprintln!("BLOCKED GMP parity: set LLG_TEST_GMP_ROOT");
                 continue;
             }
             let mut controls = envs.to_vec();
@@ -438,7 +438,8 @@ pub(crate) fn run_case_checked_matrix(
         llg::sim::build::cmake_available(),
         "CLI tests require CMake"
     );
-    let gmp = std::env::var("LLG_TEST_GMP_ROOT").unwrap_or_default();
+    let gmp =
+        sim_harness::test_gmp_root(&format!("GMP lane for {suite}/{fixture}")).unwrap_or_default();
     for optimized in [false, true] {
         for (backend, kernel) in [
             ("legacy", "portable"),
@@ -446,7 +447,6 @@ pub(crate) fn run_case_checked_matrix(
             ("compact", "gmp"),
         ] {
             if kernel == "gmp" && gmp.is_empty() {
-                eprintln!("BLOCKED GMP lane for {suite}/{fixture}: set LLG_TEST_GMP_ROOT");
                 continue;
             }
             let controls = [

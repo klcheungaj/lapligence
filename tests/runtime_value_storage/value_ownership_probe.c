@@ -121,7 +121,8 @@ static void check_arithmetic_destinations(void) {
         CHECK(sv4_to_u64(a) == (16 & mask));
         sv4_mul_into(&out, a, b);
         CHECK(sv4_to_u64(out) == (80 & mask));
-        CHECK(value_test_allocations() == allocations);
+        CHECK(value_test_allocations() ==
+              allocations + (width > 64 ? probe_kernel_scratch_allocations() : 0));
         sv4_mul_into(&a, a, b);
         CHECK(sv4_to_u64(a) == (80 & mask));
         llg_sv4_set_state(&b, 0, 3);
