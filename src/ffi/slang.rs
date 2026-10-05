@@ -14,7 +14,9 @@ use std::sync::Arc;
 use std::{fmt, ptr, slice, str};
 
 mod sources;
-use sources::{decode_line_directive, decode_source_library, finish_line_directives};
+use sources::{
+    decode_edition_finding, decode_line_directive, decode_source_library, finish_line_directives,
+};
 mod semantics;
 use semantics::{
     decode_semantic_edge, decode_semantic_node, decode_udp_row, decode_udp_table, PendingUdpRow,
@@ -34,7 +36,7 @@ use values::{
 mod stream;
 use stream::{sink_for, StreamBuilder};
 
-const ABI_VERSION: u32 = 12;
+const ABI_VERSION: u32 = 13;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1190,6 +1192,19 @@ pub struct LineDirective {
     pub logical_file: String,
 }
 
+/// One later-grammar form found by the native IEEE 1364-2001 syntax profile
+/// in the parsed, macro-expanded syntax trees. `range` is the physical range,
+/// the expansion's use site for a macro-built form; `label` names the form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditionFinding {
+    pub range: SourceRange,
+    pub label: String,
+}
+
+/// Native cap on [`EditionFinding`] records; mirrors
+/// `LLG_SLANG_MAX_EDITION_FINDINGS`.
+pub const MAX_EDITION_FINDINGS: u64 = 4096;
+
 /// Fully owned observations from one Slang compilation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
@@ -1215,6 +1230,9 @@ pub struct Snapshot {
     /// `` `line`` mappings sorted by file and physical offset, one per
     /// distinct mapped line start.
     pub line_directives: Vec<LineDirective>,
+    /// Syntax-profile findings of a Verilog-2001 compilation, in capture
+    /// order; empty for every other edition.
+    pub edition_findings: Vec<EditionFinding>,
 }
 
 impl Snapshot {
@@ -1438,6 +1456,13 @@ struct RawLineDirective {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+struct RawEditionFinding {
+    range: RawRange,
+    label: RawString,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 struct RawUdpRow {
     inputs: RawString,
     state: u32,
@@ -1546,6 +1571,7 @@ struct RawStreamHeader {
     lexical_token_count: u64,
     source_library_count: u64,
     line_directive_count: u64,
+    edition_finding_count: u64,
 }
 
 type RawBatch<T> = unsafe extern "C" fn(*mut std::ffi::c_void, *const T, u64) -> u32;
@@ -1572,6 +1598,7 @@ struct RawSink {
     lexical_tokens: RawBatch<RawLexicalToken>,
     source_libraries: RawBatch<RawSourceLibrary>,
     line_directives: RawBatch<RawLineDirective>,
+    edition_findings: RawBatch<RawEditionFinding>,
     end: unsafe extern "C" fn(*mut std::ffi::c_void) -> u32,
 }
 

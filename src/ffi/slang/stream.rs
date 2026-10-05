@@ -80,9 +80,10 @@ pub(super) enum Table {
     LexicalTokens,
     SourceLibraries,
     LineDirectives,
+    EditionFindings,
 }
 
-const TABLE_COUNT: usize = Table::LineDirectives as usize + 1;
+const TABLE_COUNT: usize = Table::EditionFindings as usize + 1;
 const TABLES: [Table; TABLE_COUNT] = [
     Table::Files,
     Table::RelatedDiagnostics,
@@ -101,6 +102,7 @@ const TABLES: [Table; TABLE_COUNT] = [
     Table::LexicalTokens,
     Table::SourceLibraries,
     Table::LineDirectives,
+    Table::EditionFindings,
 ];
 
 impl Table {
@@ -123,6 +125,7 @@ impl Table {
             Self::LexicalTokens => "lexical tokens",
             Self::SourceLibraries => "source library records",
             Self::LineDirectives => "line directive records",
+            Self::EditionFindings => "edition finding records",
         }
     }
 
@@ -145,6 +148,7 @@ impl Table {
             Self::LexicalTokens => std::mem::size_of::<RawLexicalToken>(),
             Self::SourceLibraries => std::mem::size_of::<RawSourceLibrary>(),
             Self::LineDirectives => std::mem::size_of::<RawLineDirective>(),
+            Self::EditionFindings => std::mem::size_of::<RawEditionFinding>(),
         }
     }
 }
@@ -204,6 +208,7 @@ pub(super) struct StreamBuilder {
     library_nodes: HashSet<u64>,
     source_libraries: Vec<SourceLibraryBinding>,
     line_directives: Vec<LineDirective>,
+    edition_findings: Vec<EditionFinding>,
 }
 
 impl StreamBuilder {
@@ -246,6 +251,7 @@ impl StreamBuilder {
             library_nodes: HashSet::new(),
             source_libraries: Vec::new(),
             line_directives: Vec::new(),
+            edition_findings: Vec::new(),
         }
     }
 
@@ -283,6 +289,7 @@ impl StreamBuilder {
             udp_tables: self.udp_tables,
             source_libraries: self.source_libraries,
             line_directives: self.line_directives,
+            edition_findings: self.edition_findings,
         };
         Ok((snapshot, self.profile))
     }
@@ -324,6 +331,7 @@ impl StreamBuilder {
             raw.lexical_token_count,
             raw.source_library_count,
             raw.line_directive_count,
+            raw.edition_finding_count,
         ];
         let header = Header {
             flags: raw.flags,
@@ -412,6 +420,11 @@ impl StreamBuilder {
             limits.max_semantic_nodes,
             "source library records",
         )?;
+        enforce_count(
+            header.count(Table::EditionFindings),
+            MAX_EDITION_FINDINGS,
+            "edition finding records",
+        )?;
         let mut output_bytes = 0_u64;
         for table in TABLES {
             let bytes = header
@@ -455,6 +468,8 @@ impl StreamBuilder {
             .reserve_exact(capacity(Table::SourceLibraries));
         self.line_directives
             .reserve_exact(capacity(Table::LineDirectives));
+        self.edition_findings
+            .reserve_exact(capacity(Table::EditionFindings));
         self.header = Some(header);
         // Native capture is complete once the header arrives; the stream
         // phase covers delivery and decoding.
@@ -813,6 +828,18 @@ impl StreamBuilder {
     }
 }
 
+impl StreamBuilder {
+    pub(super) fn edition_findings(&mut self, raw: &[RawEditionFinding]) -> Result<(), SlangError> {
+        self.enter(Table::EditionFindings, raw.len())?;
+        for item in raw {
+            self.charge(item.label)?;
+            let finding = decode_edition_finding(item, &self.files)?;
+            self.edition_findings.push(finding);
+        }
+        Ok(())
+    }
+}
+
 /// Run one receiver for a sink callback, recording its first error.
 ///
 /// # Safety
@@ -926,6 +953,7 @@ batch_receivers! {
     sink_lexical_tokens: RawLexicalToken => LexicalTokens, lexical_tokens;
     sink_source_libraries: RawSourceLibrary => SourceLibraries, source_libraries;
     sink_line_directives: RawLineDirective => LineDirectives, line_directives;
+    sink_edition_findings: RawEditionFinding => EditionFindings, edition_findings;
 }
 
 /// The callback table whose context is `builder`. The returned value borrows
@@ -952,6 +980,7 @@ pub(super) fn sink_for(builder: &mut StreamBuilder) -> RawSink {
         lexical_tokens: sink_lexical_tokens,
         source_libraries: sink_source_libraries,
         line_directives: sink_line_directives,
+        edition_findings: sink_edition_findings,
         end: sink_end,
     }
 }

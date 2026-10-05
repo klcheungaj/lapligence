@@ -221,6 +221,7 @@ fn cached_semantic_tokens_syntax_error_blocks_real_shadow_alias_fallbacks() {
     analysis.tokens.push(semantic_token_file(&shadow, 4));
     analysis.diagnostics.push(llg::core::compile::Diag {
         severity: llg::core::compile::Severity::Syntax,
+        logical: None,
         file: Some(real.to_string_lossy().into_owned()),
         line: 4,
         col: 1,
@@ -256,6 +257,7 @@ fn cached_semantic_tokens_checks_canonical_aliases_before_fallback() {
     analysis.tokens.push(semantic_token_file(&real, 4));
     analysis.diagnostics.push(llg::core::compile::Diag {
         severity: llg::core::compile::Severity::Syntax,
+        logical: None,
         file: Some(lexical_alias.to_string_lossy().into_owned()),
         line: 4,
         col: 1,
@@ -284,6 +286,7 @@ fn cached_semantic_tokens_isolates_same_basename_files_and_preserves_closed_fall
     analysis.tokens.push(semantic_token_file(&right, 20));
     analysis.diagnostics.push(llg::core::compile::Diag {
         severity: llg::core::compile::Severity::Syntax,
+        logical: None,
         file: Some(left.to_string_lossy().into_owned()),
         line: 2,
         col: 1,
@@ -1130,6 +1133,7 @@ fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
     let mut analysis = features::empty_analysis();
     analysis.diagnostics.push(Diag {
         severity: Severity::Error,
+        logical: None,
         file: None,
         line: 0,
         col: 0,
@@ -1409,6 +1413,7 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
         ] {
             analysis.diagnostics.push(Diag {
                 severity: Severity::Error,
+                logical: None,
                 file: Some(file),
                 line: 1,
                 col: 1,
@@ -1480,6 +1485,7 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
     let mut fixed_analysis = features::empty_analysis();
     fixed_analysis.diagnostics.push(Diag {
         severity: Severity::Error,
+        logical: None,
         file: Some(open_real.to_string_lossy().into_owned()),
         line: 1,
         col: 1,

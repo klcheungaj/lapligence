@@ -68,6 +68,7 @@ impl LintRule for UnusedSignalRule {
                 let node = db.node(*sig);
                 out.push(LintDiag {
                     rule: "unused-signal".to_string(),
+                    logical: None,
                     severity: LintSeverity::Warning,
                     file: node.file().map(str::to_owned),
                     line: node.line,

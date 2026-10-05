@@ -157,6 +157,59 @@ pub struct Diag {
     pub line: u32,
     pub col: u32,
     pub message: String,
+    /// `` `line``-mapped position of `file:line`, when a directive maps it.
+    /// `file`, `line` and `col` stay physical so editors and tools address
+    /// the real buffer.
+    pub logical: Option<LogicalLine>,
+}
+
+/// Logical file and line that a `` `line`` directive (IEEE 1364-2001 19.7,
+/// IEEE 1800-2009 22.12) gives a physical source line; the same values the
+/// frontend reports for `` `__FILE__``/`` `__LINE__`` there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogicalLine {
+    pub file: String,
+    pub line: u64,
+}
+
+impl Diag {
+    /// `file:line:col`, followed by `` (`line file:line)`` when a directive
+    /// maps the position: the same form simulator and runtime locations use.
+    pub fn location(&self) -> String {
+        let physical = format!(
+            "{}:{}:{}",
+            self.file.as_deref().unwrap_or(""),
+            self.line,
+            self.col
+        );
+        match &self.logical {
+            Some(logical) => format!("{physical} (`line {}:{})", logical.file, logical.line),
+            None => physical,
+        }
+    }
+}
+
+/// Fill [`Diag::logical`] from the snapshot's `` `line`` mappings. Without a
+/// directive in any admitted file this is one emptiness check.
+pub(crate) fn attach_logical_positions(diagnostics: &mut [Diag], snapshot: &Snapshot) {
+    if snapshot.line_directives.is_empty() {
+        return;
+    }
+    // Records were validated when the stream was decoded; a malformed table
+    // leaves diagnostics physical rather than failing the compile.
+    let Ok(map) = crate::core::db::SourceMap::from_snapshot(snapshot) else {
+        return;
+    };
+    for diagnostic in diagnostics {
+        if let Some(file) = diagnostic.file.as_deref() {
+            diagnostic.logical =
+                map.logical_position(file, diagnostic.line)
+                    .map(|position| LogicalLine {
+                        file: position.file.to_owned(),
+                        line: position.line,
+                    });
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1027,6 +1080,7 @@ fn compile_source_groups(
         .iter()
         .any(|diagnostic| diagnostic.severity == Severity::Error);
     diagnostics.extend(edition_diagnostics);
+    attach_logical_positions(&mut diagnostics, &snapshot);
     Ok(CompileOut {
         diagnostics,
         snapshot,
@@ -4600,6 +4654,7 @@ fn project_diagnostics(snapshot: &Snapshot) -> Vec<Diag> {
                 line,
                 col,
                 message: diagnostic.message.clone(),
+                logical: None,
             }
         })
         .collect()

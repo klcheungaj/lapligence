@@ -44,6 +44,7 @@ impl LintRule for UnconnectedPortRule {
                 }
                 out.push(LintDiag {
                     rule: "unconnected-port".to_string(),
+                    logical: None,
                     severity: LintSeverity::Warning,
                     file: inst.file().map(str::to_owned),
                     line: inst.line.max(1),

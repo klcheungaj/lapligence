@@ -77,6 +77,7 @@ impl LintRule for OutOfRangeSelectRule {
                 }
                 out.push(LintDiag {
                     rule: "out-of-range-select".to_string(),
+                    logical: None,
                     severity: LintSeverity::Warning,
                     file: node.file().map(str::to_owned),
                     line,

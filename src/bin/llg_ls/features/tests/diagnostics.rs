@@ -6,6 +6,7 @@ use super::*;
 fn slang_diagnostics_preserve_location_and_message() {
     let raw = Diag {
         severity: Severity::Syntax,
+        logical: None,
         file: Some(hp("/x/debug_TEMPLATE.v").to_owned()),
         line: 2,
         col: 22,
@@ -28,6 +29,7 @@ fn diagnostics_severity_mapping() {
         vec![
             Diag {
                 severity: Severity::Error,
+                logical: None,
                 file: Some(hp("/x/a.sv").to_owned()),
                 line: 3,
                 col: 5,
@@ -35,6 +37,7 @@ fn diagnostics_severity_mapping() {
             },
             Diag {
                 severity: Severity::Warning,
+                logical: None,
                 file: Some(hp("/x/a.sv").to_owned()),
                 line: 4,
                 col: 1,
@@ -42,6 +45,7 @@ fn diagnostics_severity_mapping() {
             },
             Diag {
                 severity: Severity::Note,
+                logical: None,
                 file: Some(hp("/x/a.sv").to_owned()),
                 line: 0,
                 col: 0,
@@ -49,6 +53,7 @@ fn diagnostics_severity_mapping() {
             },
             Diag {
                 severity: Severity::Info,
+                logical: None,
                 file: Some(hp("/x/a.sv").to_owned()),
                 line: 6,
                 col: 2,
@@ -94,6 +99,7 @@ fn lint_diagnostics_mapping() {
     let a = Analysis::new(
         vec![Diag {
             severity: Severity::Error,
+            logical: None,
             file: Some(hp("/x/a.sv").to_owned()),
             line: 1,
             col: 1,
@@ -104,6 +110,7 @@ fn lint_diagnostics_mapping() {
         vec![
             LintDiag {
                 rule: "unused-signal".to_owned(),
+                logical: None,
                 severity: LintSeverity::Error,
                 file: Some(hp("/x/a.sv").to_owned()),
                 line: 3,
@@ -112,6 +119,7 @@ fn lint_diagnostics_mapping() {
             },
             LintDiag {
                 rule: "width-mismatch".to_owned(),
+                logical: None,
                 severity: LintSeverity::Warning,
                 file: Some(hp("/x/a.sv").to_owned()),
                 line: 4,
@@ -120,6 +128,7 @@ fn lint_diagnostics_mapping() {
             },
             LintDiag {
                 rule: "multi-driver".to_owned(),
+                logical: None,
                 severity: LintSeverity::Info,
                 file: Some(hp("/x/b.sv").to_owned()),
                 line: 0,

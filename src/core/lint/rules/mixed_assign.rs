@@ -59,6 +59,7 @@ impl LintRule for MixedAssignRule {
             let path = node.parent.map(|p| scope_path(db, p)).unwrap_or_default();
             out.push(LintDiag {
                 rule: "mixed-assignments".to_string(),
+                logical: None,
                 severity: LintSeverity::Error,
                 file: node.file().map(str::to_owned),
                 line: node.line,

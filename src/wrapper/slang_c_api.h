@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 12u
+#define LLG_SLANG_ABI_VERSION 13u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -986,7 +986,21 @@ typedef struct {
   LlgSlangString logical_file;
 } LlgSlangLineDirective;
 
-/* Capture stream (ABI v12).
+/* One later-grammar form found by the strict IEEE 1364-2001 syntax profile in
+ * the parsed, macro-expanded syntax trees. Only a Verilog-2001 compile
+ * produces records. `range` is the physical source range; a form built by a
+ * macro expansion reports the expansion's use site. `label` is a short
+ * English name of the form owned by this ABI (not a Slang enum spelling
+ * contract); the receiver renders the diagnostic. At most
+ * LLG_SLANG_MAX_EDITION_FINDINGS records are produced; later ones are
+ * dropped because one finding already rejects the compilation. */
+#define LLG_SLANG_MAX_EDITION_FINDINGS 4096u
+typedef struct {
+  LlgSlangSourceRange range;
+  LlgSlangString label;
+} LlgSlangEditionFinding;
+
+/* Capture stream (ABI v13).
  *
  * llg_slang_compile() does not return a snapshot owner. After Slang has
  * elaborated, analysed and been captured, the bridge destroys the Slang
@@ -1034,6 +1048,7 @@ typedef struct {
   uint64_t lexical_token_count;
   uint64_t source_library_count;
   uint64_t line_directive_count;
+  uint64_t edition_finding_count;
 } LlgSlangStreamHeader;
 
 typedef struct {
@@ -1073,6 +1088,9 @@ typedef struct {
   uint32_t (*line_directives)(void* context,
                               const LlgSlangLineDirective* records,
                               uint64_t count);
+  uint32_t (*edition_findings)(void* context,
+                               const LlgSlangEditionFinding* records,
+                               uint64_t count);
   uint32_t (*end)(void* context);
 } LlgSlangSink;
 

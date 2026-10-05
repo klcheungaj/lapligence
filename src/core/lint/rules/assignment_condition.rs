@@ -75,6 +75,7 @@ impl LintRule for AssignmentInConditionRule {
             }
             out.push(LintDiag {
                 rule: self.id().to_string(),
+                logical: None,
                 severity: LintSeverity::Warning,
                 file: node.file().map(str::to_owned),
                 line,

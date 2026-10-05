@@ -102,6 +102,7 @@ fn width_diag(
     let node = db.node(at);
     Some(LintDiag {
         rule: "width-mismatch".to_string(),
+        logical: None,
         severity,
         file: node.file().map(str::to_owned),
         line: node.line,

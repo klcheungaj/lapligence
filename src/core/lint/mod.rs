@@ -222,6 +222,9 @@ pub struct LintDiag {
     /// 1-based column.
     pub col: u32,
     pub message: String,
+    /// `` `line``-mapped position of `file:line`, filled by the registry
+    /// after the rules ran; rules leave it `None`.
+    pub logical: Option<crate::core::compile::LogicalLine>,
 }
 
 /// Context handed to every rule: the owned db + model (+ anything rules need
@@ -274,6 +277,16 @@ impl LintRegistry {
                 if let Some(sev) = override_sev {
                     diag.severity = sev;
                 }
+                if !ctx.db.source_map().is_empty() {
+                    diag.logical = diag
+                        .file
+                        .as_deref()
+                        .and_then(|file| ctx.db.source_map().logical_position(file, diag.line))
+                        .map(|position| crate::core::compile::LogicalLine {
+                            file: position.file.to_owned(),
+                            line: position.line,
+                        });
+                }
                 out.push(diag);
             }
         }
@@ -314,7 +327,8 @@ pub fn lint_with_config(db: &Db, model: &DesignModel, config: &LintConfig) -> Ve
 /// ```
 ///
 /// `severity` is one of `"error"`, `"warning"`, `"info"`; `file` is a string
-/// or `null`; `line`/`col` are 1-based integers.  Strings are escaped per
+/// or `null`; `line`/`col` are 1-based integers. When a `` `line`` directive
+/// maps the position, `"logical_file"` and `"logical_line"` follow `col`.  Strings are escaped per
 /// JSON: `"` → `\"`, `\` → `\\`, and control characters U+0000..U+001F use
 /// the standard `\b`/`\f`/`\n`/`\r`/`\t` or `\u00xx` forms.
 pub fn diags_to_json(diags: &[LintDiag]) -> String {
@@ -349,6 +363,13 @@ pub fn diags_to_json(diags: &[LintDiag]) -> String {
         }
         out.push_str(&format!("      \"line\": {},\n", d.line));
         out.push_str(&format!("      \"col\": {},\n", d.col));
+        if let Some(logical) = &d.logical {
+            out.push_str(&format!(
+                "      \"logical_file\": \"{}\",\n      \"logical_line\": {},\n",
+                json_escape(&logical.file),
+                logical.line
+            ));
+        }
         out.push_str(&format!(
             "      \"message\": \"{}\"\n",
             json_escape(&d.message)
@@ -495,6 +516,7 @@ mod tests {
     fn lint_diag_fields_are_accessible() {
         let diag = LintDiag {
             rule: "unused-signal".to_string(),
+            logical: None,
             severity: LintSeverity::Warning,
             file: Some("tiny.sv".to_string()),
             line: 2,
@@ -735,6 +757,7 @@ mod tests {
         let diags = vec![
             LintDiag {
                 rule: "r-error".to_string(),
+                logical: None,
                 severity: LintSeverity::Error,
                 file: None,
                 line: 1,
@@ -743,6 +766,7 @@ mod tests {
             },
             LintDiag {
                 rule: "r-info".to_string(),
+                logical: None,
                 severity: LintSeverity::Info,
                 file: Some("a.sv".to_string()),
                 line: 3,
@@ -772,6 +796,7 @@ mod tests {
     fn diags_to_json_escapes_strings() {
         let diag = LintDiag {
             rule: "quote\"rule".to_string(),
+            logical: None,
             severity: LintSeverity::Warning,
             file: Some("a\"b\\c.sv".to_string()),
             line: 0,
@@ -799,6 +824,7 @@ mod tests {
         let diags = vec![
             LintDiag {
                 rule: "r".to_string(),
+                logical: None,
                 severity: LintSeverity::Error,
                 file: None,
                 line: 0,
@@ -807,6 +833,7 @@ mod tests {
             },
             LintDiag {
                 rule: "r".to_string(),
+                logical: None,
                 severity: LintSeverity::Warning,
                 file: None,
                 line: 0,
