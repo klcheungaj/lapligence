@@ -261,6 +261,10 @@ impl CellEligibility {
                 self.lhs(ctx, &mutation.lhs, false);
                 self.expression(ctx, &mutation.value);
             }
+            IrExprKind::Sequence(sequence) => {
+                self.body(ctx, &sequence.statements);
+                self.expression(ctx, &sequence.value);
+            }
             IrExprKind::CallFn(call) => self.arguments(
                 ctx,
                 call.f,

@@ -813,7 +813,7 @@ impl<'a> Codegen<'a> {
     /// leaf equalities; `!=`/case-`!=` invert that result after all leaves have
     /// participated, preserving unknown propagation for packed values.
     pub(super) fn lower_unpacked_aggregate_comparison(
-        &self,
+        &mut self,
         path: &str,
         op: Operation,
         operands: &[NodeId],
@@ -852,11 +852,7 @@ impl<'a> Codegen<'a> {
                 }
                 (None, None)
                     if !self.column_record_type(*lhs) && !self.column_record_type(*rhs) => {}
-                _ => {
-                    return Err(format!(
-                        "equality of a column-layout record value in `{path}` requires record storage operands"
-                    ));
-                }
+                _ => return self.lower_record_call_comparison(path, *lhs, *rhs, case, negate),
             }
         }
         // Leaf-wise comparison needs storage on both sides. A parameter,

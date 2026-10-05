@@ -844,6 +844,7 @@ fn expression_refs(expression: &ExprKind, refs: &mut Vec<NodeId>) {
             refs.extend(indices.iter().copied());
         }
         ExprKind::HierPath { refs: parts, .. } => refs.extend(parts.iter().flatten().copied()),
+        ExprKind::MemberSelect { base, .. } => refs.push(*base),
         ExprKind::Constant { .. } | ExprKind::DataType | ExprKind::Unbounded | ExprKind::Other => {}
     }
 }

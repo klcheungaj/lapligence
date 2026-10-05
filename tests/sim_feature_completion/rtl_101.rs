@@ -99,17 +99,15 @@ fn generated_model_scales_with_the_declaration() {
 }
 
 #[test]
-fn neg_column_record_limits_and_single_writer() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_whole_binding",
-        "binding a whole value beyond packed capacity to a pattern variable is not supported",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_record_result_operand",
-        "equality of a column-layout record value in `tb` requires record storage operands",
-    );
+fn whole_values_bind_and_record_results_compare() {
+    // `x.tag` of the bound copy of `r` (tag 3).
+    sim_cli::run_case(SUITE, "whole_binding", "3\n", "", &[]);
+    // `t` is equal and every `w` cell is X, so equality is unknown.
+    sim_cli::run_case(SUITE, "record_result_operand", "x\n", "", &[]);
+}
+
+#[test]
+fn neg_column_record_single_writer() {
     sim_cli::reject_case(
         SUITE,
         "neg_continuous_member_write",

@@ -107,6 +107,23 @@ Every whole-value operation lowers to the existing per-column shapes
 output formals); no IR variant changes meaning. Remaining limits are in
 [known issues](../../../docs/known_issues.md#remaining-non-flattened-fixed-value-contexts).
 
+RTL-101b adds one expression variant, `IrExprKind::Sequence`
+(`IrSequenceExpr { statements, value }`): run non-suspending setup statements,
+then yield `value`. Validation admits only lexical declarations
+(`FixedArrayDeclare`, `NativeValueDeclare`), blocking copies (`FixedValueAssign`,
+`FixedArrayFill`, `Assign`, `NativeValueCopy`, string/chandle assignments),
+function calls and blocks of these. Lexical storage declared there belongs to the
+expression's value scope and is released with it. Lowering uses it for a call
+returning a column-layout record inside an expression (the call fills a lexical
+temporary whose columns the comparison or selection reads) and for a whole-value
+pattern binding (the copy into the binding's storage, which the enclosing
+statement declares). Effect analysis, storage marking and the optimizer
+traversal visit its statements; the owned emitter rejects it in read-only
+evaluator callbacks. A subroutine record value with real, string or chandle
+members keeps them in one SIM-003 native value (a structure of those leaves
+with the record type's nominal identity), passed as one more trailing formal
+after the record's columns; no `IrFixedValue` carries a native payload.
+
 ## Descriptor-backed native values (SIM-003)
 
 Native records live next to, not inside, the fixed-value contract.

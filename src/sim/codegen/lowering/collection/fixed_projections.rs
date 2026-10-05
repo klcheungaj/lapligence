@@ -476,7 +476,7 @@ impl Codegen<'_> {
                         RecordColumn::Leaf(leaf) => {
                             leaf.signal.as_ref().is_some_and(|signal| !signal.real)
                         }
-                        RecordColumn::Array(_) => false,
+                        RecordColumn::Array(_) | RecordColumn::Native(..) => false,
                     }
                     // A tagged union's tag cell is not a member value.
                     && !self.record_union_tag_path(&value, path)
@@ -558,6 +558,12 @@ impl Codegen<'_> {
         Some((self.record_value_of_root(root)?, member_path))
     }
 
+    /// The columns of a whole column-layout record declaration: module or
+    /// static storage, or a subroutine record value.
+    pub(in super::super) fn record_declaration_value(&self, root: NodeId) -> Option<RecordValue> {
+        self.record_value_of_root(root)
+    }
+
     fn record_value_of_root(&self, root: NodeId) -> Option<RecordValue> {
         if let Some(value) = self.activation_records.get(&root) {
             return Some(value.clone());
@@ -620,6 +626,105 @@ impl Codegen<'_> {
                 member_name: guard.member_name,
             },
         }))
+    }
+
+    /// The tag guard of a whole member reference (`v.w`, `r.u.w`) inside a
+    /// column-layout tagged union, if `node` names one.
+    pub(in super::super) fn record_member_guard(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<RecordSelectGuard>, String> {
+        if !self.record_columns
+            || !matches!(self.kind(node), NodeKind::Expr(ExprKind::HierPath { .. }))
+        {
+            return Ok(None);
+        }
+        let Some((value, path)) = self.record_root_value(node) else {
+            return Ok(None);
+        };
+        if path.is_empty() {
+            return Ok(None);
+        }
+        let Some((tag, guard)) = self.record_union_guard(&value, &path)? else {
+            return Ok(None);
+        };
+        Ok(Some(RecordSelectGuard {
+            tag_read: self.record_column_read(&tag)?,
+            tag_target: self.record_column_lhs(&tag)?,
+            guard: crate::sim::ir::IrTaggedMemberGuard {
+                member_index: u32::try_from(guard.member_index)
+                    .map_err(|_| "tagged union member index overflow")?,
+                tag_width: guard.tag_width,
+                member_name: guard.member_name,
+            },
+        }))
+    }
+
+    /// The tag guard of member `path` of record value `value`, if the member
+    /// lies inside a column-layout tagged union of that value.
+    pub(in super::super) fn record_value_guard(
+        &self,
+        value: &RecordValue,
+        path: &[AggregatePathPart],
+    ) -> Result<Option<RecordSelectGuard>, String> {
+        let Some((tag, guard)) = self.record_union_guard(value, path)? else {
+            return Ok(None);
+        };
+        Ok(Some(RecordSelectGuard {
+            tag_read: self.record_column_read(&tag)?,
+            tag_target: self.record_column_lhs(&tag)?,
+            guard: crate::sim::ir::IrTaggedMemberGuard {
+                member_index: u32::try_from(guard.member_index)
+                    .map_err(|_| "tagged union member index overflow")?,
+                tag_width: guard.tag_width,
+                member_name: guard.member_name,
+            },
+        }))
+    }
+
+    /// One-bit check that a column-layout tagged union member is active: 1
+    /// when it is; otherwise the inactive access is reported at `location`
+    /// and the check yields X, exactly as a guarded element access does.
+    /// The checked value is the tag above a constant 1, the layout a packed
+    /// tagged union selects a member from.
+    pub(in super::super) fn record_guard_check(
+        guard: RecordSelectGuard,
+        location: String,
+    ) -> Result<IrExpr, String> {
+        let tag_width = guard.tag_read.width;
+        let one = IrExpr::new(
+            IrExprKind::Const(
+                IrConst::packed(vec![1], vec![0], vec![0], 1, false, None)
+                    .map_err(|error| error.to_string())?,
+            ),
+            1,
+            false,
+            None,
+        );
+        Ok(IrExpr::new(
+            IrExprKind::TaggedSelect {
+                base: Box::new(IrExpr::new(
+                    IrExprKind::Concat {
+                        parts: vec![guard.tag_read, one],
+                    },
+                    tag_width + 1,
+                    false,
+                    None,
+                )),
+                steps: vec![crate::sim::ir::IrTaggedSelectStep {
+                    selection: IrPackedSelect {
+                        base: lhs_integer_expr(0),
+                        width: 1,
+                    },
+                    two_state: false,
+                    guard: Some(guard.guard),
+                }],
+                location,
+            },
+            1,
+            false,
+            None,
+        ))
     }
 
     /// `target[selection]` checked against the tag of a column-layout
@@ -729,6 +834,11 @@ impl Codegen<'_> {
         }
         if let Some(root) = self.record_leaf_projection(node)? {
             return Ok(Some(root));
+        }
+        // An element of a column-layout record member array is read from
+        // its column, never from another projection of the record.
+        if self.record_column_select(node).is_some() {
+            return Ok(None);
         }
         if let Some(root) = self.fixed_root(path, node)? {
             return Ok(Some(root));

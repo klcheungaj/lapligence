@@ -130,6 +130,9 @@ fn callback_safe_expression(expr: &IrExpr) -> Result<(), String> {
         IrExprKind::Pattern(_) => Err(pending(
             "side-effect-capable evaluator expressions: conditional pattern binding",
         )),
+        IrExprKind::Sequence(_) => Err(pending(
+            "side-effect-capable evaluator expressions: statement sequence",
+        )),
         _ => Ok(()),
     }
 }
