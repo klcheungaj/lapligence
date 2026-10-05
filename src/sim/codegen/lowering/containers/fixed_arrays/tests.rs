@@ -134,3 +134,67 @@ fn failed_positional_capture_does_not_publish_a_partial_prefix() {
         "no incomplete destination prefix may escape"
     );
 }
+
+fn cell(name: &str, width: u32) -> IrExpr {
+    IrExpr::new(IrExprKind::LocalRead(name.to_owned()), width, false, None)
+}
+
+fn part_of(value: &IrExpr) -> (String, i64, i64) {
+    let IrExprKind::PartSel { base, left, right } = &value.kind else {
+        panic!("expected a part select, got {value:?}");
+    };
+    let IrExprKind::LocalRead(name) = &base.kind else {
+        panic!("expected a local base, got {base:?}");
+    };
+    (name.clone(), *left, *right)
+}
+
+/// IEEE 1800-2009 10.10: a row target joins consecutive source cells into
+/// its packed image, while a packed leaf still takes part of one value.
+#[test]
+fn split_joins_cells_into_row_targets_and_splits_wide_values() {
+    let values = Codegen::p30_split_pattern_source_values(
+        "tb",
+        vec![
+            cell("c0", 8),
+            cell("c1", 8),
+            cell("c2", 8),
+            cell("wide", 16),
+        ],
+        &[(16, false), (8, true), (8, false), (8, false)],
+    )
+    .expect("aligned row and leaf targets");
+    assert_eq!(values.len(), 4);
+    let IrExprKind::Concat { parts } = &values[0].kind else {
+        panic!("a 16-bit row joins two cells: {:?}", values[0]);
+    };
+    assert_eq!(values[0].width, 16);
+    let parts: Vec<_> = parts.iter().map(part_of).collect();
+    assert_eq!(
+        parts,
+        [("c0".to_owned(), 7, 0), ("c1".to_owned(), 7, 0)],
+        "the leftmost cell is the most significant"
+    );
+    assert_eq!(part_of(&values[1]), ("c2".to_owned(), 7, 0));
+    assert!(
+        values[1].signed,
+        "a whole single cell keeps the target sign"
+    );
+    assert_eq!(part_of(&values[2]), ("wide".to_owned(), 15, 8));
+    assert_eq!(part_of(&values[3]), ("wide".to_owned(), 7, 0));
+}
+
+#[test]
+fn split_rejects_unconsumed_or_missing_source_bits() {
+    let extra = Codegen::p30_split_pattern_source_values(
+        "tb",
+        vec![cell("a", 8), cell("b", 8)],
+        &[(8, false)],
+    )
+    .expect_err("a source cell is left over");
+    assert!(extra.contains("fewer RHS positions"), "{extra}");
+    let missing =
+        Codegen::p30_split_pattern_source_values("tb", vec![cell("a", 8)], &[(16, false)])
+            .expect_err("the row needs two cells");
+    assert!(missing.contains("RHS supplies only 0 values"), "{missing}");
+}

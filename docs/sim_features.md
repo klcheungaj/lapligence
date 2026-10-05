@@ -623,9 +623,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   cannot redirect later targets. Blocking and legal persistent NBA targets are
   represented; continuous net, net-array and true-alias leaves retain per-leaf
   resolution. Keyed/default/replicated lvalues, constants, mismatches and
-  illegal NBA targets reject. Oversized array and typed-pattern sources scatter
-  whole descriptor rows into array targets, including continuous targets.
-  SV §10.9 **[SV-2005]**.
+  illegal NBA targets reject. Unpacked-row targets take whole source rows in
+  declaration order at any nesting depth, mixed with packed leaves. Oversized
+  or descriptor sources, and descriptor row targets, copy rows through one
+  snapshot without flattening; small dense rows take their packed images.
+  Both cover blocking, NBA and continuous targets. SV §§10.9–10.10 **[SV-2005]**.
 - 🟦 **Sequential Boolean predicates** — `&&&` in `if` and `?:` evaluates reached
   clauses once, left to right. Only definite true advances; false or X/Z stops.
   A later false cannot resolve an earlier unknown. Ambiguous `if` takes else;

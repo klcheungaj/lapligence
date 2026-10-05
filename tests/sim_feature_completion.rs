@@ -20,6 +20,9 @@ mod sim_005;
 #[path = "sim_feature_completion/ki_packed_range.rs"]
 mod ki_packed_range;
 
+#[path = "sim_feature_completion/ki_pattern_rows.rs"]
+mod ki_pattern_rows;
+
 #[path = "sim_feature_completion/ki_select_bugs.rs"]
 mod ki_select_bugs;
 

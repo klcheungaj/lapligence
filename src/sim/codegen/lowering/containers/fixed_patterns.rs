@@ -109,6 +109,24 @@ impl Codegen<'_> {
         else {
             return Ok(FixedPatternPlan::Value(node));
         };
+        // A `default:` item whose own value is not an unpacked array descends
+        // to every nested element (IEEE 1800-2009 10.9.1), so it fills this
+        // whole subtree like a scalar.
+        let pattern = matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::AssignmentPattern | Operation::MultiAssignmentPattern,
+                ..
+            })
+        );
+        if !pattern
+            && self.query_descriptor(node).is_some_and(|value| {
+                !matches!(value.shape, TypeShape::FixedArray { .. })
+                    && Self::fixed_descriptor_width(value).is_some()
+            })
+        {
+            return Ok(FixedPatternPlan::Value(node));
+        }
         let NodeKind::Expr(ExprKind::Operation {
             op,
             operands,
@@ -497,7 +515,7 @@ impl Codegen<'_> {
 }
 
 impl Codegen<'_> {
-    /// Copy one row of descriptor `source` (first coordinate `row`) into a
+    /// Copy the row of descriptor `source` at coordinate prefix `row` into a
     /// dense array view, cell by cell in nested loops whose code does not
     /// scale with the extent. The view's selectors are already frozen; each
     /// cell takes the destination element's state domain.
@@ -506,11 +524,15 @@ impl Codegen<'_> {
         path: &str,
         target: &IrMemoryView,
         source: usize,
-        row: i32,
+        row: &[i32],
         nba: bool,
     ) -> Result<Vec<IrStmt>, String> {
         let array = self.model.arrays[target.array].clone();
-        let source_dims = self.model.arrays[source].dims[1..].to_vec();
+        let source_dims = self.model.arrays[source]
+            .dims
+            .get(row.len()..)
+            .ok_or_else(|| format!("assignment-pattern lvalue row shape mismatch in `{path}`"))?
+            .to_vec();
         let extents = |dims: &[(i32, i32)]| {
             dims.iter()
                 .map(|(left, right)| left.abs_diff(*right))
@@ -529,7 +551,10 @@ impl Codegen<'_> {
             .iter()
             .map(|selector| selector.value.clone())
             .collect();
-        let mut source_indices = vec![pattern_integer(i128::from(row))];
+        let mut source_indices = row
+            .iter()
+            .map(|index| pattern_integer(i128::from(*index)))
+            .collect::<Vec<_>>();
         for (dimension, bounds) in target.dims.iter().enumerate() {
             let name = self.new_fn_name(path, "pattern_cell");
             let offset = IrExpr::new(IrExprKind::LocalRead(name.clone()), 64, true, None);
