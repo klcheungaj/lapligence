@@ -51,6 +51,11 @@ pub(super) fn record_column_layout(descriptor: &TypeDescriptor) -> bool {
                 .any(|member| large_member_array(&member.descriptor)))
 }
 
+/// Whether values of this type use column layout (records or tagged unions).
+pub(in super::super) fn record_column_layout_type(descriptor: &TypeDescriptor) -> bool {
+    record_column_layout(descriptor)
+}
+
 /// A finite tagged union whose tag and payload exceed packed capacity: its
 /// tag is one cell and every member keeps its own columns.
 pub(in super::super) fn column_tagged_union(descriptor: &TypeDescriptor) -> bool {

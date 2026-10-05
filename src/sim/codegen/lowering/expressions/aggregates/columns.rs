@@ -374,6 +374,19 @@ impl Codegen<'_> {
         ))
     }
 
+    /// Evaluate `node` once into a fresh temporary of type `descriptor`.
+    pub(in crate::sim::codegen::lowering) fn record_snapshot(
+        &mut self,
+        path: &str,
+        descriptor: &TypeDescriptor,
+        node: NodeId,
+        out: &mut Vec<IrStmt>,
+    ) -> Result<RecordValue, String> {
+        let temporary = self.record_temporary(path, descriptor, out)?;
+        self.lower_record_value_into(path, &temporary, node, false, out)?;
+        Ok(temporary)
+    }
+
     /// The value of `node` as storage, or as a temporary built from it.
     fn record_value_of(
         &mut self,

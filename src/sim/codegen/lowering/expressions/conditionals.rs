@@ -1,4 +1,5 @@
 //! Conditional values retain array element boundaries across payload flattening.
+use super::super::collection::{RecordColumn, RecordValue};
 use super::*;
 use crate::core::db::ConditionalPatternKind;
 use crate::sim::ir::{IrPatternCheck, IrPatternExpr, IrPatternMatchKind};
@@ -96,6 +97,22 @@ impl Codegen<'_> {
         let Some(pattern_id) = clause.pattern else {
             return self.lower_boolean_expr(scope_path, clause.expression);
         };
+        if self.record_columns {
+            let source = self.p30_unwrap_cast(clause.expression);
+            if let Some(value) = self.column_record_storage(source) {
+                return self.lower_column_pattern(
+                    scope_path,
+                    &value,
+                    pattern_id,
+                    IrPatternMatchKind::Exact,
+                );
+            }
+            if self.column_record_type(clause.expression) {
+                return Err(format!(
+                    "a `matches` source beyond packed capacity must be a variable in `{scope_path}`"
+                ));
+            }
+        }
         let info = self.db.conditional_pattern(pattern_id).ok_or_else(|| {
             format!("conditional predicate pattern metadata is missing in `{scope_path}`")
         })?;
@@ -998,3 +1015,238 @@ fn array_merge_default(descriptor: &TypeDescriptor) -> Result<(u32, IrConst), St
 
 #[cfg(test)]
 mod tests;
+
+impl Codegen<'_> {
+    /// `value matches pattern` for a column-layout record or tagged union.
+    /// The source has no packed payload, so each leaf the pattern inspects is
+    /// tested in its own column and the tests combine in pattern order: a
+    /// tag test first, then member tests, each evaluated only after every
+    /// earlier test matched (SV 12.6).
+    pub(in super::super) fn lower_column_pattern(
+        &mut self,
+        scope_path: &str,
+        value: &RecordValue,
+        pattern_id: NodeId,
+        match_kind: IrPatternMatchKind,
+    ) -> Result<IrExpr, String> {
+        let info = self
+            .db
+            .conditional_pattern(pattern_id)
+            .ok_or_else(|| format!("conditional pattern metadata is missing in `{scope_path}`"))?;
+        let TypeShape::Aggregate(layout) = &value.descriptor.shape else {
+            return Err(format!(
+                "column-layout pattern source has no layout in `{scope_path}`"
+            ));
+        };
+        let layout = layout.clone();
+        match info.kind {
+            ConditionalPatternKind::Wildcard => Ok(pattern_truth(true)),
+            ConditionalPatternKind::Binding => Err(format!(
+                "binding a whole value beyond packed capacity to a pattern variable is not supported in `{scope_path}`"
+            )),
+            ConditionalPatternKind::Tagged => {
+                if layout.kind != AggregateKind::TaggedUnion {
+                    return Err(format!(
+                        "conditional tagged pattern requires a tagged-union source in `{scope_path}`"
+                    ));
+                }
+                let member_id = info.tagged_member.ok_or_else(|| {
+                    format!("conditional tagged pattern has no resolved union member in `{scope_path}`")
+                })?;
+                let member_name = self.db.node(member_id).name.clone();
+                let index = layout
+                    .members
+                    .iter()
+                    .position(|member| member.name == member_name)
+                    .ok_or_else(|| {
+                        format!("conditional tagged pattern member `{member_name}` is not in its source type in `{scope_path}`")
+                    })?;
+                let tag = value
+                    .columns
+                    .iter()
+                    .find(|(path, _)| path.is_empty())
+                    .map(|(_, column)| column.clone())
+                    .ok_or_else(|| format!("tagged union source has no tag column in `{scope_path}`"))?;
+                let tag_value = self.record_column_read(&tag)?;
+                let tag_width = tag_value.width;
+                let expected = IrConst::packed(
+                    vec![u64::try_from(index).map_err(|_| "tagged member index overflows")?],
+                    vec![0],
+                    vec![0],
+                    tag_width,
+                    false,
+                    None,
+                )
+                .map_err(|error| error.to_string())?;
+                let tag_test = IrExpr::new(
+                    IrExprKind::Pattern(Box::new(IrPatternExpr {
+                        value: Box::new(tag_value),
+                        constant: None,
+                        binding: None,
+                        match_kind,
+                        checks: vec![IrPatternCheck {
+                            offset: 0,
+                            width: tag_width,
+                            signed: false,
+                            two_state: false,
+                            // The enclosing case mode applies to tag bits too
+                            // (SV 12.6.1), as in the packed layout.
+                            exact: false,
+                            constant: Some(Box::new(IrExpr::new(
+                                IrExprKind::Const(expected),
+                                tag_width,
+                                false,
+                                None,
+                            ))),
+                            binding: None,
+                        }],
+                    })),
+                    1,
+                    false,
+                    None,
+                );
+                let Some(payload) = info.value_pattern else {
+                    return Ok(tag_test);
+                };
+                let member = layout.members[index].clone();
+                let member_test =
+                    self.lower_column_member_pattern(scope_path, value, &member, payload, match_kind)?;
+                Ok(cmp_expr_ir(IrBinOp::LogAnd, tag_test, member_test))
+            }
+            ConditionalPatternKind::Structure => {
+                if layout.kind != AggregateKind::UnpackedStruct {
+                    return Err(format!(
+                        "conditional structure pattern requires a structure source in `{scope_path}`"
+                    ));
+                }
+                let fields = self
+                    .db
+                    .conditional_pattern_fields(pattern_id)
+                    .ok_or_else(|| {
+                        format!("conditional structure pattern fields are missing in `{scope_path}`")
+                    })?
+                    .to_vec();
+                let mut seen = HashSet::new();
+                let mut result: Option<IrExpr> = None;
+                for field in fields {
+                    let name = self.db.node(field.field).name.clone();
+                    if !seen.insert(name.clone()) {
+                        return Err(format!(
+                            "conditional structure pattern repeats member `{name}` in `{scope_path}`"
+                        ));
+                    }
+                    let member = layout
+                        .members
+                        .iter()
+                        .find(|member| member.name == name)
+                        .cloned()
+                        .ok_or_else(|| {
+                            format!("conditional structure pattern member `{name}` is not in its source type in `{scope_path}`")
+                        })?;
+                    let test = self.lower_column_member_pattern(
+                        scope_path,
+                        value,
+                        &member,
+                        field.pattern,
+                        match_kind,
+                    )?;
+                    result = Some(match result {
+                        Some(previous) => cmp_expr_ir(IrBinOp::LogAnd, previous, test),
+                        None => test,
+                    });
+                }
+                Ok(result.unwrap_or_else(|| pattern_truth(true)))
+            }
+            ConditionalPatternKind::Constant
+            | ConditionalPatternKind::Invalid
+            | ConditionalPatternKind::Unsupported => Err(format!(
+                "unsupported conditional pattern for a value beyond packed capacity in `{scope_path}`"
+            )),
+        }
+    }
+
+    /// The test of one immediate member of a column-layout source.
+    fn lower_column_member_pattern(
+        &mut self,
+        scope_path: &str,
+        value: &RecordValue,
+        member: &AggregateMember,
+        pattern_id: NodeId,
+        match_kind: IrPatternMatchKind,
+    ) -> Result<IrExpr, String> {
+        let key = AggregatePathPart::Member(member.name.clone());
+        let columns = value
+            .columns
+            .iter()
+            .filter(|(path, _)| path.first() == Some(&key))
+            .map(|(path, column)| (path[1..].to_vec(), column.clone()))
+            .collect::<Vec<_>>();
+        let info = self.db.conditional_pattern(pattern_id).ok_or_else(|| {
+            format!("nested conditional pattern metadata is missing in `{scope_path}`")
+        })?;
+        if info.kind == ConditionalPatternKind::Wildcard {
+            return Ok(pattern_truth(true));
+        }
+        if matches!(&member.descriptor.shape, TypeShape::Opaque { kind } if kind == "Void") {
+            return Err(format!(
+                "void tagged pattern member `{}` cannot have a payload pattern in `{scope_path}`",
+                member.name
+            ));
+        }
+        if super::super::collection::record_column_layout_type(&member.descriptor) {
+            let nested = RecordValue {
+                descriptor: member.descriptor.clone(),
+                columns,
+            };
+            return self.lower_column_pattern(scope_path, &nested, pattern_id, match_kind);
+        }
+        let [(path, column)] = columns.as_slice() else {
+            return Err(format!(
+                "pattern on member `{}` needs one packed member value in `{scope_path}`",
+                member.name
+            ));
+        };
+        if !path.is_empty() || matches!(column, RecordColumn::Array(_)) {
+            return Err(format!(
+                "pattern on member array `{}` of a value beyond packed capacity supports only `.*` in `{scope_path}`",
+                member.name
+            ));
+        }
+        let source = self.record_column_read(column)?;
+        let mut checks = Vec::new();
+        let mut active = HashSet::new();
+        self.lower_pattern_component(
+            scope_path,
+            pattern_id,
+            &member.descriptor,
+            0,
+            &mut checks,
+            &mut active,
+            match_kind,
+        )?;
+        Ok(IrExpr::new(
+            IrExprKind::Pattern(Box::new(IrPatternExpr {
+                value: Box::new(source),
+                constant: None,
+                binding: None,
+                match_kind,
+                checks,
+            })),
+            1,
+            false,
+            None,
+        ))
+    }
+}
+
+fn pattern_truth(value: bool) -> IrExpr {
+    IrExpr::new(
+        IrExprKind::Const(
+            IrConst::packed(vec![u64::from(value)], vec![0], vec![0], 1, false, None)
+                .expect("one-bit pattern truth"),
+        ),
+        1,
+        false,
+        None,
+    )
+}
