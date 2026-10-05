@@ -205,10 +205,10 @@ impl<'a> Codegen<'a> {
                         );
                     }
                     if self.nonflatten_function(ft)
-                        || self
-                            .func_formals(ft)
-                            .iter()
-                            .any(|(formal, _)| self.nonflatten_function(*formal))
+                        || self.record_return(ft)
+                        || self.func_formals(ft).iter().any(|(formal, _)| {
+                            self.nonflatten_function(*formal) || self.record_declaration(*formal)
+                        })
                     {
                         needs_process(
                             process,

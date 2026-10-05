@@ -24,15 +24,20 @@ impl<'a> Codegen<'a> {
     ) -> Result<Option<IrLhs>, String> {
         let mut current = node;
         let mut outer = Vec::new();
-        let (array_node, array_indices, packed_indices) = loop {
+        let (array_select, array_node, array_indices, packed_indices) = loop {
             match self.kind(current) {
                 NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
-                    if let Some(array) = self.array_of(*base) {
+                    if let Some(array) = self.select_array_of(current, *base) {
                         let rank = array.dims.len();
                         if indices.len() < rank || array.real {
                             return Ok(None);
                         }
-                        break (*base, indices[..rank].to_vec(), indices[rank..].to_vec());
+                        break (
+                            current,
+                            *base,
+                            indices[..rank].to_vec(),
+                            indices[rank..].to_vec(),
+                        );
                     }
                     outer.push((*base, Select::Elements(indices.clone())));
                     current = *base;
@@ -42,7 +47,7 @@ impl<'a> Codegen<'a> {
                         if array.dims.len() != 1 || array.real {
                             return Ok(None);
                         }
-                        break (*base, vec![*index], Vec::new());
+                        break (current, *base, vec![*index], Vec::new());
                     }
                     outer.push((*base, Select::Elements(vec![*index])));
                     current = *base;
@@ -67,7 +72,7 @@ impl<'a> Codegen<'a> {
             return Ok(None);
         }
         let array = self
-            .array_of(array_node)
+            .select_array_of(array_select, array_node)
             .cloned()
             .ok_or_else(|| format!("packed selection lost its array root in `{path}`"))?;
         let indices = array_indices
@@ -85,6 +90,21 @@ impl<'a> Codegen<'a> {
         )?;
         for (base, select) in outer.into_iter().rev() {
             self.packed_selection_steps(path, base, select, &mut parent_width, &mut steps)?;
+        }
+        if let Some(guard) = self.record_select_guard(array_select)? {
+            let element = IrLhs::ArrayElem {
+                arr: self.reference_array(array.ir),
+                indices,
+                elem_sel: IrElemSel::Whole,
+            };
+            return Ok(Some(self.record_guarded_element_lhs(
+                guard,
+                element,
+                array.elem_width,
+                steps,
+                false,
+                self.source_location(node),
+            )));
         }
         Ok(Some(IrLhs::ArrayElem {
             arr: self.reference_array(array.ir),

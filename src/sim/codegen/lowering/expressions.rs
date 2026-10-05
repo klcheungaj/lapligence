@@ -1,6 +1,6 @@
 //! Expression and assignment-target lowering into typed simulator IR.
 
-use super::collection::aggregate_path_suffix;
+use super::collection::{aggregate_path_suffix, record_cell_leaf};
 use super::objects::object_query;
 use super::*;
 use crate::sim::ir::{

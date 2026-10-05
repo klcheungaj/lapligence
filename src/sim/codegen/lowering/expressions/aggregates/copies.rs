@@ -59,7 +59,8 @@ pub(super) fn equivalent_copy_shape(left: &TypeDescriptor, right: &TypeDescripto
         }
         (TypeShape::String, TypeShape::String) => true,
         (TypeShape::Opaque { kind: left }, TypeShape::Opaque { kind: right }) => {
-            left == "Chandle" && right == "Chandle"
+            // Void tagged-union members carry no value but keep the shape.
+            left == right && (left == "Chandle" || left == "Void")
         }
         _ => false,
     }

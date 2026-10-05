@@ -26,6 +26,13 @@ struct Projection {
     ref_legal: bool,
 }
 
+/// Tag operands of an element select on a column-layout tagged union member.
+pub(in super::super) struct RecordSelectGuard {
+    pub(in super::super) tag_read: IrExpr,
+    pub(in super::super) tag_target: IrLhs,
+    pub(in super::super) guard: crate::sim::ir::IrTaggedMemberGuard,
+}
+
 #[derive(Clone)]
 struct TaggedMemberGuard {
     tag_width: u32,
@@ -204,6 +211,11 @@ impl Codegen<'_> {
             }
         }
         if let Some((owner, aggregate)) = self.unpacked_aggregate_info(node) {
+            if aggregate.columns {
+                // Column-layout records are never one packed composite;
+                // member selects resolve their own leaf or column.
+                return Ok(None);
+            }
             let descriptor = self
                 .query_descriptor(owner)
                 .cloned()
@@ -262,7 +274,11 @@ impl Codegen<'_> {
                 }));
             }
         }
-        if let Some(array) = self.array_of(node).cloned().filter(|array| !array.real) {
+        if let Some(array) = self
+            .array_of(node)
+            .cloned()
+            .filter(|array| !array.real && self.record_column_array(node).is_none())
+        {
             if let Some(descriptor) = self.query_descriptor(node).cloned() {
                 if let Some(width) = fixed_width(&descriptor) {
                     let mut parts = Vec::new();
@@ -438,8 +454,280 @@ impl Codegen<'_> {
         Ok(Some(projection))
     }
 
+    /// A scalar leaf of a column-layout record roots its own projection;
+    /// the record has no packed composite to select from. A leaf inside a
+    /// member of a column-layout tagged union reads through its tag guard.
+    fn record_leaf_projection(&mut self, node: NodeId) -> Result<Option<Projection>, String> {
+        if !self.record_columns
+            || !matches!(self.kind(node), NodeKind::Expr(ExprKind::HierPath { .. }))
+        {
+            return Ok(None);
+        }
+        let Some((value, member_path)) = self.record_root_value(node) else {
+            return Ok(None);
+        };
+        let Some((leaf_path, column)) = value
+            .columns
+            .iter()
+            .filter(|(path, column)| {
+                member_path.starts_with(path)
+                    && match column {
+                        RecordColumn::Cell(_) => true,
+                        RecordColumn::Leaf(leaf) => {
+                            leaf.signal.as_ref().is_some_and(|signal| !signal.real)
+                        }
+                        RecordColumn::Array(_) => false,
+                    }
+                    // A tagged union's tag cell is not a member value.
+                    && !self.record_union_tag_path(&value, path)
+            })
+            .max_by_key(|(path, _)| path.len())
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let Some(descriptor) = Self::descriptor_at_path(&value.descriptor, &leaf_path) else {
+            return Ok(None);
+        };
+        let read = self.record_column_read(&column)?;
+        let target = self.record_column_lhs(&column)?;
+        let width = read.width;
+        let mut projection = match self.record_union_guard(&value, &leaf_path)? {
+            None => Projection {
+                root: FixedRoot::Cell { read, target },
+                signed: descriptor.info.signed,
+                descriptor: descriptor.clone(),
+                steps: Vec::new(),
+                element_states: Vec::new(),
+                ref_legal: true,
+            },
+            Some((tag, guard)) => {
+                // The guarded value is the tag above the member leaf, the
+                // layout a packed tagged union selects from.
+                let tag_read = self.record_column_read(&tag)?;
+                let tag_target = self.record_column_lhs(&tag)?;
+                let tag_width = tag_read.width;
+                Projection {
+                    root: FixedRoot::Cell {
+                        read: IrExpr::new(
+                            IrExprKind::Concat {
+                                parts: vec![tag_read, read],
+                            },
+                            tag_width + width,
+                            false,
+                            None,
+                        ),
+                        target: IrLhs::Stream {
+                            parts: vec![(tag_target, tag_width), (target, width)],
+                            width: tag_width + width,
+                            slice: 1,
+                            direction: IrStreamDirection::LeftToRight,
+                        },
+                    },
+                    signed: descriptor.info.signed,
+                    descriptor: descriptor.clone(),
+                    steps: vec![(
+                        IrPackedSelect {
+                            base: lhs_integer_expr(0),
+                            width,
+                        },
+                        two_state(&descriptor),
+                        Some(guard),
+                    )],
+                    element_states: Vec::new(),
+                    ref_legal: false,
+                }
+            }
+        };
+        for part in &member_path[leaf_path.len()..] {
+            let AggregatePathPart::Member(name) = part else {
+                return Ok(None);
+            };
+            Self::fixed_member(&mut projection, name)?;
+        }
+        Ok(Some(projection))
+    }
+
+    /// The whole column-layout record (or tagged union) a member path is
+    /// rooted at, with the member path below it.
+    fn record_root_value(&self, node: NodeId) -> Option<(RecordValue, Vec<AggregatePathPart>)> {
+        if let Some((root, member_path)) = self.activation_record_path(node) {
+            return Some((self.activation_records.get(&root)?.clone(), member_path));
+        }
+        let (root, member_path) = self.unpacked_path_for_expr(node)?;
+        Some((self.record_value_of_root(root)?, member_path))
+    }
+
+    fn record_value_of_root(&self, root: NodeId) -> Option<RecordValue> {
+        if let Some(value) = self.activation_records.get(&root) {
+            return Some(value.clone());
+        }
+        let aggregate = self
+            .unpacked_aggregates
+            .get(&root)
+            .filter(|info| info.columns)?;
+        let columns = aggregate
+            .leaves
+            .iter()
+            .map(|leaf| {
+                let column = match &leaf.array {
+                    Some(array) if super::record_columns::record_cell_leaf(leaf) => {
+                        RecordColumn::Cell(array.ir)
+                    }
+                    Some(array) => RecordColumn::Array(array.ir),
+                    None => RecordColumn::Leaf(Box::new(leaf.clone())),
+                };
+                (leaf.path.clone(), column)
+            })
+            .collect();
+        Some(RecordValue {
+            descriptor: self.query_descriptor(root)?.clone(),
+            columns,
+        })
+    }
+
+    /// The tag read and guard of an element select on a member array of a
+    /// column-layout tagged union (`v.w[i]`), if the column has one.
+    pub(in super::super) fn record_select_guard(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<RecordSelectGuard>, String> {
+        if !self.record_columns {
+            return Ok(None);
+        }
+        let Some((root, members)) = self.db.array_select_path(node) else {
+            return Ok(None);
+        };
+        let root = self.canonical_func_target(root).unwrap_or(root);
+        let Some(value) = self.record_value_of_root(root) else {
+            return Ok(None);
+        };
+        let path = members
+            .iter()
+            .cloned()
+            .map(AggregatePathPart::Member)
+            .collect::<Vec<_>>();
+        let Some((tag, guard)) = self.record_union_guard(&value, &path)? else {
+            return Ok(None);
+        };
+        Ok(Some(RecordSelectGuard {
+            tag_read: self.record_column_read(&tag)?,
+            tag_target: self.record_column_lhs(&tag)?,
+            guard: crate::sim::ir::IrTaggedMemberGuard {
+                member_index: u32::try_from(guard.member_index)
+                    .map_err(|_| "tagged union member index overflow")?,
+                tag_width: guard.tag_width,
+                member_name: guard.member_name,
+            },
+        }))
+    }
+
+    /// `target[selection]` checked against the tag of a column-layout
+    /// tagged union member: the tag cell sits above the selected element,
+    /// as in the packed tagged layout, so one guarded step precedes the
+    /// element's own packed steps.
+    pub(in super::super) fn record_guarded_element_lhs(
+        &self,
+        guard: RecordSelectGuard,
+        element: IrLhs,
+        element_width: u32,
+        steps: Vec<IrPackedSelect>,
+        signed: bool,
+        location: String,
+    ) -> IrLhs {
+        let tag_width = guard.tag_read.width;
+        let mut guarded = vec![crate::sim::ir::IrTaggedSelectStep {
+            selection: IrPackedSelect {
+                base: lhs_integer_expr(0),
+                width: element_width,
+            },
+            two_state: false,
+            guard: Some(guard.guard),
+        }];
+        guarded.extend(
+            steps
+                .into_iter()
+                .map(|selection| crate::sim::ir::IrTaggedSelectStep {
+                    selection,
+                    two_state: false,
+                    guard: None,
+                }),
+        );
+        IrLhs::TaggedSelect {
+            target: Box::new(IrLhs::Stream {
+                parts: vec![(guard.tag_target, tag_width), (element, element_width)],
+                width: tag_width + element_width,
+                slice: 1,
+                direction: IrStreamDirection::LeftToRight,
+            }),
+            steps: guarded,
+            signed,
+            two_state: false,
+            location,
+        }
+    }
+
+    /// Whether `path` names the tag cell of a column-layout tagged union.
+    fn record_union_tag_path(&self, value: &RecordValue, path: &[AggregatePathPart]) -> bool {
+        Self::descriptor_at_path(&value.descriptor, path)
+            .is_some_and(|descriptor| super::record_columns::column_tagged_union(&descriptor))
+    }
+
+    /// The tag column and guard of the column-layout tagged union member a
+    /// leaf at `leaf_path` belongs to. Only one tagged level is supported.
+    fn record_union_guard(
+        &self,
+        value: &RecordValue,
+        leaf_path: &[AggregatePathPart],
+    ) -> Result<Option<(RecordColumn, TaggedMemberGuard)>, String> {
+        let mut found = None;
+        for length in 0..leaf_path.len() {
+            let prefix = &leaf_path[..length];
+            let Some(descriptor) = Self::descriptor_at_path(&value.descriptor, prefix) else {
+                continue;
+            };
+            if !super::record_columns::column_tagged_union(&descriptor) {
+                continue;
+            }
+            let TypeShape::Aggregate(layout) = &descriptor.shape else {
+                continue;
+            };
+            let AggregatePathPart::Member(name) = &leaf_path[length] else {
+                return Err("tagged union member path has an index".into());
+            };
+            let member_index = layout
+                .members
+                .iter()
+                .position(|member| &member.name == name)
+                .ok_or_else(|| format!("tagged union has no member `{name}`"))?;
+            let tag = value
+                .columns
+                .iter()
+                .find(|(column_path, _)| column_path.as_slice() == prefix)
+                .map(|(_, column)| column.clone())
+                .ok_or("tagged union has no tag column")?;
+            if found.is_some() {
+                return Err(format!(
+                    "member `{name}` is nested in more than one tagged union beyond packed capacity"
+                ));
+            }
+            found = Some((
+                tag,
+                TaggedMemberGuard {
+                    tag_width: layout.tag_bits().ok_or("tagged union tag width overflow")?,
+                    member_index,
+                    member_name: name.clone(),
+                },
+            ));
+        }
+        Ok(found)
+    }
+
     fn fixed_projection(&mut self, path: &str, node: NodeId) -> Result<Option<Projection>, String> {
         if let Some(root) = self.native_leaf_projection(node)? {
+            return Ok(Some(root));
+        }
+        if let Some(root) = self.record_leaf_projection(node)? {
             return Ok(Some(root));
         }
         if let Some(root) = self.fixed_root(path, node)? {

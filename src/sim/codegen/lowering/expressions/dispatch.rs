@@ -1086,7 +1086,12 @@ impl<'a> Codegen<'a> {
                         None,
                     ));
                 }
-                let ai = self.array_of(*base).cloned().ok_or_else(|| {
+                let ai = self
+                    .record_column_select(h)
+                    .map(|(column, _)| column)
+                    .or_else(|| self.array_of(*base))
+                    .cloned()
+                    .ok_or_else(|| {
                     format!(
                         "cannot resolve array base of select `{}` in `{scope_path}` (base kind: {:?})",
                         self.node(*base).name,
@@ -1099,7 +1104,7 @@ impl<'a> Codegen<'a> {
                         .iter()
                         .map(|i| self.lower_expr(scope_path, *i))
                         .collect::<Result<Vec<_>, _>>()?;
-                    return Ok(IrExpr::new(
+                    let element = IrExpr::new(
                         IrExprKind::ArrayRead {
                             arr: self.reference_array(ai.ir),
                             indices: ies,
@@ -1108,7 +1113,38 @@ impl<'a> Codegen<'a> {
                         ai.elem_width,
                         ai.signed,
                         None,
-                    ));
+                    );
+                    if let Some(guard) = self.record_select_guard(h)? {
+                        // A member array of a column-layout tagged union
+                        // reads only while its member is active.
+                        let (tag, guard) = (guard.tag_read, guard.guard);
+                        let tag_width = tag.width;
+                        return Ok(IrExpr::new(
+                            IrExprKind::TaggedSelect {
+                                base: Box::new(IrExpr::new(
+                                    IrExprKind::Concat {
+                                        parts: vec![tag, element],
+                                    },
+                                    tag_width + ai.elem_width,
+                                    false,
+                                    None,
+                                )),
+                                steps: vec![crate::sim::ir::IrTaggedSelectStep {
+                                    selection: crate::sim::ir::IrPackedSelect {
+                                        base: lhs_integer_expr(0),
+                                        width: ai.elem_width,
+                                    },
+                                    two_state: false,
+                                    guard: Some(guard),
+                                }],
+                                location: self.source_location(h),
+                            },
+                            ai.elem_width,
+                            ai.signed,
+                            None,
+                        ));
+                    }
+                    return Ok(element);
                 }
                 if indices.len() == ndims + 1 {
                     if ai.real {

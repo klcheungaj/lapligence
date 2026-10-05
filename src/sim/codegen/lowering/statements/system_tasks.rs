@@ -184,19 +184,25 @@ impl EmitCtx<'_, '_> {
         node: NodeId,
     ) -> Result<IrMemoryView, String> {
         let (base, selectors, slice) = self.memory_view_base(name, node)?;
-        let array = self.cg.array_of(base).cloned().ok_or_else(|| {
-            if self.cg.container_of(node).is_some() {
-                format!(
+        let array = self
+            .cg
+            .record_column_select(base)
+            .map(|(column, _)| column)
+            .or_else(|| self.cg.array_of(base))
+            .cloned()
+            .ok_or_else(|| {
+                if self.cg.container_of(node).is_some() {
+                    format!(
                     "{name} does not support dynamic arrays, queues, or associative arrays in `{}`",
                     self.path
                 )
-            } else {
-                format!(
-                    "{name} requires a fixed packed memory view in `{}`",
-                    self.path
-                )
-            }
-        })?;
+                } else {
+                    format!(
+                        "{name} requires a fixed packed memory view in `{}`",
+                        self.path
+                    )
+                }
+            })?;
         if array.is_net {
             return Err(format!(
                 "{name} requires a variable memory, not a net, in `{}`",
@@ -347,6 +353,10 @@ impl EmitCtx<'_, '_> {
                 Ok((root, selectors, None))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                if let Some((_, indices)) = self.cg.record_column_select(node) {
+                    // The select itself locates its record column.
+                    return Ok((node, indices.to_vec(), None));
+                }
                 let (root, mut selectors, slice) = self.memory_view_base(name, *base)?;
                 if slice.is_some() {
                     return Err(format!(

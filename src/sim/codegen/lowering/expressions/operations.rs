@@ -69,6 +69,18 @@ impl<'a> Codegen<'a> {
             otype,
             Operation::Equal | Operation::NotEqual | Operation::CaseEqual | Operation::CaseNotEqual
         ) {
+            // Column-layout records compare column by column.
+            if self.record_columns
+                && operands.iter().any(|node| {
+                    self.column_record_type(*node) || self.column_record_storage(*node).is_some()
+                })
+            {
+                if let Some(value) =
+                    self.lower_unpacked_aggregate_comparison(scope_path, otype, operands)?
+                {
+                    return Ok(value);
+                }
+            }
             let oversized = operands.iter().any(|node| {
                 self.query_descriptor(*node)
                     .and_then(Self::fixed_descriptor_width_bits)

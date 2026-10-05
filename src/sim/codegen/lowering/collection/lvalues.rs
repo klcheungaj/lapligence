@@ -726,18 +726,40 @@ impl<'a> Codegen<'a> {
                         two_state,
                     ));
                 }
-                let ai = self.array_of(*base).cloned().ok_or_else(|| {
-                    format!(
-                        "cannot resolve array base of select `{}` in `{path}`",
-                        self.node(*base).name,
-                    )
-                })?;
+                let ai = self
+                    .record_column_select(lhs)
+                    .map(|(column, _)| column)
+                    .or_else(|| self.array_of(*base))
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!(
+                            "cannot resolve array base of select `{}` in `{path}`",
+                            self.node(*base).name,
+                        )
+                    })?;
                 let ndims = ai.dims.len();
                 if indices.len() == ndims {
                     let ies = indices
                         .iter()
                         .map(|i| self.lower_expr(path, *i))
                         .collect::<Result<Vec<_>, _>>()?;
+                    if let Some(guard) = self.record_select_guard(lhs)? {
+                        // A member array of a column-layout tagged union is
+                        // written only while its member is active.
+                        let element = IrLhs::ArrayElem {
+                            arr: self.reference_array(ai.ir),
+                            indices: ies,
+                            elem_sel: IrElemSel::Whole,
+                        };
+                        return Ok(Lhs::Canonical(self.record_guarded_element_lhs(
+                            guard,
+                            element,
+                            ai.elem_width,
+                            Vec::new(),
+                            ai.signed,
+                            self.source_location(lhs),
+                        )));
+                    }
                     return Ok(Lhs::ArrayElem(ArrayElemLhs {
                         arr: ai,
                         indices: ies,

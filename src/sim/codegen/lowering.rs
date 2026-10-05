@@ -936,6 +936,9 @@ struct AggregateMemberInfo {
     /// existing owned-object runtime path; aggregate nodes have neither.
     signal: Option<SignalInfo>,
     object: Option<usize>,
+    /// A member array of a column-layout record (RTL-101) is one fixed-array
+    /// column instead of one leaf per cell.
+    array: Option<ArrayInfo>,
     path: Vec<AggregatePathPart>,
 }
 
@@ -966,6 +969,9 @@ struct NativeLayout {
 struct UnpackedAggregateInfo {
     kind: AggregateKind,
     type_identity: Option<String>,
+    /// Column layout (RTL-101): whole-record values move leaf by leaf and
+    /// never as one packed payload.
+    columns: bool,
     members: Vec<AggregateMemberInfo>,
     /// Recursive descriptors are lowered to deterministic leaves only at the
     /// backend boundary. The descriptor itself remains the compatibility and
@@ -1205,6 +1211,16 @@ struct Codegen<'a> {
     /// key uses declaration identity and canonical member/index path, never a
     /// display spelling or frontend pointer.
     aggregate_objects: HashMap<(NodeId, String), usize>,
+    /// Whether any record uses column layout; keeps column lookups off the
+    /// common array-resolution path otherwise.
+    record_columns: bool,
+    /// Column-layout record formals, results and locals of subroutines.
+    activation_records: HashMap<NodeId, collection::RecordValue>,
+    /// Array metadata of subroutine record member-array columns.
+    record_array_infos: HashMap<usize, ArrayInfo>,
+    /// Set while a column-layout record result call is lowered as an
+    /// assignment source, the only context that supplies its result columns.
+    record_call_result: bool,
     /// Native record declarations (formals, results, locals) → type layout.
     native_layouts: HashMap<NodeId, NativeLayout>,
     /// `(instance, declaration)` → native value storage.
@@ -1529,6 +1545,10 @@ impl<'a> Codegen<'a> {
             class_init_receiver: None,
             unpacked_aggregates: HashMap::new(),
             aggregate_objects: HashMap::new(),
+            record_columns: false,
+            activation_records: HashMap::new(),
+            record_array_infos: HashMap::new(),
+            record_call_result: false,
             native_layouts: HashMap::new(),
             native_storage: HashMap::new(),
             native_value_layouts: HashMap::new(),
@@ -1715,6 +1735,9 @@ impl<'a> Codegen<'a> {
     fn array_of(&self, node: NodeId) -> Option<&ArrayInfo> {
         if let Some(array) = self.array_globals.get(&node) {
             return Some(array);
+        }
+        if let Some(column) = self.record_column_array(node) {
+            return Some(column);
         }
         match self.kind(node) {
             NodeKind::Array { .. } => self.array_globals.get(&node),
