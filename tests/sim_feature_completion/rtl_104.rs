@@ -3,7 +3,8 @@
 //! relational operand, and the project ruling on package-import visibility.
 //! Expected outputs are hand-derived; see the fixture readme.
 
-use super::sim_cli;
+use super::{sim_cli, sim_harness};
+use std::path::Path;
 
 const SUITE: &str = "feature_completion/rtl_104";
 const AMBIGUOUS_PLUS: &str =
@@ -90,4 +91,91 @@ fn native_update_values_report_their_limit() {
         "limit_native_value",
         "an overloaded operator update whose value is used or whose target selector has side effects requires a target within the",
     );
+}
+
+/// Count a fixture's once-bound overloaded updates (prefix-valued, postfix)
+/// and its statement updates kept as `A = f(A)` assignments, checking that
+/// every once-bound update calls its function through an `OverloadCurrent`
+/// operand rather than a second binding of the target.
+fn owned_update_counts(fixture: &str) -> (usize, usize, usize) {
+    use llg::core::{
+        compile,
+        db::{Db, ExprKind, NodeKind, Operation},
+    };
+
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim")
+        .join(SUITE)
+        .join(format!("{fixture}.sv"));
+    sim_harness::with_frontend_temp_cwd("rtl-104-db", |_| {
+        let compiled = compile::compile_checked(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| format!("compile: {error}"))?;
+        let database =
+            Db::from_slang(&compiled.snapshot).map_err(|error| format!("database: {error}"))?;
+        let reads_current = |call| {
+            let Some(mut argument) = database.node(call).children().first().copied() else {
+                return false;
+            };
+            while let NodeKind::Expr(ExprKind::Cast { operand, .. }) = database.node_kind(argument)
+            {
+                argument = *operand;
+            }
+            matches!(
+                database.node_kind(argument),
+                NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::OverloadCurrent,
+                    ..
+                })
+            )
+        };
+        let (mut updates, mut post_updates, mut plain) = (0, 0, 0);
+        for id in database.node_ids() {
+            let (op, call) = match database.node_kind(id) {
+                NodeKind::Expr(ExprKind::Operation {
+                    op,
+                    assignment: true,
+                    operands,
+                    ..
+                }) => (*op, operands.get(1).copied()),
+                // An expression statement's assignment node is its child too.
+                _ => continue,
+            };
+            let call = call.filter(|call| {
+                matches!(database.node_kind(*call), NodeKind::FuncCall { name, .. }
+                    if matches!(name.as_str(), "inc" | "add"))
+            });
+            match (op, call) {
+                (Operation::OverloadUpdate | Operation::OverloadPostUpdate, Some(call))
+                    if reads_current(call) =>
+                {
+                    if op == Operation::OverloadUpdate {
+                        updates += 1;
+                    } else {
+                        post_updates += 1;
+                    }
+                }
+                (Operation::OverloadUpdate | Operation::OverloadPostUpdate, _) => {
+                    return Err(format!("update {id:?} does not call through its target"));
+                }
+                (Operation::Assignment, Some(call)) if !reads_current(call) => plain += 1,
+                _ => {}
+            }
+        }
+        Ok((updates, post_updates, plain))
+    })
+    .expect("checked compilation and owned capture")
+}
+
+#[test]
+fn once_bound_updates_are_owned_update_operations() {
+    // `arr[next()] += d`, `++arr[next()]` and `y = (arr[next()] += d)`;
+    // `arr[next()]++`, `y = arr[next()]++`, `recs[next()].inner++` and the
+    // `for` step `arr[next()]++`.
+    assert_eq!(owned_update_counts("single_evaluation"), (3, 4, 0));
+    // `z = x + y`, `z++`, `b = a + a` and `b++` keep ordinary assignments.
+    assert_eq!(owned_update_counts("package_import"), (0, 0, 4));
 }
