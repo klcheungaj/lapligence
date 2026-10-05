@@ -30,7 +30,8 @@ cells and descriptor views for whole and selected values, conditionals, patterns
 streams and function formals/returns; arrays of unpacked records use the same
 views. A single record or tagged union wider than the packed limit, or with a
 member array above the dense threshold, stores one descriptor column per member
-array and scalar leaf (RTL-101); see
+array and scalar leaf (RTL-101); in a subroutine value its real, string and
+chandle members share one native value (RTL-101b); see
 [resource limits](sim_features.md#resource-limits) for the exact descriptor profile.
 Dynamic, resizable and unbounded aggregate values remain separately bounded. The executable
 boundary cases are in [`tests/fixtures/sim/syn036_capacity`](../tests/fixtures/sim/syn036_capacity/).

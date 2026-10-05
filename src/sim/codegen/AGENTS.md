@@ -404,6 +404,15 @@ cell), whole-value operations iterate the columns, subroutine activations keep
 their columns in `activation_records` (extra columns follow the declared
 formals, results are trailing outputs), and a consumer that reads a member
 must resolve it through `record_column_array` rather than a packed projection.
+Real/string/chandle leaves of an activation record are `RecordColumn::Native`
+items of one native value, passed after the columns. Static initializers go to
+`record_initializers` (static schedule); automatic block records are lexical
+(`automatic_block_record`). An operand that needs setup inside an expression
+(a record call result, a whole-value binding) is an `IrExprKind::Sequence`
+whose statements never suspend; binding storage is declared before the
+enclosing statement through `record_binding_declarations`, opened by
+`lower_stmt`. Whole tagged-union member copies check the tag with
+`record_guard_check`, the same runtime report as element accesses.
 Native records (string/real/chandle leaves, no packed width) in subroutine
 formals, results and locals use `collection/native_values.rs`: one
 `IrNativeValue` root per storage, leaf accesses by constant item path, and

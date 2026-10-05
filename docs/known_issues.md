@@ -310,7 +310,7 @@ Use the command in the frontend memory entry with `LLG_CORPUS_N` set to
 ## Remaining non-flattened fixed-value contexts
 
 **Status:** open; RTL-002 and RTL-002b implement descriptor transport for
-integral fixed arrays, and RTL-101 column layout for large records.
+integral fixed arrays, and RTL-101/RTL-101b column layout for large records.
 
 Integral variable arrays copy, compare, select rows, merge conditionals, stream
 (including multiple segments and unaligned slices), initialize and pass through
@@ -323,14 +323,22 @@ threshold, and records or finite tagged unions wider than the packed limit,
 keep each member array and scalar leaf in its own descriptor column (RTL-101):
 they copy, compare, merge conditionals, match patterns, pass through module
 ports and subroutine formals/results/locals, and a 65,537-cell member generates
-about 10 KB of C instead of 79 MB. Column records still reject binding a whole
-value to a pattern variable (as does the oversized source of a whole-value
-`matches` binding, RTL-016), comparing or selecting from a record-returning
-call as an expression operand, static declaration initializers of column
-locals, member initializers on column member arrays, and subroutine or
-comparison use of a column record that has `real`, `string` or `chandle`
-members. Copying a whole member array out of an inactive tagged-union member
-is not guarded; element reads and writes report the inactive member at run time.
+about 10 KB of C instead of 79 MB. RTL-101b adds whole-value pattern bindings,
+record call results compared or selected inside an expression, static and
+automatic declaration initializers, uniform member initializers, `real`,
+`string` and `chandle` members (a SIM-003 native value per subroutine record)
+and tag checks on whole member copies. Column records still reject: a member
+initializer that gives a column's cells different values (a column keeps one
+element default); selecting a whole member array, a sub-record, or a `string`
+or `chandle` member of a call result inside an expression, and comparing a
+record pattern, conditional or tagged expression operand (only storage and
+calls compare); an output or inout record argument with `real`, `string` or
+`chandle` members of a function called inside an expression (statement calls
+stage it through a temporary) and a `ref` formal of such a record; and a
+whole-value binding in a continuous assignment. A nonblocking write of a whole
+tagged-union member array checks the tag when it is issued; element writes
+recheck at commit. The oversized source of a whole-value `matches` binding that
+is a fixed array rather than a record still rejects (RTL-016).
 Dense rows as descriptor pattern items and scatter targets, and dense arrays,
 packed values, runtime `with` ranges and nested streams as parts of an
 oversized stream, use descriptor transport (RTL-103); a resizable container operand of an oversized

@@ -656,6 +656,23 @@ pub(super) fn enclosing_scope_name(nodes: &[Node], id: NodeId) -> Option<String>
     (!full_name.is_empty()).then(|| full_name.to_string())
 }
 
+/// The member name a member-access node selects.
+fn member_select_name(
+    snapshot: &SlangSnapshot,
+    ids: &SemanticIds,
+    node: &SemanticNode,
+) -> Result<Option<String>, DbError> {
+    let member = node
+        .target_id
+        .map(|id| canonical_reference_target(snapshot, ids, id))
+        .transpose()?;
+    Ok(member
+        .and_then(|id| snapshot.semantic_nodes.get(id.index()))
+        .map(|member| member.name.to_string())
+        .filter(|name| !name.is_empty())
+        .or_else(|| (!node.name.is_empty()).then(|| node.name.to_string())))
+}
+
 #[cfg(test)]
 mod source_position_tests {
     use super::*;
@@ -846,21 +863,4 @@ mod source_position_tests {
         }
         assert!(count > 32);
     }
-}
-
-/// The member name a member-access node selects.
-fn member_select_name(
-    snapshot: &SlangSnapshot,
-    ids: &SemanticIds,
-    node: &SemanticNode,
-) -> Result<Option<String>, DbError> {
-    let member = node
-        .target_id
-        .map(|id| canonical_reference_target(snapshot, ids, id))
-        .transpose()?;
-    Ok(member
-        .and_then(|id| snapshot.semantic_nodes.get(id.index()))
-        .map(|member| member.name.to_string())
-        .filter(|name| !name.is_empty())
-        .or_else(|| (!node.name.is_empty()).then(|| node.name.to_string())))
 }

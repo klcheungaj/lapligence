@@ -187,7 +187,7 @@ supported.
 | --- | --- |
 | Packed element or value | 1–1,048,575 bits inclusive; `LLG_SUPPORTED_WIDTH_LIMIT = 1 << 20` is exclusive. Each packed cell uses its actual width. |
 | Generated fixed unpacked array | At most 16,777,216 cells in the product of all dimensions (`LLG_MAX_FIXED_ARRAY_CELLS`). Extents/products are checked before allocation; an over-limit declaration receives a resource diagnostic. |
-| Fixed array used as a value, formal or stream | Integral variable arrays use non-flattened descriptor transport: whole and selected-row copies, equality, conditionals (element-wise merge for an ambiguous selector), default fills, declaration initializers, array-valued pattern items, pattern-lvalue row scatter and multi-segment/unaligned streams, including runtime `with` ranges, dense rows and nested streams; dense rows also serve as pattern items and scatter targets of descriptor sources (RTL-103). Module, package, function-static and block-static declaration initializers run in the static schedule; automatic block and function arrays initialize per entry. Static, automatic and recursive functions pass such arrays through input, output, inout and ref formals and return them. Arrays of unpacked records whose elements fit the packed limit use the same transport ([RTL-099](../tests/sim_feature_completion/rtl_099.rs) executes 1,048,576 mixed-state records through copies, equality, ambiguous conditionals, function values and an NBA with a bounded model). Records with a member array above the 4,096-cell dense threshold, and records or finite tagged unions wider than 1,048,575 bits, keep each member array and scalar leaf in its own descriptor column: they copy, compare, merge ambiguous conditionals per member, match structure and tagged patterns, and pass through module ports and static, automatic and recursive subroutine formals, results and locals, with generated C independent of the member extent ([RTL-101](../tests/sim_feature_completion/rtl_101.rs); remaining limits in the [known issue](known_issues.md#remaining-non-flattened-fixed-value-contexts)). Direct reductions read cells individually. |
+| Fixed array used as a value, formal or stream | Integral variable arrays use non-flattened descriptor transport: whole and selected-row copies, equality, conditionals (element-wise merge for an ambiguous selector), default fills, declaration initializers, array-valued pattern items, pattern-lvalue row scatter and multi-segment/unaligned streams, including runtime `with` ranges, dense rows and nested streams; dense rows also serve as pattern items and scatter targets of descriptor sources (RTL-103). Module, package, function-static and block-static declaration initializers run in the static schedule; automatic block and function arrays initialize per entry. Static, automatic and recursive functions pass such arrays through input, output, inout and ref formals and return them. Arrays of unpacked records whose elements fit the packed limit use the same transport ([RTL-099](../tests/sim_feature_completion/rtl_099.rs) executes 1,048,576 mixed-state records through copies, equality, ambiguous conditionals, function values and an NBA with a bounded model). Records with a member array above the 4,096-cell dense threshold, and records or finite tagged unions wider than 1,048,575 bits, keep each member array and scalar leaf in its own descriptor column: they copy, compare, merge ambiguous conditionals per member, match structure and tagged patterns, bind whole values to pattern variables, and pass through module ports and static, automatic and recursive subroutine formals, results and locals, with generated C independent of the member extent ([RTL-101](../tests/sim_feature_completion/rtl_101.rs)). Module, block and subroutine static declaration initializers run column by column in the static schedule, automatic block locals initialize per entry, a uniform member initializer becomes the column's element default, real/string/chandle members travel in a SIM-003 native value next to the columns, and a record call result compares and has scalar members and member-array elements selected inside an expression ([RTL-101b](../tests/sim_feature_completion/rtl_101b.rs); remaining limits in the [known issue](known_issues.md#remaining-non-flattened-fixed-value-contexts)). Direct reductions read cells individually. |
 | Subroutine recursion | At most 256 active calls; a further call emits a recursion-limit diagnostic and returns the result type's default. Recursive calls, including through class virtual and virtual-interface dispatch, use heap frames, so their depth does not consume native stack; recursion re-entering through DPI C code does. |
 | Read-only helper inlining | At most 32 nested callback calls; deeper emission receives an explicit diagnostic. |
 | Scheduler region passes | Default 10,000,000 per time slot; `LLG_ZERO_LOOP_LIMIT` accepts a positive decimal `uint64`. Exhaustion diagnoses a zero-delay loop. |
@@ -254,7 +254,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   values and publish NBAs the same way (RTL-099). Single records and tagged
   unions wider than the packed limit, or with member arrays above 4,096
   cells, store one descriptor column per member array and scalar leaf and
-  move as values the same way (RTL-101). Fixed integral record arrays also
+  move as values the same way (RTL-101), including real, string and chandle
+  members, static initializers and call results inside expressions
+  (RTL-101b). Fixed integral record arrays also
   retain recursive member selections and constant-selected electrical net views.
   V §3.10; SV §§7.4, 7.6 **[1995/SV-2005]**.
 - 🟨 **Initialization and lifetimes** — Scalar, fixed integral composite and
@@ -325,7 +327,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   store nothing. Unpacked tagged unions beyond packed capacity keep the tag
   and each member in separate descriptor columns (RTL-101): tagged
   expressions reset inactive members, values copy, compare, merge and match,
-  and element reads/writes of an inactive member report runtime errors.
+  and element reads/writes and whole member-array or record-member copies of
+  an inactive member report runtime errors (RTL-101b), reading the member's
+  uninitialized value and storing nothing.
   Real/string/chandle and dynamic payloads (SIM-007) reject with explicit
   diagnostics.
   **Q03 (resolved):** SV §§4.9.4 and 10.4.2 fix an NBA's target and RHS at
@@ -672,8 +676,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   wildcard and binding patterns and dynamic/native tagged payloads remain
   restricted. Column-layout record and tagged-union sources beyond packed
   capacity match structure, tagged, wildcard and constant member patterns
-  column by column (RTL-101); binding such a whole value to a pattern
-  variable remains restricted. SV §§7.3.2, 12.6
+  column by column (RTL-101) and bind whole records, record members and
+  member arrays to pattern variables by copying columns into lexical storage
+  (RTL-101b). SV §§7.3.2, 12.6
   **[SV-2005]**.
 - 🟦 **Qualified selection** — `unique`, `unique0`, `priority` diagnose no-match/
   multiple-match with source locations and default/else suppression. `case inside`
