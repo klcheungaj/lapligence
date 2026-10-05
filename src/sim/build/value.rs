@@ -120,7 +120,6 @@ check_c_source_runs([=[
 #include <string.h>
 _Static_assert(GMP_LIMB_BITS == 64 && GMP_NAIL_BITS == 0, "64-bit nail-free GMP required");
 _Static_assert(sizeof(mp_limb_t) == 8, "64-bit GMP required");
-_Static_assert(_Generic((mp_limb_t*)0, uint64_t*: 1, default: 0), "compatible uint64_t GMP limbs required");
 int main(void) {{
   char version[64];
   snprintf(version, sizeof(version), "%d.%d.%d", __GNU_MP_VERSION, __GNU_MP_VERSION_MINOR, __GNU_MP_VERSION_PATCHLEVEL);
@@ -135,11 +134,60 @@ int main(void) {{
 }}
 ]=] LLG_GMP_COMPATIBLE)
 if(NOT LLG_GMP_COMPATIBLE)
-  message(FATAL_ERROR "GMP_ROOT headers/library mismatch, unavailable mpn APIs, or unsupported limbs: require compatible 64-bit nail-free GMP (see CMakeConfigureLog.yaml)")
+  message(FATAL_ERROR "GMP_ROOT headers/library mismatch, unavailable mpn APIs, or unsupported limbs: require 64-bit nail-free GMP (see CMakeConfigureLog.yaml)")
 endif()
 target_include_directories({target} PRIVATE "{include}")
 target_link_libraries({target} {visibility} "{library}")
 "#, visibility = if target == "llg_runtime" { "PUBLIC" } else { "PRIVATE" }));
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::value_backend::ValueConfig;
+
+    fn installation(base: &std::path::Path, name: &str, header: &str) -> PathBuf {
+        let root = base.join(name);
+        std::fs::create_dir_all(root.join("include")).unwrap();
+        std::fs::create_dir_all(root.join("lib")).unwrap();
+        std::fs::write(root.join("include/gmp.h"), header).unwrap();
+        std::fs::write(root.join("lib/libgmp.a"), "archive").unwrap();
+        root
+    }
+
+    #[test]
+    fn gmp_identity_follows_installation_bytes_not_location() {
+        let base = std::env::temp_dir().join(format!("llg-gmp-identity-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let options = |root: &PathBuf| CmakeBuildOpts {
+            value_config: ValueConfig {
+                backend: ValueBackend::Compact,
+                kernel: CompactKernel::Gmp,
+            },
+            gmp_root: Some(root.clone()),
+            ..Default::default()
+        };
+        let first = identity(&options(&installation(&base, "a", "header"))).unwrap();
+        let moved = identity(&options(&installation(&base, "b", "header"))).unwrap();
+        let edited = identity(&options(&installation(&base, "c", "header\n"))).unwrap();
+        assert_eq!(first, moved);
+        assert_ne!(first, edited);
+        assert!(first.starts_with("v5-b1-k1-gmp64-nail0-"), "{first}");
+        let portable = identity(&CmakeBuildOpts {
+            value_config: ValueConfig {
+                backend: ValueBackend::Compact,
+                kernel: CompactKernel::Portable,
+            },
+            gmp_root: Some(base.join("a")),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(portable, "v5-b1-k0-portable");
+        std::fs::remove_file(base.join("a/lib/libgmp.a")).unwrap();
+        let missing = identity(&options(&base.join("a"))).unwrap_err();
+        assert!(missing.to_string().contains("system fallback is disabled"));
+        std::fs::remove_dir_all(&base).unwrap();
+    }
 }

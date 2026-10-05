@@ -53,6 +53,14 @@ static inline size_t probe_owner_allocations(uint32_t width) {
     return width != 0;
 #endif
 }
+/* Freed scratch allocations per wide GMP kernel call (limb-copying hosts). */
+static inline size_t probe_kernel_scratch_allocations(void) {
+#if LLG_SV4_USE_GMP
+    return llg_gmp_sv4_kernel_scratch_allocations();
+#else
+    return 0;
+#endif
+}
 /* Same width and stored states, independently of the payload layout. */
 static inline int probe_same(sv4_t left, sv4_t right) {
     return llg_sv4_width(left) == llg_sv4_width(right) && sv4_same(left, right);

@@ -10,9 +10,33 @@
 #include <gmp.h>
 _Static_assert(GMP_LIMB_BITS == 64 && GMP_NAIL_BITS == 0, "64-bit nail-free GMP required");
 _Static_assert(sizeof(mp_limb_t) == 8, "64-bit GMP limb storage required");
-/* Pass native typed arrays, never cast uint64_t buffers to a GMP limb view. */
-_Static_assert(_Generic((mp_limb_t*)0, uint64_t*: 1, default: 0),
-               "GMP and uint64_t must have compatible limb types");
+/* Values store uint64_t words. GMP's 64-bit limb is that same C type on LP64
+ * Linux and on 64-bit Windows (long long limbs), but macOS declares uint64_t as
+ * unsigned long long while GMP's limb is unsigned long. Distinct types must not
+ * alias, so a word buffer is never cast to a limb view: compatible types pass
+ * the arrays directly; otherwise operands are memcpy'd into native limb
+ * scratch (same 64-bit representation) and results copied back. A const
+ * object, not a constant expression, avoids MSVC's constant-condition warning. */
+static const int g4_limbs_native = _Generic((uint64_t*)0, mp_limb_t*: 1, default: 0);
+#define G4_LIMBS(p) _Generic((p), mp_limb_t*: (p), default: (mp_limb_t*)0)
+#define G4_CLIMBS(p) _Generic((p), const mp_limb_t*: (p), default: (const mp_limb_t*)0)
+static mp_limb_t* g4_limb_scratch(size_t limbs) {
+    if (!limbs || limbs > SIZE_MAX / sizeof(mp_limb_t))
+        llg_gmp_sv4_fail("allocation size overflow");
+    mp_limb_t* p = (mp_limb_t*)calloc(limbs, sizeof(mp_limb_t));
+    if (!p)
+        llg_gmp_sv4_fail("allocation failed");
+    return p;
+}
+static void g4_mpn_mul(mp_limb_t* out, const mp_limb_t* a, const mp_limb_t* b, size_t n) {
+    if (n >= LLG_SV4_MUL_FULL_THRESHOLD) {
+        mpn_mul_n(out, a, b, (mp_size_t)n);
+        return;
+    }
+    (void)mpn_mul_1(out, a, (mp_size_t)n, b[0]);
+    for (size_t i = 1; i < n; ++i)
+        (void)mpn_addmul_1(out + i, a, (mp_size_t)(n - i), b[i]);
+}
 #else
 static void multiply_word(uint64_t a, uint64_t b, uint64_t* lo, uint64_t* hi) {
     uint64_t a0 = (uint32_t)a, a1 = a >> 32, b0 = (uint32_t)b, b1 = b >> 32;
@@ -24,13 +48,17 @@ static void multiply_word(uint64_t a, uint64_t b, uint64_t* lo, uint64_t* hi) {
 
 void llg_gmp_sv4_kernel_mul(uint64_t* out, const uint64_t* a, const uint64_t* b, size_t n) {
 #if LLG_SV4_GMP_KERNELS
-    if (n >= LLG_SV4_MUL_FULL_THRESHOLD) {
-        mpn_mul_n(out, a, b, (mp_size_t)n);
+    if (g4_limbs_native) {
+        g4_mpn_mul(G4_LIMBS(out), G4_CLIMBS(a), G4_CLIMBS(b), n);
         return;
     }
-    (void)mpn_mul_1(out, a, (mp_size_t)n, b[0]);
-    for (size_t i = 1; i < n; ++i)
-        (void)mpn_addmul_1(out + i, a, (mp_size_t)(n - i), b[i]);
+    size_t product = g4_product_words(n);
+    mp_limb_t* scratch = g4_limb_scratch(2u * n + product);
+    memcpy(scratch, a, n * 8u);
+    memcpy(scratch + n, b, n * 8u);
+    g4_mpn_mul(scratch + 2u * n, scratch, scratch + n, n);
+    memcpy(out, scratch + 2u * n, product * 8u);
+    free(scratch);
 #else
     memset(out, 0, n * 8u);
     for (size_t i = 0; i < n; ++i) {
@@ -62,8 +90,17 @@ void llg_gmp_sv4_kernel_div(uint64_t* out, const uint64_t* a, const uint64_t* b,
             memcpy(out, a, an * 8u);
         return;
     }
-    uint64_t *scratch = llg_gmp_sv4_alloc(an + 1u + bn), *q = scratch, *r = q + an + 1u;
-    mpn_tdiv_qr(q, r, 0, a, (mp_size_t)an, b, (mp_size_t)bn);
+    size_t inputs = g4_limbs_native ? 0u : an + bn;
+    mp_limb_t* scratch = g4_limb_scratch(inputs + an + 1u + bn);
+    const mp_limb_t *x = G4_CLIMBS(a), *y = G4_CLIMBS(b);
+    if (!g4_limbs_native) {
+        memcpy(scratch, a, an * 8u);
+        memcpy(scratch + an, b, bn * 8u);
+        x = scratch;
+        y = scratch + an;
+    }
+    mp_limb_t *q = scratch + inputs, *r = q + an + 1u;
+    mpn_tdiv_qr(q, r, 0, x, (mp_size_t)an, y, (mp_size_t)bn);
     memcpy(out, remainder ? r : q, (remainder ? bn : an - bn + 1u) * 8u);
     free(scratch);
 }
@@ -190,12 +227,27 @@ void llg_gmp_sv4_kernel_div(uint64_t* result, const uint64_t* dividend, const ui
 
 #endif
 
+size_t llg_gmp_sv4_kernel_scratch_allocations(void) {
+#if LLG_SV4_GMP_KERNELS
+    return g4_limbs_native ? 0u : 1u;
+#else
+    return 0u;
+#endif
+}
+
 /* Decimal digits, most significant first. The input is operation-local mutable
  * magnitude storage; GMP's get_str may destroy it for non-power-of-two bases. */
 size_t llg_gmp_sv4_kernel_decimal(unsigned char* out, uint64_t* magnitude, size_t n) {
 #if LLG_SV4_GMP_KERNELS
-    if (n >= LLG_SV4_DECIMAL_GMP_THRESHOLD)
-        return mpn_get_str(out, 10, magnitude, (mp_size_t)n);
+    if (n >= LLG_SV4_DECIMAL_GMP_THRESHOLD) {
+        if (g4_limbs_native)
+            return mpn_get_str(out, 10, G4_LIMBS(magnitude), (mp_size_t)n);
+        mp_limb_t* limbs = g4_limb_scratch(n);
+        memcpy(limbs, magnitude, n * 8u);
+        size_t count = mpn_get_str(out, 10, limbs, (mp_size_t)n);
+        free(limbs);
+        return count;
+    }
 #endif
     size_t count = 0;
     while (n) {

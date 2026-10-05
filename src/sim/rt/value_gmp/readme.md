@@ -48,7 +48,15 @@ prints `x` in decimal.
 
 Operations have separate translation units. `kernels.c` alone
 includes GMP when `LLG_SV4_GMP_KERNELS=1`; portable mode has no GMP dependency.
-GMP requires compatible 64-bit nail-free limbs. Wide multiplication computes the
+GMP requires 64-bit nail-free limbs; 32-bit-limb and nail builds are rejected at
+configure and compile time. Values store `uint64_t` words. GMP's 64-bit limb is
+the same C type on LP64 Linux and 64-bit Windows (`_LONG_LONG_LIMB`), so those
+arrays pass to `mpn` directly. macOS declares `uint64_t` as `unsigned long long`
+while GMP's limb is `unsigned long`: same size, distinct type. Casting would
+violate C aliasing rules, so the kernels then `memcpy` operands into native limb
+scratch and copy results back. That costs one freed heap scratch per wide
+mul/div/mod/decimal call (`llg_gmp_sv4_kernel_scratch_allocations()` reports it
+for the allocation probes); portable kernels never pay it. Wide multiplication computes the
 low half directly below `LLG_SV4_MUL_FULL_THRESHOLD` (128 words by default). At or
 above the threshold GMP uses a full product in a temporary tail of the result
 allocation, then shrinks it before publication. Portable mode always computes
@@ -135,3 +143,29 @@ writes through the existing limb kernel, using scratch only for a full GMP
 product; known aliases compute a fresh owner before replacement. Unknown results
 fill X after inspecting inputs, promoting B only when needed; known replacement
 results remove B. Mismatched widths retain returning-operation extension rules.
+
+## Platform qualification and GMP licensing
+
+GMP is an optional, user-supplied dependency selected with
+`LLG_COMPACT_KERNELS=gmp` and an explicit `GMP_ROOT` (`include/gmp.h` plus a
+static `lib/libgmp.a`, `lib/gmp.lib` or `lib/libgmp.lib`). Headers, library,
+compiler ABI and limb configuration must match the model compiler; CMake checks
+version agreement and 64-bit nail-free limbs, and the content hash keeps runtime
+archives of different installations apart. CI qualifies one route per compiler
+ABI (`scripts/ci_gmp.py`, `.github/workflows/ci.yml` `gmp-test` and
+`gmp-linux-test`): the pinned, SHA-256-verified GMP 6.3.0 tarball built with a
+generic (not host-tuned) static configuration and `make check` on Linux and
+macOS, and the vcpkg `gmp` port with `*-windows-static-md` triplets (static
+library, dynamic CRT like generated models) on Windows MSVC x64/arm64. A host-tuned
+build (for example `-march=native`) is valid only on matching CPUs.
+
+Licensing (review, not legal advice): GMP is dual-licensed LGPLv3-or-later /
+GPLv2-or-later. Lapligence distributes no GMP source or binary: release packages
+and the `llg`/`llg_ls` executables never link it, and only a model the user
+builds with GMP kernels links the user's static `libgmp`. Such a model also
+contains the GPLv2 Lapligence runtime, so whoever distributes it relies on GMP's
+GPLv2 option (LGPLv3 alone is not GPLv2-compatible) and must ship GMP's licence
+texts and corresponding source. Under LGPLv3 alone (a differently licensed
+runtime), static linking would additionally require relinkable object files. The
+legacy backend and portable compact kernels never use GMP, so GMP-free builds
+are unaffected. See `THIRD_PARTY_NOTICES.md`.

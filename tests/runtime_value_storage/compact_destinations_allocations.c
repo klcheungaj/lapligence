@@ -28,6 +28,8 @@ void* __wrap_realloc(void* p, size_t n) {
 static void (*ops[])(g4_t*, g4_t, g4_t) = {llg_gmp_sv4_add_into, llg_gmp_sv4_sub_into,
                                            llg_gmp_sv4_mul_into};
 int main(void) {
+    /* Limb-copying GMP kernels (macOS) add one freed scratch per wide multiply. */
+    size_t scratch = llg_gmp_sv4_kernel_scratch_allocations();
     uint32_t widths[] = {0, 1, 8, 63, 64, 65, 256, 4096, 8128, 8129, 8192, 8193};
     for (size_t k = 0; k < sizeof(widths) / sizeof(widths[0]); ++k)
         for (unsigned op = 0; op < 3; ++op)
@@ -44,14 +46,14 @@ int main(void) {
                     if (w > 64)
                         CHECK(target->data.wide.a == payload);
                 } else if (alias) {
-                    CHECK(allocations == before + 1);
+                    CHECK(allocations == before + 1 + scratch);
                     CHECK(target->data.wide.a != payload);
                 } else {
                     CHECK(target->data.wide.a == payload);
                     CHECK(reallocations == rb);
-                    CHECK(allocations <= before + 1);
+                    CHECK(allocations <= before + 1 + scratch);
                     if (w <= 4096)
-                        CHECK(allocations == before);
+                        CHECK(allocations == before + scratch);
                 }
                 llg_gmp_sv4_destroy(&a);
                 llg_gmp_sv4_destroy(&b);
@@ -74,7 +76,7 @@ int main(void) {
         before = allocations;
         rb = reallocations;
         ops[op](&d, a, b);
-        CHECK(allocations == before && reallocations == rb + 1);
+        CHECK(allocations == before + (op == 2 ? scratch : 0) && reallocations == rb + 1);
         CHECK(!d.data.wide.b && !d.is_signed);
         llg_gmp_sv4_destroy(&a);
         llg_gmp_sv4_destroy(&b);

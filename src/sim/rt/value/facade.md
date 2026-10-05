@@ -38,7 +38,9 @@ libraries, but a generated model must select exactly one descriptor ABI.
 backend. It changes wide mul/div/mod/pow and thresholded decimal conversion kernels.
 All other operations use plain C word loops. `<gmp.h>` appears only in
 `value_gmp/kernels.c`; GMP must use
-64-bit nail-free limbs compatible with `uint64_t`. Portable kernels require no
+64-bit nail-free limbs. Limbs of the same C type as `uint64_t` are passed
+directly; a distinct 64-bit type (macOS) is copied through limb scratch, never
+aliased. Portable kernels require no
 GMP headers or library. The multiplication full-product threshold is the named
 `LLG_SV4_MUL_FULL_THRESHOLD` (128 words by default, about 8192 bits). Below it,
 the result receives only its low words, with no separate scratch allocation.
@@ -49,7 +51,7 @@ Legacy production retains value ABI **4**. The experimental compact descriptor
 uses value ABI **5**. Emission and build callers pass the same `ValueConfig`; the driver reads
 `LLG_VALUE_BACKEND=legacy|compact` and `LLG_COMPACT_KERNELS=portable|gmp`.
 Defaults are legacy/portable. GMP kernels require an explicit `GMP_ROOT` with
-matching headers/library, verified 64-bit nail-free compatible limbs and mpn APIs.
+matching headers/library, verified 64-bit nail-free limbs and mpn APIs.
 Legacy/portable builds never inspect GMP inputs. Generated guards record backend,
 kernel and ABI; `llg_value_build.h` records the GMP content fingerprint and names
 the required link symbol. Source exports carry only the selected backend.
