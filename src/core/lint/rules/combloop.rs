@@ -81,6 +81,7 @@ impl LintRule for CombinationalLoopRule {
             let node = db.node(first);
             out.push(LintDiag {
                 rule: "combinational-loop".to_string(),
+                logical: None,
                 severity: LintSeverity::Error,
                 file: node.file().map(str::to_owned),
                 line: node.line,

@@ -63,11 +63,11 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 8. Continuous/structural | 3 | 6 | 3 | 0 | 0 | 12 |
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 7 |
 | 10. System tasks/functions | 10 | 10 | 3 | 0 | 0 | 23 |
-| 11. Compiler directives | 5 | 2 | 0 | 0 | 0 | 7 |
+| 11. Compiler directives | 6 | 1 | 0 | 0 | 0 | 7 |
 | 12. Verification/foreign interfaces | 1 | 12 | 0 | 3 | 0 | 16 |
-| **Total** | **44** | **81** | **7** | **3** | **1** | **136** |
+| **Total** | **45** | **80** | **7** | **3** | **1** | **136** |
 
-**126 rows have some source implementation; 81 of those remain partial and one
+**126 rows have some source implementation; 80 of those remain partial and one
 is accepted.** The accepted row (`always_ff` and writer rules) carries
 post-change HDL execution evidence from RTL-013 and RTL-099; other rows have no
 row-level acceptance promotion yet, which does not mean they lack passing tests.
@@ -148,7 +148,8 @@ later-form gates do not establish complete 2009 semantic conformance.
 | Whole unpacked-array values, assignments and ports | Rejected; memory declarations, indexed elements and admitted memory-I/O storage arguments remain legal | Admitted fixed forms |
 | Unbased-unsized literals and SV-only `for` headers | Rejected | Admitted |
 | `$clog2` | Rejected | Admitted |
-| Keyword-free later grammar: queue/dynamic/associative and `[size]` dimensions, multiple packed ranges, end and statement labels, `.name` connections, `edge` events, casts, time literals, inline/region-free generate loops, `localparam` ports, default/output function arguments, input-less functions, multi-statement or empty subroutine bodies, unnamed-block declarations, procedural declaration initializers, empty `()` on user subroutines | Rejected with a source-located strict-edition diagnostic | Admitted |
+| Keyword-free later grammar: every parsed syntax kind outside the 1364-2001 Annex A allowlist, plus shape checks on admitted kinds — queue/dynamic/associative and `[size]` dimensions, multiple packed ranges, end and statement labels, `.name` connections, `edge` events, casts, time literals, inline/region-free/unnamed generate loops, `localparam` or keyword-less parameter ports, module lifetimes, declaration qualifiers, named or empty call arguments, nested assignments, `&&&` predicates, non-2001 parameter/net/argument/function result types, direction-less or array arguments, default/output function arguments, input-less functions, multi-statement or empty subroutine bodies, unnamed-block declarations, procedural declaration initializers, empty `()` on user subroutines — including forms built by macros | Rejected with a source-located strict-edition diagnostic (a macro-built form at its use site) | Admitted |
+| Variable drivers: continuous assignment, gate output or output/inout port connection driving a variable; variable input/inout port (V §§6.1, 7.1, 12.3.9.2) | Rejected | Admitted |
 | Later `$countbits`, `assert final`, `$assertcontrol`, covergroup bins `with`/`matches`/set-expression forms | Rejected | Rejected; later internal paths do not override the selected edition |
 | `ref` formal of a static subroutine (SV §13.5.2) | Rejected (`ref` is SV-only) | Rejected as an error, not a frontend warning |
 
@@ -160,8 +161,18 @@ include unbased literals, function/multiple-step `for` headers and memory-storag
 exceptions; they were not rerun here. The [RTL-019 suite](../tests/sim_feature_completion/rtl_019.rs)
 executes every keyword-free later form under 2009 and rejects each one alone
 under 2001, and keeps the legal 2001 neighbours (including `$readmemh`/`$fread`
-storage arguments) executing in both editions. Complete Annex A coverage is not
-claimed: only the forms listed above are gated beyond keywords and system names.
+storage arguments) executing in both editions. The 2001 grammar check is closed:
+the wrapper's `Verilog2001SyntaxProfile` walks the parsed, macro-expanded syntax
+trees, admits only the syntax kinds that IEEE 1364-2001 Annex A productions
+produce and checks their optional parts, so a later form needs no listing to be
+rejected. The [RTL-106 suite](../tests/sim_feature_completion/rtl_106.rs)
+rejects macro-built and further keyword-free forms and the variable drivers,
+checks that each negative compiles under 2009, and executes a legal 2001
+composition (UDP, gates, defparam, named generate loops, fork/join, force,
+events, macro-built blocks and calls) on every value backend in both editions.
+Semantic rules the grammar cannot express (for example an `output real` module port)
+remain admitted unless the frontend rejects them; see the
+[known issue](known_issues.md#strict-2001-profile-checks-grammar-and-listed-semantics).
 
 `--compilation-units separate|merged` defaults to `separate`. Separate mode gives
 each source its own preprocessor and `$unit` scope; merged mode shares them in
@@ -1410,17 +1421,20 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   strength. Includes, `` `resetall ``, generated and arrayed instances and
   separate/merged compilation units are covered. Resizable (dynamic) formals
   remain outside the qualified boundary. V §19.9; SV §22.9 **[1995]**.
-- 🟨 **Source mapping** — `` `line ``, `` `__FILE__ `` and `` `__LINE__ `` expose
+- 🟦 **Source mapping** — `` `line ``, `` `__FILE__ `` and `` `__LINE__ `` expose
   mapped values in 2009 through nested includes, include restoration, macro
   use sites and both compilation-unit modes; a directive maps only its own
   file. 2001 admits `` `line `` without the later predefined macros. The owned
   Db keeps each node's physical position and a separate per-file `` `line ``
-  map. Frontend diagnostics and scope-based runtime locations (`$finish`,
-  severity tasks) stay physical; file-based simulator diagnostics, assertion
-  messages and coroutine site locations append `` (`line file:line) ``.
-  Physical `` `__FILE__ `` is the opened file's base name. Frontend diagnostics
-  do not yet carry the mapped position. V §19.7; SV §§22.12–22.13
-  **[2001/SV-2009]**.
+  map. Every file-based location keeps the physical `path:line:col` first and
+  appends `` (`line file:line) ``: Slang, strict-edition and lint diagnostics
+  (CLI text, `--lint-json` `logical_file`/`logical_line`), simulator
+  diagnostics, assertion messages and coroutine site locations. The language
+  server keeps physical ranges and adds the mapped origin as related
+  information ([RTL-106](../tests/sim_feature_completion/rtl_106.rs)).
+  Scope-based runtime locations (`$finish`, severity tasks) print a scope path
+  and stay physical. Physical `` `__FILE__ `` is the opened file's base name.
+  V §19.7; SV §§22.12–22.13 **[2001/SV-2009]**.
 - 🟦 **Keyword/macro state** — `` `begin_keywords `` / `` `end_keywords `` retain
   lexical tables without changing the edition; `` `undefineall `` clears macros.
   SV §§22.5.3, 22.14 **[SV-2005/SV-2009]**; keyword directives first appeared in

@@ -36,6 +36,12 @@ pub struct SourceMap {
 }
 
 impl SourceMap {
+    /// Build the mappings from a snapshot's `` `line`` records; used by
+    /// consumers, such as frontend diagnostics, that run before a Db exists.
+    pub fn from_snapshot(snapshot: &SlangSnapshot) -> Result<Self, DbError> {
+        Self::from_slang(snapshot)
+    }
+
     pub(super) fn from_slang(snapshot: &SlangSnapshot) -> Result<Self, DbError> {
         let mut files: HashMap<String, Vec<LineMapping>> = HashMap::new();
         // The snapshot sorts records by file and offset; walk each file's text

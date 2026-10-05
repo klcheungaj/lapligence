@@ -47,6 +47,7 @@ impl LintRule for BlockingInFFRule {
                 let node = db.node(assign);
                 out.push(LintDiag {
                     rule: "blocking-in-always_ff".to_string(),
+                    logical: None,
                     severity: LintSeverity::Warning,
                     file: node.file().map(str::to_owned),
                     line: node.line,

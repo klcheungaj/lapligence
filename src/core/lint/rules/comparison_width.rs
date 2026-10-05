@@ -52,6 +52,7 @@ impl LintRule for ComparisonWidthRule {
             let node = db.node(id);
             out.push(LintDiag {
                 rule: "comparison-width-mismatch".to_string(),
+                logical: None,
                 severity: LintSeverity::Warning,
                 file: node.file().map(str::to_owned),
                 line: node.line,

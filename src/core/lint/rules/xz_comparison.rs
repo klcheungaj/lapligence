@@ -58,6 +58,7 @@ impl LintRule for XzLogicalEqualityRule {
             }
             out.push(LintDiag {
                 rule: "xz-logical-equality".to_string(),
+                logical: None,
                 severity: LintSeverity::Warning,
                 file: node.file().map(str::to_owned),
                 line,

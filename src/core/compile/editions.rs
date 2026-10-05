@@ -894,6 +894,115 @@ fn verilog_2001_semantic_violation(
     None
 }
 
+/// The first variable reference that an lvalue expression writes, following
+/// only the written structure (concatenation operands, select bases and
+/// output-argument assignments), never index or width expressions.
+fn written_variable<'a>(
+    snapshot: &Snapshot,
+    nodes: &HashMap<u64, &'a SemanticNode>,
+    root: u64,
+) -> Option<&'a SemanticNode> {
+    let mut stack = vec![root];
+    let mut visited = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !visited.insert(id) {
+            continue;
+        }
+        let Some(node) = nodes.get(&id).copied() else {
+            continue;
+        };
+        if node.kind == SemanticKind::Expression
+            && node
+                .target_id
+                .and_then(|target| nodes.get(&target))
+                .is_some_and(|target| {
+                    matches!(target.kind, SemanticKind::Variable | SemanticKind::Array)
+                })
+        {
+            return Some(node);
+        }
+        stack.extend(
+            semantic_edges(snapshot, node)
+                .iter()
+                .filter(|edge| {
+                    matches!(
+                        edge.role,
+                        SemanticEdgeRole::Operand | SemanticEdgeRole::Base | SemanticEdgeRole::Lhs
+                    )
+                })
+                .map(|edge| edge.target_id),
+        );
+    }
+    None
+}
+
+/// IEEE 1364-2001 6.1, 7.1 and 12.3.9.2: continuous assignments, gate
+/// outputs and output/inout port connections drive nets, and input/inout
+/// ports are nets inside the module. Variables are procedural targets only.
+/// Returns the reported range and label.
+fn verilog_2001_driver_violation(
+    snapshot: &Snapshot,
+    nodes: &HashMap<u64, &SemanticNode>,
+    node: &SemanticNode,
+) -> Option<(Option<SourceRange>, &'static str)> {
+    let edges = semantic_edges(snapshot, node);
+    let targets = |role: SemanticEdgeRole| {
+        edges
+            .iter()
+            .filter(move |edge| edge.role == role)
+            .map(|edge| edge.target_id)
+    };
+    match node.kind {
+        SemanticKind::ContinuousAssign => {
+            for body in targets(SemanticEdgeRole::Body) {
+                let lhs = nodes
+                    .get(&body)
+                    .map(|assign| semantic_edges(snapshot, assign))
+                    .and_then(|edges| edges.iter().find(|edge| edge.role == SemanticEdgeRole::Lhs));
+                if let Some(written) =
+                    lhs.and_then(|lhs| written_variable(snapshot, nodes, lhs.target_id))
+                {
+                    return Some((
+                        written.range.or(node.range),
+                        "continuous assignment to a variable",
+                    ));
+                }
+            }
+        }
+        SemanticKind::Port => {
+            if node.is_input || node.is_inout {
+                for low in targets(SemanticEdgeRole::LowConnection) {
+                    let variable = nodes.get(&low).is_some_and(|target| {
+                        matches!(target.kind, SemanticKind::Variable | SemanticKind::Array)
+                    }) || written_variable(snapshot, nodes, low).is_some();
+                    if variable {
+                        return Some((node.range, "variable input or inout port"));
+                    }
+                }
+            }
+            if node.is_output || node.is_inout {
+                for high in targets(SemanticEdgeRole::HighConnection) {
+                    if let Some(written) = written_variable(snapshot, nodes, high) {
+                        return Some((written.range, "output port connected to a variable"));
+                    }
+                }
+            }
+        }
+        SemanticKind::Primitive if node.is_primitive_instance => {
+            for actual in targets(SemanticEdgeRole::Actual) {
+                if !nodes.get(&actual).is_some_and(|actual| actual.is_output) {
+                    continue;
+                }
+                if let Some(written) = written_variable(snapshot, nodes, actual) {
+                    return Some((written.range, "gate output connected to a variable"));
+                }
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
 /// Generate constructs outside `generate`/`endgenerate` are a 1364-2005
 /// form; 1364-2001 12.1.3 admits them only inside a generate region.
 fn generate_regions(tokens: &[&crate::ffi::slang::LexicalToken]) -> HashMap<u64, Vec<(u64, u64)>> {
@@ -1150,6 +1259,9 @@ pub(super) fn edition_diagnostics(
                 && node.is_local
             {
                 violations.push((node.range, "nested module declaration".to_owned()));
+            }
+            if let Some((range, label)) = verilog_2001_driver_violation(snapshot, &nodes, node) {
+                violations.push((range, label.to_owned()));
             }
             if is_systemverilog_for_header(snapshot, &nodes, node) {
                 violations.push((node.range, "SystemVerilog for-loop header".to_owned()));
@@ -1412,6 +1524,20 @@ pub(super) fn edition_diagnostics(
             violations.push((token.range, "uniqueness constraint".to_owned()));
         }
     }
+    // The native syntax profile checks the macro-expanded parse trees against
+    // the IEEE 1364-2001 grammar (Verilog-2001 compilations only). A form the
+    // checks above already reported at the same position keeps its label.
+    let reported: HashSet<_> = violations
+        .iter()
+        .filter_map(|(range, _)| range.map(|r| (r.file_id, r.start)))
+        .collect();
+    violations.extend(
+        snapshot
+            .edition_findings
+            .iter()
+            .filter(|finding| !reported.contains(&(finding.range.file_id, finding.range.start)))
+            .map(|finding| (Some(finding.range), finding.label.clone())),
+    );
     let mut seen = HashSet::new();
     violations.into_iter().filter_map(|(range, label)| {
         let key = (range.map(|r| (r.file_id, r.start)), label.clone());
@@ -1424,6 +1550,7 @@ pub(super) fn edition_diagnostics(
         Some(Diag {
             severity: Severity::Error, file, line, col,
             message: format!("`{label}` is not available in IEEE {edition} and is rejected by the strict edition profile"),
+            logical: None,
         })
     }).collect()
 }

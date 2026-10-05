@@ -296,6 +296,7 @@ struct CaptureOutput {
   std::vector<LlgSlangUdpRow> udp_rows;
   std::vector<LlgSlangSourceLibrary> source_libraries;
   std::vector<LlgSlangLineDirective> line_directives;
+  std::vector<LlgSlangEditionFinding> edition_findings;
 };
 
 namespace {
@@ -4458,6 +4459,529 @@ private:
   }
 };
 
+// Strict IEEE 1364-2001 grammar profile over the parsed syntax trees.
+//
+// The frontend parses 2001 sources with its 1364-2005/SystemVerilog grammar
+// and a 1364-2001 keyword table, so a later form that needs no new keyword
+// still parses. The syntax trees are built from the macro-expanded token
+// stream, so checking them sees a form built by a macro exactly like a
+// spelled one. The profile is closed: every syntax kind not listed by
+// verilog2001SyntaxKind() is a later form, and listed kinds get shape checks
+// for the optional parts that IEEE 1364-2001 Annex A lacks (end labels, empty
+// argument lists, `[size]` dimensions, nested assignments and similar).
+// Error-recovery kinds stay admitted; the frontend already reports them.
+class Verilog2001SyntaxProfile {
+public:
+  explicit Verilog2001SyntaxProfile(Capture& capture) : capture(capture) {}
+
+  // Depth is bounded by the parser's own recursion limit.
+  void walk(const syntax::SyntaxNode& node) {
+    if (!verilog2001SyntaxKind(node.kind)) {
+      report(node.sourceRange(), kindLabel(node.kind));
+      return;
+    }
+    checkShape(node);
+    for (size_t i = 0, count = node.getChildCount(); i < count; i++) {
+      if (const syntax::SyntaxNode* child = node.childNode(i))
+        walk(*child);
+    }
+  }
+
+private:
+  using SK = syntax::SyntaxKind;
+
+  // IEEE 1364-2001 Annex A productions as frontend syntax kinds.
+  static bool verilog2001SyntaxKind(SK kind) {
+    switch (kind) {
+      // A.1 source text, configurations and library maps (Clause 13).
+      case SK::CompilationUnit:
+      case SK::ModuleDeclaration:
+      case SK::ModuleHeader:
+      case SK::ParameterPortList:
+      case SK::AnsiPortList:
+      case SK::NonAnsiPortList:
+      case SK::ImplicitNonAnsiPort:
+      case SK::ExplicitNonAnsiPort:
+      case SK::EmptyNonAnsiPort:
+      case SK::PortReference:
+      case SK::PortConcatenation:
+      case SK::ImplicitAnsiPort:
+      case SK::NetPortHeader:
+      case SK::VariablePortHeader:
+      case SK::PortDeclaration:
+      case SK::ConfigDeclaration:
+      case SK::ConfigCellIdentifier:
+      case SK::ConfigInstanceIdentifier:
+      case SK::ConfigLiblist:
+      case SK::ConfigUseClause:
+      case SK::CellConfigRule:
+      case SK::InstanceConfigRule:
+      case SK::DefaultConfigRule:
+      case SK::LibraryMap:
+      case SK::LibraryDeclaration:
+      case SK::LibraryIncludeStatement:
+      case SK::LibraryIncDirClause:
+      case SK::FilePathSpec:
+      // A.2 declarations.
+      case SK::DataDeclaration:
+      case SK::Declarator:
+      case SK::NetDeclaration:
+      case SK::EqualsValueClause:
+      case SK::GenvarDeclaration:
+      case SK::ParameterDeclaration:
+      case SK::ParameterDeclarationStatement:
+      case SK::ImplicitType:
+      case SK::RegType:
+      case SK::IntegerType:
+      case SK::TimeType:
+      case SK::RealType:
+      case SK::RealTimeType:
+      case SK::EventType:
+      case SK::VariableDimension:
+      case SK::RangeDimensionSpecifier:
+      case SK::DriveStrength:
+      case SK::PullStrength:
+      case SK::ChargeStrength:
+      case SK::Delay3:
+      case SK::DelayControl:
+      case SK::FunctionDeclaration:
+      case SK::TaskDeclaration:
+      case SK::FunctionPrototype:
+      case SK::FunctionPortList:
+      case SK::FunctionPort:
+      // A.3 primitive instances, A.4 module instances and generates.
+      case SK::PrimitiveInstantiation:
+      case SK::HierarchyInstantiation:
+      case SK::HierarchicalInstance:
+      case SK::InstanceName:
+      case SK::ParameterValueAssignment:
+      case SK::OrderedParamAssignment:
+      case SK::NamedParamAssignment:
+      case SK::OrderedPortConnection:
+      case SK::NamedPortConnection:
+      case SK::EmptyPortConnection:
+      case SK::DefParam:
+      case SK::DefParamAssignment:
+      case SK::GenerateRegion:
+      case SK::LoopGenerate:
+      case SK::IfGenerate:
+      case SK::CaseGenerate:
+      case SK::GenerateBlock:
+      // A.5 UDPs.
+      case SK::UdpDeclaration:
+      case SK::AnsiUdpPortList:
+      case SK::NonAnsiUdpPortList:
+      case SK::UdpBody:
+      case SK::UdpEntry:
+      case SK::UdpInitialStmt:
+      case SK::UdpInputPortDecl:
+      case SK::UdpOutputPortDecl:
+      case SK::UdpSimpleField:
+      case SK::UdpEdgeField:
+      // A.6 behavioral statements.
+      case SK::ContinuousAssign:
+      case SK::InitialBlock:
+      case SK::AlwaysBlock:
+      case SK::SequentialBlockStatement:
+      case SK::ParallelBlockStatement:
+      case SK::NamedBlockClause:
+      case SK::ConditionalStatement:
+      case SK::ConditionalPredicate:
+      case SK::ConditionalPattern:
+      case SK::ElseClause:
+      case SK::CaseStatement:
+      case SK::StandardCaseItem:
+      case SK::DefaultCaseItem:
+      case SK::LoopStatement:
+      case SK::ForeverStatement:
+      case SK::ForLoopStatement:
+      case SK::TimingControlStatement:
+      case SK::EventControl:
+      case SK::EventControlWithExpression:
+      case SK::ImplicitEventControl:
+      case SK::RepeatedEventControl:
+      case SK::SignalEventExpression:
+      case SK::BinaryEventExpression:
+      case SK::ParenthesizedEventExpression:
+      case SK::ExpressionStatement:
+      case SK::ProceduralAssignStatement:
+      case SK::ProceduralForceStatement:
+      case SK::ProceduralDeassignStatement:
+      case SK::ProceduralReleaseStatement:
+      case SK::DisableStatement:
+      case SK::BlockingEventTriggerStatement:
+      case SK::WaitStatement:
+      case SK::EmptyStatement:
+      // A.7 specify blocks.
+      case SK::SpecifyBlock:
+      case SK::SpecparamDeclaration:
+      case SK::SpecparamDeclarator:
+      case SK::PathDeclaration:
+      case SK::PathDescription:
+      case SK::SimplePathSuffix:
+      case SK::EdgeSensitivePathSuffix:
+      case SK::ConditionalPathDeclaration:
+      case SK::IfNonePathDeclaration:
+      case SK::PulseStyleDeclaration:
+      case SK::SystemTimingCheck:
+      case SK::TimingCheckEventArg:
+      case SK::TimingCheckEventCondition:
+      case SK::ExpressionTimingCheckArg:
+      case SK::EmptyTimingCheckArg:
+      case SK::EdgeControlSpecifier:
+      case SK::EdgeDescriptor:
+      // A.8 expressions and A.9 general.
+      case SK::AttributeInstance:
+      case SK::AttributeSpec:
+      case SK::IdentifierName:
+      case SK::IdentifierSelectName:
+      case SK::ScopedName:
+      case SK::SystemName:
+      case SK::IntegerLiteralExpression:
+      case SK::IntegerVectorExpression:
+      case SK::RealLiteralExpression:
+      case SK::StringLiteralExpression:
+      case SK::UnaryPlusExpression:
+      case SK::UnaryMinusExpression:
+      case SK::UnaryLogicalNotExpression:
+      case SK::UnaryBitwiseNotExpression:
+      case SK::UnaryBitwiseAndExpression:
+      case SK::UnaryBitwiseNandExpression:
+      case SK::UnaryBitwiseOrExpression:
+      case SK::UnaryBitwiseNorExpression:
+      case SK::UnaryBitwiseXorExpression:
+      case SK::UnaryBitwiseXnorExpression:
+      case SK::AddExpression:
+      case SK::SubtractExpression:
+      case SK::MultiplyExpression:
+      case SK::DivideExpression:
+      case SK::ModExpression:
+      case SK::PowerExpression:
+      case SK::EqualityExpression:
+      case SK::InequalityExpression:
+      case SK::CaseEqualityExpression:
+      case SK::CaseInequalityExpression:
+      case SK::LessThanExpression:
+      case SK::LessThanEqualExpression:
+      case SK::GreaterThanExpression:
+      case SK::GreaterThanEqualExpression:
+      case SK::LogicalAndExpression:
+      case SK::LogicalOrExpression:
+      case SK::BinaryAndExpression:
+      case SK::BinaryOrExpression:
+      case SK::BinaryXorExpression:
+      case SK::BinaryXnorExpression:
+      case SK::LogicalShiftLeftExpression:
+      case SK::LogicalShiftRightExpression:
+      case SK::ArithmeticShiftLeftExpression:
+      case SK::ArithmeticShiftRightExpression:
+      case SK::ConditionalExpression:
+      case SK::ConcatenationExpression:
+      case SK::MultipleConcatenationExpression:
+      case SK::ParenthesizedExpression:
+      case SK::MinTypMaxExpression:
+      case SK::ElementSelectExpression:
+      case SK::ElementSelect:
+      case SK::BitSelect:
+      case SK::SimpleRangeSelect:
+      case SK::AscendingRangeSelect:
+      case SK::DescendingRangeSelect:
+      case SK::MemberAccessExpression:
+      case SK::InvocationExpression:
+      case SK::ArgumentList:
+      case SK::OrderedArgument:
+      case SK::EmptyArgument:
+      case SK::AssignmentExpression:
+      case SK::NonblockingAssignmentExpression:
+      case SK::TimingControlExpression:
+      // Port connections and arguments are parsed as property expressions;
+      // these wrappers hold a plain expression.
+      case SK::SimplePropertyExpr:
+      case SK::SimpleSequenceExpr:
+      case SK::ParenthesizedPropertyExpr:
+      case SK::ParenthesizedSequenceExpr:
+      // Error recovery; the frontend reports these itself.
+      case SK::Unknown:
+      case SK::BadExpression:
+      case SK::EmptyIdentifierName:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  static std::string kindLabel(SK kind) {
+    switch (kind) {
+      case SK::NamedLabel: return "statement label";
+      case SK::WildcardPortConnection: return "implicit named port connection";
+      case SK::ExplicitAnsiPort: return "explicit ANSI port expression";
+      case SK::NamedArgument: return "named subroutine argument";
+      case SK::UnbasedUnsizedLiteralExpression: return "unbased unsized literal";
+      case SK::TimeLiteralExpression: return "time literal";
+      case SK::CastExpression:
+      case SK::SignedCastExpression: return "cast";
+      case SK::EmptyMember: return "empty module item";
+      default: break;
+    }
+    // A Slang kind spelling such as `AssignmentPatternExpression` becomes
+    // `assignment pattern expression`.
+    const std::string_view name = syntax::toString(kind);
+    std::string label;
+    for (size_t i = 0; i < name.size(); i++) {
+      const char c = name[i];
+      const bool upper = c >= 'A' && c <= 'Z';
+      if (upper && i != 0 &&
+          ((name[i - 1] >= 'a' && name[i - 1] <= 'z') ||
+           (i + 1 < name.size() && name[i + 1] >= 'a' && name[i + 1] <= 'z' &&
+            name[i - 1] >= 'A' && name[i - 1] <= 'Z')))
+        label += ' ';
+      label += upper ? static_cast<char>(c - 'A' + 'a') : c;
+    }
+    return label;
+  }
+
+  static bool isEmptyImplicitType(const syntax::DataTypeSyntax* type) {
+    if (!type)
+      return true;
+    if (type->kind != SK::ImplicitType)
+      return false;
+    const auto& implicit = type->as<syntax::ImplicitTypeSyntax>();
+    return !implicit.signing && implicit.dimensions.empty();
+  }
+
+  // 1364-2001 A.2.1.1 / A.2.6: parameter, function result and task/function
+  // argument types are `[signed] [range]`, integer, real, realtime or time.
+  static bool scalarTypeKind(SK kind) {
+    return kind == SK::ImplicitType || kind == SK::IntegerType ||
+           kind == SK::TimeType || kind == SK::RealType ||
+           kind == SK::RealTimeType;
+  }
+
+  void checkShape(const syntax::SyntaxNode& node) {
+    switch (node.kind) {
+      case SK::NamedBlockClause:
+        checkNamedBlockClause(node);
+        break;
+      case SK::ModuleHeader: {
+        const auto& header = node.as<syntax::ModuleHeaderSyntax>();
+        if (header.lifetime)
+          report(header.lifetime.range(), "module lifetime");
+        break;
+      }
+      case SK::ParameterPortList: {
+        const auto& list = node.as<syntax::ParameterPortListSyntax>();
+        bool first = true;
+        for (const auto* declaration : list.declarations) {
+          // A.1.3: every port declaration starts with `parameter`; a later
+          // declaration without a keyword continues the previous list.
+          if (first && !declaration->keyword)
+            report(declaration->sourceRange(),
+                   "parameter port without the parameter keyword");
+          if (declaration->keyword &&
+              declaration->keyword.kind != parsing::TokenKind::ParameterKeyword)
+            report(declaration->keyword.range(),
+                   "localparam in a parameter port list");
+          first = false;
+        }
+        break;
+      }
+      case SK::ParameterDeclaration: {
+        const auto& declaration = node.as<syntax::ParameterDeclarationSyntax>();
+        if (!scalarTypeKind(declaration.type->kind))
+          report(declaration.type->sourceRange(), "parameter data type");
+        break;
+      }
+      case SK::DataDeclaration: {
+        const auto& declaration = node.as<syntax::DataDeclarationSyntax>();
+        if (!declaration.modifiers.empty())
+          report(declaration.modifiers[0].range(), "declaration qualifier");
+        break;
+      }
+      case SK::NetDeclaration: {
+        const auto& declaration = node.as<syntax::NetDeclarationSyntax>();
+        if (declaration.type->kind != SK::ImplicitType)
+          report(declaration.type->sourceRange(), "net data type");
+        break;
+      }
+      case SK::VariableDimension: {
+        const auto& dimension = node.as<syntax::VariableDimensionSyntax>();
+        // A.2.5: dimension ::= [ expr : expr ].
+        if (!dimension.specifier)
+          report(node.sourceRange(), "dynamic array dimension");
+        else if (dimension.specifier->kind == SK::RangeDimensionSpecifier &&
+                 dimension.specifier->as<syntax::RangeDimensionSpecifierSyntax>()
+                         .selector->kind != SK::SimpleRangeSelect)
+          report(node.sourceRange(), "unpacked dimension size");
+        break;
+      }
+      case SK::FunctionPrototype:
+        checkPrototype(node.as<syntax::FunctionPrototypeSyntax>());
+        break;
+      case SK::FunctionPort: {
+        const auto& port = node.as<syntax::FunctionPortSyntax>();
+        if (port.constKeyword || port.staticKeyword || port.varKeyword)
+          report(node.sourceRange(), "argument qualifier");
+        if (port.dataType && !scalarTypeKind(port.dataType->kind) &&
+            port.dataType->kind != SK::RegType)
+          report(port.dataType->sourceRange(), "argument data type");
+        if (!port.direction && !isEmptyImplicitType(port.dataType))
+          report(node.sourceRange(), "argument type without a direction");
+        if (!port.declarator->dimensions.empty())
+          report(port.declarator->dimensions[0]->sourceRange(),
+                 "unpacked array argument");
+        break;
+      }
+      case SK::InvocationExpression: {
+        const auto& call = node.as<syntax::InvocationExpressionSyntax>();
+        // A.8.2: user calls list expressions; system calls may leave
+        // arguments empty (A.6.9 system_task_enable).
+        if (call.left->kind == SK::SystemName || !call.arguments)
+          break;
+        if (call.arguments->parameters.empty())
+          report(call.arguments->sourceRange(), "empty subroutine argument list");
+        for (const auto* argument : call.arguments->parameters) {
+          if (argument->kind == SK::EmptyArgument)
+            report(call.arguments->sourceRange(), "empty subroutine argument");
+        }
+        break;
+      }
+      case SK::NamedPortConnection: {
+        const auto& connection = node.as<syntax::NamedPortConnectionSyntax>();
+        if (!connection.openParen)
+          report(connection.name.range(), "implicit named port connection");
+        break;
+      }
+      case SK::SignalEventExpression: {
+        const auto& event = node.as<syntax::SignalEventExpressionSyntax>();
+        // A.6.5 event_expression has only posedge and negedge.
+        if (event.edge.kind == parsing::TokenKind::EdgeKeyword)
+          report(event.edge.range(), "edge event control");
+        break;
+      }
+      case SK::ConditionalPredicate:
+        if (node.as<syntax::ConditionalPredicateSyntax>().conditions.size() > 1)
+          report(node.sourceRange(), "conditional pattern list");
+        break;
+      case SK::ForLoopStatement: {
+        const auto& loop = node.as<syntax::ForLoopStatementSyntax>();
+        // A.6.8: one variable_assignment on each side of a condition.
+        if (loop.initializers.size() != 1 || loop.steps.size() != 1 ||
+            !loop.stopExpr)
+          report(loop.forKeyword.range(), "SystemVerilog for-loop header");
+        break;
+      }
+      case SK::LoopGenerate: {
+        const auto& loop = node.as<syntax::LoopGenerateSyntax>();
+        // A.4.2 genvar_assignment names an already declared genvar.
+        if (loop.genvar)
+          report(loop.genvar.range(), "genvar declaration in a generate loop");
+        // 12.1.3.2: the loop body is `begin : name ... end`.
+        if (loop.block->kind != SK::GenerateBlock ||
+            !loop.block->as<syntax::GenerateBlockSyntax>().beginName)
+          report(loop.block->sourceRange(), "unnamed generate loop block");
+        break;
+      }
+      case SK::ConfigDeclaration:
+        if (!node.as<syntax::ConfigDeclarationSyntax>().localparams.empty())
+          report(node.sourceRange(), "configuration localparam");
+        break;
+      case SK::ConfigUseClause:
+        if (node.as<syntax::ConfigUseClauseSyntax>().paramAssignments)
+          report(node.sourceRange(), "configuration parameter assignment");
+        break;
+      case SK::AssignmentExpression:
+      case SK::NonblockingAssignmentExpression:
+        checkAssignmentPlacement(node);
+        break;
+      default:
+        break;
+    }
+  }
+
+  // A.6.3/A.4.2: only `begin : name`, `fork : name` and generate blocks
+  // carry a name; no closing keyword takes a `: label`.
+  void checkNamedBlockClause(const syntax::SyntaxNode& node) {
+    const syntax::SyntaxNode* parent = node.parent;
+    if (!parent)
+      return;
+    if (syntax::BlockStatementSyntax::isKind(parent->kind) &&
+        parent->as<syntax::BlockStatementSyntax>().blockName == &node)
+      return;
+    if (parent->kind == SK::GenerateBlock &&
+        parent->as<syntax::GenerateBlockSyntax>().beginName == &node)
+      return;
+    // Report from the closing keyword so the position matches the token
+    // check for the same spelled form.
+    SourceRange range = node.sourceRange();
+    for (size_t i = 1, count = parent->getChildCount(); i < count; i++) {
+      if (parent->childNode(i) == &node) {
+        if (parsing::Token keyword = parent->childToken(i - 1))
+          range = SourceRange(keyword.location(), range.end());
+        break;
+      }
+    }
+    report(range, "end label");
+  }
+
+  void checkPrototype(const syntax::FunctionPrototypeSyntax& prototype) {
+    if (prototype.keyword.kind == parsing::TokenKind::FunctionKeyword &&
+        !scalarTypeKind(prototype.returnType->kind))
+      report(prototype.returnType->sourceRange(), "function return type");
+    if (prototype.name->kind != SK::IdentifierName)
+      report(prototype.name->sourceRange(), "qualified subroutine name");
+    if (!prototype.portList)
+      return;
+    // A.2.6-A.2.7: an ANSI argument list is nonempty and starts with a
+    // direction.
+    const auto& ports = prototype.portList->ports;
+    if (ports.empty()) {
+      report(prototype.portList->sourceRange(), "empty subroutine argument list");
+      return;
+    }
+    const auto* first = ports[0];
+    if (first->kind == SK::FunctionPort &&
+        !first->as<syntax::FunctionPortSyntax>().direction)
+      report(first->sourceRange(), "argument without a direction");
+  }
+
+  // A.6.2/A.6.8/A.6.1: assignments are statements, continuous assignments,
+  // for-loop/generate-loop steps or procedural continuous assignments,
+  // never operands of an expression.
+  void checkAssignmentPlacement(const syntax::SyntaxNode& node) {
+    const syntax::SyntaxNode* parent = node.parent;
+    if (!parent)
+      return;
+    switch (parent->kind) {
+      case SK::ExpressionStatement:
+      case SK::ContinuousAssign:
+      case SK::ForLoopStatement:
+      case SK::LoopGenerate:
+      case SK::ProceduralAssignStatement:
+      case SK::ProceduralForceStatement:
+        if (node.kind == SK::AssignmentExpression ||
+            parent->kind == SK::ExpressionStatement)
+          return;
+        break;
+      default:
+        break;
+    }
+    report(node.sourceRange(), "assignment within an expression");
+  }
+
+  void report(SourceRange range, std::string_view label) {
+    if (capture.output.edition_findings.size() >= LLG_SLANG_MAX_EDITION_FINDINGS)
+      return;
+    const LlgSlangSourceRange span = capture.span(range);
+    if (span.file_id == LLG_SLANG_INVALID_ID)
+      return;
+    chargeRecord(capture.output, sizeof(LlgSlangEditionFinding));
+    capture.output.edition_findings.push_back(
+        {span, storeString(capture.output, label)});
+  }
+
+  Capture& capture;
+};
+
 class CaptureClient final : public DiagnosticClient {
 public:
   CaptureClient(Capture& capture, uint32_t provider)
@@ -5081,6 +5605,11 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   for (const auto& tree : compilation.getSyntaxTrees())
     tree->root().visit(lexicalCapture);
   lexicalCapture.bindSemanticTokens();
+  if (edition.snapshotFlag == LLG_SLANG_SNAPSHOT_EDITION_VERILOG_2001) {
+    Verilog2001SyntaxProfile profile(capture);
+    for (const auto& tree : compilation.getSyntaxTrees())
+      profile.walk(tree->root());
+  }
 
   lexicalStage.finish();
   return output;
@@ -5106,7 +5635,7 @@ bool sinkComplete(const LlgSlangSink& sink) {
          sink.parameters && sink.instances && sink.semantic_edges &&
          sink.semantic_nodes && sink.udp_rows && sink.udp_tables &&
          sink.lexical_tokens && sink.source_libraries &&
-         sink.line_directives && sink.end;
+         sink.line_directives && sink.edition_findings && sink.end;
 }
 
 void checkSink(uint32_t status) {
@@ -5148,6 +5677,7 @@ void streamCapture(CaptureOutput& output, const LlgSlangSink& sink) {
       output.lexical_tokens.size(),
       output.source_libraries.size(),
       output.line_directives.size(),
+      output.edition_findings.size(),
   };
   checkSink(sink.begin(sink.context, &header));
   streamTable(sink, sink.files, output.files);
@@ -5171,6 +5701,7 @@ void streamCapture(CaptureOutput& output, const LlgSlangSink& sink) {
   streamTable(sink, sink.lexical_tokens, output.lexical_tokens);
   streamTable(sink, sink.source_libraries, output.source_libraries);
   streamTable(sink, sink.line_directives, output.line_directives);
+  streamTable(sink, sink.edition_findings, output.edition_findings);
   checkSink(sink.end(sink.context));
 }
 

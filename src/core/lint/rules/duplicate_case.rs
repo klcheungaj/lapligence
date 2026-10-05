@@ -70,6 +70,7 @@ impl LintRule for DuplicateCaseItemRule {
                         }
                         out.push(LintDiag {
                             rule: "duplicate-case-item".to_string(),
+                            logical: None,
                             severity: LintSeverity::Warning,
                             file: later.file().map(str::to_owned),
                             line,

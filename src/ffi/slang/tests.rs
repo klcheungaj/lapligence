@@ -23,6 +23,7 @@ struct Tables {
     lexical_tokens: Vec<RawLexicalToken>,
     source_libraries: Vec<RawSourceLibrary>,
     line_directives: Vec<RawLineDirective>,
+    edition_findings: Vec<RawEditionFinding>,
 }
 
 impl Tables {
@@ -47,6 +48,7 @@ impl Tables {
             lexical_token_count: self.lexical_tokens.len() as u64,
             source_library_count: self.source_libraries.len() as u64,
             line_directive_count: self.line_directives.len() as u64,
+            edition_finding_count: self.edition_findings.len() as u64,
         }
     }
 }
@@ -100,7 +102,8 @@ fn drive(sink: &RawSink, header: &RawStreamHeader, tables: &Tables, batch: usize
         udp_tables: udp_tables,
         lexical_tokens: lexical_tokens,
         source_libraries: source_libraries,
-        line_directives: line_directives
+        line_directives: line_directives,
+        edition_findings: edition_findings
     );
     // SAFETY: `context` is the sink's builder.
     unsafe { (sink.end)(context) }
@@ -853,6 +856,55 @@ fn line_directive_records_are_bounded_sorted_and_deduplicated() {
             vec![record(0, 12, 40, mapped), record(0, 12, 41, mapped)],
             "disagree",
         ),
+    ] {
+        let error = invalid_native_message(stream(&tables(records)));
+        assert!(error.contains(message), "{error}");
+    }
+}
+
+#[test]
+fn edition_finding_records_are_bounded_and_keep_capture_order() {
+    let name = b"a.v";
+    let files = vec![RawFile {
+        id: 0,
+        name: RawString {
+            data: name.as_ptr(),
+            len: name.len() as u64,
+        },
+        byte_len: 20,
+    }];
+    let tables = |edition_findings: Vec<RawEditionFinding>| Tables {
+        files: files.clone(),
+        edition_findings,
+        ..Tables::default()
+    };
+    let record = |file_id, start, end, label: &'static [u8]| RawEditionFinding {
+        range: RawRange {
+            file_id,
+            start,
+            end,
+        },
+        label: RawString {
+            data: label.as_ptr(),
+            len: label.len() as u64,
+        },
+    };
+    let decoded = stream(&tables(vec![
+        record(0, 9, 12, b"end label"),
+        record(0, 2, 4, b"cast"),
+    ]))
+    .expect("valid records")
+    .edition_findings;
+    let summary: Vec<_> = decoded
+        .iter()
+        .map(|f| (f.range.start, f.range.end, f.label.as_str()))
+        .collect();
+    assert_eq!(summary, vec![(9, 12, "end label"), (2, 4, "cast")]);
+    for (records, message) in [
+        (vec![record(1, 0, 1, b"cast")], "unknown file"),
+        (vec![record(0, 4, 21, b"cast")], "outside its file"),
+        (vec![record(INVALID_ID, 0, 0, b"cast")], "no source range"),
+        (vec![record(0, 1, 2, b"")], "empty label"),
     ] {
         let error = invalid_native_message(stream(&tables(records)));
         assert!(error.contains(message), "{error}");
