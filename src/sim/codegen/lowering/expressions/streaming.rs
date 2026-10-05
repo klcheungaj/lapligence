@@ -154,26 +154,32 @@ impl<'a> Codegen<'a> {
         })?;
         let uninitialized = Self::fixed_element_uninitialized(element);
         // An aggregate element is uniform when its default is all X (every
-        // leaf four-state) or all zero (every leaf two-state).
-        let (uniform, two_state) = match &uninitialized {
-            None => (true, element.two_state),
+        // leaf four-state) or all zero (every leaf two-state). Otherwise its
+        // two-state leaves are the bits whose default is a known zero.
+        let (two_state, two_state_runs) = match &uninitialized {
+            None => (element.two_state, Vec::new()),
             Some(default) => {
-                let all_x = IrConst::integral_default(element_width, false);
-                let limb = |words: &[u64], index: usize| words.get(index).copied().unwrap_or(0);
-                if (0..all_x.x.len()).all(|index| limb(&default.x, index) == all_x.x[index])
-                    && default.z.iter().all(|word| *word == 0)
-                {
-                    (true, false)
-                } else if default
-                    .x
-                    .iter()
-                    .chain(&default.z)
-                    .chain(&default.bits)
-                    .all(|word| *word == 0)
-                {
-                    (true, true)
-                } else {
-                    (false, element.two_state)
+                let limb = |words: &[u64], index: u32| {
+                    words.get((index / 64) as usize).copied().unwrap_or(0) >> (index % 64) & 1
+                };
+                let known = |bit: u32| limb(&default.x, bit) == 0 && limb(&default.z, bit) == 0;
+                let mut runs = Vec::new();
+                let mut bit = 0;
+                while bit < element_width {
+                    if !known(bit) {
+                        bit += 1;
+                        continue;
+                    }
+                    let lsb = bit;
+                    while bit < element_width && known(bit) {
+                        bit += 1;
+                    }
+                    runs.push((lsb, bit - lsb));
+                }
+                match runs.as_slice() {
+                    [] => (false, Vec::new()),
+                    [(0, width)] if *width == element_width => (true, Vec::new()),
+                    _ => (element.two_state, runs),
                 }
             }
         };
@@ -190,7 +196,7 @@ impl<'a> Codegen<'a> {
             bounds: *bounds,
             element_width,
             two_state,
-            uniform,
+            two_state_runs,
             fallback: uninitialized
                 .unwrap_or_else(|| IrConst::integral_default(element_width, element.two_state)),
         }))

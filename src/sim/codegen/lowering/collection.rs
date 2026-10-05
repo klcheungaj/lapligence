@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 
 mod aggregates;
 mod arguments;
+pub(super) use arguments::CallWriteback;
 mod call_contracts;
 pub(super) use call_contracts::{EventEvaluation, PostponedEvaluation};
 mod calls;

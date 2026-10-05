@@ -275,6 +275,25 @@ impl<'a> Codegen<'a> {
         node: NodeId,
         bindings: &HashMap<NodeId, IrDependency>,
     ) -> Option<IrDependency> {
+        if let Some(select) = self.packed_element_member_select(node) {
+            // A member of a packed-array element: the member's bits when the
+            // element is static, otherwise the element chain's own prefix.
+            let prefix = self.packed_storage_prefix_bound(select, bindings)?;
+            let NodeKind::Expr(ExprKind::HierPath { parts, .. }) = self.kind(node) else {
+                return Some(prefix);
+            };
+            let element = self
+                .query_descriptor(select)
+                .and_then(Self::fixed_descriptor_width);
+            let member = self.packed_member_layout(select, &parts[1..]);
+            let (storage, lsb, width) = self.dependency_span(&prefix)?;
+            return Some(match (element, member) {
+                (Some(element), Some(member)) if element == width => {
+                    self.slice_dependency(storage, lsb.checked_add(member.lsb)?, member.width)
+                }
+                _ => prefix,
+            });
+        }
         if let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) {
             // A ref formal has no independent signal. Resolve its selected
             // field within the actual's prefix, not through global storage.
@@ -1929,11 +1948,25 @@ impl<'a> Codegen<'a> {
                 }
                 Ok(())
             }
-            NodeKind::Expr(ExprKind::HierPath { .. }) => {
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
                 // A hierarchical LHS base signal must not trigger the owning
-                // process (same rule as a plain LHS ref). The backend supports only
-                // constant indices/bounds on hierarchical targets, so there
-                // are no index/bounds reads to collect.
+                // process (same rule as a plain LHS ref). A member path rooted
+                // at an element select (`s[i].lo`) keeps that select node among
+                // its references; its selectors choose the written element,
+                // so they are reads of the writer.
+                for root in refs.iter().flatten() {
+                    if matches!(self.kind(*root), NodeKind::Expr(_)) {
+                        self.walk_lhs_select_reads_bound(
+                            scope_path,
+                            *root,
+                            seen,
+                            visited,
+                            out,
+                            include_function_bodies,
+                            bindings,
+                        )?;
+                    }
+                }
                 Ok(())
             }
             _ => Ok(()), // plain ref LHS: not part of the read set

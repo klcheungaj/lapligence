@@ -176,7 +176,7 @@ supported.
 | --- | --- |
 | Packed element or value | 1–1,048,575 bits inclusive; `LLG_SUPPORTED_WIDTH_LIMIT = 1 << 20` is exclusive. Each packed cell uses its actual width. |
 | Generated fixed unpacked array | At most 16,777,216 cells in the product of all dimensions (`LLG_MAX_FIXED_ARRAY_CELLS`). Extents/products are checked before allocation; an over-limit declaration receives a resource diagnostic. |
-| Fixed array used as a value, formal or stream | Integral variable arrays use non-flattened descriptor transport: whole and selected-row copies, equality, conditionals (element-wise merge for an ambiguous selector), default fills, declaration initializers, array-valued pattern items, pattern-lvalue row scatter and multi-segment/unaligned streams, including constant in-bounds `with` ranges. Module, package, function-static and block-static declaration initializers run in the static schedule; automatic block and function arrays initialize per entry. Static, automatic and recursive functions pass such arrays through input, output, inout and ref formals and return them. Arrays of unpacked records whose elements fit the packed limit use the same transport ([RTL-099](../tests/sim_feature_completion/rtl_099.rs) executes 1,048,576 mixed-state records through copies, equality, ambiguous conditionals, function values and an NBA with a bounded model). Records with a member array above the 4,096-cell dense threshold, and records or finite tagged unions wider than 1,048,575 bits, keep each member array and scalar leaf in its own descriptor column: they copy, compare, merge ambiguous conditionals per member, match structure and tagged patterns, and pass through module ports and static, automatic and recursive subroutine formals, results and locals, with generated C independent of the member extent ([RTL-101](../tests/sim_feature_completion/rtl_101.rs); remaining limits in the [known issue](known_issues.md#remaining-non-flattened-fixed-value-contexts)). Direct reductions read cells individually. |
+| Fixed array used as a value, formal or stream | Integral variable arrays use non-flattened descriptor transport: whole and selected-row copies, equality, conditionals (element-wise merge for an ambiguous selector), default fills, declaration initializers, array-valued pattern items, pattern-lvalue row scatter and multi-segment/unaligned streams, including runtime `with` ranges, dense rows and nested streams; dense rows also serve as pattern items and scatter targets of descriptor sources (RTL-103). Module, package, function-static and block-static declaration initializers run in the static schedule; automatic block and function arrays initialize per entry. Static, automatic and recursive functions pass such arrays through input, output, inout and ref formals and return them. Arrays of unpacked records whose elements fit the packed limit use the same transport ([RTL-099](../tests/sim_feature_completion/rtl_099.rs) executes 1,048,576 mixed-state records through copies, equality, ambiguous conditionals, function values and an NBA with a bounded model). Records with a member array above the 4,096-cell dense threshold, and records or finite tagged unions wider than 1,048,575 bits, keep each member array and scalar leaf in its own descriptor column: they copy, compare, merge ambiguous conditionals per member, match structure and tagged patterns, and pass through module ports and static, automatic and recursive subroutine formals, results and locals, with generated C independent of the member extent ([RTL-101](../tests/sim_feature_completion/rtl_101.rs); remaining limits in the [known issue](known_issues.md#remaining-non-flattened-fixed-value-contexts)). Direct reductions read cells individually. |
 | Subroutine recursion | At most 256 active calls; a further call emits a recursion-limit diagnostic and returns the result type's default. Recursive calls, including through class virtual and virtual-interface dispatch, use heap frames, so their depth does not consume native stack; recursion re-entering through DPI C code does. |
 | Read-only helper inlining | At most 32 nested callback calls; deeper emission receives an explicit diagnostic. |
 | Scheduler region passes | Default 10,000,000 per time slot; `LLG_ZERO_LOOP_LIMIT` accepts a positive decimal `uint64`. Exhaustion diagnoses a zero-delay loop. |
@@ -443,8 +443,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   dependencies. Fixed outputs admit whole arrays, constant rows/slices, aggregate
   values, nested member and member-array targets and instance-array
   distribution; interface modport arrays link through generate and forwarding.
-  A variable output target with runtime selects is an implied continuous
-  assignment: selector changes retarget it and unknown selectors write nothing.
+  A variable output target with runtime selects, including a member target
+  such as `.a(s[i].lo)`, is an implied continuous assignment: selector changes
+  retarget it and unknown selectors write nothing.
   Descriptor-backed arrays (to 16M cells) cross ports as descriptor copies.
   String and native-record value ports carry independent copies, including an
   output driven by a child `assign` (SIM-004).
@@ -540,7 +541,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   initial and always procedure has started; include transitive function reads
   and exclude written expressions. Fixed arrays (including 65,537-cell
   descriptor arrays, by contents marker rather than per cell), nested record and
-  packed members, constant/runtime selectors, conditional arms, sequential
+  packed members, constant/runtime selectors (including those of a written
+  member target such as `s[i].lo`), conditional arms, sequential
   predicates, ref ports (nested, to members and cells), string variables and
   string record members, and aggregate input links contribute dependencies.
   Unchanged results do not notify downstream readers; a closed latch retains
@@ -809,8 +811,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   packed arrays of structures and unions. Out-of-range/X/Z reads
   produce X positions; writes affect only in-range positions. Ordinary part
   selects remain unsigned; an element select keeps its element type's sign.
-  Member access through a packed-array element (`ps[i].f`) rejects
-  ([known issue](known_issues.md#member-access-through-packed-array-elements)). V §§4.1.14, 4.2.1–4.2.2 **[1995/2001]**.
+  Members of packed-array elements (`ps[i].f`, `w[i][j].s.f`, `q[k][i].f`,
+  `h.arr[i].f`) and their sub-selects read, write, drive ports and nets, force
+  and wait through the same element chain; a tagged-union member of such an
+  element rejects
+  ([known issue](known_issues.md#tagged-union-members-of-packed-array-elements)). V §§4.1.14, 4.2.1–4.2.2 **[1995/2001]**.
 - 🟦 **Packed strings and sign conversion** — Eight-bit ASCII vectors support
   literals/escapes, assignment, comparison, concatenation and padding/truncation.
   `$signed`/`$unsigned`, resolved sign/self-determined width rules and X/Z
@@ -908,11 +913,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Bit-stream casts and streaming** — Fixed arrays/nested records, selected
   rows/members, call results and admitted ref/const-ref projections preserve
   state conversion and non-dividing/type slice sizes within packed capacity.
-  Oversized streams of integral arrays, selected rows, call results and constant
-  in-bounds `with` ranges support multiple segments and unaligned slice sizes
-  through a lazily read stream image; the RHS is snapshotted before publication.
-  Runtime `with` ranges and nested oversized streams in such streams reject.
-  Packed and bounded
+  Oversized streams of integral arrays, selected rows, call results, `with`
+  ranges (constant, runtime or partly out of range), dense arrays and rows,
+  packed values and nested streams support multiple segments and unaligned
+  slice sizes through a lazily read stream image without flattening
+  ([RTL-103](../tests/sim_feature_completion/rtl_103.rs)); the RHS is
+  snapshotted before publication, and a runtime-sized stream larger than its
+  target is a run-time error. Packed and bounded
   dynamic/queue-element streams capture one RHS, then publish destinations in
   stream order with overlap-safe snapshots. A stream assigned to a wider fixed
   target is left-aligned and zero-filled on the right; oversize streams reject.
@@ -927,9 +934,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   sources and selectors. At most one resizable destination is allowed;
   mixed/resizable destinations use a
   [blocking-only assignment path](../src/sim/codegen/lowering/containers/streaming.rs).
-  Nonblocking or right-to-left selectors that read an earlier target of the same
-  unpack, runtime target ranges in copy-out or delayed assignments, and runtime
-  target ranges over mixed two-state/four-state record elements reject.
+  Output copy-out from a task or void-function call statement unpacks into
+  runtime or out-of-range `with` targets with selectors fixed at the call, and
+  elements mixing two-state and four-state members convert member-wise
+  (RTL-103). Nonblocking, right-to-left or copy-out selectors that read an
+  earlier target of the same unpack, and such targets of a function call inside
+  an expression or of an intra-assignment-delayed assignment, reject.
   Compound streaming assignments are outside the assignment grammar
   (SV §11.4.14.3, Annex A.6.2). Fixed-size cast mismatches, unpacked-union
   bit-stream casts, real/associative operands, native strings, recursive objects
@@ -1505,7 +1515,9 @@ domains, gated/initial history, Preponed reads and LSB/X/Z edge rules; `$past`
 counts only clock time steps strictly before its evaluation. Real arguments
 keep numeric samples: `$past` returns the exact sampled real and
 `$stable/$changed` compare with real `==`; `$rose/$fell` of a real are
-illegal. Future global forms and complex clocks remain rejected. Future global
+illegal. Outside any assertion, a procedural `$sampled` returns the
+Preponed value of every packed or real signal it reads, registered without
+per-slot history. Future global forms and complex clocks remain rejected. Future global
 functions are legal in SV2009 property/sequence contexts under §16.9.4, with
 global clocking, nonnesting and match-item restrictions and delayed assertion
 actions; their rejection is an implementation gap. Procedural and action-block

@@ -57,6 +57,7 @@ fn image_target(target: IrLhs) -> IrStreamTarget {
         element_width: 8,
         two_state: false,
         selector: index_selector(),
+        two_state_runs: Vec::new(),
     }
 }
 
@@ -161,4 +162,120 @@ fn memory_views_bound_their_last_element() {
         model.validate_stmt(&fill(view(3, (2, 9))), None).is_err(),
         "a view one cell past the array is rejected"
     );
+}
+
+#[test]
+fn image_selector_two_state_runs_stay_disjoint_inside_one_element() {
+    let model = image_model();
+    let runs = |two_state_runs: Vec<(u32, u32)>| {
+        let IrStreamTarget::FixedImageSelector {
+            target,
+            bounds,
+            element_width,
+            two_state,
+            selector,
+            ..
+        } = image_target(IrLhs::Whole(0))
+        else {
+            unreachable!("image target")
+        };
+        stream(
+            vec![IrStreamTarget::FixedImageSelector {
+                target,
+                bounds,
+                element_width,
+                two_state,
+                selector,
+                two_state_runs,
+            }],
+            false,
+        )
+    };
+    model
+        .validate_stmt(&runs(vec![(0, 2), (4, 3)]), None)
+        .expect("ascending disjoint runs inside an 8-bit element");
+    for (invalid, reason) in [
+        (vec![(0, 0)], "an empty run"),
+        (vec![(0, 4), (2, 2)], "overlapping runs"),
+        (vec![(6, 3)], "a run past the element"),
+    ] {
+        assert!(
+            model.validate_stmt(&runs(invalid), None).is_err(),
+            "{reason}"
+        );
+    }
+}
+
+/// A 5,000-cell descriptor destination, a 5,000-cell descriptor source and a
+/// four-cell dense array, all of 8-bit cells.
+fn descriptor_stream_model() -> IrModel {
+    let mut model = valid_model();
+    for (name, right) in [("dst", 4999), ("src", 4999), ("dense", 3)] {
+        model
+            .arrays
+            .push(IrArray::new(name.into(), name.into(), 8, false, vec![(0, right)]).unwrap());
+    }
+    model
+}
+
+fn whole_view(model: &IrModel, array: usize) -> IrMemoryView {
+    let total = model.arrays[array].total;
+    IrMemoryView {
+        array,
+        origin: 0,
+        selectors: Vec::new(),
+        sliced: false,
+        dims: model.arrays[array].dims.clone(),
+        strides: vec![1],
+        total,
+    }
+}
+
+#[test]
+fn descriptor_stream_operands_check_cells_and_storage() {
+    let model = descriptor_stream_model();
+    let assign = |src: IrFixedValue| IrStmt::FixedValueAssign {
+        dst: whole_view(&model, 0),
+        src: Box::new(src),
+        nba: false,
+    };
+    let packed = |width: u32, cell_width: u32, runtime_sized: bool| IrFixedValue::Packed {
+        value: Box::new(packed_const(0, width)),
+        cell_width,
+        runtime_sized,
+    };
+    let selected = |array: usize| IrFixedValue::Selected {
+        array,
+        selector: index_selector(),
+    };
+    let stream = |parts: Vec<IrFixedValue>| IrFixedValue::Stream { parts, slice: 0 };
+    model
+        .validate_stmt(
+            &assign(stream(vec![
+                packed(16, 8, false),
+                selected(1),
+                IrFixedValue::Dense(whole_view(&model, 2)),
+                packed(32, 8, true),
+            ])),
+            None,
+        )
+        .expect("packed, selected, dense and runtime-sized operands");
+    model
+        .validate_stmt(&assign(packed(40_000, 8, false)), None)
+        .expect("a packed operand of the destination's width");
+    for (invalid, reason) in [
+        (stream(vec![packed(12, 8, false)]), "partial packed cells"),
+        (stream(vec![selected(2)]), "a selection of dense storage"),
+        (
+            stream(vec![IrFixedValue::Dense(whole_view(&model, 1))]),
+            "a dense view of descriptor storage",
+        ),
+        (selected(1), "a runtime-sized whole operand"),
+        (packed(16, 8, false), "a narrower whole operand"),
+    ] {
+        assert!(
+            model.validate_stmt(&assign(invalid), None).is_err(),
+            "{reason}"
+        );
+    }
 }

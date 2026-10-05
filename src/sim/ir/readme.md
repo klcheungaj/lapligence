@@ -77,7 +77,11 @@ meaning of an existing variant:
   the 4,096-cell dense threshold), `IrArray::element_uninitialized` defaults,
   and `IrNetArray`/`IrNetCellRun` constant runs for undriven net-array cells.
 - Values above packed capacity: `IrFixedValue` (`Array(IrMemoryView)`, `Call`,
-  `Conditional` with `element_cells`, `Stream`, `Convert`), assigned by
+  `Conditional` with `element_cells`, `Stream`, `Convert`, and the additive
+  stream/pattern operands of RTL-103: `Dense` views of dense integral storage,
+  `Packed` values split into cells, `Selected` runtime `with` selections of
+  one-dimensional descriptor arrays; the last two may be runtime-sized and
+  count as zero bits for static checks), assigned by
   `IrStmt::FixedValueAssign` and compared by `IrExprKind::FixedValueCompare`;
   whole arrays also use `FixedArrayCopy`, `FixedArrayDeclare`,
   `FixedArrayFill`, `FixedArrayOrder` and `FixedArrayReduce`.
@@ -151,6 +155,10 @@ an activation declared by `FixedArrayDeclare` and emitted as a lexical
 `IrSampledFunc::RealStable/RealChanged` and `$past` over a real keep the
 argument's exact 64-bit IEEE image in the history domain and compare or decode
 it as a real; `$sampled` of a real reads a numeric Preponed snapshot.
+A procedural `$sampled` registers every signal its argument reads: reals
+through `IrInitStep::RegisterSampled`, packed signals through
+`IrInitStep::RegisterSampledValue`, which keeps the Preponed value without the
+per-slot history that clocking input skews read.
 
 ## Bounded packed selection chains
 

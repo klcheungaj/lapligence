@@ -331,12 +331,10 @@ locals, member initializers on column member arrays, and subroutine or
 comparison use of a column record that has `real`, `string` or `chandle`
 members. Copying a whole member array out of an inactive tagged-union member
 is not guarded; element reads and writes report the inactive member at run time.
-Descriptor pattern items and scatter targets whose rows are small dense
-arrays inside an oversized source, dense arrays and runtime `with` ranges as parts
-of an oversized stream, and nested oversized streams reject with explicit
-diagnostics; constant in-bounds `with` ranges stream as sliced views (RTL-015).
-Extending those paths through per-cell source expansion would recreate the
-capacity cost.
+Dense rows as descriptor pattern items and scatter targets, and dense arrays,
+packed values, runtime `with` ranges and nested streams as parts of an
+oversized stream, use descriptor transport (RTL-103); a resizable container operand of an oversized
+stream rejects (SIM-020).
 
 Fixed-array `reverse`/`sort`/`rsort`, selected-row reductions and `inside`
 over stored cells (descriptor arrays, selected rows and dense arrays above 16
@@ -455,23 +453,23 @@ element-wise expressions run as cell loops.
 ## Streaming `with` targets outside the direct assignment path
 
 **Status:** open; RTL-015 represents runtime and partly out-of-bounds fixed
-`with` targets only in a direct (blocking or nonblocking) streaming assignment.
+`with` targets in a direct (blocking or nonblocking) streaming assignment, and
+RTL-103 adds output copy-out from task and void-function call statements.
 
 Such a range needs its bounds checked and its in-range elements written at run
-time (IEEE 1800-2009 §11.4.14.4), which the `StreamAssign` statement does. An
-output or inout copy-out actual and an intra-assignment-delayed assignment lower
-their target as a static lvalue instead, so a runtime or out-of-bounds `with`
-range there rejects with "requires a direct streaming assignment"; a constant
-in-bounds range works. A runtime range over a record member array, ref formal or
-local whose elements mix two-state and four-state members also rejects, because
-its packed element write cannot apply member-wise state conversion; a uniform
-element domain, any model array and every source use work. Supporting either
-needs a copy-out/delayed stream plan or a member-wise conversion mask.
+time (IEEE 1800-2009 §11.4.14.4), which the `StreamAssign` statement does. A
+copy-out runs it after the call with the selectors fixed when the call starts.
+A function call inside an expression has no statement after it to run it in,
+and an intra-assignment-delayed assignment lowers its target as a static
+lvalue (SIM-014), so a runtime or out-of-bounds `with` range there rejects; a
+constant in-bounds range works. Supporting the expression call needs a
+writeback form of the checked unpack in the call ABI.
 
-Two forms reject by owner policy rather than cost: a selector that reads a target
-unpacked earlier by the same nonblocking unpack (nothing is published at issue)
-or by a right-to-left unpack (the consumed width must be known before the bits
-are reordered). Assign the length first in its own statement.
+Three forms reject by owner policy rather than cost: a selector that reads a
+target unpacked earlier by the same nonblocking unpack (nothing is published at
+issue), by a right-to-left unpack (the consumed width must be known before the
+bits are reordered) or by a copy-out (its selectors are fixed before the call).
+Assign the length first in its own statement.
 
 ## Runtime-selected module reference connections have no qualified binding oracle
 
@@ -774,20 +772,22 @@ for each expression port, selected by the bound instance at run time.
 Reproduce with `interface i; logic [7:0] a; modport m(input .p(a[3:0]));
 endinterface`, `virtual i.m v = inst;` and `$display("%h", v.p);`.
 
-## Member access through packed-array elements
+## Tagged-union members of packed-array elements
 
-**Status:** open (found while fixing multidimensional packed range selects).
+**Status:** open (boundary kept when member access through packed-array
+elements was admitted).
 
-A member select of one element of a packed array of structures or unions,
-such as `ps[i].hi` for `pair_t [3:0] ps`, is not captured as a member path and
-rejects with ``unsupported executable node `MemberAccess` ``. Whole-element and
-range selects (`ps[i]`, `ps[2:1]`) and member selects of unpacked-array
-elements work. The cause is in Db capture: a member path is built over an
-element select only when the base is an unpacked array or has several packed
-dimensions, so this member access keeps no owned form. Capturing the element
-select as the path root, and lowering it through the packed member
-projection, would admit it. Until then, select the element into a structure
-variable first, or use the equivalent part-select.
+A member of a tagged union that is an element of a packed array, such as
+`tp[i].a` for `t_t [1:0] tp` with `typedef union tagged packed {...} t_t`,
+rejects with ``tagged-union member `a` of a packed-array element is not
+supported``. Reading or writing it needs the tag check on the selected
+element; the packed element-member projection (`collection/packed_elements.rs`)
+carries no tag guard, so it rejects rather than read inactive payload bits.
+Other packed structure and union members of packed-array elements work, as do
+tagged-union members of whole signals. Lowering it as an
+`IrExprKind::TaggedSelect` / `IrLhs::TaggedSelect` whose steps are the element
+chain followed by the guarded member step would admit it. Until then, select
+the element into a tagged-union variable first.
 
-Reproduce with `typedef struct packed { logic [3:0] hi, lo; } pair_t;
-pair_t [3:0] ps; initial $display("%h", ps[3].hi);`.
+Reproduce with `typedef union tagged packed { logic [3:0] a, b; } t_t;
+t_t [1:0] tp; initial $display("%h", tp[0].a);`.

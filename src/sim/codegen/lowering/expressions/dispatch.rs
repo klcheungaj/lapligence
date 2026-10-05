@@ -771,6 +771,11 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         h: NodeId,
     ) -> Result<IrExpr, String> {
+        if self.packed_element_member_select(h).is_some() {
+            if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
+                return Ok(value);
+            }
+        }
         let partial_array_select = match self.kind(h) {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 Some((*base, indices.clone()))

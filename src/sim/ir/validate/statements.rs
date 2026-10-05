@@ -408,11 +408,20 @@ impl Validator<'_> {
                             bounds: (left, right),
                             element_width,
                             selector,
+                            two_state_runs,
                             ..
                         } => {
                             self.validate_lhs(target, formals, &format!("{target_path}.target"))?;
                             let count = u64::from(left.abs_diff(*right)) + 1;
+                            // Runs are disjoint, ascending and inside one element.
+                            let mut next_lsb = 0u64;
+                            let runs_valid = two_state_runs.iter().all(|(lsb, width)| {
+                                let valid = *width != 0 && u64::from(*lsb) >= next_lsb;
+                                next_lsb = u64::from(*lsb) + u64::from(*width);
+                                valid
+                            }) && next_lsb <= u64::from(*element_width);
                             if *element_width == 0
+                                || !runs_valid
                                 || self.lhs_packed_width(target).map(u64::from)
                                     != Some(count * u64::from(*element_width))
                             {

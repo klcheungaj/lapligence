@@ -200,6 +200,14 @@ impl Validator<'_> {
                     return self.fail(path, "sampled real source must be a variable");
                 }
             }
+            IrInitStep::RegisterSampledValue(sig) => {
+                let Some(signal) = self.model.signals.get(*sig) else {
+                    return self.fail(path, format!("sampled signal index {sig} is out of bounds"));
+                };
+                if matches!(signal.ty, IrType::Real { .. }) || signal.ty.width() == 0 {
+                    return self.fail(path, "sampled value source must be packed");
+                }
+            }
             IrInitStep::Initialize(initialization) => match &initialization.target {
                 IrInitTarget::Fixed(lhs) => {
                     self.validate_lhs(lhs, &[], &format!("{path}.target"))?;
@@ -254,7 +262,7 @@ impl Validator<'_> {
             | IrInitStep::SetScalar { value, .. }
             | IrInitStep::WriteNet { value, .. } => self.validate_const(value, path),
             IrInitStep::FillArrayX(_) => Ok(()),
-            IrInitStep::RegisterSampled(_) => Ok(()),
+            IrInitStep::RegisterSampled(_) | IrInitStep::RegisterSampledValue(_) => Ok(()),
             // The body was validated above. Suspension is rejected by the
             // owned emitter, which owns the execution-effect analysis.
             IrInitStep::Execute { .. } => Ok(()),

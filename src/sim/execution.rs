@@ -2279,7 +2279,10 @@ fn collect_fixed_value_effects(
                 collect_fixed_value_effects(ir, part, effects, visited_calls);
             }
         }
-        IrFixedValue::Array(_) => {}
+        IrFixedValue::Array(_)
+        | IrFixedValue::Dense(_)
+        | IrFixedValue::Packed { .. }
+        | IrFixedValue::Selected { .. } => {}
         IrFixedValue::Convert { value, .. } => {
             collect_fixed_value_effects(ir, value, effects, visited_calls)
         }

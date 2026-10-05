@@ -597,27 +597,41 @@ static void fixed_snapshot_publish(llg_fixed_array_t* dst, llg_fixed_array_t* sn
     } else fixed_array_apply(dst, snapshot);
 }
 
+/* Snapshot `count` stream sources into one lazily read bit image whose cells
+ * are `cell_width` bits; cell bits past the sources read zero. */
+static llg_fixed_image_t* fixed_stream_image(const llg_fixed_array_t* const* sources, size_t count, uint32_t slice, uint32_t cell_width, int two_state) {
+    llg_fixed_image_t* image = llg_checked_calloc(1, sizeof(*image), "fixed stream image");
+    image->refs = 1; image->count = count; image->slice = slice;
+    image->cell_width = cell_width; image->two_state = two_state;
+    image->sources = llg_checked_calloc(count, sizeof(*image->sources), "fixed stream sources");
+    for (size_t i = 0; i < count; ++i) {
+        fixed_array_snapshot(&image->sources[i], sources[i], 0);
+        uint64_t width = llg_sv4_width(sources[i]->initial);
+        if (sources[i]->total > (UINT64_MAX - image->bit_count) / width) fixed_bad_state("fixed stream width overflow");
+        image->bit_count += sources[i]->total * width;
+    }
+    return image;
+}
+
+/* Every operand may be empty (a runtime `with` selection of no elements), so
+ * a stream of no sources publishes zeros: the empty stream is left-justified
+ * and zero-filled (SV 11.4.14). */
 void llg_fixed_array_stream_segments(llg_fixed_array_t* dst, const llg_fixed_array_t* const* sources, size_t count, int two_state, int nba, uint32_t slice) {
     if (region_is_read_only_now(g.current_region) && !region_private_store("fixed array stream"))
         return;
     llg_value_scope_t* pin = value_target_pin(dst);
     llg_value_scope_t* scope = llg_value_scope_begin_object(sizeof(llg_fixed_array_t), llg_fixed_array_destroy);
     llg_fixed_array_t* snapshot = llg_value_scope_object(scope);
-    if (!count) fixed_bad_state("empty fixed stream");
-    if (count == 1 && !slice && dst->total == sources[0]->total && llg_sv4_width(dst->initial) == llg_sv4_width(sources[0]->initial)) {
+    if (!count) {
+        llg_fixed_array_init(snapshot, dst->total, sv4_zero(llg_sv4_width(dst->initial), llg_sv4_signed(dst->initial)), NULL);
+    } else if (count == 1 && !slice && dst->total == sources[0]->total && llg_sv4_width(dst->initial) == llg_sv4_width(sources[0]->initial)) {
         fixed_array_snapshot(snapshot, sources[0], two_state);
     } else {
-        llg_fixed_image_t* image = llg_checked_calloc(1, sizeof(*image), "fixed stream image");
-        image->refs = 1; image->count = count; image->slice = slice;
-        image->cell_width = llg_sv4_width(dst->initial); image->two_state = two_state;
-        image->sources = llg_checked_calloc(count, sizeof(*image->sources), "fixed stream sources");
-        for (size_t i = 0; i < count; ++i) {
-            fixed_array_snapshot(&image->sources[i], sources[i], 0);
-            uint64_t width = llg_sv4_width(sources[i]->initial);
-            if (sources[i]->total > (UINT64_MAX - image->bit_count) / width) fixed_bad_state("fixed stream width overflow");
-            image->bit_count += sources[i]->total * width;
+        llg_fixed_image_t* image = fixed_stream_image(sources, count, slice, llg_sv4_width(dst->initial), two_state);
+        if (dst->total > UINT64_MAX / image->cell_width || image->bit_count > dst->total * image->cell_width) {
+            fixed_image_release(image);
+            fixed_bad_state("fixed stream exceeds destination");
         }
-        if (dst->total > UINT64_MAX / image->cell_width || image->bit_count > dst->total * image->cell_width) fixed_bad_state("fixed stream exceeds destination");
         llg_fixed_array_init(snapshot, dst->total, sv4_zero(image->cell_width, llg_sv4_signed(dst->initial)), NULL);
         llg_fixed_range_t* range = llg_checked_calloc(1, sizeof(*range), "fixed stream range");
         range->count = dst->total; range->image = image; snapshot->ranges = range;
@@ -625,6 +639,88 @@ void llg_fixed_array_stream_segments(llg_fixed_array_t* dst, const llg_fixed_arr
     fixed_snapshot_publish(dst, snapshot, nba);
     llg_value_scope_end(scope);
     if (pin) llg_value_scope_end(pin);
+}
+
+static uint32_t fixed_gcd(uint32_t a, uint32_t b) {
+    while (b) { uint32_t t = a % b; a = b; b = t; }
+    return a;
+}
+
+int llg_fixed_array_stream_value(llg_fixed_array_t* result, const llg_fixed_array_t* const* sources, size_t count, uint32_t slice) {
+    if (!result || result->total) fixed_bad_state("invalid fixed stream operand");
+    /* The common divisor of every source cell width divides the stream
+     * width, so the image has no padding cells. */
+    uint32_t cell_width = 0;
+    for (size_t i = 0; i < count; ++i) cell_width = fixed_gcd(cell_width, llg_sv4_width(sources[i]->initial));
+    if (!count) return 0;
+    llg_fixed_image_t* image = fixed_stream_image(sources, count, slice, cell_width, 0);
+    llg_fixed_array_init(result, image->bit_count / cell_width, sv4_zero(cell_width, 0), NULL);
+    llg_fixed_range_t* range = llg_checked_calloc(1, sizeof(*range), "fixed stream range");
+    range->count = result->total; range->image = image; result->ranges = range;
+    return 1;
+}
+
+int llg_fixed_array_packed_source(llg_fixed_array_t* result, sv4_t value, uint32_t cell_width) {
+    if (!result || result->total) fixed_bad_state("invalid fixed stream operand");
+    uint32_t width = llg_sv4_width(value);
+    if (!width) return 0;
+    if (!cell_width || width % cell_width) fixed_bad_state("packed fixed operand is not whole cells");
+    uint64_t total = width / cell_width;
+    llg_fixed_array_init(result, total, sv4_zero(cell_width, 0), NULL);
+    for (uint64_t i = 0; i < total; ++i) {
+        int64_t high = (int64_t)(width - i * cell_width) - 1;
+        sv4_t cell = sv4_part_select(value, high, high - (int64_t)cell_width + 1);
+        if (!sv4_same(cell, result->initial)) sv4_move(llg_fixed_array_cell(result, i), &cell);
+        sv4_destroy(&cell);
+    }
+    return 1;
+}
+
+void llg_fixed_array_dense_source(llg_fixed_array_t* result, const sv4_t* cells,
+                                  uint64_t origin, uint64_t total, sv4_t fallback) {
+    if (!result || result->total || !cells || !total) fixed_bad_state("invalid fixed stream operand");
+    llg_fixed_array_init(result, total, sv4_clone(&fallback), NULL);
+    if (origin == UINT64_MAX) return;
+    for (uint64_t i = 0; i < total; ++i)
+        if (!sv4_same(cells[origin + i], result->initial)) sv4_copy(llg_fixed_array_cell(result, i), &cells[origin + i]);
+}
+
+int llg_fixed_array_with_source(llg_fixed_array_t* result, const llg_fixed_array_t* array,
+                                int64_t declaration_left, int64_t declaration_right,
+                                sv4_t fallback, int selector_kind, sv4_t first, sv4_t second) {
+    if (!result || result->total || !array) fixed_bad_state("invalid fixed stream operand");
+    int64_t left, right;
+    size_t count;
+    llg_fixed_stream_bounds(selector_kind, first, second, declaration_left, declaration_right, &left, &right, &count);
+    if (!count) return 0;
+    uint64_t extent = (uint64_t)(declaration_left >= declaration_right ? declaration_left - declaration_right
+                                                                         : declaration_right - declaration_left) + 1u;
+    if (extent != array->total || llg_sv4_width(fallback) != llg_sv4_width(array->initial))
+        fixed_bad_state("fixed `with` operand shape mismatch");
+    llg_fixed_array_init(result, count, sv4_clone(&fallback), NULL);
+    /* Selected offset i reads storage offset base + i: the selection is
+     * oriented to storage order, which advances one cell per element. */
+    int64_t minuend = declaration_left <= declaration_right ? left : declaration_left;
+    int64_t subtrahend = declaration_left <= declaration_right ? declaration_left : left;
+    uint64_t skip = minuend < subtrahend ? (uint64_t)subtrahend - (uint64_t)minuend : 0;
+    uint64_t start = minuend < subtrahend ? 0 : (uint64_t)minuend - (uint64_t)subtrahend;
+    if (skip >= count || start >= extent) return 1;
+    uint64_t in_bounds = count - skip < extent - start ? count - skip : extent - start;
+    const llg_fixed_array_t* owner = array->owner ? array->owner : array;
+    uint64_t origin = array->owner ? array->origin : 0;
+    if (origin == UINT64_MAX) return 1;
+    start += origin;
+    /* Owner ranges precede the owner's uniform default for the window. */
+    result->ranges = fixed_ranges_copy(owner, start, in_bounds, skip, 0);
+    llg_fixed_range_t** tail = &result->ranges;
+    while (*tail) tail = &(*tail)->next;
+    llg_fixed_range_t uniform = {0}; uniform.value = owner->initial;
+    fixed_range_append(&result->ranges, &tail, fixed_range_clone(&uniform, skip, in_bounds, 0, 0));
+    for (llg_fixed_cell_t* cell = owner->cells; cell; cell = cell->next) {
+        if (cell->index < start || cell->index - start >= in_bounds) continue;
+        sv4_copy(llg_fixed_array_cell(result, cell->index - start + skip), &cell->value);
+    }
+    return 1;
 }
 
 void llg_fixed_array_stream_copy(llg_fixed_array_t* dst, const llg_fixed_array_t* src, int two_state, int nba, uint32_t slice) {

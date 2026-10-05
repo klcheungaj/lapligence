@@ -126,6 +126,19 @@ sv4_t llg_fixed_array_compare(const llg_fixed_array_t*, const llg_fixed_array_t*
 /* Pack a runtime `with` selection of a one-dimensional descriptor array in
  * stream order; indices outside the bounds stream `fallback` (borrowed). */
 sv4_t llg_fixed_array_stream_source(const llg_fixed_array_t*, int64_t, int64_t, uint32_t, sv4_t, int, sv4_t, sv4_t);
+/* Descriptor stream operands (SV 11.4.14). Each initializes a zeroed
+ * scratch array and returns 0, leaving it zeroed, when the operand has no
+ * bits. packed_source splits a borrowed packed value into `cell_width`-bit
+ * cells, left cell first. with_source presents a runtime `with` selection of
+ * a one-dimensional descriptor array in storage order; indices outside the
+ * bounds read the borrowed `fallback`, and no owner cell is materialized.
+ * stream_value lazily images a nested stream of `count` sources. */
+int llg_fixed_array_packed_source(llg_fixed_array_t*, sv4_t, uint32_t);
+int llg_fixed_array_with_source(llg_fixed_array_t*, const llg_fixed_array_t*, int64_t, int64_t, sv4_t, int, sv4_t, sv4_t);
+int llg_fixed_array_stream_value(llg_fixed_array_t*, const llg_fixed_array_t* const*, size_t, uint32_t);
+/* Copy `total` dense cells from `origin` into a zeroed scratch array; an
+ * invalid view (`origin` UINT64_MAX) reads the borrowed `fallback`. */
+void llg_fixed_array_dense_source(llg_fixed_array_t*, const sv4_t*, uint64_t, uint64_t, sv4_t);
 
 // Keep the library and every model translation unit on the host-allocation
 // declaration contract. CMake supplies the same definition when compiling
@@ -1586,6 +1599,10 @@ int llg_cancel_region_callback(llg_region_callback_id_t id);
 // each time slot. The returned pointer is runtime-owned and valid until the
 // next llg_rt_cleanup. Unregistered signals produce a controlled diagnostic.
 void llg_sampled_register(sv4_t* signal);
+// Register a signal for its Preponed value only (procedural `$sampled`,
+// IEEE 1800-2009 16.9.3). It keeps no per-slot history, so its memory stays
+// constant; llg_sampled_register adds the history clocking skews read.
+void llg_sampled_register_value(sv4_t* signal);
 const sv4_t* llg_sampled_value(const sv4_t* signal);
 int llg_sampled_copy(const sv4_t* signal, sv4_t* out);
 // Real variables keep their own numeric Preponed snapshot. Reading an

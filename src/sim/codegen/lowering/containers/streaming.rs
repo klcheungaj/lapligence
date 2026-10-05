@@ -179,6 +179,35 @@ impl<'a> Codegen<'a> {
         blocking: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        let mode = if blocking {
+            StreamTargetMode::Blocking
+        } else {
+            StreamTargetMode::Nonblocking
+        };
+        let Some(plan) = self.stream_mixed_targets(path, lhs, mode, op)? else {
+            return Ok(None);
+        };
+        let source = self.lower_stream_operand(path, rhs, None)?;
+        if source.is_real() {
+            return Err(format!(
+                "real source is not legal for a streaming assignment in `{path}`"
+            ));
+        }
+        Ok(Some(plan.assign(source, !blocking)))
+    }
+
+    /// The checked unpack plan of a streaming target that needs the
+    /// `StreamAssign` statement: one with a packed-element resizable container
+    /// or a fixed `with` range that is runtime-valued or partly outside its
+    /// bounds. `None` means every component is a static packed lvalue.
+    pub(in super::super) fn stream_mixed_targets(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        mode: StreamTargetMode,
+        op: Operation,
+    ) -> Result<Option<StreamTargetPlan>, String> {
+        let blocking = mode == StreamTargetMode::Blocking;
         let NodeKind::Expr(ExprKind::Streaming {
             direction,
             slice_size,
@@ -206,6 +235,10 @@ impl<'a> Codegen<'a> {
             }
         }
         if !needs_mixed {
+            return Ok(None);
+        }
+        if mode == StreamTargetMode::CopyOut && has_container {
+            // Resizable copy-out targets keep their existing lvalue path (SIM-020).
             return Ok(None);
         }
         if !blocking && has_container {
@@ -264,10 +297,10 @@ impl<'a> Codegen<'a> {
                             if (!blocking || reversed_fixed)
                                 && self.reads_overlap_lvalue_writes(path, with_node, &earlier)?
                             {
-                                let form = if blocking {
-                                    "right-to-left"
-                                } else {
-                                    "nonblocking"
+                                let form = match mode {
+                                    StreamTargetMode::Blocking => "right-to-left",
+                                    StreamTargetMode::Nonblocking => "nonblocking",
+                                    StreamTargetMode::CopyOut => "output copy-out",
                                 };
                                 return Err(format!(
                                     "{form} streaming `with` selector reads a target unpacked earlier by the same assignment in `{path}`"
@@ -292,6 +325,7 @@ impl<'a> Codegen<'a> {
                                     element_width: shape.element_width,
                                     two_state: shape.two_state,
                                     selector,
+                                    two_state_runs: shape.two_state_runs,
                                 });
                             }
                             earlier.push(value);
@@ -381,27 +415,19 @@ impl<'a> Codegen<'a> {
             return Err(format!("empty streaming assignment target in `{path}`"));
         }
 
-        let source = self.lower_stream_operand(path, rhs, None)?;
-        if source.is_real() {
-            return Err(format!(
-                "real source is not legal for a streaming assignment in `{path}`"
-            ));
-        }
         let slice = if slice_size == 0 {
             1
         } else {
             u32::try_from(slice_size)
                 .map_err(|_| format!("streaming slice size is too large in `{path}`"))?
         };
-        Ok(Some(IrStmt::StreamAssign {
-            source,
+        Ok(Some(StreamTargetPlan {
+            targets,
             slice,
             direction: match direction {
                 DbStreamingDirection::LeftToRight => IrStreamDirection::LeftToRight,
                 DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
             },
-            targets,
-            nba: !blocking,
         }))
     }
 
@@ -493,5 +519,36 @@ impl<'a> Codegen<'a> {
                 selector,
             },
         ))))
+    }
+}
+
+/// Evaluation point of a checked streaming unpack's `with` selectors.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in super::super) enum StreamTargetMode {
+    /// Selectors are evaluated in stream order as each target is written.
+    Blocking,
+    /// Selectors are evaluated at issue; writes are queued.
+    Nonblocking,
+    /// Output copy-out: selectors are frozen with the actual at the call,
+    /// before the callee runs, and the targets are written after it returns.
+    CopyOut,
+}
+
+/// Fixed and resizable components of a checked streaming unpack.
+pub(in super::super) struct StreamTargetPlan {
+    pub(in super::super) targets: Vec<IrStreamTarget>,
+    pub(in super::super) slice: u32,
+    pub(in super::super) direction: IrStreamDirection,
+}
+
+impl StreamTargetPlan {
+    pub(in super::super) fn assign(self, source: IrExpr, nba: bool) -> IrStmt {
+        IrStmt::StreamAssign {
+            source,
+            slice: self.slice,
+            direction: self.direction,
+            targets: self.targets,
+            nba,
+        }
     }
 }

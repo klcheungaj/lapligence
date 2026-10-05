@@ -1294,6 +1294,9 @@ struct Codegen<'a> {
     /// Real variables read by `$sampled` outside history domains; each gets
     /// a numeric Preponed snapshot registration at model initialization.
     sampled_real_signals: std::collections::BTreeSet<usize>,
+    /// Packed signals a procedural `$sampled` reads, registered for their
+    /// Preponed value without clocking history.
+    sampled_value_signals: std::collections::BTreeSet<usize>,
     /// Lexical bindings for fixed-array reduction maps, keyed by declaration
     /// identity so nested `with` expressions can retain outer iterators.
     fixed_method_iterators: HashMap<NodeId, FixedMethodIterator>,
@@ -1567,6 +1570,7 @@ impl<'a> Codegen<'a> {
             container_initializers: Vec::new(),
             container_iterator: None,
             sampled_real_signals: std::collections::BTreeSet::new(),
+            sampled_value_signals: std::collections::BTreeSet::new(),
             fixed_method_iterators: HashMap::new(),
             pending_container_pre_fns: Vec::new(),
             array_initializers: Vec::new(),
@@ -2400,12 +2404,12 @@ struct EmitCtx<'c, 'a> {
 struct FixedImageShape {
     bounds: (i32, i32),
     element_width: u32,
-    /// Element state domain; meaningful when `uniform`.
+    /// Element state domain; meaningful when `two_state_runs` is empty.
     two_state: bool,
-    /// The element has one state domain, so a packed element write applies
-    /// the right conversion. Unpacked aggregate elements with mixed domains
-    /// are not uniform.
-    uniform: bool,
+    /// `(lsb, width)` of each two-state run of an unpacked aggregate element
+    /// whose members mix state domains. Empty when the element has one
+    /// domain, so a packed element write applies the right conversion.
+    two_state_runs: Vec<(u32, u32)>,
     /// Element default-uninitialized value for out-of-bounds source indices.
     fallback: IrConst,
 }

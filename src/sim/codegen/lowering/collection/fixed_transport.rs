@@ -94,36 +94,143 @@ impl Codegen<'_> {
             let mut parts = Vec::new();
             for stream in streams {
                 if let Some(with_node) = stream.with_expr {
-                    parts.push(IrFixedValue::Array(self.fixed_with_view(
-                        path,
-                        stream.value,
-                        with_node,
-                    )?));
+                    parts.push(self.lower_fixed_with_part(path, stream.value, with_node)?);
                     continue;
                 }
-                let part = self.lower_fixed_value(path, stream.value)?;
-                if matches!(part, IrFixedValue::Stream { .. }) {
-                    // A nested stream has no element-shaped extent of its own.
-                    return Err("nested descriptor streams are not supported".into());
+                if matches!(
+                    self.kind(stream.value),
+                    NodeKind::Expr(ExprKind::Streaming { .. })
+                ) {
+                    match self.lower_fixed_value(path, stream.value)? {
+                        // A nested `>>` stream is the concatenation of its
+                        // operands, so they join this stream directly.
+                        IrFixedValue::Stream {
+                            parts: inner,
+                            slice: 0,
+                        } => parts.extend(inner),
+                        // Other nested streams keep their own reordering and
+                        // are imaged lazily as one operand.
+                        nested => parts.push(nested),
+                    }
+                    continue;
                 }
-                parts.push(part);
+                parts.push(self.lower_fixed_value(path, stream.value)?);
             }
             return Ok(IrFixedValue::Stream { parts, slice });
         }
-        let view = self.fixed_memory_view(path, node)?;
-        if !self.model.arrays[view.array].sparse() {
-            return Err("descriptor value requires descriptor storage".into());
+        if let Ok(view) = self.fixed_memory_view(path, node) {
+            let array = &self.model.arrays[view.array];
+            if array.sparse() {
+                return Ok(IrFixedValue::Array(view));
+            }
+            if !array.real && !array.is_net() && array.elem_width != 0 {
+                return Ok(IrFixedValue::Dense(view));
+            }
         }
-        Ok(IrFixedValue::Array(view))
+        // Dense arrays, small records and integral values fit one packed
+        // value; they enter descriptor transport as cells, never per element.
+        self.lower_fixed_packed(path, node)
+    }
+
+    /// A packed bit-stream operand as descriptor cells: an array keeps its
+    /// element as the cell, any other value is one cell.
+    fn lower_fixed_packed(&mut self, path: &str, node: NodeId) -> Result<IrFixedValue, String> {
+        if self.container_of(node).is_some() {
+            return Err(format!(
+                "resizable container operand of an oversized fixed stream in `{path}` is not supported"
+            ));
+        }
+        let value = match self.lower_bitstream_source(path, node)? {
+            Some(value) => value,
+            None => self.lower_expr(path, node)?,
+        };
+        if value.is_real() || value.width == 0 {
+            return Err(format!(
+                "descriptor operand in `{path}` requires an integral bit-stream value"
+            ));
+        }
+        let cell_width = self
+            .query_descriptor(node)
+            .and_then(|descriptor| match &descriptor.shape {
+                TypeShape::FixedArray { element, .. } => Self::fixed_descriptor_width(element),
+                _ => None,
+            })
+            .filter(|width| *width != 0 && value.width.is_multiple_of(*width))
+            .unwrap_or(value.width);
+        Ok(IrFixedValue::Packed {
+            value: Box::new(value),
+            cell_width,
+            runtime_sized: false,
+        })
+    }
+
+    /// A `with` operand of an oversized stream (SV 11.4.14.4). A constant
+    /// in-bounds range of descriptor storage is a sliced view; any other
+    /// range of descriptor storage is a runtime selection that reads
+    /// out-of-bounds elements as their default. A dense or image array is
+    /// selected as one packed value whose cells are its elements.
+    fn lower_fixed_with_part(
+        &mut self,
+        path: &str,
+        value: NodeId,
+        with_node: NodeId,
+    ) -> Result<IrFixedValue, String> {
+        if let Some(array) = self
+            .array_of(value)
+            .cloned()
+            .filter(|array| self.model.arrays[array.ir].sparse())
+        {
+            let [bounds] = array.dims.as_slice() else {
+                return Err(Self::multidimensional_with_error(path));
+            };
+            if self.static_with_in_bounds(path, with_node, *bounds)? {
+                return Ok(IrFixedValue::Array(
+                    self.fixed_with_view(path, value, with_node)?,
+                ));
+            }
+            return Ok(IrFixedValue::Selected {
+                array: array.ir,
+                selector: self.lower_stream_selector(path, with_node)?,
+            });
+        }
+        if self.container_of(value).is_some() {
+            return Err(format!(
+                "resizable container operand of an oversized fixed stream in `{path}` is not supported"
+            ));
+        }
+        let element_width = match self.array_of(value) {
+            Some(array) => array.elem_width,
+            None => {
+                self.fixed_image_shape(path, value)?
+                    .ok_or_else(|| {
+                        format!(
+                            "streaming `with` selector requires a one-dimensional unpacked array in `{path}`"
+                        )
+                    })?
+                    .element_width
+            }
+        };
+        let runtime_sized = self
+            .static_stream_selector_indices(path, with_node)?
+            .is_none();
+        let selected = self.lower_stream_operand(path, value, Some(with_node))?;
+        if element_width == 0 || selected.is_real() {
+            return Err(format!(
+                "streaming `with` operand in `{path}` requires integral elements"
+            ));
+        }
+        Ok(IrFixedValue::Packed {
+            value: Box::new(selected),
+            cell_width: element_width,
+            runtime_sized,
+        })
     }
 }
 
 impl Codegen<'_> {
     /// A constant in-bounds `with` range of a one-dimensional descriptor
     /// array streams like the equivalent slice (SV 11.4.14.4), so it is a
-    /// sliced view in storage order. A runtime or out-of-bounds range would
-    /// give the stream a runtime extent, which descriptor streams cannot
-    /// represent.
+    /// sliced view in storage order. Other ranges are `IrFixedValue::Selected`.
     fn fixed_with_view(
         &mut self,
         path: &str,
@@ -238,9 +345,12 @@ impl Codegen<'_> {
         let TypeShape::FixedArray { dimensions, .. } = &source.shape else {
             return Ok(None);
         };
+        // A descriptor-stored source scatters rows even when its total width
+        // would fit one packed value: it is never flattened.
         if dimensions.len() < 2
-            || Self::fixed_descriptor_width_bits(&source)
+            || (Self::fixed_descriptor_width_bits(&source)
                 .is_none_or(|width| width <= u64::from(LLG_MAX_WIDTH))
+                && !self.descriptor_operand(rhs))
             || !targets
                 .iter()
                 .all(|(_, descriptor)| matches!(descriptor.shape, TypeShape::FixedArray { .. }))
@@ -265,9 +375,11 @@ impl Codegen<'_> {
                 ));
             }
             let mut view = self.fixed_memory_view(path, *target)?;
-            if !self.model.arrays[view.array].sparse() {
+            let storage = &self.model.arrays[view.array];
+            // A small dense row receives its cells by a copy loop.
+            if !storage.sparse() && (storage.real || storage.is_net() || storage.elem_width == 0) {
                 return Err(format!(
-                    "assignment-pattern lvalue row in `{path}` requires descriptor storage for oversized scatter"
+                    "assignment-pattern lvalue row in `{path}` requires descriptor or dense integral storage for oversized scatter"
                 ));
             }
             for selector in &mut view.selectors {
@@ -318,6 +430,10 @@ impl Codegen<'_> {
                 return Err(format!(
                     "assignment-pattern lvalue row shape mismatch in `{path}`"
                 ));
+            }
+            if !self.model.arrays[view.array].sparse() {
+                ordered.extend(self.dense_row_scatter(path, &view, snapshot.ir, index, nba)?);
+                continue;
             }
             ordered.push(IrStmt::FixedValueAssign {
                 dst: view,

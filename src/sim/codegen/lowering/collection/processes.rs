@@ -826,6 +826,7 @@ impl<'a> Codegen<'a> {
         if pattern_statement_is_local(statement, &remap.local_arrays) {
             return Ok(());
         }
+        let dense_loop = dense_row_loop(statement, &self.model);
         match statement.unlocated_mut() {
             IrStmt::Block(statements) => {
                 for statement in statements {
@@ -843,6 +844,12 @@ impl<'a> Codegen<'a> {
             IrStmt::FixedValueAssign {
                 dst, nba: false, ..
             } if !self.model.arrays[dst.array].is_net() => {
+                remap.next_leaf += 1;
+                Ok(())
+            }
+            // A dense variable row receives a descriptor row by one copy loop
+            // (`dense_row_scatter`); like a descriptor row it is one leaf.
+            IrStmt::For { .. } if dense_loop => {
                 remap.next_leaf += 1;
                 Ok(())
             }
@@ -2031,4 +2038,35 @@ impl<'a> Codegen<'a> {
         }
         Ok(())
     }
+}
+
+/// Whether `statement` is a dense row copy loop: every write is a blocking
+/// whole-element store into one dense variable (non-net) array.
+fn dense_row_loop(statement: &IrStmt, model: &IrModel) -> bool {
+    fn writes(statement: &IrStmt, model: &IrModel, target: &mut Option<usize>) -> bool {
+        match statement.unlocated() {
+            IrStmt::For { body, .. } | IrStmt::Block(body) => body
+                .iter()
+                .all(|statement| writes(statement, model, target)),
+            IrStmt::DeclLocal { .. } => true,
+            IrStmt::Assign {
+                lhs:
+                    IrLhs::ArrayElem {
+                        arr,
+                        elem_sel: IrElemSel::Whole,
+                        ..
+                    },
+                nba: false,
+                ..
+            } => {
+                let array = &model.arrays[*arr];
+                !array.sparse() && !array.is_net() && *target.get_or_insert(*arr) == *arr
+            }
+            _ => false,
+        }
+    }
+    let mut target = None;
+    matches!(statement.unlocated(), IrStmt::For { .. })
+        && writes(statement, model, &mut target)
+        && target.is_some()
 }

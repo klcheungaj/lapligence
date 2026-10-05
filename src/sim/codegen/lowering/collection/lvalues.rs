@@ -207,8 +207,8 @@ impl<'a> Codegen<'a> {
     }
 
     /// The whole packed lvalue of an image-represented fixed array target
-    /// and its shape. Elements must share one state domain so that a packed
-    /// element write applies the declared conversion.
+    /// and its shape. An element whose members mix state domains carries its
+    /// two-state runs, which every element write converts separately.
     pub(in super::super) fn fixed_image_target(
         &mut self,
         path: &str,
@@ -219,11 +219,6 @@ impl<'a> Codegen<'a> {
                 "streaming `with` selector requires a one-dimensional unpacked array target in `{path}`"
             )
         })?;
-        if !shape.uniform {
-            return Err(format!(
-                "streaming `with` target elements mixing two-state and four-state members are not supported in `{path}`"
-            ));
-        }
         let whole = self.analyze_lhs(path, value)?;
         let whole = self.lhs_to_ir(whole)?;
         let count = u64::from(shape.bounds.0.abs_diff(shape.bounds.1)) + 1;
@@ -263,14 +258,49 @@ impl<'a> Codegen<'a> {
             .into_iter()
             .map(|index| {
                 let offset = (index - i128::from(left)).abs();
-                Lhs::Canonical(IrLhs::fixed_image_element(
+                let element = IrLhs::fixed_image_element(
                     &whole,
                     lhs_integer_expr((count - 1 - offset) * width),
                     shape.element_width,
                     shape.two_state,
-                ))
+                );
+                Self::fixed_image_element_lhs(element, &shape)
             })
             .collect())
+    }
+
+    /// An element of an image target as an lvalue. A mixed-domain element is
+    /// the concatenation of its state runs, most significant first, so each
+    /// run applies its own conversion (SV 6.24.3).
+    fn fixed_image_element_lhs(element: IrLhs, shape: &FixedImageShape) -> Lhs {
+        if shape.two_state_runs.is_empty() {
+            return Lhs::Canonical(element);
+        }
+        let mut parts = Vec::new();
+        let mut high = shape.element_width;
+        let mut push = |lsb: u32, width: u32, two_state: bool| {
+            parts.push(Lhs::Canonical(IrLhs::fixed_image_element(
+                &element,
+                lhs_integer_expr(i128::from(lsb)),
+                width,
+                two_state,
+            )));
+        };
+        for (lsb, width) in shape.two_state_runs.iter().rev() {
+            if lsb + width < high {
+                push(lsb + width, high - lsb - width, false);
+            }
+            push(*lsb, *width, true);
+            high = *lsb;
+        }
+        if high > 0 {
+            push(0, high, false);
+        }
+        Lhs::Stream {
+            parts,
+            slice: Some(1),
+            direction: IrStreamDirection::LeftToRight,
+        }
     }
 
     /// True when `node` is a reference to a modport expression port or a
@@ -354,6 +384,11 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn analyze_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Lhs, String> {
+        if self.packed_element_member_select(lhs).is_some() {
+            if let Some(target) = self.packed_value_lhs(path, lhs)? {
+                return Ok(target);
+            }
+        }
         if let Some(target) = self.modport_select_lhs(path, lhs)? {
             return Ok(Lhs::Canonical(target));
         }

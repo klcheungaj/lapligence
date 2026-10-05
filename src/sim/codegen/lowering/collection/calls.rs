@@ -320,6 +320,17 @@ impl<'a> Codegen<'a> {
                         ..
                     }
                 );
+                let mode = super::super::containers::StreamTargetMode::CopyOut;
+                if self
+                    .stream_mixed_targets(scope_path, bound[idx].expr, mode, Operation::Assignment)?
+                    .is_some()
+                {
+                    // An expression call has no statement after it to run the
+                    // checked unpack in; statement calls support it.
+                    return Err(format!(
+                        "streaming `with` copy-out target whose range is runtime-valued or outside the array bounds is not supported for a function call inside an expression in `{scope_path}`"
+                    ));
+                }
                 let (wb, actual_read, selector_inits) = self.lower_call_actual(
                     scope_path,
                     bound[idx].expr,
