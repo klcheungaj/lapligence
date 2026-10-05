@@ -710,7 +710,8 @@ whose target selector has side effects requires a target within the
 1048575-bit packed value limit without native members" when the target is
 wider than the packed value limit (a 65,537-element `int` array) or a record
 with a string, real or other native member. Statement forms with
-side-effect-free targets (`x++;`, `x += b;`) run for every target.
+side-effect-free targets (`x++;`, `x += b;`, and the same updates as `for`
+steps) run for every target.
 
 ### Cause
 

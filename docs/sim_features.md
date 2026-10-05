@@ -968,8 +968,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   are visible after declaration and inner ones shadow outer ones; a wildcard
   import makes a package's overloads candidates after the scope's own (project
   ruling in [sim_data_semantics](sim_data_semantics.md)). Statement-position
-  compound assignments and increments with side-effect-free targets build
-  `A = op(A, B)` and `A = f(A)`; prefix/postfix values, compound values and
+  compound assignments and increments (expression statements and `for` steps)
+  with side-effect-free targets build `A = op(A, B)` and `A = f(A)`;
+  prefix/postfix values, compound values and
   side-effecting target selectors bind the target once and yield the new or
   old value. Those once-bound forms need a target within the packed value
   limit without native members

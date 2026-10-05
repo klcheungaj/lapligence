@@ -1,11 +1,13 @@
-# Positional pattern rows
+# Positional pattern rows and for-step overloaded updates
 
 IEEE 1800-2009 supplies the oracles: §10.10 for positional pattern lvalues
 (the source's elements are taken in declaration order, from the left bound,
 and a target that is itself an unpacked row receives a whole row), §10.9.1
-for `default:` items (a scalar default fills every nested element), and
-§10.3 with Table 10-1 for continuous pattern targets (constant selects).
-Every `.out` file is derived by hand below; none were captured from `llg`.
+for `default:` items (a scalar default fills every nested element), §10.3
+with Table 10-1 for continuous pattern targets (constant selects), §12.7.1
+for `for` steps (their values are discarded) and §11.11 for overloaded
+operators. Every `.out` file is derived by hand below; none were captured
+from `llg`.
 
 ## `dense_rows` (small dense sources)
 
@@ -72,6 +74,26 @@ row. A typed item source `two_t'{w[1], w[0]}` swaps the rows into `nd` and
 big[8][1] = dd`, `vd[2] = n2 = h2 = nd[2] = ee`, `a[0] = bb`,
 `rows[6][5] = aa`.
 
+## `for_step_updates`
+
+`inc` adds `(1, 2)` to `(a, b)`, `add` adds the records, `ninc`/`ndec`
+append `+`/`-` and add `+1`/`-1`, `nadd` appends `*` and adds its integer,
+`vinc` adds 1 to every element and `vadd` adds its integer.
+
+- Packed: three `x++` steps from `(1, 10)` give `(4, 16)` with `i = 3`; two
+  `x += (5, 1)` steps give `(14, 18)`; two `y = x++` steps (a value form)
+  give `x = (16, 22)`, `y = (15, 20)`; two `sa[1]++` steps from `(7, 3)` give
+  `(9, 7)`.
+- Native: three `n++` steps from `("a", 1)` give `("a+++", 4)`; two
+  `n += 5` steps give `("a+++**", 14)`; two `--n` steps give
+  `("a+++**--", 12)`.
+- Descriptor: `c[k] = k`; three `c++` steps give `c[0] = 3`,
+  `c[65536] = 65539`; two `c += 10` steps give `c[1] = 24`,
+  `c[65536] = 65559`.
+- Expression statements under `if`, `case`, `begin`, `fork` and a task:
+  `n++`, `n += 2`, `n++`, `n++` append `+*++` and add 5 (`17`); `c++` and
+  `c += 1` give `c[0] = 25`, `c[65536] = 65561`.
+
 ## Negatives and limits
 
 - `neg_row_shape`: a 3-element row target for a 4-element source row is
@@ -80,3 +102,8 @@ big[8][1] = dd`, `vd[2] = n2 = h2 = nd[2] = ee`, `a[0] = bb`,
   illegal (Table 10-1), also for a descriptor row.
 - `neg_row_automatic_nba`: an automatic row cannot take a nonblocking write
   (§6.21).
+- `limit_descriptor_step_selector`: a for-step update whose target selector
+  has side effects binds its target once, which needs a packed-capacity
+  target; a descriptor-sized row keeps the documented limit, as in an
+  expression statement. (Arrays of records with native members are not
+  admitted at all, so a native element cannot reach this form.)
