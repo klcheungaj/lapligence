@@ -209,6 +209,10 @@ pub struct Db {
     /// their declaration identity as [`NodeKind::NamedEvent`] while this side
     /// table records the index shape needed by the simulator.
     event_arrays: HashMap<NodeId, ArrayMeta>,
+    /// Resizable-container shape of subroutine formals and results, keyed by
+    /// the [`NodeKind::FuncArg`] or [`NodeKind::FuncTask`] node. Formals keep
+    /// their argument identity, so the shape is recorded beside them.
+    subroutine_arrays: HashMap<NodeId, ArrayMeta>,
     /// Canonical owner/path for array-select expressions whose frontend base
     /// is a detached synthetic array node (for example a member array inside
     /// an unpacked aggregate).  Keeping this identity in the owned snapshot
@@ -308,6 +312,7 @@ impl Db {
             design_name: "test".to_owned(),
             arrays: HashMap::new(),
             event_arrays: HashMap::new(),
+            subroutine_arrays: HashMap::new(),
             array_select_paths: HashMap::new(),
             vars_init: HashMap::new(),
             net_delays: HashMap::new(),
@@ -375,6 +380,7 @@ impl Db {
             design_name: design_name.into(),
             arrays,
             event_arrays: HashMap::new(),
+            subroutine_arrays: HashMap::new(),
             array_select_paths: HashMap::new(),
             vars_init: HashMap::new(),
             net_delays: HashMap::new(),
@@ -578,6 +584,12 @@ impl Db {
 
     pub fn event_array_meta(&self, id: NodeId) -> Option<&ArrayMeta> {
         self.event_arrays.get(&id)
+    }
+
+    /// Resizable-container shape (dynamic, queue or associative) of a
+    /// subroutine formal or function result.
+    pub fn subroutine_array_meta(&self, id: NodeId) -> Option<&ArrayMeta> {
+        self.subroutine_arrays.get(&id)
     }
 
     /// Resolve an array-select expression to its aggregate owner and

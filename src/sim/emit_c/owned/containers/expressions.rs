@@ -24,7 +24,7 @@ pub(super) fn render(
             };
             format!(
                 "{function}(&{}, {slice}, {}, {selector_kind}, {first}, {second})",
-                name(ctx, *container),
+                name(frame, *container)?,
                 matches!(direction, IrStreamDirection::RightToLeft) as u8
             )
         }
@@ -54,7 +54,7 @@ pub(super) fn render(
             };
             format!(
                 "sv4_from_u64((uint64_t){method}(&{}), 32, 1)",
-                name(ctx, *index)
+                name(frame, *index)?
             )
         }
         IrContainerExpr::Reduce {
@@ -63,7 +63,7 @@ pub(super) fn render(
         } => format!(
             "{}_reduce(&{}, {})",
             prefix(&ctx.model.containers[*container].kind),
-            name(ctx, *container),
+            name(frame, *container)?,
             match operation {
                 IrContainerReduction::Sum => "LLG_CONTAINER_REDUCE_SUM",
                 IrContainerReduction::Product => "LLG_CONTAINER_REDUCE_PRODUCT",
@@ -82,7 +82,7 @@ pub(super) fn render(
         } => format!(
             "{}_reduce_with(&{}, {}, {}, {}, {}, {}, NULL)",
             prefix(&ctx.model.containers[*container].kind),
-            name(ctx, *container),
+            name(frame, *container)?,
             match operation {
                 IrContainerReduction::Sum => "LLG_CONTAINER_REDUCE_SUM",
                 IrContainerReduction::Product => "LLG_CONTAINER_REDUCE_PRODUCT",
@@ -118,7 +118,7 @@ pub(super) fn render(
             };
             format!(
                 "{method}(&{}, {})",
-                name(ctx, *container),
+                name(frame, *container)?,
                 operand(frame, owners, index)?.code
             )
         }
@@ -129,7 +129,7 @@ pub(super) fn render(
                 IrContainerKind::Queue { .. } => "llg_queue_value_get_real",
                 IrContainerKind::Associative { .. } => "llg_assoc_value_get_integral_real",
             },
-            name(ctx, *container),
+            name(frame, *container)?,
             operand(frame, owners, index)?.code
         ),
         IrContainerExpr::GetNested { container, indices } => format!(
@@ -139,7 +139,7 @@ pub(super) fn render(
                 IrContainerKind::Queue { .. } => "llg_queue_value_get_nested",
                 IrContainerKind::Associative { .. } => "llg_assoc_value_get_nested_integral",
             },
-            name(ctx, *container),
+            name(frame, *container)?,
             super::indices(frame, owners, indices)?,
             indices.len()
         ),
@@ -150,18 +150,18 @@ pub(super) fn render(
                 IrContainerKind::Queue { .. } => "llg_queue_value_get_nested_real",
                 IrContainerKind::Associative { .. } => "llg_assoc_value_get_nested_integral_real",
             },
-            name(ctx, *container),
+            name(frame, *container)?,
             super::indices(frame, owners, indices)?,
             indices.len()
         ),
         IrContainerExpr::GetString { container, key } => format!(
             "llg_owned_assoc_get_string(&{}, {})",
-            name(ctx, *container),
+            name(frame, *container)?,
             key_operand(frame, strings, key)?
         ),
         IrContainerExpr::GetStringReal { container, key } => format!(
             "llg_owned_assoc_value_get_real(&{}, {})",
-            name(ctx, *container),
+            name(frame, *container)?,
             key_operand(frame, strings, key)?
         ),
         IrContainerExpr::Exists { container, key } => format!(
@@ -171,7 +171,7 @@ pub(super) fn render(
             } else {
                 "llg_assoc_value_exists_integral"
             },
-            name(ctx, *container),
+            name(frame, *container)?,
             operand(frame, owners, key)?.code
         ),
         IrContainerExpr::ExistsString { container, key } => format!(
@@ -181,7 +181,7 @@ pub(super) fn render(
             } else {
                 "llg_owned_assoc_value_exists_string"
             },
-            name(ctx, *container),
+            name(frame, *container)?,
             key_operand(frame, strings, key)?
         ),
         IrContainerExpr::AssocTraverse {
@@ -208,7 +208,7 @@ pub(super) fn render(
             };
             format!(
                 "sv4_from_u64({method}(&{}, {}), 32, 1)",
-                name(ctx, *container),
+                name(frame, *container)?,
                 frame.address(key_address)?.address
             )
         }
@@ -223,7 +223,7 @@ pub(super) fn render(
             } else {
                 "llg_owned_assoc_value_traverse_string"
             },
-            name(ctx, *container),
+            name(frame, *container)?,
             format_args!("&{}", ctx.model.objects[*key_object].c_name),
             match direction {
                 IrAssocTraversal::First => 0,
@@ -243,7 +243,7 @@ pub(super) fn render(
             } else {
                 "llg_owned_assoc_value_traverse_string"
             },
-            name(ctx, *container),
+            name(frame, *container)?,
             frame.native_lookup(key_name, NativeKind::String)?.address,
             match direction {
                 IrAssocTraversal::First => 0,
@@ -253,16 +253,16 @@ pub(super) fn render(
             }
         ),
         IrContainerExpr::QueueFront(index) => {
-            format!("llg_queue_front(&{})", name(ctx, *index))
+            format!("llg_queue_front(&{})", name(frame, *index)?)
         }
         IrContainerExpr::QueueBack(index) => {
-            format!("llg_queue_back(&{})", name(ctx, *index))
+            format!("llg_queue_back(&{})", name(frame, *index)?)
         }
         IrContainerExpr::QueuePopFront(index) => {
-            format!("llg_queue_pop_front(&{})", name(ctx, *index))
+            format!("llg_queue_pop_front(&{})", name(frame, *index)?)
         }
         IrContainerExpr::QueuePopBack(index) => {
-            format!("llg_queue_pop_back(&{})", name(ctx, *index))
+            format!("llg_queue_pop_back(&{})", name(frame, *index)?)
         }
     })
 }

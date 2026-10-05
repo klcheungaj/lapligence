@@ -399,7 +399,9 @@ impl Frame<'_, '_> {
                     matched
                 }
                 IrInsideItem::Container { container } => {
-                    let container = self.ctx.model.containers[*container].clone();
+                    let container_name = self.container_name(*container)?;
+                    let mut container = self.ctx.model.containers[*container].clone();
+                    container.c_name = container_name;
                     let Some((width, signed, _)) = container.element.packed() else {
                         return Err("inside container requires packed elements".to_owned());
                     };

@@ -1,0 +1,8 @@
+size 3 second second first
+99 5 first! 3 21
+copy first! changed 99
+assoc keyed 1 created 1 0
+pop changed 2 2.50
+left second 1
+dyn 3 second z [] 4.25 3
+empty 0 0

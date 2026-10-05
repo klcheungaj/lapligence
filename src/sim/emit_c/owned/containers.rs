@@ -6,8 +6,68 @@ mod keys;
 mod statements;
 pub(in crate::sim::emit_c) use keys::key_adapters;
 
-fn name<'a>(ctx: &'a RCtx<'_>, index: usize) -> &'a str {
-    &ctx.model.containers[index].c_name
+fn name(frame: &Frame<'_, '_>, index: usize) -> Result<String, String> {
+    frame.container_name(index)
+}
+
+impl Frame<'_, '_> {
+    /// C lvalue of container `index`: its global for model storage, or the
+    /// binding of an activation container declared or bound in this frame.
+    pub(super) fn container_name(&self, index: usize) -> Result<String, String> {
+        let container = self
+            .ctx
+            .model
+            .containers
+            .get(index)
+            .ok_or("container reference is out of bounds")?;
+        if let Some((class, field)) = container.class_field {
+            // Per-object storage of an instance property, reached through
+            // the receiver of the enclosing method.
+            if self
+                .ctx
+                .func
+                .is_none_or(|function| function.receiver_class.is_none())
+            {
+                return Err("class container property used outside its class methods".to_owned());
+            }
+            let (ty, _, _) = super::super::containers::activation_storage(container, "")?;
+            return Ok(format!(
+                "(*({ty}*)llg_class_field(_this, {class}, {field})->value.handle)"
+            ));
+        }
+        if !container.activation {
+            return Ok(container.c_name.clone());
+        }
+        self.containers
+            .get(&index)
+            .cloned()
+            .ok_or_else(|| "container used before its lexical declaration".to_owned())
+    }
+
+    /// Create an empty container with the storage type of `index`, owned by
+    /// the current lexical value scope, and return its C lvalue. Activation
+    /// containers and call-boundary copies use this storage.
+    pub(super) fn new_container(&mut self, index: usize) -> Result<String, String> {
+        let container = self
+            .ctx
+            .model
+            .containers
+            .get(index)
+            .ok_or("container declaration is out of bounds")?;
+        let (ty, _, destroy) = super::super::containers::activation_storage(container, "")?;
+        let pointer = self.scalar(
+            &format!("{ty}*"),
+            format!(
+                "({ty}*)llg_value_scope_object(llg_value_scope_begin_object(sizeof({ty}), {destroy}))"
+            ),
+        );
+        let target = format!("(*{pointer})");
+        let (_, init, _) = super::super::containers::activation_storage(container, &target)?;
+        for line in init.lines() {
+            self.line(line.trim());
+        }
+        Ok(target)
+    }
 }
 
 fn operand(
@@ -125,12 +185,9 @@ impl Frame<'_, '_> {
         {
             if self.ctx.model.containers[*index].element.is_real() {
                 let back = matches!(operation, IrContainerExpr::QueuePopBack(_));
+                let name = self.container_name(*index)?;
                 return Ok(self.value(
-                    format!(
-                        "llg_queue_value_pop_real(&{}, {})",
-                        self.ctx.model.containers[*index].c_name,
-                        i32::from(back)
-                    ),
+                    format!("llg_queue_value_pop_real(&{name}, {})", i32::from(back)),
                     0,
                     false,
                 ));
@@ -154,9 +211,10 @@ impl Frame<'_, '_> {
             } else {
                 "back"
             };
+            let name = self.container_name(*index)?;
             self.line(format!(
-                "llg_queue_pop_{side}_into(&{}, &{});",
-                self.ctx.model.containers[*index].c_name, result.code
+                "llg_queue_pop_{side}_into(&{name}, &{});",
+                result.code
             ));
             return Ok(result);
         }
@@ -176,6 +234,14 @@ impl Frame<'_, '_> {
         &mut self,
         operation: &IrContainerStmt,
     ) -> Result<(), String> {
+        if let IrContainerStmt::Declare(container) = operation {
+            if !self.ctx.model.containers[*container].activation {
+                return Err("only activation containers are declared lexically".to_owned());
+            }
+            let target = self.new_container(*container)?;
+            self.containers.insert(*container, target);
+            return Ok(());
+        }
         let mut values = Vec::new();
         let mut strings = Vec::new();
         let code = statements::render(self, operation, &mut values, &mut strings)?;
@@ -189,6 +255,18 @@ impl Frame<'_, '_> {
         Ok(())
     }
 }
+/// Runtime whole-container copy for the storage type of `container`.
+pub(super) fn copy_function(container: &crate::sim::ir::IrContainer) -> &'static str {
+    match (container.element.is_packed(), &container.kind) {
+        (false, IrContainerKind::Dynamic) => "llg_dyn_value_copy",
+        (false, IrContainerKind::Queue { .. }) => "llg_queue_value_copy",
+        (false, IrContainerKind::Associative { .. }) => "llg_assoc_value_copy",
+        (true, IrContainerKind::Dynamic) => "llg_dyn_copy",
+        (true, IrContainerKind::Queue { .. }) => "llg_queue_copy",
+        (true, IrContainerKind::Associative { .. }) => "llg_assoc_copy",
+    }
+}
+
 fn prefix(kind: &IrContainerKind) -> &'static str {
     match kind {
         IrContainerKind::Dynamic => "llg_dyn",

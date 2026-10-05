@@ -93,7 +93,9 @@ impl Frame<'_, '_> {
                 }
             }
             IrChandleExpr::ContainerGet { container, index } => {
-                let container = self.ctx.model.containers[*container].clone();
+                let container_name = self.container_name(*container)?;
+                let mut container = self.ctx.model.containers[*container].clone();
+                container.c_name = container_name;
                 let index = self.expression(index)?;
                 let function = match container.kind {
                     IrContainerKind::Dynamic => "llg_dyn_value_get_chandle",
@@ -124,14 +126,16 @@ impl Frame<'_, '_> {
                 if self.read_only_callback {
                     return Err(pending("mutating container query in a read-only callback"));
                 }
-                let name = self.ctx.model.containers[*container].c_name.clone();
+                let name = self.container_name(*container)?;
                 return Ok(self.scalar(
                     "void*",
                     format!("llg_queue_value_pop_chandle(&{name}, {})", i32::from(*back)),
                 ));
             }
             IrChandleExpr::ContainerGetNested { container, indices } => {
-                let container = self.ctx.model.containers[*container].clone();
+                let container_name = self.container_name(*container)?;
+                let mut container = self.ctx.model.containers[*container].clone();
+                container.c_name = container_name;
                 let (list, values) = self.container_indices(indices)?;
                 let function = match container.kind {
                     IrContainerKind::Dynamic => "llg_dyn_value_get_nested_chandle",
@@ -154,7 +158,7 @@ impl Frame<'_, '_> {
                 return Ok(value);
             }
             IrChandleExpr::AssociativeGet { container, key } => {
-                let name = self.ctx.model.containers[*container].c_name.clone();
+                let name = self.container_name(*container)?;
                 let key = self.string(key)?;
                 let value = self.scalar(
                     "void*",
@@ -201,14 +205,17 @@ impl Frame<'_, '_> {
                 "*({})",
                 self.native_lookup(name, NativeKind::Process)?.address
             ),
-            IrProcessExpr::FormalRead(_) => return Err(pending("process-handle formal ABI")),
+            IrProcessExpr::FormalRead(index) => format!(
+                "(llg_process_handle_t*){}",
+                self.chandle(&IrChandleExpr::FormalRead(*index))?
+            ),
             IrProcessExpr::Handle(handle) => {
                 if let IrChandleExpr::QueuePop { container, back } = handle.as_ref() {
                     if self.read_only_callback {
                         return Err(pending("mutating container query in a read-only callback"));
                     }
                     // The popped element's reference moves into the result.
-                    let name = self.ctx.model.containers[*container].c_name.clone();
+                    let name = self.container_name(*container)?;
                     let result = self.native_reserve(NativeKind::Process);
                     self.line(format!(
                         "llg_queue_value_pop_process_to((void**){}, &{name}, {});",
@@ -481,7 +488,7 @@ impl Frame<'_, '_> {
             return Err(pending("container element writes in read-only callbacks"));
         }
         let storage = self.ctx.model.containers[container].clone();
-        let name = storage.c_name.clone();
+        let name = self.container_name(container)?;
         let (call, depth, touch) = match storage.kind {
             IrContainerKind::Associative {
                 key: IrAssocKey::String,

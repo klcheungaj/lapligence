@@ -1078,6 +1078,16 @@ impl<'a> Codegen<'a> {
                         None,
                     ));
                 }
+                if let Some(function) = self.container_result_base(*base) {
+                    return Err(format!(
+                        "container result of `{function}` in `{scope_path}` must be assigned whole to a container variable"
+                    ));
+                }
+                if let Some(property) = self.foreign_class_container(*base) {
+                    return Err(format!(
+                        "class container property `{property}` in `{scope_path}` is accessible only inside its class's methods (SIM-011)"
+                    ));
+                }
                 let ai = self.array_of(*base).cloned().ok_or_else(|| {
                     format!(
                         "cannot resolve array base of select `{}` in `{scope_path}` (base kind: {:?})",

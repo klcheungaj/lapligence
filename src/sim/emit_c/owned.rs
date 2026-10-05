@@ -147,6 +147,9 @@ pub(super) struct Frame<'a, 'm> {
     fixed_arrays: HashMap<usize, String>,
     /// Activation native values bound in this frame (`llg_value_t*` expressions).
     native_values: HashMap<usize, String>,
+    /// Activation containers bound in this frame (container lvalue
+    /// expressions, such as `(*ptr)`).
+    containers: HashMap<usize, String>,
     slots: Vec<bool>,
     next_name: usize,
     bindings: Vec<HashMap<String, Binding>>,
@@ -309,6 +312,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             code: String::new(),
             fixed_arrays: HashMap::new(),
             native_values: HashMap::new(),
+            containers: HashMap::new(),
             slots: Vec::new(),
             next_name: 0,
             bindings: vec![HashMap::new()],

@@ -122,6 +122,29 @@ impl Codegen<'_> {
         }
     }
 
+    /// By-value operand of a handle formal. A `process` formal borrows the
+    /// caller's counted handle for the call; the callee retains a copy it
+    /// keeps.
+    pub(in super::super) fn lower_handle_argument(
+        &mut self,
+        path: &str,
+        formal: NodeId,
+        actual: NodeId,
+    ) -> Result<IrChandleExpr, String> {
+        if self.is_process_formal(formal) {
+            return Ok(IrChandleExpr::Process(Box::new(
+                self.lower_process(path, actual)?,
+            )));
+        }
+        self.lower_chandle(path, actual)
+    }
+
+    /// Whether `node` is a subroutine formal of the built-in `process` class.
+    pub(in super::super) fn is_process_formal(&self, node: NodeId) -> bool {
+        matches!(self.kind(node), NodeKind::FuncArg { ty, .. }
+            if ty.kind == "class" && ty.type_name.as_deref() == Some("process"))
+    }
+
     pub(in super::super) fn lower_chandle(
         &mut self,
         path: &str,
@@ -320,6 +343,16 @@ impl Codegen<'_> {
             let mut in_args = Vec::new();
             let mut arg_irs = vec![None; meta.formals.len()];
             for (idx, (formal, is_out)) in meta.formals.iter().enumerate() {
+                if self.is_subroutine_container(*formal) {
+                    let argument =
+                        self.container_call_argument(path, *formal, bound[idx].expr, None)?;
+                    if *is_out {
+                        out_args.push(argument);
+                    } else {
+                        in_args.push(argument);
+                    }
+                    continue;
+                }
                 if self.is_native_declaration(*formal) {
                     let argument =
                         self.native_expression_argument(path, *formal, bound[idx].expr)?;
@@ -356,9 +389,11 @@ impl Codegen<'_> {
                         out_args.push(IrCallArg::ChandleAddr(address));
                     }
                 } else if is_chandle {
-                    in_args.push(IrCallArg::ChandleVal(
-                        self.lower_chandle(path, bound[idx].expr)?,
-                    ));
+                    in_args.push(IrCallArg::ChandleVal(self.lower_handle_argument(
+                        path,
+                        *formal,
+                        bound[idx].expr,
+                    )?));
                 } else {
                     let value =
                         self.lower_bound_arg(path, &meta.formals, &bound, idx, &mut arg_irs)?;

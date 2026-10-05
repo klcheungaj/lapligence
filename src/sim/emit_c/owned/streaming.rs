@@ -265,7 +265,9 @@ impl Frame<'_, '_> {
                     container,
                     selector,
                 } => {
-                    let container = self.ctx.model.containers[*container].clone();
+                    let container_name = self.container_name(*container)?;
+                    let mut container = self.ctx.model.containers[*container].clone();
+                    container.c_name = container_name;
                     let Some((element_width, _, _)) = container.element.packed() else {
                         return Err("streaming target requires packed elements".to_owned());
                     };

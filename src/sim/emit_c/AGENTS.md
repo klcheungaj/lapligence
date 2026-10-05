@@ -324,6 +324,17 @@ aliased foreign pointers. VPI argument arrays borrow registered slots only for
 one call. File-input/plusarg source and format snapshots plus selected targets
 remain owned across callbacks.
 
+## Container storage names
+
+Name containers only through `Frame::container_name`: a model-global
+container is its C variable, an activation container is the frame binding made
+by `Declare`, a container formal or a call operand (`(*ptr)` into a value-scope
+object created by `new_container`), and a class property container is
+`llg_class_field(_this, ...)` storage, valid only inside that class's methods.
+Activation and per-object containers have no change dependencies, so waits and
+monitors on them reject. Calls give every container formal fresh storage and
+copy back outputs after the cancellation check, like native values.
+
 ## Streaming and event captures
 
 Snapshot a stream RHS before unpacking. Evaluate/check/publish targets in stream

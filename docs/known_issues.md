@@ -370,15 +370,17 @@ that commit; allocation failure is fatal, so no partial image is observed.
 ## Native record values outside by-value subroutine storage
 
 **Status:** open; SIM-003 implements descriptor-backed native records for
-subroutine formals, results and locals.
+subroutine formals, results and locals; SIM-006 stores them as elements of
+queues, dynamic and associative arrays.
 
 ### Symptom
 
 Unpacked records with string, real or chandle leaves copy, compare and cross
-input/output/inout formals and results as runtime values. These legal forms
-still reject with explicit diagnostics: module-level unpacked arrays and
-queue/dynamic/associative containers of native records or strings, their
-slices, a run-time index into a native member array of an automatic record, `ref`
+input/output/inout formals and results as runtime values, and are whole or
+member-addressed elements of resizable containers (SIM-006). These legal forms
+still reject with explicit diagnostics: module-level fixed unpacked arrays of
+native records, their slices, compound or nonblocking writes to a record
+element of a resizable container, a run-time index into a native member array of an automatic record, `ref`
 formals of native record type, nonblocking writes to a static subroutine
 native record (module records and persistent strings/chandles are queued since
 SIM-004), fork-join_none capture of automatic native records,
@@ -400,8 +402,8 @@ run-time item addressing plus per-element change records.
 Run-time item paths and element change records (SIM-007), native ref aliases
 (SIM-008), a root-plus-item-path pending record for static native roots
 (a queued leaf pointer would dangle because a root replaces its leaves on
-assignment), fork capture pins (SIM-010) and
-container formals/locals (SIM-006) reuse the same descriptors and root registry.
+assignment), fork capture pins (SIM-010) reuse the same descriptors and root registry, as
+the SIM-006 container elements and container formals/locals already do.
 
 ### Reproduce
 

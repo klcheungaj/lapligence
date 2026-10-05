@@ -121,9 +121,11 @@ impl<'a> Codegen<'a> {
         let ret_var = (has_ret
             || self.nonflatten_function(ft)
             || self.native_return(ft)
+            || self.container_return(ft)
             || self.real_array_return(ft))
         .then_some(ft);
         self.bind_native_function(inst, ft);
+        self.bind_container_function(inst, ft);
         let body = self
             .func_body(ft)
             .ok_or_else(|| format!("function `{}` without a body", self.node(ft).name))?;
@@ -433,6 +435,7 @@ impl<'a> Codegen<'a> {
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if self.fixed_formal_array(*io).is_some()
                 || self.is_native_declaration(*io)
+                || self.is_subroutine_container(*io)
                 || self.real_formal_array(*io).is_some()
             {
                 continue;
@@ -471,6 +474,13 @@ impl<'a> Codegen<'a> {
                         ..
                     }
                 );
+                if !is_ref && !*is_out && automatic && self.is_process_formal(*io) {
+                    // A by-value process formal borrows the caller's counted
+                    // handle for the activation; reads retain their copies.
+                    process_read.insert(*io, crate::sim::ir::IrProcessExpr::FormalRead(idx));
+                    chandle_read.insert(*io, IrChandleExpr::FormalRead(idx));
+                    continue;
+                }
                 if !is_ref && !*is_out {
                     if let Some(object) = (!automatic)
                         .then(|| self.static_chandle_formals.get(&(inst, *io)).copied())
@@ -1085,6 +1095,11 @@ impl<'a> Codegen<'a> {
             if self.is_native_declaration(node) {
                 // Native record locals are descriptor-backed values declared
                 // by `NativeValueDeclare` (see `native_values`).
+                return Ok(());
+            }
+            if self.is_subroutine_container(node) {
+                // Container locals are declared by `IrContainerStmt::Declare`
+                // or persist as static containers (`subroutine_containers`).
                 return Ok(());
             }
             if self.array_globals.get(&node).is_some_and(|array| {

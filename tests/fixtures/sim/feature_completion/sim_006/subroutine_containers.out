@@ -1,0 +1,11 @@
+pop_all=abc size_after=3
+grow=4 2.5 1.0 1.5
+touch=2 101 102
+evens=4 6
+depth=5 size=0
+counter=1 2
+keys=13
+recs=2 y! z 2.5
+fill=2 b bump=3 7 2 sum=9
+pops=135
+slow=16 time=1

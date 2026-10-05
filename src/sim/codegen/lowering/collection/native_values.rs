@@ -307,8 +307,9 @@ impl Codegen<'_> {
         self.native_temporary(node)
     }
 
-    /// The first activation native value of the enclosing subroutine that a
-    /// fork branch references; branch processes cannot address it.
+    /// The first activation native value or container of the enclosing
+    /// subroutine that a fork branch references; branch processes cannot
+    /// address it.
     pub(in super::super) fn native_activation_capture(&self, branch: NodeId) -> Option<String> {
         let mut pending = vec![branch];
         while let Some(node) = pending.pop() {
@@ -322,12 +323,15 @@ impl Codegen<'_> {
                 _ => Vec::new(),
             };
             for target in targets {
-                if self
+                let activation = self
                     .native_roots
                     .get(&target)
                     .is_some_and(|value| self.model.native_values[*value].activation)
-                    && !self.node_is_within(target, branch)
-                {
+                    || self
+                        .container_globals
+                        .get(&target)
+                        .is_some_and(|container| self.model.containers[container.ir].activation);
+                if activation && !self.node_is_within(target, branch) {
                     return Some(self.node(target).name.clone());
                 }
             }

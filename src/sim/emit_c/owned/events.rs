@@ -146,6 +146,13 @@ impl Frame<'_, '_> {
                     "{{ .sig = {trigger}, .value = {value}, .lsb = {lsb}u, .width = {width}u }}"
                 )
             }
+            IrDependency::ContainerContents(index) | IrDependency::ContainerShape(index)
+                if !self.ctx.model.containers[*index].is_global_storage() =>
+            {
+                return Err(pending(
+                    "event controls on resizable containers in subroutine storage",
+                ))
+            }
             IrDependency::ContainerContents(index) => format!(
                 "{{ .sig = &{}_llg_contents_dep }}",
                 self.ctx.model.containers[*index].c_name

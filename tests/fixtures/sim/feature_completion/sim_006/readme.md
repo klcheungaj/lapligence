@@ -1,0 +1,34 @@
+# Recursive containers and handle-array storage (SIM-006)
+
+The task module runs every positive fixture through the public CLI in both HDL
+optimizer modes on legacy, compact/portable and compact/GMP values (GMP when
+`LLG_TEST_GMP_ROOT` is set). The feature fixtures without runtime warnings
+also run after the frontend snapshot and owned Db are destroyed; the two
+fixtures that warn also check their exact runtime stderr. Expected outputs are
+derived by hand from the cited clauses, not captured from llg.
+
+Containers are values (SV 7.5-7.10): assignment, formals and results copy the
+container and its elements. Handle elements (class objects, events,
+processes, semaphores, mailboxes, virtual interfaces, chandles) copy the
+handle only, never the designated object.
+
+| Fixture | Clause and independent oracle |
+| --- | --- |
+| `subroutine_containers` | IEEE 1800-2009 §§7.5, 7.8, 7.10, 13.3-13.5. `pop_all` drains its own copy: `abc`, caller still has 3. `grow` keeps 1.5 2.5 through `new[4](old)` and fills 2*0.5, 3*0.5: `4 2.5 1.0 1.5`. `touch` adds 100 through copied handles (objects 1, 2 become 101, 102) and clears only its copy (caller size 2). `evens(7)` = {0,2,4,6}: size 4, element 3 = 6; `void'(evens(3))` discards a result. Recursive `depth(4, dummy)` pushes 4..0 into per-activation copies: 5, caller still empty. Static `counter` keeps its local queue: 1 then 2. `keys` sums value*key length: 2*2+3*3 = 13. `recs` appends {z,2.5} and edits element 0 in place: 2, `y!`, `z`, 2.5. `fill` outputs {a,b}; `bump` turns {1,2} into {7,2,2}; `sum('{4,5})` builds its argument at the call: 9. Task `slow` copies {1,2,3}, waits 1 ns, appends 10: 16 at time 1. |
+| `procedural_containers` | §§6.21, 7.5, 7.10, 23.2.2. Block locals: queue {3}, strings `w x` after `push_front`, real 2.5. The loop's `automatic` queue restarts empty each iteration: size 1 holding 2 on the last pass. The task's `static` queue keeps both visits (2) while its automatic local holds one (1). Port `qin`/`sout` containers follow the driver: `v1 v2`, then `v3`. |
+| `class_containers` | §§8.5, 8.9, 8.13, 7.5-7.10. Each object owns its instance containers: `k` gets 3, 4 and, through the alias `alias_k`, 1 (total 8); `k2` has 9. The static `shared` queue collects every `add` from every object: 30 40 90 10 50, so 5 entries with `shared[4]` = 50. A derived object reaches the inherited queue and table: `more` adds 5, then `q[0] + 100` = 105; one key; its own real array holds 1.5. `drop_front` pops 3 then deletes the rest of `k.q` (total 0) without touching `k2` (9). |
+| `record_elements` | §§7.2, 7.4, 7.5, 7.8, 7.10. Queue after `push_back(first)`, `push_front(second)`, `insert(1, second)`: second second first. Runtime-indexed member writes change only `q[2]`: 99, 5, `first!`, inner 3; `q[0].arr[1]` is 21. `y = q[2]` is a deep copy (renaming `q[2]` leaves `first!`). Writes through missing keys create entries from the defaults: `keyed`, 1 entry, `created`, exists, `arr[0]` 0. `pop_back` returns `changed` with r 2.50, leaving 2; `delete(0)` leaves `second`. `new[3](d)` keeps both elements and adds a default (empty name), r 4.25 written afterwards, inner 3. `delete()` empties both. |
+| `handle_arrays` | §§7.4, 8.4, 9.7, 15.3, 15.4, 25.9. Virtual interfaces in a range `[2:3]` array and a queue designate the interface: writing 21 through `vq[0]` is seen by `i1` and `vifs[3]`. Copying class-handle arrays shares objects: 50 through `copy[1]`, 60 through `cq[0]`, `copy[2] == objs[2]`. Semaphores with 1 and 2 keys grant `try_get(1)`/`try_get(2)`. Two queue entries name one mailbox: 7 put through one is received through the other. At 2 ns the first forked process waits and the second has finished; `kill` makes it KILLED. |
+| `event_containers` | §§6.17, 7.4.5, 7.5, 7.8.6, 7.10, 15.5. Queue {e3,null,e1,e2}: size 4, one null; element 2 is `e1`. After `delete(1)` element 1 is still `e1`; `pop_front` returns `e3`. Missing associative entries read as null (with the §7.8.6 warning) and `exists(5)` is 1. `new[2]` creates two distinct events (Table 6-7 default for event elements); after `d[1] = d[0]` both name one event, so `->d[0]` at 1 ns wakes `@(d[1])`, and `->q[0]` (e1) at 2 ns makes `q[0].triggered` true. `new[3](d)` keeps the sharing and adds a new event. `reverse` gives {e2,e1}. 64 pushes with `e2` at 40 plus `push_front(e1)` force reallocation: 65 entries, index 41 is `e2`, 63 nulls. `fire_all` triggers its copy's non-null entries at 3 ns, waking both waiters. `q = {}` empties the queue and a read past the end is null. |
+| `assoc_defaults` | §7.8.6, Table 7-1, §7.9.11. Missing `a[7]` reads 0 and `s["nope"]` the empty string, each with a warning. The index `4'bx01x` is invalid: the read warns and yields 0, the write warns and is ignored (still 1 entry). Wildcard `w[6]` is missing: `xx`. With `'{default: 42}` a missing key reads 42 silently and creates nothing. A missing real reads 0.0 with a warning. `cnt["k"] += 2` reads the default 0 (warning) and creates 2; `++` makes 3; `a[1]--` gives 4. |
+| `dynamic_events`, `queue_events`, `associative_events`, `process_array`, `process_formal`, `semaphore_array`, `mailbox_array`, `virtual_associative`, `dynamic_call` | Adopted FND-002 witnesses (ledger L-F02-11-01, L-F12-02-04, L-F12-05-01, L-F12-05-02, L-F12-06-01, L-F12-07-01 and the SIM-003 `dynamic_call` item); each expected line is the witness's `Expected:` header; the copies end with a quiet `$finish(0)`. |
+
+## Negatives
+
+| Fixture | Boundary |
+| --- | --- |
+| `neg_wildcard_foreach`, `neg_wildcard_first`, `neg_wildcard_find` | §7.8.1: a wildcard-index associative array cannot be traversed by `foreach` or used with methods that return an index (frontend diagnostics). |
+| `neg_container_ref_formal` | Legal by §13.5.2; `ref` aliases of container storage need the retained-cell contract of SIM-008 and are rejected explicitly. |
+| `neg_container_fork_capture` | Legal by §9.3.2; a fork branch reading the enclosing activation's container needs the capture pins of SIM-010 and is rejected explicitly. |
+| `neg_class_container_outside` | Legal by §8.5; an instance container selected through an explicit handle (`k.q`) needs receiver-qualified container IR, part of the class property work of SIM-011, and is rejected explicitly. Inside the class's methods the same property is supported. |
+| `neg_container_result_select` | Legal; a container-valued call used other than as a whole assignment source or statement needs an expression temporary and is rejected explicitly. |

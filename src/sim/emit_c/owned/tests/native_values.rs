@@ -9,6 +9,8 @@ fn container_model(element: IrContainerElement) -> IrModel {
         element,
         kind: IrContainerKind::Dynamic,
         initial_size: None,
+        activation: false,
+        class_field: None,
     });
     model
 }

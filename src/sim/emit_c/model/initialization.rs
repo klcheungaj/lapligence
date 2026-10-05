@@ -65,7 +65,11 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
             ));
         }
     }
-    for container in &model.containers {
+    for container in model
+        .containers
+        .iter()
+        .filter(|container| container.is_global_storage())
+    {
         out.push_str(&super::super::containers::declaration_and_init(container)?.1);
         if let Some(size) = container.initial_size {
             out.push_str(&format!(

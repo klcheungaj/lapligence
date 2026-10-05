@@ -173,12 +173,14 @@ sv4_t llg_assoc_value_get_integral(const llg_assoc_value_t* array, sv4_t key) {
     sv4_t result_value;
 
     int found = 0;
-    if (llg_assoc_value_normalize_key(array, key, &normalized)) {
+    int valid = llg_assoc_value_normalize_key(array, key, &normalized);
+    if (valid) {
         size_t position = llg_assoc_value_integral_position(array, normalized,
                                                              &found);
         if (found && array->entries[position].value.desc->kind == LLG_VALUE_PACKED)
             do { result_value = sv4_clone(&array->entries[position].value.value.packed); goto cleanup_key; } while (0);
     }
+    llg_assoc_read_miss(valid, array->has_default_value);
     do { result_value = array->default_value.desc &&
                    array->default_value.desc->kind == LLG_VALUE_PACKED
         ? sv4_clone(&array->default_value.value.packed)
@@ -194,12 +196,14 @@ double llg_assoc_value_get_integral_real(const llg_assoc_value_t* array,
     double result_value;
 
     int found = 0;
-    if (llg_assoc_value_normalize_key(array, key, &normalized)) {
+    int valid = llg_assoc_value_normalize_key(array, key, &normalized);
+    if (valid) {
         size_t position = llg_assoc_value_integral_position(array, normalized,
                                                              &found);
         if (found && array->entries[position].value.desc->kind == LLG_VALUE_REAL)
             do { result_value = array->entries[position].value.value.real; goto cleanup_key; } while (0);
     }
+    llg_assoc_read_miss(valid, array->has_default_value);
     do { result_value = array->default_value.desc &&
                    array->default_value.desc->kind == LLG_VALUE_REAL
         ? array->default_value.value.real
@@ -215,12 +219,14 @@ llg_string_t llg_assoc_value_get_integral_string(
     llg_string_t result_value;
 
     int found = 0;
-    if (llg_assoc_value_normalize_key(array, key, &normalized)) {
+    int valid = llg_assoc_value_normalize_key(array, key, &normalized);
+    if (valid) {
         size_t position = llg_assoc_value_integral_position(array, normalized,
                                                              &found);
         if (found && array->entries[position].value.desc->kind == LLG_VALUE_STRING)
             do { result_value = llg_string_clone(&array->entries[position].value.value.string); goto cleanup_key; } while (0);
     }
+    llg_assoc_read_miss(valid, array->has_default_value);
     do { result_value = array->default_value.desc &&
                    array->default_value.desc->kind == LLG_VALUE_STRING
         ? llg_string_clone(&array->default_value.value.string)
@@ -236,12 +242,14 @@ void* llg_assoc_value_get_integral_chandle(
     void* result_value;
 
     int found = 0;
-    if (llg_assoc_value_normalize_key(array, key, &normalized)) {
+    int valid = llg_assoc_value_normalize_key(array, key, &normalized);
+    if (valid) {
         size_t position = llg_assoc_value_integral_position(array, normalized,
                                                              &found);
         if (found && llg_value_is_handle_kind(array->entries[position].value.desc))
             do { result_value = array->entries[position].value.value.handle; goto cleanup_key; } while (0);
     }
+    llg_assoc_read_miss(valid, array->has_default_value);
     do { result_value = array->default_value.desc &&
                    llg_value_is_handle_kind(array->default_value.desc)
         ? array->default_value.value.handle
@@ -313,7 +321,7 @@ int llg_assoc_value_set_integral(llg_assoc_value_t* array, sv4_t key,
     sv4_t normalized = SV4_EMPTY;
     int result_value;
 
-    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { result_value = 0; goto cleanup_key; } while (0);
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { llg_container_warning("invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
     llg_value_t source = llg_assoc_value_packed_source(array, value);
     int result = llg_assoc_value_set_source(array, &normalized, NULL, 0, &source, &change);
     llg_value_drop(&source);
@@ -332,7 +340,7 @@ int llg_assoc_value_set_integral_real(llg_assoc_value_t* array, sv4_t key,
     sv4_t normalized = SV4_EMPTY;
     int result_value;
 
-    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { result_value = 0; goto cleanup_key; } while (0);
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { llg_container_warning("invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
     llg_value_t source = llg_value_from_real(array->element, value);
     int result = llg_assoc_value_set_source(array, &normalized, NULL, 0, &source, &change);
     llg_value_drop(&source);
@@ -352,6 +360,7 @@ int llg_assoc_value_set_integral_string(llg_assoc_value_t* array, sv4_t key,
     int result_value;
 
     if (!llg_assoc_value_normalize_key(array, key, &normalized)) {
+        llg_container_warning("invalid associative-array key write");
         llg_string_destroy(&value);
         do { result_value = 0; goto cleanup_key; } while (0);
     }
@@ -373,7 +382,7 @@ int llg_assoc_value_set_integral_chandle(llg_assoc_value_t* array, sv4_t key,
     sv4_t normalized = SV4_EMPTY;
     int result_value;
 
-    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { result_value = 0; goto cleanup_key; } while (0);
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { llg_container_warning("invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
     llg_value_t source = llg_value_from_chandle(array->element, value);
     do { result_value = llg_assoc_value_set_source(array, &normalized, NULL, 0, &source, &change); goto cleanup_key; } while (0);
 cleanup_key:
@@ -391,9 +400,9 @@ int llg_assoc_value_set_nested_integral_container(
     sv4_t normalized = SV4_EMPTY;
     int result_value;
 
-    if (!indices || count == 0 ||
-        !llg_assoc_value_normalize_key(array, indices[0], &normalized))
-        do { result_value = 0; goto cleanup_key; } while (0);
+    if (!indices || count == 0) do { result_value = 0; goto cleanup_key; } while (0);
+    if (!llg_assoc_value_normalize_key(array, indices[0], &normalized))
+        do { llg_container_warning("invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
     llg_value_t* target = count == 1
         ? NULL
         : llg_assoc_value_nested_at_integral(array, indices, count);
@@ -437,7 +446,7 @@ int llg_assoc_value_set_nested_integral_container_from_packed(
     int result_value;
 
     if (!indices || count == 0 || !source) do { result_value = 0; goto cleanup_key; } while (0);
-    if (!llg_assoc_value_normalize_key(array, indices[0], &normalized)) do { result_value = 0; goto cleanup_key; } while (0);
+    if (!llg_assoc_value_normalize_key(array, indices[0], &normalized)) do { llg_container_warning("invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
 
     const llg_value_desc_t* target_desc = NULL;
     if (count == 1) {

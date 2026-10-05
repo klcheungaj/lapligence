@@ -35,6 +35,7 @@ impl<'a> Codegen<'a> {
                 NodeKind::FuncArg { ty, .. } => {
                     if self.fixed_formal_array(*io).is_some()
                         || self.is_native_declaration(*io)
+                        || self.is_subroutine_container(*io)
                         || self.real_formal_array(*io).is_some()
                     {
                         (0, false, false, false, false, false, false)

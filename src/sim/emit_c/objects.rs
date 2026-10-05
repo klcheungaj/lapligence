@@ -324,7 +324,9 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
                     | IrCallArg::FixedArray(_)
                     | IrCallArg::RealArray(_)
                     | IrCallArg::RealArrayValues(_)
+                    | IrCallArg::ContainerValues { .. }
                     | IrCallArg::NativeValue(_)
+                    | IrCallArg::Container(_)
                     | IrCallArg::NativeLeaves { .. }
                     | IrCallArg::NativeCall { .. }
                     | IrCallArg::RealArrayCall { .. }
@@ -999,7 +1001,9 @@ fn render_typed_call(
             | IrCallArg::FixedArray(_)
             | IrCallArg::RealArray(_)
             | IrCallArg::RealArrayValues(_)
+            | IrCallArg::ContainerValues { .. }
             | IrCallArg::NativeValue(_)
+            | IrCallArg::Container(_)
             | IrCallArg::NativeLeaves { .. }
             | IrCallArg::NativeCall { .. }
             | IrCallArg::RealArrayCall { .. }

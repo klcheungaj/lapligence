@@ -49,6 +49,7 @@ mod real_arrays;
 mod return_flow;
 mod signatures;
 mod strength_views;
+mod subroutine_containers;
 mod virtual_interfaces;
 
 type VirtualInterfaceMemberEntries = Vec<(String, SignalInfo)>;

@@ -1209,6 +1209,12 @@ struct Codegen<'a> {
     native_layouts: HashMap<NodeId, NativeLayout>,
     /// `(instance, declaration)` → native value storage.
     native_storage: HashMap<(NodeId, NodeId), usize>,
+    /// Container storage of subroutine formals, results and locals, keyed by
+    /// (instance, declaration).
+    subroutine_containers: HashMap<(NodeId, NodeId), usize>,
+    /// Set while lowering a container-result call whose result storage the
+    /// caller appends (`lower_container_result_into`).
+    container_result_call: bool,
     /// Native value → declaration whose layout describes it.
     native_value_layouts: HashMap<usize, NodeId>,
     /// Native declarations of the subroutine instance being lowered.
@@ -1528,6 +1534,8 @@ impl<'a> Codegen<'a> {
             aggregate_objects: HashMap::new(),
             native_layouts: HashMap::new(),
             native_storage: HashMap::new(),
+            subroutine_containers: HashMap::new(),
+            container_result_call: false,
             native_value_layouts: HashMap::new(),
             native_roots: HashMap::new(),
             native_leaf_symbols: HashMap::new(),

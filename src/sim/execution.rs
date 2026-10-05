@@ -1332,7 +1332,10 @@ fn collect_argument_effects(
         | IrCallArg::RealArray(_)
         | IrCallArg::NativeValue(_)
         | IrCallArg::EventVal(_) => {}
-        IrCallArg::RealArrayValues(values) => {
+        // Container outputs are copied back into caller storage after the
+        // callee returns, independent of the callee's own statements.
+        IrCallArg::Container(_) => effects.push(ExecutionEffect::ImmediateStore),
+        IrCallArg::RealArrayValues(values) | IrCallArg::ContainerValues { values, .. } => {
             for value in values {
                 collect_expression_effects(ir, value, effects, visited_calls);
             }

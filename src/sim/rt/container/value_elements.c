@@ -44,7 +44,8 @@ llg_value_t* llg_assoc_value_element_integral(llg_assoc_value_t* array,
         return NULL;
     sv4_t normalized = SV4_EMPTY;
     llg_value_t* value = NULL;
-    if (llg_assoc_value_normalize_key(array, indices[0], &normalized)) {
+    int valid = llg_assoc_value_normalize_key(array, indices[0], &normalized);
+    if (valid) {
         int found = 0;
         size_t position =
             llg_assoc_value_integral_position(array, normalized, &found);
@@ -53,6 +54,14 @@ llg_value_t* llg_assoc_value_element_integral(llg_assoc_value_t* array,
             position = llg_assoc_value_integral_position(array, normalized,
                                                          &found);
         if (found) value = &array->entries[position].value;
+    }
+    if (!value) {
+        if (create) {
+            if (!valid)
+                llg_container_warning("invalid associative-array key write");
+        } else {
+            llg_assoc_read_miss(valid, array->has_default_value);
+        }
     }
     sv4_destroy(&normalized);
     for (size_t i = 1; value && i < count; ++i) {
@@ -73,6 +82,7 @@ llg_value_t* llg_assoc_value_element_string(llg_assoc_value_t* array,
     if (!found && create &&
         llg_assoc_value_create_entry(array, NULL, key, length))
         position = llg_assoc_value_string_position(array, key, length, &found);
+    if (!found && !create) llg_assoc_read_miss(1, array->has_default_value);
     return found ? &array->entries[position].value : NULL;
 }
 
@@ -185,9 +195,12 @@ int llg_assoc_value_set_element_integral(llg_assoc_value_t* array,
     int result;
     if (count == 1) {
         sv4_t normalized = SV4_EMPTY;
-        result = llg_assoc_value_normalize_key(array, indices[0], &normalized) &&
-                 llg_assoc_value_set_source(array, &normalized, NULL, 0, value,
-                                            &change);
+        result = llg_assoc_value_normalize_key(array, indices[0], &normalized);
+        if (!result)
+            llg_container_warning("invalid associative-array key write");
+        else
+            result = llg_assoc_value_set_source(array, &normalized, NULL, 0,
+                                                value, &change);
         sv4_destroy(&normalized);
     } else {
         result = llg_value_element_store(

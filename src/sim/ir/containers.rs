@@ -229,6 +229,37 @@ pub struct IrContainer {
     /// The main initializer allocates this many null/default elements before
     /// any process can assign or read one.
     pub initial_size: Option<u64>,
+    /// Per-activation subroutine storage: a formal, result, automatic local
+    /// or call temporary. It is created by [`IrContainerStmt::Declare`] (or
+    /// bound to a container formal), owned by the enclosing lexical value
+    /// scope and has no model-global declaration or change dependencies.
+    pub activation: bool,
+    /// Instance property storage of class `.0`, field `.1`: one container
+    /// per object, reached through the receiver of the enclosing method.
+    pub class_field: Option<(usize, usize)>,
+}
+
+impl IrContainer {
+    /// Whether this container is one model-global variable with change
+    /// dependencies (neither activation nor per-object storage).
+    pub fn is_global_storage(&self) -> bool {
+        !self.activation && self.class_field.is_none()
+    }
+
+    /// Whether `other` uses the same runtime storage type: the same container
+    /// kind (queue bounds aside), associative key and element shape.
+    pub fn same_storage_type(&self, other: &Self) -> bool {
+        let kind = match (&self.kind, &other.kind) {
+            (IrContainerKind::Dynamic, IrContainerKind::Dynamic)
+            | (IrContainerKind::Queue { .. }, IrContainerKind::Queue { .. }) => true,
+            (
+                IrContainerKind::Associative { key: left },
+                IrContainerKind::Associative { key: right },
+            ) => left == right,
+            _ => false,
+        };
+        kind && self.element == other.element
+    }
 }
 
 /// One bound of a queue slice. `$` is kept distinct from an ordinary
@@ -402,6 +433,9 @@ pub enum IrContainerMethod {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrContainerStmt {
+    /// Create one empty activation container ([`IrContainer::activation`])
+    /// owned by the enclosing lexical value scope.
+    Declare(usize),
     /// Unstream a packed value into a packed-element dynamic array or queue.
     /// Selector expressions are retained so the runtime can resize the target
     /// and update the requested logical elements after evaluating them once.
@@ -1745,6 +1779,15 @@ impl IrContainerStmt {
             Self::ResetDefault(container) => {
                 container_kind(model, *container, Some("associative")).map(|_| ())
             }
+            Self::Declare(container) => {
+                if !container_kind(model, *container, None)?.activation {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "only activation containers have lexical declarations",
+                    ));
+                }
+                Ok(())
+            }
             Self::SetString { container, key, .. } => {
                 let container = string_container(model, *container)?;
                 if !container.element.is_packed() {
@@ -2031,7 +2074,8 @@ impl IrContainerStmt {
             | Self::MethodAssign { .. }
             | Self::Method { .. }
             | Self::Delete(_)
-            | Self::ResetDefault(_) => {}
+            | Self::ResetDefault(_)
+            | Self::Declare(_) => {}
         }
     }
 
@@ -2120,7 +2164,8 @@ impl IrContainerStmt {
             | Self::MethodAssign { .. }
             | Self::Method { .. }
             | Self::Delete(_)
-            | Self::ResetDefault(_) => {}
+            | Self::ResetDefault(_)
+            | Self::Declare(_) => {}
         }
     }
 }

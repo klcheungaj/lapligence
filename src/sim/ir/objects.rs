@@ -32,6 +32,10 @@ pub struct IrClass {
 pub struct IrClassField {
     pub(in crate::sim) c_name: String,
     pub(in crate::sim) ty: IrClassFieldType,
+    /// Resizable container held by this instance property (index into
+    /// [`super::IrModel::containers`]). The field slot holds the owned
+    /// container storage, so `ty` is the opaque [`IrClassFieldType::Chandle`].
+    pub(in crate::sim) container: Option<usize>,
 }
 
 /// One packed member exposed by a virtual-interface view. The member index is

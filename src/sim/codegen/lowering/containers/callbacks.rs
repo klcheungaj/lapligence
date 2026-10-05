@@ -244,7 +244,7 @@ impl<'a> Codegen<'a> {
         }))
     }
 
-    pub(super) fn lower_container_value(
+    pub(in super::super) fn lower_container_value(
         &mut self,
         path: &str,
         container: usize,

@@ -392,7 +392,11 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             table_loop(table)
         ));
     }
-    for container in &model.containers {
+    for container in model
+        .containers
+        .iter()
+        .filter(|container| container.is_global_storage())
+    {
         let name = &container.c_name;
         defaults(
             &mut initialize,

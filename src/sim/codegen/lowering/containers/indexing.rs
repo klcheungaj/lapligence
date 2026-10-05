@@ -124,7 +124,24 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
     ) -> Result<IrExpr, String> {
-        let value = self.lower_expr(path, node)?;
+        // An implicit conversion to the index type would turn X/Z bits into
+        // zeros; the runtime validates the original value first and treats
+        // an unknown index as invalid (SV 7.4.6, 7.8.6).
+        let mut source = node;
+        while let NodeKind::Expr(ExprKind::Cast { operand, .. }) = self.kind(source) {
+            if !self.db.is_implicit_conversion(source) {
+                break;
+            }
+            source = *operand;
+        }
+        let value = if source != node {
+            match self.lower_expr(path, source) {
+                Ok(value) if !value.is_real() && value.width > 0 => value,
+                _ => self.lower_expr(path, node)?,
+            }
+        } else {
+            self.lower_expr(path, node)?
+        };
         if value.is_real() {
             return Err(format!(
                 "resizable container index in `{path}` must be integral"
@@ -234,18 +251,19 @@ impl<'a> Codegen<'a> {
 
     pub(in super::super) fn container_of(&self, node: NodeId) -> Option<ContainerInfo> {
         match self.kind(node) {
-            NodeKind::Array { .. } | NodeKind::NamedEvent => {
-                self.container_globals.get(&node).cloned()
-            }
+            NodeKind::Array { .. }
+            | NodeKind::NamedEvent
+            | NodeKind::FuncArg { .. }
+            | NodeKind::FuncTask { .. } => self.container_declaration(node),
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
-            }) => self.container_globals.get(target).cloned(),
+            }) => self.container_declaration(*target),
             NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
                 .first()
                 .copied()
                 .flatten()
                 .or_else(|| refs.last().copied().flatten())
-                .and_then(|target| self.container_globals.get(&target).cloned()),
+                .and_then(|target| self.container_declaration(target)),
             NodeKind::Expr(ExprKind::Operation {
                 op: Operation::Assignment,
                 operands,
@@ -255,6 +273,53 @@ impl<'a> Codegen<'a> {
                 .and_then(|operand| self.container_of(*operand)),
             _ => None,
         }
+    }
+
+    /// The name of a container-result function whose call result is selected
+    /// directly (`f()[i]`), which needs an expression temporary.
+    pub(in super::super) fn container_result_base(&self, node: NodeId) -> Option<String> {
+        let target = match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => *target,
+            NodeKind::FuncCall { .. } => {
+                let NodeKind::FuncCall { name, callee, .. } = self.kind(node) else {
+                    return None;
+                };
+                self.resolve_callee_env(self.inst, name, false, *callee)
+                    .ok()?
+                    .0
+            }
+            _ => node,
+        };
+        (matches!(self.kind(target), NodeKind::FuncTask { .. }) && self.container_return(target))
+            .then(|| self.node(target).name.clone())
+    }
+
+    /// The name of a per-object container property selected through an
+    /// explicit handle (`h.q`), which only `this`-relative accesses inside
+    /// the class's own methods can address.
+    pub(in super::super) fn foreign_class_container(&self, node: NodeId) -> Option<String> {
+        let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = self.kind(node) else {
+            return None;
+        };
+        let target = refs.last().copied().flatten()?;
+        self.container_globals
+            .get(&target)
+            .filter(|info| self.model.containers[info.ir].class_field.is_some())
+            .map(|_| self.node(target).name.clone())
+    }
+
+    /// Container storage of a declaration. A function's result storage is
+    /// visible only inside the body being lowered; elsewhere the function
+    /// name denotes a call.
+    fn container_declaration(&self, node: NodeId) -> Option<ContainerInfo> {
+        if matches!(self.kind(node), NodeKind::FuncTask { .. })
+            && self.func.as_ref().and_then(|function| function.ret_node) != Some(node)
+        {
+            return None;
+        }
+        self.container_globals.get(&node).cloned()
     }
 
     pub(in super::super) fn container_element_path(

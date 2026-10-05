@@ -29,6 +29,11 @@ pub struct IrFormal {
     /// `double*` C parameter); index into [`super::IrModel::arrays`]. Real
     /// arrays keep numeric cells and never use the packed fixed-value ABI.
     pub(in crate::sim) real_array: Option<usize>,
+    /// Resizable container bound to this formal in the callee (a `void*` C
+    /// parameter naming caller-created storage of the same container type);
+    /// index into [`super::IrModel::containers`]. The caller copies inputs
+    /// in and outputs back, so the callee owns a private value.
+    pub(in crate::sim) container: Option<usize>,
     pub(in crate::sim) fixed_shape: Option<IrContainerElement>,
     /// Default fixed payload, preserving each unpacked leaf's state domain.
     pub(in crate::sim) fixed_default: Option<IrConst>,
@@ -97,6 +102,7 @@ impl IrFormal {
             fixed_array: None,
             native_value: None,
             real_array: None,
+            container: None,
             fixed_shape: None,
             fixed_default: None,
             width,

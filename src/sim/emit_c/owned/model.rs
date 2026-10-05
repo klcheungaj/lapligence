@@ -301,6 +301,24 @@ fn render_function(
         frame.return_address = Some("&_ret".to_owned());
     }
     for (index, formal) in function.formals.iter().enumerate() {
+        if let Some(container) = formal.container {
+            let parameter = format!("{}{index}", if formal.is_out { "o" } else { "a" });
+            let storage = &ctx.model.containers[container];
+            let (ty, _, _) = super::super::containers::activation_storage(storage, "")?;
+            let bound = format!("(*({ty}*){parameter})");
+            if storage.activation {
+                frame.containers.insert(container, bound);
+            } else if matches!(formal.mode, IrFormalMode::Input | IrFormalMode::Inout) {
+                // Static subroutine storage keeps its own container; the
+                // caller's fresh copy is consumed on entry.
+                frame.line(format!(
+                    "{}(&{}, &{bound});",
+                    super::containers::copy_function(storage),
+                    storage.c_name
+                ));
+            }
+            continue;
+        }
         if let Some(value) = formal.native_value {
             let parameter = format!("{}{index}", if formal.is_out { "o" } else { "a" });
             if ctx.model.native_values[value].activation {
@@ -425,6 +443,18 @@ fn render_function(
     frame.line("goto _llg_return;");
     frame.line("_llg_return: ;");
     for (index, formal) in function.formals.iter().enumerate() {
+        if let Some(container) = formal
+            .container
+            .filter(|container| !ctx.model.containers[*container].activation && formal.is_out)
+        {
+            let storage = &ctx.model.containers[container];
+            let (ty, _, _) = super::super::containers::activation_storage(storage, "")?;
+            frame.line(format!(
+                "{}(({ty}*)o{index}, &{});",
+                super::containers::copy_function(storage),
+                storage.c_name
+            ));
+        }
         if let Some(value) = formal
             .native_value
             .filter(|value| !ctx.model.native_values[*value].activation && formal.is_out)

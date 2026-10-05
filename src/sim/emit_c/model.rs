@@ -849,6 +849,12 @@ fn render_model(
         out.push_str(super::owned::containers::key_adapters());
     }
     super::owned::native::helpers(&mut out);
+    out.push_str(&super::containers::activation_drop_helpers(model));
+    // Container storage and descriptor tables precede class layouts, whose
+    // constructors create per-object container properties.
+    for container in &model.containers {
+        out.push_str(&super::containers::declaration_and_init(container)?.0);
+    }
     render_class_decls(model, &mut out);
     super::owned::udp::tables(model, &mut out);
     render_signal_decls(model, &mut out);
@@ -856,9 +862,6 @@ fn render_model(
     render_vpi_compile_calls(model, &mut out);
     render_static_local_decls(model, &mut out);
     super::owned::model::persistent_returns(model, &mut out);
-    for container in &model.containers {
-        out.push_str(&super::containers::declaration_and_init(container)?.0);
-    }
     out.push_str(&super::owned::native_values::native_type_tables(model)?.0);
     for object in &model.objects {
         if object.ty == crate::sim::ir::IrObjectType::String {
@@ -922,7 +925,11 @@ fn render_model(
                 array.c_name, array.elem_width, u8::from(array.signed), part_count, array.c_name));
         }
     }
-    for container in &model.containers {
+    for container in model
+        .containers
+        .iter()
+        .filter(|container| container.is_global_storage())
+    {
         out.push_str(&format!(
             "static sv4_t {}_llg_contents_dep = SV4_EMPTY;\n\
              static sv4_t {}_llg_shape_dep = SV4_EMPTY;\n",

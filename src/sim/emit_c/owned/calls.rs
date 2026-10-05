@@ -261,6 +261,7 @@ impl Frame<'_, '_> {
         let mut native_owners = Vec::new();
         let mut fixed_copyouts = Vec::new();
         let mut native_copyouts = Vec::new();
+        let mut container_copyouts = Vec::new();
         let mut string_copyouts = Vec::new();
         let mut real_copyouts = Vec::new();
         // The IR stores arguments in the C ABI order (addresses, inputs).
@@ -348,6 +349,43 @@ impl Frame<'_, '_> {
                         native_copyouts.push((actual, storage.clone()));
                     }
                     parameters.push(storage);
+                }
+                IrCallArg::Container(container) => {
+                    // The callee always receives fresh storage of its formal
+                    // type: inputs copy the actual in, outputs and results
+                    // are copied back after the callee returns.
+                    let actual = self.container_name(*container)?;
+                    let callee = formal
+                        .container
+                        .ok_or("container operand requires a container formal")?;
+                    let storage = self.new_container(callee)?;
+                    let copy = super::containers::copy_function(&self.ctx.model.containers[callee]);
+                    if matches!(formal.mode, IrFormalMode::Input | IrFormalMode::Inout) {
+                        self.line(format!("{copy}(&{storage}, &{actual});"));
+                    }
+                    if formal.is_out {
+                        container_copyouts.push((copy, actual, storage.clone()));
+                    }
+                    parameters.push(format!("(void*)&{storage}"));
+                }
+                IrCallArg::ContainerValues { container, values } => {
+                    // Element values are evaluated in order into fresh
+                    // storage that only this operand references.
+                    let storage = self.new_container(*container)?;
+                    self.containers.insert(*container, storage.clone());
+                    let build = if self.ctx.model.containers[*container].element.is_real() {
+                        IrContainerStmt::AssignRealValues {
+                            container: *container,
+                            values: values.clone(),
+                        }
+                    } else {
+                        IrContainerStmt::AssignValues {
+                            container: *container,
+                            values: values.clone(),
+                        }
+                    };
+                    self.container_statement(&build)?;
+                    parameters.push(format!("(void*)&{storage}"));
                 }
                 IrCallArg::NativeCall { value, call } => {
                     // The inner result is a fresh temporary that only this
@@ -656,6 +694,9 @@ impl Frame<'_, '_> {
         }
         for (target, storage, count) in real_copyouts {
             self.publish_real_cells(&target, &storage, count);
+        }
+        for (copy, target, storage) in container_copyouts {
+            self.line(format!("{copy}(&{target}, &{storage});"));
         }
         for (target, storage) in native_copyouts {
             self.line(format!("llg_native_value_copy({target}, {storage});"));

@@ -812,6 +812,8 @@ impl<'a> Codegen<'a> {
             element,
             kind,
             initial_size,
+            activation: false,
+            class_field: None,
         });
         if has_initializer {
             self.container_initializers.push((node, ir));

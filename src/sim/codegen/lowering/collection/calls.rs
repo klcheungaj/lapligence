@@ -100,6 +100,9 @@ impl<'a> Codegen<'a> {
         callee: Option<NodeId>,
         args: &[NodeId],
     ) -> Result<IrExpr, String> {
+        // Only the outermost call may be a container-result call whose
+        // storage the caller appends; nested argument calls may not.
+        let container_result_call = std::mem::take(&mut self.container_result_call);
         let virtual_call_info = self.virtual_interface_method_info(h)?;
         let (ft, callee_inst) = if let Some((_, _, ft, callee_inst, _)) = virtual_call_info {
             (ft, callee_inst)
@@ -114,6 +117,11 @@ impl<'a> Codegen<'a> {
         if meta.is_task {
             return Err(format!(
                 "task call `{name}` used as an expression in `{scope_path}`"
+            ));
+        }
+        if self.container_return(ft) && !container_result_call {
+            return Err(format!(
+                "container result of `{name}` in `{scope_path}` must be assigned whole to a container variable"
             ));
         }
         let formals = meta.formals.clone();
@@ -138,6 +146,16 @@ impl<'a> Codegen<'a> {
         let mut in_args: Vec<(usize, IrCallArg)> = Vec::new();
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if self.is_subroutine_container(*io) {
+                let argument =
+                    self.container_call_argument(scope_path, *io, bound[idx].expr, None)?;
+                if *is_out {
+                    out_args.push(argument);
+                } else {
+                    in_args.push((idx, argument));
+                }
+                continue;
+            }
             if self.is_native_declaration(*io) {
                 let argument = self.native_expression_argument(scope_path, *io, bound[idx].expr)?;
                 if *is_out {
@@ -331,6 +349,7 @@ impl<'a> Codegen<'a> {
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if self.fixed_formal_array(*io).is_some()
                 || self.is_native_declaration(*io)
+                || self.is_subroutine_container(*io)
                 || self.real_formal_array(*io).is_some()
             {
                 continue;
@@ -348,7 +367,11 @@ impl<'a> Codegen<'a> {
             {
                 in_args.push((
                     idx,
-                    IrCallArg::ChandleVal(self.lower_chandle(scope_path, bound[idx].expr)?),
+                    IrCallArg::ChandleVal(self.lower_handle_argument(
+                        scope_path,
+                        *io,
+                        bound[idx].expr,
+                    )?),
                 ));
             } else if !*is_out && !is_ref {
                 if bound[idx].string {
@@ -402,6 +425,7 @@ impl<'a> Codegen<'a> {
         if ret_val.is_none()
             && !self.nonflatten_function(ft)
             && !self.native_return(ft)
+            && !self.container_return(ft)
             && !self.real_array_return(ft)
             && !is_class_constructor
             && !self.lowering_assertion_match_item
