@@ -14,6 +14,14 @@ fn containers_cross_subroutine_formals_results_and_locals() {
 }
 
 #[test]
+fn record_column_formals_precede_trailing_results() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/record_column_results.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_column_results", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "record_column_results", expected);
+}
+
+#[test]
 fn block_and_port_containers_keep_their_lifetimes() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_006/procedural_containers.out");

@@ -582,6 +582,9 @@ impl EmitCtx<'_, '_> {
                 }
             }
         }
+        // Trailing column-layout record outputs precede any trailing result
+        // formal in the callee signature (see `record_formal_columns`).
+        out_args.extend(record_out_args);
         if let Some(result) = self.cg.model.funcs[fidx]
             .formals
             .last()
@@ -621,7 +624,6 @@ impl EmitCtx<'_, '_> {
             out_args.push(IrCallArg::RealArray(temporary));
         }
         in_args.sort_by_key(|(idx, _)| *idx);
-        out_args.extend(record_out_args);
         out_args.extend(in_args.into_iter().map(|(_, argument)| argument));
         out_args.extend(record_in_args);
         let depth = parse_depth(&self.depth_arg);
