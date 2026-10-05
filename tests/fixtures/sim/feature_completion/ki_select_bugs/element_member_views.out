@@ -1,0 +1,6 @@
+t1 y0 2 cv xxx2 out cxx1 a 3 c c pw xxxxxx5x wn 9876
+t2 y0 4 cv xxx2 a 1 c a pw xx5xxx5x
+t3 cv x4x2 pw xx5x6x5x
+t4 wn 9f76
+event src[1].lo 4
+t5 wn 9876 y0 4

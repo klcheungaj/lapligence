@@ -253,6 +253,71 @@ pub(super) fn array_select_from_slang(
     Ok(multidimensional_packed.then(|| (raw_base, vec![index])))
 }
 
+/// The name of the packed value an element-select chain selects from
+/// (`ps[i]`, `w[i][j]`, `h.arr[i]`) when the selected element is a structure
+/// or union. Unpacked-array roots go through [`array_select_from_slang`].
+fn packed_element_select_root(
+    snapshot: &SlangSnapshot,
+    type_projector: &SlangTypeProjector<'_>,
+    ids: &SemanticIds,
+    select: &SemanticNode,
+    depth: usize,
+) -> Result<Option<String>, DbError> {
+    let element_is_aggregate = select
+        .type_id
+        .map(|type_id| type_projector.project(type_id))
+        .transpose()?
+        .is_some_and(|projection| projection.aggregate_layout.is_some());
+    if !element_is_aggregate {
+        return Ok(None);
+    }
+    let mut current = select;
+    let mut steps = depth;
+    while current.kind == SemanticKind::Expression && current.subkind == 73 {
+        if steps > snapshot.semantic_nodes.len() {
+            return Err(DbError::InvalidSnapshot(
+                "element select chain contains a cycle".into(),
+            ));
+        }
+        steps += 1;
+        let edges = semantic_edges(snapshot, current)?;
+        let Some(base) = edge_target(ids, edges, SemanticEdgeRole::Base)? else {
+            return Ok(None);
+        };
+        current = &snapshot.semantic_nodes[base.index()];
+    }
+    let packed = current
+        .type_id
+        .map(|type_id| type_projector.project(type_id))
+        .transpose()?
+        .is_some_and(|projection| !projection.packed_dimensions.is_empty());
+    if !packed || current.kind != SemanticKind::Expression {
+        return Ok(None);
+    }
+    let name = match current.subkind {
+        65 => {
+            let Some(target) = expression_reference_target(snapshot, ids, current)? else {
+                return Ok(None);
+            };
+            if is_array_semantic(snapshot, target) {
+                return Ok(None);
+            }
+            snapshot.semantic_nodes[target.index()].name.to_string()
+        }
+        // A packed-array member of a structure (`h.arr[i].hi`).
+        75 => {
+            let Some((parts, _)) =
+                member_path_from_slang(snapshot, type_projector, ids, current, steps + 1)?
+            else {
+                return Ok(None);
+            };
+            parts.last().cloned().unwrap_or_default()
+        }
+        _ => return Ok(None),
+    };
+    Ok((!name.is_empty()).then_some(name))
+}
+
 pub(super) type SemanticMemberPath = (Vec<String>, Vec<Option<NodeId>>);
 
 pub(super) fn member_path_from_slang(
@@ -292,18 +357,26 @@ pub(super) fn member_path_from_slang(
             // node as the base reference so lowering can retrieve the runtime
             // handle from the container instead of collapsing it to the array
             // declaration.
-            let Some((array, _indices)) =
+            let unpacked_root =
                 array_select_from_slang(snapshot, type_projector, ids, base_semantic, depth + 1)?
-            else {
-                return Ok(None);
-            };
-            let Some(name) = snapshot
-                .semantic_nodes
-                .get(array.index())
-                .map(|array| array.name.to_string())
-                .filter(|name| !name.is_empty())
-            else {
-                return Ok(None);
+                    .and_then(|(array, _indices)| snapshot.semantic_nodes.get(array.index()))
+                    .map(|array| array.name.to_string())
+                    .filter(|name| !name.is_empty());
+            // A member of a packed-array element (`ps[i].hi`, `w[i][j].hi`)
+            // keeps the same shape: the element select is the base
+            // reference, named by the packed declaration it selects from.
+            let name = match unpacked_root {
+                Some(name) => name,
+                None => match packed_element_select_root(
+                    snapshot,
+                    type_projector,
+                    ids,
+                    base_semantic,
+                    depth + 1,
+                )? {
+                    Some(name) => name,
+                    None => return Ok(None),
+                },
             };
             (vec![name], vec![Some(semantic_id(ids, base_semantic.id)?)])
         } else {

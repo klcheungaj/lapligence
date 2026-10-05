@@ -1278,6 +1278,9 @@ struct Codegen<'a> {
     /// Real variables read by `$sampled` outside history domains; each gets
     /// a numeric Preponed snapshot registration at model initialization.
     sampled_real_signals: std::collections::BTreeSet<usize>,
+    /// Packed signals a procedural `$sampled` reads, registered for their
+    /// Preponed value without clocking history.
+    sampled_value_signals: std::collections::BTreeSet<usize>,
     /// Lexical bindings for fixed-array reduction maps, keyed by declaration
     /// identity so nested `with` expressions can retain outer iterators.
     fixed_method_iterators: HashMap<NodeId, FixedMethodIterator>,
@@ -1547,6 +1550,7 @@ impl<'a> Codegen<'a> {
             container_initializers: Vec::new(),
             container_iterator: None,
             sampled_real_signals: std::collections::BTreeSet::new(),
+            sampled_value_signals: std::collections::BTreeSet::new(),
             fixed_method_iterators: HashMap::new(),
             pending_container_pre_fns: Vec::new(),
             array_initializers: Vec::new(),

@@ -58,7 +58,11 @@ selection steps. Composing bit, part and indexed selections preserves each
 intermediate bound, including fixed-array element/member roots. Selections of a
 whole multidimensional packed value, or of a packed array of records, address
 whole elements through `packed_geometry.rs`; an in-range constant chain lowers
-to one part-select of its root and one runtime step to an indexed part-select. The same typed
+to one part-select of its root and one runtime step to an indexed part-select.
+A member of such an element (`ps[i].hi`) is one more constant step of the
+chain; a runtime element LSB absorbs the member offset, so it stays one indexed
+part-select. Members of unpacked-array elements of packed arrays and of
+packed-array structure members project through `fixed_projections.rs`. The same typed
 projection supplies reads, mutations, NBA capture and call copy-out; module
 connections require constant selectors and keep subroutine ref-actual legality
 separate.

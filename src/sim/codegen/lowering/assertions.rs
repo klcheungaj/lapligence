@@ -1922,34 +1922,71 @@ fn property_truth(value: IrExpr) -> IrExpr {
     )
 }
 
-/// Real signals read by a sampled expression (see [`sampled_compatible`]).
-pub(super) fn sampled_real_reads(
-    model: &IrModel,
+/// Signals a sampled expression reads (the forms [`sampled_compatible`]
+/// admits). Each one needs a Preponed snapshot outside an assertion.
+pub(super) fn sampled_signal_reads(
     expression: &IrExpr,
     reads: &mut std::collections::BTreeSet<usize>,
 ) {
-    match expression.kind() {
-        IrExprKind::SigRead(signal) => {
-            if matches!(model.signals[*signal].ty, IrType::Real { .. }) {
+    let mut pending = vec![expression];
+    while let Some(expression) = pending.pop() {
+        match expression.kind() {
+            IrExprKind::SigRead(signal) => {
                 reads.insert(*signal);
             }
+            IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
+                pending.extend([&**a, &**b]);
+            }
+            IrExprKind::Un { a, .. }
+            | IrExprKind::RealUn { a, .. }
+            | IrExprKind::CastToReal { a, .. }
+            | IrExprKind::CastToPacked { a }
+            | IrExprKind::Resize { a }
+            | IrExprKind::Convert { a }
+            | IrExprKind::ToTwoState { a }
+            | IrExprKind::StreamToFixed { a }
+            | IrExprKind::BitStreamCast { a, .. } => pending.push(a),
+            IrExprKind::Mux { sel, a, b }
+            | IrExprKind::ArrayMux { sel, a, b, .. }
+            | IrExprKind::StructMux { sel, a, b, .. } => pending.extend([&**sel, &**a, &**b]),
+            IrExprKind::UdpEval { inputs: parts, .. }
+            | IrExprKind::Predicate { clauses: parts }
+            | IrExprKind::Concat { parts }
+            | IrExprKind::Replicate { parts, .. } => pending.extend(parts.iter()),
+            IrExprKind::Stream { value, .. } => pending.push(value),
+            IrExprKind::Inside { value, items } => {
+                pending.push(value);
+                for item in items {
+                    match item {
+                        crate::sim::ir::IrInsideItem::Value(value)
+                        | crate::sim::ir::IrInsideItem::FixedArray { value, .. } => {
+                            pending.push(value)
+                        }
+                        crate::sim::ir::IrInsideItem::Range { low, high } => {
+                            pending.extend([low, high])
+                        }
+                        crate::sim::ir::IrInsideItem::OpenRange { low, high } => {
+                            pending.extend(low.iter().chain(high.iter()))
+                        }
+                        crate::sim::ir::IrInsideItem::Container { .. }
+                        | crate::sim::ir::IrInsideItem::Cells(_) => {}
+                    }
+                }
+            }
+            IrExprKind::BitSel { base, idx } => pending.extend([&**base, &**idx]),
+            IrExprKind::PartSel { base, .. } => pending.push(base),
+            IrExprKind::IdxPartSel {
+                base,
+                base_idx,
+                width_expr,
+                ..
+            } => pending.extend([&**base, &**base_idx, &**width_expr]),
+            IrExprKind::SysFunc(function) => {
+                if let crate::sim::ir::IrSysFunc::Sampled(call) = &**function {
+                    pending.push(&call.argument);
+                }
+            }
+            _ => {}
         }
-        IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
-            sampled_real_reads(model, a, reads);
-            sampled_real_reads(model, b, reads);
-        }
-        IrExprKind::Un { a, .. }
-        | IrExprKind::RealUn { a, .. }
-        | IrExprKind::CastToReal { a, .. }
-        | IrExprKind::CastToPacked { a }
-        | IrExprKind::Resize { a }
-        | IrExprKind::Convert { a }
-        | IrExprKind::ToTwoState { a } => sampled_real_reads(model, a, reads),
-        IrExprKind::Mux { sel, a, b } => {
-            sampled_real_reads(model, sel, reads);
-            sampled_real_reads(model, a, reads);
-            sampled_real_reads(model, b, reads);
-        }
-        _ => {}
     }
 }

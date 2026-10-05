@@ -96,6 +96,9 @@ pub enum IrInitStep {
     SetScalar { sig: usize, value: IrConst },
     /// Register a source signal with the runtime's preponed sampling history.
     RegisterSampled(usize),
+    /// Register a packed source for its Preponed value only, without the
+    /// per-slot history clocking skews read (procedural `$sampled`).
+    RegisterSampledValue(usize),
     /// Fill a collapsed-net member through its driver slot.
     WriteNet {
         group: usize,

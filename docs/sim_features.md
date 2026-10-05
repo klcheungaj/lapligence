@@ -436,8 +436,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   dependencies. Fixed outputs admit whole arrays, constant rows/slices, aggregate
   values, nested member and member-array targets and instance-array
   distribution; interface modport arrays link through generate and forwarding.
-  A variable output target with runtime selects is an implied continuous
-  assignment: selector changes retarget it and unknown selectors write nothing.
+  A variable output target with runtime selects, including a member target
+  such as `.a(s[i].lo)`, is an implied continuous assignment: selector changes
+  retarget it and unknown selectors write nothing.
   Descriptor-backed arrays (to 16M cells) cross ports as descriptor copies.
   String and native-record value ports carry independent copies, including an
   output driven by a child `assign` (SIM-004).
@@ -533,7 +534,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   initial and always procedure has started; include transitive function reads
   and exclude written expressions. Fixed arrays (including 65,537-cell
   descriptor arrays, by contents marker rather than per cell), nested record and
-  packed members, constant/runtime selectors, conditional arms, sequential
+  packed members, constant/runtime selectors (including those of a written
+  member target such as `s[i].lo`), conditional arms, sequential
   predicates, ref ports (nested, to members and cells), string variables and
   string record members, and aggregate input links contribute dependencies.
   Unchanged results do not notify downstream readers; a closed latch retains
@@ -799,8 +801,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   packed arrays of structures and unions. Out-of-range/X/Z reads
   produce X positions; writes affect only in-range positions. Ordinary part
   selects remain unsigned; an element select keeps its element type's sign.
-  Member access through a packed-array element (`ps[i].f`) rejects
-  ([known issue](known_issues.md#member-access-through-packed-array-elements)). V §§4.1.14, 4.2.1–4.2.2 **[1995/2001]**.
+  Members of packed-array elements (`ps[i].f`, `w[i][j].s.f`, `q[k][i].f`,
+  `h.arr[i].f`) and their sub-selects read, write, drive ports and nets, force
+  and wait through the same element chain; a tagged-union member of such an
+  element rejects
+  ([known issue](known_issues.md#tagged-union-members-of-packed-array-elements)). V §§4.1.14, 4.2.1–4.2.2 **[1995/2001]**.
 - 🟦 **Packed strings and sign conversion** — Eight-bit ASCII vectors support
   literals/escapes, assignment, comparison, concatenation and padding/truncation.
   `$signed`/`$unsigned`, resolved sign/self-determined width rules and X/Z
@@ -1495,7 +1500,9 @@ domains, gated/initial history, Preponed reads and LSB/X/Z edge rules; `$past`
 counts only clock time steps strictly before its evaluation. Real arguments
 keep numeric samples: `$past` returns the exact sampled real and
 `$stable/$changed` compare with real `==`; `$rose/$fell` of a real are
-illegal. Future global forms and complex clocks remain rejected. Future global
+illegal. Outside any assertion, a procedural `$sampled` returns the
+Preponed value of every packed or real signal it reads, registered without
+per-slot history. Future global forms and complex clocks remain rejected. Future global
 functions are legal in SV2009 property/sequence contexts under §16.9.4, with
 global clocking, nonnesting and match-item restrictions and delayed assertion
 actions; their rejection is an implementation gap. Procedural and action-block

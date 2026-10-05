@@ -763,7 +763,8 @@ impl EmitCtx<'_, '_> {
         );
         // Member paths share aggregate storage, so event waits must compare the selected value.
         let selected_aggregate_member = self.cg.packed_member_info(expression).is_some()
-            || self.cg.unpacked_member_info(expression).is_some();
+            || self.cg.unpacked_member_info(expression).is_some()
+            || self.cg.packed_element_member_select(expression).is_some();
         let mapped_formal = matches!(
             self.cg.kind(expression),
             NodeKind::Expr(ExprKind::Ref {

@@ -54,9 +54,32 @@ void llg_sampled_register(sv4_t* signal) {
     g.sampled = item;
 }
 
+void llg_sampled_register_value(sv4_t* signal) {
+    if (!signal) {
+        fprintf(stderr, "llg: cannot register a null sampled signal\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return;
+    }
+    if (find_sampled_value(signal)) return;
+    for (llg_sampled_value_t* item = g.sampled_values; item; item = item->next) {
+        if (item->signal == signal) return;
+    }
+    llg_sampled_value_t* item = (llg_sampled_value_t*)llg_checked_malloc(
+        1, sizeof(*item), "sampled value");
+    item->signal = signal;
+    item->value = sv4_clone(signal);
+    item->history = NULL;
+    item->next = g.sampled_values;
+    g.sampled_values = item;
+}
+
 const sv4_t* llg_sampled_value(const sv4_t* signal) {
     llg_sampled_value_t* item = find_sampled_value(signal);
     if (item) return &item->value;
+    for (item = g.sampled_values; item; item = item->next) {
+        if (item->signal == signal) return &item->value;
+    }
     report_unregistered_sampled_signal();
     return NULL;
 }
@@ -242,6 +265,8 @@ static void sample_preponed_values(void) {
     g.sampled_time_valid = 1;
     for (llg_sampled_real_t* item = g.sampled_reals; item; item = item->next)
         item->value = *item->signal;
+    for (llg_sampled_value_t* item = g.sampled_values; item; item = item->next)
+        sv4_copy(&item->value, item->signal);
     for (llg_sampled_value_t* item = g.sampled; item; item = item->next) {
         sv4_copy(&item->value, item->signal);
         llg_sampled_history_t* last = item->history;
