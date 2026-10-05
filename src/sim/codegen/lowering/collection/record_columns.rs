@@ -15,6 +15,24 @@ use crate::sim::ir::LLG_DENSE_FIXED_ARRAY_CELLS;
 #[cfg(test)]
 mod tests;
 
+/// One stored column of a record value, in declaration order.
+#[derive(Clone)]
+pub(in crate::sim::codegen) enum RecordColumn {
+    /// Descriptor storage of a member array.
+    Array(usize),
+    /// One-cell descriptor storage of a scalar leaf.
+    Cell(usize),
+    /// Module storage of a real, string or chandle member.
+    Leaf(AggregateMemberInfo),
+}
+
+/// A record value as its columns, with paths relative to `descriptor`.
+#[derive(Clone)]
+pub(in crate::sim::codegen) struct RecordValue {
+    pub(in crate::sim::codegen) descriptor: TypeDescriptor,
+    pub(in crate::sim::codegen) columns: Vec<(Vec<AggregatePathPart>, RecordColumn)>,
+}
+
 /// Whether a record descriptor uses column layout: an unpacked structure
 /// wider than packed capacity, or one with a member array (directly or in a
 /// nested unpacked structure) above the dense-cell threshold.
@@ -98,6 +116,61 @@ fn single_member_record(member: &AggregateMember, clear: bool) -> TypeDescriptor
             type_id: None,
             members: vec![member],
         }),
+    }
+}
+
+/// The column shape of one record leaf, used to allocate temporaries.
+enum ColumnShape {
+    Packed {
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    },
+    Array(TypeDescriptor),
+}
+
+/// Column shapes of a record type in the declaration order used by module
+/// storage (`collect_aggregate_descriptor_leaves` with columns).
+fn column_shapes(
+    descriptor: &TypeDescriptor,
+    prefix: &[AggregatePathPart],
+    two_state: bool,
+    out: &mut Vec<(Vec<AggregatePathPart>, ColumnShape)>,
+) -> Result<(), String> {
+    match &descriptor.shape {
+        TypeShape::FixedArray { .. } => {
+            out.push((prefix.to_vec(), ColumnShape::Array(descriptor.clone())));
+            Ok(())
+        }
+        TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct => {
+            for member in &layout.members {
+                let mut path = prefix.to_vec();
+                path.push(AggregatePathPart::Member(member.name.clone()));
+                column_shapes(&member.descriptor, &path, member.two_state, out)?;
+            }
+            Ok(())
+        }
+        TypeShape::PackedAtom { .. } | TypeShape::Aggregate(_) => {
+            let width = fixed_width(descriptor).ok_or_else(|| {
+                format!(
+                    "record member `{}` has no packed width",
+                    aggregate_path_suffix(prefix)
+                )
+            })?;
+            out.push((
+                prefix.to_vec(),
+                ColumnShape::Packed {
+                    width,
+                    signed: descriptor.info.signed,
+                    two_state,
+                },
+            ));
+            Ok(())
+        }
+        _ => Err(format!(
+            "record member `{}` is not integral; a temporary column-layout record value supports integral members only",
+            aggregate_path_suffix(prefix)
+        )),
     }
 }
 
@@ -288,11 +361,14 @@ impl Codegen<'_> {
         ))
     }
 
-    /// Lexical storage for one column of a temporary record value.
+    /// Storage for one member-array column of a record value: lexical
+    /// activation storage, or persistent descriptor storage for a static
+    /// subroutine.
     pub(in super::super) fn record_temporary_array(
         &mut self,
         path: &str,
         descriptor: &TypeDescriptor,
+        activation: bool,
     ) -> Result<usize, String> {
         let TypeShape::FixedArray {
             dimensions,
@@ -305,10 +381,14 @@ impl Codegen<'_> {
             .ok_or_else(|| format!("record column element in `{path}` exceeds packed capacity"))?;
         let total = fixed_array_cell_count(dimensions)?;
         let ir = self.model.arrays.len();
-        let c_name = self.new_fn_name(path, "record_column");
+        let c_name = if activation {
+            self.new_fn_name(path, "record_column")
+        } else {
+            format!("S_llg_record_{ir}")
+        };
         self.model.arrays.push(crate::sim::ir::IrArray {
-            activation: true,
-            descriptor: false,
+            activation,
+            descriptor: !activation,
             net: None,
             net_elements: Vec::new(),
             element_default: Self::fixed_descriptor_default(element),
@@ -338,22 +418,28 @@ impl Codegen<'_> {
             .or_else(|| self.array_of(base))
     }
 
-    /// Lexical one-cell column for a scalar leaf of a temporary record.
+    /// One-cell column for a scalar leaf of a record value, holding
+    /// `default` until written.
     pub(in super::super) fn record_temporary_cell(
         &mut self,
         path: &str,
-        width: u32,
-        signed: bool,
-        two_state: bool,
+        shape: (u32, bool, bool),
+        default: Option<IrConst>,
+        activation: bool,
     ) -> usize {
+        let (width, signed, two_state) = shape;
         let ir = self.model.arrays.len();
-        let c_name = self.new_fn_name(path, "record_cell");
+        let c_name = if activation {
+            self.new_fn_name(path, "record_cell")
+        } else {
+            format!("S_llg_record_{ir}")
+        };
         self.model.arrays.push(crate::sim::ir::IrArray {
-            activation: true,
-            descriptor: false,
+            activation,
+            descriptor: !activation,
             net: None,
             net_elements: Vec::new(),
-            element_default: None,
+            element_default: default,
             element_uninitialized: None,
             c_name,
             hdl_name: String::new(),
@@ -368,17 +454,80 @@ impl Codegen<'_> {
         ir
     }
 
+    /// Allocate the columns of a record value of type `descriptor`.
+    pub(in super::super) fn allocate_record_columns(
+        &mut self,
+        path: &str,
+        descriptor: &TypeDescriptor,
+        activation: bool,
+    ) -> Result<RecordValue, String> {
+        let mut shapes = Vec::new();
+        column_shapes(descriptor, &[], descriptor.two_state, &mut shapes)?;
+        let mut columns = Vec::with_capacity(shapes.len());
+        for (member_path, shape) in shapes {
+            let column = match shape {
+                ColumnShape::Packed {
+                    width,
+                    signed,
+                    two_state,
+                } => {
+                    let default = Self::record_leaf_default(descriptor, &member_path, false);
+                    RecordColumn::Cell(self.record_temporary_cell(
+                        path,
+                        (width, signed, two_state),
+                        default,
+                        activation,
+                    ))
+                }
+                ColumnShape::Array(array) => {
+                    RecordColumn::Array(self.record_temporary_array(path, &array, activation)?)
+                }
+            };
+            columns.push((member_path, column));
+        }
+        Ok(RecordValue {
+            descriptor: descriptor.clone(),
+            columns,
+        })
+    }
+
+    /// Declarations of the lexical columns of `value`.
+    pub(in super::super) fn declare_record_columns(value: &RecordValue) -> Vec<IrStmt> {
+        value
+            .columns
+            .iter()
+            .filter_map(|(_, column)| match column {
+                RecordColumn::Array(array) | RecordColumn::Cell(array) => {
+                    Some(IrStmt::FixedArrayDeclare(*array))
+                }
+                RecordColumn::Leaf(_) => None,
+            })
+            .collect()
+    }
+
     /// Whether values of this type use column layout.
     pub(in super::super) fn column_layout_descriptor(descriptor: &TypeDescriptor) -> bool {
         record_column_layout(descriptor)
     }
 
-    /// Column storage of `root` at member `path`.
+    /// Column storage of `root` at member `path`: a module record column or
+    /// a member-array column of a subroutine record value.
     pub(in super::super) fn record_column_at(
         &self,
         root: NodeId,
         path: &[AggregatePathPart],
     ) -> Option<&ArrayInfo> {
+        if let Some(value) = self.activation_records.get(&root) {
+            return value
+                .columns
+                .iter()
+                .find_map(|(column_path, column)| match column {
+                    RecordColumn::Array(array) if column_path == path => {
+                        self.record_array_infos.get(array)
+                    }
+                    _ => None,
+                });
+        }
         self.unpacked_aggregates
             .get(&root)?
             .leaves
@@ -388,6 +537,41 @@ impl Codegen<'_> {
             .as_ref()
     }
 
+    /// The declaration and member path of a reference into a subroutine
+    /// record value (formal, result or local).
+    pub(in super::super) fn activation_record_path(
+        &self,
+        node: NodeId,
+    ) -> Option<(NodeId, Vec<AggregatePathPart>)> {
+        if self.activation_records.is_empty() {
+            return None;
+        }
+        let root = |node: NodeId| {
+            let node = self.canonical_func_target(node).unwrap_or(node);
+            self.activation_records.contains_key(&node).then_some(node)
+        };
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => root(*target).map(|target| (target, Vec::new())),
+            NodeKind::Expr(ExprKind::HierPath { parts, refs }) => {
+                let (index, target) = refs.iter().enumerate().find_map(|(index, target)| {
+                    target.and_then(root).map(|target| (index, target))
+                })?;
+                Some((
+                    target,
+                    parts[index + 1..]
+                        .iter()
+                        .cloned()
+                        .map(AggregatePathPart::Member)
+                        .collect(),
+                ))
+            }
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.activation_record_path(*operand),
+            _ => root(node).map(|target| (target, Vec::new())),
+        }
+    }
+
     /// The column a whole member reference (`r.a`, `r.s.a`) names.
     pub(in super::super) fn record_column_array(&self, node: NodeId) -> Option<&ArrayInfo> {
         if !self.record_columns
@@ -395,7 +579,9 @@ impl Codegen<'_> {
         {
             return None;
         }
-        let (root, path) = self.unpacked_path_for_expr(node)?;
+        let (root, path) = self
+            .activation_record_path(node)
+            .or_else(|| self.unpacked_path_for_expr(node))?;
         self.record_column_at(root, &path)
     }
 
@@ -413,6 +599,7 @@ impl Codegen<'_> {
             return None;
         };
         if let Some((root, members)) = self.db.array_select_path(node) {
+            let root = self.canonical_func_target(root).unwrap_or(root);
             let path = members
                 .iter()
                 .cloned()
@@ -426,11 +613,114 @@ impl Codegen<'_> {
             .map(|column| (column, indices.as_slice()))
     }
 
-    /// Whether `node` names a whole column-layout record.
-    pub(in super::super) fn is_column_record(&self, node: NodeId) -> bool {
+    /// Whether a subroutine returns a column-layout record.
+    pub(in super::super) fn record_return(&self, function: NodeId) -> bool {
         self.record_columns
-            && self
-                .unpacked_aggregate_info(node)
-                .is_some_and(|(_, info)| info.columns)
+            && matches!(self.kind(function), NodeKind::FuncTask { ret: Some(_), .. })
+            && self.activation_records.contains_key(&function)
+    }
+
+    /// Whether a formal, result or local is a column-layout record value.
+    pub(in super::super) fn record_declaration(&self, node: NodeId) -> bool {
+        self.activation_records.contains_key(&node)
+    }
+
+    /// Allocate column storage for every column-layout record formal, result
+    /// and local of `function`: lexical activations for automatic storage,
+    /// persistent descriptors for static storage.
+    pub(in super::super) fn prepare_record_function(
+        &mut self,
+        function: NodeId,
+        automatic: bool,
+    ) -> Result<(), String> {
+        let mut nodes = self
+            .func_formals(function)
+            .into_iter()
+            .map(|(node, _)| (node, automatic))
+            .collect::<Vec<_>>();
+        let returns = matches!(self.kind(function), NodeKind::FuncTask { ret: Some(_), .. });
+        if returns {
+            nodes.push((function, automatic));
+        }
+        if let Some(body) = self.func_body(function) {
+            self.record_locals(body, &mut nodes);
+        }
+        let path = self.instance_path_of(function);
+        for (node, activation) in nodes {
+            if self.activation_records.contains_key(&node) {
+                continue;
+            }
+            let Some(descriptor) = self.query_descriptor(node).cloned() else {
+                continue;
+            };
+            if !record_column_layout(&descriptor) {
+                continue;
+            }
+            let value = self
+                .allocate_record_columns(&path, &descriptor, activation)
+                .map_err(|error| {
+                    format!(
+                        "column-layout record `{}` in `{path}`: {error}",
+                        self.node(node).name
+                    )
+                })?;
+            for (_, column) in &value.columns {
+                if let RecordColumn::Array(array) = column {
+                    let info = ArrayInfo {
+                        global: self.model.arrays[*array].c_name.clone(),
+                        elem_width: self.model.arrays[*array].elem_width,
+                        signed: self.model.arrays[*array].signed,
+                        real: false,
+                        shortreal: false,
+                        is_net: false,
+                        dims: self.model.arrays[*array].dims.clone(),
+                        init: None,
+                        ir: *array,
+                    };
+                    self.record_array_infos.insert(*array, info);
+                }
+            }
+            self.record_columns = true;
+            self.activation_records.insert(node, value);
+        }
+        Ok(())
+    }
+
+    fn record_locals(&self, node: NodeId, out: &mut Vec<(NodeId, bool)>) {
+        match self.kind(node) {
+            NodeKind::Var { .. } => {
+                if self
+                    .query_descriptor(node)
+                    .is_some_and(record_column_layout)
+                {
+                    let automatic = self.db.variable_lifetime(node) == VariableLifetime::Automatic;
+                    out.push((node, automatic));
+                }
+            }
+            NodeKind::FuncTask { .. } => {}
+            _ => {
+                for child in &self.node(node).children {
+                    self.record_locals(*child, out);
+                }
+            }
+        }
+    }
+
+    /// The IR formals of a column-layout record formal or result, one per
+    /// column in declaration order.
+    pub(in super::super) fn record_formal_columns(&self, node: NodeId) -> Vec<usize> {
+        self.activation_records
+            .get(&node)
+            .map(|value| {
+                value
+                    .columns
+                    .iter()
+                    .filter_map(|(_, column)| match column {
+                        RecordColumn::Array(array) | RecordColumn::Cell(array) => Some(*array),
+                        RecordColumn::Leaf(_) => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }

@@ -42,7 +42,7 @@ mod nets;
 mod packed_elements;
 pub(super) mod packed_formals;
 pub(super) use packed_elements::Select;
-pub(super) use record_columns::record_cell_leaf;
+pub(super) use record_columns::{record_cell_leaf, RecordColumn, RecordValue};
 mod port_net_types;
 mod ports;
 mod processes;

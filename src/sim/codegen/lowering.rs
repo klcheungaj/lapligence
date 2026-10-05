@@ -1214,6 +1214,13 @@ struct Codegen<'a> {
     /// Whether any record uses column layout; keeps column lookups off the
     /// common array-resolution path otherwise.
     record_columns: bool,
+    /// Column-layout record formals, results and locals of subroutines.
+    activation_records: HashMap<NodeId, collection::RecordValue>,
+    /// Array metadata of subroutine record member-array columns.
+    record_array_infos: HashMap<usize, ArrayInfo>,
+    /// Set while a column-layout record result call is lowered as an
+    /// assignment source, the only context that supplies its result columns.
+    record_call_result: bool,
     /// Native record declarations (formals, results, locals) → type layout.
     native_layouts: HashMap<NodeId, NativeLayout>,
     /// `(instance, declaration)` → native value storage.
@@ -1532,6 +1539,9 @@ impl<'a> Codegen<'a> {
             unpacked_aggregates: HashMap::new(),
             aggregate_objects: HashMap::new(),
             record_columns: false,
+            activation_records: HashMap::new(),
+            record_array_infos: HashMap::new(),
+            record_call_result: false,
             native_layouts: HashMap::new(),
             native_storage: HashMap::new(),
             native_value_layouts: HashMap::new(),

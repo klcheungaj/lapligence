@@ -138,6 +138,9 @@ impl Codegen<'_> {
             .get(&node)
             .filter(|_| self.descriptor_transport(node))
             .map(|array| array.ir)
+            // A column-layout record formal or result binds its first
+            // column here; `record_formal_columns` lists the rest.
+            .or_else(|| self.record_formal_columns(node).first().copied())
     }
 
     pub(super) fn prepare_fixed_function(

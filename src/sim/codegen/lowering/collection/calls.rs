@@ -116,6 +116,11 @@ impl<'a> Codegen<'a> {
                 "task call `{name}` used as an expression in `{scope_path}`"
             ));
         }
+        if self.record_return(ft) && !std::mem::take(&mut self.record_call_result) {
+            return Err(format!(
+                "function `{name}` returns a column-layout record; call it only as the source of a record assignment or return in `{scope_path}`"
+            ));
+        }
         let formals = meta.formals.clone();
         let bound = self.bind_call_args(self.inst, &formals, args)?;
         for (idx, (io, _is_out)) in formals.iter().enumerate() {
@@ -137,7 +142,35 @@ impl<'a> Codegen<'a> {
         // them in the callee's declaration order (the C parameter order).
         let mut in_args: Vec<(usize, IrCallArg)> = Vec::new();
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
+        // Columns after the first of column-layout record formals, in the
+        // order their trailing IR formals were declared.
+        let mut record_out_args = Vec::new();
+        let mut record_in_args = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if self.record_declaration(*io) {
+                let address = *is_out
+                    || matches!(
+                        self.kind(*io),
+                        NodeKind::FuncArg {
+                            direction: DbDirection::Ref,
+                            ..
+                        }
+                    );
+                let mut columns = self
+                    .record_call_columns(scope_path, *io, bound[idx].expr)?
+                    .into_iter();
+                let first = columns
+                    .next()
+                    .ok_or("column-layout record formal has no columns")?;
+                if address {
+                    out_args.push(first);
+                    record_out_args.extend(columns);
+                } else {
+                    in_args.push((idx, first));
+                    record_in_args.extend(columns);
+                }
+                continue;
+            }
             if self.is_native_declaration(*io) {
                 let argument = self.native_expression_argument(scope_path, *io, bound[idx].expr)?;
                 if *is_out {
@@ -369,7 +402,9 @@ impl<'a> Codegen<'a> {
             }
         }
         in_args.sort_by_key(|(idx, _)| *idx);
+        out_args.extend(record_out_args);
         out_args.extend(in_args.into_iter().map(|(_, argument)| argument));
+        out_args.extend(record_in_args);
         // A class method written without an explicit receiver inside another
         // class method is represented as a plain function call by Slang. Bind
         // that call to the current `this` (or the object under construction).
@@ -401,6 +436,7 @@ impl<'a> Codegen<'a> {
             self.class_method_owner(ft).is_some() && self.node(ft).name == "new";
         if ret_val.is_none()
             && !self.nonflatten_function(ft)
+            && !self.record_return(ft)
             && !self.native_return(ft)
             && !self.real_array_return(ft)
             && !is_class_constructor

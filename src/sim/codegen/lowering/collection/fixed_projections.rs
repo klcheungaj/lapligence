@@ -454,6 +454,63 @@ impl Codegen<'_> {
         {
             return Ok(None);
         }
+        if let Some((root, member_path)) = self.activation_record_path(node) {
+            let Some(value) = self.activation_records.get(&root) else {
+                return Ok(None);
+            };
+            let Some((leaf_path, cell)) =
+                value
+                    .columns
+                    .iter()
+                    .find_map(|(path, column)| match column {
+                        RecordColumn::Cell(cell) if member_path.starts_with(path) => {
+                            Some((path.clone(), *cell))
+                        }
+                        _ => None,
+                    })
+            else {
+                return Ok(None);
+            };
+            let Some(descriptor) = Self::descriptor_at_path(&value.descriptor, &leaf_path) else {
+                return Ok(None);
+            };
+            let array = self.reference_array(cell);
+            let (width, signed) = (
+                self.model.arrays[array].elem_width,
+                self.model.arrays[array].signed,
+            );
+            let mut projection = Projection {
+                root: FixedRoot::Cell {
+                    read: IrExpr::new(
+                        IrExprKind::ArrayRead {
+                            arr: array,
+                            indices: vec![lhs_integer_expr(0)],
+                            elem_sel: IrElemSel::Whole,
+                        },
+                        width,
+                        signed,
+                        None,
+                    ),
+                    target: self.reference_lhs(IrLhs::ArrayElem {
+                        arr: array,
+                        indices: vec![lhs_integer_expr(0)],
+                        elem_sel: IrElemSel::Whole,
+                    })?,
+                },
+                signed: descriptor.info.signed,
+                descriptor,
+                steps: Vec::new(),
+                element_states: Vec::new(),
+                ref_legal: true,
+            };
+            for part in &member_path[leaf_path.len()..] {
+                let AggregatePathPart::Member(name) = part else {
+                    return Ok(None);
+                };
+                Self::fixed_member(&mut projection, name)?;
+            }
+            return Ok(Some(projection));
+        }
         let Some((root, member_path)) = self.unpacked_path_for_expr(node) else {
             return Ok(None);
         };

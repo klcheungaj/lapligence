@@ -7,6 +7,9 @@ impl EmitCtx<'_, '_> {
         &mut self,
         declaration: NodeId,
     ) -> Result<Vec<IrStmt>, String> {
+        if self.func.is_some() && self.cg.record_declaration(declaration) {
+            return self.cg.lower_record_local(&self.path, declaration);
+        }
         if let Some(value) = self
             .func
             .is_some()

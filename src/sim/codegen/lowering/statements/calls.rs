@@ -1359,6 +1359,29 @@ impl EmitCtx<'_, '_> {
             .func
             .as_ref()
             .and_then(|function| function.ret_node)
+            .filter(|node| self.cg.record_declaration(*node) && self.inline.is_none())
+        {
+            let mut statements = Vec::new();
+            if let Some(value) = value {
+                statements.push(
+                    self.cg
+                        .lower_column_record_assignment(
+                            &self.path,
+                            result,
+                            value,
+                            false,
+                            Operation::Assignment,
+                        )?
+                        .ok_or("column-layout record return has no record assignment")?,
+                );
+            }
+            statements.push(IrStmt::Return { value: None });
+            return Ok(IrStmt::Block(statements));
+        }
+        if let Some(result) = self
+            .func
+            .as_ref()
+            .and_then(|function| function.ret_node)
             .filter(|node| {
                 self.cg.fixed_formal_array(*node).is_some()
                     || self.cg.real_formal_array(*node).is_some()

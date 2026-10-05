@@ -5,81 +5,9 @@
 //! member arrays through descriptor views. Sources that are not storage
 //! (patterns, conditionals, calls) are first built into a lexical temporary
 //! record, so every source is evaluated once before any destination write.
+use super::super::super::collection::{RecordColumn, RecordValue};
 use super::*;
 use crate::sim::ir::{IrFixedValue, IrMemoryView};
-
-/// One stored column of a record value, in declaration order.
-#[derive(Clone)]
-pub(in crate::sim::codegen::lowering) enum RecordColumn {
-    /// Descriptor storage of a member array.
-    Array(usize),
-    /// One-cell descriptor storage of a scalar leaf.
-    Cell(usize),
-    /// Module storage of a real, string or chandle member.
-    Leaf(AggregateMemberInfo),
-}
-
-/// A record value as its columns, with paths relative to `descriptor`.
-#[derive(Clone)]
-pub(in crate::sim::codegen::lowering) struct RecordValue {
-    pub(in crate::sim::codegen::lowering) descriptor: TypeDescriptor,
-    pub(in crate::sim::codegen::lowering) columns: Vec<(Vec<AggregatePathPart>, RecordColumn)>,
-}
-
-/// The column shape of one record leaf, used to allocate temporaries.
-enum ColumnShape {
-    Packed {
-        width: u32,
-        signed: bool,
-        two_state: bool,
-    },
-    Array(TypeDescriptor),
-}
-
-/// Column shapes of a record type in the declaration order used by module
-/// storage (`collect_aggregate_descriptor_leaves` with columns).
-fn column_shapes(
-    descriptor: &TypeDescriptor,
-    prefix: &[AggregatePathPart],
-    two_state: bool,
-    out: &mut Vec<(Vec<AggregatePathPart>, ColumnShape)>,
-) -> Result<(), String> {
-    match &descriptor.shape {
-        TypeShape::FixedArray { .. } => {
-            out.push((prefix.to_vec(), ColumnShape::Array(descriptor.clone())));
-            Ok(())
-        }
-        TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct => {
-            for member in &layout.members {
-                let mut path = prefix.to_vec();
-                path.push(AggregatePathPart::Member(member.name.clone()));
-                column_shapes(&member.descriptor, &path, member.two_state, out)?;
-            }
-            Ok(())
-        }
-        TypeShape::PackedAtom { .. } | TypeShape::Aggregate(_) => {
-            let width = Codegen::fixed_descriptor_width(descriptor).ok_or_else(|| {
-                format!(
-                    "record member `{}` has no packed width",
-                    aggregate_path_suffix(prefix)
-                )
-            })?;
-            out.push((
-                prefix.to_vec(),
-                ColumnShape::Packed {
-                    width,
-                    signed: descriptor.info.signed,
-                    two_state,
-                },
-            ));
-            Ok(())
-        }
-        _ => Err(format!(
-            "record member `{}` is not integral; a temporary column-layout record value supports integral members only",
-            aggregate_path_suffix(prefix)
-        )),
-    }
-}
 
 impl Codegen<'_> {
     /// The storage columns of a column-layout record or of a sub-record of
@@ -90,6 +18,25 @@ impl Codegen<'_> {
     ) -> Option<RecordValue> {
         if !self.record_columns {
             return None;
+        }
+        if let Some((root, prefix)) = self.activation_record_path(node) {
+            let value = self.activation_records.get(&root)?;
+            let descriptor = Self::descriptor_at_path(&value.descriptor, &prefix)?;
+            if !matches!(&descriptor.shape,
+                TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct)
+            {
+                return None;
+            }
+            let columns = value
+                .columns
+                .iter()
+                .filter(|(path, _)| path.starts_with(&prefix))
+                .map(|(path, column)| (path[prefix.len()..].to_vec(), column.clone()))
+                .collect::<Vec<_>>();
+            return (!columns.is_empty()).then_some(RecordValue {
+                descriptor,
+                columns,
+            });
         }
         let selection = self.resolve_unpacked_aggregate(node)?;
         if !selection.storage.columns
@@ -135,32 +82,9 @@ impl Codegen<'_> {
         descriptor: &TypeDescriptor,
         out: &mut Vec<IrStmt>,
     ) -> Result<RecordValue, String> {
-        let mut shapes = Vec::new();
-        column_shapes(descriptor, &[], descriptor.two_state, &mut shapes)?;
-        let mut columns = Vec::with_capacity(shapes.len());
-        for (member_path, shape) in shapes {
-            let column = match shape {
-                ColumnShape::Packed {
-                    width,
-                    signed,
-                    two_state,
-                } => {
-                    let ir = self.record_temporary_cell(path, width, signed, two_state);
-                    out.push(IrStmt::FixedArrayDeclare(ir));
-                    RecordColumn::Cell(ir)
-                }
-                ColumnShape::Array(array) => {
-                    let ir = self.record_temporary_array(path, &array)?;
-                    out.push(IrStmt::FixedArrayDeclare(ir));
-                    RecordColumn::Array(ir)
-                }
-            };
-            columns.push((member_path, column));
-        }
-        Ok(RecordValue {
-            descriptor: descriptor.clone(),
-            columns,
-        })
+        let value = self.allocate_record_columns(path, descriptor, true)?;
+        out.extend(Self::declare_record_columns(&value));
+        Ok(value)
     }
 
     fn record_column_read(&self, column: &RecordColumn) -> Result<IrExpr, String> {
@@ -947,14 +871,149 @@ impl Codegen<'_> {
     }
 
     /// Calls returning a column-layout record (filled in by the call ABI).
+    /// `dst = f(...)` for a function returning a column-layout record: the
+    /// call writes one trailing output per result column. A blocking store
+    /// into descriptor columns binds them directly (outputs copy back after
+    /// the callee returns); other destinations receive a temporary.
     fn lower_record_call_into(
         &mut self,
-        _path: &str,
-        _dst: &RecordValue,
-        _node: NodeId,
-        _nba: bool,
+        path: &str,
+        dst: &RecordValue,
+        node: NodeId,
+        nba: bool,
     ) -> Result<Option<Vec<IrStmt>>, String> {
-        Ok(None)
+        let NodeKind::FuncCall { name, callee, .. } = self.kind(node) else {
+            return Ok(None);
+        };
+        let (name, callee) = (name.clone(), *callee);
+        let (function, _) = self.resolve_callee_env(self.inst, &name, false, callee)?;
+        if !self.record_return(function) {
+            return Ok(None);
+        }
+        let mut out = Vec::new();
+        let direct = !nba
+            && dst
+                .columns
+                .iter()
+                .all(|(_, column)| !matches!(column, RecordColumn::Leaf(_)));
+        let result = if direct {
+            dst.clone()
+        } else {
+            let descriptor = self
+                .activation_records
+                .get(&function)
+                .map(|value| value.descriptor.clone())
+                .ok_or("record result has no columns")?;
+            self.record_temporary(path, &descriptor, &mut out)?
+        };
+        self.record_call_result = true;
+        let expression = self.lower_func_call_expr(path, node, &name, callee);
+        self.record_call_result = false;
+        let IrExprKind::CallFn(expression) = expression?.kind else {
+            return Err("record call did not lower to a typed call".into());
+        };
+        let mut args = expression.args;
+        let outputs = self.model.funcs[expression.f]
+            .formals
+            .iter()
+            .filter(|formal| formal.is_address())
+            .count();
+        let results = result
+            .columns
+            .iter()
+            .filter_map(|(_, column)| match column {
+                RecordColumn::Array(array) | RecordColumn::Cell(array) => {
+                    Some(IrCallArg::FixedArray(self.reference_array(*array)))
+                }
+                RecordColumn::Leaf(_) => None,
+            })
+            .collect::<Vec<_>>();
+        let first = outputs
+            .checked_sub(results.len())
+            .ok_or("record result has more columns than outputs")?;
+        for (offset, argument) in results.into_iter().enumerate() {
+            args.insert(first + offset, argument);
+        }
+        out.push(IrStmt::Call(Box::new(IrCall::new(
+            expression.f,
+            args,
+            expression.depth,
+            Vec::new(),
+            Vec::new(),
+        ))));
+        if !direct {
+            self.record_copy(path, dst, &result, nba, &mut out)?;
+        }
+        Ok(Some(out))
+    }
+
+    /// One descriptor operand per column of a record actual.
+    pub(in crate::sim::codegen::lowering) fn record_call_columns(
+        &mut self,
+        path: &str,
+        formal: NodeId,
+        actual: NodeId,
+    ) -> Result<Vec<IrCallArg>, String> {
+        let shape = self
+            .activation_records
+            .get(&formal)
+            .cloned()
+            .ok_or("column-layout record formal has no columns")?;
+        let actual_node = self.p30_unwrap_cast(actual);
+        let value = self.column_record_storage(actual_node).ok_or_else(|| {
+            format!(
+                "column-layout record argument for `{}` in `{path}` must be a record variable, member or formal",
+                self.node(formal).name
+            )
+        })?;
+        self.record_shapes_match(path, &shape, &value)?;
+        value
+            .columns
+            .iter()
+            .map(|(_, column)| match column {
+                RecordColumn::Array(array) | RecordColumn::Cell(array) => {
+                    Ok(IrCallArg::FixedValue(Box::new(IrFixedValue::Array(
+                        self.record_column_view(*array),
+                    ))))
+                }
+                RecordColumn::Leaf(_) => Err(format!(
+                    "column-layout record argument in `{path}` has a real, string or chandle member"
+                )),
+            })
+            .collect()
+    }
+
+    /// Declare an automatic column-layout record local and run its
+    /// initializer; static locals keep persistent columns.
+    pub(in crate::sim::codegen::lowering) fn lower_record_local(
+        &mut self,
+        path: &str,
+        declaration: NodeId,
+    ) -> Result<Vec<IrStmt>, String> {
+        let value = self
+            .activation_records
+            .get(&declaration)
+            .cloned()
+            .ok_or("column-layout record local has no columns")?;
+        let initializer = self.db.var_initializer(declaration);
+        let automatic = value.columns.iter().any(|(_, column)| {
+            matches!(column, RecordColumn::Array(array) | RecordColumn::Cell(array)
+                if self.model.arrays[*array].activation)
+        });
+        if !automatic {
+            if initializer.is_some() {
+                return Err(format!(
+                    "initializer of static column-layout record local `{}` in `{path}` is not supported",
+                    self.node(declaration).name
+                ));
+            }
+            return Ok(Vec::new());
+        }
+        let mut statements = Self::declare_record_columns(&value);
+        if let Some(initializer) = initializer {
+            self.lower_record_value_into(path, &value, initializer, false, &mut statements)?;
+        }
+        Ok(statements)
     }
 }
 
