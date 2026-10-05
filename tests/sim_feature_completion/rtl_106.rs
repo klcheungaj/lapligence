@@ -13,6 +13,7 @@ use std::path::Path;
 
 const SUITE: &str = "feature_completion/rtl_106";
 const LATER: &str = "is not available in IEEE 2001";
+const ARGS_2001: [&str; 2] = ["--edition", "2001"];
 
 /// Value-backend lanes: legacy, compact portable and, when a GMP root is
 /// supplied, compact GMP. A missing GMP root is reported as blocked.
@@ -67,114 +68,149 @@ fn legal_2001_composition_executes_in_both_editions() {
 /// the macro use site.
 #[test]
 fn macro_built_later_forms_reject_in_2001() {
-    for (fixture, position, label) in [
-        ("neg_macro_end_label", "5:3", "end label"),
-        ("neg_macro_cast", "4:15", "cast"),
-        (
-            "neg_macro_dot_name",
-            "6:9",
-            "implicit named port connection",
-        ),
-        ("neg_macro_size_dim", "3:15", "unpacked dimension size"),
-        (
-            "neg_macro_empty_call",
-            "6:11",
-            "empty subroutine argument list",
-        ),
-        (
-            "neg_macro_empty_task",
-            "3:13",
-            "empty subroutine argument list",
-        ),
-        ("neg_macro_statement_label", "4:5", "statement label"),
-        (
-            "neg_macro_param_port",
-            "2:12",
-            "parameter port without the parameter keyword",
-        ),
-        (
-            "neg_macro_localparam_port",
-            "2:31",
-            "localparam in a parameter port list",
-        ),
-        (
-            "neg_macro_loop_genvar",
-            "5:5",
-            "genvar declaration in a generate loop",
-        ),
-        ("neg_macro_edge", "4:12", "edge event control"),
-    ] {
-        sim_cli::reject_case_with_args(
-            SUITE,
-            &format!("{fixture}.v"),
-            &format!("{fixture}.v:{position} `{label}` {LATER}"),
-            &["--edition", "2001"],
-        );
-    }
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_macro_end_label.v",
+        "neg_macro_end_label.v:5:3 `end label` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_macro_cast.v",
+        "neg_macro_cast.v:4:15 `cast` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_macro_dot_name.v",
+        "neg_macro_dot_name.v:6:9 `implicit named port connection` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_macro_size_dim.v",
+        "neg_macro_size_dim.v:3:15 `unpacked dimension size` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_macro_empty_call.v",
+        "neg_macro_empty_call.v:6:11 `empty subroutine argument list` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_macro_empty_task.v",
+        "neg_macro_empty_task.v:3:13 `empty subroutine argument list` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_macro_statement_label.v",
+        "neg_macro_statement_label.v:4:5 `statement label` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_macro_param_port.v",
+        "neg_macro_param_port.v:2:12 `parameter port without the parameter keyword` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_macro_localparam_port.v",
+        "neg_macro_localparam_port.v:2:31 `localparam in a parameter port list` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_macro_loop_genvar.v",
+        "neg_macro_loop_genvar.v:5:5 `genvar declaration in a generate loop` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_macro_edge.v",
+        "neg_macro_edge.v:4:12 `edge event control` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
 }
 
 /// Keyword-free later grammar the listed token rules did not cover.
 #[test]
 fn keyword_free_later_forms_reject_in_2001() {
-    for (fixture, position, label) in [
-        ("neg_named_argument", "7:19", "named subroutine argument"),
-        ("neg_function_reg_return", "2:12", "function return type"),
-        (
-            "neg_param_port_keyword",
-            "1:14",
-            "parameter port without the parameter keyword",
-        ),
-        (
-            "neg_nested_assignment",
-            "5:10",
-            "assignment within an expression",
-        ),
-        (
-            "neg_unnamed_generate_loop",
-            "5:35",
-            "unnamed generate loop block",
-        ),
-        ("neg_module_lifetime", "1:8", "module lifetime"),
-        (
-            "neg_argument_direction",
-            "2:22",
-            "argument without a direction",
-        ),
-    ] {
-        sim_cli::reject_case_with_args(
-            SUITE,
-            &format!("{fixture}.v"),
-            &format!("{fixture}.v:{position} `{label}` {LATER}"),
-            &["--edition", "2001"],
-        );
-    }
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_named_argument.v",
+        "neg_named_argument.v:7:19 `named subroutine argument` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_function_reg_return.v",
+        "neg_function_reg_return.v:2:12 `function return type` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_param_port_keyword.v",
+        "neg_param_port_keyword.v:1:14 `parameter port without the parameter keyword` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_nested_assignment.v",
+        "neg_nested_assignment.v:5:10 `assignment within an expression` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_unnamed_generate_loop.v",
+        "neg_unnamed_generate_loop.v:5:35 `unnamed generate loop block` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_module_lifetime.v",
+        "neg_module_lifetime.v:1:8 `module lifetime` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_argument_direction.v",
+        "neg_argument_direction.v:2:22 `argument without a direction` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
 }
 
 /// IEEE 1364-2001 6.1, 7.1 and 12.3.9.2: continuous assignments, gate
 /// outputs and output port connections drive nets; input ports are nets.
 #[test]
 fn variable_drivers_reject_in_2001() {
-    for (fixture, position, label) in [
-        (
-            "neg_assign_reg",
-            "3:10",
-            "continuous assignment to a variable",
-        ),
-        (
-            "neg_output_reg",
-            "7:19",
-            "output port connected to a variable",
-        ),
-        ("neg_gate_reg", "4:9", "gate output connected to a variable"),
-        ("neg_input_reg", "2:9", "variable input or inout port"),
-    ] {
-        sim_cli::reject_case_with_args(
-            SUITE,
-            &format!("{fixture}.v"),
-            &format!("{fixture}.v:{position} `{label}` {LATER}"),
-            &["--edition", "2001"],
-        );
-    }
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_assign_reg.v",
+        "neg_assign_reg.v:3:10 `continuous assignment to a variable` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_output_reg.v",
+        "neg_output_reg.v:7:19 `output port connected to a variable` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_gate_reg.v",
+        "neg_gate_reg.v:4:9 `gate output connected to a variable` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_input_reg.v",
+        "neg_input_reg.v:2:9 `variable input or inout port` is not available in IEEE 2001",
+        &ARGS_2001,
+    );
 }
 
 /// Every negative is legal SystemVerilog-2009 and fails only under 2001.
@@ -262,24 +298,35 @@ fn frontend_diagnostics_append_the_line_mapped_position() {
 /// do not change the simulated result.
 #[test]
 fn lint_findings_append_the_line_mapped_position() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim")
+        .join(SUITE)
+        .join("line_lint.v");
+    let stderr = format!(
+        "{}:7:5 (`line orig_lint.v:31): [WARNING] incomplete-case: case without default in combinational process may infer a latch\n\
+         lint: 0 error(s), 1 warning(s)\n\
+         llg: $finish at time 1 at tb:15:5\n",
+        fixture.display()
+    );
     for edition in ["2001", "2009"] {
-        let output = sim_cli::invoke_with_env(
+        sim_cli::run_case_with_args(
             SUITE,
             "line_lint.v",
-            true,
+            "y=1\n",
+            &stderr,
+            &[],
             &["--edition", edition, "--lint"],
-            &[],
-            &[],
-        );
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(output.status.code(), Some(0), "{stderr}");
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "y=1\n");
-        assert!(
-            stderr.contains("line_lint.v:6:5 (`line orig_lint.v:31): [WARNING] incomplete-case:"),
-            "{stderr}"
         );
     }
-    let output = sim_cli::invoke_with_env(SUITE, "line_lint.v", true, &["--lint-json"], &[], &[]);
+    // `--lint-json` takes a following operand as its output path.
+    let output = sim_cli::invoke_with_env(
+        SUITE,
+        "line_lint.v",
+        true,
+        &["--lint-json", "--edition", "2009"],
+        &[],
+        &[],
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("\"logical_file\": \"orig_lint.v\",\n      \"logical_line\": 31,"),

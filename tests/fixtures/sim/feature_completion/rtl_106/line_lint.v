@@ -1,3 +1,4 @@
+`timescale 1ns/1ns
 module tb;
   reg [1:0] sel;
   reg y;
@@ -11,5 +12,6 @@ module tb;
   initial begin
     sel = 2'd1;
     #1 $display("y=%b", y);
+    $finish;
   end
 endmodule
