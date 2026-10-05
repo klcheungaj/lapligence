@@ -8,14 +8,17 @@
 //! variable goes through it. `llg` reads a config file only when `--config`
 //! names it; it never discovers `llg.toml` in the current directory.
 //!
-//! A scalar from a higher layer replaces the lower one. A repeatable option
-//! appends: the config list comes first and the command-line values follow;
-//! `--clear <list>` drops the config list before they apply. Only the config
-//! supplies lists (no list option has an environment variable). Duplicates:
-//! a later `NAME[=VALUE]` define or `NAME=VALUE` parameter override replaces an
-//! earlier one for the same `NAME`; any other list keeps the first occurrence
-//! of an identical entry, and source files are compared by canonical path.
-//! Plusargs after `--` are never deduplicated.
+//! A scalar from a higher layer replaces the lower one. A list option given on
+//! the command line replaces the config list (several occurrences accumulate
+//! among themselves); its `--append-<list>` twin adds to the list instead, after
+//! the replacing values when both are given. Source files on the command line
+//! replace `sources.files` and the directory discovery, and `--` replaces the
+//! configured plusargs even when nothing follows it. Only the config supplies
+//! lists (no list option has an environment variable). Duplicates: a later
+//! `NAME[=VALUE]` define or `NAME=VALUE` parameter override replaces an earlier
+//! one for the same `NAME`; any other list keeps the first occurrence of an
+//! identical entry, and source files are compared by canonical path. Plusargs
+//! are never deduplicated.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -25,7 +28,7 @@ use llg::core::compile;
 use llg::ffi::slang::SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES;
 use llg::sim;
 
-use crate::cli::{Cli, ListKey, MIB};
+use crate::cli::{Cli, MIB};
 
 /// Default output root: models go to `build/sim/<design>` and the runtime
 /// cache to `build/llg-runtime-cache`, both under the current directory.
@@ -168,16 +171,21 @@ fn path_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// The configured entries of a list unless `--clear` named it, followed by the
-/// command-line entries.
-fn appended<T>(config: impl IntoIterator<Item = T>, cli: Vec<T>, cleared: bool) -> Vec<T> {
-    let mut merged: Vec<T> = if cleared {
-        Vec::new()
-    } else {
-        config.into_iter().collect()
-    };
-    merged.extend(cli);
+/// A list option: the command-line replacement when one was given, else the
+/// configured entries, followed by the `--append-<list>` entries.
+fn listed<T>(
+    config: impl IntoIterator<Item = T>,
+    replace: Option<Vec<T>>,
+    append: Vec<T>,
+) -> Vec<T> {
+    let mut merged: Vec<T> = replace.unwrap_or_else(|| config.into_iter().collect());
+    merged.extend(append);
     merged
+}
+
+/// A repeatable option's values, or `None` when it was not given.
+fn given<T>(values: Vec<T>) -> Option<Vec<T>> {
+    (!values.is_empty()).then_some(values)
 }
 
 /// Drop repeated entries, keeping the first of each `key`.
@@ -222,13 +230,15 @@ pub(crate) fn resolve(
 ) -> Result<DriverOptions, SettingsError> {
     let empty = config::default_config(Path::new(if cfg!(windows) { "C:\\" } else { "/" }));
     let config = config.unwrap_or(&empty);
-    let cleared = |key: ListKey| cli.clear.contains(&key);
+    let append = cli.append;
 
-    // Sources: the config's explicit files and everything discovered under its
-    // explicit directories, then the command-line files.
+    // Sources: files named on the command line replace the config's explicit
+    // files and the discovery under its explicit directories; otherwise the
+    // config supplies them. `--append-source` files follow either way.
+    let replaced_sources = given(cli.files);
     let mut config_files: Vec<String> = Vec::new();
     let mut source_dirs: Vec<String> = Vec::new();
-    if !cleared(ListKey::Sources) {
+    if replaced_sources.is_none() {
         config_files.extend(config.sources.files.iter().map(|path| path_string(path)));
         if config.sources.directories_configured {
             let discovered = config::discover_sources(config).map_err(|error| {
@@ -246,97 +256,99 @@ pub(crate) fn resolve(
                 .collect();
         }
     }
-    let files = dedup_first(appended(config_files, cli.files, false), |file| {
-        source_identity(file)
-    });
+    let files = dedup_first(
+        listed(config_files, replaced_sources, append.files),
+        |file| source_identity(file),
+    );
 
     // Source directories are include-search directories, as in the language
-    // server; they follow `--clear sources`, not `--clear include-dirs`.
+    // server; they follow the sources, not the include-directory list.
     let include_dirs = dedup_first(
-        appended(
-            source_dirs.into_iter().chain(
+        source_dirs
+            .into_iter()
+            .chain(listed(
                 config
                     .compile
                     .include_dirs
                     .iter()
-                    .filter(|_| !cleared(ListKey::IncludeDirs))
                     .map(|path| path_string(path)),
-            ),
-            cli.include_dirs,
-            false,
-        ),
+                given(cli.include_dirs),
+                append.include_dirs,
+            ))
+            .collect(),
         String::clone,
     );
 
     let defines = dedup_last(
-        appended(
+        listed(
             config.compile.defines.iter().cloned(),
-            cli.defines,
-            cleared(ListKey::Defines),
+            given(cli.defines),
+            append.defines,
         ),
         |entry| entry_name(entry),
     );
     let param_overrides = dedup_last(
-        appended(
+        listed(
             config
                 .compile
                 .param_overrides
                 .iter()
                 .map(|(name, value)| format!("{name}={value}")),
-            cli.param_overrides,
-            cleared(ListKey::ParamOverrides),
+            given(cli.param_overrides),
+            append.param_overrides,
         ),
         |entry| entry_name(entry),
     );
     let system_subroutines = dedup_first(
-        appended(
+        listed(
             config.compile.system_tasks.iter().cloned(),
-            cli.system_subroutines,
-            cleared(ListKey::SystemTasks),
+            given(cli.system_subroutines),
+            append.system_subroutines,
         ),
         String::clone,
     );
     let library_map_files = dedup_first(
-        appended(
+        listed(
             config
                 .libraries
                 .map_files
                 .iter()
                 .map(|path| path_string(path)),
-            cli.library_map_files,
-            cleared(ListKey::LibMaps),
+            given(cli.library_map_files),
+            append.library_map_files,
         ),
         String::clone,
     );
     let library_files = dedup_first(
-        appended(
+        listed(
             config.libraries.files.iter().cloned(),
-            cli.library_files,
-            cleared(ListKey::LibFiles),
+            given(cli.library_files),
+            append.library_files,
         ),
         String::clone,
     );
     let library_order = dedup_first(
-        appended(
+        listed(
             config.libraries.order.iter().cloned(),
-            cli.library_order,
-            cleared(ListKey::LibraryOrder),
+            given(cli.library_order),
+            append.library_order,
         ),
         String::clone,
     );
     let dpi_libraries = dedup_first(
-        appended(
+        listed(
             config.build.dpi_libs.iter().cloned(),
-            cli.dpi_libraries,
-            cleared(ListKey::DpiLibs),
+            given(cli.dpi_libraries),
+            append.dpi_libraries,
         ),
         PathBuf::clone,
     );
-    // Plusargs after `--` follow the configured ones; repeats are meaningful.
-    let runtime_args = appended(
+    // `--` replaces the configured plusargs even when empty; repeats are
+    // meaningful, so nothing is deduplicated.
+    let runtime_args = listed(
         config.simulator.plusargs.iter().flatten().cloned(),
-        cli.runtime_args.unwrap_or_default(),
-        cleared(ListKey::Plusargs),
+        cli.runtime_args,
+        append.runtime_args,
     );
 
     let lint_json_mode = cli.lint_json_mode.unwrap_or(
@@ -611,8 +623,8 @@ files = ["a.sv"]
     }
 
     #[test]
-    fn repeatable_command_line_options_append_to_the_config_lists() {
-        let dir = temp("lists");
+    fn list_options_on_the_command_line_replace_the_config_lists() {
+        let dir = temp("replace");
         let options = resolve_no_env(
             cli(&[
                 "-I",
@@ -633,6 +645,68 @@ files = ["a.sv"]
                 "cli.so",
                 "x.sv",
                 "--",
+                "+cli",
+            ]),
+            Some(&config(&dir, FULL)),
+        )
+        .unwrap();
+        assert_eq!(options.include_dirs, ["cli_inc"]);
+        assert_eq!(options.defines, ["CLI_ONLY"]);
+        assert_eq!(options.param_overrides, ["WIDTH=3"]);
+        assert_eq!(options.system_subroutines, ["$cli()"]);
+        assert_eq!(options.library_map_files, ["cli.map"]);
+        assert_eq!(options.library_files, ["cl=c.sv"]);
+        assert_eq!(options.library_order, ["a", "b"]);
+        assert_eq!(options.dpi_libraries, [PathBuf::from("cli.so")]);
+        assert_eq!(options.runtime_args, ["+cli"]);
+        assert_eq!(
+            options.files,
+            ["x.sv"],
+            "command-line files replace sources.files"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn repeated_replace_options_accumulate_among_themselves() {
+        let dir = temp("replace_many");
+        let options = resolve_no_env(
+            cli(&[
+                "-D", "A", "-D", "B=2", "-I", "i1", "-I", "i2", "x.sv", "y.sv",
+            ]),
+            Some(&config(&dir, FULL)),
+        )
+        .unwrap();
+        assert_eq!(options.defines, ["A", "B=2"]);
+        assert_eq!(options.include_dirs, ["i1", "i2"]);
+        assert_eq!(options.files, ["x.sv", "y.sv"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn append_options_extend_the_config_lists() {
+        let dir = temp("append");
+        let options = resolve_no_env(
+            cli(&[
+                "--append-include-dir",
+                "cli_inc",
+                "--append-define",
+                "CLI_ONLY",
+                "--append-param-override",
+                "WIDTH=3",
+                "--append-define-system-task",
+                "$cli()",
+                "--append-libmap",
+                "cli.map",
+                "--append-libfile",
+                "cl=c.sv",
+                "--append-library-order",
+                "a,b",
+                "--append-dpi-lib",
+                "cli.so",
+                "--append-source",
+                "x.sv",
+                "--append-plusarg",
                 "+cli",
             ]),
             Some(&config(&dir, FULL)),
@@ -665,27 +739,77 @@ files = ["a.sv"]
         assert_eq!(
             options.files,
             [path_string(&dir.join("a.sv")), "x.sv".to_owned()],
-            "command-line files follow sources.files"
+            "appended sources follow sources.files"
         );
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn clear_discards_only_the_named_config_list() {
-        let dir = temp("clear");
+    fn append_without_a_config_is_the_whole_list() {
+        let options = resolve_no_env(
+            cli(&[
+                "--append-define",
+                "A",
+                "--append-source",
+                "x.sv",
+                "--append-plusarg",
+                "+p",
+            ]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(options.defines, ["A"]);
+        assert_eq!(options.files, ["x.sv"]);
+        assert_eq!(options.runtime_args, ["+p"]);
+    }
+
+    #[test]
+    fn replace_values_are_the_base_and_append_values_follow() {
+        let dir = temp("mixed");
         let cfg = config(&dir, FULL);
-        let cases: [(&str, &[&str]); 10] = [
-            ("include-dirs", &["-I", "cli_inc"]),
-            ("defines", &["-D", "CLI_ONLY"]),
-            ("param-overrides", &["-G", "WIDTH=3"]),
-            ("system-tasks", &["--define-system-task", "$cli()"]),
-            ("libmaps", &["--libmap", "cli.map"]),
-            ("libfiles", &["--libfile", "cl=c.sv"]),
-            ("library-order", &["-L", "a,b"]),
-            ("dpi-libs", &["--dpi-lib", "cli.so"]),
-            ("plusargs", &["--", "+cli"]),
-            ("sources", &["x.sv"]),
-        ];
+        let options = resolve_no_env(
+            cli(&[
+                "--append-define",
+                "APP_FIRST",
+                "-D",
+                "REP",
+                "--append-define",
+                "APP2",
+                "-I",
+                "rep_inc",
+                "--append-include-dir",
+                "app_inc",
+                "-L",
+                "r",
+                "--append-library-order",
+                "p",
+                "r2.sv",
+                "--append-source",
+                "a2.sv",
+                "--append-plusarg",
+                "+app",
+                "--",
+                "+rep",
+            ]),
+            Some(&cfg),
+        )
+        .unwrap();
+        assert_eq!(
+            options.defines,
+            ["REP", "APP_FIRST", "APP2"],
+            "the config list is replaced; the order of the two kinds on the command line does not matter"
+        );
+        assert_eq!(options.include_dirs, ["rep_inc", "app_inc"]);
+        assert_eq!(options.library_order, ["r", "p"]);
+        assert_eq!(options.files, ["r2.sv", "a2.sv"]);
+        assert_eq!(options.runtime_args, ["+rep", "+app"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn each_option_changes_only_its_own_list() {
+        let dir = temp("own_list");
+        let cfg = config(&dir, FULL);
         let lists = |options: &DriverOptions| {
             [
                 format!("{:?}", options.include_dirs),
@@ -701,43 +825,69 @@ files = ["a.sv"]
             ]
         };
         let baseline = lists(&resolve_no_env(cli(&[]), Some(&cfg)).unwrap());
-        for (list, extra) in cases {
-            let mut args = vec!["--clear", list];
-            args.extend(extra);
-            let options = lists(&resolve_no_env(cli(&args), Some(&cfg)).unwrap());
-            let differing = options
-                .iter()
-                .zip(&baseline)
-                .filter(|(a, b)| a != b)
-                .count();
-            assert_eq!(differing, 1, "--clear {list} changes only its own list");
+        let cases: [(usize, &[&str], &[&str]); 10] = [
+            (0, &["-I", "cli_inc"], &["--append-include-dir", "cli_inc"]),
+            (1, &["-D", "CLI_ONLY"], &["--append-define", "CLI_ONLY"]),
+            (
+                2,
+                &["-G", "WIDTH=3"],
+                &["--append-param-override", "WIDTH=3"],
+            ),
+            (
+                3,
+                &["--define-system-task", "$cli()"],
+                &["--append-define-system-task", "$cli()"],
+            ),
+            (4, &["--libmap", "cli.map"], &["--append-libmap", "cli.map"]),
+            (
+                5,
+                &["--libfile", "cl=c.sv"],
+                &["--append-libfile", "cl=c.sv"],
+            ),
+            (6, &["-L", "a,b"], &["--append-library-order", "a,b"]),
+            (7, &["--dpi-lib", "cli.so"], &["--append-dpi-lib", "cli.so"]),
+            (8, &["--", "+cli"], &["--append-plusarg", "+cli"]),
+            (9, &["x.sv"], &["--append-source", "x.sv"]),
+        ];
+        for (index, replace, append) in cases {
+            for args in [replace, append] {
+                let options = lists(&resolve_no_env(cli(args), Some(&cfg)).unwrap());
+                let differing: Vec<usize> = (0..options.len())
+                    .filter(|position| options[*position] != baseline[*position])
+                    .collect();
+                assert_eq!(differing, [index], "{args:?} changes only its own list");
+            }
         }
-        let options =
-            resolve_no_env(cli(&["--clear", "defines", "-D", "ONLY"]), Some(&cfg)).unwrap();
-        assert_eq!(options.defines, ["ONLY"]);
-        let options = resolve_no_env(cli(&["--clear", "defines"]), Some(&cfg)).unwrap();
-        assert!(options.defines.is_empty(), "a clear alone empties the list");
-        let options = resolve_no_env(cli(&["--clear", "plusargs"]), Some(&cfg)).unwrap();
-        assert!(options.runtime_args.is_empty());
-        let options = resolve_no_env(
-            cli(&["-D", "LATE", "--clear", "defines,include-dirs"]),
-            Some(&cfg),
-        )
-        .unwrap();
-        assert_eq!(options.defines, ["LATE"], "position does not matter");
-        assert!(options.include_dirs.is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn clear_requires_a_known_list_name() {
-        for args in [
-            &["--clear"][..],
-            &["--clear", "nope"],
-            &["--clear", "defines,nope"],
+    fn append_options_require_a_value() {
+        for flag in [
+            "--append-source",
+            "--append-include-dir",
+            "--append-define",
+            "--append-param-override",
+            "--append-define-system-task",
+            "--append-libmap",
+            "--append-libfile",
+            "--append-library-order",
+            "--append-dpi-lib",
+            "--append-plusarg",
         ] {
-            let args = args.iter().map(|arg| (*arg).to_owned()).collect();
-            assert_eq!(parse_args(args).unwrap_err(), 2);
+            assert_eq!(parse_args(vec![flag.to_owned()]).unwrap_err(), 2, "{flag}");
+            assert_eq!(
+                parse_args(vec![flag.to_owned(), String::new()]).unwrap_err(),
+                2,
+                "{flag} with an empty value"
+            );
+        }
+        for bad in ["NAME", "=1", "N="] {
+            assert_eq!(
+                parse_args(vec!["--append-param-override".to_owned(), bad.to_owned()]).unwrap_err(),
+                2,
+                "{bad}"
+            );
         }
     }
 
@@ -747,25 +897,48 @@ files = ["a.sv"]
         let cfg = config(&dir, FULL);
         let options = resolve_no_env(
             cli(&[
-                "-D", "CFG_B=9", "-D", "NEW", "-D", "NEW=1", "-G", "DEPTH=2", "-G", "DEPTH=3",
+                "-D", "X=1", "-D", "X=2", "-D", "NEW", "-D", "NEW=1", "-G", "DEPTH=2", "-G",
+                "DEPTH=3",
             ]),
             Some(&cfg),
         )
         .unwrap();
-        assert_eq!(options.defines, ["CFG_A", "CFG_B=9", "NEW=1"]);
+        assert_eq!(options.defines, ["X=2", "NEW=1"]);
+        assert_eq!(options.param_overrides, ["DEPTH=3"]);
+        let options = resolve_no_env(
+            cli(&[
+                "--append-define",
+                "CFG_B=9",
+                "--append-define",
+                "NEW",
+                "--append-define",
+                "NEW=1",
+                "--append-param-override",
+                "DEPTH=2",
+                "--append-param-override",
+                "DEPTH=3",
+            ]),
+            Some(&cfg),
+        )
+        .unwrap();
+        assert_eq!(
+            options.defines,
+            ["CFG_A", "CFG_B=9", "NEW=1"],
+            "an appended define replaces the config define of the same name"
+        );
         assert_eq!(options.param_overrides, ["DEPTH=3"]);
         // Other lists keep the first occurrence of an identical entry.
         let options = resolve_no_env(
             cli(&[
-                "-I",
+                "--append-include-dir",
                 "cli_inc",
-                "-I",
+                "--append-include-dir",
                 "cli_inc",
-                "-L",
+                "--append-library-order",
                 "lib,x,lib",
-                "--libfile",
+                "--append-libfile",
                 "cl=c.sv",
-                "--libfile",
+                "--append-libfile",
                 "cl=c.sv",
             ]),
             Some(&cfg),
@@ -784,33 +957,52 @@ files = ["a.sv"]
             ]
         );
         // Plusargs are not deduplicated.
-        let options = resolve_no_env(cli(&["--", "+cfg", "+cfg"]), Some(&cfg)).unwrap();
+        let options = resolve_no_env(cli(&["--", "+a", "+a"]), Some(&cfg)).unwrap();
+        assert_eq!(options.runtime_args, ["+a", "+a"]);
+        let options = resolve_no_env(
+            cli(&["--append-plusarg", "+cfg", "--append-plusarg", "+cfg"]),
+            Some(&cfg),
+        )
+        .unwrap();
         assert_eq!(options.runtime_args, ["+cfg", "+cfg", "+cfg"]);
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn a_source_named_on_the_command_line_and_in_the_config_is_listed_once() {
+    fn a_source_appended_and_in_the_config_is_listed_once() {
         let dir = temp("same_source");
         let file = dir.join("a.sv");
         std::fs::write(&file, "").unwrap();
         let cfg = config(&dir, "schema_version = 1\n[sources]\nfiles = [\"a.sv\"]\n");
         let named = path_string(&file);
-        let options = resolve_no_env(cli(&[named.as_str(), "b.sv"]), Some(&cfg)).unwrap();
+        let options = resolve_no_env(
+            cli(&["--append-source", named.as_str(), "--append-source", "b.sv"]),
+            Some(&cfg),
+        )
+        .unwrap();
         assert_eq!(options.files, [named, "b.sv".to_owned()]);
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn a_plusarg_marker_alone_leaves_the_config_plusargs() {
+    fn a_plusarg_marker_replaces_the_config_plusargs_even_when_empty() {
         let dir = temp("plusargs");
-        let options = resolve_no_env(cli(&["x.sv", "--"]), Some(&config(&dir, FULL))).unwrap();
-        assert_eq!(options.runtime_args, ["+cfg"]);
+        let cfg = config(&dir, FULL);
+        let options = resolve_no_env(cli(&["x.sv", "--"]), Some(&cfg)).unwrap();
+        assert!(options.runtime_args.is_empty());
+        let options = resolve_no_env(cli(&["x.sv"]), Some(&cfg)).unwrap();
+        assert_eq!(options.runtime_args, ["+cfg"], "no marker keeps the config");
+        let options = resolve_no_env(cli(&["--append-plusarg", "+app", "--"]), Some(&cfg)).unwrap();
+        assert_eq!(
+            options.runtime_args,
+            ["+app"],
+            "empty replacement plus append"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn config_directories_supply_sources_and_include_dirs_and_files_append() {
+    fn config_directories_supply_sources_and_include_dirs_until_replaced() {
         let dir = temp("discover");
         std::fs::create_dir_all(dir.join("rtl")).unwrap();
         std::fs::write(dir.join("rtl/b.sv"), "").unwrap();
@@ -829,7 +1021,12 @@ files = ["a.sv"]
             options.include_dirs,
             [path_string(&dir.join("rtl")), path_string(&dir.join("inc"))]
         );
-        let options = resolve_no_env(cli(&["only.sv", "-I", "mine"]), Some(&cfg)).unwrap();
+        // Appending sources and include directories keeps the discovery.
+        let options = resolve_no_env(
+            cli(&["--append-source", "only.sv", "--append-include-dir", "mine"]),
+            Some(&cfg),
+        )
+        .unwrap();
         let mut appended_files = discovered.to_vec();
         appended_files.push("only.sv".to_owned());
         assert_eq!(options.files, appended_files);
@@ -841,17 +1038,23 @@ files = ["a.sv"]
                 "mine".to_owned()
             ]
         );
-        let options = resolve_no_env(
-            cli(&["--clear", "sources", "only.sv", "-I", "mine"]),
-            Some(&cfg),
-        )
-        .unwrap();
+        // Named sources replace the discovery and the source directories as
+        // include directories; `-I` replaces only the explicit include list.
+        let options = resolve_no_env(cli(&["only.sv", "-I", "mine"]), Some(&cfg)).unwrap();
         assert_eq!(options.files, ["only.sv"]);
+        assert_eq!(options.include_dirs, ["mine"]);
+        let options = resolve_no_env(cli(&["only.sv"]), Some(&cfg)).unwrap();
+        assert_eq!(options.include_dirs, [path_string(&dir.join("inc"))]);
+        let options = resolve_no_env(cli(&["-I", "mine"]), Some(&cfg)).unwrap();
+        assert_eq!(options.files, discovered);
         assert_eq!(
             options.include_dirs,
-            [path_string(&dir.join("inc")), "mine".to_owned()],
-            "clearing sources also drops the source directories as include dirs"
+            [path_string(&dir.join("rtl")), "mine".to_owned()]
         );
+        // Replacement and appended sources together.
+        let options =
+            resolve_no_env(cli(&["only.sv", "--append-source", "more.sv"]), Some(&cfg)).unwrap();
+        assert_eq!(options.files, ["only.sv", "more.sv"]);
         let _ = std::fs::remove_dir_all(dir);
     }
 
