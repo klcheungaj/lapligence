@@ -272,6 +272,15 @@ arrays: disjoint procedural writers execute in both optimizer modes on both
 backends (set `LLG_TEST_GMP_ROOT` for the GMP lane) and after Db destruction,
 and procedural, second-port and always_ff writers overlapping a slice reject.
 
+RTL-104's operator-overload fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_104::)'`: increment and compound
+values, once-evaluated targets, relational-operand expected types and package
+overloads run in both optimizer modes on both backends (set
+`LLG_TEST_GMP_ROOT` for the GMP lane); nested or unmatched relational operands,
+explicit, late and re-exported imports, two imported candidates and a native
+update value reject. The package ruling is in
+[sim_data_semantics](../docs/sim_data_semantics.md#project-rulings-where-the-lrm-is-silent).
+
 RTL-105's frontend-admission fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_105::)'`: `inout uwire` formals,
 concatenated uwire inout actuals and runtime-selected continuous assignments to

@@ -952,13 +952,18 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   fixed arrays cross it by descriptor. Exact formal matches win, with the
   integral implicit-cast exception; result types are selected by assignment,
   argument, port, return and cast contexts, and remaining ambiguity requires a
-  cast. Declarations are visible after declaration and inner ones shadow outer
-  ones; compound assignments build `A = op(A, B)` and increments
-  `A = f(A)`, rejecting targets with side effects. A postfix increment's value
-  and a prefix one used inside a larger aggregate expression, expected types
-  from relational operands, and package declarations seen through imports are
-  not admitted; V2001 rejects the syntax. Native/non-integral extensions are
-  SIM-021. SV §11.11 **[SV-2005]**.
+  cast; a relational operand also takes the other operand's type. Declarations
+  are visible after declaration and inner ones shadow outer ones; a wildcard
+  import makes a package's overloads candidates after the scope's own (project
+  ruling in [sim_data_semantics](sim_data_semantics.md)). Statement-position
+  compound assignments and increments with side-effect-free targets build
+  `A = op(A, B)` and `A = f(A)`; prefix/postfix values, compound values and
+  side-effecting target selectors bind the target once and yield the new or
+  old value. Those once-bound forms need a target within the packed value
+  limit without native members
+  ([known issue](known_issues.md#operator-overload-update-values-on-oversized-or-native-targets));
+  V2001 rejects the syntax. Native/non-integral extensions are SIM-021.
+  SV §11.11 **[SV-2005]**.
 
 ## 8. Continuous assignments & structural
 
