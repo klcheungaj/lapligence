@@ -530,6 +530,21 @@ opaque behavior. Operator tests should pin intermediate width—not only the
 final destination width—and should distinguish logical equality from case and
 wildcard equality.
 
+## Project rulings where the LRM is silent
+
+These are accepted project decisions for behavior the standards leave
+undefined. Tests pin each one; change them only by an explicit decision.
+
+* **Runtime-selected continuous assignment to a variable with a delay**
+  (`assign #d a[i] = x;`, accepted 2026-10-04). Any change of the RHS or the
+  selector re-evaluates the whole assignment. A pending delayed update is
+  replaced by the newest evaluation's target *and* value (the inertial rule of
+  SV §10.3.3 applied to the retargeted write), so the previously selected
+  element keeps its value. Example: `x` rises at 10 and `i` goes 0→1 at 12
+  with `#5`: `a[0]` is never written and `a[1]` becomes 1 at 17. Pinned by
+  `rtl_105::runtime_selected_delayed_update_follows_newest_evaluation`; see
+  the "Continuous drivers" row in [sim_features](sim_features.md).
+
 ## Source anchors
 
 * IEEE 1364-2001: §§2.4–2.8 (tokens/literals), 3.1–3.12 (data objects),
