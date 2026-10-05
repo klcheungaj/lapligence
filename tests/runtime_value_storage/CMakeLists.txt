@@ -190,7 +190,7 @@ endforeach()
 add_executable(allocation_failure_probe allocation_failure_probe.c)
 target_link_libraries(allocation_failure_probe PRIVATE owner_probe_container)
 strict_c(allocation_failure_probe)
-foreach(mode IN ITEMS construct clone unknown queue)
+foreach(mode IN ITEMS construct clone unknown queue record_queue)
   add_test(NAME value_allocation_failure_${mode}
     COMMAND "${CMAKE_COMMAND}"
       "-DPROBE=$<TARGET_FILE:allocation_failure_probe>" "-DMODE=${mode}"
