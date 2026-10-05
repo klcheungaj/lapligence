@@ -1492,6 +1492,57 @@ fn rejects_invalid_index_default_with_wrong_width() {
 }
 
 #[test]
+fn record_columns_use_descriptor_storage_regardless_of_extent() {
+    // A one-cell column of a column-layout record (RTL-101) is descriptor
+    // storage only through its explicit flag; the same dense shape without
+    // it keeps packed cells and cannot be a descriptor operand.
+    let cell = |c_name: &str, descriptor: bool| IrArray {
+        activation: false,
+        descriptor,
+        net: None,
+        net_elements: Vec::new(),
+        element_default: None,
+        element_uninitialized: None,
+        c_name: c_name.to_string(),
+        hdl_name: c_name.to_string(),
+        elem_width: 8,
+        signed: false,
+        two_state: false,
+        real: false,
+        shortreal: false,
+        dims: vec![(0, 0)],
+        total: 1,
+    };
+    let mut model = valid_model();
+    model.arrays.push(cell("left", true));
+    model.arrays.push(cell("right", true));
+    model.arrays.push(cell("dense", false));
+    assert!(model.arrays[0].sparse() && !model.arrays[2].sparse());
+    let view = |array: usize| IrMemoryView {
+        array,
+        origin: 0,
+        selectors: Vec::new(),
+        sliced: false,
+        dims: vec![(0, 0)],
+        strides: vec![1],
+        total: 1,
+    };
+    let assign = |dst: usize, src: usize| IrStmt::FixedValueAssign {
+        dst: view(dst),
+        src: Box::new(IrFixedValue::Array(view(src))),
+        nba: false,
+    };
+    model
+        .validate_stmt(&assign(0, 1), None)
+        .expect("descriptor columns copy as descriptor values");
+    for (dst, src) in [(0, 2), (2, 0)] {
+        model
+            .validate_stmt(&assign(dst, src), None)
+            .expect_err("a dense array is not a descriptor operand");
+    }
+}
+
+#[test]
 fn force_dependencies_must_name_persistent_fixed_arrays() {
     let array = |activation| IrArray {
         activation,

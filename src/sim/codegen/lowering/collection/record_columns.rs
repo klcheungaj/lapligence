@@ -263,7 +263,7 @@ impl Codegen<'_> {
             ));
         }
         let two_state = element.two_state || chain.iter().any(|member| member.two_state);
-        let c_name = self.c_name("A", path, &[object_name, &suffix]);
+        let c_name = self.c_name("G", path, &[object_name, &suffix]);
         let mut hdl_name = self.waveform_name(object);
         hdl_name.push('\u{1f}');
         hdl_name.push_str(&record_member_label(member_path));
@@ -331,7 +331,7 @@ impl Codegen<'_> {
         let chain = path_members(&root, member_path)
             .ok_or_else(|| format!("record member path `{suffix}` in `{path}` is unresolved"))?;
         let two_state = descriptor.two_state || chain.iter().any(|member| member.two_state);
-        let c_name = self.c_name("A", path, &[object_name, &suffix]);
+        let c_name = self.c_name("G", path, &[object_name, &suffix]);
         let mut hdl_name = self.waveform_name(object);
         hdl_name.push('\u{1f}');
         hdl_name.push_str(&record_member_label(member_path));
@@ -397,12 +397,13 @@ impl Codegen<'_> {
             .ok_or_else(|| {
                 format!("tagged union `{object_name}` in `{path}` has no representable tag")
             })?;
+        // `$` cannot start an identifier, so the tag never names a member.
         let suffix = if member_path.is_empty() {
-            "tag".to_owned()
+            "$tag".to_owned()
         } else {
-            format!("{}__tag", aggregate_path_suffix(member_path))
+            format!("{}__$tag", aggregate_path_suffix(member_path))
         };
-        let c_name = self.c_name("A", path, &[object_name, &suffix]);
+        let c_name = self.c_name("G", path, &[object_name, &suffix]);
         let mut hdl_name = self.waveform_name(object);
         if !member_path.is_empty() {
             hdl_name.push('\u{1f}');

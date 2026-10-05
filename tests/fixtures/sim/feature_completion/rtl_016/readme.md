@@ -21,10 +21,12 @@ backends; representative sources also run after snapshot/Db destruction.
 - `patterns` and `case_modes` cover tagged patterns over unpacked payloads,
   binding scope through `&&&` clauses, nested tags, and undefined (X) tags in
   `case`, `casex` and `if ... matches`.
-- `capacity_boundary` and `neg_oversized_payload` straddle the packed value
-  capacity: the largest legal finite payload keeps one owner, one bit more is
-  rejected instead of being flattened, as is the oversized source of a
-  whole-value binding (`neg_oversized_pattern`). `neg_native_payload` keeps
+- `capacity_boundary` and `oversized_payload_columns` straddle the packed
+  value capacity: the largest legal finite payload keeps one owner; one bit
+  more keeps the tag and each member in separate columns (RTL-101), so the
+  default-filled `Table` reads `5a` at both ends and `tagged Empty` matches.
+  The oversized array source of a whole-value binding is still rejected
+  instead of being flattened (`neg_oversized_pattern`). `neg_native_payload` keeps
   real payloads (SIM-007) outside finite storage. `neg_binding_scope` and
   `neg_member_value` are the nearest language-illegal forms.
 
