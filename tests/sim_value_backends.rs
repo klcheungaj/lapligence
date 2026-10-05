@@ -40,7 +40,7 @@ fn configs() -> Vec<ValueConfig> {
             kernel: CompactKernel::Portable,
         },
     ];
-    if std::env::var_os("LLG_TEST_GMP_ROOT").is_some() {
+    if sim_harness::test_gmp_root("compact GMP exports").is_some() {
         configs.push(ValueConfig {
             backend: ValueBackend::Compact,
             kernel: CompactKernel::Gmp,
@@ -286,8 +286,8 @@ fn component_invalid_driver_selector_is_rejected() {
 
 #[test]
 fn component_gmp_header_library_and_limb_mismatches_fail_configure() {
-    let Some(root) = std::env::var_os("LLG_TEST_GMP_ROOT").map(PathBuf::from) else {
-        eprintln!("BLOCKED GMP dependency witnesses: set LLG_TEST_GMP_ROOT");
+    let Some(root) = sim_harness::test_gmp_root("GMP dependency witnesses").map(PathBuf::from)
+    else {
         return;
     };
     let dir = sim_harness::TempDir::new("gmp-mismatch").unwrap();
@@ -316,7 +316,11 @@ fn component_gmp_header_library_and_limb_mismatches_fail_configure() {
             .join("\n");
         assert!(changed, "missing header macro {macro_name}");
         std::fs::write(installation.join("include/gmp.h"), header).unwrap();
-        std::fs::copy(root.join("lib/libgmp.a"), installation.join("lib/libgmp.a")).unwrap();
+        let library = qualification::GMP_LIBRARIES
+            .iter()
+            .find(|name| root.join(name).is_file())
+            .expect("static GMP library");
+        std::fs::copy(root.join(library), installation.join(library)).unwrap();
         let project = dir.path().join(format!("project-{index}"));
         let opts = build::CmakeBuildOpts {
             value_config: ValueConfig {
@@ -345,3 +349,5 @@ fn component_gmp_header_library_and_limb_mismatches_fail_configure() {
 
 #[path = "sim_value_backends/parity.rs"]
 mod parity;
+#[path = "sim_value_backends/qualification.rs"]
+mod qualification;

@@ -28,8 +28,7 @@ fn dynamic_storage_and_waveform_snapshots_compact_portable() {
 /// The compact probes with GMP kernels; requires `LLG_TEST_GMP_ROOT`.
 #[test]
 fn dynamic_storage_and_waveform_snapshots_compact_gmp() {
-    let Ok(gmp) = std::env::var("LLG_TEST_GMP_ROOT") else {
-        eprintln!("BLOCKED compact GMP storage probes: set LLG_TEST_GMP_ROOT");
+    let Some(gmp) = sim_harness::test_gmp_root("compact GMP storage probes") else {
         return;
     };
     run_storage_tests(
