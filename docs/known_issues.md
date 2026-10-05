@@ -695,42 +695,38 @@ publishes both halves with the transition delay of the combined output.
 Reproduce with `bufif1 #1 (w, d, e); pulldown (w);`, `d = 0; e = 1'bx;` and
 `#2 $display("%v", w);` (prints `StX`; the LRM result is `650`).
 
-## Operator-overload increment values and expected types
+## Operator-overload update values on oversized or native targets
 
-**Status:** RTL-017 executes fixed operator overloads (SV §11.11); these
-legal forms are rejected with specific diagnostics or remain unadmitted.
+**Status:** RTL-017 and RTL-104 execute fixed operator overloads (SV §11.11),
+including increment values, once-evaluated targets, relational expected types
+and package overloads. One target class is left.
 
 ### Symptom
 
-- `y = x++;` with an overloaded `++` reports "the value of an overloaded
-  postfix '++' cannot be used". Statement and `for`-step forms run.
-- `y = ++x;` on an unpacked operand fails in lowering with "assignment-like
-  expression to a streaming target", the existing limit for any unpacked
-  assignment used as a value (`y = (x = z);` fails the same way).
-- `arr[next()] += b;` with an overloaded `+` reports that the target "is read
-  and written separately and must not have side effects".
-- Overloads differing only in result type need a cast inside a relational
-  operand even when the other operand fixes the comparison type.
-- An overload declared in a package is not visible through `import`.
+An overloaded increment or compound assignment whose value is used
+(`y = x++;`, `y = (x += b);`) or whose target selector has side effects
+(`a[next()]++;`) reports "an overloaded operator update whose value is used or
+whose target selector has side effects requires a target within the
+1048575-bit packed value limit without native members" when the target is
+wider than the packed value limit (a 65,537-element `int` array) or a record
+with a string, real or other native member. Statement forms with
+side-effect-free targets (`x++;`, `x += b;`) run for every target.
 
 ### Cause
 
-The frontend builds `x = f(x)` for increments and `A = op(A, B)` for compound
-assignments from ordinary call and assignment nodes, re-binding the target as
-an operand. No owned node yields an old value or binds the target once for
-both uses. Expected types are threaded through assignment-like contexts only.
-Overload declarations are unnamed members, so wildcard imports cannot carry them.
+These forms lower to the packed `Mutation` expression, which captures the
+target's current value once. Descriptor-backed fixed values and native records
+have no such capture: the statement forms re-read the target as an ordinary
+call argument instead.
 
 ### Direction
 
-Add an owned mutation form whose value can be the pre-update aggregate and
-whose target selectors are frozen once, reuse it for compound overloads, and
-pass the opposite operand's type as the expected type of relational operands.
+Give `IrFixedValue` and native record roots a once-resolved read/modify/write
+form whose old value can be kept.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/rtl_017/neg_postfix_value.sv` and
-`neg_target_side_effects.sv`.
+`tests/fixtures/sim/feature_completion/rtl_104/limit_native_value.sv`.
 
 ## Strict 2001 profile gates a listed set of keyword-free later forms
 

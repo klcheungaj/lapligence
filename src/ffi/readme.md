@@ -5,7 +5,7 @@ owned APIs to the rest of the library.
 
 | Component | Responsibility |
 | --- | --- |
-| `slang.rs` and `slang/` | C ABI v12 requests, the capture-stream receivers (`slang/stream.rs`), bounded error owners, layout/tag validation, exact value/text copies and RAII destruction. |
+| `slang.rs` and `slang/` | C ABI v14 requests, the capture-stream receivers (`slang/stream.rs`), bounded error owners, layout/tag validation, exact value/text copies and RAII destruction. |
 | `process_memory.rs` | Platform process-memory counters and native resource limits. |
 | `secure_fs` | Handle-relative filesystem admission and identity/race protection. |
 

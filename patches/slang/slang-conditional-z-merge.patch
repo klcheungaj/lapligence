@@ -1,4 +1,5 @@
 diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/expressions/OperatorExpressions.cpp
+index 03e33e9c1..2db261bbc 100644
 --- a/source/ast/expressions/OperatorExpressions.cpp
 +++ b/source/ast/expressions/OperatorExpressions.cpp
 @@ -12,6 +12,7 @@
@@ -9,7 +10,7 @@ diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/express
  #include "slang/ast/expressions/ConversionExpression.h"
  #include "slang/ast/expressions/MiscExpressions.h"
  #include "slang/ast/statements/ConditionalStatements.h"
-@@ -215,7 +216,8 @@
+@@ -215,7 +216,8 @@ bool Expression::bindMembershipExpressions(const ASTContext& context, TokenKind
  
  Expression& UnaryExpression::fromSyntax(Compilation& compilation,
                                          const PrefixUnaryExpressionSyntax& syntax,
@@ -19,7 +20,7 @@ diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/express
      auto op = OpInfo::getUnary(syntax.kind);
      bitmask<ASTFlags> extraFlags;
      if (OpInfo::isLValue(op))
-@@ -289,6 +291,26 @@
+@@ -289,6 +291,26 @@ Expression& UnaryExpression::fromSyntax(Compilation& compilation,
      }
  
      if (!good) {
@@ -46,7 +47,7 @@ diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/express
          auto& diag = context.addDiag(diag::BadUnaryExpression, syntax.operatorToken.location());
          diag << *type;
          diag << operand.sourceRange;
-@@ -321,6 +343,13 @@
+@@ -321,6 +343,13 @@ Expression& UnaryExpression::fromSyntax(Compilation& compilation,
      }
  
      if (!type->isNumeric()) {
@@ -60,8 +61,35 @@ diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/express
          auto& diag = context.addDiag(diag::BadUnaryExpression, syntax.operatorToken.location());
          diag << *type;
          diag << operand.sourceRange;
-@@ -511,7 +540,8 @@
+@@ -509,9 +538,35 @@ void UnaryExpression::serializeTo(ASTSerializer& serializer) const {
+     serializer.write("operand", operand());
+ }
  
++// The comparisons IEEE 1800-2009 11.11 lets an overload declaration bind, whose
++// operands take each other's type as the expected overload result type.
++static bool isOverloadComparison(BinaryOperator op) {
++    switch (op) {
++        case BinaryOperator::Equality:
++        case BinaryOperator::Inequality:
++        case BinaryOperator::LessThan:
++        case BinaryOperator::LessThanEqual:
++        case BinaryOperator::GreaterThan:
++        case BinaryOperator::GreaterThanEqual:
++            return true;
++        default:
++            return false;
++    }
++}
++
++// The range an overloaded operand reports to tryOverloadedOperator: that of the
++// operation itself, inside any parentheses.
++static SourceRange overloadOperandRange(const ExpressionSyntax& syntax) {
++    const ExpressionSyntax* operand = &syntax;
++    while (operand->kind == SyntaxKind::ParenthesizedExpression)
++        operand = operand->as<ParenthesizedExpressionSyntax>().expression;
++    return operand->sourceRange();
++}
++
  Expression& BinaryExpression::fromSyntax(Compilation& compilation,
                                           const BinaryExpressionSyntax& syntax,
 -                                         const ASTContext& context) {
@@ -70,7 +98,85 @@ diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/express
      // If we are allowed unbounded literals here, pass that along to subexpressions.
      bitmask<ASTFlags> flags = ASTFlags::None;
      if (context.flags.has(ASTFlags::AllowUnboundedLiteral) &&
-@@ -584,7 +614,7 @@
+@@ -524,6 +579,26 @@ Expression& BinaryExpression::fromSyntax(Compilation& compilation,
+     auto& syntaxRight = *syntax.right;
+ 
+     auto op = OpInfo::getBinary(syntax.kind);
++
++    // IEEE 1800-2009 11.11: a relational operator with an unambiguous comparison
++    // supplies the expected result type of an overloaded operand. Each operand
++    // binds under a probe; one whose overload is ambiguous on its own binds
++    // again with the other operand's type.
++    const bool probeOverloads = compilation.hasOperatorOverloads() &&
++                                isOverloadComparison(op);
++    bool deferred[2] = {false, false};
++    auto bindOperand = [&](const ExpressionSyntax& operand, bitmask<ASTFlags> operandFlags,
++                           size_t index) -> Expression* {
++        if (!probeOverloads)
++            return &create(compilation, operand, context, operandFlags);
++
++        Compilation::OverloadAmbiguityProbe probe{overloadOperandRange(operand)};
++        auto saved = std::exchange(compilation.overloadAmbiguityProbe, &probe);
++        auto& result = create(compilation, operand, context, operandFlags);
++        compilation.overloadAmbiguityProbe = saved;
++        deferred[index] = probe.deferred;
++        return &result;
++    };
+     if (op == BinaryOperator::Equality || op == BinaryOperator::Inequality ||
+         op == BinaryOperator::CaseEquality || op == BinaryOperator::CaseInequality) {
+         flags |= ASTFlags::AllowTypeReferences;
+@@ -533,14 +608,14 @@ Expression& BinaryExpression::fromSyntax(Compilation& compilation,
+         // an expression so we need to explicitly try that separately here.
+         lhs = tryBindInterfaceRef(context, syntaxLeft, /* isInterfacePort */ false);
+         if (!lhs)
+-            lhs = &create(compilation, syntaxLeft, context, flags);
++            lhs = bindOperand(syntaxLeft, flags, 0);
+ 
+         // If we found a virtual interface on the lhs we can also try for an instance
+         // on the rhs. Otherwise we know we're doing normal expression binding.
+         if (lhs->type->isVirtualInterface()) {
+             rhs = tryBindInterfaceRef(context, syntaxRight, /* isInterfacePort */ false);
+             if (!rhs) {
+-                rhs = &create(compilation, syntaxRight, context, flags);
++                rhs = bindOperand(syntaxRight, flags, 1);
+             }
+             else if (lhs->kind == ExpressionKind::ArbitrarySymbol &&
+                      rhs->kind == ExpressionKind::ArbitrarySymbol) {
+@@ -552,11 +627,11 @@ Expression& BinaryExpression::fromSyntax(Compilation& compilation,
+             }
+         }
+         else {
+-            rhs = &create(compilation, syntaxRight, context, flags);
++            rhs = bindOperand(syntaxRight, flags, 1);
+         }
+     }
+     else {
+-        lhs = &create(compilation, syntaxLeft, context, flags);
++        lhs = bindOperand(syntaxLeft, flags, 0);
+ 
+         if (OpInfo::isShortCircuit(op)) {
+             // We want to evaluate the lhs as a constant if possible, to know whether
+@@ -580,11 +655,26 @@ Expression& BinaryExpression::fromSyntax(Compilation& compilation,
+             }
+         }
+ 
+-        rhs = &create(compilation, syntaxRight, context, flags);
++        rhs = bindOperand(syntaxRight, flags, 1);
++    }
++
++    // Without a usable type on the other side, binding again without one
++    // reports the ambiguity.
++    if (deferred[0]) {
++        const Type* expected = nullptr;
++        if (!deferred[1] && !rhs->bad())
++            expected = rhs->type;
++        lhs = &create(compilation, syntaxLeft, context, flags, expected);
++    }
++    if (deferred[1]) {
++        const Type* expected = nullptr;
++        if (!deferred[0] && !lhs->bad())
++            expected = lhs->type;
++        rhs = &create(compilation, syntaxRight, context, flags, expected);
      }
  
      auto& result = fromComponents(*lhs, *rhs, op, syntax.operatorToken.range(),
@@ -79,7 +185,7 @@ diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/express
      context.setAttributes(result, syntax.attributes);
  
      return result;
-@@ -718,9 +748,43 @@
+@@ -718,9 +808,43 @@ static void analyzePrecedence(const ASTContext& context, const Expression& lhs,
      }
  }
  
@@ -124,7 +230,7 @@ diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/express
      auto& compilation = context.getCompilation();
      const Type* lt = lhs.type;
      const Type* rt = rhs.type;
-@@ -827,11 +891,14 @@
+@@ -827,11 +951,14 @@ Expression& BinaryExpression::fromComponents(Expression& lhs, Expression& rhs, B
              result->type = singleBitType(compilation, lt, rt);
  
              // Result type is fixed but the two operands affect each other as they would in
@@ -144,7 +250,7 @@ diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/express
              break;
          }
          case BinaryOperator::LogicalAnd:
-@@ -946,6 +1013,15 @@
+@@ -946,6 +1073,15 @@ Expression& BinaryExpression::fromComponents(Expression& lhs, Expression& rhs, B
      }
  
      if (!good) {
@@ -160,7 +266,7 @@ diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/express
          auto& diag = context.addDiag(diag::BadBinaryExpression, opRange);
          diag << *lt << *rt;
          diag << lhs.sourceRange;
-@@ -1633,14 +1709,30 @@
+@@ -1633,14 +1769,30 @@ ConstantValue ConditionalExpression::evalImpl(EvalContext& context) const {
  
      // When the conditional predicate is unknown, there are rules to combine both sides
      // and return the hybrid result.
@@ -194,7 +300,7 @@ diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/express
  
          auto combineArrays = [&](auto& result, auto& la, auto& ra) -> ConstantValue {
              ConstantValue defaultElement = type->getArrayElementType()->getDefaultValue();
-@@ -1671,6 +1763,25 @@
+@@ -1671,6 +1823,25 @@ ConstantValue ConditionalExpression::evalImpl(EvalContext& context) const {
                  std::vector<ConstantValue> result(la.size());
                  return combineArrays(result, la, ra);
              }
@@ -221,9 +327,10 @@ diff --git a/source/ast/expressions/OperatorExpressions.cpp b/source/ast/express
          else if (cvl.isQueue()) {
              auto& la = *cvl.queue();
 diff --git a/tests/unittests/ast/ExpressionTests.cpp b/tests/unittests/ast/ExpressionTests.cpp
+index 7664576c6..8da478706 100644
 --- a/tests/unittests/ast/ExpressionTests.cpp
 +++ b/tests/unittests/ast/ExpressionTests.cpp
-@@ -3790,6 +3790,91 @@
+@@ -3790,6 +3790,91 @@ endmodule
      CHECK(var.getInitializer()->eval(eval_ctx).getBitstreamWidth() == 4);
  }
  

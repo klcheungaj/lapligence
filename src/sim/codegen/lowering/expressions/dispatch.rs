@@ -771,6 +771,9 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         h: NodeId,
     ) -> Result<IrExpr, String> {
+        if let Some(value) = self.overload_current_read(scope_path, h) {
+            return value;
+        }
         if self.packed_element_member_select(h).is_some() {
             if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
                 return Ok(value);

@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 13u
+#define LLG_SLANG_ABI_VERSION 14u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -614,6 +614,9 @@ enum {
   LLG_SLANG_EXPR_CLOCKING_EVENT = 91,
   /* A typed tagged-union member constructor (`tag value(...)`). */
   LLG_SLANG_EXPR_TAGGED_UNION = 92,
+  /* The current value of the target of the enclosing
+   * LLG_SLANG_OP_OVERLOAD_UPDATE assignment; it has no edges. */
+  LLG_SLANG_EXPR_UPDATE_CURRENT = 93,
   LLG_SLANG_TIMING_DELAY = 112,
   LLG_SLANG_TIMING_SIGNAL_EVENT = 113,
   LLG_SLANG_TIMING_EVENT_LIST = 114,
@@ -786,7 +789,14 @@ enum {
   LLG_SLANG_OP_ASSERTION_ALWAYS = 66,
   LLG_SLANG_OP_ASSERTION_SALWAYS = 67,
   LLG_SLANG_OP_ASSERTION_EVENTUALLY = 68,
-  LLG_SLANG_OP_ASSERTION_SEVENTUALLY = 69
+  LLG_SLANG_OP_ASSERTION_SEVENTUALLY = 69,
+  /* An overloaded compound assignment or increment (IEEE 1800-2009 11.11)
+   * whose target is bound once: the RHS edge is the bound function's call,
+   * whose arguments read the target's current value through
+   * LLG_SLANG_EXPR_UPDATE_CURRENT. The expression yields the assigned value,
+   * or the target's previous value for the postfix form. */
+  LLG_SLANG_OP_OVERLOAD_UPDATE = 70,
+  LLG_SLANG_OP_OVERLOAD_POST_UPDATE = 71
 };
 
 enum {
@@ -1000,7 +1010,7 @@ typedef struct {
   LlgSlangString label;
 } LlgSlangEditionFinding;
 
-/* Capture stream (ABI v13).
+/* Capture stream (ABI v14).
  *
  * llg_slang_compile() does not return a snapshot owner. After Slang has
  * elaborated, analysed and been captured, the bridge destroys the Slang

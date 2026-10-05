@@ -13,7 +13,7 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   known flags, reserved fields, pointer/length pairs, IDs, ranges and table windows.
   Use module error types, preserving native status/message; malformed output is
   `InvalidNativeData`, distinct from valid unsupported HDL.
-- ABI v12 `CompileRequest` borrows sources/options until blocking
+- ABI v14 `CompileRequest` borrows sources/options until blocking
   `llg_slang_compile` returns, distinguishing units from include-only buffers.
   Library-unit recovery uses the same buffers/limits; reject unknown request flags.
   Cache keys are lexically normalized; include directories are lookup prefixes,

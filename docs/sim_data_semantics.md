@@ -546,6 +546,24 @@ undefined. Tests pin each one; change them only by an explicit decision.
   `rtl_105::runtime_selected_delayed_update_follows_newest_evaluation`; see
   the "Continuous drivers" row in [sim_features](sim_features.md).
 
+* **Operator overloads declared in a package** (RTL-104; listed for user
+  confirmation). IEEE 1800-2009 §11.11 says an overload declaration "follows
+  the same search rules as a data declaration" and must be "defined before use
+  in a scope that is visible", but is silent on packages; overload
+  declarations have no name. The project reads §26.3 literally for that
+  unnamed declaration: at each scope of the use, from the innermost outward,
+  the scope's own overloads declared before the use are searched first, then
+  those declared directly in every package the scope wildcard-imports
+  (`import p::*;`) before the use, which also covers compilation-unit imports.
+  Candidates from several imported packages are pooled, so two equally
+  matching ones are ambiguous (like a name supplied by two wildcard imports).
+  An explicit import (`import p::add;`) names one identifier and never carries
+  an overload, and neither does an export (§26.6) or a `p::` qualification.
+  The bound function is still found by ordinary call lookup from the use
+  (§11.11), so it must be visible there too. Pinned by
+  `rtl_104::package_overloads_follow_wildcard_imports` and
+  `rtl_104::neg_package_overloads_need_a_preceding_wildcard_import`.
+
 ## Source anchors
 
 * IEEE 1364-2001: §§2.4–2.8 (tokens/literals), 3.1–3.12 (data objects),

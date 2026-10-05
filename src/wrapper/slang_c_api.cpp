@@ -1566,6 +1566,7 @@ uint32_t semanticExpressionKind(ExpressionKind kind) {
     case ExpressionKind::AssertionInstance: return LLG_SLANG_EXPR_ASSERTION_INSTANCE;
     case ExpressionKind::ClockingEvent: return LLG_SLANG_EXPR_CLOCKING_EVENT;
     case ExpressionKind::TaggedUnion: return LLG_SLANG_EXPR_TAGGED_UNION;
+    case ExpressionKind::LValueReference: return LLG_SLANG_EXPR_UPDATE_CURRENT;
     default: return LLG_SLANG_SUBKIND_NONE;
   }
 }
@@ -1661,9 +1662,19 @@ const Expression& rangeSelectBase(const RangeSelectExpression& expression) {
   return peelConstantSlices(expression.value(), *left, *right);
 }
 
+// An overloaded compound assignment or increment (IEEE 1800-2009 11.11) keeps
+// its compound operator only while its target is bound once; its right side is
+// then the bound function's call, never Slang's built-in binary expansion.
+bool isOverloadedUpdate(const AssignmentExpression& expression) {
+  if (!expression.op)
+    return false;
+  const Expression* right = unwrapImplicitConversions(expression.right());
+  return right && right->kind == ExpressionKind::Call;
+}
+
 const Expression* compoundAssignmentSourceRhs(
     const AssignmentExpression& expression) {
-  if (!expression.op)
+  if (!expression.op || isOverloadedUpdate(expression))
     return &expression.right();
 
   const Expression* expanded = unwrapImplicitConversions(expression.right());
@@ -2431,14 +2442,10 @@ public:
 
   template<std::derived_from<Expression> T>
   void handle(const T& expression) {
-    // Compound assignments use an internal LValueReferenceExpression as the
-    // left operand of Slang's expanded binary RHS. It is an evaluator
-    // placeholder, not an executable source expression; retaining it as an
-    // owned `Other` node would make an otherwise supported assignment fail
-    // semantic reachability validation.
-    if constexpr (std::same_as<T, LValueReferenceExpression>) {
-      return;
-    }
+    // Built-in compound assignments use an internal LValueReferenceExpression
+    // as the left operand of Slang's expanded binary RHS, which capture never
+    // visits (see compoundAssignmentSourceRhs). The only visited placeholder
+    // is an overloaded update's current target value (UPDATE_CURRENT).
 
     if (capture.declarationOnly) {
       if constexpr (std::same_as<T, NamedValueExpression> ||
@@ -2498,9 +2505,14 @@ public:
       result.constant_id = capture.constant(*value);
     }
     if constexpr (std::same_as<T, AssignmentExpression>) {
-      result.operation = expression.op
-          ? semanticBinaryOperation(*expression.op)
-          : static_cast<uint32_t>(LLG_SLANG_OP_ASSIGN);
+      if (isOverloadedUpdate(expression))
+        result.operation = expression.isOverloadedPostfix
+            ? LLG_SLANG_OP_OVERLOAD_POST_UPDATE
+            : LLG_SLANG_OP_OVERLOAD_UPDATE;
+      else
+        result.operation = expression.op
+            ? semanticBinaryOperation(*expression.op)
+            : static_cast<uint32_t>(LLG_SLANG_OP_ASSIGN);
       if (expression.isNonBlocking())
         result.flags |= LLG_SLANG_SEMANTIC_NONBLOCKING;
     }

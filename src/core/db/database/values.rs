@@ -106,6 +106,8 @@ pub(super) fn operation_from_slang(operation: SemanticOperation, unary: bool) ->
         SemanticOperation::StreamLeft => Operation::StreamLeftToRight,
         SemanticOperation::StreamRight => Operation::StreamRightToLeft,
         SemanticOperation::Assign => Operation::Assignment,
+        SemanticOperation::OverloadUpdate => Operation::OverloadUpdate,
+        SemanticOperation::OverloadPostUpdate => Operation::OverloadPostUpdate,
         SemanticOperation::Inside => Operation::Inside,
         SemanticOperation::AssignmentPattern => Operation::AssignmentPattern,
         SemanticOperation::MinTypMax => Operation::MinTypMax,

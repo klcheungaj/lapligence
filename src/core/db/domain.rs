@@ -107,7 +107,8 @@ semantic_enum! {
         Matched, Triggered, AssignmentPattern, MultiAssignmentPattern, If, IfElse,
         CompositeAnd, CompositeOr, Type, Assignment, AcceptOn, RejectOn, SyncAcceptOn,
         SyncRejectOn, OverlapFollowedBy, NonOverlapFollowedBy, Nexttime, Always, Eventually,
-        Until, UntilWith, Implies, Inside, Coverage
+        Until, UntilWith, Implies, Inside, Coverage,
+        OverloadUpdate, OverloadPostUpdate, OverloadCurrent
     }
 }
 
