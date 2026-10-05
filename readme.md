@@ -175,16 +175,20 @@ llg [options] [<file.sv>...] [-- <plusargs>...]
 Options can also come from an `llg.toml`, read only when named with
 `--config <file>` (which must exist); `llg` never discovers one. The same file
 configures `llg_ls`. Precedence is command line, then environment, then the
-file, then built-in defaults. A repeatable option on the command line appends to
-the file's list and `--clear <list>` discards the file's list first; see
-[configuration](docs/config.md) for every key and the precedence. Config errors
+file, then built-in defaults. A list option on the command line (`-I`, `-D`,
+source files, `--`, ...) replaces the file's list, and its `--append-<list>` twin
+adds to it instead; see [configuration](docs/config.md) for every key, the list
+table and the precedence. Config errors
 name the file and key and exit 1.
 
 Common options:
 
 - `--config <file>`: read this `llg.toml` (must exist; there is no discovery).
-- `--clear <list>`: drop the config file's values of a repeatable list
-  (`sources`, `include-dirs`, `defines`, ...) before the command-line values apply.
+- `--append-<list> <value>`: add to the config file's list instead of replacing
+  it (`--append-source`, `--append-include-dir`, `--append-define`,
+  `--append-param-override`, `--append-define-system-task`, `--append-libmap`,
+  `--append-libfile`, `--append-library-order`, `--append-dpi-lib`,
+  `--append-plusarg`).
 - `--param-override <NAME=VALUE>` / `-G`: override a top-level parameter.
 - `--no-lint`, `--no-gen-only`, `--opt`: undo `lint.run`, `build.gen_only` and
   `simulator.optimize = false` from the config file.

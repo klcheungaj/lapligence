@@ -1,0 +1,5 @@
+t0 xx 33 zz x
+t1 5a 5b -2 1 3
+t1 after writes 5a 33 5b -2 1 3 live 11
+t1 next delta 5a 5b
+t2 11 44 12 3 0 1

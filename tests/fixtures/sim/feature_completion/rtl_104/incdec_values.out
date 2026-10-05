@@ -1,0 +1,11 @@
+post-dec 0 8 1 10
+pre-dec -1 6 -1 6
+pre-inc 0 8 0 8
+argument 8 1 10
+loop 4 6 20
+element 2 6 3 8
+member 8 3 8 3 3
+local 6 20 6
+compound 11 20 11
+array 4 9 9 5
+array 5 10 5 10

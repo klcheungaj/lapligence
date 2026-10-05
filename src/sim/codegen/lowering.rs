@@ -936,6 +936,9 @@ struct AggregateMemberInfo {
     /// existing owned-object runtime path; aggregate nodes have neither.
     signal: Option<SignalInfo>,
     object: Option<usize>,
+    /// A member array of a column-layout record (RTL-101) is one fixed-array
+    /// column instead of one leaf per cell.
+    array: Option<ArrayInfo>,
     path: Vec<AggregatePathPart>,
 }
 
@@ -966,6 +969,9 @@ struct NativeLayout {
 struct UnpackedAggregateInfo {
     kind: AggregateKind,
     type_identity: Option<String>,
+    /// Column layout (RTL-101): whole-record values move leaf by leaf and
+    /// never as one packed payload.
+    columns: bool,
     members: Vec<AggregateMemberInfo>,
     /// Recursive descriptors are lowered to deterministic leaves only at the
     /// backend boundary. The descriptor itself remains the compatibility and
@@ -1205,6 +1211,16 @@ struct Codegen<'a> {
     /// key uses declaration identity and canonical member/index path, never a
     /// display spelling or frontend pointer.
     aggregate_objects: HashMap<(NodeId, String), usize>,
+    /// Whether any record uses column layout; keeps column lookups off the
+    /// common array-resolution path otherwise.
+    record_columns: bool,
+    /// Column-layout record formals, results and locals of subroutines.
+    activation_records: HashMap<NodeId, collection::RecordValue>,
+    /// Array metadata of subroutine record member-array columns.
+    record_array_infos: HashMap<usize, ArrayInfo>,
+    /// Set while a column-layout record result call is lowered as an
+    /// assignment source, the only context that supplies its result columns.
+    record_call_result: bool,
     /// Native record declarations (formals, results, locals) → type layout.
     native_layouts: HashMap<NodeId, NativeLayout>,
     /// `(instance, declaration)` → native value storage.
@@ -1288,6 +1304,9 @@ struct Codegen<'a> {
     /// Real variables read by `$sampled` outside history domains; each gets
     /// a numeric Preponed snapshot registration at model initialization.
     sampled_real_signals: std::collections::BTreeSet<usize>,
+    /// Packed signals a procedural `$sampled` reads, registered for their
+    /// Preponed value without clocking history.
+    sampled_value_signals: std::collections::BTreeSet<usize>,
     /// Lexical bindings for fixed-array reduction maps, keyed by declaration
     /// identity so nested `with` expressions can retain outer iterators.
     fixed_method_iterators: HashMap<NodeId, FixedMethodIterator>,
@@ -1364,6 +1383,10 @@ struct Codegen<'a> {
     /// C expression for the recursion depth at call sites in the current
     /// context (`"0"` in processes, `"depth + 1"` in function bodies).
     depth_arg: String,
+    /// Width and signedness of the target of each overloaded update
+    /// (IEEE 1800-2009 11.11) whose value is being lowered, innermost last.
+    /// Its `OverloadCurrent` operand reads the mutation's captured target.
+    overload_current: Vec<(u32, bool)>,
     /// Owning module-instance arena node of the current emission context;
     /// used to resolve unbound callees by name.
     inst: NodeId,
@@ -1532,6 +1555,10 @@ impl<'a> Codegen<'a> {
             class_init_receiver: None,
             unpacked_aggregates: HashMap::new(),
             aggregate_objects: HashMap::new(),
+            record_columns: false,
+            activation_records: HashMap::new(),
+            record_array_infos: HashMap::new(),
+            record_call_result: false,
             native_layouts: HashMap::new(),
             native_storage: HashMap::new(),
             subroutine_containers: HashMap::new(),
@@ -1560,6 +1587,7 @@ impl<'a> Codegen<'a> {
             container_initializers: Vec::new(),
             container_iterator: None,
             sampled_real_signals: std::collections::BTreeSet::new(),
+            sampled_value_signals: std::collections::BTreeSet::new(),
             fixed_method_iterators: HashMap::new(),
             pending_container_pre_fns: Vec::new(),
             array_initializers: Vec::new(),
@@ -1587,6 +1615,7 @@ impl<'a> Codegen<'a> {
             scope_nodes: HashMap::new(),
             func: None,
             depth_arg: "0".to_string(),
+            overload_current: Vec::new(),
             inst: NodeId(0),
             design_name: String::new(),
             proc_seq: 0,
@@ -1719,6 +1748,9 @@ impl<'a> Codegen<'a> {
     fn array_of(&self, node: NodeId) -> Option<&ArrayInfo> {
         if let Some(array) = self.array_globals.get(&node) {
             return Some(array);
+        }
+        if let Some(column) = self.record_column_array(node) {
+            return Some(column);
         }
         match self.kind(node) {
             NodeKind::Array { .. } => self.array_globals.get(&node),
@@ -2390,12 +2422,12 @@ struct EmitCtx<'c, 'a> {
 struct FixedImageShape {
     bounds: (i32, i32),
     element_width: u32,
-    /// Element state domain; meaningful when `uniform`.
+    /// Element state domain; meaningful when `two_state_runs` is empty.
     two_state: bool,
-    /// The element has one state domain, so a packed element write applies
-    /// the right conversion. Unpacked aggregate elements with mixed domains
-    /// are not uniform.
-    uniform: bool,
+    /// `(lsb, width)` of each two-state run of an unpacked aggregate element
+    /// whose members mix state domains. Empty when the element has one
+    /// domain, so a packed element write applies the right conversion.
+    two_state_runs: Vec<(u32, u32)>,
     /// Element default-uninitialized value for out-of-bounds source indices.
     fallback: IrConst,
 }

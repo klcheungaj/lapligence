@@ -204,6 +204,17 @@ impl<'a> Codegen<'a> {
             .collect();
         sampled_sources.sort_unstable();
         sampled_sources.dedup_by_key(|(source, _)| *source);
+        for source in &self.sampled_value_signals {
+            // A clocking source's history registration also samples its value.
+            if sampled_sources
+                .binary_search_by_key(source, |(source, _)| *source)
+                .is_err()
+            {
+                model
+                    .init_steps
+                    .push(IrInitStep::RegisterSampledValue(*source));
+            }
+        }
         for (source, _) in sampled_sources {
             model.init_steps.push(IrInitStep::RegisterSampled(source));
         }

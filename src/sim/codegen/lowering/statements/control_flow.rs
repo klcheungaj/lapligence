@@ -157,7 +157,53 @@ impl EmitCtx<'_, '_> {
                 ));
             }
         };
-        let selector_value = self.cg.lower_expr(&self.path, selector)?;
+        // A selector beyond packed capacity is matched column by column
+        // (RTL-101). Storage is read in place unless an item filter could
+        // change it before a later item is tested; any other selector is
+        // evaluated once into a temporary.
+        let mut prelude = Vec::new();
+        let column_source = if self.cg.record_columns
+            && (self
+                .cg
+                .column_record_storage(self.cg.p30_unwrap_cast(selector))
+                .is_some()
+                || self.cg.column_record_type(selector))
+        {
+            match self
+                .cg
+                .column_record_storage(self.cg.p30_unwrap_cast(selector))
+            {
+                Some(value) if items.iter().all(|item| item.filter.is_none()) => Some(value),
+                _ => {
+                    let descriptor = self
+                        .cg
+                        .query_descriptor(selector)
+                        .cloned()
+                        .ok_or("pattern case selector has no type")?;
+                    Some(self.cg.record_snapshot(
+                        &self.path,
+                        &descriptor,
+                        selector,
+                        &mut prelude,
+                    )?)
+                }
+            }
+        } else {
+            None
+        };
+        let selector_value = if column_source.is_some() {
+            IrExpr::new(
+                IrExprKind::Const(
+                    IrConst::packed(vec![0], vec![], vec![], 1, false, None)
+                        .map_err(|error| error.to_string())?,
+                ),
+                1,
+                false,
+                None,
+            )
+        } else {
+            self.cg.lower_expr(&self.path, selector)?
+        };
         if selector_value.is_real() {
             return Err(format!(
                 "pattern case selector must be integral in `{}`",
@@ -173,13 +219,18 @@ impl EmitCtx<'_, '_> {
         );
         let mut branches = Vec::with_capacity(items.len());
         for item in items {
-            let mut condition = self.cg.lower_pattern_value(
-                &self.path,
-                selector,
-                item.pattern,
-                selector_read.clone(),
-                match_kind,
-            )?;
+            let mut condition = if let Some(value) = &column_source {
+                self.cg
+                    .lower_column_pattern(&self.path, value, item.pattern, match_kind)?
+            } else {
+                self.cg.lower_pattern_value(
+                    &self.path,
+                    selector,
+                    item.pattern,
+                    selector_read.clone(),
+                    match_kind,
+                )?
+            };
             if let Some(filter) = item.filter {
                 let filter = self.cg.lower_boolean_expr(&self.path, filter)?;
                 condition = cmp_expr_ir(IrBinOp::LogAnd, condition, filter);
@@ -222,13 +273,16 @@ impl EmitCtx<'_, '_> {
         } else if let Some([IrStmt::If { check, .. }]) = tail.as_deref_mut() {
             *check = qualifier;
         }
-        let mut lowered = vec![IrStmt::DeclLocal {
-            name: selector_name,
-            width: selector_value.width,
-            signed: selector_value.signed,
-            two_state: false,
-            init: Some(Box::new(selector_value)),
-        }];
+        let mut lowered = prelude;
+        if column_source.is_none() {
+            lowered.push(IrStmt::DeclLocal {
+                name: selector_name,
+                width: selector_value.width,
+                signed: selector_value.signed,
+                two_state: false,
+                init: Some(Box::new(selector_value)),
+            });
+        }
         if let Some(tail) = tail {
             lowered.extend(tail);
         }

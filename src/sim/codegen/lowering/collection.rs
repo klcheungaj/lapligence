@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 
 mod aggregates;
 mod arguments;
+pub(super) use arguments::CallWriteback;
 mod call_contracts;
 pub(super) use call_contracts::{EventEvaluation, PostponedEvaluation};
 mod calls;
@@ -42,10 +43,14 @@ mod nets;
 mod packed_elements;
 pub(super) mod packed_formals;
 pub(super) use packed_elements::Select;
+pub(super) use record_columns::{
+    column_tagged_union, record_cell_leaf, record_column_layout_type, RecordColumn, RecordValue,
+};
 mod port_net_types;
 mod ports;
 mod processes;
 mod real_arrays;
+mod record_columns;
 mod return_flow;
 mod signatures;
 mod strength_views;

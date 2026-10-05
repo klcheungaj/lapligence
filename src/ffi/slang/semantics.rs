@@ -327,7 +327,7 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
         14 => matches!(subkind, 0 | 228),
         15 => matches!(subkind, 0 | 160..=164 | 200..=227),
         18 => matches!(subkind, 0 | 32..=67 | SEMANTIC_STMT_PATTERN_CASE),
-        19 => matches!(subkind, 0 | 64..=78 | 80..=92),
+        19 => matches!(subkind, 0 | 64..=78 | 80..=93),
         25 => matches!(subkind, 0 | 194 | SEMANTIC_SCOPE_CLOCKING_BLOCK),
         26 => matches!(subkind, 0 | 112..=118),
         28 => matches!(subkind, 0..=13),
@@ -520,6 +520,8 @@ pub(super) fn decode_semantic_operation(raw: u32) -> Result<SemanticOperation, S
         67 => SemanticOperation::AssertionSAlways,
         68 => SemanticOperation::AssertionEventually,
         69 => SemanticOperation::AssertionSEventually,
+        70 => SemanticOperation::OverloadUpdate,
+        71 => SemanticOperation::OverloadPostUpdate,
         _ => return Err(invalid_native("semantic node has an unknown operation")),
     })
 }

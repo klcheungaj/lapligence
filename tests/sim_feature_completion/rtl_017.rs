@@ -188,24 +188,6 @@ fn prototypes_must_have_the_operator_arity() {
 }
 
 #[test]
-fn postfix_values_are_not_admitted() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_postfix_value",
-        "the value of an overloaded postfix '++' cannot be used",
-    );
-}
-
-#[test]
-fn compound_targets_must_not_have_side_effects() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_target_side_effects",
-        "the target of an overloaded '+' is read and written separately",
-    );
-}
-
-#[test]
 fn only_overload_operators_can_be_bound() {
     sim_cli::reject_case(SUITE, "neg_not_overloadable", "expected identifier");
 }

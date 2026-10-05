@@ -119,6 +119,9 @@ impl<'a> Codegen<'a> {
         if matches!(self.kind(node), NodeKind::Expr(ExprKind::Cast { .. })) {
             return Ok(None);
         }
+        if let Some(value) = self.overload_current_read(path, node) {
+            return value.map(Some);
+        }
         if self.query_descriptor(node).is_some_and(|descriptor| {
             matches!(
                 &descriptor.shape,

@@ -124,6 +124,11 @@ impl<'a> Codegen<'a> {
                 "container result of `{name}` in `{scope_path}` must be assigned whole to a container variable"
             ));
         }
+        if self.record_return(ft) && !std::mem::take(&mut self.record_call_result) {
+            return Err(format!(
+                "function `{name}` returns a column-layout record; call it only as the source of a record assignment or return in `{scope_path}`"
+            ));
+        }
         let formals = meta.formals.clone();
         let bound = self.bind_call_args(self.inst, &formals, args)?;
         for (idx, (io, _is_out)) in formals.iter().enumerate() {
@@ -145,6 +150,10 @@ impl<'a> Codegen<'a> {
         // them in the callee's declaration order (the C parameter order).
         let mut in_args: Vec<(usize, IrCallArg)> = Vec::new();
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
+        // Columns after the first of column-layout record formals, in the
+        // order their trailing IR formals were declared.
+        let mut record_out_args = Vec::new();
+        let mut record_in_args = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if self.is_subroutine_container(*io) {
                 let argument =
@@ -153,6 +162,30 @@ impl<'a> Codegen<'a> {
                     out_args.push(argument);
                 } else {
                     in_args.push((idx, argument));
+                }
+                continue;
+            }
+            if self.record_declaration(*io) {
+                let address = *is_out
+                    || matches!(
+                        self.kind(*io),
+                        NodeKind::FuncArg {
+                            direction: DbDirection::Ref,
+                            ..
+                        }
+                    );
+                let mut columns = self
+                    .record_call_columns(scope_path, *io, bound[idx].expr)?
+                    .into_iter();
+                let first = columns
+                    .next()
+                    .ok_or("column-layout record formal has no columns")?;
+                if address {
+                    out_args.push(first);
+                    record_out_args.extend(columns);
+                } else {
+                    in_args.push((idx, first));
+                    record_in_args.extend(columns);
                 }
                 continue;
             }
@@ -305,6 +338,17 @@ impl<'a> Codegen<'a> {
                         ..
                     }
                 );
+                let mode = super::super::containers::StreamTargetMode::CopyOut;
+                if self
+                    .stream_mixed_targets(scope_path, bound[idx].expr, mode, Operation::Assignment)?
+                    .is_some()
+                {
+                    // An expression call has no statement after it to run the
+                    // checked unpack in; statement calls support it.
+                    return Err(format!(
+                        "streaming `with` copy-out target whose range is runtime-valued or outside the array bounds is not supported for a function call inside an expression in `{scope_path}`"
+                    ));
+                }
                 let (wb, actual_read, selector_inits) = self.lower_call_actual(
                     scope_path,
                     bound[idx].expr,
@@ -392,7 +436,9 @@ impl<'a> Codegen<'a> {
             }
         }
         in_args.sort_by_key(|(idx, _)| *idx);
+        out_args.extend(record_out_args);
         out_args.extend(in_args.into_iter().map(|(_, argument)| argument));
+        out_args.extend(record_in_args);
         // A class method written without an explicit receiver inside another
         // class method is represented as a plain function call by Slang. Bind
         // that call to the current `this` (or the object under construction).
@@ -424,6 +470,7 @@ impl<'a> Codegen<'a> {
             self.class_method_owner(ft).is_some() && self.node(ft).name == "new";
         if ret_val.is_none()
             && !self.nonflatten_function(ft)
+            && !self.record_return(ft)
             && !self.native_return(ft)
             && !self.container_return(ft)
             && !self.real_array_return(ft)

@@ -59,14 +59,17 @@ never parse TOML in a bin. `cli.rs` records only what was given; `settings.rs`
 resolves command line > environment > config > built-in, and `settings::layered`
 is the single place that states that order: every option with an environment
 variable goes through it (add new env-backed options there and to the `Env`
-reader, not to `sim::build`). Scalars replace; a repeatable option given on the
-command line appends to the config list and `--clear <list>` discards the config
-list first (a later `NAME=VALUE` define/override replaces an earlier one;
-other lists keep the first identical entry); booleans have `--no-X` opposites
-(`--no-gen-only`, `--opt`, `--no-lint`). `--config`, `--clear` and
-`--lint-config` are command-line only. A config error exits 1 naming file and key; entry-level
-warnings go to stderr. Add a new option to `cli.rs`, the config schema,
-`docs/config.md` and the resolve/precedence tests together.
+reader, not to `sim::build`). Scalars replace; a list option given on the
+command line (including source files and `--` plusargs) replaces the config
+list, and its `--append-<list>` twin adds to it (replacing values first, then
+appended ones; `settings::listed` is the one merge). A later `NAME=VALUE`
+define/override replaces an earlier one; other lists keep the first identical
+entry; booleans have `--no-X` opposites (`--no-gen-only`, `--opt`, `--no-lint`).
+`--config` and `--lint-config` are command-line only. A config error exits 1
+naming file and key; entry-level warnings go to stderr. Add a new option to
+`cli.rs`, the config schema, `docs/config.md` (a new list needs both its
+replace and its `--append-` option, an `Appends` field and a row in the list
+table) `docs/config.md` and the resolve/precedence tests together.
 
 ## Startup and process state
 

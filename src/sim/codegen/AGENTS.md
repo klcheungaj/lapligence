@@ -47,6 +47,10 @@ diagnostic labels remain separate from C symbols. The
   packed dimension visible at its base; element width is the remaining
   dimensions times the element type (so records count whole). Map labels to bits
   only through `lowering/packed_geometry.rs`, never with per-site stride math.
+  A member path whose first reference is an element select (`ps[i].hi`) names
+  that select's root only as a label: resolve it through the select chain,
+  never by the root's name, which would drop the select. Its selectors are
+  reads of a writer (sensitivity and continuous re-evaluation).
 - `PackedChain` preserves each selection relative to its preceding result,
   including remaining packed-element stride, bounds, direction and right bound.
   Partial reads keep valid bits and fill missing bits with X; invalid writes do
@@ -391,6 +395,15 @@ for `sparse()` storage and oversized values, never a per-cell expansion; new
 writers of fixed storage must register cell intervals for the single-writer
 rule; and new net-array driver forms must be added to the `net_cells.rs`
 classification inventory.
+Column-layout records and tagged unions (RTL-101; wider than the packed limit
+or with a member array above the dense threshold) are classified in
+`collection/record_columns.rs` and lowered in
+`expressions/aggregates/columns.rs`: every integral leaf is an
+`IrArray::descriptor` column (a scalar leaf is one cell, a tag is one more
+cell), whole-value operations iterate the columns, subroutine activations keep
+their columns in `activation_records` (extra columns follow the declared
+formals, results are trailing outputs), and a consumer that reads a member
+must resolve it through `record_column_array` rather than a packed projection.
 Native records (string/real/chandle leaves, no packed width) in subroutine
 formals, results and locals use `collection/native_values.rs`: one
 `IrNativeValue` root per storage, leaf accesses by constant item path, and
@@ -437,11 +450,20 @@ storage order. Never drop a `with` range: model arrays use `FixedStream`/
 `FixedSelector`, other fixed arrays (ref formals, locals, members, rows, call
 results) use their whole image (`FixedImageStream`/`FixedImageSelector`), and
 constant in-bounds target ranges unpack into element parts. A runtime or
-out-of-bounds target range needs a direct streaming assignment (not copy-out or
-intra-assignment delay). Each blocking `>>` selector may observe earlier unpacked
-fields, unlike frozen positional targets; nonblocking and `<<` forms reject a
-selector that reads an earlier target of the same unpack. Oversized descriptor
-streams accept only constant in-bounds ranges, as sliced views. Wider fixed
+out-of-bounds target range needs the checked `StreamAssign` (`stream_mixed_targets`):
+a direct streaming assignment, or a statement call's output copy-out
+(`lower_call_writeback`, selectors frozen at the call); expression calls and
+intra-assignment delays reject. Image elements mixing two-state and four-state
+members carry their two-state runs: constant parts become one lvalue per run,
+runtime selections convert the selected segment. Each blocking `>>` selector may
+observe earlier unpacked fields, unlike frozen positional targets; nonblocking,
+`<<` and copy-out forms reject a selector that reads an earlier target of the
+same unpack. Oversized descriptor stream operands are views (constant in-bounds
+`with` ranges as sliced views), `Selected` runtime `with` selections of
+descriptor arrays, `Dense` views of dense arrays, `Packed` values (records,
+`with` selections of dense/image arrays) or nested streams (`>>` spliced);
+dense rows also enter descriptor patterns as `Dense` items and receive scatter
+rows by a copy loop (`dense_row_scatter`). Wider fixed
 destinations left-align and zero-fill; oversize fixed sources diagnose, while
 longer unpack sources consume leftmost bits. Composite call/ref layouts use the
 same recursive descriptors.

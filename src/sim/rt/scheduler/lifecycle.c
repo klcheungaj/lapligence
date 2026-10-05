@@ -56,6 +56,12 @@ static void free_sampled_values(void) {
         free(g.sampled_reals);
         g.sampled_reals = next;
     }
+    while (g.sampled_values) {
+        llg_sampled_value_t* next = g.sampled_values->next;
+        sv4_destroy(&g.sampled_values->value);
+        free(g.sampled_values);
+        g.sampled_values = next;
+    }
     while (g.sampled) {
         llg_sampled_value_t* next = g.sampled->next;
         while (g.sampled->history) {

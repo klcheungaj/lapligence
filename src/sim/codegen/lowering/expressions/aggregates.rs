@@ -3,6 +3,7 @@
 use super::super::containers::PatternAssignmentKind;
 use super::*;
 
+mod columns;
 mod copies;
 pub(in crate::sim::codegen::lowering) use copies::AggregateSelection;
 
@@ -188,6 +189,9 @@ impl<'a> Codegen<'a> {
         if let Some(statement) =
             self.lower_p30_pattern_lvalue_assignment(path, lhs, rhs, kind, op)?
         {
+            return Ok(Some(statement));
+        }
+        if let Some(statement) = self.lower_column_record_assignment(path, lhs, rhs, nba, op)? {
             return Ok(Some(statement));
         }
         if op == Operation::Assignment
@@ -823,6 +827,38 @@ impl<'a> Codegen<'a> {
         let [lhs, rhs] = operands else {
             return Ok(None);
         };
+        if self.record_columns {
+            let negate = matches!(op, Operation::NotEqual | Operation::CaseNotEqual);
+            let case = matches!(op, Operation::CaseEqual | Operation::CaseNotEqual);
+            match (
+                self.column_record_storage(*lhs),
+                self.column_record_storage(*rhs),
+            ) {
+                (Some(left), Some(right)) => {
+                    let equality = self.record_equality(path, &left, &right, case)?;
+                    return Ok(Some(if negate {
+                        IrExpr::new(
+                            IrExprKind::Un {
+                                op: IrUnOp::LogNot,
+                                a: Box::new(equality),
+                            },
+                            1,
+                            false,
+                            None,
+                        )
+                    } else {
+                        equality
+                    }));
+                }
+                (None, None)
+                    if !self.column_record_type(*lhs) && !self.column_record_type(*rhs) => {}
+                _ => {
+                    return Err(format!(
+                        "equality of a column-layout record value in `{path}` requires record storage operands"
+                    ));
+                }
+            }
+        }
         // Leaf-wise comparison needs storage on both sides. A parameter,
         // call or conditional operand is a fixed payload instead; the caller
         // then compares complete payloads bit for bit, which is the same
@@ -1016,6 +1052,13 @@ impl<'a> Codegen<'a> {
         &self,
         leaf: &AggregateMemberInfo,
     ) -> Result<IrLhs, String> {
+        if let Some(cell) = leaf.array.as_ref().filter(|_| record_cell_leaf(leaf)) {
+            return self.reference_lhs(IrLhs::ArrayElem {
+                arr: self.reference_array(cell.ir),
+                indices: vec![lhs_integer_expr(0)],
+                elem_sel: IrElemSel::Whole,
+            });
+        }
         let signal = leaf.signal.as_ref().ok_or_else(|| {
             format!(
                 "aggregate member `{}` is not a packed or real assignment target",
@@ -1044,6 +1087,18 @@ impl<'a> Codegen<'a> {
         &self,
         leaf: &AggregateMemberInfo,
     ) -> Result<IrExpr, String> {
+        if let Some(cell) = leaf.array.as_ref().filter(|_| record_cell_leaf(leaf)) {
+            return Ok(IrExpr::new(
+                IrExprKind::ArrayRead {
+                    arr: self.reference_array(cell.ir),
+                    indices: vec![lhs_integer_expr(0)],
+                    elem_sel: IrElemSel::Whole,
+                },
+                cell.elem_width,
+                cell.signed,
+                None,
+            ));
+        }
         let signal = leaf.signal.as_ref().ok_or_else(|| {
             format!(
                 "aggregate member `{}` is not a packed or real expression",

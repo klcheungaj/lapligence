@@ -28,8 +28,9 @@ Each direct rank-one reduction reads owned cells individually, while
 the RTL-002/RTL-002b integral-array profile uses lazy defaults, stable selected
 cells and descriptor views for whole and selected values, conditionals, patterns,
 streams and function formals/returns; arrays of unpacked records use the same
-views. A single record wider than the packed limit retains the packed payload
-limit; see
+views. A single record or tagged union wider than the packed limit, or with a
+member array above the dense threshold, stores one descriptor column per member
+array and scalar leaf (RTL-101); see
 [resource limits](sim_features.md#resource-limits) for the exact descriptor profile.
 Dynamic, resizable and unbounded aggregate values remain separately bounded. The executable
 boundary cases are in [`tests/fixtures/sim/syn036_capacity`](../tests/fixtures/sim/syn036_capacity/).
@@ -544,6 +545,24 @@ undefined. Tests pin each one; change them only by an explicit decision.
   with `#5`: `a[0]` is never written and `a[1]` becomes 1 at 17. Pinned by
   `rtl_105::runtime_selected_delayed_update_follows_newest_evaluation`; see
   the "Continuous drivers" row in [sim_features](sim_features.md).
+
+* **Operator overloads declared in a package** (RTL-104; listed for user
+  confirmation). IEEE 1800-2009 §11.11 says an overload declaration "follows
+  the same search rules as a data declaration" and must be "defined before use
+  in a scope that is visible", but is silent on packages; overload
+  declarations have no name. The project reads §26.3 literally for that
+  unnamed declaration: at each scope of the use, from the innermost outward,
+  the scope's own overloads declared before the use are searched first, then
+  those declared directly in every package the scope wildcard-imports
+  (`import p::*;`) before the use, which also covers compilation-unit imports.
+  Candidates from several imported packages are pooled, so two equally
+  matching ones are ambiguous (like a name supplied by two wildcard imports).
+  An explicit import (`import p::add;`) names one identifier and never carries
+  an overload, and neither does an export (§26.6) or a `p::` qualification.
+  The bound function is still found by ordinary call lookup from the use
+  (§11.11), so it must be visible there too. Pinned by
+  `rtl_104::package_overloads_follow_wildcard_imports` and
+  `rtl_104::neg_package_overloads_need_a_preceding_wildcard_import`.
 
 ## Source anchors
 

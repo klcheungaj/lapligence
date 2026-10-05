@@ -360,6 +360,7 @@ typedef struct {
     uint64_t callback_sequence;
     llg_region_callback_t* callbacks; // sorted by time, region, issue order
     llg_sampled_value_t* sampled;
+    llg_sampled_value_t* sampled_values; // Preponed value only, no history
     llg_sampled_real_t* sampled_reals;
     llg_sampled_domain_t* sampled_domains;
     uint64_t sampled_domain_sequence;

@@ -43,6 +43,6 @@ Nearest-illegal negatives: `neg_self_determined_ambiguous` and
 nonvisible prototypes), `neg_missing_function`, `neg_prototype_mismatch`,
 `neg_overload_arity`, `neg_not_overloadable` (`&` is not an overload
 operator) and `neg_v2001_overload.v` (IEEE 1364-2001 has no overload
-declarations). `neg_postfix_value` and `neg_target_side_effects` are the
-documented limits of the `x = f(x)` expansion: a postfix value cannot be
-represented, and a target is read and written separately.
+declarations). The former `neg_postfix_value` and `neg_target_side_effects`
+forms are legal and now execute: see `rtl_104/` (`rtl017_postfix_value`,
+`rtl017_target_side_effects`).

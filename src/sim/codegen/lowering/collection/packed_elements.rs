@@ -1,13 +1,16 @@
 //! Packed selections of fixed-array elements, preserving each intermediate bound.
 
-use super::super::packed_geometry::PackedSelectDim;
+use super::super::packed_geometry::{offset_lsb, PackedSelectDim};
 use super::*;
+use crate::core::db::PackedMember;
 use crate::sim::ir::IrPackedSelect;
 
 pub(in super::super) enum Select {
     Elements(Vec<NodeId>),
     Part(NodeId, NodeId),
     Indexed(NodeId, NodeId, bool),
+    /// A member path over the preceding element (`ps[i].hi`).
+    Member(NodeId),
 }
 
 impl<'a> Codegen<'a> {
@@ -21,15 +24,20 @@ impl<'a> Codegen<'a> {
     ) -> Result<Option<IrLhs>, String> {
         let mut current = node;
         let mut outer = Vec::new();
-        let (array_node, array_indices, packed_indices) = loop {
+        let (array_select, array_node, array_indices, packed_indices) = loop {
             match self.kind(current) {
                 NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
-                    if let Some(array) = self.array_of(*base) {
+                    if let Some(array) = self.select_array_of(current, *base) {
                         let rank = array.dims.len();
                         if indices.len() < rank || array.real {
                             return Ok(None);
                         }
-                        break (*base, indices[..rank].to_vec(), indices[rank..].to_vec());
+                        break (
+                            current,
+                            *base,
+                            indices[..rank].to_vec(),
+                            indices[rank..].to_vec(),
+                        );
                     }
                     outer.push((*base, Select::Elements(indices.clone())));
                     current = *base;
@@ -39,7 +47,7 @@ impl<'a> Codegen<'a> {
                         if array.dims.len() != 1 || array.real {
                             return Ok(None);
                         }
-                        break (*base, vec![*index], Vec::new());
+                        break (current, *base, vec![*index], Vec::new());
                     }
                     outer.push((*base, Select::Elements(vec![*index])));
                     current = *base;
@@ -64,7 +72,7 @@ impl<'a> Codegen<'a> {
             return Ok(None);
         }
         let array = self
-            .array_of(array_node)
+            .select_array_of(array_select, array_node)
             .cloned()
             .ok_or_else(|| format!("packed selection lost its array root in `{path}`"))?;
         let indices = array_indices
@@ -82,6 +90,21 @@ impl<'a> Codegen<'a> {
         )?;
         for (base, select) in outer.into_iter().rev() {
             self.packed_selection_steps(path, base, select, &mut parent_width, &mut steps)?;
+        }
+        if let Some(guard) = self.record_select_guard(array_select)? {
+            let element = IrLhs::ArrayElem {
+                arr: self.reference_array(array.ir),
+                indices,
+                elem_sel: IrElemSel::Whole,
+            };
+            return Ok(Some(self.record_guarded_element_lhs(
+                guard,
+                element,
+                array.elem_width,
+                steps,
+                false,
+                self.source_location(node),
+            )));
         }
         Ok(Some(IrLhs::ArrayElem {
             arr: self.reference_array(array.ir),
@@ -113,6 +136,12 @@ impl<'a> Codegen<'a> {
                     width_expr,
                     neg,
                 }) => (*base, Select::Indexed(*base_expr, *width_expr, *neg)),
+                NodeKind::Expr(ExprKind::HierPath { .. }) => {
+                    match self.packed_element_member_select(current) {
+                        Some(select) => (select, Select::Member(current)),
+                        None => break,
+                    }
+                }
                 _ => break,
             };
             if self.array_of(base).is_some() || self.container_of(base).is_some() {
@@ -159,7 +188,10 @@ impl<'a> Codegen<'a> {
         let Ok(dim) = PackedSelectDim::new(root_width, Some(outer)) else {
             return Ok(None);
         };
-        if ranges.len() < 2 && dim.stride == 1 {
+        let through_member = selectors
+            .iter()
+            .any(|(_, select)| matches!(select, Select::Member(_)));
+        if ranges.len() < 2 && dim.stride == 1 && !through_member {
             return Ok(None);
         }
         let mut width = root_width;
@@ -184,6 +216,9 @@ impl<'a> Codegen<'a> {
         if value.is_real() {
             return Ok(None);
         }
+        let through_member = selectors
+            .iter()
+            .any(|(_, select)| matches!(select, Select::Member(_)));
         let Some(steps) = self.packed_value_steps(path, root, selectors, value.width)? else {
             return Ok(None);
         };
@@ -198,30 +233,53 @@ impl<'a> Codegen<'a> {
                 false,
                 None,
             );
-            return Ok(Some(self.packed_value_select_type(node, selected)));
+            return Ok(Some(self.packed_value_select_type(
+                node,
+                selected,
+                through_member,
+            )));
         }
         // A part-select that is out of range or unknown reads X for the
         // missing bits (IEEE 1800-2009 11.5.1), as the scalar paths do.
         let value = steps.into_iter().fold(value, |value, step| {
             super::packed_formals::packed_step_read(value, step)
         });
-        Ok(Some(self.packed_value_select_type(node, value)))
+        Ok(Some(self.packed_value_select_type(
+            node,
+            value,
+            through_member,
+        )))
     }
 
     /// An element select takes its element type's signedness (a select of
     /// `logic signed [3:0]` elements is signed); a part-select is unsigned.
-    fn packed_value_select_type(&self, node: NodeId, value: IrExpr) -> IrExpr {
+    /// A member takes its declared signedness, and a value selected through
+    /// a two-state member of a four-state structure reads as two-state
+    /// (IEEE 1800-2009 7.2.1).
+    fn packed_value_select_type(
+        &self,
+        node: NodeId,
+        value: IrExpr,
+        through_member: bool,
+    ) -> IrExpr {
+        let descriptor = self.query_descriptor(node);
         let element = matches!(
             self.kind(node),
-            NodeKind::Expr(ExprKind::BitSelect { .. } | ExprKind::ArraySelect { .. })
+            NodeKind::Expr(
+                ExprKind::BitSelect { .. }
+                    | ExprKind::ArraySelect { .. }
+                    | ExprKind::HierPath { .. }
+            )
         );
-        let signed = element
-            && self
-                .query_descriptor(node)
-                .is_some_and(|descriptor| descriptor.info.signed);
-        if signed {
+        let signed = element && descriptor.is_some_and(|descriptor| descriptor.info.signed);
+        let value = if signed {
             let width = value.width;
             IrExpr::resize_to(value, width, true)
+        } else {
+            value
+        };
+        if through_member && descriptor.is_some_and(|descriptor| descriptor.two_state) {
+            IrExpr::to_two_state(value)
         } else {
             value
         }
@@ -254,8 +312,19 @@ impl<'a> Codegen<'a> {
             } => (*width, *two_state),
             _ => return Ok(None),
         };
+        let through_member = selectors
+            .iter()
+            .any(|(_, select)| matches!(select, Select::Member(_)));
         let Some(steps) = self.packed_value_steps(path, root, selectors, root_width)? else {
             return Ok(None);
+        };
+        // A write through a member converts to the selected bits' own state
+        // domain: a two-state member of a four-state structure stores 0 for X.
+        let two_state = if through_member {
+            self.query_descriptor(node)
+                .map_or(two_state, |descriptor| descriptor.two_state)
+        } else {
+            two_state
         };
         if let Lhs::Whole(info) = &target {
             if let Some((lsb, width)) = constant_packed_span(root_width, &steps) {
@@ -283,6 +352,68 @@ impl<'a> Codegen<'a> {
             signed: false,
             two_state,
         })))
+    }
+
+    /// The element select at the base of a member path over an element of a
+    /// packed array (`ps[i].hi`, `w[i][j].in.lo`, `h.arr[i].hi`). Capture
+    /// keeps that select as the path's first reference; paths over
+    /// unpacked-array or container elements keep their own projections.
+    pub(in super::super) fn packed_element_member_select(&self, node: NodeId) -> Option<NodeId> {
+        let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) else {
+            return None;
+        };
+        if parts.len() < 2 {
+            return None;
+        }
+        let select = refs.first().copied().flatten()?;
+        let mut current = select;
+        loop {
+            let base = match self.kind(current) {
+                NodeKind::Expr(
+                    ExprKind::BitSelect { base, .. } | ExprKind::ArraySelect { base, .. },
+                ) => *base,
+                _ if current == select => return None,
+                _ => return Some(select),
+            };
+            if self.array_of(base).is_some() || self.container_of(base).is_some() {
+                return None;
+            }
+            current = base;
+        }
+    }
+
+    /// The selected element and the member's place inside it. Tagged-union
+    /// members need their tag guard on the selected element, which this
+    /// projection does not carry, so they reject.
+    fn packed_element_member(&self, path: &str, node: NodeId) -> Result<PackedMember, String> {
+        let (Some(select), NodeKind::Expr(ExprKind::HierPath { parts, .. })) =
+            (self.packed_element_member_select(node), self.kind(node))
+        else {
+            return Err(format!(
+                "packed-array element member lost its element select in `{path}`"
+            ));
+        };
+        let members = &parts[1..];
+        let label = members.join(".");
+        let mut layout = self.db.aggregate_layout(select);
+        for name in members {
+            let Some(current) = layout else {
+                break;
+            };
+            if current.kind == AggregateKind::TaggedUnion {
+                return Err(format!(
+                    "tagged-union member `{label}` of a packed-array element is not supported in `{path}`"
+                ));
+            }
+            layout = current
+                .members
+                .iter()
+                .find(|member| member.name == *name)
+                .and_then(|member| member.aggregate_layout());
+        }
+        self.packed_member_layout(select, members).ok_or_else(|| {
+            format!("member `{label}` of a packed-array element has no packed layout in `{path}`")
+        })
     }
 
     pub(in super::super) fn packed_selection_steps(
@@ -366,6 +497,34 @@ impl<'a> Codegen<'a> {
                 };
                 steps.push(IrPackedSelect { base, width });
                 *parent_width = width;
+            }
+            Select::Member(node) => {
+                let member = self.packed_element_member(path, node)?;
+                if member
+                    .lsb
+                    .checked_add(member.width)
+                    .is_none_or(|end| end > *parent_width)
+                {
+                    return Err(format!(
+                        "member `{}` lies outside its packed-array element in `{path}`",
+                        member.name
+                    ));
+                }
+                // A runtime element LSB absorbs the member offset, so
+                // `ps[i].hi` stays one indexed step. The member lies inside
+                // its element: an out-of-range or unknown element leaves the
+                // member out of range or unknown too.
+                match steps.last_mut() {
+                    Some(last) if fold && !matches!(last.base.kind, IrExprKind::Const(_)) => {
+                        last.base = offset_lsb(last.base.clone(), member.lsb)?;
+                        last.width = member.width;
+                    }
+                    _ => steps.push(IrPackedSelect {
+                        base: lhs_integer_expr(i128::from(member.lsb)),
+                        width: member.width,
+                    }),
+                }
+                *parent_width = member.width;
             }
         }
         Ok(())

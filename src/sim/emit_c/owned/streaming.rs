@@ -353,6 +353,7 @@ impl Frame<'_, '_> {
                     element_width,
                     two_state,
                     selector,
+                    two_state_runs,
                 } => {
                     let selection = match selection {
                         Some(selection) => selection,
@@ -363,7 +364,7 @@ impl Frame<'_, '_> {
                             *element_width,
                         )?,
                     };
-                    writes.push(self.stage_fixed_selection(
+                    let write = self.stage_fixed_selection(
                         &value,
                         &cursor,
                         selection,
@@ -371,9 +372,29 @@ impl Frame<'_, '_> {
                         FixedElement::Image {
                             target: target.clone(),
                             bounds: *bounds,
-                            two_state: *two_state,
+                            two_state: *two_state && two_state_runs.is_empty(),
                         },
-                    ));
+                    );
+                    if let (StreamWrite::FixedSelector { segment, .. }, false) =
+                        (&write, two_state_runs.is_empty())
+                    {
+                        // Mixed-domain elements convert member-wise before the
+                        // packed element writes, which then keep every state.
+                        let runs = self.name("two_state_runs");
+                        let values = two_state_runs
+                            .iter()
+                            .map(|(lsb, width)| format!("{lsb}u, {width}u"))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        self.line(format!("static const uint32_t {runs}[] = {{ {values} }};"));
+                        self.line(format!(
+                            "if (llg_sv4_width({})) llg_stream_segment_two_state(&{}, {element_width}u, {runs}, {}u);",
+                            segment.code,
+                            segment.code,
+                            two_state_runs.len()
+                        ));
+                    }
+                    writes.push(write);
                 }
             }
             for write in writes {

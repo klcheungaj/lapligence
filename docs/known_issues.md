@@ -310,7 +310,7 @@ Use the command in the frontend memory entry with `LLG_CORPUS_N` set to
 ## Remaining non-flattened fixed-value contexts
 
 **Status:** open; RTL-002 and RTL-002b implement descriptor transport for
-integral fixed arrays.
+integral fixed arrays, and RTL-101 column layout for large records.
 
 Integral variable arrays copy, compare, select rows, merge conditionals, stream
 (including multiple segments and unaligned slices), initialize and pass through
@@ -318,18 +318,23 @@ input/output/inout/ref formals and returns of static, automatic and recursive
 functions without becoming one packed value. Array-valued pattern items and
 pattern-lvalue row scatter use the same views, and so do arrays of unpacked
 records whose elements fit the packed limit (RTL-099 qualifies 1,048,576
-records). A single unpacked record or finite tagged union wider than the packed
-limit still has no descriptor layout and retains the packed payload limit as a
-value (formal, return, conditional); a record member array above the 4,096-cell
-dense threshold is expanded per cell (a 65,537-cell member generates about
-79 MB of C, and a whole-record pattern over such members fails to resolve the
-member array). So does the source of a whole-value `matches`
-wildcard or binding, which rejects with its size (RTL-016). Descriptor pattern items and scatter targets whose rows are small dense
-arrays inside an oversized source, dense arrays and runtime `with` ranges as parts
-of an oversized stream, and nested oversized streams reject with explicit
-diagnostics; constant in-bounds `with` ranges stream as sliced views (RTL-015).
-Extending those paths through per-cell source expansion would recreate the
-capacity cost.
+records). Unpacked records with a member array above the 4,096-cell dense
+threshold, and records or finite tagged unions wider than the packed limit,
+keep each member array and scalar leaf in its own descriptor column (RTL-101):
+they copy, compare, merge conditionals, match patterns, pass through module
+ports and subroutine formals/results/locals, and a 65,537-cell member generates
+about 10 KB of C instead of 79 MB. Column records still reject binding a whole
+value to a pattern variable (as does the oversized source of a whole-value
+`matches` binding, RTL-016), comparing or selecting from a record-returning
+call as an expression operand, static declaration initializers of column
+locals, member initializers on column member arrays, and subroutine or
+comparison use of a column record that has `real`, `string` or `chandle`
+members. Copying a whole member array out of an inactive tagged-union member
+is not guarded; element reads and writes report the inactive member at run time.
+Dense rows as descriptor pattern items and scatter targets, and dense arrays,
+packed values, runtime `with` ranges and nested streams as parts of an
+oversized stream, use descriptor transport (RTL-103); a resizable container operand of an oversized
+stream rejects (SIM-020).
 
 Fixed-array `reverse`/`sort`/`rsort`, selected-row reductions and `inside`
 over stored cells (descriptor arrays, selected rows and dense arrays above 16
@@ -495,23 +500,23 @@ element-wise expressions run as cell loops.
 ## Streaming `with` targets outside the direct assignment path
 
 **Status:** open; RTL-015 represents runtime and partly out-of-bounds fixed
-`with` targets only in a direct (blocking or nonblocking) streaming assignment.
+`with` targets in a direct (blocking or nonblocking) streaming assignment, and
+RTL-103 adds output copy-out from task and void-function call statements.
 
 Such a range needs its bounds checked and its in-range elements written at run
-time (IEEE 1800-2009 §11.4.14.4), which the `StreamAssign` statement does. An
-output or inout copy-out actual and an intra-assignment-delayed assignment lower
-their target as a static lvalue instead, so a runtime or out-of-bounds `with`
-range there rejects with "requires a direct streaming assignment"; a constant
-in-bounds range works. A runtime range over a record member array, ref formal or
-local whose elements mix two-state and four-state members also rejects, because
-its packed element write cannot apply member-wise state conversion; a uniform
-element domain, any model array and every source use work. Supporting either
-needs a copy-out/delayed stream plan or a member-wise conversion mask.
+time (IEEE 1800-2009 §11.4.14.4), which the `StreamAssign` statement does. A
+copy-out runs it after the call with the selectors fixed when the call starts.
+A function call inside an expression has no statement after it to run it in,
+and an intra-assignment-delayed assignment lowers its target as a static
+lvalue (SIM-014), so a runtime or out-of-bounds `with` range there rejects; a
+constant in-bounds range works. Supporting the expression call needs a
+writeback form of the checked unpack in the call ABI.
 
-Two forms reject by owner policy rather than cost: a selector that reads a target
-unpacked earlier by the same nonblocking unpack (nothing is published at issue)
-or by a right-to-left unpack (the consumed width must be known before the bits
-are reordered). Assign the length first in its own statement.
+Three forms reject by owner policy rather than cost: a selector that reads a
+target unpacked earlier by the same nonblocking unpack (nothing is published at
+issue), by a right-to-left unpack (the consumed width must be known before the
+bits are reordered) or by a copy-out (its selectors are fixed before the call).
+Assign the length first in its own statement.
 
 ## Runtime-selected module reference connections have no qualified binding oracle
 
@@ -737,42 +742,38 @@ publishes both halves with the transition delay of the combined output.
 Reproduce with `bufif1 #1 (w, d, e); pulldown (w);`, `d = 0; e = 1'bx;` and
 `#2 $display("%v", w);` (prints `StX`; the LRM result is `650`).
 
-## Operator-overload increment values and expected types
+## Operator-overload update values on oversized or native targets
 
-**Status:** RTL-017 executes fixed operator overloads (SV §11.11); these
-legal forms are rejected with specific diagnostics or remain unadmitted.
+**Status:** RTL-017 and RTL-104 execute fixed operator overloads (SV §11.11),
+including increment values, once-evaluated targets, relational expected types
+and package overloads. One target class is left.
 
 ### Symptom
 
-- `y = x++;` with an overloaded `++` reports "the value of an overloaded
-  postfix '++' cannot be used". Statement and `for`-step forms run.
-- `y = ++x;` on an unpacked operand fails in lowering with "assignment-like
-  expression to a streaming target", the existing limit for any unpacked
-  assignment used as a value (`y = (x = z);` fails the same way).
-- `arr[next()] += b;` with an overloaded `+` reports that the target "is read
-  and written separately and must not have side effects".
-- Overloads differing only in result type need a cast inside a relational
-  operand even when the other operand fixes the comparison type.
-- An overload declared in a package is not visible through `import`.
+An overloaded increment or compound assignment whose value is used
+(`y = x++;`, `y = (x += b);`) or whose target selector has side effects
+(`a[next()]++;`) reports "an overloaded operator update whose value is used or
+whose target selector has side effects requires a target within the
+1048575-bit packed value limit without native members" when the target is
+wider than the packed value limit (a 65,537-element `int` array) or a record
+with a string, real or other native member. Statement forms with
+side-effect-free targets (`x++;`, `x += b;`) run for every target.
 
 ### Cause
 
-The frontend builds `x = f(x)` for increments and `A = op(A, B)` for compound
-assignments from ordinary call and assignment nodes, re-binding the target as
-an operand. No owned node yields an old value or binds the target once for
-both uses. Expected types are threaded through assignment-like contexts only.
-Overload declarations are unnamed members, so wildcard imports cannot carry them.
+These forms lower to the packed `Mutation` expression, which captures the
+target's current value once. Descriptor-backed fixed values and native records
+have no such capture: the statement forms re-read the target as an ordinary
+call argument instead.
 
 ### Direction
 
-Add an owned mutation form whose value can be the pre-update aggregate and
-whose target selectors are frozen once, reuse it for compound overloads, and
-pass the opposite operand's type as the expected type of relational operands.
+Give `IrFixedValue` and native record roots a once-resolved read/modify/write
+form whose old value can be kept.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/rtl_017/neg_postfix_value.sv` and
-`neg_target_side_effects.sv`.
+`tests/fixtures/sim/feature_completion/rtl_104/limit_native_value.sv`.
 
 ## Strict 2001 profile gates a listed set of keyword-free later forms
 
@@ -814,20 +815,22 @@ for each expression port, selected by the bound instance at run time.
 Reproduce with `interface i; logic [7:0] a; modport m(input .p(a[3:0]));
 endinterface`, `virtual i.m v = inst;` and `$display("%h", v.p);`.
 
-## Member access through packed-array elements
+## Tagged-union members of packed-array elements
 
-**Status:** open (found while fixing multidimensional packed range selects).
+**Status:** open (boundary kept when member access through packed-array
+elements was admitted).
 
-A member select of one element of a packed array of structures or unions,
-such as `ps[i].hi` for `pair_t [3:0] ps`, is not captured as a member path and
-rejects with ``unsupported executable node `MemberAccess` ``. Whole-element and
-range selects (`ps[i]`, `ps[2:1]`) and member selects of unpacked-array
-elements work. The cause is in Db capture: a member path is built over an
-element select only when the base is an unpacked array or has several packed
-dimensions, so this member access keeps no owned form. Capturing the element
-select as the path root, and lowering it through the packed member
-projection, would admit it. Until then, select the element into a structure
-variable first, or use the equivalent part-select.
+A member of a tagged union that is an element of a packed array, such as
+`tp[i].a` for `t_t [1:0] tp` with `typedef union tagged packed {...} t_t`,
+rejects with ``tagged-union member `a` of a packed-array element is not
+supported``. Reading or writing it needs the tag check on the selected
+element; the packed element-member projection (`collection/packed_elements.rs`)
+carries no tag guard, so it rejects rather than read inactive payload bits.
+Other packed structure and union members of packed-array elements work, as do
+tagged-union members of whole signals. Lowering it as an
+`IrExprKind::TaggedSelect` / `IrLhs::TaggedSelect` whose steps are the element
+chain followed by the guarded member step would admit it. Until then, select
+the element into a tagged-union variable first.
 
-Reproduce with `typedef struct packed { logic [3:0] hi, lo; } pair_t;
-pair_t [3:0] ps; initial $display("%h", ps[3].hi);`.
+Reproduce with `typedef union tagged packed { logic [3:0] a, b; } t_t;
+t_t [1:0] tp; initial $display("%h", tp[0].a);`.

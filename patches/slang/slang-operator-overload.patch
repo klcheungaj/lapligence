@@ -1,7 +1,8 @@
 diff --git a/include/slang/ast/ASTVisitor.h b/include/slang/ast/ASTVisitor.h
+index 133958b90..888bc04cb 100644
 --- a/include/slang/ast/ASTVisitor.h
 +++ b/include/slang/ast/ASTVisitor.h
-@@ -280,6 +280,7 @@
+@@ -280,6 +280,7 @@ decltype(auto) Symbol::visit(TVisitor&& visitor, Args&&... args) const {
          SYMBOL(AnonymousProgram);
          SYMBOL(NetAlias);
          SYMBOL(ConfigBlock);
@@ -10,9 +11,10 @@ diff --git a/include/slang/ast/ASTVisitor.h b/include/slang/ast/ASTVisitor.h
          TYPE(ScalarType);
          TYPE(FloatingType);
 diff --git a/include/slang/ast/Compilation.h b/include/slang/ast/Compilation.h
+index 90d225362..b494bbc8d 100644
 --- a/include/slang/ast/Compilation.h
 +++ b/include/slang/ast/Compilation.h
-@@ -656,6 +656,14 @@
+@@ -656,6 +656,28 @@ public:
      /// This will cause appropriate errors to be issued.
      void noteNameConflict(const Symbol& symbol);
  
@@ -24,10 +26,24 @@ diff --git a/include/slang/ast/Compilation.h b/include/slang/ast/Compilation.h
 +    /// @returns true if any operator overload declaration has been added.
 +    bool hasOperatorOverloads() const { return anyOperatorOverloads; }
 +
++    /// IEEE 1800-2009 11.11 makes a relational operator with an unambiguous
++    /// comparison an expected-type context. While one of its operands binds,
++    /// the operator installs a probe naming that operand's range: an overload
++    /// of exactly that operation that is ambiguous without an expected type
++    /// sets `deferred` instead of reporting an error, and the operator binds
++    /// the operand again with the other operand's type.
++    struct OverloadAmbiguityProbe {
++        SourceRange operand;
++        bool deferred = false;
++    };
++
++    /// The probe of the operand currently being bound, if any.
++    OverloadAmbiguityProbe* overloadAmbiguityProbe = nullptr;
++
      using AliasBitRange = std::pair<uint64_t, uint64_t>;
  
      /// Makes note of an alias defined between the bit ranges of the two given symbols.
-@@ -817,6 +825,10 @@
+@@ -817,6 +839,10 @@ private:
      friend class Scope;
      friend struct DiagnosticVisitor;
  
@@ -39,9 +55,10 @@ diff --git a/include/slang/ast/Compilation.h b/include/slang/ast/Compilation.h
      struct ResolvedBind {
          SmallVector<const Symbol*> instTargets;
 diff --git a/include/slang/ast/Symbol.h b/include/slang/ast/Symbol.h
+index c7a8297c2..584d58e1e 100644
 --- a/include/slang/ast/Symbol.h
 +++ b/include/slang/ast/Symbol.h
-@@ -120,7 +120,8 @@
+@@ -120,7 +120,8 @@ enum class RandMode;
      x(SystemTimingCheck) \
      x(AnonymousProgram) \
      x(NetAlias) \
@@ -51,10 +68,28 @@ diff --git a/include/slang/ast/Symbol.h b/include/slang/ast/Symbol.h
  // clang-format on
  
  SLANG_ENUM(SymbolKind, SYMBOLKIND)
+diff --git a/include/slang/ast/expressions/AssignmentExpressions.h b/include/slang/ast/expressions/AssignmentExpressions.h
+index bff100b96..82f33a67d 100644
+--- a/include/slang/ast/expressions/AssignmentExpressions.h
++++ b/include/slang/ast/expressions/AssignmentExpressions.h
+@@ -26,6 +26,12 @@ public:
+     /// An optional timing control that applies to the assignment.
+     const TimingControl* timingControl;
+ 
++    /// True for an overloaded postfix increment or decrement (IEEE 1800-2009
++    /// 11.11), built as a compound assignment whose right side calls the bound
++    /// function on the target's current value: the expression yields the
++    /// target's value from before the update instead of the assigned value.
++    bool isOverloadedPostfix = false;
++
+     AssignmentExpression(std::optional<BinaryOperator> op, bool nonBlocking, const Type& type,
+                          Expression& left, Expression& right, const TimingControl* timingControl,
+                          SourceRange sourceRange) :
 diff --git a/include/slang/ast/expressions/CallExpression.h b/include/slang/ast/expressions/CallExpression.h
+index 643c6a91d..00ccbbd1b 100644
 --- a/include/slang/ast/expressions/CallExpression.h
 +++ b/include/slang/ast/expressions/CallExpression.h
-@@ -133,6 +133,45 @@
+@@ -133,6 +133,51 @@ public:
                           std::string_view symbolName, SourceRange range, const ASTContext& context,
                           SmallVectorBase<const Expression*>& boundArgs);
  
@@ -73,7 +108,10 @@ diff --git a/include/slang/ast/expressions/CallExpression.h b/include/slang/ast/
 +                                             const Type* expectedType, SourceRange sourceRange,
 +                                             SourceRange opRange);
 +
-+    /// Resolves an increment or decrement of @a target as `target = f(target)`.
++    /// Resolves an increment or decrement of @a target as an assignment whose
++    /// right side calls the bound function on the target's current value; see
++    /// finishOverloadedCompound for the two shapes. A postfix form whose value
++    /// may be used sets AssignmentExpression::isOverloadedPostfix.
 +    static Expression* tryOverloadedIncDec(const ASTContext& context, parsing::TokenKind op,
 +                                           bool isPostfix, Expression& target,
 +                                           SourceRange sourceRange, SourceRange opRange);
@@ -84,15 +122,18 @@ diff --git a/include/slang/ast/expressions/CallExpression.h b/include/slang/ast/
 +                                               const Type& targetType, Expression& expr,
 +                                               SourceRange sourceRange);
 +
-+    /// Builds the right side of a compound assignment whose arithmetic operator
-+    /// resolved to @a call with an lvalue placeholder as its first argument:
-+    /// the target is re-read as an ordinary operand, giving `lhs = op(lhs, rhs)`.
++    /// Builds the right side of a compound assignment or increment whose operator
++    /// resolved to @a call with an lvalue placeholder as its first argument. In
++    /// statement position a target without side effects is re-read as an
++    /// ordinary operand, giving `lhs = op(lhs, rhs)` with no compound operator.
++    /// Otherwise the placeholder stays and the caller keeps the compound form,
++    /// so the target is evaluated once and the expression has a value.
 +    static Expression& finishOverloadedCompound(const ASTContext& context,
-+                                                CallExpression& call, const Expression& lhs,
-+                                                std::string_view opText, SourceRange opRange);
++                                                CallExpression& call, const Expression& lhs);
 +
 +    /// @returns true if @a expr is a call built by tryOverloadedOperator for a
-+    /// compound assignment, i.e. its first argument is the lvalue placeholder.
++    /// compound assignment or increment, i.e. its first argument is the lvalue
++    /// placeholder.
 +    static bool isOverloadedCompound(const Expression& expr);
 +
 +    /// @}
@@ -101,9 +142,10 @@ diff --git a/include/slang/ast/expressions/CallExpression.h b/include/slang/ast/
  
      template<typename TVisitor>
 diff --git a/include/slang/ast/expressions/OperatorExpressions.h b/include/slang/ast/expressions/OperatorExpressions.h
+index 0b11feaaf..e676bf2ab 100644
 --- a/include/slang/ast/expressions/OperatorExpressions.h
 +++ b/include/slang/ast/expressions/OperatorExpressions.h
-@@ -47,7 +47,8 @@
+@@ -47,7 +47,8 @@ public:
  
      static Expression& fromSyntax(Compilation& compilation,
                                    const syntax::PrefixUnaryExpressionSyntax& syntax,
@@ -113,7 +155,7 @@ diff --git a/include/slang/ast/expressions/OperatorExpressions.h b/include/slang
  
      static Expression& fromSyntax(Compilation& compilation,
                                    const syntax::PostfixUnaryExpressionSyntax& syntax,
-@@ -105,11 +106,15 @@
+@@ -105,11 +106,15 @@ public:
  
      static Expression& fromSyntax(Compilation& compilation,
                                    const syntax::BinaryExpressionSyntax& syntax,
@@ -132,9 +174,10 @@ diff --git a/include/slang/ast/expressions/OperatorExpressions.h b/include/slang
      static void analyzeOpTypes(const Type& clt, const Type& crt, const Type& originalLt,
                                 const Type& originalRt, const Expression& lhs, const Expression& rhs,
 diff --git a/include/slang/ast/symbols/MemberSymbols.h b/include/slang/ast/symbols/MemberSymbols.h
+index 3aaf2bb3b..148f8d27a 100644
 --- a/include/slang/ast/symbols/MemberSymbols.h
 +++ b/include/slang/ast/symbols/MemberSymbols.h
-@@ -635,4 +635,42 @@
+@@ -635,4 +635,42 @@ private:
      mutable std::optional<std::span<const Expression* const>> netRefs;
  };
  
@@ -178,9 +221,10 @@ diff --git a/include/slang/ast/symbols/MemberSymbols.h b/include/slang/ast/symbo
 +
  } // namespace slang::ast
 diff --git a/include/slang/parsing/Parser.h b/include/slang/parsing/Parser.h
+index e2f1ed2c4..b14e1374d 100644
 --- a/include/slang/parsing/Parser.h
 +++ b/include/slang/parsing/Parser.h
-@@ -357,6 +357,7 @@
+@@ -357,6 +357,7 @@ private:
      syntax::MemberSyntax* parseSpecifyItem();
      syntax::SpecifyBlockSyntax& parseSpecifyBlock(AttrList attributes);
      syntax::NetAliasSyntax& parseNetAlias(AttrList attributes);
@@ -189,9 +233,10 @@ diff --git a/include/slang/parsing/Parser.h b/include/slang/parsing/Parser.h
      syntax::SystemTimingCheckSyntax& parseSystemTimingCheck();
      syntax::TimingCheckArgSyntax& parseTimingCheckArg();
 diff --git a/include/slang/syntax/SyntaxFacts.h b/include/slang/syntax/SyntaxFacts.h
+index e283d6d2c..29f8a9b16 100644
 --- a/include/slang/syntax/SyntaxFacts.h
 +++ b/include/slang/syntax/SyntaxFacts.h
-@@ -100,6 +100,9 @@
+@@ -100,6 +100,9 @@ public:
      /// @return true if the given token represents a possible data type expression.
      static bool isPossibleDataType(TokenKind kind);
  
@@ -202,9 +247,10 @@ diff --git a/include/slang/syntax/SyntaxFacts.h b/include/slang/syntax/SyntaxFac
      static bool isPossibleExpression(TokenKind kind);
  
 diff --git a/scripts/diagnostics.txt b/scripts/diagnostics.txt
+index 670b3f2ab..42af26f26 100644
 --- a/scripts/diagnostics.txt
 +++ b/scripts/diagnostics.txt
-@@ -813,6 +813,12 @@
+@@ -813,6 +813,10 @@ warning nonstandard-string-concat NonstandardStringConcat "string concatenation
  warning inc-dec-bit IncDecBit "increment/decrement of a 1-bit operand"
  warning string-int-concat ConcatWithStringInt "cannot mix strings and integers in a concatenation (use a cast if this is desired)"
  warning range-select-reversed RangeSelectReversed "range of selection [{}:{}] from {} is reversed"
@@ -212,15 +258,14 @@ diff --git a/scripts/diagnostics.txt b/scripts/diagnostics.txt
 +error OverloadFunctionNotFound "operator overload declaration binds '{}', which is not a visible function"
 +error OverloadPrototypeMismatch "function '{}' does not match its operator overload prototype"
 +error OverloadAmbiguous "ambiguous overload of operator '{}'; use a cast to select the result type"
-+error OverloadPostfixValue "the value of an overloaded postfix '{}' cannot be used; write it as a statement or use the prefix form"
-+error OverloadTargetSideEffects "the target of an overloaded '{}' is read and written separately and must not have side effects"
  
  subsystem Statements
  error ReturnNotInSubroutine "return statement is only valid inside task and function blocks"
 diff --git a/scripts/syntax.txt b/scripts/syntax.txt
+index 4f1fbb325..52ea8f8a0 100644
 --- a/scripts/syntax.txt
 +++ b/scripts/syntax.txt
-@@ -1690,6 +1690,17 @@
+@@ -1690,6 +1690,17 @@ token keyword
  separated_list<Expression> nets
  token semi
  
@@ -239,9 +284,10 @@ diff --git a/scripts/syntax.txt b/scripts/syntax.txt
  token externKeyword
  list<AttributeInstance> actualAttributes
 diff --git a/source/analysis/AnalysisScopeVisitor.h b/source/analysis/AnalysisScopeVisitor.h
+index d03210214..a69360779 100644
 --- a/source/analysis/AnalysisScopeVisitor.h
 +++ b/source/analysis/AnalysisScopeVisitor.h
-@@ -401,7 +401,8 @@
+@@ -401,7 +401,8 @@ struct AnalysisScopeVisitor {
                           ModportClockingSymbol, ElabSystemTaskSymbol, UninstantiatedDefSymbol,
                           DefParamSymbol, PrimitivePortSymbol, CoverageBinSymbol, TimingPathSymbol,
                           PulseStyleSymbol, SystemTimingCheckSymbol, NetAliasSymbol,
@@ -252,9 +298,10 @@ diff --git a/source/analysis/AnalysisScopeVisitor.h b/source/analysis/AnalysisSc
      void visit(const T& symbol) {
          // Everything else doesn't need to be analyzed (except visiting expressions, if necessary).
 diff --git a/source/ast/ElabVisitors.h b/source/ast/ElabVisitors.h
+index 5058df7d0..d10fc6c00 100644
 --- a/source/ast/ElabVisitors.h
 +++ b/source/ast/ElabVisitors.h
-@@ -145,6 +145,13 @@
+@@ -145,6 +145,13 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
          symbol.getNetReferences();
      }
  
@@ -269,9 +316,10 @@ diff --git a/source/ast/ElabVisitors.h b/source/ast/ElabVisitors.h
          if (!handleDefault(symbol))
              return;
 diff --git a/source/ast/Expression.cpp b/source/ast/Expression.cpp
+index 2f0389a41..13dd6c9d1 100644
 --- a/source/ast/Expression.cpp
 +++ b/source/ast/Expression.cpp
-@@ -812,7 +812,7 @@
+@@ -812,7 +812,7 @@ Expression& Expression::create(Compilation& compilation, const ExpressionSyntax&
          case SyntaxKind::UnaryPredecrementExpression:
              result = &UnaryExpression::fromSyntax(compilation,
                                                    syntax.as<PrefixUnaryExpressionSyntax>(),
@@ -280,7 +328,7 @@ diff --git a/source/ast/Expression.cpp b/source/ast/Expression.cpp
              break;
          case SyntaxKind::PostincrementExpression:
          case SyntaxKind::PostdecrementExpression:
-@@ -849,7 +849,7 @@
+@@ -849,7 +849,7 @@ Expression& Expression::create(Compilation& compilation, const ExpressionSyntax&
          case SyntaxKind::ArithmeticShiftRightExpression:
          case SyntaxKind::PowerExpression:
              result = &BinaryExpression::fromSyntax(compilation, syntax.as<BinaryExpressionSyntax>(),
@@ -290,9 +338,10 @@ diff --git a/source/ast/Expression.cpp b/source/ast/Expression.cpp
          case SyntaxKind::AssignmentExpression:
          case SyntaxKind::AddAssignmentExpression:
 diff --git a/source/ast/Scope.cpp b/source/ast/Scope.cpp
+index 6545485a1..8520120ce 100644
 --- a/source/ast/Scope.cpp
 +++ b/source/ast/Scope.cpp
-@@ -375,6 +375,11 @@
+@@ -375,6 +375,11 @@ void Scope::addMembers(const SyntaxNode& syntax) {
              addMember(
                  EmptyMemberSymbol::fromSyntax(compilation, *this, syntax.as<EmptyMemberSyntax>()));
              break;
@@ -305,9 +354,10 @@ diff --git a/source/ast/Scope.cpp b/source/ast/Scope.cpp
              addMember(TypeAliasType::fromSyntax(*this, syntax.as<TypedefDeclarationSyntax>()));
              break;
 diff --git a/source/ast/Statement.cpp b/source/ast/Statement.cpp
+index e683111b5..26f974184 100644
 --- a/source/ast/Statement.cpp
 +++ b/source/ast/Statement.cpp
-@@ -608,6 +608,7 @@
+@@ -608,6 +608,7 @@ std::span<const StatementBlockSymbol* const> Statement::createAndAddBlockItems(
              case SyntaxKind::ParameterDeclarationStatement:
              case SyntaxKind::LetDeclaration:
              case SyntaxKind::NetTypeDeclaration:
@@ -316,26 +366,62 @@ diff --git a/source/ast/Statement.cpp b/source/ast/Statement.cpp
                  break;
              case SyntaxKind::PortDeclaration:
 diff --git a/source/ast/expressions/AssignmentExpressions.cpp b/source/ast/expressions/AssignmentExpressions.cpp
+index ce6e371c6..1e3d70651 100644
 --- a/source/ast/expressions/AssignmentExpressions.cpp
 +++ b/source/ast/expressions/AssignmentExpressions.cpp
-@@ -417,7 +417,15 @@
+@@ -417,7 +417,17 @@ Expression& AssignmentExpression::fromComponents(
      if (op) {
          auto lvalRef = compilation.emplace<LValueReferenceExpression>(*lhs.type, lhs.sourceRange);
          result->right_ = &BinaryExpression::fromComponents(*lvalRef, *result->right_, *op, opRange,
 -                                                           sourceRange, context);
 +                                                           sourceRange, context, lhs.type);
 +
-+        // An overloaded operator turns `A op= B` into `A = f(A, B)` with `=` keeping
-+        // its normal meaning (IEEE 1800-2009 11.11).
++        // An overloaded operator applies its function to A and B, with `=` keeping
++        // its normal meaning (IEEE 1800-2009 11.11). finishOverloadedCompound
++        // decides whether the compound form, and its single target binding, stays.
 +        if (CallExpression::isOverloadedCompound(*result->right_)) {
 +            result->right_ = &CallExpression::finishOverloadedCompound(
-+                context, result->right_->as<CallExpression>(), lhs, OpInfo::getText(*op), opRange);
-+            result->op = std::nullopt;
++                context, result->right_->as<CallExpression>(), lhs);
++            if (!CallExpression::isOverloadedCompound(*result->right_))
++                result->op = std::nullopt;
 +        }
      }
  
      result->right_ = &convertAssignment(context, *lhs.type, *result->right_, opRange,
+@@ -478,6 +488,12 @@ ConstantValue AssignmentExpression::evalImpl(EvalContext& context) const {
+     if (!rvalue)
+         return nullptr;
+ 
++    if (isOverloadedPostfix) {
++        ConstantValue old = lvalue.load();
++        lvalue.store(rvalue);
++        return old;
++    }
++
+     // If the LHS is an assignment pattern we need to manually apply any conversions
+     // to the elements of the RHS since there's no other place to do it.
+     if (left().kind == ExpressionKind::SimpleAssignmentPattern)
+@@ -488,7 +504,8 @@ ConstantValue AssignmentExpression::evalImpl(EvalContext& context) const {
+ }
+ 
+ bool AssignmentExpression::isEquivalentImpl(const AssignmentExpression& rhs) const {
+-    return op == rhs.op && nonBlocking == rhs.nonBlocking && left().isEquivalentTo(rhs.left()) &&
++    return op == rhs.op && nonBlocking == rhs.nonBlocking &&
++           isOverloadedPostfix == rhs.isOverloadedPostfix && left().isEquivalentTo(rhs.left()) &&
+            right().isEquivalentTo(rhs.right()) && bool(timingControl) == bool(rhs.timingControl) &&
+            (!timingControl || timingControl->isEquivalentTo(*rhs.timingControl));
+ }
+@@ -499,6 +516,8 @@ void AssignmentExpression::serializeTo(ASTSerializer& serializer) const {
+     serializer.write("isNonBlocking", isNonBlocking());
+     if (op)
+         serializer.write("op", toString(*op));
++    if (isOverloadedPostfix)
++        serializer.write("isOverloadedPostfix", true);
+     if (timingControl)
+         serializer.write("timingControl", *timingControl);
+ }
 diff --git a/source/ast/expressions/CallExpression.cpp b/source/ast/expressions/CallExpression.cpp
+index 18ed6845d..6b26b83c7 100644
 --- a/source/ast/expressions/CallExpression.cpp
 +++ b/source/ast/expressions/CallExpression.cpp
 @@ -7,6 +7,8 @@
@@ -347,10 +433,11 @@ diff --git a/source/ast/expressions/CallExpression.cpp b/source/ast/expressions/
  #include "slang/ast/Compilation.h"
  #include "slang/ast/Constraints.h"
  #include "slang/ast/EvalContext.h"
-@@ -15,11 +17,13 @@
+@@ -15,11 +17,14 @@
  #include "slang/ast/expressions/MiscExpressions.h"
  #include "slang/ast/expressions/SelectExpressions.h"
  #include "slang/ast/symbols/ClassSymbols.h"
++#include "slang/ast/symbols/CompilationUnitSymbols.h"
 +#include "slang/ast/symbols/MemberSymbols.h"
  #include "slang/ast/symbols/SubroutineSymbols.h"
  #include "slang/diagnostics/ConstEvalDiags.h"
@@ -361,7 +448,7 @@ diff --git a/source/ast/expressions/CallExpression.cpp b/source/ast/expressions/
  #include "slang/syntax/AllSyntax.h"
  
  namespace slang::ast {
-@@ -924,4 +928,433 @@
+@@ -924,4 +929,473 @@ void CallExpression::serializeTo(ASTSerializer& serializer) const {
      }
  }
  
@@ -482,7 +569,9 @@ diff --git a/source/ast/expressions/CallExpression.cpp b/source/ast/expressions/
 +    return true;
 +}
 +
-+enum class OverloadResult { NotFound, Found, Error };
++// Deferred: ambiguous without an expected type while the use's relational
++// operator may still supply one (Compilation::OverloadAmbiguityProbe).
++enum class OverloadResult { NotFound, Found, Error, Deferred };
 +
 +// Selects among the prototypes visible in one scope. Exact argument matches win;
 +// otherwise the integral exception applies only when every candidate shares a
@@ -491,7 +580,7 @@ diff --git a/source/ast/expressions/CallExpression.cpp b/source/ast/expressions/
 +OverloadResult selectOverload(const ASTContext& context,
 +                              std::span<const OperatorOverloadSymbol* const> visible,
 +                              std::span<const Type* const> actualTypes, const Type* expectedType,
-+                              TokenKind op, SourceRange opRange,
++                              TokenKind op, SourceRange opRange, bool deferAmbiguity,
 +                              const OperatorOverloadSymbol*& selected) {
 +    SmallVector<const OperatorOverloadSymbol*> exact;
 +    SmallVector<const OperatorOverloadSymbol*> integral;
@@ -539,6 +628,9 @@ diff --git a/source/ast/expressions/CallExpression.cpp b/source/ast/expressions/
 +        }
 +    }
 +
++    if (deferAmbiguity && !expectedType)
++        return OverloadResult::Deferred;
++
 +    auto& diag = context.addDiag(diag::OverloadAmbiguous, opRange);
 +    diag << LexerFacts::getTokenKindText(op);
 +    for (auto proto : candidates)
@@ -549,26 +641,53 @@ diff --git a/source/ast/expressions/CallExpression.cpp b/source/ast/expressions/
 +// Walks the lexical scopes of the use outward. Prototypes are visible once
 +// declared, like data declarations; the innermost scope with a matching
 +// prototype decides, so an inner declaration shadows an outer one.
++//
++// Within one scope, the scope's own prototypes come first, then those declared
++// directly in packages that the scope wildcard-imports before the use (IEEE
++// 1800-2009 11.11 gives overloads the search rules of a data declaration, and
++// 26.3 makes a wildcard import a fallback after local declarations). An
++// overload declaration has no name, so an explicit import or an export never
++// carries it.
 +OverloadResult findOverload(const ASTContext& context, TokenKind op,
 +                            std::span<const Type* const> actualTypes, const Type* expectedType,
-+                            SourceRange opRange, const OperatorOverloadSymbol*& selected) {
++                            SourceRange opRange, bool deferAmbiguity,
++                            const OperatorOverloadSymbol*& selected) {
 +    const Scope* scope = context.scope;
 +    LookupLocation location = context.getLocation();
 +    SmallVector<const OperatorOverloadSymbol*> visible;
-+    while (scope) {
-+        visible.clear();
-+        for (auto& proto : scope->membersOfType<OperatorOverloadSymbol>()) {
++    auto collect = [&](const Scope& declaring) {
++        for (auto& proto : declaring.membersOfType<OperatorOverloadSymbol>()) {
 +            if (proto.op != op || proto.getArity() != actualTypes.size())
 +                continue;
-+            if (location.getScope() == scope && LookupLocation::before(proto) >= location)
++            if (location.getScope() == &declaring && LookupLocation::before(proto) >= location)
 +                continue;
 +            visible.push_back(&proto);
 +        }
++    };
++    auto select = [&]() {
++        if (visible.empty())
++            return OverloadResult::NotFound;
++        return selectOverload(context, visible, actualTypes, expectedType, op, opRange,
++                              deferAmbiguity, selected);
++    };
 +
-+        if (!visible.empty()) {
-+            auto result = selectOverload(context, visible, actualTypes, expectedType, op, opRange,
-+                                         selected);
-+            if (result != OverloadResult::NotFound)
++    while (scope) {
++        visible.clear();
++        collect(*scope);
++        if (auto result = select(); result != OverloadResult::NotFound)
++            return result;
++
++        if (auto importData = scope->getWildcardImportData()) {
++            visible.clear();
++            for (auto import : importData->wildcardImports) {
++                if (import->isFromExport)
++                    continue;
++                if (location.getScope() == scope && LookupLocation::before(*import) >= location)
++                    continue;
++                if (auto package = import->getPackage())
++                    collect(*package);
++            }
++            if (auto result = select(); result != OverloadResult::NotFound)
 +                return result;
 +        }
 +
@@ -650,10 +769,18 @@ diff --git a/source/ast/expressions/CallExpression.cpp b/source/ast/expressions/
 +        actualTypes.push_back(operand->type);
 +    }
 +
++    // Only the operand a relational operator is probing may wait for its type.
++    auto probe = comp.overloadAmbiguityProbe;
++    const bool deferAmbiguity = probe && probe->operand == sourceRange;
++
 +    const OperatorOverloadSymbol* proto = nullptr;
-+    switch (findOverload(context, op, actualTypes, expectedType, opRange, proto)) {
++    switch (findOverload(context, op, actualTypes, expectedType, opRange, deferAmbiguity,
++                         proto)) {
 +        case OverloadResult::NotFound:
 +            return nullptr;
++        case OverloadResult::Deferred:
++            probe->deferred = true;
++            return &badExpr(comp, nullptr);
 +        case OverloadResult::Error:
 +            return &badExpr(comp, nullptr);
 +        case OverloadResult::Found:
@@ -692,41 +819,37 @@ diff --git a/source/ast/expressions/CallExpression.cpp b/source/ast/expressions/
 +
 +    const Type* actualTypes[] = {target.type};
 +    const OperatorOverloadSymbol* proto = nullptr;
-+    switch (findOverload(context, op, actualTypes, target.type, opRange, proto)) {
++    switch (findOverload(context, op, actualTypes, target.type, opRange,
++                         /* deferAmbiguity */ false, proto)) {
 +        case OverloadResult::NotFound:
 +            return nullptr;
++        case OverloadResult::Deferred:
 +        case OverloadResult::Error:
 +            return &badExpr(comp, nullptr);
 +        case OverloadResult::Found:
 +            break;
 +    }
 +
-+    // `x++` builds `x = f(x)`, whose value is the updated one; the old value a
-+    // postfix form yields is only representable when it is discarded.
-+    if (isPostfix && !context.flags.has(ASTFlags::TopLevelStatement)) {
-+        context.addDiag(diag::OverloadPostfixValue, opRange) << LexerFacts::getTokenKindText(op);
-+        return &badExpr(comp, nullptr);
-+    }
-+
-+    if (overloadTargetHasSideEffects(target) || !target.syntax ||
-+        !ExpressionSyntax::isKind(target.syntax->kind)) {
-+        context.addDiag(diag::OverloadTargetSideEffects, opRange)
-+            << LexerFacts::getTokenKindText(op);
-+        return &badExpr(comp, nullptr);
-+    }
-+
-+    Expression* read = &create(comp, target.syntax->as<ExpressionSyntax>(), context);
-+    Expression* operands[] = {read};
++    // The bound function reads the target's current value through the same
++    // placeholder a compound assignment uses, so the target is bound once.
++    auto current = comp.emplace<LValueReferenceExpression>(*target.type, target.sourceRange);
++    Expression* operands[] = {current};
 +    auto call = tryOverloadedOperator(context, op, operands, target.type, sourceRange, opRange);
 +    if (!call)
 +        return &badExpr(comp, nullptr);
 +    if (call->bad())
 +        return call;
 +
-+    auto& rhs = Expression::convertAssignment(context, *target.type, *call, opRange);
-+    auto result = comp.emplace<AssignmentExpression>(std::nullopt, /* nonBlocking */ false,
++    auto& update = finishOverloadedCompound(context, call->as<CallExpression>(), target);
++    auto& rhs = Expression::convertAssignment(context, *target.type, update, opRange);
++    std::optional<BinaryOperator> compound;
++    if (isOverloadedCompound(update)) {
++        compound = op == TokenKind::DoublePlus ? BinaryOperator::Add : BinaryOperator::Subtract;
++    }
++    auto result = comp.emplace<AssignmentExpression>(compound, /* nonBlocking */ false,
 +                                                     *target.type, target, rhs, nullptr,
 +                                                     sourceRange);
++    result->isOverloadedPostfix = compound.has_value() && isPostfix;
 +    if (rhs.bad())
 +        return &badExpr(comp, result);
 +    return result;
@@ -742,9 +865,10 @@ diff --git a/source/ast/expressions/CallExpression.cpp b/source/ast/expressions/
 +    const Type* actualTypes[] = {expr.type};
 +    const OperatorOverloadSymbol* proto = nullptr;
 +    switch (findOverload(context, TokenKind::Equals, actualTypes, &targetType, sourceRange,
-+                         proto)) {
++                         /* deferAmbiguity */ false, proto)) {
 +        case OverloadResult::NotFound:
 +            return nullptr;
++        case OverloadResult::Deferred:
 +        case OverloadResult::Error:
 +            return &badExpr(comp, nullptr);
 +        case OverloadResult::Found:
@@ -774,16 +898,19 @@ diff --git a/source/ast/expressions/CallExpression.cpp b/source/ast/expressions/
 +}
 +
 +Expression& CallExpression::finishOverloadedCompound(const ASTContext& context,
-+                                                     CallExpression& call, const Expression& lhs,
-+                                                     std::string_view opText,
-+                                                     SourceRange opRange) {
-+    auto& comp = context.getCompilation();
-+    if (overloadTargetHasSideEffects(lhs) || !lhs.syntax ||
-+        !ExpressionSyntax::isKind(lhs.syntax->kind)) {
-+        context.addDiag(diag::OverloadTargetSideEffects, opRange) << opText;
-+        return badExpr(comp, &call);
++                                                     CallExpression& call,
++                                                     const Expression& lhs) {
++    // In statement position a target without side effects may simply be read
++    // again, giving `A = f(A, B)`; this keeps the ordinary assignment forms,
++    // including descriptor-sized and native targets. Otherwise the placeholder
++    // stays, so the target is evaluated once and the expression's value (the
++    // assigned value, or the old value of a postfix form) stays available.
++    if (!context.flags.has(ASTFlags::TopLevelStatement) || overloadTargetHasSideEffects(lhs) ||
++        !lhs.syntax || !ExpressionSyntax::isKind(lhs.syntax->kind)) {
++        return call;
 +    }
 +
++    auto& comp = context.getCompilation();
 +    auto& fn = *std::get<0>(call.subroutine);
 +    auto& read = create(comp, lhs.syntax->as<ExpressionSyntax>(), context);
 +    auto& arg = Expression::convertAssignment(context, fn.getArguments()[0]->getType(), read,
@@ -796,6 +923,7 @@ diff --git a/source/ast/expressions/CallExpression.cpp b/source/ast/expressions/
 +
  } // namespace slang::ast
 diff --git a/source/ast/expressions/ConversionExpression.cpp b/source/ast/expressions/ConversionExpression.cpp
+index 019ef7596..aedc1d2da 100644
 --- a/source/ast/expressions/ConversionExpression.cpp
 +++ b/source/ast/expressions/ConversionExpression.cpp
 @@ -11,6 +11,7 @@
@@ -806,7 +934,7 @@ diff --git a/source/ast/expressions/ConversionExpression.cpp b/source/ast/expres
  #include "slang/ast/expressions/LiteralExpressions.h"
  #include "slang/ast/expressions/MiscExpressions.h"
  #include "slang/ast/expressions/OperatorExpressions.h"
-@@ -193,6 +194,15 @@
+@@ -193,6 +194,15 @@ Expression& Expression::convertAssignment(const ASTContext& context, const Type&
              return *result;
          }
  
@@ -822,7 +950,7 @@ diff --git a/source/ast/expressions/ConversionExpression.cpp b/source/ast/expres
          DiagCode code = diag::BadAssignment;
          if (!context.flags.has(ASTFlags::OutputArg) &&
              (type.isCastCompatible(*rt) || type.isBitstreamCastable(*rt))) {
-@@ -336,6 +346,13 @@
+@@ -336,6 +346,13 @@ Expression& ConversionExpression::fromSyntax(Compilation& comp, const CastExpres
              }
          }
          else if (!type->isBitstreamCastable(*operand->type)) {
@@ -837,9 +965,10 @@ diff --git a/source/ast/expressions/ConversionExpression.cpp b/source/ast/expres
              diag << *operand->type << *type;
              diag << targetExpr.sourceRange << operand->sourceRange;
 diff --git a/source/parsing/Parser_members.cpp b/source/parsing/Parser_members.cpp
+index 152b324a5..fa9af6482 100644
 --- a/source/parsing/Parser_members.cpp
 +++ b/source/parsing/Parser_members.cpp
-@@ -223,6 +223,10 @@
+@@ -223,6 +223,10 @@ MemberSyntax* Parser::parseMemberImpl(AttrList attributes, SyntaxKind parentKind
          case TokenKind::ModPortKeyword:
              return &parseModportDeclaration(attributes);
          case TokenKind::BindKeyword:
@@ -850,7 +979,7 @@ diff --git a/source/parsing/Parser_members.cpp b/source/parsing/Parser_members.c
              return &parseBindDirective(attributes);
          case TokenKind::SpecParamKeyword:
              return &parseSpecparam(attributes, parentKind);
-@@ -3714,6 +3718,28 @@
+@@ -3714,6 +3718,28 @@ NetAliasSyntax& Parser::parseNetAlias(AttrList attributes) {
      return factory.netAlias(attributes, keyword, {alloc, buffer}, semi);
  }
  
@@ -880,9 +1009,10 @@ diff --git a/source/parsing/Parser_members.cpp b/source/parsing/Parser_members.c
      uint32_t index = 1;
      if (!scanAttributes(index))
 diff --git a/source/parsing/Parser_statements.cpp b/source/parsing/Parser_statements.cpp
+index 82b1776e3..4a49c2f33 100644
 --- a/source/parsing/Parser_statements.cpp
 +++ b/source/parsing/Parser_statements.cpp
-@@ -676,6 +676,10 @@
+@@ -676,6 +676,10 @@ SyntaxList<SyntaxNode> Parser::parseBlockItems(TokenKind endKind, Token& end, bo
          else if (isVariableDeclaration()) {
              newNode = &parseVariableDeclaration(parseAttributes());
          }
@@ -894,9 +1024,10 @@ diff --git a/source/parsing/Parser_statements.cpp b/source/parsing/Parser_statem
              newNode = &parseStatement(/* allowEmpty */ true,
                                        /* allowSuperNew */ inConstructor && !sawStatement);
 diff --git a/source/syntax/SyntaxFacts.cpp b/source/syntax/SyntaxFacts.cpp
+index db0ac9770..18c54db04 100644
 --- a/source/syntax/SyntaxFacts.cpp
 +++ b/source/syntax/SyntaxFacts.cpp
-@@ -281,6 +281,29 @@
+@@ -281,6 +281,29 @@ bool SyntaxFacts::isRightAssociative(SyntaxKind kind) {
      }
  }
  
@@ -926,7 +1057,7 @@ diff --git a/source/syntax/SyntaxFacts.cpp b/source/syntax/SyntaxFacts.cpp
  bool SyntaxFacts::isPossibleDataType(TokenKind kind) {
      switch (kind) {
          case TokenKind::BitKeyword:
-@@ -1257,6 +1280,7 @@
+@@ -1257,6 +1280,7 @@ static bool isModuleOrPackageDecl(SyntaxKind kind) {
          case SyntaxKind::ConstraintDeclaration:
          case SyntaxKind::CheckerDeclaration:
          case SyntaxKind::ElabSystemTask:

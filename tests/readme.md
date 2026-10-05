@@ -142,6 +142,13 @@ most also after Db destruction; expectations are independent bit-string
 derivations. `target_bounds` prints its results to stderr, compared exactly with
 the run-time bounds reports.
 
+RTL-103's streaming and pattern fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_103::)'`. Positive fixtures run in
+both optimizer modes on every backend (set `LLG_TEST_GMP_ROOT` for the GMP lane),
+the main ones also after Db destruction; `copyout_bounds` and `mixed_state`
+print their results to stderr, compared exactly with the run-time bounds
+reports. Expectations are hand derivations of the stream and pattern rules.
+
 RTL-018's library, configuration and bind fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_018::)'`, with
 `binary(sim_syn032_library_configs)` and `binary(sim_syn033_structural_bind)`.
@@ -273,6 +280,15 @@ They pin the output-port writer rule for constant slices of descriptor-backed
 arrays: disjoint procedural writers execute in both optimizer modes on both
 backends (set `LLG_TEST_GMP_ROOT` for the GMP lane) and after Db destruction,
 and procedural, second-port and always_ff writers overlapping a slice reject.
+
+RTL-104's operator-overload fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_104::)'`: increment and compound
+values, once-evaluated targets, relational-operand expected types and package
+overloads run in both optimizer modes on both backends (set
+`LLG_TEST_GMP_ROOT` for the GMP lane); nested or unmatched relational operands,
+explicit, late and re-exported imports, two imported candidates and a native
+update value reject. The package ruling is in
+[sim_data_semantics](../docs/sim_data_semantics.md#project-rulings-where-the-lrm-is-silent).
 
 RTL-105's frontend-admission fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_105::)'`: `inout uwire` formals,
@@ -780,7 +796,7 @@ cargo nextest run --locked --test lsp_stdio lsp_stdio_accepts_driver_keys
 `llg_config_cli` copies `tests/fixtures/config_cli` into an isolated directory
 and runs the public `llg` from it with a written `llg.toml`: no discovery of a
 file in the current directory, explicit and missing `--config`, command-line
-override of top, append-versus-`--clear` for lists, define override,
+override of top, replace-versus-`--append-<list>` for lists, define override,
 environment-versus-config-versus-command-line compiler selection, unknown keys
 and invalid values. `config::` and `settings::` cover schema parsing, path resolution and
 the precedence rules without a simulator build.

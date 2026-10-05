@@ -28,6 +28,7 @@ impl<'a> Codegen<'a> {
                 }
                 let automatic = *automatic;
                 self.prepare_fixed_function(*c, automatic)?;
+                self.prepare_record_function(*c, automatic)?;
                 self.prepare_native_function(inst, *c, automatic)?;
                 self.prepare_container_function(inst, *c, automatic)?;
                 self.prepare_real_array_function(*c, automatic)?;
@@ -126,6 +127,24 @@ impl<'a> Codegen<'a> {
                         }
                     })
                     .collect::<Result<Vec<_>, String>>()?;
+                // A column-layout record formal passes one descriptor per
+                // column: the first takes the formal's own slot, the rest
+                // follow the declared formals, before any trailing result.
+                let mut record_columns = Vec::new();
+                for ((io, _), formal) in formals.iter().zip(&formals_ir) {
+                    for array in self.record_formal_columns(*io).into_iter().skip(1) {
+                        let mut column = formal.clone();
+                        column.fixed_array = Some(array);
+                        record_columns.push(column);
+                    }
+                }
+                if dpi.is_some() && !record_columns.is_empty() {
+                    return Err(format!(
+                        "DPI-C import `{}` cannot pass a column-layout record",
+                        self.node(*c).name
+                    ));
+                }
+                formals_ir.extend(record_columns);
                 if let Some(dpi) = &dpi {
                     self.validate_dpi_import(*c, inst, dpi, &formals_ir)?;
                     if self
@@ -145,6 +164,15 @@ impl<'a> Codegen<'a> {
                     formal.width = 0;
                     formal.fixed_array = Some(array);
                     formals_ir.push(formal);
+                    // A column-layout record result is one trailing output
+                    // per column.
+                    for array in self.record_formal_columns(*c).into_iter().skip(1) {
+                        let mut formal =
+                            IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
+                        formal.width = 0;
+                        formal.fixed_array = Some(array);
+                        formals_ir.push(formal);
+                    }
                 }
                 if let Some(array) = self
                     .real_array_return(*c)
@@ -703,6 +731,7 @@ impl<'a> Codegen<'a> {
         let ret = match ret {
             Some(_)
                 if self.nonflatten_function(ft)
+                    || self.record_return(ft)
                     || self.native_return(ft)
                     || self.container_return(ft)
                     || self.real_array_return(ft) =>

@@ -496,6 +496,73 @@ impl Codegen<'_> {
     }
 }
 
+impl Codegen<'_> {
+    /// Copy one row of descriptor `source` (first coordinate `row`) into a
+    /// dense array view, cell by cell in nested loops whose code does not
+    /// scale with the extent. The view's selectors are already frozen; each
+    /// cell takes the destination element's state domain.
+    pub(in super::super) fn dense_row_scatter(
+        &mut self,
+        path: &str,
+        target: &IrMemoryView,
+        source: usize,
+        row: i32,
+        nba: bool,
+    ) -> Result<Vec<IrStmt>, String> {
+        let array = self.model.arrays[target.array].clone();
+        let source_dims = self.model.arrays[source].dims[1..].to_vec();
+        let extents = |dims: &[(i32, i32)]| {
+            dims.iter()
+                .map(|(left, right)| left.abs_diff(*right))
+                .collect::<Vec<_>>()
+        };
+        if target.selectors.len() + target.dims.len() != array.dims.len()
+            || extents(&target.dims) != extents(&source_dims)
+        {
+            return Err(format!(
+                "assignment-pattern lvalue row shape mismatch in `{path}`"
+            ));
+        }
+        let mut names = Vec::with_capacity(target.dims.len());
+        let mut target_indices: Vec<IrExpr> = target
+            .selectors
+            .iter()
+            .map(|selector| selector.value.clone())
+            .collect();
+        let mut source_indices = vec![pattern_integer(i128::from(row))];
+        for (dimension, bounds) in target.dims.iter().enumerate() {
+            let name = self.new_fn_name(path, "pattern_cell");
+            let offset = IrExpr::new(IrExprKind::LocalRead(name.clone()), 64, true, None);
+            target_indices.push(pattern_coordinate(*bounds, offset.clone()));
+            source_indices.push(pattern_coordinate(source_dims[dimension], offset));
+            names.push(name);
+        }
+        let value = IrExpr::new(
+            IrExprKind::ArrayRead {
+                arr: source,
+                indices: source_indices,
+                elem_sel: IrElemSel::Whole,
+            },
+            self.model.arrays[source].elem_width,
+            self.model.arrays[source].signed,
+            None,
+        );
+        let mut body = vec![IrStmt::Assign {
+            lhs: IrLhs::ArrayElem {
+                arr: target.array,
+                indices: target_indices,
+                elem_sel: IrElemSel::Whole,
+            },
+            rhs: ir_to_storage(value, array.elem_width, array.signed, array.two_state)?,
+            nba,
+        }];
+        for (name, bounds) in names.into_iter().zip(&target.dims).rev() {
+            body = pattern_loop(name, u64::from(bounds.0.abs_diff(bounds.1)) + 1, body);
+        }
+        Ok(body)
+    }
+}
+
 #[derive(Clone)]
 enum PatternCapture {
     Value(IrExpr),

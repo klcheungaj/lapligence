@@ -47,6 +47,72 @@ impl<'a> Codegen<'a> {
                 return Ok(false);
             }
             AggregateKind::TaggedUnion => {
+                if let Some(descriptor) = self
+                    .query_descriptor(node)
+                    .filter(|descriptor| super::record_columns::column_tagged_union(descriptor))
+                    .cloned()
+                {
+                    if !matches!(self.kind(node), NodeKind::Var { .. }) {
+                        if matches!(
+                            self.kind(node),
+                            NodeKind::Net { .. }
+                                | NodeKind::Array { .. }
+                                | NodeKind::Port { .. }
+                                | NodeKind::IoDecl { .. }
+                        ) {
+                            return Err(format!(
+                                "tagged union `{}` in `{path}` beyond packed capacity must be a variable",
+                                self.node(node).name
+                            ));
+                        }
+                        // Type declarations allocate no storage.
+                        return Ok(false);
+                    }
+                    // Beyond packed capacity, the tag is one cell and each
+                    // member keeps its own columns (RTL-101).
+                    let object_name = self.node(node).name.clone();
+                    let root = AggregateMember {
+                        initializer: None,
+                        name: object_name.clone(),
+                        ty: descriptor.info.clone(),
+                        two_state: descriptor.two_state,
+                        packed_ranges: Vec::new(),
+                        aggregate: None,
+                        descriptor: descriptor.clone(),
+                    };
+                    let mut leaves = Vec::new();
+                    self.collect_tagged_columns(
+                        path,
+                        node,
+                        &object_name,
+                        &root,
+                        &descriptor,
+                        &[],
+                        &mut leaves,
+                    )?;
+                    let members = layout
+                        .members
+                        .iter()
+                        .map(|member| AggregateMemberInfo {
+                            member: member.clone(),
+                            signal: None,
+                            object: None,
+                            array: None,
+                            path: vec![AggregatePathPart::Member(member.name.clone())],
+                        })
+                        .collect();
+                    self.unpacked_aggregates.insert(
+                        node,
+                        UnpackedAggregateInfo {
+                            kind: layout.kind,
+                            type_identity: layout.type_identity,
+                            columns: true,
+                            members,
+                            leaves,
+                        },
+                    );
+                    return Ok(true);
+                }
                 if self
                     .query_descriptor(node)
                     .is_some_and(|descriptor| Self::fixed_descriptor_width(descriptor).is_some())
@@ -121,6 +187,7 @@ impl<'a> Codegen<'a> {
                 },
                 signal: Some(signal),
                 object: None,
+                array: None,
                 path: Vec::new(),
             };
             let members = layout
@@ -130,6 +197,7 @@ impl<'a> Codegen<'a> {
                     member: member.clone(),
                     signal: None,
                     object: None,
+                    array: None,
                     path: vec![AggregatePathPart::Member(member.name.clone())],
                 })
                 .collect();
@@ -138,6 +206,7 @@ impl<'a> Codegen<'a> {
                 UnpackedAggregateInfo {
                     kind: layout.kind,
                     type_identity: layout.type_identity,
+                    columns: false,
                     members,
                     leaves: vec![leaf],
                 },
@@ -219,6 +288,9 @@ impl<'a> Codegen<'a> {
         } else {
             None
         };
+        let columns = self
+            .query_descriptor(node)
+            .is_some_and(super::record_columns::record_column_layout);
         let mut leaves = Vec::new();
         for member in &layout.members {
             if let Some(signal) = &union_signal {
@@ -228,6 +300,7 @@ impl<'a> Codegen<'a> {
                     member: storage_member,
                     signal: Some(signal.clone()),
                     object: None,
+                    array: None,
                     path: vec![AggregatePathPart::Member(member.name.clone())],
                 });
                 continue;
@@ -240,6 +313,7 @@ impl<'a> Codegen<'a> {
                 &member.descriptor,
                 &[AggregatePathPart::Member(member.name.clone())],
                 union_signal.as_ref(),
+                columns,
                 &mut leaves,
             )?;
         }
@@ -248,7 +322,10 @@ impl<'a> Codegen<'a> {
                 "unpacked aggregate `{object_name}` in `{path}` has no supported value leaves"
             ));
         }
-        if let Some(descriptor) = self.query_descriptor(node).cloned() {
+        if columns {
+            // Column leaves carry their own typed defaults.
+            self.record_columns = true;
+        } else if let Some(descriptor) = self.query_descriptor(node).cloned() {
             if let Some(default) = Self::fixed_descriptor_default(&descriptor) {
                 for leaf in &leaves {
                     let Some(signal) = &leaf.signal else {
@@ -282,6 +359,7 @@ impl<'a> Codegen<'a> {
                 member: member.clone(),
                 signal: None,
                 object: None,
+                array: None,
                 path: vec![path_part],
             }));
         }
@@ -290,6 +368,7 @@ impl<'a> Codegen<'a> {
             UnpackedAggregateInfo {
                 kind: layout.kind,
                 type_identity: layout.type_identity,
+                columns,
                 members,
                 leaves,
             },
@@ -301,7 +380,7 @@ impl<'a> Codegen<'a> {
     /// This is an emission detail only; compatibility and copy policy remain
     /// governed by the recursive descriptor captured in `core::db`.
     #[allow(clippy::too_many_arguments)]
-    fn collect_aggregate_descriptor_leaves(
+    pub(super) fn collect_aggregate_descriptor_leaves(
         &mut self,
         path: &str,
         object: NodeId,
@@ -310,8 +389,54 @@ impl<'a> Codegen<'a> {
         descriptor: &TypeDescriptor,
         member_path: &[AggregatePathPart],
         shared: Option<&SignalInfo>,
+        columns: bool,
         leaves: &mut Vec<AggregateMemberInfo>,
     ) -> Result<(), String> {
+        if columns && shared.is_none() && super::record_columns::column_tagged_union(descriptor) {
+            return self.collect_tagged_columns(
+                path,
+                object,
+                object_name,
+                member,
+                descriptor,
+                member_path,
+                leaves,
+            );
+        }
+        if columns
+            && shared.is_none()
+            && member_path
+                .iter()
+                .all(|part| matches!(part, AggregatePathPart::Member(_)))
+        {
+            let array = matches!(descriptor.shape, TypeShape::FixedArray { .. });
+            let packed = matches!(descriptor.shape, TypeShape::PackedAtom { .. })
+                || matches!(&descriptor.shape, TypeShape::Aggregate(layout)
+                    if layout.kind != AggregateKind::UnpackedStruct);
+            if array || packed {
+                let leaf = if array {
+                    self.collect_record_column(
+                        path,
+                        object,
+                        object_name,
+                        member,
+                        descriptor,
+                        member_path,
+                    )?
+                } else {
+                    self.collect_record_cell(
+                        path,
+                        object,
+                        object_name,
+                        member,
+                        descriptor,
+                        member_path,
+                    )?
+                };
+                leaves.push(leaf);
+                return Ok(());
+            }
+        }
         match &descriptor.shape {
             TypeShape::PackedAtom { .. } => {
                 let signal = match shared {
@@ -339,6 +464,7 @@ impl<'a> Codegen<'a> {
                     member: leaf_member(member, descriptor),
                     signal: Some(signal),
                     object: None,
+                    array: None,
                     path: member_path.to_vec(),
                 });
             }
@@ -365,6 +491,7 @@ impl<'a> Codegen<'a> {
                     member: leaf_member(member, descriptor),
                     signal: Some(signal),
                     object: None,
+                    array: None,
                     path: member_path.to_vec(),
                 });
             }
@@ -390,6 +517,7 @@ impl<'a> Codegen<'a> {
                     member: leaf_member(member, descriptor),
                     signal: None,
                     object: Some(index),
+                    array: None,
                     path: member_path.to_vec(),
                 });
             }
@@ -418,6 +546,7 @@ impl<'a> Codegen<'a> {
                     member: leaf_member(member, descriptor),
                     signal: Some(signal),
                     object: None,
+                    array: None,
                     path: member_path.to_vec(),
                 });
             }
@@ -433,6 +562,7 @@ impl<'a> Codegen<'a> {
                         &nested.descriptor,
                         &nested_path,
                         shared,
+                        columns,
                         leaves,
                     )?;
                 }
@@ -475,6 +605,7 @@ impl<'a> Codegen<'a> {
                         next,
                         &element_path,
                         shared,
+                        columns,
                         leaves,
                     )?;
                     if index == right {
@@ -512,6 +643,7 @@ impl<'a> Codegen<'a> {
                     member: leaf_member(member, descriptor),
                     signal: None,
                     object: Some(index),
+                    array: None,
                     path: member_path.to_vec(),
                 });
             }
@@ -662,6 +794,7 @@ impl<'a> Codegen<'a> {
         let ir = self.model.arrays.len();
         self.model.arrays.push(crate::sim::ir::IrArray {
             activation: false,
+            descriptor: false,
             net: None,
             net_elements: Vec::new(),
             element_default: self.query_descriptor(node).and_then(|descriptor| {

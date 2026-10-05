@@ -348,7 +348,12 @@ containers use ascending storage indices. Registered loop indices are destroyed
 each iteration. Image-represented fixed targets (refs, locals, members, rows) take
 one read-modify-write when blocking and per-element selected stores when queued;
 out-of-range source elements stream the element's default-uninitialized value,
-and descriptor sources read cells through `peek`. StreamToFixed left-aligns/
+and descriptor sources read cells through `peek`. Mixed-domain image elements
+convert their two-state runs on the selected segment before any element write.
+Descriptor stream operands build a runtime-length source list: empty runtime
+selections are skipped, `Selected` windows share owner ranges/cells plus the
+element default outside the bounds, `Dense` views and `Packed` values become
+scratch cells, and nested streams are lazy images. StreamToFixed left-aligns/
 zero-fills and diagnoses oversized inputs. Composite call/ref targets retain exact
 layout descriptors.
 

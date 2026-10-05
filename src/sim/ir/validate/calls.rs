@@ -349,7 +349,15 @@ impl Validator<'_> {
                                 "fixed operand requires descriptor formal",
                             )
                         })?;
-                    if bits != expected.total * u64::from(expected.elem_width)
+                    let formal_bits = expected.total * u64::from(expected.elem_width);
+                    // A stream may be shorter than its formal (it is left-
+                    // justified and zero-filled); runtime parts count as zero.
+                    let fits = if matches!(value.as_ref(), IrFixedValue::Stream { .. }) {
+                        bits <= formal_bits
+                    } else {
+                        bits == formal_bits
+                    };
+                    if !fits
                         || (formal.is_ref() && !matches!(value.as_ref(), IrFixedValue::Array(_)))
                     {
                         return self.fail(

@@ -655,6 +655,12 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
                 frame.canonical_signal(*index)
             ));
         }
+        IrInitStep::RegisterSampledValue(index) => {
+            frame.line(format!(
+                "llg_sampled_register_value({});",
+                frame.canonical_signal(*index)
+            ));
+        }
         IrInitStep::WriteNet { group, slot, value } => {
             let net = model.net_group(*group);
             let mut result = frame.constant(value, false);

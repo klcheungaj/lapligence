@@ -23,11 +23,17 @@ impl<'a> Codegen<'a> {
                     "$sampled argument must be a static packed or real expression in `{scope_path}`"
                 ));
             }
-            if argument.is_real() {
-                // A real keeps its numeric Preponed value (SV 16.9.3).
-                let mut reads = std::collections::BTreeSet::new();
-                super::super::assertions::sampled_real_reads(&self.model, &argument, &mut reads);
-                self.sampled_real_signals.extend(reads);
+            // Outside an assertion `$sampled` still returns the Preponed
+            // value (SV 16.9.3): register every signal it reads. A real keeps
+            // its numeric snapshot; a packed value needs no history.
+            let mut reads = std::collections::BTreeSet::new();
+            super::super::assertions::sampled_signal_reads(&argument, &mut reads);
+            for signal in reads {
+                if matches!(self.model.signals[signal].ty, IrType::Real { .. }) {
+                    self.sampled_real_signals.insert(signal);
+                } else if self.model.signals[signal].ty.width() != 0 {
+                    self.sampled_value_signals.insert(signal);
+                }
             }
             return Ok(IrExpr::new(
                 IrExprKind::SysFunc(Box::new(IrSysFunc::Sampled(IrSampledCall::new(

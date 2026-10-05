@@ -188,5 +188,28 @@ pub(super) fn packed_lsb(
     ))
 }
 
+/// `lsb + offset`: the runtime LSB of a field `offset` bits above the LSB of
+/// a selected element. It is one bit wider than either operand, so the sum
+/// cannot wrap, and an X/Z element LSB stays unknown.
+pub(super) fn offset_lsb(lsb: IrExpr, offset: u32) -> Result<IrExpr, String> {
+    if offset == 0 {
+        return Ok(lsb);
+    }
+    let offset = lhs_integer_expr(i128::from(offset));
+    let width = lsb
+        .width
+        .max(offset.width)
+        .checked_add(1)
+        .filter(|width| *width <= LLG_MAX_WIDTH)
+        .ok_or_else(|| {
+            "packed selection index arithmetic exceeds the supported limit".to_owned()
+        })?;
+    Ok(bin_expr(
+        IrBinOp::Add,
+        IrExpr::convert_to(lsb, width, true),
+        IrExpr::convert_to(offset, width, true),
+    ))
+}
+
 #[cfg(test)]
 mod tests;

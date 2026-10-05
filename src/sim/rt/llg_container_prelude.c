@@ -482,6 +482,29 @@ int64_t llg_fixed_image_element_lsb(int64_t declaration_left,
     return (int64_t)((count - 1u - (uint64_t)offset) * element_width);
 }
 
+/* Apply member-wise two-state conversion (SV 6.24.3) to every element of a
+ * selected stream segment before it is unpacked into mixed-domain elements.
+ * Elements occupy `element_width` bits from the segment's MSB; `runs` holds
+ * `run_count` pairs of element-relative (lsb, width). */
+void llg_stream_segment_two_state(sv4_t* segment, uint32_t element_width,
+                                  const uint32_t* runs, size_t run_count) {
+    llg_check_element_type(element_width);
+    uint32_t width = llg_sv4_width(*segment);
+    if (width % element_width)
+        llg_container_fatal("fixed streaming segment is not a whole number of elements");
+    for (uint32_t low = 0; low < width; low += element_width) {
+        for (size_t i = 0; i < run_count; ++i) {
+            int64_t run_low = (int64_t)low + runs[2 * i];
+            int64_t run_high = run_low + runs[2 * i + 1] - 1;
+            sv4_t run = sv4_part_select(*segment, run_high, run_low);
+            sv4_t known = sv4_to_two_state(run);
+            sv4_part_select_set(segment, run_high, run_low, known);
+            sv4_destroy(&run);
+            sv4_destroy(&known);
+        }
+    }
+}
+
 static sv4_t llg_pack_stream_values(const sv4_t* values, size_t count,
                                     uint32_t element_width, uint32_t slice,
                                     int right_to_left) {

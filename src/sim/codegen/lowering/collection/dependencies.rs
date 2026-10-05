@@ -41,6 +41,10 @@ impl<'a> Codegen<'a> {
             if !prefix.starts_with(&leaf.path) && !leaf.path.starts_with(&prefix) {
                 continue;
             }
+            if let Some(array) = &leaf.array {
+                dependencies.push(IrDependency::ArrayContents(self.reference_array(array.ir)));
+                continue;
+            }
             let Some(signal) = &leaf.signal else {
                 // A string member publishes its own change marker; other
                 // native members have none (see `walk_read_signals_bound`).
@@ -271,6 +275,25 @@ impl<'a> Codegen<'a> {
         node: NodeId,
         bindings: &HashMap<NodeId, IrDependency>,
     ) -> Option<IrDependency> {
+        if let Some(select) = self.packed_element_member_select(node) {
+            // A member of a packed-array element: the member's bits when the
+            // element is static, otherwise the element chain's own prefix.
+            let prefix = self.packed_storage_prefix_bound(select, bindings)?;
+            let NodeKind::Expr(ExprKind::HierPath { parts, .. }) = self.kind(node) else {
+                return Some(prefix);
+            };
+            let element = self
+                .query_descriptor(select)
+                .and_then(Self::fixed_descriptor_width);
+            let member = self.packed_member_layout(select, &parts[1..]);
+            let (storage, lsb, width) = self.dependency_span(&prefix)?;
+            return Some(match (element, member) {
+                (Some(element), Some(member)) if element == width => {
+                    self.slice_dependency(storage, lsb.checked_add(member.lsb)?, member.width)
+                }
+                _ => prefix,
+            });
+        }
         if let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) {
             // A ref formal has no independent signal. Resolve its selected
             // field within the actual's prefix, not through global storage.
@@ -364,7 +387,7 @@ impl<'a> Codegen<'a> {
             }
         };
         if !indices.is_empty() {
-            if let Some(array) = self.array_of(base).filter(|array| !array.real) {
+            if let Some(array) = self.select_array_of(node, base).filter(|array| !array.real) {
                 let mut out = Vec::new();
                 self.add_fixed_array_dependency(array, &indices, &mut HashSet::new(), &mut out);
                 return out
@@ -815,7 +838,9 @@ impl<'a> Codegen<'a> {
                     | Operation::PreIncrement
                     | Operation::PostDecrement
                     | Operation::PreDecrement
-                    | Operation::Assignment,
+                    | Operation::Assignment
+                    | Operation::OverloadUpdate
+                    | Operation::OverloadPostUpdate,
                 operands,
                 ..
             }) => {
@@ -1014,7 +1039,7 @@ impl<'a> Codegen<'a> {
                 }
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
-                if let Some(array) = self.array_of(*base) {
+                if let Some(array) = self.select_array_of(lhs, *base) {
                     self.add_process_array_write(array, indices, writes);
                 } else if let Some(container) = self.container_of(*base) {
                     writes.insert(IrDependency::ContainerContents(container.ir));
@@ -1337,7 +1362,7 @@ impl<'a> Codegen<'a> {
                 }
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
-                if let Some(array) = self.array_of(*base) {
+                if let Some(array) = self.select_array_of(node, *base) {
                     self.add_fixed_array_dependency(array, indices, seen, out);
                     for index in indices {
                         self.walk_read_signals_bound(
@@ -1466,7 +1491,9 @@ impl<'a> Codegen<'a> {
                     | Operation::PostIncrement
                     | Operation::PreIncrement
                     | Operation::PostDecrement
-                    | Operation::PreDecrement,
+                    | Operation::PreDecrement
+                    | Operation::OverloadUpdate
+                    | Operation::OverloadPostUpdate,
                 operands,
                 ..
             }) => {
@@ -1925,11 +1952,25 @@ impl<'a> Codegen<'a> {
                 }
                 Ok(())
             }
-            NodeKind::Expr(ExprKind::HierPath { .. }) => {
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
                 // A hierarchical LHS base signal must not trigger the owning
-                // process (same rule as a plain LHS ref). The backend supports only
-                // constant indices/bounds on hierarchical targets, so there
-                // are no index/bounds reads to collect.
+                // process (same rule as a plain LHS ref). A member path rooted
+                // at an element select (`s[i].lo`) keeps that select node among
+                // its references; its selectors choose the written element,
+                // so they are reads of the writer.
+                for root in refs.iter().flatten() {
+                    if matches!(self.kind(*root), NodeKind::Expr(_)) {
+                        self.walk_lhs_select_reads_bound(
+                            scope_path,
+                            *root,
+                            seen,
+                            visited,
+                            out,
+                            include_function_bodies,
+                            bindings,
+                        )?;
+                    }
+                }
                 Ok(())
             }
             _ => Ok(()), // plain ref LHS: not part of the read set

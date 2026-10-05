@@ -36,7 +36,7 @@ Negatives: `neg_stream_compound` adopts FND-002's L-F07-15-03 witness
 `neg_unpack_undersized` and `neg_union_cast` are the §6.24.3/§11.4.14.3 size
 and type errors. Owner policy rejects a selector that reads a target unpacked
 earlier by a nonblocking (`neg_nba_with_dependence`) or right-to-left
-(`neg_reversed_with_dependence`) unpack. `neg_mixed_state_target`,
-`neg_runtime_with_output`, `neg_descriptor_runtime_with` and
-`neg_nba_container` are legal forms outside the represented slice and keep
-explicit diagnostics (see `docs/known_issues.md`).
+(`neg_reversed_with_dependence`) unpack. `neg_nba_container` is a legal form
+owned by SIM-020 and keeps an explicit diagnostic. The former mixed-state,
+copy-out and descriptor-stream `with` negatives are RTL-103 positives
+(`../rtl_103/rtl015_*.sv`).

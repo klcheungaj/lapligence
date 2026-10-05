@@ -4,18 +4,19 @@
 //!
 //! ```text
 //! llg [generate options] [build options] [<file.sv>...] [-- <plusargs>...]
-//! generate: --config <file>  --clear <list>  --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --no-lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-gen-only  --no-opt  --opt  --stop-policy <resume|exit>  --max-export-mib <MiB>
+//! generate: --config <file>  --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --no-lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-gen-only  --no-opt  --opt  --stop-policy <resume|exit>  --max-export-mib <MiB>
 //! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
 //! output:   --out-dir <dir>  --runtime-cache <dir>
+//! append:   --append-<list> <value>  (source, include-dir, define, param-override, define-system-task, libmap, libfile, library-order, dpi-lib, plusarg)
 //! ```
 //!
 //! Configuration: the file named by `--config` (which must exist) supplies
 //! defaults for the options above; `llg` never discovers `llg.toml` on its own.
 //! See `docs/config.md` and `settings.rs` for the key list and the precedence
-//! (command line > environment > config file > built-in default). A repeatable
-//! option on the command line appends to the file's list, and `--clear <list>`
-//! discards the file's list first. With no arguments the driver prints usage
-//! and exits 2.
+//! (command line > environment > config file > built-in default). A list
+//! option on the command line (`-I`, `-D`, source files, `--`, ...) replaces the
+//! file's list; its `--append-<list>` twin adds to the list instead, after any
+//! replacing values. With no arguments the driver prints usage and exits 2.
 //!
 //! `--lint` runs the shared linter (`core::lint`) over the compiled design
 //! after elaboration and before codegen: each finding prints to stderr as

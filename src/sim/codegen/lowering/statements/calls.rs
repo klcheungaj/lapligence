@@ -1,5 +1,6 @@
 //! Calls.
 
+use super::super::collection::CallWriteback;
 use super::*;
 
 impl EmitCtx<'_, '_> {
@@ -224,6 +225,10 @@ impl EmitCtx<'_, '_> {
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
         let mut before = Vec::new();
         let mut after = Vec::new();
+        // Columns after the first of column-layout record formals follow the
+        // declared formals of each direction (see `record_formal_columns`).
+        let mut record_out_args = Vec::new();
+        let mut record_in_args = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if self.cg.is_subroutine_container(*io) {
                 let argument = self.cg.container_call_argument(
@@ -236,6 +241,31 @@ impl EmitCtx<'_, '_> {
                     out_args.push(argument);
                 } else {
                     in_args.push((idx, argument));
+                }
+                continue;
+            }
+            if self.cg.record_declaration(*io) {
+                let address = *is_out
+                    || matches!(
+                        self.cg.kind(*io),
+                        NodeKind::FuncArg {
+                            direction: DbDirection::Ref,
+                            ..
+                        }
+                    );
+                let mut columns = self
+                    .cg
+                    .record_call_columns(&self.path, *io, bound[idx].expr)?
+                    .into_iter();
+                let first = columns
+                    .next()
+                    .ok_or("column-layout record formal has no columns")?;
+                if address {
+                    out_args.push(first);
+                    record_out_args.extend(columns);
+                } else {
+                    in_args.push((idx, first));
+                    record_in_args.extend(columns);
                 }
                 continue;
             }
@@ -411,7 +441,7 @@ impl EmitCtx<'_, '_> {
                     ..
                 }
             );
-            let (lh, actual_read, selector_inits) = self.cg.lower_call_actual(
+            let (writeback, actual_read, selector_inits) = self.cg.lower_call_writeback(
                 &self.path,
                 bound[idx].expr,
                 &format!("{}_{}", h.0, idx),
@@ -444,15 +474,45 @@ impl EmitCtx<'_, '_> {
                     storage.signed,
                     None,
                 );
-                after.push(IrStmt::Assign {
-                    rhs: apply_lhs_assignment_context(&self.cg.model, &lh, read.clone()),
-                    lhs: lh,
-                    nba: false,
-                });
+                after.push(writeback.store(&self.cg.model, read.clone()));
                 arg_irs[idx] = Some(read);
                 out_args.push(IrCallArg::OutAddr(format!("&{}", storage.global)));
                 continue;
             }
+            let lh = match writeback {
+                CallWriteback::Lhs(lhs) => lhs,
+                stream @ CallWriteback::Stream(_) => {
+                    // The call temporary keeps the formal's typed default; its
+                    // copy-out lands in a caller local that the checked unpack
+                    // then consumes after the call.
+                    let local = format!("_sco{}_{}", h.0, idx);
+                    let (width, signed) = (bound[idx].width, bound[idx].signed);
+                    if bound[idx].real {
+                        return Err(format!(
+                            "real output formal cannot copy out to a streaming concatenation in `{}`",
+                            self.path
+                        ));
+                    }
+                    before.push(IrStmt::DeclLocal {
+                        name: local.clone(),
+                        width,
+                        signed,
+                        two_state: bound[idx].two_state,
+                        init: None,
+                    });
+                    after.push(stream.store(
+                        &self.cg.model,
+                        IrExpr::new(IrExprKind::LocalRead(local.clone()), width, signed, None),
+                    ));
+                    IrLhs::WholeRef {
+                        addr: format!("&{local}"),
+                        width,
+                        signed,
+                        two_state: bound[idx].two_state,
+                        shortreal: false,
+                    }
+                }
+            };
             let tname = format!("_a{}_{}", h.0, idx);
             let init_ir = self
                 .cg
@@ -561,7 +621,9 @@ impl EmitCtx<'_, '_> {
             out_args.push(IrCallArg::RealArray(temporary));
         }
         in_args.sort_by_key(|(idx, _)| *idx);
+        out_args.extend(record_out_args);
         out_args.extend(in_args.into_iter().map(|(_, argument)| argument));
+        out_args.extend(record_in_args);
         let depth = parse_depth(&self.depth_arg);
         let call = IrStmt::Call(Box::new(IrCall {
             f: fidx,
@@ -1005,7 +1067,7 @@ impl EmitCtx<'_, '_> {
                         nba: false,
                     });
                 } else {
-                    let (actual_lhs, actual_read, selector_inits) = self.cg.lower_call_actual(
+                    let (writeback, actual_read, selector_inits) = self.cg.lower_call_writeback(
                         &self.path,
                         b.expr,
                         &format!("{}_{}", h.0, idx),
@@ -1034,15 +1096,7 @@ impl EmitCtx<'_, '_> {
                             nba: false,
                         });
                     }
-                    after.push(IrStmt::Assign {
-                        rhs: apply_lhs_assignment_context(
-                            &self.cg.model,
-                            &actual_lhs,
-                            storage_read,
-                        ),
-                        lhs: actual_lhs,
-                        nba: false,
-                    });
+                    after.push(writeback.store(&self.cg.model, storage_read));
                 }
             } else if *is_out {
                 let is_inout = matches!(
@@ -1052,7 +1106,7 @@ impl EmitCtx<'_, '_> {
                         ..
                     }
                 );
-                let (actual_lhs, actual_read, selector_inits) = self.cg.lower_call_actual(
+                let (writeback, actual_read, selector_inits) = self.cg.lower_call_writeback(
                     &self.path,
                     b.expr,
                     &format!("{}_{}", h.0, idx),
@@ -1094,11 +1148,7 @@ impl EmitCtx<'_, '_> {
                 if is_inout {
                     arg_dependencies.insert(*io, self.cg.collect_read_signals(&self.path, b.expr)?);
                 }
-                after.push(IrStmt::Assign {
-                    rhs: apply_lhs_assignment_context(&self.cg.model, &actual_lhs, read_ir.clone()),
-                    lhs: actual_lhs,
-                    nba: false,
-                });
+                after.push(writeback.store(&self.cg.model, read_ir.clone()));
                 arg_read.insert(
                     *io,
                     ArgMap {
@@ -1406,6 +1456,29 @@ impl EmitCtx<'_, '_> {
                             Operation::Assignment,
                         )?
                         .ok_or("container return has no container assignment")?,
+                );
+            }
+            statements.push(IrStmt::Return { value: None });
+            return Ok(IrStmt::Block(statements));
+        }
+        if let Some(result) = self
+            .func
+            .as_ref()
+            .and_then(|function| function.ret_node)
+            .filter(|node| self.cg.record_declaration(*node) && self.inline.is_none())
+        {
+            let mut statements = Vec::new();
+            if let Some(value) = value {
+                statements.push(
+                    self.cg
+                        .lower_column_record_assignment(
+                            &self.path,
+                            result,
+                            value,
+                            false,
+                            Operation::Assignment,
+                        )?
+                        .ok_or("column-layout record return has no record assignment")?,
                 );
             }
             statements.push(IrStmt::Return { value: None });

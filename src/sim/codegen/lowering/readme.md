@@ -58,10 +58,23 @@ selection steps. Composing bit, part and indexed selections preserves each
 intermediate bound, including fixed-array element/member roots. Selections of a
 whole multidimensional packed value, or of a packed array of records, address
 whole elements through `packed_geometry.rs`; an in-range constant chain lowers
-to one part-select of its root and one runtime step to an indexed part-select. The same typed
+to one part-select of its root and one runtime step to an indexed part-select.
+A member of such an element (`ps[i].hi`) is one more constant step of the
+chain; a runtime element LSB absorbs the member offset, so it stays one indexed
+part-select. Members of unpacked-array elements of packed arrays and of
+packed-array structure members project through `fixed_projections.rs`. The same typed
 projection supplies reads, mutations, NBA capture and call copy-out; module
 connections require constant selectors and keep subroutine ref-actual legality
 separate.
+
+Overloaded updates (IEEE 1800-2009 11.11) whose value is used or whose target
+selector has side effects arrive as `OverloadUpdate`/`OverloadPostUpdate`
+assignments: the target, and the bound function's call whose `OverloadCurrent`
+operand reads the target's current value. They lower to the ordinary
+`IrExprKind::Mutation` (the call is its value, the operand its
+`_llg_mut_current` capture), so the target resolves once; an unpacked record's
+leaf `Stream` is admitted as a mutation target only here. Targets above the
+packed value limit or with native members are rejected with a specific error.
 
 See [lowering overview](../readme.md),
 [execution model](../../execution/readme.md),

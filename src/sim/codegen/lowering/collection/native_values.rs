@@ -203,8 +203,11 @@ impl Codegen<'_> {
         let TypeShape::Aggregate(layout) = &descriptor.shape else {
             return None;
         };
+        // Records whose leaves are all integral are fixed values; beyond
+        // packed capacity they use column layout (RTL-101), not native
+        // storage.
         if layout.kind != AggregateKind::UnpackedStruct
-            || Self::fixed_descriptor_width(descriptor).is_some()
+            || Self::fixed_descriptor_width_bits(descriptor).is_some()
         {
             return None;
         }

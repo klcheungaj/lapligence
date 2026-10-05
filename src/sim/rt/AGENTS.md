@@ -305,6 +305,9 @@ but native runtime callers can pass any live packed owner to the borrowed-source
 APIs. Globally filtering that storage class would change accepted runtime behavior.
 Ordinary waits use their own snapshots, input skew sampling uses
 `sampling.c`, and named-event `.triggered` uses event-object state.
+`llg_sampled_register_value` keeps only a signal's Preponed value (procedural
+`$sampled`) in a separate list, so it adds no history and no per-write lookup;
+`llg_sampled_register` adds the history skews read.
 
 Slot history retains any/positive/negative occurrence independently, so a later
 opposite edge cannot erase an earlier match. Time advance drops all entries except

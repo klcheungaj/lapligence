@@ -70,6 +70,16 @@ impl<'a> Codegen<'a> {
         parts: &[String],
         refs: &[Option<NodeId>],
     ) -> Option<(NodeId, usize)> {
+        // A member path over an element select names the selected
+        // declaration first; resolving that name would drop the select.
+        if refs.first().copied().flatten().is_some_and(|select| {
+            matches!(
+                self.kind(select),
+                NodeKind::Expr(ExprKind::BitSelect { .. } | ExprKind::ArraySelect { .. })
+            )
+        }) {
+            return None;
+        }
         if let Some((index, target)) = refs
             .iter()
             .enumerate()
@@ -848,12 +858,15 @@ impl<'a> Codegen<'a> {
         &self,
         base: NodeId,
     ) -> Option<Vec<crate::core::db::PackedRange>> {
+        let select = base;
         match self.kind(base) {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 let mut ranges = self.packed_ranges_for_base(*base)?;
                 // An unpacked array's packed ranges are its element's; only
                 // the indices past its unpacked dimensions select packed ones.
-                let unpacked = self.array_of(*base).map_or(0, |array| array.dims.len());
+                let unpacked = self
+                    .select_array_of(select, *base)
+                    .map_or(0, |array| array.dims.len());
                 let packed = indices.len().saturating_sub(unpacked);
                 if packed > ranges.len() {
                     return None;

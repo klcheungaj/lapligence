@@ -881,6 +881,117 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// Lower one output/inout actual's copy-out target once. A streaming
+    /// concatenation whose `with` range is runtime-valued or partly outside
+    /// its bounds needs the checked unpack of a `StreamAssign` (SV 11.4.14.4);
+    /// its selectors and lvalue coordinates are frozen at the call like any
+    /// other actual, and the formal's value is unpacked after the callee
+    /// returns. Every other actual keeps its ordinary lvalue.
+    #[allow(clippy::type_complexity)]
+    pub(in super::super) fn lower_call_writeback(
+        &mut self,
+        path: &str,
+        actual: NodeId,
+        tag: &str,
+        read_actual: bool,
+    ) -> Result<
+        (
+            CallWriteback,
+            Option<IrExpr>,
+            Vec<(String, u32, bool, bool, IrExpr)>,
+        ),
+        String,
+    > {
+        let mode = super::super::containers::StreamTargetMode::CopyOut;
+        if let Some(plan) = self.stream_mixed_targets(path, actual, mode, Operation::Assignment)? {
+            if read_actual {
+                // The frontend admits a stream only as an assignment target or
+                // source, never as an inout actual.
+                return Err(format!(
+                    "streaming concatenation inout actual in `{path}` is not supported"
+                ));
+            }
+            let mut captures = Vec::new();
+            let mut sequence = 0usize;
+            let plan = self.freeze_stream_targets(plan, tag, &mut sequence, &mut captures)?;
+            return Ok((CallWriteback::Stream(plan), None, captures));
+        }
+        let (lhs, read, captures) = self.lower_call_actual(path, actual, tag, read_actual)?;
+        Ok((CallWriteback::Lhs(lhs), read, captures))
+    }
+
+    /// Freeze every selector and lvalue coordinate of a checked streaming
+    /// copy-out into caller locals, in target order.
+    fn freeze_stream_targets(
+        &self,
+        mut plan: super::super::containers::StreamTargetPlan,
+        tag: &str,
+        sequence: &mut usize,
+        captures: &mut Vec<(String, u32, bool, bool, IrExpr)>,
+    ) -> Result<super::super::containers::StreamTargetPlan, String> {
+        let freeze = |expr: &mut IrExpr,
+                      sequence: &mut usize,
+                      captures: &mut Vec<(String, u32, bool, bool, IrExpr)>|
+         -> Result<(), String> {
+            if expr.is_real() {
+                return Err(format!(
+                    "real-valued selector in subroutine output actual `{tag}` is not supported"
+                ));
+            }
+            let name = format!("_call_idx_{tag}_{}", *sequence);
+            *sequence += 1;
+            let frozen = IrExpr::new(
+                IrExprKind::LocalRead(name.clone()),
+                expr.width,
+                expr.signed,
+                None,
+            );
+            let value = std::mem::replace(expr, frozen);
+            captures.push((name, value.width, value.signed, false, value));
+            Ok(())
+        };
+        let mut lhs_captures = Vec::new();
+        for target in &mut plan.targets {
+            let selector = match target {
+                IrStreamTarget::Packed { lhs, .. } => {
+                    *lhs = self
+                        .freeze_call_lhs(lhs.clone(), tag, sequence, &mut lhs_captures)?
+                        .0;
+                    captures.append(&mut lhs_captures);
+                    continue;
+                }
+                IrStreamTarget::FixedSelector { selector, .. } => selector,
+                IrStreamTarget::FixedImageSelector {
+                    target, selector, ..
+                } => {
+                    let frozen = self
+                        .freeze_call_lhs(target.as_ref().clone(), tag, sequence, &mut lhs_captures)?
+                        .0;
+                    **target = frozen;
+                    captures.append(&mut lhs_captures);
+                    selector
+                }
+                IrStreamTarget::Container { .. } => {
+                    return Err("resizable streaming copy-out target is not supported".into())
+                }
+            };
+            match selector {
+                crate::sim::ir::IrStreamSelector::Index(index) => {
+                    freeze(index, sequence, captures)?
+                }
+                crate::sim::ir::IrStreamSelector::Range { left, right } => {
+                    freeze(left, sequence, captures)?;
+                    freeze(right, sequence, captures)?;
+                }
+                crate::sim::ir::IrStreamSelector::Indexed { base, width, .. } => {
+                    freeze(base, sequence, captures)?;
+                    freeze(width, sequence, captures)?;
+                }
+            }
+        }
+        Ok(plan)
+    }
+
     /// Lower one output/inout actual once.  Runtime selector expressions are
     /// captured in caller-side locals before the callee starts; the returned
     /// read and writeback LHS then use those locals rather than re-evaluating
@@ -1295,3 +1406,24 @@ impl<'a> Codegen<'a> {
 
 #[cfg(test)]
 mod tests;
+
+/// Where an output/inout actual receives the formal's final value.
+pub(in super::super) enum CallWriteback {
+    Lhs(IrLhs),
+    /// A checked streaming unpack whose selectors are already frozen.
+    Stream(super::super::containers::StreamTargetPlan),
+}
+
+impl CallWriteback {
+    /// The copy-out statement writing `value` (the formal's storage) back.
+    pub(in super::super) fn store(self, model: &IrModel, value: IrExpr) -> IrStmt {
+        match self {
+            Self::Lhs(lhs) => IrStmt::Assign {
+                rhs: apply_lhs_assignment_context(model, &lhs, value),
+                lhs,
+                nba: false,
+            },
+            Self::Stream(plan) => plan.assign(value, false),
+        }
+    }
+}

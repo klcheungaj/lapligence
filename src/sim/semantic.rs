@@ -1696,6 +1696,8 @@ pub(crate) fn operation_arity_requirement(
         Operation::Concat | Operation::MinTypMax => (1, None, "at least one"),
         Operation::MultiConcat | Operation::Inside => (2, None, "at least two"),
         Operation::StreamLeftToRight | Operation::StreamRightToLeft => (1, Some(2), "one or two"),
+        Operation::OverloadUpdate | Operation::OverloadPostUpdate => (2, Some(2), "exactly two"),
+        Operation::OverloadCurrent => (0, Some(0), "no"),
         _ => return None,
     })
 }

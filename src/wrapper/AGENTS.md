@@ -83,6 +83,11 @@ removal linear in that target's duplicates.
 - `ConditionPattern` role 38 pairs with its indexed condition; true/false edges
   use explicit branch roles/index 0. Preserve matching syntax as typed patterns,
   not Boolean conditions. Tag extensions do not change ABI pointer/layout rules.
+- A compound assignment whose right side (through conversions) is a call is an
+  overloaded update (IEEE 1800-2009 11.11): export `OVERLOAD_UPDATE` or, for
+  `isOverloadedPostfix`, `OVERLOAD_POST_UPDATE`, with the whole call as `RHS`;
+  its `LValueReference` arguments export `UPDATE_CURRENT`. Built-in compound
+  placeholders are never visited.
 
 ## Assignment patterns
 

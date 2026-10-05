@@ -310,6 +310,10 @@ void llg_fixed_image_stream_scatter(sv4_t* image, sv4_t segment,
 int64_t llg_fixed_image_element_lsb(int64_t declaration_left,
                                     int64_t declaration_right, int64_t logical,
                                     uint32_t element_width);
+/* Clear X/Z in the element-relative two-state runs (`run_count` pairs of
+ * lsb, width) of every element of a selected stream segment, in place. */
+void llg_stream_segment_two_state(sv4_t* segment, uint32_t element_width,
+                                  const uint32_t* runs, size_t run_count);
 /* Assign a runtime-sized streaming concatenation to a fixed-size bit-stream
  * target: the stream is left-aligned and zero-filled on the right, and a
  * stream larger than the target is an error (IEEE 1800-2009 11.4.14). The
