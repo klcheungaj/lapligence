@@ -220,6 +220,10 @@ pub enum IrStreamTarget {
         element_width: u32,
         two_state: bool,
         selector: IrStreamSelector,
+        /// `(lsb, width)` of each two-state run inside one element whose
+        /// members mix state domains (SV 6.24.3 member-wise conversion);
+        /// empty when the element has one domain (`two_state`).
+        two_state_runs: Vec<(u32, u32)>,
     },
 }
 

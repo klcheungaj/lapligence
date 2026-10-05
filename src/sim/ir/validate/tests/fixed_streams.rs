@@ -57,6 +57,7 @@ fn image_target(target: IrLhs) -> IrStreamTarget {
         element_width: 8,
         two_state: false,
         selector: index_selector(),
+        two_state_runs: Vec::new(),
     }
 }
 

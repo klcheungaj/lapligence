@@ -26,6 +26,28 @@ pub enum IrFixedValue {
         value: Box<IrFixedValue>,
         array: usize,
     },
+    /// A packed bit-stream operand of a descriptor stream (a dense array,
+    /// integral value, nested packed stream or `with` selection of a dense or
+    /// image array) as `cell_width`-bit cells, left cell first. A
+    /// `runtime_sized` value learns its width when evaluated; an empty value
+    /// contributes no bits.
+    Packed {
+        value: Box<IrExpr>,
+        cell_width: u32,
+        runtime_sized: bool,
+    },
+    /// A view of dense (below-threshold, non-net) integral array storage,
+    /// presented to descriptor transport cell for cell; the source code stays
+    /// one copy loop whatever the extent.
+    Dense(IrMemoryView),
+    /// A one-dimensional descriptor array selected by a runtime or partly
+    /// out-of-bounds `with` range (SV 11.4.14.4), streamed in storage order.
+    /// Indices outside the bounds read the element's default-uninitialized
+    /// value; no cell is materialized.
+    Selected {
+        array: usize,
+        selector: IrStreamSelector,
+    },
 }
 
 impl IrFixedValue {
@@ -50,6 +72,7 @@ impl IrFixedValue {
                 }
             }
             Self::Convert { value, .. } => value.calls(visit),
+            Self::Packed { .. } | Self::Selected { .. } | Self::Dense(_) => {}
         }
     }
 
@@ -81,6 +104,23 @@ impl IrFixedValue {
                 }
             }
             Self::Convert { value, .. } => value.expressions(visit),
+            Self::Packed { value, .. } => visit(value),
+            Self::Dense(view) => {
+                for selector in &view.selectors {
+                    visit(&selector.value);
+                }
+            }
+            Self::Selected { selector, .. } => match selector {
+                IrStreamSelector::Index(index) => visit(index),
+                IrStreamSelector::Range { left, right } => {
+                    visit(left);
+                    visit(right);
+                }
+                IrStreamSelector::Indexed { base, width, .. } => {
+                    visit(base);
+                    visit(width);
+                }
+            },
         }
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
@@ -111,6 +151,23 @@ impl IrFixedValue {
                 }
             }
             Self::Convert { value, .. } => value.expressions_mut(visit),
+            Self::Packed { value, .. } => visit(value),
+            Self::Dense(view) => {
+                for selector in &mut view.selectors {
+                    visit(&mut selector.value);
+                }
+            }
+            Self::Selected { selector, .. } => match selector {
+                IrStreamSelector::Index(index) => visit(index),
+                IrStreamSelector::Range { left, right } => {
+                    visit(left);
+                    visit(right);
+                }
+                IrStreamSelector::Indexed { base, width, .. } => {
+                    visit(base);
+                    visit(width);
+                }
+            },
         }
     }
 }
