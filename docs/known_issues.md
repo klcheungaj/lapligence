@@ -324,12 +324,11 @@ value (formal, return, conditional); a record member array above the 4,096-cell
 dense threshold is expanded per cell (a 65,537-cell member generates about
 79 MB of C, and a whole-record pattern over such members fails to resolve the
 member array). So does the source of a whole-value `matches`
-wildcard or binding, which rejects with its size (RTL-016). Descriptor pattern items and scatter targets whose rows are small dense
-arrays inside an oversized source, dense arrays and runtime `with` ranges as parts
-of an oversized stream, and nested oversized streams reject with explicit
-diagnostics; constant in-bounds `with` ranges stream as sliced views (RTL-015).
-Extending those paths through per-cell source expansion would recreate the
-capacity cost.
+wildcard or binding, which rejects with its size (RTL-016). Dense rows as
+descriptor pattern items and scatter targets, and dense arrays, packed values,
+runtime `with` ranges and nested streams as parts of an oversized stream, use
+descriptor transport (RTL-103); a resizable container operand of an oversized
+stream rejects (SIM-020).
 
 Fixed-array `reverse`/`sort`/`rsort`, selected-row reductions and `inside`
 over stored cells (descriptor arrays, selected rows and dense arrays above 16
@@ -448,23 +447,23 @@ element-wise expressions run as cell loops.
 ## Streaming `with` targets outside the direct assignment path
 
 **Status:** open; RTL-015 represents runtime and partly out-of-bounds fixed
-`with` targets only in a direct (blocking or nonblocking) streaming assignment.
+`with` targets in a direct (blocking or nonblocking) streaming assignment, and
+RTL-103 adds output copy-out from task and void-function call statements.
 
 Such a range needs its bounds checked and its in-range elements written at run
-time (IEEE 1800-2009 §11.4.14.4), which the `StreamAssign` statement does. An
-output or inout copy-out actual and an intra-assignment-delayed assignment lower
-their target as a static lvalue instead, so a runtime or out-of-bounds `with`
-range there rejects with "requires a direct streaming assignment"; a constant
-in-bounds range works. A runtime range over a record member array, ref formal or
-local whose elements mix two-state and four-state members also rejects, because
-its packed element write cannot apply member-wise state conversion; a uniform
-element domain, any model array and every source use work. Supporting either
-needs a copy-out/delayed stream plan or a member-wise conversion mask.
+time (IEEE 1800-2009 §11.4.14.4), which the `StreamAssign` statement does. A
+copy-out runs it after the call with the selectors fixed when the call starts.
+A function call inside an expression has no statement after it to run it in,
+and an intra-assignment-delayed assignment lowers its target as a static
+lvalue (SIM-014), so a runtime or out-of-bounds `with` range there rejects; a
+constant in-bounds range works. Supporting the expression call needs a
+writeback form of the checked unpack in the call ABI.
 
-Two forms reject by owner policy rather than cost: a selector that reads a target
-unpacked earlier by the same nonblocking unpack (nothing is published at issue)
-or by a right-to-left unpack (the consumed width must be known before the bits
-are reordered). Assign the length first in its own statement.
+Three forms reject by owner policy rather than cost: a selector that reads a
+target unpacked earlier by the same nonblocking unpack (nothing is published at
+issue), by a right-to-left unpack (the consumed width must be known before the
+bits are reordered) or by a copy-out (its selectors are fixed before the call).
+Assign the length first in its own statement.
 
 ## Runtime-selected module reference connections have no qualified binding oracle
 

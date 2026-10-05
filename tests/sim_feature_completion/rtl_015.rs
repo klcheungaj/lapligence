@@ -136,23 +136,10 @@ fn neg_selector_reading_an_earlier_target() {
     );
 }
 
+// The mixed-state, copy-out and descriptor-stream `with` negatives are
+// positives of RTL-103 (`rtl_103::rtl015_*`); the container NBA stays SIM-020's.
 #[test]
 fn neg_unrepresented_with_forms() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_mixed_state_target",
-        "streaming `with` target elements mixing two-state and four-state members are not supported",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_runtime_with_output",
-        "requires a direct streaming assignment",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_descriptor_runtime_with",
-        "descriptor stream `with` range must be constant and inside the array bounds",
-    );
     sim_cli::reject_case(
         SUITE,
         "neg_nba_container",

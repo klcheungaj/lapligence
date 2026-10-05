@@ -77,7 +77,11 @@ meaning of an existing variant:
   the 4,096-cell dense threshold), `IrArray::element_uninitialized` defaults,
   and `IrNetArray`/`IrNetCellRun` constant runs for undriven net-array cells.
 - Values above packed capacity: `IrFixedValue` (`Array(IrMemoryView)`, `Call`,
-  `Conditional` with `element_cells`, `Stream`, `Convert`), assigned by
+  `Conditional` with `element_cells`, `Stream`, `Convert`, and the additive
+  stream/pattern operands of RTL-103: `Dense` views of dense integral storage,
+  `Packed` values split into cells, `Selected` runtime `with` selections of
+  one-dimensional descriptor arrays; the last two may be runtime-sized and
+  count as zero bits for static checks), assigned by
   `IrStmt::FixedValueAssign` and compared by `IrExprKind::FixedValueCompare`;
   whole arrays also use `FixedArrayCopy`, `FixedArrayDeclare`,
   `FixedArrayFill`, `FixedArrayOrder` and `FixedArrayReduce`.
