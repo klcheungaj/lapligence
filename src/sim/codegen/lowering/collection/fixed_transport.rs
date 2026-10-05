@@ -411,7 +411,7 @@ impl Codegen<'_> {
             } else {
                 strides[prefix - 1]
             };
-            if cell % span != 0 || cell >= total {
+            if !cell.is_multiple_of(span) || cell >= total {
                 return Err(format!(
                     "assignment-pattern lvalue in `{path}` does not match its source rows"
                 ));
