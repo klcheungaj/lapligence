@@ -143,6 +143,10 @@ an activation declared by `FixedArrayDeclare` and emitted as a lexical
 `IrSampledFunc::RealStable/RealChanged` and `$past` over a real keep the
 argument's exact 64-bit IEEE image in the history domain and compare or decode
 it as a real; `$sampled` of a real reads a numeric Preponed snapshot.
+A procedural `$sampled` registers every signal its argument reads: reals
+through `IrInitStep::RegisterSampled`, packed signals through
+`IrInitStep::RegisterSampledValue`, which keeps the Preponed value without the
+per-slot history that clocking input skews read.
 
 ## Bounded packed selection chains
 

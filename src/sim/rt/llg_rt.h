@@ -1586,6 +1586,10 @@ int llg_cancel_region_callback(llg_region_callback_id_t id);
 // each time slot. The returned pointer is runtime-owned and valid until the
 // next llg_rt_cleanup. Unregistered signals produce a controlled diagnostic.
 void llg_sampled_register(sv4_t* signal);
+// Register a signal for its Preponed value only (procedural `$sampled`,
+// IEEE 1800-2009 16.9.3). It keeps no per-slot history, so its memory stays
+// constant; llg_sampled_register adds the history clocking skews read.
+void llg_sampled_register_value(sv4_t* signal);
 const sv4_t* llg_sampled_value(const sv4_t* signal);
 int llg_sampled_copy(const sv4_t* signal, sv4_t* out);
 // Real variables keep their own numeric Preponed snapshot. Reading an

@@ -1500,7 +1500,9 @@ domains, gated/initial history, Preponed reads and LSB/X/Z edge rules; `$past`
 counts only clock time steps strictly before its evaluation. Real arguments
 keep numeric samples: `$past` returns the exact sampled real and
 `$stable/$changed` compare with real `==`; `$rose/$fell` of a real are
-illegal. Future global forms and complex clocks remain rejected. Future global
+illegal. Outside any assertion, a procedural `$sampled` returns the
+Preponed value of every packed or real signal it reads, registered without
+per-slot history. Future global forms and complex clocks remain rejected. Future global
 functions are legal in SV2009 property/sequence contexts under §16.9.4, with
 global clocking, nonnesting and match-item restrictions and delayed assertion
 actions; their rejection is an implementation gap. Procedural and action-block

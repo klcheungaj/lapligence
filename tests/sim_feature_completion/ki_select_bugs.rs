@@ -111,3 +111,20 @@ fn runtime_selected_member_targets_wait_on_their_selectors() {
     sim_cli::run_case(SUITE, "selector_retarget", expected, "", &[]);
     sim_cli::run_case_backend_parity(SUITE, "selector_retarget", expected, &[], &[]);
 }
+
+#[test]
+fn procedural_sampled_returns_the_preponed_value() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_select_bugs/procedural_sampled.out");
+    sim_cli::run_case(SUITE, "procedural_sampled", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "procedural_sampled", expected, &[], &[]);
+}
+
+#[test]
+fn neg_sampled_takes_one_argument() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_sampled_arguments",
+        "too many arguments for '$sampled'; expected 1 but 2 were provided",
+    );
+}

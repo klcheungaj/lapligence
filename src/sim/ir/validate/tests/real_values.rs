@@ -251,3 +251,22 @@ fn real_array_ordering_needs_real_scalar_elements() {
         assert!(model.validate().is_err(), "invalid real ordering {array}");
     }
 }
+
+#[test]
+fn sampled_value_registration_requires_a_packed_signal() {
+    let mut model = valid_model();
+    let packed = model.signals.len() - 1;
+    model.signals.push(real_signal("r"));
+    let real = model.signals.len() - 1;
+    model
+        .init_steps
+        .push(IrInitStep::RegisterSampledValue(packed));
+    model.validate().unwrap();
+    for invalid in [real, real + 1] {
+        let mut model = model.clone();
+        model
+            .init_steps
+            .push(IrInitStep::RegisterSampledValue(invalid));
+        assert!(model.validate().is_err(), "sampled value source {invalid}");
+    }
+}
