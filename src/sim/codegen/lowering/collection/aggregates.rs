@@ -247,8 +247,8 @@ impl<'a> Codegen<'a> {
             ));
         }
         if columns {
+            // Column leaves carry their own typed defaults.
             self.record_columns = true;
-            self.record_column_leaf_defaults(path, node, &leaves)?;
         } else if let Some(descriptor) = self.query_descriptor(node).cloned() {
             if let Some(default) = Self::fixed_descriptor_default(&descriptor) {
                 for leaf in &leaves {
@@ -317,21 +317,38 @@ impl<'a> Codegen<'a> {
         leaves: &mut Vec<AggregateMemberInfo>,
     ) -> Result<(), String> {
         if columns
-            && matches!(descriptor.shape, TypeShape::FixedArray { .. })
+            && shared.is_none()
             && member_path
                 .iter()
                 .all(|part| matches!(part, AggregatePathPart::Member(_)))
         {
-            let leaf = self.collect_record_column(
-                path,
-                object,
-                object_name,
-                member,
-                descriptor,
-                member_path,
-            )?;
-            leaves.push(leaf);
-            return Ok(());
+            let array = matches!(descriptor.shape, TypeShape::FixedArray { .. });
+            let packed = matches!(descriptor.shape, TypeShape::PackedAtom { .. })
+                || matches!(&descriptor.shape, TypeShape::Aggregate(layout)
+                    if layout.kind != AggregateKind::UnpackedStruct);
+            if array || packed {
+                let leaf = if array {
+                    self.collect_record_column(
+                        path,
+                        object,
+                        object_name,
+                        member,
+                        descriptor,
+                        member_path,
+                    )?
+                } else {
+                    self.collect_record_cell(
+                        path,
+                        object,
+                        object_name,
+                        member,
+                        descriptor,
+                        member_path,
+                    )?
+                };
+                leaves.push(leaf);
+                return Ok(());
+            }
         }
         match &descriptor.shape {
             TypeShape::PackedAtom { .. } => {
@@ -690,6 +707,7 @@ impl<'a> Codegen<'a> {
         let ir = self.model.arrays.len();
         self.model.arrays.push(crate::sim::ir::IrArray {
             activation: false,
+            descriptor: false,
             net: None,
             net_elements: Vec::new(),
             element_default: self.query_descriptor(node).and_then(|descriptor| {

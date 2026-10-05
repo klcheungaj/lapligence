@@ -1052,6 +1052,13 @@ impl<'a> Codegen<'a> {
         &self,
         leaf: &AggregateMemberInfo,
     ) -> Result<IrLhs, String> {
+        if let Some(cell) = leaf.array.as_ref().filter(|_| record_cell_leaf(leaf)) {
+            return self.reference_lhs(IrLhs::ArrayElem {
+                arr: self.reference_array(cell.ir),
+                indices: vec![lhs_integer_expr(0)],
+                elem_sel: IrElemSel::Whole,
+            });
+        }
         let signal = leaf.signal.as_ref().ok_or_else(|| {
             format!(
                 "aggregate member `{}` is not a packed or real assignment target",
@@ -1080,6 +1087,18 @@ impl<'a> Codegen<'a> {
         &self,
         leaf: &AggregateMemberInfo,
     ) -> Result<IrExpr, String> {
+        if let Some(cell) = leaf.array.as_ref().filter(|_| record_cell_leaf(leaf)) {
+            return Ok(IrExpr::new(
+                IrExprKind::ArrayRead {
+                    arr: self.reference_array(cell.ir),
+                    indices: vec![lhs_integer_expr(0)],
+                    elem_sel: IrElemSel::Whole,
+                },
+                cell.elem_width,
+                cell.signed,
+                None,
+            ));
+        }
         let signal = leaf.signal.as_ref().ok_or_else(|| {
             format!(
                 "aggregate member `{}` is not a packed or real expression",

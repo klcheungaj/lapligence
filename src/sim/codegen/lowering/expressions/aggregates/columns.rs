@@ -11,17 +11,12 @@ use crate::sim::ir::{IrFixedValue, IrMemoryView};
 /// One stored column of a record value, in declaration order.
 #[derive(Clone)]
 pub(in crate::sim::codegen::lowering) enum RecordColumn {
-    /// Module storage leaf: packed, real, string or chandle.
-    Leaf(AggregateMemberInfo),
-    /// Fixed-array column, persistent or lexical.
+    /// Descriptor storage of a member array.
     Array(usize),
-    /// Lexical packed temporary.
-    Local {
-        name: String,
-        width: u32,
-        signed: bool,
-        two_state: bool,
-    },
+    /// One-cell descriptor storage of a scalar leaf.
+    Cell(usize),
+    /// Module storage of a real, string or chandle member.
+    Leaf(AggregateMemberInfo),
 }
 
 /// A record value as its columns, with paths relative to `descriptor`.
@@ -111,6 +106,7 @@ impl Codegen<'_> {
             .map(|leaf| {
                 let path = leaf.path[selection.prefix.len()..].to_vec();
                 let column = match &leaf.array {
+                    Some(array) if record_cell_leaf(leaf) => RecordColumn::Cell(array.ir),
                     Some(array) => RecordColumn::Array(array.ir),
                     None => RecordColumn::Leaf(leaf.clone()),
                 };
@@ -149,20 +145,9 @@ impl Codegen<'_> {
                     signed,
                     two_state,
                 } => {
-                    let name = self.new_fn_name(path, "record_leaf");
-                    out.push(IrStmt::DeclLocal {
-                        name: name.clone(),
-                        width,
-                        signed,
-                        init: None,
-                        two_state,
-                    });
-                    RecordColumn::Local {
-                        name,
-                        width,
-                        signed,
-                        two_state,
-                    }
+                    let ir = self.record_temporary_cell(path, width, signed, two_state);
+                    out.push(IrStmt::FixedArrayDeclare(ir));
+                    RecordColumn::Cell(ir)
                 }
                 ColumnShape::Array(array) => {
                     let ir = self.record_temporary_array(path, &array)?;
@@ -188,17 +173,19 @@ impl Codegen<'_> {
                     value
                 })
             }
-            RecordColumn::Local {
-                name,
-                width,
-                signed,
-                ..
-            } => Ok(IrExpr::new(
-                IrExprKind::LocalRead(name.clone()),
-                *width,
-                *signed,
-                None,
-            )),
+            RecordColumn::Cell(cell) => {
+                let array = self.reference_array(*cell);
+                Ok(IrExpr::new(
+                    IrExprKind::ArrayRead {
+                        arr: array,
+                        indices: vec![lhs_integer_expr(0)],
+                        elem_sel: IrElemSel::Whole,
+                    },
+                    self.model.arrays[array].elem_width,
+                    self.model.arrays[array].signed,
+                    None,
+                ))
+            }
             RecordColumn::Array(_) => Err("record array column is not a packed value".into()),
         }
     }
@@ -206,17 +193,10 @@ impl Codegen<'_> {
     fn record_column_lhs(&self, column: &RecordColumn) -> Result<IrLhs, String> {
         match column {
             RecordColumn::Leaf(leaf) => self.aggregate_leaf_lhs(leaf),
-            RecordColumn::Local {
-                name,
-                width,
-                signed,
-                two_state,
-            } => Ok(IrLhs::WholeRef {
-                addr: format!("&{name}"),
-                width: *width,
-                signed: *signed,
-                two_state: *two_state,
-                shortreal: false,
+            RecordColumn::Cell(cell) => self.reference_lhs(IrLhs::ArrayElem {
+                arr: self.reference_array(*cell),
+                indices: vec![lhs_integer_expr(0)],
+                elem_sel: IrElemSel::Whole,
             }),
             RecordColumn::Array(_) => Err("record array column is not a packed target".into()),
         }
@@ -274,7 +254,8 @@ impl Codegen<'_> {
         out: &mut Vec<IrStmt>,
     ) -> Result<(), String> {
         match (target, source) {
-            (RecordColumn::Array(target), RecordColumn::Array(source)) => {
+            (RecordColumn::Array(target), RecordColumn::Array(source))
+            | (RecordColumn::Cell(target), RecordColumn::Cell(source)) => {
                 if target != source {
                     out.push(IrStmt::FixedValueAssign {
                         dst: self.record_column_view(*target),
@@ -340,7 +321,8 @@ impl Codegen<'_> {
         let mut equality: Option<IrExpr> = None;
         for ((_, left), (_, right)) in left.columns.iter().zip(&right.columns) {
             let column = match (left, right) {
-                (RecordColumn::Array(left), RecordColumn::Array(right)) => IrExpr::new(
+                (RecordColumn::Array(left), RecordColumn::Array(right))
+                | (RecordColumn::Cell(left), RecordColumn::Cell(right)) => IrExpr::new(
                     IrExprKind::FixedValueCompare {
                         left: Box::new(IrFixedValue::Array(self.record_column_view(*left))),
                         right: Box::new(IrFixedValue::Array(self.record_column_view(*right))),
@@ -595,17 +577,31 @@ impl Codegen<'_> {
                 .ok_or_else(|| format!("record merge column is unresolved in `{path}`"))?;
             let two_state = member.two_state || leaf.two_state;
             match column {
+                RecordColumn::Cell(cell) => {
+                    let width = self.model.arrays[*cell].elem_width;
+                    let signed = self.model.arrays[*cell].signed;
+                    let value = Self::fixed_descriptor_uninitialized(&leaf)
+                        .unwrap_or_else(|| uniform_constant(width, signed, two_state));
+                    out.push(IrStmt::FixedArrayFill {
+                        array: self.reference_array(*cell),
+                        value: IrExpr::new(IrExprKind::Const(value), width, signed, None),
+                        nba,
+                    });
+                }
                 RecordColumn::Array(array) => {
                     let TypeShape::FixedArray { element, .. } = &leaf.shape else {
                         return Err(format!("record merge column is not an array in `{path}`"));
                     };
                     let width = Self::fixed_descriptor_width(element)
                         .ok_or("record merge element has no width")?;
-                    let value = Self::fixed_descriptor_uninitialized(element)
-                        .unwrap_or_else(|| uniform_constant(width, two_state || element.two_state));
+                    let signed = self.model.arrays[*array].signed;
+                    let value =
+                        Self::fixed_descriptor_uninitialized(element).unwrap_or_else(|| {
+                            uniform_constant(width, signed, two_state || element.two_state)
+                        });
                     out.push(IrStmt::FixedArrayFill {
                         array: self.reference_array(*array),
-                        value: IrExpr::new(IrExprKind::Const(value), width, false, None),
+                        value: IrExpr::new(IrExprKind::Const(value), width, signed, None),
                         nba,
                     });
                 }
@@ -614,7 +610,7 @@ impl Codegen<'_> {
                     let width = packed_lhs_width(&self.model, &lhs)
                         .ok_or("record merge leaf has no packed width")?;
                     let value = Self::fixed_descriptor_uninitialized(&leaf)
-                        .unwrap_or_else(|| uniform_constant(width, two_state));
+                        .unwrap_or_else(|| uniform_constant(width, false, two_state));
                     out.push(IrStmt::Assign {
                         rhs: IrExpr::new(IrExprKind::Const(value), width, false, None),
                         lhs,
@@ -962,7 +958,7 @@ impl Codegen<'_> {
     }
 }
 
-fn uniform_constant(width: u32, two_state: bool) -> IrConst {
+fn uniform_constant(width: u32, signed: bool, two_state: bool) -> IrConst {
     let words = width.div_ceil(64) as usize;
     let x = if two_state {
         Vec::new()
@@ -973,6 +969,6 @@ fn uniform_constant(width: u32, two_state: bool) -> IrConst {
         }
         x
     };
-    IrConst::packed(vec![0; words], x, Vec::new(), width, false, None)
+    IrConst::packed(vec![0; words], x, Vec::new(), width, signed, None)
         .expect("checked record member width")
 }

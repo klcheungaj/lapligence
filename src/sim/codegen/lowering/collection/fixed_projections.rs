@@ -446,8 +446,62 @@ impl Codegen<'_> {
         Ok(Some(projection))
     }
 
+    /// A scalar leaf of a column-layout record roots its own projection;
+    /// the record has no packed composite to select from.
+    fn record_leaf_projection(&mut self, node: NodeId) -> Result<Option<Projection>, String> {
+        if !self.record_columns
+            || !matches!(self.kind(node), NodeKind::Expr(ExprKind::HierPath { .. }))
+        {
+            return Ok(None);
+        }
+        let Some((root, member_path)) = self.unpacked_path_for_expr(node) else {
+            return Ok(None);
+        };
+        let Some(aggregate) = self
+            .unpacked_aggregates
+            .get(&root)
+            .filter(|info| info.columns)
+        else {
+            return Ok(None);
+        };
+        let Some(leaf) = aggregate
+            .leaves
+            .iter()
+            .filter(|leaf| {
+                (leaf.signal.as_ref().is_some_and(|signal| !signal.real)
+                    || super::record_columns::record_cell_leaf(leaf))
+                    && member_path.starts_with(&leaf.path)
+            })
+            .max_by_key(|leaf| leaf.path.len())
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let mut projection = Projection {
+            root: FixedRoot::Cell {
+                read: self.aggregate_leaf_read(&leaf)?,
+                target: self.aggregate_leaf_lhs(&leaf)?,
+            },
+            signed: leaf.member.descriptor.info.signed,
+            descriptor: leaf.member.descriptor.clone(),
+            steps: Vec::new(),
+            element_states: Vec::new(),
+            ref_legal: true,
+        };
+        for part in &member_path[leaf.path.len()..] {
+            let AggregatePathPart::Member(name) = part else {
+                return Ok(None);
+            };
+            Self::fixed_member(&mut projection, name)?;
+        }
+        Ok(Some(projection))
+    }
+
     fn fixed_projection(&mut self, path: &str, node: NodeId) -> Result<Option<Projection>, String> {
         if let Some(root) = self.native_leaf_projection(node)? {
+            return Ok(Some(root));
+        }
+        if let Some(root) = self.record_leaf_projection(node)? {
             return Ok(Some(root));
         }
         if let Some(root) = self.fixed_root(path, node)? {

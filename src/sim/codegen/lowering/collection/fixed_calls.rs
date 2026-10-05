@@ -101,6 +101,7 @@ impl Codegen<'_> {
         };
         self.model.arrays.push(crate::sim::ir::IrArray {
             activation: true,
+            descriptor: false,
             net: None,
             net_elements: Vec::new(),
             element_default: Self::fixed_descriptor_default(element),

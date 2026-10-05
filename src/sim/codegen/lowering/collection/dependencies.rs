@@ -41,6 +41,10 @@ impl<'a> Codegen<'a> {
             if !prefix.starts_with(&leaf.path) && !leaf.path.starts_with(&prefix) {
                 continue;
             }
+            if let Some(array) = &leaf.array {
+                dependencies.push(IrDependency::ArrayContents(self.reference_array(array.ir)));
+                continue;
+            }
             let Some(signal) = &leaf.signal else {
                 // A string member publishes its own change marker; other
                 // native members have none (see `walk_read_signals_bound`).
@@ -364,7 +368,7 @@ impl<'a> Codegen<'a> {
             }
         };
         if !indices.is_empty() {
-            if let Some(array) = self.array_of(base).filter(|array| !array.real) {
+            if let Some(array) = self.select_array_of(node, base).filter(|array| !array.real) {
                 let mut out = Vec::new();
                 self.add_fixed_array_dependency(array, &indices, &mut HashSet::new(), &mut out);
                 return out
@@ -1014,7 +1018,7 @@ impl<'a> Codegen<'a> {
                 }
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
-                if let Some(array) = self.array_of(*base) {
+                if let Some(array) = self.select_array_of(lhs, *base) {
                     self.add_process_array_write(array, indices, writes);
                 } else if let Some(container) = self.container_of(*base) {
                     writes.insert(IrDependency::ContainerContents(container.ir));
@@ -1337,7 +1341,7 @@ impl<'a> Codegen<'a> {
                 }
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
-                if let Some(array) = self.array_of(*base) {
+                if let Some(array) = self.select_array_of(node, *base) {
                     self.add_fixed_array_dependency(array, indices, seen, out);
                     for index in indices {
                         self.walk_read_signals_bound(

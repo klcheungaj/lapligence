@@ -225,6 +225,7 @@ fn rejects_array_total_that_disagrees_with_dimensions() {
     let mut model = valid_model();
     model.arrays.push(IrArray {
         activation: false,
+        descriptor: false,
         net: None,
         net_elements: Vec::new(),
         element_default: None,
@@ -250,6 +251,7 @@ fn rejects_array_storage_above_selected_cell_limit() {
     let mut model = valid_model();
     model.arrays.push(IrArray {
         activation: false,
+        descriptor: false,
         net: None,
         net_elements: Vec::new(),
         element_default: None,
@@ -1318,6 +1320,7 @@ fn descriptor_value_assignment_requires_matching_descriptor_shape() {
     let mut model = valid_model();
     let rows = |c_name: &str, dims: Vec<(i32, i32)>, total: u64| IrArray {
         activation: false,
+        descriptor: false,
         net: None,
         net_elements: Vec::new(),
         element_default: None,
@@ -1393,6 +1396,7 @@ fn descriptor_cast_requires_equal_size_lexical_shape() {
             .product();
         IrArray {
             activation,
+            descriptor: false,
             net: None,
             net_elements: Vec::new(),
             element_default: None,
@@ -1464,6 +1468,7 @@ fn rejects_invalid_index_default_with_wrong_width() {
     let mut model = valid_model();
     model.arrays.push(IrArray {
         activation: false,
+        descriptor: false,
         net: None,
         net_elements: Vec::new(),
         element_default: None,
@@ -1490,6 +1495,7 @@ fn rejects_invalid_index_default_with_wrong_width() {
 fn force_dependencies_must_name_persistent_fixed_arrays() {
     let array = |activation| IrArray {
         activation,
+        descriptor: false,
         net: None,
         net_elements: Vec::new(),
         element_default: None,

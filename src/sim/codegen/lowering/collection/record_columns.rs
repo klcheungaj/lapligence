@@ -44,6 +44,23 @@ fn large_member_array(descriptor: &TypeDescriptor) -> bool {
     }
 }
 
+/// Display label of a member path (`a`, `inner.a`).
+fn record_member_label(path: &[AggregatePathPart]) -> String {
+    path.iter()
+        .map(|part| match part {
+            AggregatePathPart::Member(name) => name.clone(),
+            AggregatePathPart::Index(index) => format!("[{index}]"),
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+/// Whether a column leaf is a one-cell scalar column rather than a member
+/// array.
+pub(in super::super) fn record_cell_leaf(leaf: &AggregateMemberInfo) -> bool {
+    leaf.array.is_some() && !matches!(leaf.member.descriptor.shape, TypeShape::FixedArray { .. })
+}
+
 /// Members along `path` from the record root, outermost first.
 fn path_members<'a>(
     root: &'a TypeDescriptor,
@@ -130,19 +147,11 @@ impl Codegen<'_> {
         let c_name = self.c_name("A", path, &[object_name, &suffix]);
         let mut hdl_name = self.waveform_name(object);
         hdl_name.push('\u{1f}');
-        hdl_name.push_str(
-            &member_path
-                .iter()
-                .map(|part| match part {
-                    AggregatePathPart::Member(name) => name.clone(),
-                    AggregatePathPart::Index(index) => format!("[{index}]"),
-                })
-                .collect::<Vec<_>>()
-                .join("."),
-        );
+        hdl_name.push_str(&record_member_label(member_path));
         let ir = self.model.arrays.len();
         self.model.arrays.push(crate::sim::ir::IrArray {
             activation: false,
+            descriptor: true,
             net: None,
             net_elements: Vec::new(),
             element_default: Self::fixed_descriptor_default(element),
@@ -177,41 +186,73 @@ impl Codegen<'_> {
         })
     }
 
-    /// Typed defaults of the scalar leaves of a column-layout record. The
-    /// whole record may exceed packed capacity, so each leaf takes its slice
-    /// of its immediate member's default (member initializers and two-state
-    /// domains included).
-    pub(super) fn record_column_leaf_defaults(
+    /// Allocate the one-cell column of a scalar record leaf. Every integral
+    /// leaf of a column-layout record is descriptor storage, so whole-record
+    /// copies, comparisons and subroutine transport are uniform per column.
+    pub(super) fn collect_record_cell(
         &mut self,
         path: &str,
-        node: NodeId,
-        leaves: &[AggregateMemberInfo],
-    ) -> Result<(), String> {
+        object: NodeId,
+        object_name: &str,
+        member: &AggregateMember,
+        descriptor: &TypeDescriptor,
+        member_path: &[AggregatePathPart],
+    ) -> Result<AggregateMemberInfo, String> {
+        let suffix = aggregate_path_suffix(member_path);
+        let width = fixed_width(descriptor).ok_or_else(|| {
+            format!("record member `{object_name}.{suffix}` in `{path}` has no packed width")
+        })?;
         let root = self
-            .query_descriptor(node)
+            .query_descriptor(object)
             .cloned()
             .ok_or("column-layout record has no type")?;
-        for leaf in leaves {
-            let Some(signal) = &leaf.signal else {
-                continue;
-            };
-            if signal.real {
-                continue;
-            }
-            let default = Self::record_leaf_default(&root, &leaf.path, false).ok_or_else(|| {
-                format!(
-                    "record member `{}` in `{path}` has no fixed default",
-                    aggregate_path_suffix(&leaf.path)
-                )
-            })?;
-            self.model.signals[signal.ir].fixed_default = Some(fixed_constant_slice(
-                &default,
-                0,
-                signal.width,
-                signal.signed,
-            ));
-        }
-        Ok(())
+        let default = Self::record_leaf_default(&root, member_path, false).ok_or_else(|| {
+            format!("record member `{object_name}.{suffix}` in `{path}` has no fixed default")
+        })?;
+        let chain = path_members(&root, member_path)
+            .ok_or_else(|| format!("record member path `{suffix}` in `{path}` is unresolved"))?;
+        let two_state = descriptor.two_state || chain.iter().any(|member| member.two_state);
+        let c_name = self.c_name("A", path, &[object_name, &suffix]);
+        let mut hdl_name = self.waveform_name(object);
+        hdl_name.push('\u{1f}');
+        hdl_name.push_str(&record_member_label(member_path));
+        let ir = self.model.arrays.len();
+        self.model.arrays.push(crate::sim::ir::IrArray {
+            activation: false,
+            descriptor: true,
+            net: None,
+            net_elements: Vec::new(),
+            element_default: Some(default),
+            element_uninitialized: Self::fixed_descriptor_uninitialized(descriptor)
+                .filter(|_| matches!(descriptor.shape, TypeShape::Aggregate(_))),
+            c_name: c_name.clone(),
+            hdl_name,
+            elem_width: width,
+            signed: descriptor.info.signed,
+            two_state,
+            real: false,
+            shortreal: false,
+            dims: vec![(0, 0)],
+            total: 1,
+        });
+        self.record_columns = true;
+        Ok(AggregateMemberInfo {
+            member: leaf_member(member, descriptor),
+            signal: None,
+            object: None,
+            array: Some(ArrayInfo {
+                global: c_name,
+                elem_width: width,
+                signed: descriptor.info.signed,
+                real: false,
+                shortreal: false,
+                is_net: false,
+                dims: vec![(0, 0)],
+                init: None,
+                ir,
+            }),
+            path: member_path.to_vec(),
+        })
     }
 
     /// Default of the leaf at `path`, evaluated on the outermost member that
@@ -267,6 +308,7 @@ impl Codegen<'_> {
         let c_name = self.new_fn_name(path, "record_column");
         self.model.arrays.push(crate::sim::ir::IrArray {
             activation: true,
+            descriptor: false,
             net: None,
             net_elements: Vec::new(),
             element_default: Self::fixed_descriptor_default(element),
@@ -284,6 +326,48 @@ impl Codegen<'_> {
         Ok(ir)
     }
 
+    /// The array an element select addresses: a record column for
+    /// `r.a[i]`, otherwise the storage of its base.
+    pub(in super::super) fn select_array_of(
+        &self,
+        select: NodeId,
+        base: NodeId,
+    ) -> Option<&ArrayInfo> {
+        self.record_column_select(select)
+            .map(|(column, _)| column)
+            .or_else(|| self.array_of(base))
+    }
+
+    /// Lexical one-cell column for a scalar leaf of a temporary record.
+    pub(in super::super) fn record_temporary_cell(
+        &mut self,
+        path: &str,
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    ) -> usize {
+        let ir = self.model.arrays.len();
+        let c_name = self.new_fn_name(path, "record_cell");
+        self.model.arrays.push(crate::sim::ir::IrArray {
+            activation: true,
+            descriptor: false,
+            net: None,
+            net_elements: Vec::new(),
+            element_default: None,
+            element_uninitialized: None,
+            c_name,
+            hdl_name: String::new(),
+            elem_width: width,
+            signed,
+            two_state,
+            real: false,
+            shortreal: false,
+            dims: vec![(0, 0)],
+            total: 1,
+        });
+        ir
+    }
+
     /// Whether values of this type use column layout.
     pub(in super::super) fn column_layout_descriptor(descriptor: &TypeDescriptor) -> bool {
         record_column_layout(descriptor)
@@ -299,7 +383,7 @@ impl Codegen<'_> {
             .get(&root)?
             .leaves
             .iter()
-            .find(|leaf| leaf.path == path)?
+            .find(|leaf| leaf.path == path && !record_cell_leaf(leaf))?
             .array
             .as_ref()
     }
