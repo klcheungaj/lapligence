@@ -689,9 +689,12 @@ impl Codegen<'_> {
     fn record_locals(&self, node: NodeId, out: &mut Vec<(NodeId, bool)>) {
         match self.kind(node) {
             NodeKind::Var { .. } => {
-                if self
-                    .query_descriptor(node)
-                    .is_some_and(record_column_layout)
+                // Detached member declarations reached through selects have
+                // no parent scope and are not locals.
+                if self.node(node).parent.is_some()
+                    && self
+                        .query_descriptor(node)
+                        .is_some_and(record_column_layout)
                 {
                     let automatic = self.db.variable_lifetime(node) == VariableLifetime::Automatic;
                     out.push((node, automatic));

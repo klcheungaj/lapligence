@@ -224,7 +224,36 @@ impl EmitCtx<'_, '_> {
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
         let mut before = Vec::new();
         let mut after = Vec::new();
+        // Columns after the first of column-layout record formals follow the
+        // declared formals of each direction (see `record_formal_columns`).
+        let mut record_out_args = Vec::new();
+        let mut record_in_args = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if self.cg.record_declaration(*io) {
+                let address = *is_out
+                    || matches!(
+                        self.cg.kind(*io),
+                        NodeKind::FuncArg {
+                            direction: DbDirection::Ref,
+                            ..
+                        }
+                    );
+                let mut columns = self
+                    .cg
+                    .record_call_columns(&self.path, *io, bound[idx].expr)?
+                    .into_iter();
+                let first = columns
+                    .next()
+                    .ok_or("column-layout record formal has no columns")?;
+                if address {
+                    out_args.push(first);
+                    record_out_args.extend(columns);
+                } else {
+                    in_args.push((idx, first));
+                    record_in_args.extend(columns);
+                }
+                continue;
+            }
             if self.cg.is_native_declaration(*io) {
                 let argument = self.cg.native_call_argument(
                     &self.path,
@@ -528,7 +557,9 @@ impl EmitCtx<'_, '_> {
             out_args.push(IrCallArg::RealArray(temporary));
         }
         in_args.sort_by_key(|(idx, _)| *idx);
+        out_args.extend(record_out_args);
         out_args.extend(in_args.into_iter().map(|(_, argument)| argument));
+        out_args.extend(record_in_args);
         let depth = parse_depth(&self.depth_arg);
         let call = IrStmt::Call(Box::new(IrCall {
             f: fidx,
