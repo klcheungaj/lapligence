@@ -476,7 +476,7 @@ impl Codegen<'_> {
                         RecordColumn::Leaf(leaf) => {
                             leaf.signal.as_ref().is_some_and(|signal| !signal.real)
                         }
-                        RecordColumn::Array(_) => false,
+                        RecordColumn::Array(_) | RecordColumn::Native(..) => false,
                     }
                     // A tagged union's tag cell is not a member value.
                     && !self.record_union_tag_path(&value, path)

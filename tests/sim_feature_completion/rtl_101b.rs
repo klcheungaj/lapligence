@@ -54,4 +54,22 @@ fn neg_column_record_follow_up_limits() {
         "neg_nonuniform_member_initializer",
         "member initializer of `a` gives the column's cells different values; column layout keeps one element default",
     );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_native_ref_formal",
+        "ref formal `v` of a column-layout record with real, string or chandle members is not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_native_output_in_expression",
+        "output record argument for `o` in `tb` with real, string or chandle members must be a subroutine record of the same type unless the call is a statement",
+    );
+}
+
+#[test]
+fn column_records_with_native_members_cross_subroutines() {
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_101b/native_members.out");
+    sim_cli::run_case(SUITE, "native_members", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "native_members", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "native_members", expected);
 }

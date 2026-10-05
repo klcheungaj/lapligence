@@ -813,7 +813,7 @@ impl<'a> Codegen<'a> {
     /// leaf equalities; `!=`/case-`!=` invert that result after all leaves have
     /// participated, preserving unknown propagation for packed values.
     pub(super) fn lower_unpacked_aggregate_comparison(
-        &self,
+        &mut self,
         path: &str,
         op: Operation,
         operands: &[NodeId],

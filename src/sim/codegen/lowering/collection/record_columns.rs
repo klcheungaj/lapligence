@@ -24,6 +24,9 @@ pub(in crate::sim::codegen) enum RecordColumn {
     Cell(usize),
     /// Module storage of a real, string or chandle member.
     Leaf(Box<AggregateMemberInfo>),
+    /// A real, string or chandle member of a subroutine record value: one
+    /// item of the value's SIM-003 native value, which holds all of them.
+    Native(usize, Box<NativeLeaf>),
 }
 
 /// A record value as its columns, with paths relative to `descriptor`.
@@ -224,6 +227,8 @@ enum ColumnShape {
         two_state: bool,
     },
     Array(TypeDescriptor),
+    /// A real, string or chandle leaf, kept in the record's native value.
+    Native(IrContainerElement),
 }
 
 /// Column shapes of a record type in the declaration order used by module
@@ -295,8 +300,22 @@ fn column_shapes(
             ));
             Ok(())
         }
+        TypeShape::Real { .. } | TypeShape::String => {
+            out.push((
+                prefix.to_vec(),
+                ColumnShape::Native(lower_container_element(descriptor)?),
+            ));
+            Ok(())
+        }
+        TypeShape::Opaque { kind } if kind == "Chandle" => {
+            out.push((
+                prefix.to_vec(),
+                ColumnShape::Native(IrContainerElement::Chandle),
+            ));
+            Ok(())
+        }
         _ => Err(format!(
-            "record member `{}` is not integral; a temporary column-layout record value supports integral members only",
+            "record member `{}` is not an integral, real, string or chandle value; a column-layout record value in a subroutine cannot hold it",
             aggregate_path_suffix(prefix)
         )),
     }
@@ -717,9 +736,21 @@ impl Codegen<'_> {
     ) -> Result<RecordValue, String> {
         let mut shapes = Vec::new();
         column_shapes(descriptor, &[], descriptor.two_state, &mut shapes)?;
+        let native = self.record_native_value(path, descriptor, &shapes, activation)?;
+        let mut native_items = 0u32;
         let mut columns = Vec::with_capacity(shapes.len());
         for (member_path, shape) in shapes {
             let column = match shape {
+                ColumnShape::Native(element) => {
+                    let value = native.ok_or("record native leaves have no value")?;
+                    let leaf = NativeLeaf {
+                        path: member_path.clone(),
+                        items: vec![native_items],
+                        ty: super::native_values::leaf_ty(&element)?,
+                    };
+                    native_items += 1;
+                    RecordColumn::Native(value, Box::new(leaf))
+                }
                 ColumnShape::Packed {
                     width,
                     signed,
@@ -757,18 +788,133 @@ impl Codegen<'_> {
         })
     }
 
+    /// The SIM-003 native value holding every real, string and chandle leaf
+    /// of a record value of type `descriptor`, in declaration order. The
+    /// value's type is a structure of those leaves only; its nominal
+    /// identity is the record type's, which no other native value has,
+    /// because a column-layout record is never itself a native value.
+    fn record_native_value(
+        &mut self,
+        path: &str,
+        descriptor: &TypeDescriptor,
+        shapes: &[(Vec<AggregatePathPart>, ColumnShape)],
+        activation: bool,
+    ) -> Result<Option<usize>, String> {
+        let members = shapes
+            .iter()
+            .filter_map(|(member_path, shape)| match shape {
+                ColumnShape::Native(element) => Some(IrContainerMember {
+                    name: record_member_label(member_path),
+                    element: Box::new(element.clone()),
+                }),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if members.is_empty() {
+            return Ok(None);
+        }
+        let element = IrContainerElement::Aggregate {
+            type_id: descriptor.id.0,
+            members,
+        };
+        crate::sim::ir::validate_native_type(&element, path)
+            .map_err(|error| format!("record native leaves in `{path}`: {error:?}"))?;
+        let ty = match self
+            .model
+            .native_types
+            .iter()
+            .position(|existing| *existing == element)
+        {
+            Some(ty) => ty,
+            None => {
+                self.model.native_types.push(element);
+                self.model.native_types.len() - 1
+            }
+        };
+        let index = self.model.native_values.len();
+        self.model
+            .native_values
+            .push(crate::sim::ir::IrNativeValue {
+                c_name: format!("S_llg_native_{index}"),
+                ty,
+                activation,
+            });
+        Ok(Some(index))
+    }
+
     /// Declarations of the lexical columns of `value`.
-    pub(in super::super) fn declare_record_columns(value: &RecordValue) -> Vec<IrStmt> {
-        value
+    pub(in super::super) fn declare_record_columns(&self, value: &RecordValue) -> Vec<IrStmt> {
+        let mut statements = Vec::new();
+        let mut natives = Vec::new();
+        for (_, column) in &value.columns {
+            match column {
+                RecordColumn::Array(array) | RecordColumn::Cell(array) => {
+                    statements.push(IrStmt::FixedArrayDeclare(*array));
+                }
+                RecordColumn::Native(native, _)
+                    if self.model.native_values[*native].activation
+                        && !natives.contains(native) =>
+                {
+                    natives.push(*native);
+                    statements.push(IrStmt::NativeValueDeclare(*native));
+                }
+                RecordColumn::Native(..) | RecordColumn::Leaf(_) => {}
+            }
+        }
+        statements
+    }
+
+    /// The native value that holds exactly the real, string and chandle
+    /// leaves of `value`, when they all belong to one.
+    pub(in super::super) fn record_native_group(&self, value: &RecordValue) -> Option<usize> {
+        let mut group = None;
+        let mut count = 0usize;
+        for (_, column) in &value.columns {
+            match column {
+                RecordColumn::Native(native, _) => {
+                    if group.is_some_and(|group| group != *native) {
+                        return None;
+                    }
+                    group = Some(*native);
+                    count += 1;
+                }
+                RecordColumn::Leaf(_) => return None,
+                RecordColumn::Array(_) | RecordColumn::Cell(_) => {}
+            }
+        }
+        let group = group?;
+        let IrContainerElement::Aggregate { members, .. } =
+            &self.model.native_types[self.model.native_values[group].ty]
+        else {
+            return None;
+        };
+        (members.len() == count).then_some(group)
+    }
+
+    /// The native leaf of a subroutine record value that `node` names.
+    pub(in super::super) fn record_native_leaf(&self, node: NodeId) -> Option<(usize, NativeLeaf)> {
+        if !self.record_columns {
+            return None;
+        }
+        let (root, path) = self.activation_record_path(node)?;
+        self.activation_records
+            .get(&root)?
             .columns
             .iter()
-            .filter_map(|(_, column)| match column {
-                RecordColumn::Array(array) | RecordColumn::Cell(array) => {
-                    Some(IrStmt::FixedArrayDeclare(*array))
+            .find_map(|(column_path, column)| match column {
+                RecordColumn::Native(value, leaf) if *column_path == path => {
+                    Some((*value, (**leaf).clone()))
                 }
-                RecordColumn::Leaf(_) => None,
+                _ => None,
             })
-            .collect()
+    }
+
+    /// The native value of a column-layout record formal or result that
+    /// holds its real, string and chandle members, if it has any.
+    pub(in super::super) fn record_formal_native(&self, node: NodeId) -> Option<usize> {
+        self.activation_records
+            .get(&node)
+            .and_then(|value| self.record_native_group(value))
     }
 
     /// Whether values of this type use column layout.
@@ -1021,7 +1167,7 @@ impl Codegen<'_> {
                     .iter()
                     .filter_map(|(_, column)| match column {
                         RecordColumn::Array(array) | RecordColumn::Cell(array) => Some(*array),
-                        RecordColumn::Leaf(_) => None,
+                        RecordColumn::Leaf(_) | RecordColumn::Native(..) => None,
                     })
                     .collect()
             })

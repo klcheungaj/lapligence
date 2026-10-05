@@ -241,7 +241,12 @@ impl EmitCtx<'_, '_> {
                     );
                 let mut columns = self
                     .cg
-                    .record_call_columns(&self.path, *io, bound[idx].expr)?
+                    .record_call_columns(
+                        &self.path,
+                        *io,
+                        bound[idx].expr,
+                        Some((&mut before, &mut after)),
+                    )?
                     .into_iter();
                 let first = columns
                     .next()
@@ -563,11 +568,14 @@ impl EmitCtx<'_, '_> {
                 }
             }
         }
+        // Formals beyond the declared ones and the extra record columns are
+        // a trailing result.
+        let declared = formals.len() + record_out_args.len() + record_in_args.len();
         if let Some(result) = self.cg.model.funcs[fidx]
             .formals
             .last()
             .and_then(|formal| formal.native_value)
-            .filter(|_| self.cg.model.funcs[fidx].formals.len() > formals.len())
+            .filter(|_| self.cg.model.funcs[fidx].formals.len() > declared)
         {
             // A native result discarded by a statement call still needs
             // caller-owned result storage.
@@ -579,7 +587,7 @@ impl EmitCtx<'_, '_> {
             .formals
             .last()
             .and_then(|formal| formal.real_array)
-            .filter(|_| self.cg.model.funcs[fidx].formals.len() > formals.len())
+            .filter(|_| self.cg.model.funcs[fidx].formals.len() > declared)
         {
             // A real-array result discarded by a statement call still needs
             // caller-owned result cells.

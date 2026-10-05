@@ -156,9 +156,15 @@ impl<'a> Codegen<'a> {
                             ..
                         }
                     );
-                let mut columns = self
-                    .record_call_columns(scope_path, *io, bound[idx].expr)?
-                    .into_iter();
+                let mut prelude = self.native_call_prelude.take();
+                let columns = self.record_call_columns(
+                    scope_path,
+                    *io,
+                    bound[idx].expr,
+                    prelude.as_mut().map(|(before, after)| (before, after)),
+                );
+                self.native_call_prelude = prelude;
+                let mut columns = columns?.into_iter();
                 let first = columns
                     .next()
                     .ok_or("column-layout record formal has no columns")?;

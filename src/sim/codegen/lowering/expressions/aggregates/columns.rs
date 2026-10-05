@@ -5,6 +5,7 @@
 //! member arrays through descriptor views. Sources that are not storage
 //! (patterns, conditionals, calls) are first built into a lexical temporary
 //! record, so every source is evaluated once before any destination write.
+use super::super::super::collection::native_values::NativeEndpointLeaf;
 use super::super::super::collection::{column_tagged_union, RecordColumn, RecordValue};
 use super::*;
 use crate::sim::ir::{IrFixedValue, IrMemoryView};
@@ -86,8 +87,20 @@ impl Codegen<'_> {
         out: &mut Vec<IrStmt>,
     ) -> Result<RecordValue, String> {
         let value = self.allocate_record_columns(path, descriptor, true)?;
-        out.extend(Self::declare_record_columns(&value));
+        out.extend(self.declare_record_columns(&value));
         Ok(value)
+    }
+
+    /// The scalar leaf transfer endpoint of a real, string or chandle
+    /// column.
+    fn record_leaf_endpoint(column: &RecordColumn) -> Option<NativeEndpointLeaf> {
+        match column {
+            RecordColumn::Native(value, leaf) => {
+                Some(NativeEndpointLeaf::Value(*value, (**leaf).clone()))
+            }
+            RecordColumn::Leaf(leaf) => Some(NativeEndpointLeaf::Module(leaf.clone())),
+            RecordColumn::Array(_) | RecordColumn::Cell(_) => None,
+        }
     }
 
     pub(in crate::sim::codegen::lowering) fn record_column_read(
@@ -117,6 +130,9 @@ impl Codegen<'_> {
                 ))
             }
             RecordColumn::Array(_) => Err("record array column is not a packed value".into()),
+            RecordColumn::Native(..) => {
+                Err("record native member is read through its native value".into())
+            }
         }
     }
 
@@ -132,6 +148,9 @@ impl Codegen<'_> {
                 elem_sel: IrElemSel::Whole,
             }),
             RecordColumn::Array(_) => Err("record array column is not a packed target".into()),
+            RecordColumn::Native(..) => {
+                Err("record native member is written through its native value".into())
+            }
         }
     }
 
@@ -175,7 +194,27 @@ impl Codegen<'_> {
         out: &mut Vec<IrStmt>,
     ) -> Result<(), String> {
         self.record_shapes_match(path, dst, src)?;
+        // Whole native values of one type copy at once (SIM-003).
+        let natives = match (self.record_native_group(dst), self.record_native_group(src)) {
+            (Some(target), Some(source))
+                if !nba
+                    && self.model.native_values[target].ty
+                        == self.model.native_values[source].ty =>
+            {
+                if target != source {
+                    out.push(IrStmt::NativeValueCopy {
+                        dst: target,
+                        src: source,
+                    });
+                }
+                true
+            }
+            _ => false,
+        };
         for ((_, target), (_, source)) in dst.columns.iter().zip(&src.columns) {
+            if natives && matches!(target, RecordColumn::Native(..)) {
+                continue;
+            }
             self.record_column_copy(path, target, source, nba, out)?;
         }
         Ok(())
@@ -231,6 +270,17 @@ impl Codegen<'_> {
                     "record copy pairs an array member with a scalar member in `{path}`"
                 ));
             }
+            (RecordColumn::Native(..), _) | (_, RecordColumn::Native(..)) => {
+                let (Some(target), Some(source)) = (
+                    Self::record_leaf_endpoint(target),
+                    Self::record_leaf_endpoint(source),
+                ) else {
+                    return Err(format!(
+                        "record copy pairs a native member with a packed member in `{path}`"
+                    ));
+                };
+                out.push(self.native_leaf_copy(path, &target, &source, nba)?);
+            }
             _ => {
                 let lhs = self.record_column_lhs(target)?;
                 let value = self.record_column_read(source)?;
@@ -247,7 +297,7 @@ impl Codegen<'_> {
     /// One-bit equality of two record values (SV 11.4.5): every column must
     /// compare equal; a known mismatch decides 0 regardless of X columns.
     pub(in crate::sim::codegen::lowering) fn record_equality(
-        &self,
+        &mut self,
         path: &str,
         left: &RecordValue,
         right: &RecordValue,
@@ -269,12 +319,18 @@ impl Codegen<'_> {
                     false,
                     None,
                 ),
-                (RecordColumn::Leaf(leaf), _) | (_, RecordColumn::Leaf(leaf))
-                    if leaf.object.is_some() =>
-                {
-                    return Err(format!(
-                        "equality of column-layout records with string or chandle members is not supported in `{path}`"
-                    ));
+                (RecordColumn::Native(..), _)
+                | (_, RecordColumn::Native(..))
+                | (RecordColumn::Leaf(_), RecordColumn::Leaf(_)) => {
+                    let (Some(left), Some(right)) = (
+                        Self::record_leaf_endpoint(left),
+                        Self::record_leaf_endpoint(right),
+                    ) else {
+                        return Err(format!(
+                            "record equality pairs a native member with a packed member in `{path}`"
+                        ));
+                    };
+                    self.native_leaf_equality(path, &left, &right, case)?
                 }
                 _ => {
                     let (left, right) = (
@@ -691,17 +747,10 @@ impl Codegen<'_> {
                         nba,
                     });
                 }
-                _ => {
-                    let lhs = self.record_column_lhs(column)?;
-                    let width = packed_lhs_width(&self.model, &lhs)
-                        .ok_or("record merge leaf has no packed width")?;
-                    let value = Self::fixed_descriptor_uninitialized(&leaf)
-                        .unwrap_or_else(|| uniform_constant(width, false, two_state));
-                    out.push(IrStmt::Assign {
-                        rhs: IrExpr::new(IrExprKind::Const(value), width, false, None),
-                        lhs,
-                        nba,
-                    });
+                RecordColumn::Native(..) | RecordColumn::Leaf(_) => {
+                    let target = Self::record_leaf_endpoint(column)
+                        .ok_or("record native member has no endpoint")?;
+                    out.push(self.native_leaf_reset(path, &target, nba)?);
                 }
             }
         }
@@ -766,6 +815,10 @@ impl Codegen<'_> {
                     let Some((_, column)) = target.columns.first() else {
                         return Err(format!("record pattern member has no column in `{path}`"));
                     };
+                    if let Some(leaf) = Self::record_leaf_endpoint(column) {
+                        out.push(self.native_leaf_assign(path, &leaf, value, false)?);
+                        continue;
+                    }
                     let lhs = self.record_column_lhs(column)?;
                     let value = if let Some((name, width, signed)) = captured.get(&value) {
                         IrExpr::new(IrExprKind::LocalRead(name.clone()), *width, *signed, None)
@@ -1174,11 +1227,17 @@ impl Codegen<'_> {
             return Ok(None);
         }
         let mut out = Vec::new();
+        let native = self.record_formal_native(function);
         let direct = !nba
             && dst
                 .columns
                 .iter()
-                .all(|(_, column)| !matches!(column, RecordColumn::Leaf(_)));
+                .all(|(_, column)| !matches!(column, RecordColumn::Leaf(_)))
+            && native.is_none_or(|native| {
+                self.record_native_group(dst).is_some_and(|group| {
+                    self.model.native_values[group].ty == self.model.native_values[native].ty
+                })
+            });
         let result = if direct {
             dst.clone()
         } else {
@@ -1201,16 +1260,22 @@ impl Codegen<'_> {
             .iter()
             .filter(|formal| formal.is_address())
             .count();
-        let results = result
+        let mut results = result
             .columns
             .iter()
             .filter_map(|(_, column)| match column {
                 RecordColumn::Array(array) | RecordColumn::Cell(array) => {
                     Some(IrCallArg::FixedArray(self.reference_array(*array)))
                 }
-                RecordColumn::Leaf(_) => None,
+                RecordColumn::Leaf(_) | RecordColumn::Native(..) => None,
             })
             .collect::<Vec<_>>();
+        if native.is_some() {
+            let group = self
+                .record_native_group(&result)
+                .ok_or("record result has no native value")?;
+            results.push(IrCallArg::NativeValue(group));
+        }
         let first = outputs
             .checked_sub(results.len())
             .ok_or("record result has more columns than outputs")?;
@@ -1230,12 +1295,19 @@ impl Codegen<'_> {
         Ok(Some(out))
     }
 
-    /// One descriptor operand per column of a record actual.
+    /// One descriptor operand per column of a record actual, then one
+    /// native operand for its real, string and chandle members. Those
+    /// members pass as the actual's own native value when it is a whole
+    /// subroutine record of the same type; otherwise an input is built leaf
+    /// by leaf at the call, and an output or inout goes through a caller
+    /// temporary that `prelude` declares (and fills for an inout) before the
+    /// call and copies back after it.
     pub(in crate::sim::codegen::lowering) fn record_call_columns(
         &mut self,
         path: &str,
         formal: NodeId,
         actual: NodeId,
+        prelude: Option<(&mut Vec<IrStmt>, &mut Vec<IrStmt>)>,
     ) -> Result<Vec<IrCallArg>, String> {
         let shape = self
             .activation_records
@@ -1250,20 +1322,91 @@ impl Codegen<'_> {
             )
         })?;
         self.record_shapes_match(path, &shape, &value)?;
-        value
+        let mut arguments = value
             .columns
             .iter()
-            .map(|(_, column)| match column {
+            .filter_map(|(_, column)| match column {
                 RecordColumn::Array(array) | RecordColumn::Cell(array) => {
-                    Ok(IrCallArg::FixedValue(Box::new(IrFixedValue::Array(
+                    Some(IrCallArg::FixedValue(Box::new(IrFixedValue::Array(
                         self.record_column_view(*array),
                     ))))
                 }
-                RecordColumn::Leaf(_) => Err(format!(
-                    "column-layout record argument in `{path}` has a real, string or chandle member"
-                )),
+                RecordColumn::Leaf(_) | RecordColumn::Native(..) => None,
             })
-            .collect()
+            .collect::<Vec<_>>();
+        let Some(native) = self.record_formal_native(formal) else {
+            return Ok(arguments);
+        };
+        let ty = self.model.native_values[native].ty;
+        if let Some(group) = self
+            .record_native_group(&value)
+            .filter(|group| self.model.native_values[*group].ty == ty)
+        {
+            arguments.push(IrCallArg::NativeValue(group));
+            return Ok(arguments);
+        }
+        let pairs = shape
+            .columns
+            .iter()
+            .zip(&value.columns)
+            .filter_map(|((_, formal), (_, actual))| match formal {
+                RecordColumn::Native(_, leaf) => Some(
+                    Self::record_leaf_endpoint(actual)
+                        .map(|actual| ((**leaf).clone(), actual))
+                        .ok_or("record native member pairs with a packed member"),
+                ),
+                _ => None,
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let output = matches!(
+            self.kind(formal),
+            NodeKind::FuncArg {
+                direction: DbDirection::Output | DbDirection::Inout,
+                ..
+            }
+        );
+        if !output {
+            let mut leaves = Vec::with_capacity(pairs.len());
+            for (leaf, actual) in &pairs {
+                leaves.push(crate::sim::ir::IrNativeLeafValue {
+                    items: leaf.items.clone(),
+                    value: self.native_leaf_value(actual)?,
+                });
+            }
+            arguments.push(IrCallArg::NativeLeaves { ty, leaves });
+            return Ok(arguments);
+        }
+        let Some((before, after)) = prelude else {
+            return Err(format!(
+                "output record argument for `{}` in `{path}` with real, string or chandle members must be a subroutine record of the same type unless the call is a statement",
+                self.node(formal).name
+            ));
+        };
+        let temporary = self.model.native_values.len();
+        self.model
+            .native_values
+            .push(crate::sim::ir::IrNativeValue {
+                c_name: format!("S_llg_native_{temporary}"),
+                ty,
+                activation: true,
+            });
+        before.push(IrStmt::NativeValueDeclare(temporary));
+        let inout = matches!(
+            self.kind(formal),
+            NodeKind::FuncArg {
+                direction: DbDirection::Inout,
+                ..
+            }
+        );
+        for (leaf, actual) in pairs {
+            let staged = NativeEndpointLeaf::Value(temporary, leaf);
+            if inout {
+                before.push(self.native_leaf_copy(path, &staged, &actual, false)?);
+            }
+            after.push(self.native_leaf_copy(path, &actual, &staged, false)?);
+        }
+        arguments.push(IrCallArg::NativeValue(temporary));
+        Ok(arguments)
     }
 
     /// Declare an automatic column-layout record local and run its
@@ -1298,7 +1441,7 @@ impl Codegen<'_> {
             }
             return Ok(Vec::new());
         }
-        let mut statements = Self::declare_record_columns(&value);
+        let mut statements = self.declare_record_columns(&value);
         if let Some(initializer) = initializer {
             self.lower_record_value_into(path, &value, initializer, false, &mut statements)?;
         }
