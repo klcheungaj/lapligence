@@ -307,6 +307,22 @@ impl FrameLayout {
         Ok(changed)
     }
 
+    /// Drop the emission-only name and access indexes once the body is
+    /// final. Later stages (frame-type grouping, body sharing and metadata)
+    /// read only the block tree, fields and call slots, and every rendered
+    /// coroutine keeps its layout until model assembly.
+    pub(super) fn release_emission_state(&mut self) {
+        self.names = BTreeSet::new();
+        self.accesses = BTreeMap::new();
+        self.blocks.shrink_to_fit();
+        for block in &mut self.blocks {
+            block.fields.shrink_to_fit();
+            block.calls.shrink_to_fit();
+            block.children.shrink_to_fit();
+        }
+        self.calls.shrink_to_fit();
+    }
+
     /// Conservative LP64 size used for D19. Every embedded call is counted as
     /// anchored, independently of the mechanism selected by the first pass.
     /// Sibling C blocks contribute their maximum rather than their sum.

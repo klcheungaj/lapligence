@@ -60,9 +60,11 @@ pub(super) fn collect(
                 format!("{index}:{}", batch.rows.len()),
             ));
         }
-        artifact.source = rewrite_identifiers(&artifact.source, |identifier| {
-            helpers.get(identifier).cloned()
-        });
+        if !helpers.is_empty() {
+            artifact.source = rewrite_identifiers(&artifact.source, |identifier| {
+                helpers.get(identifier).cloned()
+            });
+        }
     }
     Ok(tables)
 }

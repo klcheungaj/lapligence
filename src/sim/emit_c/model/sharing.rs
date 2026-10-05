@@ -1,6 +1,8 @@
 //! Exact sharing of owned emitted bodies; unrepresented operands stay in the key.
 use super::*;
 use crate::sim::ir::*;
+use std::collections::HashSet;
+use std::rc::Rc;
 
 pub(super) const DEFAULT_SHARE_MIN_INSTANCES: usize = 4;
 const SELF: &str = "llg_body_self";
@@ -20,30 +22,82 @@ pub(super) fn threshold() -> Result<usize, String> {
     }
 }
 
-#[derive(Clone)]
-struct Operand {
+/// Declaration, layout shape and record access of an operand. One value is
+/// shared by every occurrence of a registry entry or scalar type.
+struct OperandKind {
     declaration: String,
     shape: String,
-    value: String,
-    access: String,
+    access: &'static str,
+}
+
+/// One normalized body operand. Every sharing candidate keeps its operands
+/// until its group is resolved, so an operand is two reference-counted
+/// pointers rather than four owned strings per occurrence.
+#[derive(Clone)]
+struct Operand {
+    kind: Rc<OperandKind>,
+    value: Rc<str>,
 }
 
 impl Operand {
-    fn pointer(ty: &str, shape: String, name: &str) -> Self {
+    fn new(declaration: String, shape: String, value: String, access: &'static str) -> Self {
         Self {
-            declaration: format!("{ty}* @"),
-            shape,
-            value: format!("&{name}"),
-            access: "(*I->@)".to_owned(),
+            kind: Rc::new(OperandKind {
+                declaration,
+                shape,
+                access,
+            }),
+            value: value.into(),
         }
     }
+    fn pointer(ty: &str, shape: String, name: &str) -> Self {
+        Self::new(format!("{ty}* @"), shape, format!("&{name}"), "(*I->@)")
+    }
+    #[cfg(test)]
     fn scalar(ty: &str, value: String) -> Self {
-        Self {
-            declaration: format!("{ty} @"),
-            shape: ty.to_owned(),
-            value,
-            access: "I->@".to_owned(),
-        }
+        Self::new(format!("{ty} @"), ty.to_owned(), value, "I->@")
+    }
+    fn declaration(&self) -> &str {
+        &self.kind.declaration
+    }
+    fn shape(&self) -> &str {
+        &self.kind.shape
+    }
+    fn access(&self) -> &'static str {
+        self.kind.access
+    }
+}
+
+/// Scalar operand kinds and literal values interned across one sharing pass:
+/// the same literals recur in every instance of a generated body.
+#[derive(Default)]
+struct ScalarOperands {
+    kinds: HashMap<&'static str, Rc<OperandKind>>,
+    values: HashSet<Rc<str>>,
+}
+
+impl ScalarOperands {
+    fn operand(&mut self, ty: &'static str, value: &str) -> Operand {
+        let kind = self
+            .kinds
+            .entry(ty)
+            .or_insert_with(|| {
+                Rc::new(OperandKind {
+                    declaration: format!("{ty} @"),
+                    shape: ty.to_owned(),
+                    access: "I->@",
+                })
+            })
+            .clone();
+        let value = match self.values.get(value) {
+            Some(value) => value.clone(),
+            None => {
+                let value = Rc::<str>::from(value);
+                self.values.insert(value.clone());
+                value
+            }
+        };
+        Operand { kind, value }
     }
 }
 
@@ -94,12 +148,12 @@ fn registry(
             let name = format!("{}__cells", group.c_name);
             registry.insert(
                 name.clone(),
-                Operand {
-                    declaration: format!("sv4_t (*@)[{}]", group.n_drivers),
-                    shape: format!("{}:{}:{}", group.width, group.signed, group.n_drivers),
-                    value: format!("&{name}"),
-                    access: "(*I->@)".to_owned(),
-                },
+                Operand::new(
+                    format!("sv4_t (*@)[{}]", group.n_drivers),
+                    format!("{}:{}:{}", group.width, group.signed, group.n_drivers),
+                    format!("&{name}"),
+                    "(*I->@)",
+                ),
             );
         }
     }
@@ -137,16 +191,16 @@ fn registry(
         );
         registry.insert(
             array.c_name.clone(),
-            Operand {
-                declaration: if array.sparse() {
+            Operand::new(
+                if array.sparse() {
                     "llg_fixed_array_t *@".to_owned()
                 } else {
                     format!("{ty} (*@)[{}]", array.total)
                 },
                 shape,
-                value: format!("&{}", array.c_name),
-                access: "(*I->@)".to_owned(),
-            },
+                format!("&{}", array.c_name),
+                "(*I->@)",
+            ),
         );
         let name = format!("{}_llg_contents_dep", array.c_name);
         registry.insert(
@@ -220,12 +274,12 @@ fn registry(
         };
         registry.insert(
             function.c_name.clone(),
-            Operand {
-                declaration: format!("{ret} (*@)({params})"),
-                shape: format!("{:?}:{:?}", function.ret, function.formals),
-                value: function.c_name.clone(),
-                access: "I->@".to_owned(),
-            },
+            Operand::new(
+                format!("{ret} (*@)({params})"),
+                format!("{:?}:{:?}", function.ret, function.formals),
+                function.c_name.clone(),
+                "I->@",
+            ),
         );
     }
     for artifact in functions.values().chain(branches.values()) {
@@ -241,13 +295,12 @@ fn registry(
         if !registry.contains_key(name) {
             registry.insert(
                 name.to_owned(),
-                Operand {
-                    declaration: "llg_co_status_t (*@)(llg_co_frame_t*, llg_co_chain_t*)"
-                        .to_owned(),
-                    shape: artifact.frame_type.clone(),
-                    value: name.to_owned(),
-                    access: "I->@".to_owned(),
-                },
+                Operand::new(
+                    "llg_co_status_t (*@)(llg_co_frame_t*, llg_co_chain_t*)".to_owned(),
+                    artifact.frame_type.clone(),
+                    name.to_owned(),
+                    "I->@",
+                ),
             );
         }
     }
@@ -286,6 +339,7 @@ fn normalize(
     generated: bool,
     registry: &HashMap<String, Operand>,
     constants: &HashMap<String, Operand>,
+    scalars: &mut ScalarOperands,
 ) -> Option<Normalized> {
     if source
         .lines()
@@ -330,10 +384,7 @@ fn normalize(
         } else if matches!(bytes[index], b'"' | b'\'') {
             index = quoted_end(bytes, index);
             if bytes[start] == b'"' {
-                operand = Some(Operand::scalar(
-                    "const char*",
-                    source[start..index].to_owned(),
-                ));
+                operand = Some(scalars.operand("const char*", &source[start..index]));
             }
         } else if bytes[index].is_ascii_alphabetic() || bytes[index] == b'_' {
             index = word_end(bytes, index);
@@ -382,7 +433,7 @@ fn normalize(
                     _ => false,
                 });
             if identity {
-                operand = Some(Operand::scalar(
+                operand = Some(scalars.operand(
                     if value.ends_with("ULL") {
                         "uint64_t"
                     } else if value.ends_with('u') {
@@ -390,10 +441,10 @@ fn normalize(
                     } else {
                         "int"
                     },
-                    value.to_owned(),
+                    value,
                 ));
             } else if generated && value.ends_with("ULL") {
-                operand = Some(Operand::scalar("uint64_t", value.to_owned()));
+                operand = Some(scalars.operand("uint64_t", value));
             }
         } else {
             index += 1;
@@ -456,11 +507,12 @@ fn push_candidate(
         .normalized
         .operands
         .iter()
-        .map(|operand| format!("{}:{}", operand.declaration, operand.shape))
+        .map(|operand| format!("{}:{}", operand.declaration(), operand.shape()))
         .collect::<Vec<_>>()
         .join(";");
     candidate.key.push(':');
     candidate.key.push_str(&shapes);
+    candidate.normalized.operands.shrink_to_fit();
     let key = std::mem::take(&mut candidate.key);
     let next = groups.len();
     let group = *by_key.entry(key).or_insert_with(|| {
@@ -504,12 +556,12 @@ pub(super) fn share(
     for (name, ty, shape) in additional.pca_tables {
         registry.insert(
             name.clone(),
-            Operand {
-                declaration: format!("const {ty}* @"),
-                shape: shape.clone(),
-                value: name.clone(),
-                access: "I->@".to_owned(),
-            },
+            Operand::new(
+                format!("const {ty}* @"),
+                shape.clone(),
+                name.clone(),
+                "I->@",
+            ),
         );
     }
     let frame_names = functions
@@ -529,6 +581,7 @@ pub(super) fn share(
         .into_iter()
         .map(|(name, _)| name)
         .collect::<BTreeSet<_>>();
+    let mut scalars = ScalarOperands::default();
     let mut groups = Vec::<Vec<Candidate>>::new();
     let mut by_key = HashMap::new();
     for artifact in functions
@@ -542,18 +595,17 @@ pub(super) fn share(
             continue;
         }
         let generated = artifact.display_name.contains('[');
-        if let Some(normalized) =
-            normalize(&artifact.source, name, generated, &registry, &constants)
-        {
+        if let Some(normalized) = normalize(
+            &artifact.source,
+            name,
+            generated,
+            &registry,
+            &constants,
+            &mut scalars,
+        ) {
             let shape = artifact.layout.render_typedef("llg_key_frame")?;
             let shape = rewrite_identifiers(&shape, |name| frame_names.get(name).cloned());
-            let pca = if let CoroutineId::Process(index) = artifact.owner {
-                execution.processes()[index].blocks.iter().any(|block| block.operations.iter().any(|statement| matches!(statement,
-                    IrStmt::If { then_, .. } if then_.iter().any(|statement| matches!(statement, IrStmt::PcaDrive { .. })))))
-            } else {
-                false
-            };
-            let provenance = if pca {
+            let provenance = if artifact.pca_driver {
                 "owned PCA driver"
             } else {
                 &artifact.location
@@ -581,8 +633,14 @@ pub(super) fn share(
         if function.dpi.is_some() {
             continue;
         }
-        if let Some(normalized) = normalize(source, &function.c_name, false, &registry, &constants)
-        {
+        if let Some(normalized) = normalize(
+            source,
+            &function.c_name,
+            false,
+            &registry,
+            &constants,
+            &mut scalars,
+        ) {
             let key = format!(
                 "plain:{:?}:{:?}:{:?}:{}",
                 function.origin, function.formals, function.ret, normalized.source
@@ -622,14 +680,14 @@ pub(super) fn share(
                 .iter()
                 .all(|candidate| candidate.normalized.operands[slot].value == operand.value)
             {
-                let expression = if operand.access.starts_with("(*") {
+                let expression = if operand.access().starts_with("(*") {
                     operand
                         .value
                         .strip_prefix('&')
                         .unwrap_or(&operand.value)
                         .to_owned()
                 } else {
-                    operand.value.clone()
+                    operand.value.to_string()
                 };
                 replacements.insert(format!("v{slot}"), expression);
             } else {
@@ -643,19 +701,18 @@ pub(super) fn share(
                 .parse::<usize>()
                 .ok()?;
             let field = format!("v{slot}");
-            Some(
-                replacements
-                    .get(&field)
-                    .cloned()
-                    .unwrap_or_else(|| first.normalized.operands[slot].access.replace('@', &field)),
-            )
+            Some(replacements.get(&field).cloned().unwrap_or_else(|| {
+                first.normalized.operands[slot]
+                    .access()
+                    .replace('@', &field)
+            }))
         });
         result.declarations.push_str("typedef struct {\n");
         for &slot in &varying {
             result.declarations.push_str(&format!(
                 "    {};\n",
                 first.normalized.operands[slot]
-                    .declaration
+                    .declaration()
                     .replace('@', &format!("v{slot}"))
             ));
         }
@@ -722,7 +779,7 @@ pub(super) fn share(
             let record = format!("llg_body_instance_{}_{}", sequence - 1, member);
             let values = varying
                 .iter()
-                .map(|slot| candidate.normalized.operands[*slot].value.as_str())
+                .map(|slot| &*candidate.normalized.operands[*slot].value)
                 .collect::<Vec<_>>();
             result.declarations.push_str(&format!(
                 "static const {record_type} {record} = {{ {} }};\n",
@@ -743,12 +800,12 @@ pub(super) fn share(
                 let call = format!("{body_name}({params}, &{record})");
                 plain.insert(
                     index,
-                    format!(
+                    retained(format!(
                         "static {ret} {}({}) {{\n    {}{call};\n}}\n",
                         candidate.name,
                         owned_func_params(function),
                         if ret == "void" { "" } else { "return " }
-                    ),
+                    )),
                 );
             } else {
                 let artifact = match candidate.owner {
@@ -759,7 +816,8 @@ pub(super) fn share(
                 if let Some(frame) = &shared_frame {
                     artifact.frame_type = frame.clone();
                     artifact.shared_entry = Some(body_name.clone());
-                    artifact.source.clear();
+                    // Release the body: the shared entry replaces it.
+                    artifact.source = String::new();
                     result.spawns.insert(
                         candidate.name.clone(),
                         (
@@ -768,7 +826,7 @@ pub(super) fn share(
                         ),
                     );
                 } else {
-                    artifact.source = format!("static llg_co_status_t {}(llg_co_frame_t* co, llg_co_chain_t* ch) {{\n    return {body_name}(co, ch, &{record});\n}}\n", candidate.name);
+                    artifact.source = retained(format!("static llg_co_status_t {}(llg_co_frame_t* co, llg_co_chain_t* ch) {{\n    return {body_name}(co, ch, &{record});\n}}\n", candidate.name));
                 }
             }
         }
@@ -797,6 +855,7 @@ mod tests {
         })
         .collect();
         let registry = HashMap::new();
+        let mut scalars = ScalarOperands::default();
         let mut groups = Vec::new();
         let mut by_key = HashMap::new();
         for (index, second) in [
@@ -810,9 +869,11 @@ mod tests {
         {
             let name = format!("p_{index}");
             let source = format!("static void {name}(void) {{ sv4_add(constant_a, {second}); }}");
-            let ordinary = normalize(&source, &name, false, &registry, &constants).unwrap();
+            let ordinary =
+                normalize(&source, &name, false, &registry, &constants, &mut scalars).unwrap();
             assert!(ordinary.operands.is_empty());
-            let normalized = normalize(&source, &name, true, &registry, &constants).unwrap();
+            let normalized =
+                normalize(&source, &name, true, &registry, &constants, &mut scalars).unwrap();
             assert_eq!(normalized.operands.len(), 2);
             let key = normalized.source.clone();
             push_candidate(
@@ -835,10 +896,10 @@ mod tests {
             .iter()
             .flatten()
             .all(|candidate| candidate.key.is_empty()));
-        assert_eq!(groups[0][0].normalized.operands[1].value, "&constant_a");
-        assert_eq!(groups[0][1].normalized.operands[1].value, "&constant_b");
-        assert_eq!(groups[1][0].normalized.operands[1].shape, "65:true");
-        assert_eq!(groups[2][0].normalized.operands[1].shape, "128:false");
+        assert_eq!(&*groups[0][0].normalized.operands[1].value, "&constant_a");
+        assert_eq!(&*groups[0][1].normalized.operands[1].value, "&constant_b");
+        assert_eq!(groups[1][0].normalized.operands[1].shape(), "65:true");
+        assert_eq!(groups[2][0].normalized.operands[1].shape(), "128:false");
     }
 
     #[test]
@@ -874,8 +935,51 @@ mod tests {
             assert!(groups[0].iter().all(|candidate| candidate.key.is_empty()));
             for (index, candidate) in groups[0].iter().enumerate() {
                 assert_eq!(candidate.owner, CoroutineId::Process(index));
-                assert_eq!(candidate.normalized.operands[0].value, index.to_string());
+                assert_eq!(&*candidate.normalized.operands[0].value, index.to_string());
             }
         }
+    }
+
+    #[test]
+    fn scalar_operands_share_kinds_and_literal_values() {
+        let registry = HashMap::new();
+        let constants = HashMap::new();
+        let mut scalars = ScalarOperands::default();
+        let normalized = ["p_0", "p_1"].map(|name| {
+            let source =
+                format!("static void {name}(void) {{ f(7ULL, \"text\"); g(7ULL, 9ULL); }}");
+            normalize(&source, name, true, &registry, &constants, &mut scalars).unwrap()
+        });
+        let [first, second] = &normalized;
+        assert_eq!(first.source, second.source);
+        let values = |normalized: &Normalized| {
+            normalized
+                .operands
+                .iter()
+                .map(|operand| (operand.declaration().to_owned(), operand.value.to_string()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            values(first),
+            [
+                ("uint64_t @", "7ULL"),
+                ("const char* @", "\"text\""),
+                ("uint64_t @", "7ULL"),
+                ("uint64_t @", "9ULL"),
+            ]
+            .map(|(declaration, value)| (declaration.to_owned(), value.to_owned()))
+        );
+        assert_eq!(values(first), values(second));
+        for (left, right) in first.operands.iter().zip(&second.operands) {
+            assert!(Rc::ptr_eq(&left.kind, &right.kind));
+            assert!(Rc::ptr_eq(&left.value, &right.value));
+        }
+        assert!(Rc::ptr_eq(
+            &first.operands[0].value,
+            &first.operands[2].value
+        ));
+        assert!(Rc::ptr_eq(&first.operands[0].kind, &first.operands[3].kind));
+        assert_eq!(first.operands[1].shape(), "const char*");
+        assert_eq!(first.operands[1].access(), "I->@");
     }
 }
