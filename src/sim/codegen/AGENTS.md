@@ -426,11 +426,20 @@ storage order. Never drop a `with` range: model arrays use `FixedStream`/
 `FixedSelector`, other fixed arrays (ref formals, locals, members, rows, call
 results) use their whole image (`FixedImageStream`/`FixedImageSelector`), and
 constant in-bounds target ranges unpack into element parts. A runtime or
-out-of-bounds target range needs a direct streaming assignment (not copy-out or
-intra-assignment delay). Each blocking `>>` selector may observe earlier unpacked
-fields, unlike frozen positional targets; nonblocking and `<<` forms reject a
-selector that reads an earlier target of the same unpack. Oversized descriptor
-streams accept only constant in-bounds ranges, as sliced views. Wider fixed
+out-of-bounds target range needs the checked `StreamAssign` (`stream_mixed_targets`):
+a direct streaming assignment, or a statement call's output copy-out
+(`lower_call_writeback`, selectors frozen at the call); expression calls and
+intra-assignment delays reject. Image elements mixing two-state and four-state
+members carry their two-state runs: constant parts become one lvalue per run,
+runtime selections convert the selected segment. Each blocking `>>` selector may
+observe earlier unpacked fields, unlike frozen positional targets; nonblocking,
+`<<` and copy-out forms reject a selector that reads an earlier target of the
+same unpack. Oversized descriptor stream operands are views (constant in-bounds
+`with` ranges as sliced views), `Selected` runtime `with` selections of
+descriptor arrays, `Dense` views of dense arrays, `Packed` values (records,
+`with` selections of dense/image arrays) or nested streams (`>>` spliced);
+dense rows also enter descriptor patterns as `Dense` items and receive scatter
+rows by a copy loop (`dense_row_scatter`). Wider fixed
 destinations left-align and zero-fill; oversize fixed sources diagnose, while
 longer unpack sources consume leftmost bits. Composite call/ref layouts use the
 same recursive descriptors.

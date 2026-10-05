@@ -219,6 +219,62 @@ impl Validator<'_> {
                 }
                 Ok(width)
             }
+            IrFixedValue::Dense(view) => {
+                self.validate_memory_view(view, formals, path)?;
+                let array = &self.model.arrays[view.array];
+                if array.sparse() || array.real || array.is_net() || array.elem_width == 0 {
+                    return self.fail(path, "dense fixed operand requires dense integral storage");
+                }
+                view.total
+                    .checked_mul(u64::from(array.elem_width))
+                    .ok_or_else(|| IrValidationError::new(path, "fixed operand width overflow"))
+            }
+            IrFixedValue::Packed {
+                value,
+                cell_width,
+                runtime_sized,
+            } => {
+                self.validate_expr(value, formals, path)?;
+                if value.is_real()
+                    || *cell_width == 0
+                    || (!*runtime_sized && !value.width.is_multiple_of(*cell_width))
+                {
+                    return self.fail(path, "packed fixed operand requires whole packed cells");
+                }
+                // A runtime-sized width is checked when the stream is built.
+                Ok(if *runtime_sized {
+                    0
+                } else {
+                    u64::from(value.width)
+                })
+            }
+            IrFixedValue::Selected { array, selector } => {
+                self.validate_fixed_activation(*array, path)?;
+                let valid = self.model.arrays.get(*array).is_some_and(|array| {
+                    array.sparse() && array.dims.len() == 1 && array.elem_width != 0
+                });
+                if !valid {
+                    return self.fail(
+                        path,
+                        "selected fixed operand requires one-dimensional descriptor storage",
+                    );
+                }
+                validate_stream_selector(selector)
+                    .map_err(|error| IrValidationError::new(path, error.detail()))?;
+                match selector {
+                    IrStreamSelector::Index(index) => self.validate_expr(index, formals, path)?,
+                    IrStreamSelector::Range { left, right } => {
+                        self.validate_expr(left, formals, path)?;
+                        self.validate_expr(right, formals, path)?;
+                    }
+                    IrStreamSelector::Indexed { base, width, .. } => {
+                        self.validate_expr(base, formals, path)?;
+                        self.validate_expr(width, formals, path)?;
+                    }
+                }
+                // The selected extent is runtime-valued; the stream checks it.
+                Ok(0)
+            }
         }
     }
 }

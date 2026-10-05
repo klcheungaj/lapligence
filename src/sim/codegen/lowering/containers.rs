@@ -22,6 +22,7 @@ mod queries;
 mod real_array_values;
 mod selects;
 mod streaming;
+pub(super) use streaming::{StreamTargetMode, StreamTargetPlan};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum PatternAssignmentKind {

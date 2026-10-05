@@ -1,5 +1,6 @@
 //! Calls.
 
+use super::super::collection::CallWriteback;
 use super::*;
 
 impl EmitCtx<'_, '_> {
@@ -393,7 +394,7 @@ impl EmitCtx<'_, '_> {
                     ..
                 }
             );
-            let (lh, actual_read, selector_inits) = self.cg.lower_call_actual(
+            let (writeback, actual_read, selector_inits) = self.cg.lower_call_writeback(
                 &self.path,
                 bound[idx].expr,
                 &format!("{}_{}", h.0, idx),
@@ -426,15 +427,45 @@ impl EmitCtx<'_, '_> {
                     storage.signed,
                     None,
                 );
-                after.push(IrStmt::Assign {
-                    rhs: apply_lhs_assignment_context(&self.cg.model, &lh, read.clone()),
-                    lhs: lh,
-                    nba: false,
-                });
+                after.push(writeback.store(&self.cg.model, read.clone()));
                 arg_irs[idx] = Some(read);
                 out_args.push(IrCallArg::OutAddr(format!("&{}", storage.global)));
                 continue;
             }
+            let lh = match writeback {
+                CallWriteback::Lhs(lhs) => lhs,
+                stream @ CallWriteback::Stream(_) => {
+                    // The call temporary keeps the formal's typed default; its
+                    // copy-out lands in a caller local that the checked unpack
+                    // then consumes after the call.
+                    let local = format!("_sco{}_{}", h.0, idx);
+                    let (width, signed) = (bound[idx].width, bound[idx].signed);
+                    if bound[idx].real {
+                        return Err(format!(
+                            "real output formal cannot copy out to a streaming concatenation in `{}`",
+                            self.path
+                        ));
+                    }
+                    before.push(IrStmt::DeclLocal {
+                        name: local.clone(),
+                        width,
+                        signed,
+                        two_state: bound[idx].two_state,
+                        init: None,
+                    });
+                    after.push(stream.store(
+                        &self.cg.model,
+                        IrExpr::new(IrExprKind::LocalRead(local.clone()), width, signed, None),
+                    ));
+                    IrLhs::WholeRef {
+                        addr: format!("&{local}"),
+                        width,
+                        signed,
+                        two_state: bound[idx].two_state,
+                        shortreal: false,
+                    }
+                }
+            };
             let tname = format!("_a{}_{}", h.0, idx);
             let init_ir = self
                 .cg
@@ -972,7 +1003,7 @@ impl EmitCtx<'_, '_> {
                         nba: false,
                     });
                 } else {
-                    let (actual_lhs, actual_read, selector_inits) = self.cg.lower_call_actual(
+                    let (writeback, actual_read, selector_inits) = self.cg.lower_call_writeback(
                         &self.path,
                         b.expr,
                         &format!("{}_{}", h.0, idx),
@@ -1001,15 +1032,7 @@ impl EmitCtx<'_, '_> {
                             nba: false,
                         });
                     }
-                    after.push(IrStmt::Assign {
-                        rhs: apply_lhs_assignment_context(
-                            &self.cg.model,
-                            &actual_lhs,
-                            storage_read,
-                        ),
-                        lhs: actual_lhs,
-                        nba: false,
-                    });
+                    after.push(writeback.store(&self.cg.model, storage_read));
                 }
             } else if *is_out {
                 let is_inout = matches!(
@@ -1019,7 +1042,7 @@ impl EmitCtx<'_, '_> {
                         ..
                     }
                 );
-                let (actual_lhs, actual_read, selector_inits) = self.cg.lower_call_actual(
+                let (writeback, actual_read, selector_inits) = self.cg.lower_call_writeback(
                     &self.path,
                     b.expr,
                     &format!("{}_{}", h.0, idx),
@@ -1061,11 +1084,7 @@ impl EmitCtx<'_, '_> {
                 if is_inout {
                     arg_dependencies.insert(*io, self.cg.collect_read_signals(&self.path, b.expr)?);
                 }
-                after.push(IrStmt::Assign {
-                    rhs: apply_lhs_assignment_context(&self.cg.model, &actual_lhs, read_ir.clone()),
-                    lhs: actual_lhs,
-                    nba: false,
-                });
+                after.push(writeback.store(&self.cg.model, read_ir.clone()));
                 arg_read.insert(
                     *io,
                     ArgMap {

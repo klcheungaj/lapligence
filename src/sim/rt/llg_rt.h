@@ -126,6 +126,19 @@ sv4_t llg_fixed_array_compare(const llg_fixed_array_t*, const llg_fixed_array_t*
 /* Pack a runtime `with` selection of a one-dimensional descriptor array in
  * stream order; indices outside the bounds stream `fallback` (borrowed). */
 sv4_t llg_fixed_array_stream_source(const llg_fixed_array_t*, int64_t, int64_t, uint32_t, sv4_t, int, sv4_t, sv4_t);
+/* Descriptor stream operands (SV 11.4.14). Each initializes a zeroed
+ * scratch array and returns 0, leaving it zeroed, when the operand has no
+ * bits. packed_source splits a borrowed packed value into `cell_width`-bit
+ * cells, left cell first. with_source presents a runtime `with` selection of
+ * a one-dimensional descriptor array in storage order; indices outside the
+ * bounds read the borrowed `fallback`, and no owner cell is materialized.
+ * stream_value lazily images a nested stream of `count` sources. */
+int llg_fixed_array_packed_source(llg_fixed_array_t*, sv4_t, uint32_t);
+int llg_fixed_array_with_source(llg_fixed_array_t*, const llg_fixed_array_t*, int64_t, int64_t, sv4_t, int, sv4_t, sv4_t);
+int llg_fixed_array_stream_value(llg_fixed_array_t*, const llg_fixed_array_t* const*, size_t, uint32_t);
+/* Copy `total` dense cells from `origin` into a zeroed scratch array; an
+ * invalid view (`origin` UINT64_MAX) reads the borrowed `fallback`. */
+void llg_fixed_array_dense_source(llg_fixed_array_t*, const sv4_t*, uint64_t, uint64_t, sv4_t);
 
 // Keep the library and every model translation unit on the host-allocation
 // declaration contract. CMake supplies the same definition when compiling

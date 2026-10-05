@@ -2381,12 +2381,12 @@ struct EmitCtx<'c, 'a> {
 struct FixedImageShape {
     bounds: (i32, i32),
     element_width: u32,
-    /// Element state domain; meaningful when `uniform`.
+    /// Element state domain; meaningful when `two_state_runs` is empty.
     two_state: bool,
-    /// The element has one state domain, so a packed element write applies
-    /// the right conversion. Unpacked aggregate elements with mixed domains
-    /// are not uniform.
-    uniform: bool,
+    /// `(lsb, width)` of each two-state run of an unpacked aggregate element
+    /// whose members mix state domains. Empty when the element has one
+    /// domain, so a packed element write applies the right conversion.
+    two_state_runs: Vec<(u32, u32)>,
     /// Element default-uninitialized value for out-of-bounds source indices.
     fallback: IrConst,
 }
