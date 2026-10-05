@@ -13,8 +13,9 @@ after Db destruction.
 - `copyout_with`: an output formal copies out into a runtime `with` range of a
   model array (both directions, a descending array), an automatic local and a
   mixed-state record array, from automatic, static, expanded (event formal),
-  timed and void-function calls. The range is fixed when the call starts, so a
-  callee that changes the selector does not move the target.
+  timed and void-function calls, and a disabled call that copies nothing. The
+  range is fixed when the call starts, so a callee that changes the selector
+  does not move the target.
 - `copyout_bounds` (results on stderr): a range partly outside the target
   writes the in-range elements and reports; an unknown selector writes nothing.
 - `mixed_state` (results on stderr): `with` targets whose elements mix `bit` and

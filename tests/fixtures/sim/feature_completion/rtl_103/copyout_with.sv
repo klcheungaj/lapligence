@@ -1,7 +1,8 @@
 // IEEE 1800-2009 11.4.14.3, 11.4.14.4, 13.5: an output formal copies out
 // into a streaming concatenation whose `with` range is runtime-valued. The
 // formal's value is unpacked into the selected elements in storage order,
-// consuming the leftmost bits; the range is selected when the call starts.
+// consuming the leftmost bits; the range is selected when the call starts,
+// and a disabled call copies nothing out.
 module tb;
   timeunit 1ns;
   timeprecision 1ns;
@@ -63,6 +64,11 @@ module tb;
     n = 3;
     tget({>>{arr with [n +: 2]}});
     $display("timed %0t %h %h", $time, arr[3], arr[4]);
+    fork
+      tget({>>{arr with [n +: 2]}});
+      #1 disable tget;
+    join
+    $display("disabled %h %h", arr[3], arr[4]);
     fget({>>{arr with [n -: 2]}});
     $display("function %h %h", arr[2], arr[3]);
     n = 1;
