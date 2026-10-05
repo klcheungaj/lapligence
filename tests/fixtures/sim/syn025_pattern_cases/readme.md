@@ -21,7 +21,7 @@ payload under `casez` and exact `case`. All outcomes follow the §12.5.1
 wildcard table applied to §12.6.1 pattern cases.
 `ordinary_controls.sv` also supplies the 2001 edition rejection, since
 `matches` was introduced after IEEE 1364-2001. `bad_binding_scope.sv`
-rejects use of an item binding after `endcase`; `bad_dynamic_pattern.sv`
-rejects an unrepresented dynamic
-whole-value binding at signal admission. The Rust suite runs each source in
+rejects use of an item binding after `endcase`; `string_pattern.sv`
+binds a whole string selector (SIM-007): the filtered first item fails on
+`"hello" == "bye"`, the second binds `hello` (length 5) and sets the result. The Rust suite runs each source in
 both optimizer modes.

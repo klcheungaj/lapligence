@@ -171,6 +171,16 @@ impl<'a> Codegen<'a> {
         Ok(name)
     }
 
+    /// The process string local of a string pattern variable; a pattern
+    /// variable is visible only inside its statement, so one local serves
+    /// whatever its declared lifetime.
+    pub(in super::super) fn pattern_string_local(&mut self, node: NodeId) -> String {
+        self.proc_string_locals
+            .entry(node)
+            .or_insert_with(|| format!("_lv{}", node.index()))
+            .clone()
+    }
+
     pub(in super::super) fn proc_string_local_name(&self, node: NodeId) -> Option<&str> {
         self.proc_string_locals.get(&node).map(String::as_str)
     }
@@ -587,6 +597,16 @@ impl<'a> Codegen<'a> {
         &self,
         reference: NodeId,
     ) -> Option<(NodeId, &str)> {
+        // Pattern variables are declared by their pattern rather than by an
+        // enclosing block, so a resolved reference names its storage directly.
+        if let NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) = self.kind(reference)
+        {
+            if let Some(c_name) = self.proc_string_local_name(*target) {
+                return Some((*target, c_name));
+            }
+        }
         let name = self.node(reference).name.as_str();
         let mut parent = self.node(reference).parent;
         while let Some(scope) = parent {

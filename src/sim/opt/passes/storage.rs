@@ -1043,6 +1043,12 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                     collect_lhs_rw(binding, model, rw);
                 }
             }
+            for binding in &pattern.native_bindings {
+                binding.expressions(&mut |child| collect_expr_reads(child, model, rw));
+                if let crate::sim::ir::IrNativeBinding::Value { lhs, .. } = binding {
+                    collect_lhs_rw(lhs, model, rw);
+                }
+            }
         }
         IrExprKind::Stream { value, .. } => collect_expr_reads(value, model, rw),
         IrExprKind::FixedStream { selector, .. } => {

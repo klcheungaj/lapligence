@@ -1953,16 +1953,29 @@ impl<'a> Codegen<'a> {
         let pattern_decls = self
             .conditional_pattern_targets(stmt)
             .into_iter()
-            .filter_map(|target| match self.collect_loop_var(path, target) {
-                Ok(info) if info.static_signal.is_none() => Some(Ok(IrStmt::DeclLocal {
-                    name: info.c_name,
-                    width: info.width,
-                    signed: info.signed,
-                    two_state: info.two_state,
-                    init: None,
-                })),
-                Ok(_) => None,
-                Err(error) => Some(Err(error)),
+            .filter_map(|target| {
+                // String pattern variables are process-owned string locals
+                // written when their pattern matches (SIM-007).
+                if matches!(self.kind(target), NodeKind::Var { ty } if ty.kind == "string") {
+                    return Some(Ok(IrStmt::DeclString {
+                        name: self.pattern_string_local(target),
+                        init: None,
+                    }));
+                }
+                Some(target)
+                    .map(|target| self.collect_loop_var(path, target))
+                    .and_then(|result| match result {
+                        Ok(info) if info.static_signal.is_none() => Some(Ok(IrStmt::DeclLocal {
+                            name: info.c_name,
+                            width: info.width,
+                            signed: info.signed,
+                            two_state: info.two_state,
+                            // A real pattern variable (width 0) starts at 0.0.
+                            init: (info.width == 0).then(|| Box::new(real_literal_expr(0.0))),
+                        })),
+                        Ok(_) => None,
+                        Err(error) => Some(Err(error)),
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
         let (body_stmts, mut pre_fns, shape) = {

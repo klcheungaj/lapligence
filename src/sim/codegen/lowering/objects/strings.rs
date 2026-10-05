@@ -8,9 +8,27 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrStringExpr, String> {
+        if let Some(value) = self.native_tagged_string(path, node)? {
+            return Ok(value);
+        }
+        if let Some(select) = self.native_member_select(path, node)? {
+            if let crate::sim::ir::IrNativeLeafExpr::String(value) =
+                self.native_member_select_read(path, &select)?
+            {
+                return Ok(value);
+            }
+        }
         if self.element_leaf_kind(node) == Some(IrClassFieldType::String) {
             if let Some((name, _)) = self.element_leaf_symbol(path, node, false)? {
                 return Ok(IrStringExpr::LocalRead(name));
+            }
+        }
+        if let NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) = self.kind(node)
+        {
+            if let Some(name) = self.proc_string_local_name(*target) {
+                return Ok(IrStringExpr::LocalRead(name.to_owned()));
             }
         }
         if let Some(target) = self.class_field_string_lvalue(path, node)? {

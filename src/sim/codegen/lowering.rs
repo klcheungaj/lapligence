@@ -1237,6 +1237,9 @@ struct Codegen<'a> {
     container_call_prelude: Option<Vec<IrStmt>>,
     /// Temporary container → container whose declaration types it.
     container_types_like: HashMap<usize, usize>,
+    /// Member reads of native tagged unions being lowered without their tag
+    /// check, so the checked wrapper can reuse the ordinary leaf lowering.
+    native_tagged_bypass: HashSet<NodeId>,
     /// Native value → declaration whose layout describes it.
     native_value_layouts: HashMap<usize, NodeId>,
     /// Native declarations of the subroutine instance being lowered.
@@ -1571,6 +1574,7 @@ impl<'a> Codegen<'a> {
             container_result_call: false,
             container_call_prelude: None,
             container_types_like: HashMap::new(),
+            native_tagged_bypass: HashSet::new(),
             native_value_layouts: HashMap::new(),
             native_roots: HashMap::new(),
             native_leaf_symbols: HashMap::new(),

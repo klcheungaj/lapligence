@@ -119,7 +119,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    pub(super) fn lower_container_index(
+    pub(in crate::sim::codegen) fn lower_container_index(
         &mut self,
         path: &str,
         node: NodeId,

@@ -51,6 +51,69 @@ impl EmitCtx<'_, '_> {
         op: Operation,
         force_blocking: bool,
     ) -> Result<IrStmt, String> {
+        // Tagged unions with string, real or handle members (SIM-007): a
+        // tagged construction sets the tag and one member; a member write
+        // happens only while that member is active.
+        if let Some(root) = self.cg.native_tagged_root(lhs) {
+            if let Some(statement) = self
+                .cg
+                .lower_native_tagged_construct(&self.path, root, rhs, !blocking)?
+            {
+                if op != Operation::Assignment {
+                    return Err(format!(
+                        "compound assignment of a tagged union in `{}` is illegal",
+                        self.path
+                    ));
+                }
+                return Ok(statement);
+            }
+            if !blocking {
+                return Err(format!(
+                    "nonblocking assignment to a tagged union with string, real or handle members in `{}` is not supported",
+                    self.path
+                ));
+            }
+            if self.cg.native_tagged_root(rhs).is_none() {
+                return Err(format!(
+                    "a tagged union with string, real or handle members in `{}` can only be assigned a tagged expression or another such union variable",
+                    self.path
+                ));
+            }
+        }
+        if let Some(select) = self.cg.native_member_select(&self.path, lhs)? {
+            if !blocking || op != Operation::Assignment {
+                return Err(format!(
+                    "nonblocking or compound assignment to a run-time selected native record member element in `{}` is not supported",
+                    self.path
+                ));
+            }
+            return self.cg.native_member_select_write(&self.path, &select, rhs);
+        }
+        if self.cg.native_tagged_access(lhs).is_some() {
+            if !blocking {
+                return Err(format!(
+                    "nonblocking assignment to a member of a tagged union with string, real or handle members in `{}` is not supported",
+                    self.path
+                ));
+            }
+            self.cg.native_tagged_bypass.insert(lhs);
+            let statement =
+                self.lower_assignment_operands_unchecked(lhs, rhs, blocking, op, force_blocking);
+            self.cg.native_tagged_bypass.remove(&lhs);
+            let statement = statement?;
+            return self.cg.native_tagged_guarded_write(lhs, statement);
+        }
+        self.lower_assignment_operands_unchecked(lhs, rhs, blocking, op, force_blocking)
+    }
+
+    fn lower_assignment_operands_unchecked(
+        &mut self,
+        lhs: NodeId,
+        rhs: NodeId,
+        blocking: bool,
+        op: Operation,
+        force_blocking: bool,
+    ) -> Result<IrStmt, String> {
         // A subprogram declaration initializer can be represented as an
         // assignment whose LHS is the variable declaration itself. Its value is
         // emitted through `IrLocal::initial`; suppress only that structural

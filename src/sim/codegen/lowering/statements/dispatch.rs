@@ -95,6 +95,14 @@ impl EmitCtx<'_, '_> {
                                 continue;
                             }
                             if matches!(self.cg.kind(*child), NodeKind::Var { ty } if ty.kind == "string")
+                                && self.cg.proc_string_local_name(*child).is_some()
+                                && !self.cg.is_foreach_iterator(*child)
+                            {
+                                // A string pattern variable of a case item
+                                // is declared with its process (SIM-007).
+                                continue;
+                            }
+                            if matches!(self.cg.kind(*child), NodeKind::Var { ty } if ty.kind == "string")
                                 && self.cg.is_foreach_iterator(*child)
                             {
                                 let name = self.cg.collect_loop_string_var(&self.path, *child)?;

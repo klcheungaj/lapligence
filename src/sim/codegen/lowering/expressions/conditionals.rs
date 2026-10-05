@@ -2,7 +2,9 @@
 use super::super::collection::{RecordColumn, RecordValue};
 use super::*;
 use crate::core::db::ConditionalPatternKind;
-use crate::sim::ir::{IrPatternCheck, IrPatternExpr, IrPatternMatchKind};
+use crate::sim::ir::{
+    IrNativeBinding, IrNativeLeafExpr, IrPatternCheck, IrPatternExpr, IrPatternMatchKind,
+};
 use std::collections::HashSet;
 
 fn supported_fixed_integral_value(descriptor: &TypeDescriptor) -> bool {
@@ -113,6 +115,14 @@ impl Codegen<'_> {
                 ));
             }
         }
+        if let Some(test) = self.lower_native_pattern(
+            scope_path,
+            clause.expression,
+            pattern_id,
+            IrPatternMatchKind::Exact,
+        )? {
+            return Ok(test);
+        }
         let info = self.db.conditional_pattern(pattern_id).ok_or_else(|| {
             format!("conditional predicate pattern metadata is missing in `{scope_path}`")
         })?;
@@ -197,6 +207,7 @@ impl Codegen<'_> {
                     binding: None,
                     match_kind,
                     checks,
+                    native_bindings: Vec::new(),
                 })),
                 1,
                 false,
@@ -247,6 +258,7 @@ impl Codegen<'_> {
                     binding,
                     match_kind,
                     checks: Vec::new(),
+                    native_bindings: Vec::new(),
                 })),
                 1,
                 false,
@@ -310,6 +322,7 @@ impl Codegen<'_> {
                 binding: None,
                 match_kind,
                 checks: Vec::new(),
+                native_bindings: Vec::new(),
             })),
             1,
             false,
@@ -1100,6 +1113,7 @@ impl Codegen<'_> {
                             ))),
                             binding: None,
                         }],
+                        native_bindings: Vec::new(),
                     })),
                     1,
                     false,
@@ -1231,6 +1245,7 @@ impl Codegen<'_> {
                 binding: None,
                 match_kind,
                 checks,
+                native_bindings: Vec::new(),
             })),
             1,
             false,
@@ -1249,4 +1264,240 @@ fn pattern_truth(value: bool) -> IrExpr {
         false,
         None,
     )
+}
+
+/// A pattern test that always matches (a wildcard over a value without a
+/// packed payload); its effects are the native bindings it carries.
+fn native_match_all(
+    match_kind: IrPatternMatchKind,
+    native_bindings: Vec<IrNativeBinding>,
+) -> IrExpr {
+    IrExpr::new(
+        IrExprKind::Pattern(Box::new(IrPatternExpr {
+            value: Box::new(const_bits_expr(1, true)),
+            constant: None,
+            binding: None,
+            match_kind,
+            checks: Vec::new(),
+            native_bindings,
+        })),
+        1,
+        false,
+        None,
+    )
+}
+
+impl Codegen<'_> {
+    /// Pattern tests whose source has no packed payload (SIM-007): a tagged
+    /// union variable with string, real or handle members, or a whole
+    /// string, real or handle value. `None` leaves other sources to the
+    /// packed pattern lowering. The source is read in place when the test
+    /// runs; a tagged member's tag is tested before its payload (SV 12.6).
+    pub(in super::super) fn lower_native_pattern(
+        &mut self,
+        scope_path: &str,
+        source: NodeId,
+        pattern_id: NodeId,
+        match_kind: IrPatternMatchKind,
+    ) -> Result<Option<IrExpr>, String> {
+        let info = self.db.conditional_pattern(pattern_id).ok_or_else(|| {
+            format!("conditional predicate pattern metadata is missing in `{scope_path}`")
+        })?;
+        if let Some(root) = self.native_tagged_root(source) {
+            return match info.kind {
+                ConditionalPatternKind::Wildcard => {
+                    Ok(Some(native_match_all(match_kind, Vec::new())))
+                }
+                ConditionalPatternKind::Tagged => self
+                    .lower_native_tagged_pattern(scope_path, root, &info, match_kind)
+                    .map(Some),
+                _ => Err(format!(
+                    "this pattern on a tagged union with string, real or handle members in `{scope_path}` is not supported"
+                )),
+            };
+        }
+        let Some(descriptor) = self.query_descriptor(source).cloned() else {
+            return Ok(None);
+        };
+        if !matches!(
+            descriptor.shape,
+            TypeShape::String | TypeShape::Real { .. } | TypeShape::Opaque { .. }
+        ) {
+            return Ok(None);
+        }
+        match info.kind {
+            ConditionalPatternKind::Wildcard => Ok(Some(native_match_all(match_kind, Vec::new()))),
+            ConditionalPatternKind::Binding => {
+                let target = info.binding.ok_or_else(|| {
+                    format!("conditional predicate binding has no declaration in `{scope_path}`")
+                })?;
+                let binding = match &descriptor.shape {
+                    TypeShape::String => IrNativeBinding::String {
+                        local: self.pattern_string_local(target),
+                        value: self.lower_string(scope_path, source)?,
+                    },
+                    TypeShape::Real { .. } => IrNativeBinding::Value {
+                        lhs: self.lower_lhs(scope_path, target)?,
+                        value: self.lower_expr(scope_path, source)?,
+                    },
+                    _ => {
+                        return Err(format!(
+                            "a handle pattern variable in `{scope_path}` is not supported"
+                        ))
+                    }
+                };
+                Ok(Some(native_match_all(match_kind, vec![binding])))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn lower_native_tagged_pattern(
+        &mut self,
+        scope_path: &str,
+        root: NodeId,
+        info: &crate::core::db::ConditionalPatternInfo,
+        match_kind: IrPatternMatchKind,
+    ) -> Result<IrExpr, String> {
+        let member_id = info.tagged_member.ok_or_else(|| {
+            format!("conditional tagged pattern has no resolved union member in `{scope_path}`")
+        })?;
+        let member_name = self.db.node(member_id).name.clone();
+        let parts =
+            self.native_tagged_pattern(scope_path, root, &member_name, info.value_pattern)?;
+        let payload = match parts.payload {
+            Some(payload) => Some(self.db.conditional_pattern(payload).ok_or_else(|| {
+                format!("tagged pattern payload metadata is missing in `{scope_path}`")
+            })?),
+            None => None,
+        };
+        let tag_check = |offset: u32| -> Result<Option<IrPatternCheck>, String> {
+            if parts.tag.is_none() {
+                return Ok(None);
+            }
+            let expected = IrConst::packed(
+                vec![u64::from(parts.index)],
+                vec![0],
+                vec![0],
+                parts.tag_bits,
+                false,
+                None,
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(Some(IrPatternCheck {
+                offset,
+                width: parts.tag_bits,
+                signed: false,
+                two_state: false,
+                // The enclosing case mode applies to tag bits (SV 12.6.1).
+                exact: false,
+                constant: Some(Box::new(IrExpr::new(
+                    IrExprKind::Const(expected),
+                    parts.tag_bits,
+                    false,
+                    None,
+                ))),
+                binding: None,
+            }))
+        };
+        let tag_value = parts
+            .tag
+            .clone()
+            .unwrap_or_else(|| const_bits_expr(1, true));
+        let pattern =
+            |value: IrExpr, checks: Vec<IrPatternCheck>, bindings: Vec<IrNativeBinding>| {
+                IrExpr::new(
+                    IrExprKind::Pattern(Box::new(IrPatternExpr {
+                        value: Box::new(value),
+                        constant: None,
+                        binding: None,
+                        match_kind,
+                        checks,
+                        native_bindings: bindings,
+                    })),
+                    1,
+                    false,
+                    None,
+                )
+            };
+        let Some(payload_info) = payload else {
+            return Ok(pattern(
+                tag_value,
+                tag_check(0)?.into_iter().collect(),
+                Vec::new(),
+            ));
+        };
+        match payload_info.kind {
+            ConditionalPatternKind::Wildcard => Ok(pattern(
+                tag_value,
+                tag_check(0)?.into_iter().collect(),
+                Vec::new(),
+            )),
+            ConditionalPatternKind::Binding => {
+                let target = payload_info.binding.ok_or_else(|| {
+                    format!("tagged pattern binding has no declaration in `{scope_path}`")
+                })?;
+                let binding = match parts.value.clone() {
+                    Some(IrNativeLeafExpr::String(value)) => IrNativeBinding::String {
+                        local: self.pattern_string_local(target),
+                        value,
+                    },
+                    Some(IrNativeLeafExpr::Packed(value) | IrNativeLeafExpr::Real(value)) => {
+                        IrNativeBinding::Value {
+                            lhs: self.lower_lhs(scope_path, target)?,
+                            value,
+                        }
+                    }
+                    _ => {
+                        return Err(format!(
+                            "binding tagged member `{member_name}` to a pattern variable in `{scope_path}` is not supported for its type"
+                        ))
+                    }
+                };
+                Ok(pattern(
+                    tag_value,
+                    tag_check(0)?.into_iter().collect(),
+                    vec![binding],
+                ))
+            }
+            ConditionalPatternKind::Constant
+            | ConditionalPatternKind::Structure
+            | ConditionalPatternKind::Tagged => {
+                // A packed member's payload checks run on {tag, member}.
+                let Some(IrNativeLeafExpr::Packed(member)) = parts.value.clone() else {
+                    return Err(format!(
+                        "tagged member `{member_name}` payload pattern in `{scope_path}` requires a packed member"
+                    ));
+                };
+                let member_width = member.width;
+                let mut checks: Vec<IrPatternCheck> =
+                    tag_check(member_width)?.into_iter().collect();
+                let value = match parts.tag.clone() {
+                    Some(tag) => IrExpr::new(
+                        IrExprKind::Concat {
+                            parts: vec![tag, member],
+                        },
+                        parts.tag_bits + member_width,
+                        false,
+                        None,
+                    ),
+                    None => member,
+                };
+                let mut active = HashSet::new();
+                self.lower_pattern_component(
+                    scope_path,
+                    parts.payload.ok_or("tagged payload disappeared")?,
+                    &parts.descriptor,
+                    0,
+                    &mut checks,
+                    &mut active,
+                    match_kind,
+                )?;
+                Ok(pattern(value, checks, Vec::new()))
+            }
+            _ => Err(format!(
+                "unsupported tagged payload pattern in `{scope_path}`"
+            )),
+        }
+    }
 }

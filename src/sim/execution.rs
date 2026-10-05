@@ -1465,6 +1465,15 @@ fn collect_expression_effects(
                     collect_lhs_expression_effects(ir, binding, effects, visited_calls);
                 }
             }
+            for binding in &pattern.native_bindings {
+                effects.push(ExecutionEffect::ImmediateStore);
+                if let crate::sim::ir::IrNativeBinding::Value { lhs, .. } = binding {
+                    collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
+                }
+                binding.expressions(&mut |child| {
+                    collect_expression_effects(ir, child, effects, visited_calls)
+                });
+            }
             collect_expression_effects(ir, &pattern.value, effects, visited_calls);
             if let Some(constant) = &pattern.constant {
                 collect_expression_effects(ir, constant, effects, visited_calls);

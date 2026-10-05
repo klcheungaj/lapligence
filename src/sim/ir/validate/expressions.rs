@@ -552,6 +552,29 @@ impl Validator<'_> {
                         );
                     }
                 }
+                for (index, binding) in pattern.native_bindings.iter().enumerate() {
+                    let binding_path = format!("{path}.native_bindings[{index}]");
+                    match binding {
+                        crate::sim::ir::IrNativeBinding::String { local, value } => {
+                            if local.is_empty() {
+                                return self
+                                    .fail(binding_path, "string pattern binding has no local");
+                            }
+                            value.validate(self.model, self.string_return.get())?;
+                        }
+                        crate::sim::ir::IrNativeBinding::Chandle { local, value } => {
+                            if local.is_empty() {
+                                return self
+                                    .fail(binding_path, "handle pattern binding has no local");
+                            }
+                            value.validate(self.model, formals, self.chandle_return.get())?;
+                        }
+                        crate::sim::ir::IrNativeBinding::Value { lhs, value } => {
+                            self.validate_lhs(lhs, formals, &format!("{binding_path}.lhs"))?;
+                            self.validate_expr(value, formals, &format!("{binding_path}.value"))?;
+                        }
+                    }
+                }
                 for (index, check) in pattern.checks.iter().enumerate() {
                     let check_path = format!("{path}.checks[{index}]");
                     self.validate_width(check.width, &format!("{check_path}.width"))?;

@@ -308,9 +308,18 @@ Macros, includes and their edition-specific behavior are counted in §11.
   deep except chandles, which stay borrowed foreign pointers
   ([sim_003](../tests/fixtures/sim/feature_completion/sim_003/readme.md)).
   Module native records accept untimed/delayed NBAs, continuous assignments
-  and conditional merges (SIM-004). Arrays of native records, native aggregate
-  slices, run-time indices into native member arrays, native ref formals,
-  static subroutine-root NBAs and fork capture remain restricted. SV §§6.7, 7.2–7.4 **[SV-2005]**.
+  and conditional merges (SIM-004). One-dimensional fixed arrays of strings,
+  class/chandle handles and native records are fixed-size views of the
+  recursive container runtime in module, static, subroutine and port storage:
+  run-time selects, slices, patterns, whole copies, equality, ambiguous
+  conditional merges and untimed NBAs act on owned elements. Class handles are
+  identity leaves of native records (`r.h.v` reaches the object). Run-time
+  indices into native member arrays select among at most 64 elements
+  (`NATIVE_MEMBER_SELECT_LIMIT`); packed members of module native records take
+  bit/part selects ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)).
+  Multidimensional native arrays, queue/dynamic/associative record members,
+  `f().m` on a native result, native ref formals, static subroutine-root NBAs
+  and fork capture remain restricted. SV §§6.7, 7.2–7.4 **[SV-2005]**.
 - 🟨 **Tagged unions** — Packed and unpacked tagged unions with fixed payloads
   use one finite storage owner: the tag in the most significant bits and each
   member right-justified below it. Construction and checked member access
@@ -326,8 +335,13 @@ Macros, includes and their edition-specific behavior are counted in §11.
   and each member in separate descriptor columns (RTL-101): tagged
   expressions reset inactive members, values copy, compare, merge and match,
   and element reads/writes of an inactive member report runtime errors.
-  Real/string/chandle and dynamic payloads (SIM-007) reject with explicit
-  diagnostics.
+  A module or static tagged-union variable with real, string, record or
+  class-handle members keeps a four-state tag and each member's own storage
+  (SIM-007): tagged expressions, whole copies, checked member reads/writes
+  (inactive accesses report and read the default) and `matches`/`case matches`
+  with tag, wildcard, binding and packed payload patterns. Such unions in
+  subroutine storage, arrays, ports, NBAs and conditionals, and dynamic
+  payloads, reject with explicit diagnostics.
   **Q03 (resolved):** SV §§4.9.4 and 10.4.2 fix an NBA's target and RHS at
   issue and perform the member assignment at commit; SV §11.9 requires that
   assignment to be consistent with the tag current then, and SV §7.3.2 never
@@ -401,8 +415,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
 
 <a id="native-record-capability-matrix"></a>
 
-**Native record capability matrix (SIM-003).** Native records are unpacked
-records with string, real or chandle leaves (§7.2). "yes" means executed by
+**Native record capability matrix (SIM-003, SIM-007).** Native records are unpacked
+records with string, real, chandle or class-handle leaves (§7.2). "yes" means executed by
 [sim_003](../tests/fixtures/sim/feature_completion/sim_003/readme.md) or the
 module-level fixtures cited above; a task id is the owner of a legal form that
 rejects with a diagnostic; "illegal" is an SV rule. Copies are deep, except
@@ -411,13 +425,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 
 | Context | Storage / default | Copy | `==`/`!=`, `===` | Member select | Reference | Destruction |
 | --- | --- | --- | --- | --- | --- | --- |
-| Module/static variable | yes | yes | yes | constant: yes; packed-member select SIM-007 | SIM-008 | model close |
-| Automatic/static subroutine local | yes (root) | yes | yes | constant: yes; run-time index SIM-007 | SIM-008 | scope exit, cancel, close |
-| Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant: yes; `f().m` SIM-007 | `ref` formal SIM-008 | scope exit, cancel, close |
+| Module/static variable | yes | yes | yes | constant, run-time index (at most 64 elements) and packed-member bit/part select: yes | SIM-008 | model close |
+| Automatic/static subroutine local | yes (root) | yes | yes | constant and run-time index (at most 64 elements): yes | SIM-008 | scope exit, cancel, close |
+| Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant and run-time index: yes; `f().m` rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | `ref` formal SIM-008 | scope exit, cancel, close |
 | NBA target or source | module record: yes (untimed and `#delay`); static subroutine root target: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)); automatic: illegal | yes, issue-time copy | n/a | constant: yes | n/a | commit or cancellation |
 | Fork-join_none capture | SIM-010 | SIM-010 | n/a | n/a | n/a | SIM-010 |
-| Unpacked array element, slice | SIM-007 | SIM-007 | SIM-007 | SIM-007 | SIM-008 | SIM-007 |
-| Queue/dynamic/associative element | yes (missing: default) | yes, whole element and push/insert/pop | SIM-007 | constant and run-time element index: yes | SIM-008 | delete, resize, container close |
+| Unpacked array element, slice | one-dimensional fixed array: yes ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); multidimensional: rejected | yes, elements, constant/indexed slices, patterns, conditional merges, untimed NBAs | yes, element-wise | yes | SIM-008 | owner scope or model close |
+| Queue/dynamic/associative element | yes (missing: default) | yes, whole element and push/insert/pop | whole dynamic arrays and queues: yes; record elements of resizable containers: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | constant and run-time element index: yes | SIM-008 | delete, resize, container close |
 | Class property | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-018 |
 | DPI argument | SIM-040 | SIM-040 | n/a | n/a | n/a | n/a |
 | Process-block local, call initializer | SIM-022 | SIM-022 | SIM-022 | SIM-022 | n/a | SIM-022 |
@@ -624,8 +638,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   RHS before any store or NBA issue. Overlap, declared element order and per-cell
   conversions are retained. Static task-local arrays and explicitly static arrays
   in automatic tasks retain per-declaration, per-instance storage through NBA
-  publication; changed elements notify sensitive readers. Native/resizable and
-  other oversized value contexts remain restricted. Large whole-variable copies
+  publication; changed elements notify sensitive readers. Fixed arrays of
+  strings, handles and native records copy, slice (constant and indexed),
+  merge and take untimed blocking or nonblocking element, slice and whole-array
+  writes with issue-time sources (SIM-007); delayed NBAs to them and other
+  oversized value contexts remain restricted. Large whole-variable copies
   and descriptor-backed scalar patterns use issue-time snapshots for blocking/NBA
   publication, including sparse index keys, type keys and nonuniform repeats;
   automatic-variable and subroutine-reference-formal NBAs reject. SV §§7.6, 10.4.2, 13.3.2
@@ -640,13 +657,15 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   types, including equivalent non-nominal integral types. Descriptor-backed patterns
   retain sparse defaults and snapshot exceptions without a packed payload; their
   oversized array-valued items are captured once into descriptor snapshots and
-  copied as rows, and oversized declaration initializers use the same transport. Type/default evaluation
+  copied as rows, and oversized declaration initializers use the same transport.
+  Fixed arrays of strings, handles and native records accept positional,
+  declared-index, type and default keys with their declared size (SIM-007). Type/default evaluation
   multiplicity is undefined; value tests do not prescribe invocation counts.
   SV §§10.9.1–10.9.2 **[SV-2005]**.
 - 🟨 **Replicated patterns** — Constant counts expand fixed integral arrays,
   nested rows and aggregates in syntactic order. Zero/negative counts, incompatible
-  shapes and unsupported native/resizable values reject in the admitted nonempty
-  fixed slice. Descriptor arrays use sparse fills or loops, with bounded generated
+  shapes and unsupported resizable values reject in the admitted nonempty
+  fixed slice; string and native-record elements replicate as owned copies. Descriptor arrays use sparse fills or loops, with bounded generated
   source for repeated syntax. Replication side-effect multiplicity is undefined. SV §10.9.1 **[SV-2005]**.
 - 🟨 **Positional pattern lvalues** — Plain/typed fixed arrays, packed arrays and
   packed/unpacked records deconstruct into nested/selected destinations. Capture
@@ -688,9 +707,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   payloads, check their tag before payload checks; `casez` wildcards Z tag
   bits and `casex` wildcards X/Z tag bits, so an undefined tag matches only in
   `casex`. Whole tagged bindings retain their type through later `&&&`
-  clauses. Wrong tag names and non-tagged sources reject. Whole dynamic/native
-  wildcard and binding patterns and dynamic/native tagged payloads remain
-  restricted. Column-layout record and tagged-union sources beyond packed
+  clauses. Wrong tag names and non-tagged sources reject. Whole string/real
+  wildcard and binding patterns, and tag/wildcard/binding/packed-payload
+  patterns of tagged unions with native members, work in processes (SIM-007);
+  string and real pattern variables in subroutine bodies, handle bindings,
+  native record structure patterns and dynamic payloads remain restricted. Column-layout record and tagged-union sources beyond packed
   capacity match structure, tagged, wildcard and constant member patterns
   column by column (RTL-101); binding such a whole value to a pattern
   variable remains restricted. SV §§7.3.2, 12.6
@@ -814,8 +835,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ports, structure nets, casts and conditionals. An invalid index reads the
   element type's uninitialized default, so a two-state member still decides a
   known mismatch. Descriptor-backed arrays compare cell-wise after reshaping or
-  two-state casts. Native/dynamic aggregates and real-member formal/return
-  operands remain partial. V §4.1.8; SV §§7.4.6, 11.4.5 **[1995]**.
+  two-state casts. Whole dynamic arrays, queues and fixed arrays of strings,
+  handles and native records compare element by element at run time (sizes
+  must match; strings by contents, handles by identity), and whole record
+  elements of containers compare member-wise (SIM-007). `===` on records with
+  real members and real-member formal/return operands remain partial. V §4.1.8; SV §§7.4.6, 11.4.5 **[1995]**.
 - 🟨 **Conditional values** — Known truth selects one arm, including a vector
   predicate with a dominant known 1. Ambiguous truth evaluates both reached arms
   once. Packed values follow the selected published-table policy: equal 0, 1 or X
@@ -832,8 +856,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   String, chandle and native-record results follow the same immediate-boundary
   rule: equal strings/pointers survive, otherwise `""`/null; native record
   members merge as wholes, an integral member survives only when known equal,
-  and each reached arm (calls included) is evaluated once (SIM-004). Dynamic
-  aggregate merges remain restricted.
+  and each reached arm (calls included) is evaluated once (SIM-004). Fixed
+  arrays of strings, handles and native records merge known-equal immediate
+  elements and default the rest (SIM-007); other dynamic aggregate merges
+  remain restricted.
   V Table 28; SV Table 11-20, §11.4.11 **[2001/SV-2009]**.
 - 🟦 **Concatenation, replication and selection** — Preserve order and
   self-determined widths, including singleton-concatenation unsigned/fill

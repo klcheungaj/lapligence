@@ -489,7 +489,56 @@ impl Codegen<'_> {
         let Some((selection, leaf)) = self.element_leaf(node)? else {
             return Ok(None);
         };
-        let IrValueSlot::Element { indices, key } = self.lower_element_slot(path, &selection)?
+        let name = self.element_access(path, &selection, &leaf, write)?;
+        Ok(Some((name, leaf.ty)))
+    }
+
+    /// Every leaf of the whole record element named by `node`, read in
+    /// declaration order with paths relative to the element; `None` when
+    /// `node` is not a whole record element of container storage. Each read
+    /// re-evaluates the element locator, so it must be free of side effects.
+    pub(super) fn container_record_leaf_reads(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<LeafReads>, String> {
+        let Some(selection) = self.record_element_of(node) else {
+            return Ok(None);
+        };
+        if !self.side_effect_free(node) {
+            return Err(format!(
+                "a container record element compared in `{path}` must be selected without side effects"
+            ));
+        }
+        let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
+        let mut reads = Vec::with_capacity(leaves.len());
+        for leaf in leaves {
+            let name = self.element_access(path, &selection, &leaf, false)?;
+            let value =
+                match leaf.ty {
+                    IrClassFieldType::String => LeafValue::String(IrStringExpr::LocalRead(name)),
+                    IrClassFieldType::Chandle => LeafValue::Chandle(IrChandleExpr::LocalRead(name)),
+                    IrClassFieldType::Packed { width, signed, .. } => LeafValue::Packed(
+                        IrExpr::new(IrExprKind::LocalRead(name), width, signed, None),
+                    ),
+                    IrClassFieldType::Real { .. } => {
+                        LeafValue::Real(IrExpr::new(IrExprKind::LocalRead(name), 0, false, None))
+                    }
+                };
+            reads.push((leaf.path, value));
+        }
+        Ok(Some(reads))
+    }
+
+    /// A fresh access to one leaf of a selected record element.
+    fn element_access(
+        &mut self,
+        path: &str,
+        selection: &ElementSelection,
+        leaf: &NativeLeaf,
+        write: bool,
+    ) -> Result<String, String> {
+        let IrValueSlot::Element { indices, key } = self.lower_element_slot(path, selection)?
         else {
             unreachable!("element selections lower to element slots");
         };
@@ -506,10 +555,10 @@ impl Codegen<'_> {
                 },
                 kind: IrNativeAccessKind::ElementItem { ty: leaf.ty },
                 site: None,
-                item_path: leaf.items,
+                item_path: leaf.items.clone(),
                 function: self.cur_fn_ir,
             });
-        Ok(Some((name, leaf.ty)))
+        Ok(name)
     }
 
     /// Typed read of the element leaf named by `node`.

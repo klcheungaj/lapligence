@@ -15,6 +15,8 @@ use crate::sim::ir::{
 
 mod conditionals;
 mod elements;
+mod member_select;
+mod tagged;
 
 /// Largest number of leaves of one native record. Leaf-wise transfers to and
 /// from flattened module storage emit one operation per leaf, so larger
@@ -35,6 +37,9 @@ pub(in super::super) enum NativeEndpoint {
     /// Declaration-owned module record leaves below a path prefix.
     Module(Box<AggregateSelection>),
 }
+
+/// Every leaf value of a record operand with its path, in declaration order.
+type LeafReads = Vec<(Vec<AggregatePathPart>, LeafValue)>;
 
 /// One captured leaf value of a transfer.
 #[derive(Clone)]
@@ -1496,6 +1501,22 @@ impl Codegen<'_> {
         Ok(())
     }
 
+    /// Every leaf of a record operand in declaration order: a native value,
+    /// a module native record or a whole record element of a container.
+    fn record_leaf_reads(&mut self, path: &str, node: NodeId) -> Result<Option<LeafReads>, String> {
+        if let Some(reads) = self.container_record_leaf_reads(path, node)? {
+            return Ok(Some(reads));
+        }
+        let Some((endpoint, _)) = self.native_endpoint(node)? else {
+            return Ok(None);
+        };
+        let mut reads = Vec::new();
+        for (leaf_path, leaf) in self.endpoint_leaves(&endpoint)? {
+            reads.push((leaf_path, self.endpoint_leaf_read(&leaf)?));
+        }
+        Ok(Some(reads))
+    }
+
     /// Member-wise `==`/`!=`/`===`/`!==` when either record operand is
     /// native subroutine storage. Packed leaves keep four-state comparison,
     /// reals compare numerically, strings by contents and chandles by
@@ -1516,21 +1537,24 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let (left, right) = (self.p30_unwrap_cast(*left), self.p30_unwrap_cast(*right));
-        if self.native_path_of(left)?.is_none() && self.native_path_of(right)?.is_none() {
+        let element = self.is_container_record(left) || self.is_container_record(right);
+        if !element && self.native_path_of(left)?.is_none() && self.native_path_of(right)?.is_none()
+        {
             return Ok(None);
         }
-        let (left, right) = match (self.native_endpoint(left)?, self.native_endpoint(right)?) {
-            (Some((left, _)), Some((right, _))) => (left, right),
+        let (left, right) = match (
+            self.record_leaf_reads(path, left)?,
+            self.record_leaf_reads(path, right)?,
+        ) {
+            (Some(left), Some(right)) => (left, right),
             // Scalar members of native values compare as scalars.
-            (None, None) => return Ok(None),
+            (None, None) if !element => return Ok(None),
             _ => {
                 return Err(format!(
                     "native record comparison in `{path}` needs record variables on both sides"
                 ))
             }
         };
-        let left = self.endpoint_leaves(&left)?;
-        let right = self.endpoint_leaves(&right)?;
         if left.len() != right.len()
             || left.is_empty()
             || left.iter().zip(&right).any(|((a, _), (b, _))| a != b)
@@ -1541,11 +1565,8 @@ impl Codegen<'_> {
         }
         let case = matches!(op, Operation::CaseEqual | Operation::CaseNotEqual);
         let mut equality: Option<IrExpr> = None;
-        for ((_, left), (_, right)) in left.iter().zip(&right) {
-            let leaf_equal = match (
-                self.endpoint_leaf_read(left)?,
-                self.endpoint_leaf_read(right)?,
-            ) {
+        for ((_, left), (_, right)) in left.into_iter().zip(right) {
+            let leaf_equal = match (left, right) {
                 (LeafValue::String(a), LeafValue::String(b)) => {
                     let compare = IrExpr::new(
                         IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringCompare(
