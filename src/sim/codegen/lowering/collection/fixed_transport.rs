@@ -1,5 +1,6 @@
 //! Fixed values lower to descriptor operations rather than leaf expansion.
 use super::*;
+use crate::sim::codegen::lowering::containers::PatternAssignmentKind;
 use crate::sim::ir::IrFixedValue;
 
 impl Codegen<'_> {
@@ -327,45 +328,69 @@ impl Codegen<'_> {
 }
 
 impl Codegen<'_> {
-    /// Scatter an oversized array value whose first-dimension elements are
-    /// array-valued pattern targets. The source is evaluated once into a
-    /// lexical snapshot and target selectors are frozen before any write, so
-    /// later targets never observe earlier outputs; each target then receives
-    /// one descriptor row copy.
+    /// Scatter an array value into the rows of a positional pattern lvalue
+    /// through a lexical snapshot (IEEE 1800-2009 10.10). The scatter is used
+    /// when the source is oversized or descriptor-stored, or when a row target
+    /// lives in descriptor storage, so neither side is ever flattened. The
+    /// source is evaluated once and target selectors are frozen before any
+    /// write, so later targets never observe earlier outputs. Each row target,
+    /// at any nesting depth, receives one row copy from the snapshot cells it
+    /// covers in declaration order; a packed leaf receives one snapshot cell.
     pub(in super::super) fn lower_descriptor_pattern_scatter(
         &mut self,
         path: &str,
         rhs: NodeId,
         targets: &[(NodeId, TypeDescriptor)],
-        nba: bool,
+        kind: PatternAssignmentKind,
     ) -> Result<Option<IrStmt>, String> {
+        let nba = kind == PatternAssignmentKind::Nonblocking;
         let Some(source) = self.query_descriptor(rhs).cloned() else {
             return Ok(None);
         };
         let TypeShape::FixedArray { dimensions, .. } = &source.shape else {
             return Ok(None);
         };
-        // A descriptor-stored source scatters rows even when its total width
-        // would fit one packed value: it is never flattened.
-        if dimensions.len() < 2
-            || (Self::fixed_descriptor_width_bits(&source)
-                .is_none_or(|width| width <= u64::from(LLG_MAX_WIDTH))
-                && !self.descriptor_operand(rhs))
-            || !targets
-                .iter()
-                .all(|(_, descriptor)| matches!(descriptor.shape, TypeShape::FixedArray { .. }))
-        {
+        let row_target =
+            |descriptor: &TypeDescriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. });
+        if !targets.iter().any(|(_, descriptor)| row_target(descriptor)) {
             return Ok(None);
         }
-        let bounds = dimensions[0];
-        if u64::try_from(targets.len()).ok() != Some(u64::from(bounds.0.abs_diff(bounds.1)) + 1) {
-            return Err(format!(
-                "assignment-pattern lvalue in `{path}` does not match its source rows"
-            ));
+        // A descriptor-stored source scatters rows even when its total width
+        // would fit one packed value: it is never flattened. A small dense
+        // source keeps the packed path unless a row target is descriptor
+        // storage, whose packed lvalue would enumerate every cell.
+        let oversized = Self::fixed_descriptor_width_bits(&source)
+            .is_none_or(|width| width > u64::from(LLG_MAX_WIDTH))
+            || self.descriptor_operand(rhs);
+        let descriptor_row = targets
+            .iter()
+            .any(|(target, descriptor)| row_target(descriptor) && self.descriptor_operand(*target));
+        if !oversized && !descriptor_row {
+            return Ok(None);
         }
+        let dimensions = dimensions.clone();
+        let extents = dimensions
+            .iter()
+            .map(|(left, right)| u64::from(left.abs_diff(*right)) + 1)
+            .collect::<Vec<_>>();
+        // Cells covered by one coordinate of each source dimension.
+        let mut strides = vec![1u64; extents.len()];
+        for dimension in (0..extents.len().saturating_sub(1)).rev() {
+            strides[dimension] = strides[dimension + 1]
+                .checked_mul(extents[dimension + 1])
+                .ok_or("assignment-pattern source is too large")?;
+        }
+        let total = strides
+            .first()
+            .zip(extents.first())
+            .and_then(|(stride, extent)| stride.checked_mul(*extent))
+            .ok_or("assignment-pattern source is too large")?;
         let mut statements = Vec::new();
-        let mut views = Vec::with_capacity(targets.len());
-        for (target, _) in targets {
+        let mut placements = Vec::with_capacity(targets.len());
+        let mut cell = 0u64;
+        let mut sequence = 0;
+        let tag = self.new_fn_name(path, "pattern_targets");
+        for (target, descriptor) in targets {
             if nba
                 && (self.proc_local_target(*target).is_some()
                     || self.subroutine_auto_target(*target))
@@ -373,6 +398,73 @@ impl Codegen<'_> {
                 return Err(format!(
                     "nonblocking assignment to an automatic assignment-pattern target in `{path}` is not supported"
                 ));
+            }
+            let rank = match &descriptor.shape {
+                TypeShape::FixedArray { dimensions, .. } => dimensions.len(),
+                _ => 0,
+            };
+            let prefix = dimensions.len().checked_sub(rank).ok_or_else(|| {
+                format!("assignment-pattern lvalue row shape mismatch in `{path}`")
+            })?;
+            let span = if prefix == 0 {
+                total
+            } else {
+                strides[prefix - 1]
+            };
+            if !cell.is_multiple_of(span) || cell >= total {
+                return Err(format!(
+                    "assignment-pattern lvalue in `{path}` does not match its source rows"
+                ));
+            }
+            let coordinates = (0..prefix)
+                .map(|dimension| {
+                    let ordinal =
+                        i64::try_from((cell / strides[dimension]) % extents[dimension])
+                            .map_err(|_| "assignment-pattern row offset overflows".to_owned())?;
+                    let (left, right) = dimensions[dimension];
+                    let index = if left >= right {
+                        i64::from(left) - ordinal
+                    } else {
+                        i64::from(left) + ordinal
+                    };
+                    i32::try_from(index)
+                        .map_err(|_| "assignment-pattern row offset overflows".to_owned())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            cell += span;
+            // A packed leaf of a nested pattern takes one snapshot cell. A net
+            // row (net arrays are never descriptor storage) takes the packed
+            // image of its snapshot row, so continuous drivers keep their
+            // per-leaf net mapping.
+            let net_row = rank > 0
+                && self
+                    .p30_array_prefix_base(*target)
+                    .is_some_and(|(array, _)| array.is_net);
+            if rank == 0 || net_row {
+                let lhs = self.lower_lhs(path, *target)?;
+                if nba && matches!(lhs, IrLhs::Ref { .. }) {
+                    return Err(format!(
+                        "nonblocking assignment through a reference formal in `{path}` is not supported"
+                    ));
+                }
+                let lhs = if kind == PatternAssignmentKind::Continuous {
+                    lhs
+                } else {
+                    let mut captures = Vec::new();
+                    let (lhs, _) = self.freeze_call_lhs(lhs, &tag, &mut sequence, &mut captures)?;
+                    statements.extend(captures.into_iter().map(
+                        |(name, width, signed, two_state, expr)| IrStmt::DeclLocal {
+                            name,
+                            width,
+                            signed,
+                            two_state,
+                            init: Some(Box::new(expr)),
+                        },
+                    ));
+                    lhs
+                };
+                placements.push((PatternPlacement::Packed(lhs), coordinates));
+                continue;
             }
             let mut view = self.fixed_memory_view(path, *target)?;
             let storage = &self.model.arrays[view.array];
@@ -397,7 +489,12 @@ impl Codegen<'_> {
                     init: Some(Box::new(value)),
                 });
             }
-            views.push(view);
+            placements.push((PatternPlacement::Row(view), coordinates));
+        }
+        if cell != total {
+            return Err(format!(
+                "assignment-pattern lvalue in `{path}` does not match its source rows"
+            ));
         }
         let snapshot = self.fixed_activation_array(rhs)?;
         // The snapshot precedes selector capture in evaluation order: the RHS is
@@ -417,32 +514,116 @@ impl Codegen<'_> {
             });
         }
         ordered.append(&mut statements);
-        for (offset, view) in views.into_iter().enumerate() {
-            let offset =
-                i32::try_from(offset).map_err(|_| "assignment-pattern row offset overflows")?;
-            let index = if bounds.0 >= bounds.1 {
-                bounds.0 - offset
-            } else {
-                bounds.0 + offset
-            };
-            let row = self.fixed_view_at(snapshot.ir, &[lhs_integer_expr(i128::from(index))]);
-            if row.total != view.total {
-                return Err(format!(
-                    "assignment-pattern lvalue row shape mismatch in `{path}`"
-                ));
+        for (placement, coordinates) in placements {
+            let indices = coordinates
+                .iter()
+                .map(|index| lhs_integer_expr(i128::from(*index)))
+                .collect::<Vec<_>>();
+            match placement {
+                PatternPlacement::Packed(lhs) => {
+                    let value = snapshot_row_image(&snapshot, &dimensions, &coordinates)?;
+                    if packed_lhs_width(&self.model, &lhs) != Some(value.width) {
+                        return Err(format!(
+                            "assignment-pattern lvalue target in `{path}` does not match its source row width"
+                        ));
+                    }
+                    let rhs = apply_lhs_assignment_context(&self.model, &lhs, value);
+                    ordered.push(IrStmt::Assign { lhs, rhs, nba });
+                }
+                PatternPlacement::Row(view) => {
+                    let row = self.fixed_view_at(snapshot.ir, &indices);
+                    if row.total != view.total {
+                        return Err(format!(
+                            "assignment-pattern lvalue row shape mismatch in `{path}`"
+                        ));
+                    }
+                    if !self.model.arrays[view.array].sparse() {
+                        ordered.extend(self.dense_row_scatter(
+                            path,
+                            &view,
+                            snapshot.ir,
+                            &coordinates,
+                            nba,
+                        )?);
+                        continue;
+                    }
+                    ordered.push(IrStmt::FixedValueAssign {
+                        dst: view,
+                        src: Box::new(IrFixedValue::Array(row)),
+                        nba,
+                    });
+                }
             }
-            if !self.model.arrays[view.array].sparse() {
-                ordered.extend(self.dense_row_scatter(path, &view, snapshot.ir, index, nba)?);
-                continue;
-            }
-            ordered.push(IrStmt::FixedValueAssign {
-                dst: view,
-                src: Box::new(IrFixedValue::Array(row)),
-                nba,
-            });
         }
         Ok(Some(IrStmt::Block(ordered)))
     }
+}
+
+/// The packed image of the snapshot cells under a coordinate prefix, in
+/// declaration order (leftmost cell in the most significant bits).
+fn snapshot_row_image(
+    snapshot: &ArrayInfo,
+    dimensions: &[(i32, i32)],
+    prefix: &[i32],
+) -> Result<IrExpr, String> {
+    let rest = dimensions
+        .get(prefix.len()..)
+        .ok_or("assignment-pattern row prefix exceeds its source")?;
+    let count = rest.iter().try_fold(1u64, |count, (left, right)| {
+        count.checked_mul(u64::from(left.abs_diff(*right)) + 1)
+    });
+    let width = count
+        .and_then(|count| count.checked_mul(u64::from(snapshot.elem_width)))
+        .and_then(|width| u32::try_from(width).ok())
+        .filter(|width| *width <= LLG_MAX_WIDTH)
+        .ok_or("assignment-pattern packed row exceeds the packed value limit")?;
+    let mut parts = Vec::new();
+    let mut coordinates = prefix
+        .iter()
+        .copied()
+        .chain(rest.iter().map(|(left, _)| *left))
+        .collect::<Vec<_>>();
+    loop {
+        parts.push(IrExpr::new(
+            IrExprKind::ArrayRead {
+                arr: snapshot.ir,
+                indices: coordinates
+                    .iter()
+                    .map(|index| lhs_integer_expr(i128::from(*index)))
+                    .collect(),
+                elem_sel: IrElemSel::Whole,
+            },
+            snapshot.elem_width,
+            snapshot.signed,
+            None,
+        ));
+        // Advance the trailing coordinates as an odometer in declaration order.
+        let mut dimension = dimensions.len();
+        loop {
+            if dimension == prefix.len() {
+                return Ok(if parts.len() == 1 {
+                    parts.swap_remove(0)
+                } else {
+                    IrExpr::new(IrExprKind::Concat { parts }, width, false, None)
+                });
+            }
+            dimension -= 1;
+            let (left, right) = dimensions[dimension];
+            if coordinates[dimension] != right {
+                coordinates[dimension] += if left >= right { -1 } else { 1 };
+                break;
+            }
+            coordinates[dimension] = left;
+        }
+    }
+}
+
+/// Where one positional pattern target receives its snapshot cells.
+enum PatternPlacement {
+    /// A packed leaf or net row written from the packed image of its cells.
+    Packed(IrLhs),
+    /// An unpacked row view written from the snapshot row at its prefix.
+    Row(IrMemoryView),
 }
 
 impl Codegen<'_> {

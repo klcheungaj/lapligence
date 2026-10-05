@@ -448,7 +448,12 @@ same unpack. Oversized descriptor stream operands are views (constant in-bounds
 descriptor arrays, `Dense` views of dense arrays, `Packed` values (records,
 `with` selections of dense/image arrays) or nested streams (`>>` spliced);
 dense rows also enter descriptor patterns as `Dense` items and receive scatter
-rows by a copy loop (`dense_row_scatter`). Wider fixed
+rows by a copy loop (`dense_row_scatter`). Positional pattern lvalues place
+each row target, at any nesting depth, at its declaration-order cell prefix:
+an oversized or descriptor source, or a descriptor row target, scatters from
+one snapshot (packed leaves and net rows take packed cell images); otherwise
+small sources split one bit stream over packed leaves and joined row images
+(IEEE 1800-2009 10.10). Wider fixed
 destinations left-align and zero-fill; oversize fixed sources diagnose, while
 longer unpack sources consume leftmost bits. Composite call/ref layouts use the
 same recursive descriptors.

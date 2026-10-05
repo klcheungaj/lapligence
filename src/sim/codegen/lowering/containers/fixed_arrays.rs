@@ -79,11 +79,10 @@ impl<'a> Codegen<'a> {
         }
         let mut targets = Vec::new();
         self.p30_collect_pattern_lvalue_targets(path, pattern, &target_descriptor, &mut targets)?;
-        // Oversized sources scatter descriptor rows for every assignment
-        // kind; continuous scatters keep their constant row topology.
-        if let Some(statement) =
-            self.lower_descriptor_pattern_scatter(path, rhs, &targets, !blocking)?
-        {
+        // Oversized sources and descriptor-stored row targets scatter rows
+        // for every assignment kind; continuous scatters keep their constant
+        // row topology.
+        if let Some(statement) = self.lower_descriptor_pattern_scatter(path, rhs, &targets, kind)? {
             return Ok(Some(statement));
         }
         let mut lowered_targets = Vec::with_capacity(targets.len());
@@ -545,49 +544,70 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// Distribute the declaration-order source values over the pattern's
+    /// targets as one left-to-right bit stream (IEEE 1800-2009 10.10). A
+    /// packed leaf may take part of a source value, and an unpacked row
+    /// target takes several consecutive cells joined into its packed image.
     fn p30_split_pattern_source_values(
         path: &str,
         source_values: Vec<IrExpr>,
         target_widths: &[(u32, bool)],
     ) -> Result<Vec<IrExpr>, String> {
         let mut values = Vec::with_capacity(target_widths.len());
-        let mut target = 0usize;
-        for source in source_values {
-            if source.is_real() || source.width == 0 {
+        let mut sources = source_values.into_iter();
+        let mut current: Option<(IrExpr, u32)> = None;
+        for (target, &(width, signed)) in target_widths.iter().enumerate() {
+            if width == 0 {
                 return Err(format!(
-                    "assignment-pattern source in `{path}` must be a nonempty packed value"
+                    "assignment-pattern source in `{path}` does not match target position {target}"
                 ));
             }
-            let mut cursor = source.width;
-            while cursor > 0 {
-                let Some((width, signed)) = target_widths.get(target).copied() else {
-                    return Err(format!(
-                        "assignment-pattern lvalue in `{path}` has fewer RHS positions than targets"
-                    ));
+            let mut parts = Vec::with_capacity(1);
+            let mut needed = width;
+            while needed > 0 {
+                let (source, cursor) = match current.take() {
+                    Some(current) => current,
+                    None => {
+                        let Some(source) = sources.next() else {
+                            return Err(format!(
+                                "assignment-pattern lvalue in `{path}` has {} targets but RHS supplies only {target} values",
+                                target_widths.len()
+                            ));
+                        };
+                        if source.is_real() || source.width == 0 {
+                            return Err(format!(
+                                "assignment-pattern source in `{path}` must be a nonempty packed value"
+                            ));
+                        }
+                        let cursor = source.width;
+                        (source, cursor)
+                    }
                 };
-                if width == 0 || width > cursor {
-                    return Err(format!(
-                        "assignment-pattern source in `{path}` does not match target position {target}"
-                    ));
-                }
-                cursor -= width;
-                values.push(IrExpr::new(
+                let taken = needed.min(cursor);
+                parts.push(IrExpr::new(
                     IrExprKind::PartSel {
                         base: Box::new(source.clone()),
-                        left: i64::from(cursor + width - 1),
-                        right: i64::from(cursor),
+                        left: i64::from(cursor - 1),
+                        right: i64::from(cursor - taken),
                     },
-                    width,
-                    signed,
+                    taken,
+                    signed && taken == width,
                     None,
                 ));
-                target += 1;
+                needed -= taken;
+                if cursor > taken {
+                    current = Some((source, cursor - taken));
+                }
             }
+            values.push(if parts.len() == 1 {
+                parts.swap_remove(0)
+            } else {
+                IrExpr::new(IrExprKind::Concat { parts }, width, false, None)
+            });
         }
-        if target != target_widths.len() {
+        if current.is_some() || sources.next().is_some() {
             return Err(format!(
-                "assignment-pattern lvalue in `{path}` has {} targets but RHS supplies only {target} values",
-                target_widths.len()
+                "assignment-pattern lvalue in `{path}` has fewer RHS positions than targets"
             ));
         }
         Ok(values)

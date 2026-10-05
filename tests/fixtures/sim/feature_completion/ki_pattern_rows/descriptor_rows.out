@@ -1,0 +1,9 @@
+row 00 01 02 03 | 10 11 12 13
+leaves 6 00 03 | 10 11 12 13
+before 10 03
+nba 03 02 01 00 | 10 13
+default 5a 5a xx
+overlap 01 04 | 10 13
+dense 00 b7 | 11 c7 | 42 f7 | 53 07
+rows 00 b7 | 11 c7 | 42 f7 | 53 07
+nested nba 04 15 46 57

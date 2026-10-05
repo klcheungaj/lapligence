@@ -149,6 +149,15 @@ the main ones also after Db destruction; `copyout_bounds` and `mixed_state`
 print their results to stderr, compared exactly with the run-time bounds
 reports. Expectations are hand derivations of the stream and pattern rules.
 
+The positional pattern row and for-step update fixtures use
+`-E 'binary(sim_feature_completion) & test(ki_pattern_rows::)'`: small dense,
+descriptor and nested row targets (blocking, NBA and continuous) and overloaded
+`for` steps on packed, native and descriptor targets run in both optimizer
+modes on every backend (set `LLG_TEST_GMP_ROOT` for the GMP lane); a row shape
+mismatch, a runtime continuous row and an automatic NBA row reject. The RTL-103
+and these fixtures also run under the generated-runtime sanitizers below with
+`-E 'test(rtl_103::) | test(ki_pattern_rows::)'`.
+
 RTL-018's library, configuration and bind fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_018::)'`, with
 `binary(sim_syn032_library_configs)` and `binary(sim_syn033_structural_bind)`.

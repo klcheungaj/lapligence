@@ -1,0 +1,10 @@
+packed 4 16 3
+packed compound 14 18 2
+packed value 16 22 | 15 20
+packed element 9 7
+native a+++ 4 3
+native compound a+++** 14
+native prefix a+++**-- 12
+descriptor 3 65539 3
+descriptor compound 24 65559
+statements a+++**--+*++ 17 | 25 65561

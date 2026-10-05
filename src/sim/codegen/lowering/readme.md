@@ -75,6 +75,8 @@ operand reads the target's current value. They lower to the ordinary
 `_llg_mut_current` capture), so the target resolves once; an unpacked record's
 leaf `Stream` is admitted as a mutation target only here. Targets above the
 packed value limit or with native members are rejected with a specific error.
+Statement-position updates with side-effect-free targets, including `for`
+steps, arrive from the frontend as ordinary `A = f(A, ...)` assignments.
 
 See [lowering overview](../readme.md),
 [execution model](../../execution/readme.md),
