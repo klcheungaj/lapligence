@@ -11,5 +11,6 @@ module tb;
         $display("%h %h", value.Table[0], value.Table[131071]);
         value = tagged Empty;
         if (value matches tagged Empty) $display("empty");
+        $finish(0);
     end
 endmodule

@@ -574,7 +574,7 @@ impl Codegen<'_> {
                         RecordColumn::Cell(array.ir)
                     }
                     Some(array) => RecordColumn::Array(array.ir),
-                    None => RecordColumn::Leaf(leaf.clone()),
+                    None => RecordColumn::Leaf(Box::new(leaf.clone())),
                 };
                 (leaf.path.clone(), column)
             })

@@ -50,7 +50,7 @@ impl Codegen<'_> {
                 let column = match &leaf.array {
                     Some(array) if record_cell_leaf(leaf) => RecordColumn::Cell(array.ir),
                     Some(array) => RecordColumn::Array(array.ir),
-                    None => RecordColumn::Leaf(leaf.clone()),
+                    None => RecordColumn::Leaf(Box::new(leaf.clone())),
                 };
                 (path, column)
             })
@@ -1217,7 +1217,7 @@ fn uniform_constant(width: u32, signed: bool, two_state: bool) -> IrConst {
         Vec::new()
     } else {
         let mut x = vec![u64::MAX; words];
-        if width % 64 != 0 {
+        if !width.is_multiple_of(64) {
             x[words - 1] = (1u64 << (width % 64)) - 1;
         }
         x

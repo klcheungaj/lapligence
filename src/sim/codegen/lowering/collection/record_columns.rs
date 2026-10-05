@@ -23,7 +23,7 @@ pub(in crate::sim::codegen) enum RecordColumn {
     /// One-cell descriptor storage of a scalar leaf.
     Cell(usize),
     /// Module storage of a real, string or chandle member.
-    Leaf(AggregateMemberInfo),
+    Leaf(Box<AggregateMemberInfo>),
 }
 
 /// A record value as its columns, with paths relative to `descriptor`.
@@ -376,6 +376,7 @@ impl Codegen<'_> {
 
     /// The tag cell and member columns of a tagged union too wide for one
     /// packed value, rooted at `member_path` of `object`.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn collect_tagged_columns(
         &mut self,
         path: &str,
