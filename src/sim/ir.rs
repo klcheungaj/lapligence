@@ -26,7 +26,9 @@ mod containers;
 mod native_access;
 pub use native_access::{IrClassAllocation, IrNativeAccess, IrNativeAccessKind};
 mod native_values;
-pub(in crate::sim) use native_values::{native_item_count, native_leaf_type, validate_native_type};
+pub(in crate::sim) use native_values::{
+    is_class_handle_kind, native_item_count, native_leaf_type, validate_native_type,
+};
 pub use native_values::{IrNativeLeafExpr, IrNativeLeafValue, IrNativeValue};
 mod objects;
 mod validate;

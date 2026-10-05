@@ -80,15 +80,28 @@ impl Codegen<'_> {
         container: usize,
         depth: usize,
     ) -> Option<TypeDescriptor> {
+        let mut typed = container;
+        while let Some(like) = self.container_types_like.get(&typed) {
+            typed = *like;
+        }
         let declaration = self
             .container_globals
             .iter()
-            .find(|(_, info)| info.ir == container)
-            .map(|(node, _)| *node)?;
+            .find(|(_, info)| info.ir == typed)
+            .map(|(node, _)| *node)
+            .or_else(|| {
+                self.subroutine_containers
+                    .iter()
+                    .find(|(_, ir)| **ir == typed)
+                    .map(|((_, node), _)| *node)
+            })?;
         let mut descriptor = self.db.type_descriptor(declaration)?.clone();
-        for _ in 0..depth {
+        for level in 0..depth {
             descriptor = match descriptor.shape {
                 TypeShape::Container { element, .. } => *element,
+                // A one-dimensional fixed array of native elements is a
+                // container view of its declaration (SIM-007).
+                TypeShape::FixedArray { element, .. } if level == 0 => *element,
                 _ => return None,
             };
         }
@@ -216,6 +229,104 @@ impl Codegen<'_> {
                 value: temporary,
             })),
         ]))
+    }
+
+    /// Replace a container of record elements with `values` in order (an
+    /// assignment pattern or unpacked concatenation). Every value is built
+    /// into a fresh container first, so sources that read the destination
+    /// see its old elements and the copy is independent (SV 10.9, 10.10).
+    pub(in crate::sim::codegen) fn lower_container_record_values(
+        &mut self,
+        path: &str,
+        container: usize,
+        values: Vec<NodeId>,
+    ) -> Result<IrStmt, String> {
+        let count = u64::try_from(values.len()).map_err(|_| "pattern is too large")?;
+        let temporary = self.container_temporary_like(container);
+        let mut statements = vec![IrStmt::Container(Box::new(IrContainerStmt::Declare(
+            temporary,
+        )))];
+        let queue = matches!(
+            self.model.containers[container].kind,
+            IrContainerKind::Queue { .. }
+        );
+        if !queue && self.model.containers[temporary].initial_size != Some(count) {
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::DynamicNew {
+                container: temporary,
+                size: crate::sim::codegen::lowering::containers::pattern_key_expr(
+                    i128::from(count),
+                    64,
+                    false,
+                    true,
+                ),
+                initializer: None,
+            })));
+        }
+        for (position, value) in values.into_iter().enumerate() {
+            let slot = if queue {
+                IrValueSlot::PushBack
+            } else {
+                IrValueSlot::Element {
+                    indices: vec![crate::sim::codegen::lowering::containers::pattern_key_expr(
+                        position as i128,
+                        64,
+                        false,
+                        true,
+                    )],
+                    key: None,
+                }
+            };
+            statements.push(self.record_into_slot(path, temporary, 1, slot, value, value)?);
+        }
+        statements.push(IrStmt::Container(Box::new(IrContainerStmt::Copy {
+            dst: container,
+            src: temporary,
+        })));
+        Ok(IrStmt::Block(statements))
+    }
+
+    /// Copy-out of a record output/inout formal into a container element
+    /// actual (`f(q[i])`): the element's indices are evaluated before the
+    /// call, and the value is stored after it returns.
+    pub(in crate::sim::codegen) fn container_record_writeback(
+        &mut self,
+        path: &str,
+        actual: NodeId,
+        value: usize,
+        before: &mut Vec<IrStmt>,
+    ) -> Result<Option<IrStmt>, String> {
+        let Some(selection) = self.record_element_of(actual) else {
+            return Ok(None);
+        };
+        let slot = match self.lower_element_slot(path, &selection)? {
+            IrValueSlot::Element { indices, key } => {
+                let indices = indices
+                    .into_iter()
+                    .enumerate()
+                    .map(|(position, index)| {
+                        let name = format!("_llg_out_index_{}_{position}", actual.index());
+                        let (width, signed) = (index.width, index.signed);
+                        before.push(IrStmt::DeclLocal {
+                            name: name.clone(),
+                            width,
+                            signed,
+                            two_state: false,
+                            init: Some(Box::new(index)),
+                        });
+                        IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
+                    })
+                    .collect();
+                IrValueSlot::Element { indices, key }
+            }
+            slot => slot,
+        };
+        Ok(Some(IrStmt::Container(Box::new(
+            IrContainerStmt::SetValue {
+                container: selection.container,
+                slot,
+                value,
+            },
+        ))))
     }
 
     /// `q[i] = rhs` for a record element (SV 7.5-7.10 value semantics).

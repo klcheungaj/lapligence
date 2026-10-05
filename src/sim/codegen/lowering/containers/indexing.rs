@@ -517,3 +517,99 @@ impl<'a> Codegen<'a> {
         ))
     }
 }
+
+impl Codegen<'_> {
+    /// A slice of a fixed-array view (`a[l:r]`, `a[b+:w]`, `a[b-:w]`): its
+    /// container, first storage position (signed, possibly out of range)
+    /// and element count. Constant bounds are folded; an indexed base is
+    /// evaluated once, keeping X/Z so the runtime treats it as invalid.
+    pub(in super::super) fn fixed_view_slice(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<(usize, IrExpr, u64)>, String> {
+        let node = self.p30_unwrap_cast(node);
+        let base = match self.kind(node) {
+            NodeKind::Expr(ExprKind::PartSelect { base, .. })
+            | NodeKind::Expr(ExprKind::IndexedPartSelect { base, .. }) => *base,
+            _ => return Ok(None),
+        };
+        let Some(container) = self.container_of(base).map(|container| container.ir) else {
+            return Ok(None);
+        };
+        let Some((left, right)) = self.fixed_view_ranges.get(&container).copied() else {
+            return Ok(None);
+        };
+        let (left, right) = (i128::from(left), i128::from(right));
+        let ascending = left <= right;
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::PartSelect {
+                left: first,
+                right: last,
+                ..
+            }) => {
+                let first = self.eval_bound_i128(*first)?;
+                let last = self.eval_bound_i128(*last)?;
+                let count = u64::try_from(first.abs_diff(last) + 1)
+                    .map_err(|_| format!("fixed-array slice in `{path}` is too large"))?;
+                let start = if ascending {
+                    first - left
+                } else {
+                    left - first
+                };
+                Ok(Some((
+                    container,
+                    pattern_key_expr(start, 64, true, false),
+                    count,
+                )))
+            }
+            NodeKind::Expr(ExprKind::IndexedPartSelect {
+                base_expr,
+                width_expr,
+                neg,
+                ..
+            }) => {
+                let width = self.eval_bound_i128(*width_expr)?;
+                let count = u64::try_from(width)
+                    .ok()
+                    .filter(|count| *count > 0)
+                    .ok_or_else(|| {
+                        format!("fixed-array slice width in `{path}` is not positive")
+                    })?;
+                // The lowest declared index of the selection, then its
+                // storage position: ascending ranges store the lowest index
+                // first, descending ranges the highest.
+                let index = self.lower_container_index(path, *base_expr)?;
+                let width_bits = index.width.max(32) + 2;
+                let index = IrExpr::convert_to(index, width_bits, true);
+                let (offset, negate) = match (ascending, neg) {
+                    (true, false) => (-left, false),
+                    (true, true) => (1 - width - left, false),
+                    (false, false) => (left - width + 1, true),
+                    (false, true) => (left, true),
+                };
+                let offset = pattern_key_expr(offset, width_bits, true, false);
+                let (op, a, b) = if negate {
+                    (IrBinOp::Sub, offset, index)
+                } else {
+                    (IrBinOp::Add, index, offset)
+                };
+                Ok(Some((
+                    container,
+                    IrExpr::new(
+                        IrExprKind::Bin {
+                            op,
+                            a: Box::new(a),
+                            b: Box::new(b),
+                        },
+                        width_bits,
+                        true,
+                        None,
+                    ),
+                    count,
+                )))
+            }
+            _ => Ok(None),
+        }
+    }
+}

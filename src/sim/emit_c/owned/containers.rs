@@ -66,6 +66,17 @@ impl Frame<'_, '_> {
         for line in init.lines() {
             self.line(line.trim());
         }
+        if let Some(size) = container.initial_size {
+            // A fixed-array view starts with its declared default elements.
+            let function = if container.element.is_packed() {
+                "llg_dyn_new"
+            } else {
+                "llg_dyn_value_new"
+            };
+            self.line(format!(
+                "{{ sv4_t size = sv4_from_u64({size}ULL, 64, 0); {function}(&{target}, size, NULL); sv4_destroy(&size); }}"
+            ));
+        }
         Ok(target)
     }
 }

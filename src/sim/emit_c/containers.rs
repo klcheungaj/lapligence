@@ -306,6 +306,30 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
         IrContainerExpr::QueuePopBack(index) => {
             format!("llg_queue_pop_back(&{})", name(ctx, *index))
         }
+        IrContainerExpr::Equal {
+            left,
+            right,
+            case,
+            negate,
+        } => {
+            let container = &ctx.model.containers[*left];
+            let function = match (&container.kind, container.element.is_packed()) {
+                (IrContainerKind::Dynamic, true) => "llg_dyn_equal",
+                (IrContainerKind::Dynamic, false) => "llg_dyn_value_equal",
+                (IrContainerKind::Queue { .. }, true) => "llg_queue_equal",
+                (IrContainerKind::Queue { .. }, false) => "llg_queue_value_equal",
+                (IrContainerKind::Associative { .. }, _) => {
+                    return Err("associative arrays have no whole-array equality".into())
+                }
+            };
+            format!(
+                "{function}(&{}, &{}, {}, {})",
+                name(ctx, *left),
+                name(ctx, *right),
+                u8::from(*case),
+                u8::from(*negate)
+            )
+        }
     })
 }
 
@@ -313,6 +337,9 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
     Ok(match operation {
         IrContainerStmt::SetValue { .. }
         | IrContainerStmt::GetValue { .. }
+        | IrContainerStmt::CopyRange { .. }
+        | IrContainerStmt::Merge { .. }
+        | IrContainerStmt::Nonblocking { .. }
         | IrContainerStmt::Declare(_) => {
             return Err("container record values require whole-model ownership emission".into())
         }

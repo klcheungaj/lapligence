@@ -396,6 +396,16 @@ pub enum IrContainerExpr {
     QueueBack(usize),
     QueuePopFront(usize),
     QueuePopBack(usize),
+    /// Whole-array `==`/`!=` (or, with `case`, `===`/`!==`) of two dynamic
+    /// arrays or two queues of one element type, including fixed-array
+    /// views (SV 7.6, 11.4.5). Elements compare in index order; different
+    /// sizes are unequal; the result is one unsigned bit.
+    Equal {
+        left: usize,
+        right: usize,
+        case: bool,
+        negate: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -460,6 +470,38 @@ pub enum IrContainerStmt {
     Copy {
         dst: usize,
         src: usize,
+    },
+    /// Untimed nonblocking write to persistent descriptor-backed array
+    /// storage: the whole of `src` (`dst_start` absent), or `count` source
+    /// elements from `src_start` written from storage position `dst_start`.
+    /// Source elements and the destination position are captured at issue
+    /// (SV 10.4.2).
+    Nonblocking {
+        target: usize,
+        dst_start: Option<IrExpr>,
+        src: usize,
+        src_start: IrExpr,
+        count: u64,
+    },
+    /// Ambiguous-predicate conditional merge of two descriptor-backed
+    /// dynamic arrays into `dst` (SV 11.4.11): known-equal immediate
+    /// elements survive, others take their default-uninitialized value.
+    Merge {
+        dst: usize,
+        left: usize,
+        right: usize,
+    },
+    /// Copy `count` elements between fixed-array views of record, string or
+    /// handle elements: a slice read (`dst_start` zero) or a slice write.
+    /// Starts are signed storage positions evaluated once; out-of-range
+    /// source elements read their default and out-of-range destinations
+    /// are not written (SV 7.4.6). Sources are snapshotted before writes.
+    CopyRange {
+        dst: usize,
+        dst_start: IrExpr,
+        src: usize,
+        src_start: IrExpr,
+        count: u64,
     },
     /// Assign a queue-valued locator/min/max/unique method result. The source
     /// is evaluated before replacing the destination, so aliasing a
@@ -1138,6 +1180,25 @@ impl IrContainerExpr {
             | Self::QueueBack(index)
             | Self::QueuePopFront(index)
             | Self::QueuePopBack(index) => (*index, Some("queue")),
+            Self::Equal { left, right, .. } => {
+                let left = container_kind(model, *left, None)?;
+                let right = container_kind(model, *right, None)?;
+                let same_kind = matches!(
+                    (&left.kind, &right.kind),
+                    (IrContainerKind::Dynamic, IrContainerKind::Dynamic)
+                        | (IrContainerKind::Queue { .. }, IrContainerKind::Queue { .. })
+                );
+                if !same_kind
+                    || left.element.is_packed() != right.element.is_packed()
+                    || !left.element.compatible_with(&right.element)
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "container equality requires two dynamic arrays or two queues of one element type",
+                    ));
+                }
+                return Ok(());
+            }
         };
         container_kind(model, index, expected).map(|_| ())
     }
@@ -1268,6 +1329,85 @@ impl IrContainerStmt {
                     return Err(IrValidationError::new(
                         "container",
                         "container copy type mismatch",
+                    ));
+                }
+                Ok(())
+            }
+            Self::Nonblocking {
+                target,
+                dst_start,
+                src,
+                src_start,
+                count,
+            } => {
+                let target = container_kind(model, *target, None)?;
+                let src = container_kind(model, *src, None)?;
+                if !matches!(target.kind, IrContainerKind::Dynamic)
+                    || !matches!(src.kind, IrContainerKind::Dynamic)
+                    || target.element.is_packed()
+                    || !target.is_global_storage()
+                    || !target.element.compatible_with(&src.element)
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "nonblocking array write requires persistent descriptor-backed dynamic storage and a source of its element type",
+                    ));
+                }
+                if *count == 0
+                    || src_start.is_real()
+                    || dst_start.as_ref().is_some_and(IrExpr::is_real)
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "nonblocking array write needs a positive count and integral positions",
+                    ));
+                }
+                Ok(())
+            }
+            Self::Merge { dst, left, right } => {
+                let dst = container_kind(model, *dst, None)?;
+                for source in [left, right] {
+                    let source = container_kind(model, *source, None)?;
+                    if !matches!(source.kind, IrContainerKind::Dynamic)
+                        || !source.element.compatible_with(&dst.element)
+                    {
+                        return Err(IrValidationError::new(
+                            "container",
+                            "container merge requires dynamic arrays of one element type",
+                        ));
+                    }
+                }
+                if !matches!(dst.kind, IrContainerKind::Dynamic) || dst.element.is_packed() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "container merge requires a descriptor-backed dynamic array",
+                    ));
+                }
+                Ok(())
+            }
+            Self::CopyRange {
+                dst,
+                dst_start,
+                src,
+                src_start,
+                count,
+            } => {
+                let dst = container_kind(model, *dst, None)?;
+                let src = container_kind(model, *src, None)?;
+                if !matches!(dst.kind, IrContainerKind::Dynamic)
+                    || !matches!(src.kind, IrContainerKind::Dynamic)
+                    || dst.element.is_packed()
+                    || !dst.element.compatible_with(&src.element)
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "container range copy requires two descriptor-backed dynamic arrays of one element type",
+                    ));
+                }
+                if *count == 0 || dst_start.is_real() || src_start.is_real() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "container range copy needs a positive count and integral starts",
                     ));
                 }
                 Ok(())
@@ -2097,7 +2237,26 @@ impl IrContainerStmt {
             Self::AssignChandleValues { values, .. } => {
                 values.iter().for_each(|value| value.expressions(visit))
             }
+            Self::CopyRange {
+                dst_start,
+                src_start,
+                ..
+            } => {
+                visit(dst_start);
+                visit(src_start);
+            }
+            Self::Nonblocking {
+                dst_start,
+                src_start,
+                ..
+            } => {
+                if let Some(dst_start) = dst_start {
+                    visit(dst_start);
+                }
+                visit(src_start);
+            }
             Self::Copy { .. }
+            | Self::Merge { .. }
             | Self::MethodAssign { .. }
             | Self::Method { .. }
             | Self::Delete(_)
@@ -2187,7 +2346,26 @@ impl IrContainerStmt {
             Self::AssignChandleValues { values, .. } => values
                 .iter_mut()
                 .for_each(|value| value.expressions_mut(visit)),
+            Self::CopyRange {
+                dst_start,
+                src_start,
+                ..
+            } => {
+                visit(dst_start);
+                visit(src_start);
+            }
+            Self::Nonblocking {
+                dst_start,
+                src_start,
+                ..
+            } => {
+                if let Some(dst_start) = dst_start {
+                    visit(dst_start);
+                }
+                visit(src_start);
+            }
             Self::Copy { .. }
+            | Self::Merge { .. }
             | Self::MethodAssign { .. }
             | Self::Method { .. }
             | Self::Delete(_)

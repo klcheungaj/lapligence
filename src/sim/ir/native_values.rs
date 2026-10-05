@@ -73,6 +73,12 @@ impl IrNativeLeafValue {
     }
 }
 
+/// Whether an opaque element kind is a plain identity class handle: a
+/// pointer copied by identity with no reference count (SV 8.4).
+pub(in crate::sim) fn is_class_handle_kind(kind: &str) -> bool {
+    kind == "Class"
+}
+
 /// Number of runtime items directly below one aggregate or fixed-array level.
 pub(in crate::sim) fn native_item_count(element: &IrContainerElement) -> Option<u64> {
     match element {
@@ -149,6 +155,9 @@ fn validate_native_level(
         IrContainerElement::Real { .. }
         | IrContainerElement::String
         | IrContainerElement::Chandle => Ok(()),
+        // Class handles are identity leaves stored like chandles (SIM-007);
+        // counted process handles have no plain-pointer leaf.
+        IrContainerElement::Opaque { kind, .. } if is_class_handle_kind(kind) => Ok(()),
         IrContainerElement::Aggregate { type_id, members } => {
             if members.is_empty() {
                 return Err(IrValidationError::new(

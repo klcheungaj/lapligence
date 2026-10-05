@@ -34,6 +34,16 @@ static void apply_nba(llg_nba_t* next) {
             llg_string_move(next->native.string.target, next->native.string.value);
             next->native.string.value = (llg_string_t){0};
         }
+    } else if (next->is_values) {
+        llg_dyn_value_array_t* payload = next->native.values.payload;
+        if (next->native.values.whole) {
+            llg_dyn_value_copy(next->native.values.target, payload);
+        } else {
+            sv4_t zero = sv4_from_u64(0, 64, 1);
+            llg_dyn_value_copy_range(next->native.values.target, next->value,
+                                     payload, zero, payload->size);
+            sv4_destroy(&zero);
+        }
     } else if (next->is_chandle) {
         // Chandles are borrowed foreign pointers with no change notification,
         // matching a blocking chandle write.

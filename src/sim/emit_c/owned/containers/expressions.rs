@@ -285,5 +285,29 @@ pub(super) fn render(
         IrContainerExpr::QueuePopBack(index) => {
             format!("llg_queue_pop_back(&{})", name(frame, *index)?)
         }
+        IrContainerExpr::Equal {
+            left,
+            right,
+            case,
+            negate,
+        } => {
+            let container = &ctx.model.containers[*left];
+            let function = match (&container.kind, container.element.is_packed()) {
+                (IrContainerKind::Dynamic, true) => "llg_dyn_equal",
+                (IrContainerKind::Dynamic, false) => "llg_dyn_value_equal",
+                (IrContainerKind::Queue { .. }, true) => "llg_queue_equal",
+                (IrContainerKind::Queue { .. }, false) => "llg_queue_value_equal",
+                (IrContainerKind::Associative { .. }, _) => {
+                    return Err("associative arrays have no whole-array equality".into())
+                }
+            };
+            format!(
+                "{function}(&{}, &{}, {}, {})",
+                name(frame, *left)?,
+                name(frame, *right)?,
+                u8::from(*case),
+                u8::from(*negate)
+            )
+        }
     })
 }

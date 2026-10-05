@@ -1664,6 +1664,17 @@ void llg_clocking_nba_d_sync_after(double* target, double value, uint64_t ticks,
 void llg_string_nba_after(llg_string_t* target, llg_string_t value,
                           uint64_t ticks);
 void llg_chandle_nba_after(void** target, void* value, uint64_t ticks);
+// Nonblocking write to persistent descriptor-backed array storage (a
+// fixed-array view of string, record or handle elements, SIM-007). The
+// source elements (`count` from storage position `src_start`, or the whole
+// source when `whole`) are copied at issue; `dst_start` is captured at issue.
+// The commit replaces the whole target, or writes the in-range positions
+// from `dst_start`, and notifies changed contents. The target must outlive
+// the pending write. Packed positions and `src` are borrowed.
+struct llg_dyn_value_array_t;
+void llg_dyn_value_nba(struct llg_dyn_value_array_t* target, sv4_t dst_start,
+                       const struct llg_dyn_value_array_t* src, sv4_t src_start,
+                       uint64_t count, int whole);
 // Selected writes retain only the plan's valid contiguous slice. Ascending
 // declared part-selects set reverse so queued bits remain in storage order.
 void llg_nba_selected_after(sv4_t* target, sv4_t value,

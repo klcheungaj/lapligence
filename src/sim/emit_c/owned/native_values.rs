@@ -141,7 +141,8 @@ impl Frame<'_, '_> {
                 (IrNativeLeafExpr::String(value), IrContainerElement::String) => {
                     self.string_assign(&format!("&{item}.value.string"), value)?;
                 }
-                (IrNativeLeafExpr::Chandle(value), IrContainerElement::Chandle) => {
+                (IrNativeLeafExpr::Chandle(value), IrContainerElement::Chandle)
+                | (IrNativeLeafExpr::Chandle(value), IrContainerElement::Opaque { .. }) => {
                     let value = self.chandle(value)?;
                     self.line(format!("{item}.value.handle = {value};"));
                 }

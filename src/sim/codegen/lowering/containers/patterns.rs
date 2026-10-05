@@ -54,9 +54,16 @@ impl<'a> Codegen<'a> {
         }
 
         let element_descriptor = descriptor.and_then(|descriptor| match &descriptor.shape {
-            TypeShape::Container { element, .. } => Some(element.as_ref().clone()),
+            TypeShape::Container { element, .. } | TypeShape::FixedArray { element, .. } => {
+                Some(element.as_ref().clone())
+            }
             _ => None,
         });
+        // A fixed-array view has its declared size and HDL index range; keys
+        // name declared indices (SV 10.9.1).
+        let fixed_view = self.model.containers[container]
+            .initial_size
+            .zip(self.fixed_view_ranges.get(&container).copied());
         let element_two_state = self.model.containers[container].element.two_state();
         let mut explicit = Vec::<(i64, NodeId)>::new();
         let mut type_values = Vec::<(AssignmentPatternKeyType, NodeId)>::new();
@@ -88,6 +95,22 @@ impl<'a> Codegen<'a> {
                 continue;
             }
             if let Some(index) = self.assignment_pattern_index_key(path, operand)? {
+                let index = match fixed_view {
+                    Some((_, (left, right))) => {
+                        let (left, right) = (i128::from(left), i128::from(right));
+                        if index < left.min(right) || index > left.max(right) {
+                            return Err(format!(
+                                "fixed-array assignment pattern index `{key}` is outside the declared range in `{path}`"
+                            ));
+                        }
+                        if left <= right {
+                            index - left
+                        } else {
+                            left - index
+                        }
+                    }
+                    None => index,
+                };
                 let index = i64::try_from(index).map_err(|_| {
                     format!(
                         "resizable container assignment pattern index `{key}` is out of bounds in `{path}`"
@@ -113,17 +136,23 @@ impl<'a> Codegen<'a> {
             };
             type_values.push(((**key_type).clone(), value));
         }
-        let Some(max_index) = explicit.iter().map(|(index, _)| *index).max() else {
-            return Err(format!(
-                "resizable container assignment pattern needs an explicit size or index in `{path}`"
-            ));
+        let count = match fixed_view {
+            Some((size, _)) => usize::try_from(size)
+                .map_err(|_| format!("fixed-array assignment pattern is too large in `{path}`"))?,
+            None => {
+                let Some(max_index) = explicit.iter().map(|(index, _)| *index).max() else {
+                    return Err(format!(
+                        "resizable container assignment pattern needs an explicit size or index in `{path}`"
+                    ));
+                };
+                usize::try_from(max_index)
+                    .ok()
+                    .and_then(|index| index.checked_add(1))
+                    .ok_or_else(|| {
+                        format!("resizable container assignment pattern is too large in `{path}`")
+                    })?
+            }
         };
-        let count = usize::try_from(max_index)
-            .ok()
-            .and_then(|index| index.checked_add(1))
-            .ok_or_else(|| {
-                format!("resizable container assignment pattern is too large in `{path}`")
-            })?;
         let mut values = Vec::with_capacity(count);
         for index in 0..count {
             let index = i64::try_from(index).map_err(|_| {
@@ -468,7 +497,7 @@ impl<'a> Codegen<'a> {
         Ok(IrStmt::Block(captures))
     }
 
-    fn lower_container_source_values(
+    pub(super) fn lower_container_source_values(
         &mut self,
         path: &str,
         container: usize,
@@ -525,6 +554,11 @@ impl<'a> Codegen<'a> {
                     container,
                     values,
                 })))
+            }
+            IrContainerElement::Aggregate { .. }
+            | IrContainerElement::Union { .. }
+            | IrContainerElement::FixedArray { .. } => {
+                self.lower_container_record_values(path, container, source_values)
             }
             _ => Err(format!(
                 "resizable container assignment pattern in `{path}` requires a directly represented scalar element"

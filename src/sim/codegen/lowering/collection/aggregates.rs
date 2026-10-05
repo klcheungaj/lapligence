@@ -147,13 +147,15 @@ impl<'a> Codegen<'a> {
                 TypeShape::FixedArray { element, .. } if Self::fixed_descriptor_width(element).is_some())) {
             return Ok(false);
         }
-        // Resizable arrays of records are container storage whose elements
-        // own their record values; they are not per-leaf aggregate storage.
+        // Resizable arrays of records, and fixed arrays of native records,
+        // are container storage whose elements own their record values;
+        // they are not per-leaf aggregate storage.
         if matches!(self.kind(node), NodeKind::Array { .. })
-            && self
+            && (self
                 .db
                 .array_meta(node)
                 .is_some_and(|meta| !matches!(meta.kind(), ArrayKind::Static))
+                || self.is_fixed_handle_array(node))
         {
             return Ok(false);
         }
@@ -621,7 +623,17 @@ impl<'a> Codegen<'a> {
                     })?;
                 }
             }
-            TypeShape::Opaque { kind } if kind == "Chandle" => {
+            // Class handles are identity leaves stored like chandles; the
+            // built-in semaphore, mailbox and process classes keep their
+            // own object kinds and are not record leaves.
+            TypeShape::Opaque { kind }
+                if kind == "Chandle"
+                    || (kind == "Class"
+                        && !matches!(
+                            descriptor.name.as_str(),
+                            "semaphore" | "mailbox" | "process"
+                        )) =>
+            {
                 if shared.is_some() {
                     return Err(format!(
                         "chandle member in unpacked union `{object_name}` in `{path}` is not a packed overlay"
@@ -840,9 +852,26 @@ impl<'a> Codegen<'a> {
     /// interfaces and class-like objects) use pointer-table container storage
     /// so runtime selects copy identities without flattening objects;
     /// process elements keep their reference counts in that storage.
+    ///
+    /// Strings and unpacked records or untagged unions with a string, real,
+    /// handle or container leaf (no integral fixed payload) use the same
+    /// storage: their elements are owned recursive values (SIM-007), so a
+    /// runtime select reads or writes one element in place instead of
+    /// flattening leaves per cell.
     pub(super) fn is_fixed_handle_element(element: &TypeDescriptor) -> bool {
-        matches!(&element.shape, TypeShape::Opaque { kind }
-            if matches!(kind.as_str(), "Chandle" | "VirtualInterface" | "Class"))
+        match &element.shape {
+            TypeShape::Opaque { kind } => {
+                matches!(kind.as_str(), "Chandle" | "VirtualInterface" | "Class")
+            }
+            TypeShape::String => true,
+            TypeShape::Aggregate(layout) => {
+                matches!(
+                    layout.kind,
+                    AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion
+                ) && Self::fixed_descriptor_width_bits(element).is_none()
+            }
+            _ => false,
+        }
     }
 
     pub(super) fn container_info(
@@ -867,7 +896,8 @@ impl<'a> Codegen<'a> {
             } if Self::is_fixed_handle_element(element) => {
                 if dimensions.len() != 1 {
                     return Err(format!(
-                        "multidimensional fixed handle array `{name}` in `{path}` is not supported"
+                        "multidimensional fixed array `{name}` of {} elements in `{path}` is not supported",
+                        element.name
                     ));
                 }
                 lower_container_element(element)?

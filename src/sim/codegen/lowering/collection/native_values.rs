@@ -9,8 +9,8 @@
 use super::super::expressions::AggregateSelection;
 use super::*;
 use crate::sim::ir::{
-    native_item_count, validate_native_type, IrNativeAccessKind, IrNativeLeafExpr,
-    IrNativeLeafValue, IrNativeValue, IrObjectQuery,
+    is_class_handle_kind, native_item_count, validate_native_type, IrNativeAccessKind,
+    IrNativeLeafExpr, IrNativeLeafValue, IrNativeValue, IrObjectQuery,
 };
 
 mod conditionals;
@@ -108,6 +108,9 @@ fn leaf_ty(element: &IrContainerElement) -> Result<IrClassFieldType, String> {
         }),
         IrContainerElement::String => Ok(IrClassFieldType::String),
         IrContainerElement::Chandle => Ok(IrClassFieldType::Chandle),
+        IrContainerElement::Opaque { kind, .. } if is_class_handle_kind(kind) => {
+            Ok(IrClassFieldType::Chandle)
+        }
         _ => Err("native record leaf has no scalar representation".to_owned()),
     }
 }
@@ -195,6 +198,28 @@ fn collect_native_leaves(
     }
 }
 
+/// Whether a record reaches a built-in semaphore, mailbox or process handle,
+/// which keep their own object kinds rather than plain identity leaves.
+fn has_builtin_class_leaf(descriptor: &TypeDescriptor) -> bool {
+    match &descriptor.shape {
+        TypeShape::Opaque { kind } => {
+            kind == "Class"
+                && matches!(
+                    descriptor.name.as_str(),
+                    "semaphore" | "mailbox" | "process"
+                )
+        }
+        TypeShape::Aggregate(layout) => layout
+            .members
+            .iter()
+            .any(|member| has_builtin_class_leaf(&member.descriptor)),
+        TypeShape::FixedArray { element, .. } | TypeShape::Container { element, .. } => {
+            has_builtin_class_leaf(element)
+        }
+        _ => false,
+    }
+}
+
 impl Codegen<'_> {
     /// The native value type of a declaration, or `None` when the existing
     /// packed, fixed-array or leaf storage represents it.
@@ -209,6 +234,9 @@ impl Codegen<'_> {
         if layout.kind != AggregateKind::UnpackedStruct
             || Self::fixed_descriptor_width_bits(descriptor).is_some()
         {
+            return None;
+        }
+        if has_builtin_class_leaf(descriptor) {
             return None;
         }
         let element = lower_container_element(descriptor).ok()?;
@@ -569,6 +597,26 @@ impl Codegen<'_> {
         leaf: &NativeLeaf,
     ) -> IrLhs {
         self.native_leaf_lhs(value, leaf)
+    }
+
+    /// Read of the handle leaf at `path` below native value `value`.
+    pub(in super::super) fn native_handle_leaf(
+        &mut self,
+        value: usize,
+        path: &[AggregatePathPart],
+    ) -> Result<Option<IrChandleExpr>, String> {
+        let Some(leaf) = self
+            .native_layout_of_value(value)?
+            .leaves
+            .iter()
+            .find(|leaf| leaf.path == path && leaf.ty == IrClassFieldType::Chandle)
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        Ok(Some(IrChandleExpr::LocalRead(
+            self.native_leaf_symbol(value, &leaf),
+        )))
     }
 
     /// Model-level access name of one native leaf, shared by all uses.
@@ -1349,6 +1397,12 @@ impl Codegen<'_> {
             )?);
         }
         if matches!(direction, DbDirection::Output | DbDirection::Inout) {
+            if let Some(writeback) =
+                self.container_record_writeback(path, actual, temporary, before)?
+            {
+                after.push(writeback);
+                return Ok(IrCallArg::NativeValue(temporary));
+            }
             let (target, _) = self.native_endpoint(actual)?.ok_or_else(|| {
                 format!(
                     "output actual of native record formal `{}` in `{path}` is not a record variable",

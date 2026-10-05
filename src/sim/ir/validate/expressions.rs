@@ -67,6 +67,7 @@ impl Validator<'_> {
                         (ty.width(), ty.signed())
                     }
                     IrContainerExpr::GetNested { .. } => (expr.width, expr.signed),
+                    IrContainerExpr::Equal { .. } => (1, false),
                     IrContainerExpr::GetNestedReal { .. } => (0, false),
                 };
                 if (expr.width, expr.signed) != expected {
