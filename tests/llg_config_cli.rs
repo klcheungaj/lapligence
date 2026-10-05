@@ -143,65 +143,45 @@ fn llg_toml_in_the_current_directory_is_never_discovered() {
     );
 }
 
-/// The list-option design under test: command-line values append to the
-/// config lists, `--clear <list>` discards the config values first.
+/// List options: a list option replaces the config list, its `--append-<list>`
+/// twin adds to it.
 const LISTS_ARGS: [&str; 4] = ["--config", "llg.toml", "--top", "lists_tb"];
 
-#[test]
-fn repeatable_options_append_to_the_config_lists() {
-    let project = Project::new();
-    project.write("llg.toml", BASE_CONFIG);
-    // The config supplies FAST, DEPTH=8, include dir inc_a and the rtl sources;
-    // the command line adds EXTRA, WIDTH=5, include dir inc_b and a source.
+fn lists_run(project: &Project, extra: &[&str]) -> Output {
     let mut args = LISTS_ARGS.to_vec();
-    args.extend([
-        "-D",
-        "EXTRA",
-        "-G",
-        "WIDTH=5",
-        "-I",
-        "inc_b",
-        "extra/lists.sv",
-    ]);
-    let output = project.run(&args);
-    assert!(output.status.success(), "{}", stderr(&output));
-    let text = stdout(&output);
-    assert!(
-        text.contains("f=1 e=1 l=-1 depth=8 width=5 a=3 b=7\n"),
-        "{text}"
-    );
+    args.extend(extra);
+    project.run(&args)
 }
 
 #[test]
-fn clear_replaces_the_config_list_with_the_command_line_values() {
+fn list_options_replace_the_config_lists() {
     let project = Project::new();
     project.write("llg.toml", BASE_CONFIG);
-    // Defines and parameter overrides are replaced; the include directories
-    // and sources still append.
-    let mut args = LISTS_ARGS.to_vec();
-    args.extend([
-        "--clear",
-        "defines",
-        "--clear",
-        "param-overrides",
-        "-D",
-        "EXTRA",
-        "-I",
-        "inc_b",
-        "extra/lists.sv",
-    ]);
-    let output = project.run(&args);
+    // The config's FAST, DEPTH=8, inc_a and rtl sources are all replaced by
+    // the command line's values (repeated -I accumulate among themselves).
+    let output = lists_run(
+        &project,
+        &[
+            "-D",
+            "EXTRA",
+            "-G",
+            "WIDTH=5",
+            "-I",
+            "inc_a",
+            "-I",
+            "inc_b",
+            "extra/lists.sv",
+        ],
+    );
     assert!(output.status.success(), "{}", stderr(&output));
-    let text = stdout(&output);
     assert!(
-        text.contains("f=0 e=1 l=-1 depth=1 width=1 a=3 b=7\n"),
-        "{text}"
+        stdout(&output).contains("f=0 e=1 l=-1 depth=1 width=5 a=3 b=7\n"),
+        "{}",
+        stdout(&output)
     );
 
-    // Clearing include dirs drops inc_a: only_a.svh is no longer found.
-    let mut args = LISTS_ARGS.to_vec();
-    args.extend(["--clear", "include-dirs", "-I", "inc_b", "extra/lists.sv"]);
-    let output = project.run(&args);
+    // -I replaced the config's inc_a: only_a.svh is no longer found.
+    let output = lists_run(&project, &["-I", "inc_b", "extra/lists.sv"]);
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
     assert!(
         stderr(&output).contains("only_a.svh"),
@@ -209,40 +189,114 @@ fn clear_replaces_the_config_list_with_the_command_line_values() {
         stderr(&output)
     );
 
-    // Clearing sources drops the rtl directory: `tb` no longer exists.
+    // Named sources replaced the rtl directory: the configured top `tb` is gone.
     let output = project.run(&[
         "--config",
         "llg.toml",
-        "--clear",
-        "sources",
-        "--top",
-        "tb",
-        "-I",
-        "inc_a",
-        "extra/lists.sv",
-    ]);
-    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
-    assert!(stderr(&output).contains("tb"), "{}", stderr(&output));
-    // ... and the same command with the remaining source works.
-    let output = project.run(&[
-        "--config",
-        "llg.toml",
-        "--clear",
-        "sources,include-dirs",
-        "--top",
-        "lists_tb",
         "-I",
         "inc_a",
         "-I",
         "inc_b",
         "extra/lists.sv",
     ]);
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    assert!(stderr(&output).contains("tb"), "{}", stderr(&output));
+}
+
+#[test]
+fn append_options_add_to_the_config_lists() {
+    let project = Project::new();
+    project.write("llg.toml", BASE_CONFIG);
+    // The config supplies FAST, DEPTH=8, include dir inc_a and the rtl sources;
+    // the append options add EXTRA, WIDTH=5, include dir inc_b and a source.
+    let output = lists_run(
+        &project,
+        &[
+            "--append-define",
+            "EXTRA",
+            "--append-param-override",
+            "WIDTH=5",
+            "--append-include-dir",
+            "inc_b",
+            "--append-source",
+            "extra/lists.sv",
+        ],
+    );
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(
-        stdout(&output).contains("f=1 e=0 l=-1 depth=8 width=1 a=3 b=7\n"),
+        stdout(&output).contains("f=1 e=1 l=-1 depth=8 width=5 a=3 b=7\n"),
         "{}",
         stdout(&output)
     );
+
+    // Without --append-include-dir the config's inc_a is the only directory.
+    let output = lists_run(&project, &["--append-source", "extra/lists.sv"]);
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("only_b.svh"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn replace_and_append_options_combine_with_the_replacement_first() {
+    let project = Project::new();
+    project.write("llg.toml", BASE_CONFIG);
+    // -D replaces the config's FAST and --append-define adds LEVEL; -I replaces
+    // inc_a and --append-include-dir adds inc_b; the named file replaces the
+    // rtl directory and --append-source adds back rtl/tb.sv.
+    let output = lists_run(
+        &project,
+        &[
+            "--append-define",
+            "LEVEL=4",
+            "-D",
+            "EXTRA",
+            "--append-include-dir",
+            "inc_b",
+            "-I",
+            "inc_a",
+            "extra/lists.sv",
+            "--append-source",
+            "rtl/tb.sv",
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("f=0 e=1 l=4 depth=8 width=1 a=3 b=7\n"),
+        "{}",
+        stdout(&output)
+    );
+    // The appended source really is part of the design: `tb` can be the top.
+    let output = project.run(&[
+        "--config",
+        "llg.toml",
+        "--append-define",
+        "EXTRA",
+        "-I",
+        "inc_a",
+        "-I",
+        "inc_b",
+        "--append-source",
+        "extra/lists.sv",
+        "rtl/tb.sv",
+    ]);
+    assert_prints(&output, "mode=fast depth=8 inc=1\n");
+}
+
+#[test]
+fn append_options_require_a_value() {
+    let project = Project::new();
+    let output = project.run(&["--append-define"]);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("--append-define"),
+        "{}",
+        stderr(&output)
+    );
+    let output = project.run(&["--append-param-override", "NAME", "rtl/tb.sv"]);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
 }
 
 #[test]
@@ -274,6 +328,14 @@ files = ["extra/lists.sv"]
         stdout(&output),
         stderr(&output)
     );
+    // An appended define of the same name also replaces the configured one.
+    let output = project.run(&["--config", "llg.toml", "--append-define", "LEVEL=5"]);
+    assert!(
+        stdout(&output).contains("l=5 "),
+        "{}{}",
+        stdout(&output),
+        stderr(&output)
+    );
     // Repeating it on the command line: the last one wins.
     let output = project.run(&["--config", "llg.toml", "-D", "LEVEL=2", "-D", "LEVEL=3"]);
     assert!(
@@ -285,7 +347,7 @@ files = ["extra/lists.sv"]
 }
 
 #[test]
-fn plusargs_append_to_the_config_plusargs_unless_cleared() {
+fn plusargs_after_the_marker_replace_the_config_and_append_adds() {
     let project = Project::new();
     project.write(
         "llg.toml",
@@ -299,32 +361,27 @@ files = ["extra/lists.sv"]
 plusargs = ["+cfg"]
 "#,
     );
-    let output = project.run(&["--config", "llg.toml", "--", "+cli"]);
-    assert!(
-        stdout(&output).contains("pa_cfg=1 pa_cli=1\n"),
-        "{}{}",
-        stdout(&output),
-        stderr(&output)
-    );
-    let output = project.run(&["--config", "llg.toml", "--clear", "plusargs", "--", "+cli"]);
-    assert!(
-        stdout(&output).contains("pa_cfg=0 pa_cli=1\n"),
-        "{}{}",
-        stdout(&output),
-        stderr(&output)
-    );
-}
-
-#[test]
-fn clear_rejects_an_unknown_list() {
-    let project = Project::new();
-    let output = project.run(&["--clear", "nope", "rtl/tb.sv"]);
-    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
-    assert!(stderr(&output).contains("nope"), "{}", stderr(&output));
-    assert!(
-        stderr(&output).contains("include-dirs"),
-        "{}",
-        stderr(&output)
+    let plusargs = |extra: &[&str]| {
+        let mut args = vec!["--config", "llg.toml"];
+        args.extend(extra);
+        let output = project.run(&args);
+        assert!(output.status.success(), "{}", stderr(&output));
+        let text = stdout(&output);
+        text.lines()
+            .find(|line| line.starts_with("pa_cfg"))
+            .unwrap_or_else(|| panic!("no plusarg line: {text}"))
+            .to_owned()
+    };
+    assert_eq!(plusargs(&[]), "pa_cfg=1 pa_cli=0");
+    // `--` replaces the configured plusargs, even when nothing follows it.
+    assert_eq!(plusargs(&["--", "+cli"]), "pa_cfg=0 pa_cli=1");
+    assert_eq!(plusargs(&["--"]), "pa_cfg=0 pa_cli=0");
+    // --append-plusarg keeps them.
+    assert_eq!(plusargs(&["--append-plusarg", "+cli"]), "pa_cfg=1 pa_cli=1");
+    // Both: the replacement is the base, the appended plusarg follows.
+    assert_eq!(
+        plusargs(&["--append-plusarg", "+cli", "--"]),
+        "pa_cfg=0 pa_cli=1"
     );
 }
 
@@ -373,14 +430,12 @@ fn environment_overrides_the_config_and_the_command_line_overrides_both() {
 fn command_line_values_override_every_kind_of_config_value() {
     let project = Project::new();
     project.write("llg.toml", BASE_CONFIG);
-    // `--clear` drops the config lists, so the config `FAST` define, `inc_a`
-    // include directory, DEPTH override and the rtl sources do not survive;
-    // the named file is the only source.
+    // The list options replace the config lists, so the config `FAST` define,
+    // `inc_a` include directory, DEPTH override and the rtl sources do not
+    // survive; the named file is the only source.
     let output = project.run(&[
         "--config",
         "llg.toml",
-        "--clear",
-        "defines,include-dirs,param-overrides,sources",
         "-D",
         "UNRELATED=1",
         "-I",
