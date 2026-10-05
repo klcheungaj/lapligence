@@ -354,6 +354,11 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn analyze_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Lhs, String> {
+        if self.packed_element_member_select(lhs).is_some() {
+            if let Some(target) = self.packed_value_lhs(path, lhs)? {
+                return Ok(target);
+            }
+        }
         if let Some(target) = self.modport_select_lhs(path, lhs)? {
             return Ok(Lhs::Canonical(target));
         }

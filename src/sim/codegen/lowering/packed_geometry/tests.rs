@@ -3,7 +3,10 @@ use super::*;
 use crate::sim::opt::{run_ir, OptConfig};
 
 fn folded_offset(index: IrExpr, range: PackedRange, stride: u32, back: u32) -> i128 {
-    let value = packed_lsb(index, range, stride, back).unwrap();
+    folded(packed_lsb(index, range, stride, back).unwrap())
+}
+
+fn folded(value: IrExpr) -> i128 {
     let mut model = IrModel::new("coordinate_test".to_owned(), 1).unwrap();
     model.signals.push(
         IrSignal::new(
@@ -163,4 +166,16 @@ fn range_selects_cover_whole_elements_in_both_directions() {
     let vector = PackedSelectDim::new(8, Some(PackedRange { left: 7, right: 0 })).unwrap();
     assert_eq!(vector.part(5, 2).unwrap(), (2, 4));
     assert_eq!(vector.indexed(1, 3, false).unwrap(), (1, 3));
+}
+
+#[test]
+fn member_offsets_shift_element_lsbs_without_wrapping() {
+    let range = PackedRange { left: 3, right: 0 };
+    let element = |index| packed_lsb(lhs_integer_expr(index), range, 8, 0).unwrap();
+    assert_eq!(folded(offset_lsb(element(2), 4).unwrap()), 20);
+    assert_eq!(folded(offset_lsb(element(0), 0).unwrap()), 0);
+    // An element below the range keeps a negative LSB after the member offset.
+    assert_eq!(folded(offset_lsb(element(-1), 4).unwrap()), -4);
+    let wide = offset_lsb(element(i128::from(u64::MAX)), 7).unwrap();
+    assert_eq!(folded(wide), i128::from(u64::MAX) * 8 + 7);
 }

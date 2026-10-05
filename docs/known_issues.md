@@ -767,20 +767,22 @@ for each expression port, selected by the bound instance at run time.
 Reproduce with `interface i; logic [7:0] a; modport m(input .p(a[3:0]));
 endinterface`, `virtual i.m v = inst;` and `$display("%h", v.p);`.
 
-## Member access through packed-array elements
+## Tagged-union members of packed-array elements
 
-**Status:** open (found while fixing multidimensional packed range selects).
+**Status:** open (boundary kept when member access through packed-array
+elements was admitted).
 
-A member select of one element of a packed array of structures or unions,
-such as `ps[i].hi` for `pair_t [3:0] ps`, is not captured as a member path and
-rejects with ``unsupported executable node `MemberAccess` ``. Whole-element and
-range selects (`ps[i]`, `ps[2:1]`) and member selects of unpacked-array
-elements work. The cause is in Db capture: a member path is built over an
-element select only when the base is an unpacked array or has several packed
-dimensions, so this member access keeps no owned form. Capturing the element
-select as the path root, and lowering it through the packed member
-projection, would admit it. Until then, select the element into a structure
-variable first, or use the equivalent part-select.
+A member of a tagged union that is an element of a packed array, such as
+`tp[i].a` for `t_t [1:0] tp` with `typedef union tagged packed {...} t_t`,
+rejects with ``tagged-union member `a` of a packed-array element is not
+supported``. Reading or writing it needs the tag check on the selected
+element; the packed element-member projection (`collection/packed_elements.rs`)
+carries no tag guard, so it rejects rather than read inactive payload bits.
+Other packed structure and union members of packed-array elements work, as do
+tagged-union members of whole signals. Lowering it as an
+`IrExprKind::TaggedSelect` / `IrLhs::TaggedSelect` whose steps are the element
+chain followed by the guarded member step would admit it. Until then, select
+the element into a tagged-union variable first.
 
-Reproduce with `typedef struct packed { logic [3:0] hi, lo; } pair_t;
-pair_t [3:0] ps; initial $display("%h", ps[3].hi);`.
+Reproduce with `typedef union tagged packed { logic [3:0] a, b; } t_t;
+t_t [1:0] tp; initial $display("%h", tp[0].a);`.

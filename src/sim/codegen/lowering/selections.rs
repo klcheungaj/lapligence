@@ -70,6 +70,16 @@ impl<'a> Codegen<'a> {
         parts: &[String],
         refs: &[Option<NodeId>],
     ) -> Option<(NodeId, usize)> {
+        // A member path over an element select names the selected
+        // declaration first; resolving that name would drop the select.
+        if refs.first().copied().flatten().is_some_and(|select| {
+            matches!(
+                self.kind(select),
+                NodeKind::Expr(ExprKind::BitSelect { .. } | ExprKind::ArraySelect { .. })
+            )
+        }) {
+            return None;
+        }
         if let Some((index, target)) = refs
             .iter()
             .enumerate()

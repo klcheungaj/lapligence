@@ -1,0 +1,24 @@
+ps const 4 5
+ps runtime 8 7
+ps written 8b6543a1
+ps sub 8b6540a1 1 10
+asc 0 7 2
+nz 8 f d
+oor x x x
+oor written 89abcdef
+w 6 3 6
+w written a76b4321
+r d000c5 -3 -3
+u 1 34 4
+ns 00700300 70
+mx 5 x
+mx written 0010 x
+l 2 3
+l written 9234
+P a 3
+q 4 1
+q written 3f44
+h 70020 7
+pick 2
+poke 01234e67
+nba 1f34 a70b4321

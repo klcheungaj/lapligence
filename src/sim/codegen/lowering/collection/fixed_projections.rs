@@ -370,6 +370,7 @@ impl Codegen<'_> {
         for index in packed_indices {
             self.fixed_index(path, &mut projection, index)?;
         }
+        self.recover_packed_element_type(node, &mut projection);
         Ok(Some(projection))
     }
 
@@ -517,6 +518,7 @@ impl Codegen<'_> {
                 for index in indices {
                     self.fixed_index(path, &mut projection, index)?;
                 }
+                self.recover_packed_element_type(node, &mut projection);
                 Ok(Some(projection))
             }
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
@@ -525,6 +527,7 @@ impl Codegen<'_> {
                     return Ok(None);
                 };
                 self.fixed_index(path, &mut projection, index)?;
+                self.recover_packed_element_type(node, &mut projection);
                 Ok(Some(projection))
             }
             NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
@@ -622,6 +625,25 @@ impl Codegen<'_> {
                 Ok(Some(projection))
             }
             _ => Ok(None),
+        }
+    }
+
+    /// A packed-array descriptor keeps only its ranges, so selecting its
+    /// last dimension leaves a range-less atom. When the select's own type
+    /// is a packed structure or union of that width (an element of
+    /// `pair_t [1:0] q [2]`), continue with that type so its members project.
+    fn recover_packed_element_type(&self, node: NodeId, projection: &mut Projection) {
+        if !matches!(&projection.descriptor.shape, TypeShape::PackedAtom { ranges } if ranges.is_empty())
+        {
+            return;
+        }
+        let Some(element) = self.query_descriptor(node) else {
+            return;
+        };
+        if matches!(&element.shape, TypeShape::Aggregate(_))
+            && fixed_width(element) == fixed_width(&projection.descriptor)
+        {
+            projection.descriptor = element.clone();
         }
     }
 

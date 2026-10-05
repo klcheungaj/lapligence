@@ -271,6 +271,25 @@ impl<'a> Codegen<'a> {
         node: NodeId,
         bindings: &HashMap<NodeId, IrDependency>,
     ) -> Option<IrDependency> {
+        if let Some(select) = self.packed_element_member_select(node) {
+            // A member of a packed-array element: the member's bits when the
+            // element is static, otherwise the element chain's own prefix.
+            let prefix = self.packed_storage_prefix_bound(select, bindings)?;
+            let NodeKind::Expr(ExprKind::HierPath { parts, .. }) = self.kind(node) else {
+                return Some(prefix);
+            };
+            let element = self
+                .query_descriptor(select)
+                .and_then(Self::fixed_descriptor_width);
+            let member = self.packed_member_layout(select, &parts[1..]);
+            let (storage, lsb, width) = self.dependency_span(&prefix)?;
+            return Some(match (element, member) {
+                (Some(element), Some(member)) if element == width => {
+                    self.slice_dependency(storage, lsb.checked_add(member.lsb)?, member.width)
+                }
+                _ => prefix,
+            });
+        }
         if let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) {
             // A ref formal has no independent signal. Resolve its selected
             // field within the actual's prefix, not through global storage.
