@@ -100,10 +100,10 @@ impl<'a> Codegen<'a> {
                         indices,
                         value: self.lower_string(path, rhs)?,
                     },
-                    IrContainerElement::Chandle => IrContainerStmt::SetNestedChandle {
+                    ref element if element.is_handle() => IrContainerStmt::SetNestedChandle {
                         container,
                         indices,
-                        value: self.lower_chandle(path, rhs)?,
+                        value: self.lower_container_handle(path, element, rhs)?,
                     },
                     IrContainerElement::Container { .. } => {
                         let source = self.container_of(rhs).ok_or_else(|| {
@@ -196,10 +196,10 @@ impl<'a> Codegen<'a> {
                             key,
                             value: self.lower_string(path, rhs)?,
                         },
-                        IrContainerElement::Chandle => IrContainerStmt::SetStringChandle {
+                        ref element if element.is_handle() => IrContainerStmt::SetStringChandle {
                             container: container.ir,
                             key,
-                            value: self.lower_chandle(path, rhs)?,
+                            value: self.lower_container_handle(path, element, rhs)?,
                         },
                         _ => {
                             return Err(format!(
@@ -209,14 +209,7 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 _ => {
-                    let index = if matches!(
-                        self.model.containers[container.ir].kind,
-                        IrContainerKind::Queue { .. }
-                    ) {
-                        self.lower_queue_index(path, container.ir, index)?
-                    } else {
-                        self.lower_container_index(path, index)?
-                    };
+                    let index = self.lower_container_top_index(path, container.ir, index)?;
                     match self.model.containers[container.ir].element.clone() {
                         IrContainerElement::Packed { .. } => IrContainerStmt::Set {
                             container: container.ir,
@@ -233,10 +226,10 @@ impl<'a> Codegen<'a> {
                             index,
                             value: self.lower_string(path, rhs)?,
                         },
-                        IrContainerElement::Chandle => IrContainerStmt::SetChandleValue {
+                        ref element if element.is_handle() => IrContainerStmt::SetChandleValue {
                             container: container.ir,
                             index,
-                            value: self.lower_chandle(path, rhs)?,
+                            value: self.lower_container_handle(path, element, rhs)?,
                         },
                         IrContainerElement::Container { .. } => {
                             let source = self.container_of(rhs).ok_or_else(|| {
@@ -282,6 +275,23 @@ impl<'a> Codegen<'a> {
             return Err(format!(
                 "compound assignment to resizable container in `{path}` is not supported"
             ));
+        }
+        // `{}` is the empty unpacked array concatenation (SV 7.10.4): every
+        // element is removed, exactly as by `delete()`.
+        if matches!(
+            self.kind(self.p30_unwrap_cast(rhs)),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Concat,
+                operands,
+                ..
+            }) if operands.is_empty()
+        ) && !matches!(
+            self.model.containers[dst.ir].kind,
+            IrContainerKind::Associative { .. }
+        ) {
+            return Ok(Some(IrStmt::Container(Box::new(IrContainerStmt::Delete(
+                dst.ir,
+            )))));
         }
         if let Some(statement) =
             self.lower_bitstream_cast_container_assignment(path, lhs, rhs, &dst)?

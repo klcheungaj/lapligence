@@ -2106,6 +2106,7 @@ fn collect_string_effects(
         IrStringExpr::AssociativeGet { key, .. } => {
             collect_string_effects(ir, key, effects, visited_calls)
         }
+        IrStringExpr::QueuePop { .. } => effects.push(ExecutionEffect::ImmediateStore),
         IrStringExpr::EnumName { receiver, members } => {
             collect_expression_effects(ir, receiver, effects, visited_calls);
             for member in members {
@@ -2183,6 +2184,19 @@ fn collect_chandle_effects(
         }
         IrChandleExpr::AssociativeGet { key, .. } => {
             collect_string_effects(ir, key, effects, visited_calls)
+        }
+        IrChandleExpr::QueuePop { .. } => effects.push(ExecutionEffect::ImmediateStore),
+        IrChandleExpr::Mailbox(mailbox) => {
+            collect_mailbox_expr_effects(ir, mailbox, effects, visited_calls)
+        }
+        IrChandleExpr::EventObject(event) => {
+            if let crate::sim::ir::IrEventRef::Handle(handle) = event.as_ref() {
+                collect_chandle_effects(ir, handle, effects, visited_calls);
+            } else {
+                event.expressions(&mut |index| {
+                    collect_expression_effects(ir, index, effects, visited_calls)
+                });
+            }
         }
         IrChandleExpr::Call {
             function,

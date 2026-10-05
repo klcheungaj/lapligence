@@ -411,6 +411,15 @@ impl Codegen<'_> {
     /// semaphore handle.  Semaphores share the native pointer ABI with
     /// chandles, but their methods must lower to the blocking runtime service.
     pub(in super::super) fn is_semaphore_expr(&self, path: &str, node: NodeId) -> bool {
+        // A semaphore element of resizable storage keeps its nominal type
+        // on the select expression.
+        if self.is_container_chandle_expr(node)
+            && self
+                .query_descriptor(node)
+                .is_some_and(|descriptor| descriptor.name == "semaphore")
+        {
+            return true;
+        }
         if matches!(
             self.kind(node),
             NodeKind::Expr(ExprKind::NewClass {

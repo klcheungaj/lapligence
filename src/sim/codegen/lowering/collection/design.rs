@@ -207,7 +207,7 @@ impl<'a> Codegen<'a> {
                     if name.is_empty() || !seen.insert(name.clone()) {
                         continue;
                     }
-                    if self.is_virtual_interface_array(nid) {
+                    if self.is_virtual_interface_array(nid) || self.is_fixed_handle_array(nid) {
                         let info = self.container_info(path, &name, nid, ty)?;
                         self.container_globals.insert(nid, info);
                         continue;
@@ -561,7 +561,13 @@ impl<'a> Codegen<'a> {
                     if name.is_empty() || !gseen.insert(name.clone()) {
                         continue;
                     }
-                    if self.is_virtual_interface_array(nid) {
+                    if self.is_virtual_interface_array(nid)
+                        || self.is_fixed_handle_array(nid)
+                        || !self
+                            .db
+                            .array_meta(nid)
+                            .is_some_and(|meta| matches!(meta.kind(), ArrayKind::Static))
+                    {
                         let info = self.container_info(&gs_path, &name, nid, ty)?;
                         self.container_globals.insert(nid, info);
                         continue;

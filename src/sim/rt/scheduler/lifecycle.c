@@ -272,6 +272,11 @@ void llg_rt_cleanup(void) {
     g.pca_real_table = NULL;
     g.pca_real_capacity = 0;
     free_mailboxes();
+    // Containers owned by the model may still name these objects; they only
+    // drop handles at model close and never dereference them. The handle
+    // hooks stay installed so that model teardown after this cleanup still
+    // releases counted handles held by containers.
+    free_dynamic_events();
     reap_retired_procs();
     while (g.programs) {
         llg_program_t* next = g.programs->next;
@@ -354,6 +359,7 @@ void llg_rt_init_with_args_and_precision(int argc, char** argv,
     llg_configured_process_step_limit = g.process_step_limit;
     llg_configured_stop_policy = g.stop_policy;
     g.initialized = 1;
+    install_value_handle_hooks();
     g.current_region = LLG_REGION_PREPONED;
     llg_rng_state_seed(&g.rng_root, LLG_RNG_DEFAULT_SEED);
     g.argc = argc > 0 ? argc : 0;

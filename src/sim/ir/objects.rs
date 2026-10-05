@@ -124,6 +124,12 @@ pub enum IrStringExpr {
         container: usize,
         key: Box<IrStringExpr>,
     },
+    /// Remove a queue endpoint and transfer its string to the result
+    /// (`pop_front`/`pop_back`, SV 7.10.2.4-5). An empty queue yields "".
+    QueuePop {
+        container: usize,
+        back: bool,
+    },
     Call {
         receiver: Option<Box<IrChandleExpr>>,
         virtual_dispatch: bool,
@@ -284,6 +290,13 @@ pub enum IrChandleExpr {
         container: usize,
         key: Box<IrStringExpr>,
     },
+    /// Remove a queue endpoint and yield its handle (`pop_front`/
+    /// `pop_back`). The identity moves out of the queue; the referenced
+    /// object is not copied. An empty queue yields null.
+    QueuePop {
+        container: usize,
+        back: bool,
+    },
     Call {
         receiver: Option<Box<IrChandleExpr>>,
         virtual_dispatch: bool,
@@ -302,6 +315,14 @@ pub enum IrChandleExpr {
         then: Box<IrChandleExpr>,
         otherwise: Box<IrChandleExpr>,
     },
+    /// The synchronization object an event handle refers to (null for a null
+    /// handle). Only container element writes consume it: an event element
+    /// stores this identity, never a copy of the object.
+    EventObject(Box<IrEventRef>),
+    /// A mailbox handle (construction, read or null) stored into handle
+    /// storage such as a mailbox array element. Construction allocates a
+    /// runtime mailbox; reads share the existing one.
+    Mailbox(Box<IrMailboxExpr>),
 }
 
 /// A process-class handle expression. Process identities are deliberately
@@ -670,6 +691,21 @@ impl IrStringExpr {
                 }
                 Ok(())
             }
+            Self::QueuePop { container, .. } => {
+                if !model.containers.get(*container).is_some_and(|container| {
+                    container.element.is_string()
+                        && matches!(
+                            container.kind,
+                            super::containers::IrContainerKind::Queue { .. }
+                        )
+                }) {
+                    return Err(super::IrValidationError::new(
+                        "string",
+                        "string queue pop requires a string queue",
+                    ));
+                }
+                Ok(())
+            }
             Self::AssociativeGet { container, key } => {
                 let Some(container) = model.containers.get(*container) else {
                     return Err(super::IrValidationError::new(
@@ -726,7 +762,8 @@ impl IrStringExpr {
             | Self::RandomState
             | Self::Read(_)
             | Self::LocalRead(_)
-            | Self::FormalRead(_) => {}
+            | Self::FormalRead(_)
+            | Self::QueuePop { .. } => {}
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter().for_each(visit),
             Self::AssociativeGet { key, .. } => key.expressions(visit),
@@ -789,7 +826,8 @@ impl IrStringExpr {
             | Self::RandomState
             | Self::Read(_)
             | Self::LocalRead(_)
-            | Self::FormalRead(_) => {}
+            | Self::FormalRead(_)
+            | Self::QueuePop { .. } => {}
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter_mut().for_each(visit),
             Self::AssociativeGet { key, .. } => key.expressions_mut(visit),
@@ -1680,6 +1718,37 @@ impl IrChandleExpr {
                 otherwise.validate(model, formals, chandle_return)
             }
             Self::Null => Ok(()),
+            Self::Mailbox(mailbox) => mailbox.validate(model, formals, chandle_return),
+            Self::QueuePop { container, .. } => {
+                if !model.containers.get(*container).is_some_and(|container| {
+                    container.element.is_handle()
+                        && matches!(
+                            container.kind,
+                            super::containers::IrContainerKind::Queue { .. }
+                        )
+                }) {
+                    return Err(super::IrValidationError::new(
+                        "chandle",
+                        "handle queue pop requires a handle queue",
+                    ));
+                }
+                Ok(())
+            }
+            Self::EventObject(event) => match event.as_ref() {
+                IrEventRef::Static(index) | IrEventRef::Array { array: index, .. }
+                    if *index >= model.events.len() =>
+                {
+                    Err(super::IrValidationError::new(
+                        "event object",
+                        "event index is out of bounds",
+                    ))
+                }
+                IrEventRef::Handle(handle) => handle.validate(model, formals, chandle_return),
+                IrEventRef::Captured(name) if name.is_empty() => Err(
+                    super::IrValidationError::new("event object", "captured name is empty"),
+                ),
+                _ => Ok(()),
+            },
             Self::Verbatim(code) if !code.is_empty() => Ok(()),
             Self::Verbatim(_) => Err(super::IrValidationError::new(
                 "chandle verbatim",
@@ -1708,20 +1777,21 @@ impl IrChandleExpr {
                         "container index is out of bounds",
                     ));
                 };
-                if !container.element.is_chandle() || index.is_real() {
+                if !container.element.is_handle() || index.is_real() {
                     return Err(super::IrValidationError::new(
                         "chandle",
-                        "chandle container read requires a chandle element and integral index",
+                        "chandle container read requires a handle element and integral index",
                     ));
                 }
-                if !matches!(
+                if matches!(
                     container.kind,
-                    super::containers::IrContainerKind::Dynamic
-                        | super::containers::IrContainerKind::Queue { .. }
+                    super::containers::IrContainerKind::Associative {
+                        key: super::containers::IrAssocKey::String
+                    }
                 ) {
                     return Err(super::IrValidationError::new(
                         "chandle",
-                        "chandle container read requires a dynamic array or queue",
+                        "chandle container read by integral index requires an integral key",
                     ));
                 }
                 Ok(())
@@ -1742,14 +1812,15 @@ impl IrChandleExpr {
                         "nested chandle container read has an invalid index path",
                     ));
                 }
-                if !matches!(
+                if matches!(
                     container.kind,
-                    super::containers::IrContainerKind::Dynamic
-                        | super::containers::IrContainerKind::Queue { .. }
+                    super::containers::IrContainerKind::Associative {
+                        key: super::containers::IrAssocKey::String
+                    }
                 ) {
                     return Err(super::IrValidationError::new(
                         "chandle",
-                        "nested chandle container read requires a dynamic array or queue",
+                        "nested chandle container read by integral index requires an integral key",
                     ));
                 }
                 Ok(())
@@ -1766,11 +1837,11 @@ impl IrChandleExpr {
                     super::containers::IrContainerKind::Associative {
                         key: super::containers::IrAssocKey::String
                     }
-                ) || !container.element.is_chandle()
+                ) || !container.element.is_handle()
                 {
                     return Err(super::IrValidationError::new(
                         "chandle",
-                        "associative chandle read requires a string-keyed chandle array",
+                        "associative chandle read requires a string-keyed handle array",
                     ));
                 }
                 key.validate(model, None)
@@ -1887,6 +1958,8 @@ impl IrChandleExpr {
                     arg.expressions(visit);
                 }
             }
+            Self::EventObject(event) => event.expressions(visit),
+            Self::Mailbox(mailbox) => mailbox.expressions(visit),
             _ => {}
         }
     }
@@ -1913,6 +1986,8 @@ impl IrChandleExpr {
                     arg.expressions_mut(visit);
                 }
             }
+            Self::EventObject(event) => event.expressions_mut(visit),
+            Self::Mailbox(mailbox) => mailbox.expressions_mut(visit),
             _ => {}
         }
     }

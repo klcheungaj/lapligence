@@ -220,6 +220,21 @@ impl Frame<'_, '_> {
                 self.discard(index);
                 result
             }
+            QueuePop { container, back } => {
+                if self.read_only_callback {
+                    return Err(pending("mutating container query in a read-only callback"));
+                }
+                // The removed string moves into a registered result owner
+                // before the queue notifies its readers.
+                let name = self.ctx.model.containers[*container].c_name.clone();
+                let result = self.native_reserve(NativeKind::String);
+                self.line(format!(
+                    "llg_queue_value_pop_string_to({}, &{name}, {});",
+                    result.address,
+                    i32::from(*back)
+                ));
+                result
+            }
             ContainerGetNested { container, indices } => {
                 let container = self.ctx.model.containers[*container].clone();
                 let (list, values) = self.container_indices(indices)?;

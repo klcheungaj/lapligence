@@ -8,7 +8,7 @@
 use crate::core::db::{
     AlwaysKind, ArrayKind, CapturedSemanticKind, CaseKind, ConditionalPatternKind, ConstantType,
     Db, Direction, EventSpec, ExprKind, NetType, NodeId, NodeKind, Operation, PrimClass,
-    PrimitiveType, ProcessKind, StmtKind, Strength,
+    PrimitiveType, ProcessKind, StmtKind, Strength, TypeShape,
 };
 use crate::core::model::TypeInfo;
 
@@ -708,7 +708,10 @@ fn process_reference(db: &Db, id: NodeId) -> bool {
                 target: Some(target),
             }) => current = *target,
             NodeKind::Expr(ExprKind::Cast { operand, .. }) => current = *operand,
-            NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. } => {
+            NodeKind::Expr(
+                ExprKind::ArraySelect { base, .. } | ExprKind::BitSelect { base, .. },
+            ) => current = *base,
+            NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. } | NodeKind::Array { ty } => {
                 return ty.kind == "class" && ty.type_name.as_deref() == Some("process");
             }
             NodeKind::FuncCall { name, .. } => return name == "self",
@@ -730,7 +733,10 @@ fn semaphore_reference(db: &Db, id: NodeId) -> bool {
                 class_name: Some(name),
                 ..
             }) => return name == "semaphore",
-            NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. } => {
+            NodeKind::Expr(
+                ExprKind::ArraySelect { base, .. } | ExprKind::BitSelect { base, .. },
+            ) => current = *base,
+            NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. } | NodeKind::Array { ty } => {
                 return ty.kind == "class" && ty.type_name.as_deref() == Some("semaphore");
             }
             NodeKind::FuncCall {
@@ -769,10 +775,34 @@ fn mailbox_reference(db: &Db, id: NodeId) -> bool {
                     .type_descriptor(current)
                     .is_some_and(|descriptor| descriptor.name.starts_with("mailbox#("));
             }
+            // An element of a fixed or resizable mailbox array.
+            NodeKind::Expr(
+                ExprKind::ArraySelect { base, .. } | ExprKind::BitSelect { base, .. },
+            ) => {
+                return element_reference_target(db, *base).is_some_and(|array| {
+                    db.type_descriptor(array).is_some_and(|descriptor| {
+                        matches!(&descriptor.shape,
+                            TypeShape::FixedArray { element, .. }
+                            | TypeShape::Container { element, .. }
+                                if element.name.starts_with("mailbox#("))
+                    })
+                });
+            }
             _ => return false,
         }
     }
     false
+}
+
+/// The declaration selected by an array element expression's base.
+fn element_reference_target(db: &Db, id: NodeId) -> Option<NodeId> {
+    match db.node_kind(id) {
+        NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) => Some(*target),
+        NodeKind::Array { .. } | NodeKind::Var { .. } => Some(id),
+        _ => None,
+    }
 }
 
 fn semaphore_constructor(db: &Db, id: NodeId) -> bool {

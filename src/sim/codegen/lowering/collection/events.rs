@@ -21,9 +21,18 @@ impl<'a> Codegen<'a> {
             return Ok(());
         };
         if !matches!(metadata.kind(), ArrayKind::Static) {
-            return Err(format!(
-                "named event array `{name}` in `{path}` has unsupported storage kind"
-            ));
+            // Dynamic, queue and associative event arrays are resizable
+            // containers of event handles (SV 6.17, 7.5-7.10): elements
+            // share synchronization objects by identity.
+            let info = self.container_from_meta(
+                path,
+                &name,
+                declaration,
+                metadata,
+                IrContainerElement::Event,
+            )?;
+            self.container_globals.insert(declaration, info);
+            return Ok(());
         }
         let mut total = 1u64;
         let mut dims = Vec::with_capacity(metadata.dimensions().len());
@@ -282,6 +291,13 @@ impl<'a> Codegen<'a> {
                 ));
             }
             return Ok(event.clone());
+        }
+        if let Some(container) = self.container_globals.get(&target.declaration).cloned() {
+            return Ok(IrEventRef::Handle(Box::new(self.container_event_handle(
+                scope_path,
+                container.ir,
+                &target.indices,
+            )?)));
         }
         if matches!(
             self.kind(target.declaration),

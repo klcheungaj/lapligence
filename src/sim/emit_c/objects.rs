@@ -15,7 +15,7 @@ pub(super) fn render_indices(ctx: &RCtx<'_>, indices: &[IrExpr]) -> Result<Strin
 
 pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, String> {
     Ok(match value {
-        IrStringExpr::Conditional { .. } => {
+        IrStringExpr::Conditional { .. } | IrStringExpr::QueuePop { .. } => {
             return Err("string conditionals require whole-model ownership emission".to_owned())
         }
         IrStringExpr::Literal(bytes) => {
@@ -239,6 +239,9 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
         IrChandleExpr::SemaphoreNew(_)
         | IrChandleExpr::Construct(_)
         | IrChandleExpr::Conditional { .. }
+        | IrChandleExpr::EventObject(_)
+        | IrChandleExpr::QueuePop { .. }
+        | IrChandleExpr::Mailbox(_)
         | IrChandleExpr::InterfaceInstance { .. } => {
             return Err("typed native operations require whole-model ownership emission".to_owned())
         }

@@ -174,10 +174,7 @@ impl<'a> Codegen<'a> {
         }
         let kind = self.model.containers[container].kind.clone();
         let element = self.model.containers[container].element.clone();
-        if matches!(
-            &element,
-            IrContainerElement::String | IrContainerElement::Chandle
-        ) {
+        if element.is_string() || element.is_handle() {
             return self.lower_associative_object_pattern(path, container, operands, element);
         }
         let mut seen_integral = Vec::<i128>::new();
@@ -402,10 +399,10 @@ impl<'a> Codegen<'a> {
                             key: IrStringExpr::Literal(bytes),
                             value: self.lower_string(path, value)?,
                         },
-                        IrContainerElement::Chandle => IrContainerStmt::SetStringChandle {
+                        ref element if element.is_handle() => IrContainerStmt::SetStringChandle {
                             container,
                             key: IrStringExpr::Literal(bytes),
-                            value: self.lower_chandle(path, value)?,
+                            value: self.lower_container_handle(path, element, value)?,
                         },
                         _ => unreachable!(),
                     }
@@ -438,10 +435,10 @@ impl<'a> Codegen<'a> {
                             index,
                             value: self.lower_string(path, value)?,
                         },
-                        IrContainerElement::Chandle => IrContainerStmt::SetChandleValue {
+                        ref element if element.is_handle() => IrContainerStmt::SetChandleValue {
                             container,
                             index,
-                            value: self.lower_chandle(path, value)?,
+                            value: self.lower_container_handle(path, element, value)?,
                         },
                         _ => unreachable!(),
                     }
@@ -460,9 +457,9 @@ impl<'a> Codegen<'a> {
                     container,
                     value: self.lower_string(path, value)?,
                 }),
-                IrContainerElement::Chandle => Box::new(IrContainerStmt::SetDefaultChandle {
+                element if element.is_handle() => Box::new(IrContainerStmt::SetDefaultChandle {
                     container,
-                    value: self.lower_chandle(path, value)?,
+                    value: self.lower_container_handle(path, element, value)?,
                 }),
                 _ => unreachable!(),
             }));
@@ -519,10 +516,10 @@ impl<'a> Codegen<'a> {
                     values,
                 })))
             }
-            IrContainerElement::Chandle => {
+            element if element.is_handle() => {
                 let values = source_values
                     .into_iter()
-                    .map(|value| self.lower_chandle(path, value))
+                    .map(|value| self.lower_container_handle(path, &element, value))
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(IrStmt::Container(Box::new(IrContainerStmt::AssignChandleValues {
                     container,

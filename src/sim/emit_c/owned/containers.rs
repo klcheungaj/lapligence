@@ -120,6 +120,22 @@ impl Frame<'_, '_> {
         {
             return Err(pending("mutating container query in a read-only callback"));
         }
+        if let IrContainerExpr::QueuePopFront(index) | IrContainerExpr::QueuePopBack(index) =
+            operation
+        {
+            if self.ctx.model.containers[*index].element.is_real() {
+                let back = matches!(operation, IrContainerExpr::QueuePopBack(_));
+                return Ok(self.value(
+                    format!(
+                        "llg_queue_value_pop_real(&{}, {})",
+                        self.ctx.model.containers[*index].c_name,
+                        i32::from(back)
+                    ),
+                    0,
+                    false,
+                ));
+            }
+        }
         if let IrContainerExpr::QueueFront(index)
         | IrContainerExpr::QueueBack(index)
         | IrContainerExpr::QueuePopFront(index)

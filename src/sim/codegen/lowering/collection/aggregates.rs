@@ -693,6 +693,21 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    /// Fixed unpacked arrays of identity handles (chandles, virtual
+    /// interfaces and class-like objects) use pointer-table container storage
+    /// so runtime selects copy identities without flattening objects.
+    /// Process handles carry reference counts and stay outside this path.
+    pub(super) fn is_fixed_handle_element(element: &TypeDescriptor) -> bool {
+        match &element.shape {
+            TypeShape::Opaque { kind } => match kind.as_str() {
+                "Chandle" | "VirtualInterface" => true,
+                "Class" => element.name != "process",
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     pub(super) fn container_info(
         &mut self,
         path: &str,
@@ -704,14 +719,21 @@ impl<'a> Codegen<'a> {
             .db
             .array_meta(node)
             .ok_or_else(|| format!("container `{name}` in `{path}` has no captured metadata"))?;
-        let has_initializer = meta.initializer().is_some();
         let descriptor = self.db.type_descriptor(node).ok_or_else(|| {
             format!("container `{name}` in `{path}` has no recursive type descriptor")
         })?;
         let element = match &descriptor.shape {
             TypeShape::Container { element, .. } => lower_container_element(element)?,
-            TypeShape::FixedArray { element, .. } if matches!(element.shape, TypeShape::Opaque { ref kind } if kind == "VirtualInterface") => {
-                IrContainerElement::Chandle
+            TypeShape::FixedArray {
+                dimensions,
+                element,
+            } if Self::is_fixed_handle_element(element) => {
+                if dimensions.len() != 1 {
+                    return Err(format!(
+                        "multidimensional fixed handle array `{name}` in `{path}` is not supported"
+                    ));
+                }
+                lower_container_element(element)?
             }
             _ => {
                 return Err(format!(
@@ -719,6 +741,21 @@ impl<'a> Codegen<'a> {
                 ))
             }
         };
+        self.container_from_meta(path, name, node, meta, element)
+    }
+
+    /// Allocate resizable storage for a declaration whose element shape is
+    /// already lowered. Named-event declarations keep their array metadata
+    /// separately from ordinary variables, so both enter here.
+    pub(super) fn container_from_meta(
+        &mut self,
+        path: &str,
+        name: &str,
+        node: NodeId,
+        meta: &crate::core::db::ArrayMeta,
+        element: IrContainerElement,
+    ) -> Result<ContainerInfo, String> {
+        let has_initializer = meta.initializer().is_some();
         let kind = match meta.kind() {
             // Fixed virtual-interface arrays use the same owned pointer-table
             // runtime as dynamic arrays; their HDL bounds remain in the
@@ -761,6 +798,11 @@ impl<'a> Codegen<'a> {
             })
             .flatten();
         let ir = self.model.containers.len();
+        if matches!(meta.kind(), ArrayKind::Static) {
+            if let [Some(range)] = meta.dimensions() {
+                self.fixed_view_ranges.insert(ir, *range);
+            }
+        }
         self.model.containers.push(IrContainer {
             c_name: self.global_name(path, name),
             element,

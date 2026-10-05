@@ -51,10 +51,23 @@ static void* llg_value_try_items(size_t count, size_t item_size) {
     return items;
 }
 
+/* Kind-specific identity operations installed by the scheduler. The container
+ * runtime is scheduler-independent: without hooks a new event element is null. */
+static llg_value_handle_hooks_t llg_value_hooks;
+
+void llg_value_set_handle_hooks(const llg_value_handle_hooks_t* hooks) {
+    if (hooks) llg_value_hooks = *hooks;
+    else memset(&llg_value_hooks, 0, sizeof(llg_value_hooks));
+}
+
 /* Construct the default value of `desc` into an empty `value`. On failure the
- * partially built value is released, `value` stays empty and 0 is returned. */
-static int llg_value_try_default(llg_value_t* value,
-                                 const llg_value_desc_t* desc) {
+ * partially built value is released, `value` stays empty and 0 is returned.
+ * `initial` selects the Table 6-7 initial value of a newly created element,
+ * where an event refers to a new synchronization object; otherwise every
+ * handle is null, the Table 7-1 value read from a missing element. */
+static int llg_value_try_default_mode(llg_value_t* value,
+                                      const llg_value_desc_t* desc,
+                                      int initial) {
     memset(&value->value, 0, sizeof(value->value));
     value->desc = desc;
     switch (desc->kind) {
@@ -79,8 +92,9 @@ static int llg_value_try_default(llg_value_t* value,
                     return 0;
                 }
                 for (size_t i = 0; i < desc->item_count; ++i) {
-                    if (!llg_value_try_default(&value->value.items[i],
-                                               llg_value_item_desc(desc, i))) {
+                    if (!llg_value_try_default_mode(&value->value.items[i],
+                                                    llg_value_item_desc(desc, i),
+                                                    initial)) {
                         llg_value_drop(value);
                         return 0;
                     }
@@ -91,8 +105,12 @@ static int llg_value_try_default(llg_value_t* value,
             /* A nested dynamic array has the standard null-handle default. */
             value->value.container = NULL;
             return 1;
-        case LLG_VALUE_CHANDLE:
         case LLG_VALUE_EVENT:
+            value->value.handle = initial && llg_value_hooks.event_new
+                ? llg_value_hooks.event_new()
+                : NULL;
+            return 1;
+        case LLG_VALUE_CHANDLE:
         case LLG_VALUE_OPAQUE:
             value->value.handle = NULL;
             return 1;
@@ -100,6 +118,11 @@ static int llg_value_try_default(llg_value_t* value,
             llg_container_fatal("invalid recursive container value kind");
             return 0;
     }
+}
+
+static int llg_value_try_default(llg_value_t* value,
+                                 const llg_value_desc_t* desc) {
+    return llg_value_try_default_mode(value, desc, 0);
 }
 
 static void llg_value_default(llg_value_t* value,
@@ -155,7 +178,7 @@ static int llg_value_try_construct_copy(llg_value_t* target,
     target->desc = NULL;
     const llg_value_desc_t* source_desc = source ? source->desc : NULL;
     if (!source || !source_desc)
-        return llg_value_try_default(target, target_desc);
+        return llg_value_try_default_mode(target, target_desc, 1);
     target->desc = target_desc;
     switch (target_desc->kind) {
         case LLG_VALUE_PACKED: {

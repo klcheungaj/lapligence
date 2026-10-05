@@ -234,7 +234,9 @@ impl<'a> Codegen<'a> {
 
     pub(in super::super) fn container_of(&self, node: NodeId) -> Option<ContainerInfo> {
         match self.kind(node) {
-            NodeKind::Array { .. } => self.container_globals.get(&node).cloned(),
+            NodeKind::Array { .. } | NodeKind::NamedEvent => {
+                self.container_globals.get(&node).cloned()
+            }
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
             }) => self.container_globals.get(target).cloned(),
@@ -367,17 +369,57 @@ impl<'a> Codegen<'a> {
             .into_iter()
             .enumerate()
             .map(|(depth, index)| {
-                if depth == 0
-                    && matches!(
-                        self.model.containers[container].kind,
-                        IrContainerKind::Queue { .. }
-                    )
-                {
-                    self.lower_queue_index(path, container, index)
+                if depth == 0 {
+                    self.lower_container_top_index(path, container, index)
                 } else {
                     self.lower_container_index(path, index)
                 }
             })
             .collect()
+    }
+
+    /// Lower the outermost index of `container`: `$` for queues, and the
+    /// declared range of a fixed handle-array view mapped to a storage
+    /// position. An index outside the range becomes negative or too large
+    /// and is rejected by the runtime as invalid (SV 7.4.6); X stays X.
+    pub(in super::super) fn lower_container_top_index(
+        &mut self,
+        path: &str,
+        container: usize,
+        node: NodeId,
+    ) -> Result<IrExpr, String> {
+        if matches!(
+            self.model.containers[container].kind,
+            IrContainerKind::Queue { .. }
+        ) {
+            return self.lower_queue_index(path, container, node);
+        }
+        let index = self.lower_container_index(path, node)?;
+        let Some((left, right)) = self.fixed_view_ranges.get(&container).copied() else {
+            return Ok(index);
+        };
+        let lowest = left.min(right);
+        if left <= right && lowest == 0 {
+            return Ok(index);
+        }
+        // One extra bit keeps the subtraction exact for every source width.
+        let width = index.width.max(32) + 1;
+        let index = IrExpr::convert_to(index, width, true);
+        let base = pattern_key_expr(i128::from(left), width, true, false);
+        let (a, b) = if left <= right {
+            (index, base)
+        } else {
+            (base, index)
+        };
+        Ok(IrExpr::new(
+            IrExprKind::Bin {
+                op: IrBinOp::Sub,
+                a: Box::new(a),
+                b: Box::new(b),
+            },
+            width,
+            true,
+            None,
+        ))
     }
 }

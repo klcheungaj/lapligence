@@ -119,6 +119,24 @@ impl IrContainerElement {
         matches!(self, Self::Chandle)
     }
 
+    pub fn is_event(&self) -> bool {
+        matches!(self, Self::Event)
+    }
+
+    /// Handles lowered as ordinary chandle-typed expressions: chandles and
+    /// class-like object handles (class, semaphore, mailbox, virtual
+    /// interface). Events keep their own handle lowering.
+    pub fn is_object_handle(&self) -> bool {
+        matches!(self, Self::Chandle | Self::Opaque { .. })
+    }
+
+    /// Elements stored as one pointer-sized identity: borrowed chandles,
+    /// event synchronization objects and class-like object handles. Copies
+    /// share the referenced object (SV 6.17, 8.4); none is deep-copied.
+    pub fn is_handle(&self) -> bool {
+        matches!(self, Self::Chandle | Self::Event | Self::Opaque { .. })
+    }
+
     /// Assignment compatibility for container element values. Integral
     /// packed values use the normal assignment conversion at the runtime;
     /// nominal recursive values retain their frontend type identity.
@@ -1170,7 +1188,11 @@ impl IrContainerStmt {
                     IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
                 ) || !(container.element.is_packed()
                     || (callback.is_none()
-                        && matches!(container.element, IrContainerElement::Real { .. })))
+                        && (matches!(container.element, IrContainerElement::Real { .. })
+                            || matches!(
+                                method,
+                                IrContainerMethod::Reverse | IrContainerMethod::Shuffle
+                            ))))
                 {
                     return Err(IrValidationError::new(
                         "container",
@@ -1309,7 +1331,7 @@ impl IrContainerStmt {
                         "chandle value assignment requires a dynamic array or queue",
                     ));
                 }
-                if !container.element.is_chandle() {
+                if !container.element.is_handle() {
                     return Err(IrValidationError::new(
                         "container",
                         "chandle value assignment requires a chandle container element type",
@@ -1393,7 +1415,7 @@ impl IrContainerStmt {
                 container, index, ..
             } => {
                 let container = container_kind(model, *container, None)?;
-                if index.is_real() || !container.element.is_chandle() {
+                if index.is_real() || !container.element.is_handle() {
                     return Err(IrValidationError::new(
                         "container",
                         "chandle container write requires an integral index and chandle element type",
@@ -1572,7 +1594,7 @@ impl IrContainerStmt {
             }
             Self::SetDefaultChandle { container, .. } => {
                 let container = container_kind(model, *container, Some("associative"))?;
-                if !container.element.is_chandle() {
+                if !container.element.is_handle() {
                     return Err(IrValidationError::new(
                         "container",
                         "chandle associative default requires a chandle element type",
@@ -1625,7 +1647,7 @@ impl IrContainerStmt {
             }
             Self::SetStringChandle { container, key, .. } => {
                 let container = string_container(model, *container)?;
-                if !container.element.is_chandle() {
+                if !container.element.is_handle() {
                     return Err(IrValidationError::new(
                         "container",
                         "chandle string-keyed associative write requires a chandle element type",
@@ -1684,7 +1706,7 @@ impl IrContainerStmt {
             Self::QueuePushFrontChandle { container, .. }
             | Self::QueuePushBackChandle { container, .. } => {
                 let container = container_kind(model, *container, Some("queue"))?;
-                if !container.element.is_chandle() {
+                if !container.element.is_handle() {
                     return Err(IrValidationError::new(
                         "container",
                         "chandle queue operation requires a chandle element type",
@@ -1726,7 +1748,7 @@ impl IrContainerStmt {
                 container, index, ..
             } => {
                 let container = container_kind(model, *container, Some("queue"))?;
-                if !container.element.is_chandle() || index.is_real() {
+                if !container.element.is_handle() || index.is_real() {
                     return Err(IrValidationError::new(
                         "container",
                         "chandle queue insertion requires an integral index and chandle element",
@@ -1974,7 +1996,7 @@ pub(super) fn nested_string_element(container: &IrContainer, depth: usize) -> bo
 }
 
 pub(super) fn nested_chandle_element(container: &IrContainer, depth: usize) -> bool {
-    nested_element(container, depth).is_some_and(IrContainerElement::is_chandle)
+    nested_element(container, depth).is_some_and(IrContainerElement::is_handle)
 }
 
 pub(super) fn container_kind<'a>(

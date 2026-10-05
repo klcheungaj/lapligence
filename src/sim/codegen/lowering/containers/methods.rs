@@ -70,9 +70,9 @@ impl<'a> Codegen<'a> {
                     container: container.ir,
                     value: self.lower_string(path, *value)?,
                 },
-                IrContainerElement::Chandle => IrContainerStmt::QueuePushFrontChandle {
+                ref element if element.is_handle() => IrContainerStmt::QueuePushFrontChandle {
                     container: container.ir,
-                    value: self.lower_chandle(path, *value)?,
+                    value: self.lower_container_handle(path, element, *value)?,
                 },
                 IrContainerElement::Container { .. } => {
                     let source = self.container_of(*value).ok_or_else(|| {
@@ -103,9 +103,9 @@ impl<'a> Codegen<'a> {
                     container: container.ir,
                     value: self.lower_string(path, *value)?,
                 },
-                IrContainerElement::Chandle => IrContainerStmt::QueuePushBackChandle {
+                ref element if element.is_handle() => IrContainerStmt::QueuePushBackChandle {
                     container: container.ir,
-                    value: self.lower_chandle(path, *value)?,
+                    value: self.lower_container_handle(path, element, *value)?,
                 },
                 IrContainerElement::Container { .. } => {
                     let source = self.container_of(*value).ok_or_else(|| {
@@ -140,10 +140,10 @@ impl<'a> Codegen<'a> {
                         index,
                         value: self.lower_string(path, *value)?,
                     },
-                    IrContainerElement::Chandle => IrContainerStmt::QueueInsertChandle {
+                    ref element if element.is_handle() => IrContainerStmt::QueueInsertChandle {
                         container: container.ir,
                         index,
-                        value: self.lower_chandle(path, *value)?,
+                        value: self.lower_container_handle(path, element, *value)?,
                     },
                     IrContainerElement::Container { .. } => {
                         let source = self.container_of(*value).ok_or_else(|| {
@@ -220,17 +220,14 @@ impl<'a> Codegen<'a> {
                 }
             }
             ("reverse", []) if !with_clause => {
+                // Ordering methods move whole elements and need no relational
+                // operator (SV 7.12.2), so every element type is legal.
                 if !matches!(
                     self.model.containers[container.ir].kind,
                     IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
-                ) || !self.model.containers[container.ir].element.is_packed()
-                    && !matches!(
-                        self.model.containers[container.ir].element,
-                        IrContainerElement::Real { .. }
-                    )
-                {
+                ) {
                     return Err(format!(
-                        "array method `reverse` in `{path}` currently requires a packed dynamic array or queue"
+                        "array method `reverse` in `{path}` requires a dynamic array or queue"
                     ));
                 }
                 IrContainerStmt::Method {
@@ -240,17 +237,14 @@ impl<'a> Codegen<'a> {
                 }
             }
             ("shuffle", []) if !with_clause => {
+                // Ordering methods move whole elements and need no relational
+                // operator (SV 7.12.2), so every element type is legal.
                 if !matches!(
                     self.model.containers[container.ir].kind,
                     IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
-                ) || !self.model.containers[container.ir].element.is_packed()
-                    && !matches!(
-                        self.model.containers[container.ir].element,
-                        IrContainerElement::Real { .. }
-                    )
-                {
+                ) {
                     return Err(format!(
-                        "array method `shuffle` in `{path}` currently requires a packed dynamic array or queue"
+                        "array method `shuffle` in `{path}` requires a dynamic array or queue"
                     ));
                 }
                 IrContainerStmt::Method {

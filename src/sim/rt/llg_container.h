@@ -99,6 +99,17 @@ enum {
     LLG_VALUE_COPY_BORROWED = 2,
 };
 
+/* Identity-handle lifecycle hooks (SIM-006), installed by the scheduler at
+ * runtime initialization. `event_new` returns a fresh
+ * synchronization object owned by the scheduler until model close: SV Table
+ * 6-7 makes a newly created event element (new[], default construction)
+ * refer to a new event, while a missing or invalid element reads null
+ * (Table 7-1). With no hooks installed new event elements are null. */
+typedef struct llg_value_handle_hooks_t {
+    void* (*event_new)(void);
+} llg_value_handle_hooks_t;
+void llg_value_set_handle_hooks(const llg_value_handle_hooks_t* hooks);
+
 /* Maximum descriptor nesting accepted by validation; deeper (or cyclic)
  * descriptors are rejected rather than recursed into. */
 #define LLG_VALUE_DESC_MAX_DEPTH 64
@@ -436,6 +447,14 @@ int llg_queue_value_insert_container(llg_queue_value_array_t* queue,
 int llg_queue_value_insert_container_from_packed(
     llg_queue_value_array_t* queue, sv4_t index, const llg_dyn_array_t* source);
 int llg_queue_value_delete_index(llg_queue_value_array_t* queue, sv4_t index);
+/* Remove the front (`back` == 0) or back element and return it as an
+ * independent result: a real, the moved string (into the empty or
+ * expression-owned `dst`) or the handle identity. An empty queue yields the
+ * Table 7-1 value (0.0, "", null) and does not notify. */
+double llg_queue_value_pop_real(llg_queue_value_array_t* queue, int back);
+void llg_queue_value_pop_string_to(llg_string_t* dst,
+                                   llg_queue_value_array_t* queue, int back);
+void* llg_queue_value_pop_chandle(llg_queue_value_array_t* queue, int back);
 
 void llg_dyn_init(llg_dyn_array_t* array, uint32_t element_width,
                   int8_t element_signed, int element_two_state);

@@ -61,6 +61,14 @@ impl Frame<'_, '_> {
                 "_this".to_owned()
             }
             IrChandleExpr::Null => "NULL".to_owned(),
+            IrChandleExpr::EventObject(event) => {
+                let address = self.event_address(event)?;
+                let pointer = self.scalar("llg_event_t*", address);
+                return Ok(self.scalar(
+                    "void*",
+                    format!("{pointer} ? (void*){pointer}->object : NULL"),
+                ));
+            }
             IrChandleExpr::Read(index) => self.ctx.model.objects[*index].c_name.clone(),
             IrChandleExpr::LocalRead(name) => format!(
                 "*({})",
@@ -98,6 +106,17 @@ impl Frame<'_, '_> {
                 );
                 self.discard(index);
                 return Ok(value);
+            }
+            IrChandleExpr::Mailbox(mailbox) => return self.mailbox_handle(mailbox),
+            IrChandleExpr::QueuePop { container, back } => {
+                if self.read_only_callback {
+                    return Err(pending("mutating container query in a read-only callback"));
+                }
+                let name = self.ctx.model.containers[*container].c_name.clone();
+                return Ok(self.scalar(
+                    "void*",
+                    format!("llg_queue_value_pop_chandle(&{name}, {})", i32::from(*back)),
+                ));
             }
             IrChandleExpr::ContainerGetNested { container, indices } => {
                 let container = self.ctx.model.containers[*container].clone();

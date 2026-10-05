@@ -239,13 +239,11 @@ void* llg_assoc_value_get_integral_chandle(
     if (llg_assoc_value_normalize_key(array, key, &normalized)) {
         size_t position = llg_assoc_value_integral_position(array, normalized,
                                                              &found);
-        if (found && (array->entries[position].value.desc->kind == LLG_VALUE_CHANDLE ||
-                      array->entries[position].value.desc->kind == LLG_VALUE_EVENT))
+        if (found && llg_value_is_handle_kind(array->entries[position].value.desc))
             do { result_value = array->entries[position].value.value.handle; goto cleanup_key; } while (0);
     }
     do { result_value = array->default_value.desc &&
-                   (array->default_value.desc->kind == LLG_VALUE_CHANDLE ||
-                    array->default_value.desc->kind == LLG_VALUE_EVENT)
+                   llg_value_is_handle_kind(array->default_value.desc)
         ? array->default_value.value.handle
         : NULL; goto cleanup_key; } while (0);
 cleanup_key:
@@ -304,8 +302,7 @@ llg_string_t llg_assoc_value_get_nested_integral_string(
 void* llg_assoc_value_get_nested_integral_chandle(
     const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
     llg_value_t* value = llg_assoc_value_nested_at_integral(array, indices, count);
-    return value && (value->desc->kind == LLG_VALUE_CHANDLE ||
-                     value->desc->kind == LLG_VALUE_EVENT)
+    return value && llg_value_is_handle_kind(value->desc)
         ? value->value.handle
         : NULL;
 }
@@ -541,8 +538,7 @@ int llg_assoc_value_set_nested_integral_chandle(
     llg_assoc_value_t* array, const sv4_t* indices, size_t count,
     void* value) {
     llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices, count);
-    if (!target || (target->desc->kind != LLG_VALUE_CHANDLE &&
-                    target->desc->kind != LLG_VALUE_EVENT))
+    if (!target || !llg_value_is_handle_kind(target->desc))
         return 0;
     if (target->value.handle == value) return 1;
     target->value.handle = value;

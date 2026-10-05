@@ -27,7 +27,31 @@ pub enum IrEventRef {
     /// The activation-owned handle of an input named-event formal of the
     /// enclosing function (`IrFormal::event`, by value).
     Formal(usize),
+    /// An event handle stored as an identity element of resizable container
+    /// storage (SV 6.17, 7.5-7.10). The handle expression yields the
+    /// synchronization object, or null for a missing or invalid element; it
+    /// is resolved where the operation is issued, like `Array`.
+    Handle(Box<IrChandleExpr>),
     Null,
+}
+
+impl IrEventRef {
+    /// Visit the integral expressions evaluated to resolve this handle.
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        match self {
+            Self::Array { indices, .. } => indices.iter().for_each(visit),
+            Self::Handle(handle) => handle.expressions(visit),
+            Self::Static(_) | Self::Captured(_) | Self::Formal(_) | Self::Null => {}
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        match self {
+            Self::Array { indices, .. } => indices.iter_mut().for_each(visit),
+            Self::Handle(handle) => handle.expressions_mut(visit),
+            Self::Static(_) | Self::Captured(_) | Self::Formal(_) | Self::Null => {}
+        }
+    }
 }
 
 /// One source entry of an atomic multi-source wait: a signal/array-element

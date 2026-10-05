@@ -310,6 +310,44 @@ impl Codegen<'_> {
                         },
                     ));
                 }
+                if [a, b]
+                    .iter()
+                    .any(|node| self.event_target_of(*node).is_some())
+                    && matches!(
+                        op,
+                        Operation::Equal
+                            | Operation::NotEqual
+                            | Operation::CaseEqual
+                            | Operation::CaseNotEqual
+                    )
+                {
+                    // Event handles compare by synchronization-object
+                    // identity; null compares equal to a null handle
+                    // (SV 6.17, 11.4.5).
+                    let value = object_query(
+                        IrObjectQuery::ChandleEq(
+                            self.lower_event_identity(path, a)?,
+                            self.lower_event_identity(path, b)?,
+                        ),
+                        1,
+                        false,
+                    );
+                    return Ok(Some(
+                        if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {
+                            IrExpr::new(
+                                IrExprKind::Un {
+                                    op: IrUnOp::LogNot,
+                                    a: Box::new(value),
+                                },
+                                1,
+                                false,
+                                None,
+                            )
+                        } else {
+                            value
+                        },
+                    ));
+                }
                 let is_chandle = [a, b].iter().any(|node| self.is_chandle_expr(path, *node));
                 if is_chandle {
                     if matches!(op, Operation::LogicalAnd | Operation::LogicalOr) {
@@ -407,5 +445,17 @@ impl Codegen<'_> {
             _ => return Ok(None),
         };
         Ok(Some(object_query(query.0, query.1, query.2)))
+    }
+
+    /// The synchronization-object identity of an event operand or null.
+    fn lower_event_identity(&mut self, path: &str, node: NodeId) -> Result<IrChandleExpr, String> {
+        if self.is_null_event_expression(node) {
+            return Ok(IrChandleExpr::Null);
+        }
+        let target = self.event_target_of(node).ok_or_else(|| {
+            format!("event comparison in `{path}` requires event handles or null")
+        })?;
+        let event = self.event_ref_of(&target, path)?;
+        Ok(IrChandleExpr::EventObject(Box::new(event)))
     }
 }

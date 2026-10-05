@@ -64,7 +64,11 @@ impl EmitCtx<'_, '_> {
         if is_declaration_initializer {
             return Ok(IrStmt::Nop);
         }
-        if let Some(target) = self.cg.event_target_of(lhs) {
+        if let Some(target) = self
+            .cg
+            .event_target_of(lhs)
+            .filter(|target| !self.cg.container_globals.contains_key(&target.declaration))
+        {
             if op != Operation::Assignment {
                 return Err(format!(
                     "compound assignment to named event `{}` in `{}` is not supported",
@@ -82,6 +86,15 @@ impl EmitCtx<'_, '_> {
             let target = self.cg.event_ref_of(&target, &self.path)?;
             let source = if let Some(source) = self.cg.event_target_of(rhs) {
                 Some(self.cg.event_ref_of(&source, &self.path)?)
+            } else if let Some((container, back)) = self
+                .cg
+                .queue_pop_call(rhs)
+                .filter(|(container, _)| self.cg.model.containers[*container].element.is_event())
+            {
+                Some(IrEventRef::Handle(Box::new(IrChandleExpr::QueuePop {
+                    container,
+                    back,
+                })))
             } else if self.cg.is_null_event_expression(rhs) {
                 None
             } else {

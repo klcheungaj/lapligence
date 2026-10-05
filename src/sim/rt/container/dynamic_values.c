@@ -144,8 +144,7 @@ void llg_dyn_value_assign_strings(llg_dyn_value_array_t* dst,
 void llg_dyn_value_assign_chandles(llg_dyn_value_array_t* dst,
                                    void* const* values, size_t count) {
     if (!dst->element ||
-        (dst->element->kind != LLG_VALUE_CHANDLE &&
-         dst->element->kind != LLG_VALUE_EVENT))
+        !llg_value_is_handle_kind(dst->element))
         llg_container_fatal("handle assignment used with an incompatible container");
     llg_value_t* data = llg_alloc_items(count, sizeof(*data));
     if (count) memset(data, 0, count * sizeof(*data));
@@ -178,8 +177,7 @@ llg_string_t llg_dyn_value_get_string(const llg_dyn_value_array_t* array,
 void* llg_dyn_value_get_chandle(const llg_dyn_value_array_t* array,
                                 sv4_t index) {
     llg_value_t* value = llg_dyn_value_at(array, index);
-    return value && (value->desc->kind == LLG_VALUE_CHANDLE ||
-                     value->desc->kind == LLG_VALUE_EVENT)
+    return value && llg_value_is_handle_kind(value->desc)
         ? value->value.handle
         : NULL;
 }
@@ -217,8 +215,7 @@ llg_string_t llg_dyn_value_get_nested_string(
 void* llg_dyn_value_get_nested_chandle(
     const llg_dyn_value_array_t* array, const sv4_t* indices, size_t count) {
     llg_value_t* value = llg_dyn_value_nested_at(array, indices, count);
-    return value && (value->desc->kind == LLG_VALUE_CHANDLE ||
-                     value->desc->kind == LLG_VALUE_EVENT)
+    return value && llg_value_is_handle_kind(value->desc)
         ? value->value.handle
         : NULL;
 }
@@ -259,8 +256,7 @@ int llg_dyn_value_set_string(llg_dyn_value_array_t* array, sv4_t index,
 int llg_dyn_value_set_chandle(llg_dyn_value_array_t* array, sv4_t index,
                               void* value) {
     llg_value_t* target = llg_dyn_value_at(array, index);
-    if (!target || (target->desc->kind != LLG_VALUE_CHANDLE &&
-                    target->desc->kind != LLG_VALUE_EVENT))
+    if (!target || !llg_value_is_handle_kind(target->desc))
         return 0;
     if (target->value.handle == value) return 1;
     target->value.handle = value;
@@ -326,8 +322,7 @@ int llg_dyn_value_set_nested_chandle(llg_dyn_value_array_t* array,
                                      const sv4_t* indices, size_t count,
                                      void* value) {
     llg_value_t* target = llg_dyn_value_nested_at(array, indices, count);
-    if (!target || (target->desc->kind != LLG_VALUE_CHANDLE &&
-                    target->desc->kind != LLG_VALUE_EVENT))
+    if (!target || !llg_value_is_handle_kind(target->desc))
         return 0;
     if (target->value.handle == value) return 1;
     target->value.handle = value;

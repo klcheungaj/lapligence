@@ -94,6 +94,15 @@ impl Codegen<'_> {
         let Some(declaration) = declaration else {
             return Ok(None);
         };
+        // A module or package semaphore is collected model storage; writing
+        // it must not allocate a second procedural object for the same
+        // declaration (reads already resolve through `object_of`).
+        if let Some(index) = self
+            .object_of(path, node)
+            .filter(|index| self.model.objects[*index].ty == IrObjectType::Semaphore)
+        {
+            return Ok(Some(ChandleTarget::Object(index)));
+        }
         if let Some(name) = self.proc_semaphore_local_name(declaration) {
             return Ok(Some(ChandleTarget::Local(name.to_owned())));
         }

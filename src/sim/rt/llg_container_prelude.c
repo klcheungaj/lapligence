@@ -17,6 +17,14 @@ static void llg_container_warning(const char* message) {
     fprintf(stderr, "llg container warning: %s\n", message);
 }
 
+/* Elements stored as one identity pointer: borrowed chandles, events and
+ * class-like object handles. */
+static int llg_value_is_handle_kind(const llg_value_desc_t* desc) {
+    return desc && (desc->kind == LLG_VALUE_CHANDLE ||
+                    desc->kind == LLG_VALUE_EVENT ||
+                    desc->kind == LLG_VALUE_OPAQUE);
+}
+
 static void llg_check_element_type(uint32_t width) {
     if (width == 0 || width > (LLG_SUPPORTED_WIDTH_LIMIT - 1u))
         llg_container_fatal("invalid packed element width");

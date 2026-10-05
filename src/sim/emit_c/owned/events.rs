@@ -36,6 +36,17 @@ impl Frame<'_, '_> {
         Ok(match event {
             IrEventRef::Static(index) => format!("&{}", self.ctx.model.event(*index).c_name()),
             IrEventRef::Null => "NULL".to_owned(),
+            IrEventRef::Handle(handle) => {
+                // A container element stores only the object identity; give
+                // the runtime a statement-lifetime handle naming it. Waits and
+                // triggers resolve the object before this handle goes away.
+                let object = self.chandle(handle)?;
+                let event = self.scalar(
+                    "llg_event_t",
+                    format!("(llg_event_t){{ (llg_event_object_t*)({object}) }}"),
+                );
+                format!("&{event}")
+            }
             IrEventRef::Array { array, indices } => {
                 let descriptor = self.ctx.model.event(*array);
                 let dims = descriptor

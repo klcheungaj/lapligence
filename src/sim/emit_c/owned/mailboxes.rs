@@ -11,7 +11,7 @@ struct Message {
 }
 
 impl Frame<'_, '_> {
-    fn mailbox_handle(&mut self, expression: &IrMailboxExpr) -> Result<String, String> {
+    pub(super) fn mailbox_handle(&mut self, expression: &IrMailboxExpr) -> Result<String, String> {
         Ok(match expression {
             IrMailboxExpr::Null => "NULL".to_owned(),
             IrMailboxExpr::Read(handle) => self.chandle(handle)?,

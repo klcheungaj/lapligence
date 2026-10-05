@@ -171,7 +171,9 @@ impl Codegen<'_> {
                 .iter()
                 .take_while(|reference| **reference != Some(field))
                 .flatten()
-                .find(|base| self.object_of(path, **base).is_some())
+                .find(|base| {
+                    self.object_of(path, **base).is_some() || self.is_container_chandle_expr(**base)
+                })
             {
                 return self.lower_chandle(path, *base);
             }
