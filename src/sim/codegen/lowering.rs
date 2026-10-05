@@ -1357,6 +1357,10 @@ struct Codegen<'a> {
     /// C expression for the recursion depth at call sites in the current
     /// context (`"0"` in processes, `"depth + 1"` in function bodies).
     depth_arg: String,
+    /// Width and signedness of the target of each overloaded update
+    /// (IEEE 1800-2009 11.11) whose value is being lowered, innermost last.
+    /// Its `OverloadCurrent` operand reads the mutation's captured target.
+    overload_current: Vec<(u32, bool)>,
     /// Owning module-instance arena node of the current emission context;
     /// used to resolve unbound callees by name.
     inst: NodeId,
@@ -1578,6 +1582,7 @@ impl<'a> Codegen<'a> {
             scope_nodes: HashMap::new(),
             func: None,
             depth_arg: "0".to_string(),
+            overload_current: Vec::new(),
             inst: NodeId(0),
             design_name: String::new(),
             proc_seq: 0,

@@ -1,7 +1,7 @@
 # Slang C wrapper
 
 The C++ wrapper compiles admitted source buffers and streams the captured flat
-tables through C ABI v12 into a caller-supplied sink (`LlgSlangSink`). Capture
+tables through C ABI v13 into a caller-supplied sink (`LlgSlangSink`). Capture
 finishes while Slang's compilation is live; the compilation is then destroyed
 and each table is delivered in bounded batches and released as soon as it has
 been delivered (semantic nodes chunk by chunk). C++ lifetime management stays

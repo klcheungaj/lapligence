@@ -67,6 +67,15 @@ projection supplies reads, mutations, NBA capture and call copy-out; module
 connections require constant selectors and keep subroutine ref-actual legality
 separate.
 
+Overloaded updates (IEEE 1800-2009 11.11) whose value is used or whose target
+selector has side effects arrive as `OverloadUpdate`/`OverloadPostUpdate`
+assignments: the target, and the bound function's call whose `OverloadCurrent`
+operand reads the target's current value. They lower to the ordinary
+`IrExprKind::Mutation` (the call is its value, the operand its
+`_llg_mut_current` capture), so the target resolves once; an unpacked record's
+leaf `Stream` is admitted as a mutation target only here. Targets above the
+packed value limit or with native members are rejected with a specific error.
+
 See [lowering overview](../readme.md),
 [execution model](../../execution/readme.md),
 [feature boundaries](../../../../docs/sim_features.md) and

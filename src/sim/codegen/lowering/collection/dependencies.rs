@@ -834,7 +834,9 @@ impl<'a> Codegen<'a> {
                     | Operation::PreIncrement
                     | Operation::PostDecrement
                     | Operation::PreDecrement
-                    | Operation::Assignment,
+                    | Operation::Assignment
+                    | Operation::OverloadUpdate
+                    | Operation::OverloadPostUpdate,
                 operands,
                 ..
             }) => {
@@ -1485,7 +1487,9 @@ impl<'a> Codegen<'a> {
                     | Operation::PostIncrement
                     | Operation::PreIncrement
                     | Operation::PostDecrement
-                    | Operation::PreDecrement,
+                    | Operation::PreDecrement
+                    | Operation::OverloadUpdate
+                    | Operation::OverloadPostUpdate,
                 operands,
                 ..
             }) => {

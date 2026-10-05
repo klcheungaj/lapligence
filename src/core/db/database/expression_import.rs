@@ -285,6 +285,13 @@ pub(super) fn expression_from_slang(
             member: node.name.to_string(),
             value: first(SemanticEdgeRole::Body)?,
         },
+        // The enclosing overloaded update's target value, bound once by it.
+        SEMANTIC_EXPR_UPDATE_CURRENT => ExprKind::Operation {
+            op: Operation::OverloadCurrent,
+            reordered: false,
+            assignment: false,
+            operands: Vec::new(),
+        },
         69 if matches!(
             node.operation,
             SemanticOperation::StreamLeft | SemanticOperation::StreamRight
