@@ -146,7 +146,7 @@ impl Codegen<'_> {
         let path = format!("llg_sub{}_{}", inst.index(), scope.index());
         let info = self.container_from_meta(&path, &name, node, &meta, element)?;
         let ir = info.ir;
-        self.model.containers[ir].c_name = format!("C_llg_sub_{ir}");
+        self.model.containers[ir].c_name = format!("S_llg_container_{ir}");
         if automatic {
             self.model.containers[ir].activation = true;
             // Automatic initializers run at each declaration entry.
@@ -194,7 +194,7 @@ impl Codegen<'_> {
     pub(in super::super) fn container_temporary_like(&mut self, like: usize) -> usize {
         let ir = self.model.containers.len();
         let mut container = self.model.containers[like].clone();
-        container.c_name = format!("C_llg_sub_{ir}");
+        container.c_name = format!("S_llg_container_{ir}");
         container.activation = true;
         container.class_field = None;
         container.initial_size = None;

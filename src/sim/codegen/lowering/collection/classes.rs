@@ -417,7 +417,8 @@ impl<'a> Codegen<'a> {
             }
             let field_index = fields.len();
             self.model.containers[info.ir].class_field = Some((class_index, field_index));
-            self.model.containers[info.ir].c_name = format!("C_class_{class_index}_{field_index}");
+            self.model.containers[info.ir].c_name =
+                format!("S_llg_class_container_{class_index}_{field_index}");
             fields.push(IrClassField {
                 c_name: format!("f_{class_index}_{field_index}_{}", ident(&name)),
                 ty: IrClassFieldType::Chandle,

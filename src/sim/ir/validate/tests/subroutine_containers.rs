@@ -36,10 +36,10 @@ fn container_model() -> IrModel {
     model.containers.push(queue(int_element(), false, "C_q"));
     model
         .containers
-        .push(queue(int_element(), true, "C_llg_sub_1"));
+        .push(queue(int_element(), true, "S_llg_container_1"));
     model
         .containers
-        .push(queue(int_element(), true, "C_llg_sub_2"));
+        .push(queue(int_element(), true, "S_llg_container_2"));
     model.funcs.push(IrFunc::new(
         "f".into(),
         None,

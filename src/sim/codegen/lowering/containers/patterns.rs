@@ -599,7 +599,7 @@ impl<'a> Codegen<'a> {
         };
         let temporary = self.model.containers.len();
         self.model.containers.push(IrContainer {
-            c_name: format!("C_llg_sub_{temporary}"),
+            c_name: format!("S_llg_container_{temporary}"),
             element: *element,
             kind: IrContainerKind::Dynamic,
             initial_size: None,
