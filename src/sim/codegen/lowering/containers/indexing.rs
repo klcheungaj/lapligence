@@ -275,6 +275,29 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// A nested container element (`q[i]` of `int q[$][$]`) used as a method
+    /// receiver: its container and integral index path. String-keyed
+    /// associative outer levels are excluded.
+    pub(in super::super) fn nested_container_receiver(
+        &self,
+        node: NodeId,
+    ) -> Option<(usize, Vec<NodeId>)> {
+        let (container, indices) = self.container_element_path(node)?;
+        if matches!(
+            self.model.containers[container].kind,
+            IrContainerKind::Associative {
+                key: IrAssocKey::String
+            }
+        ) {
+            return None;
+        }
+        matches!(
+            self.container_element_type(container, indices.len()),
+            Some(IrContainerElement::Container { .. })
+        )
+        .then_some((container, indices))
+    }
+
     /// The name of a container-result function whose call result is selected
     /// directly (`f()[i]`), which needs an expression temporary.
     pub(in super::super) fn container_result_base(&self, node: NodeId) -> Option<String> {

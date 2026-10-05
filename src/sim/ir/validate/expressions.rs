@@ -42,6 +42,7 @@ impl Validator<'_> {
                 let expected = match operation.as_ref() {
                     IrContainerExpr::Stream { .. } => (expr.width, expr.signed),
                     IrContainerExpr::Size(_)
+                    | IrContainerExpr::NestedSize { .. }
                     | IrContainerExpr::AssocTraverse { .. }
                     | IrContainerExpr::AssocTraverseString { .. }
                     | IrContainerExpr::AssocTraverseStringLocal { .. } => (32, true),

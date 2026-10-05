@@ -103,6 +103,13 @@ void llg_assoc_value_touch(llg_assoc_value_t* array) {
                array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
 }
 
+size_t llg_value_container_size(const llg_value_t* value) {
+    if (!value || !value->desc || value->desc->kind != LLG_VALUE_CONTAINER ||
+        !value->value.container)
+        return 0;
+    return llg_dyn_value_size(value->value.container);
+}
+
 void llg_value_element_read(llg_value_t* dst, const llg_value_t* element) {
     if (!dst || !dst->desc) llg_container_fatal("element read requires a value");
     if (element) {

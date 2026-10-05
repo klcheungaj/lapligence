@@ -348,6 +348,12 @@ pub enum IrContainerExpr {
         container: usize,
         indices: Vec<IrExpr>,
     },
+    /// `size()` of a nested container element selected by integral
+    /// indices; a missing element has size 0.
+    NestedSize {
+        container: usize,
+        indices: Vec<IrExpr>,
+    },
     GetString {
         container: usize,
         key: IrStringExpr,
@@ -950,6 +956,27 @@ impl IrContainerExpr {
                 }
                 return Ok(());
             }
+            Self::NestedSize { container, indices } => {
+                let container = container_kind(model, *container, None)?;
+                if matches!(
+                    container.kind,
+                    IrContainerKind::Associative {
+                        key: IrAssocKey::String
+                    }
+                ) || indices.is_empty()
+                    || indices.iter().any(IrExpr::is_real)
+                    || !matches!(
+                        nested_element(container, indices.len()),
+                        Some(IrContainerElement::Container { .. })
+                    )
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "nested size requires integral indices selecting a container element",
+                    ));
+                }
+                return Ok(());
+            }
             Self::GetNestedReal { container, indices } => {
                 let container = container_kind(model, *container, None)?;
                 if matches!(
@@ -1125,9 +1152,9 @@ impl IrContainerExpr {
             Self::Get { index, .. }
             | Self::GetReal { index, .. }
             | Self::Exists { key: index, .. } => visit(index),
-            Self::GetNested { indices, .. } | Self::GetNestedReal { indices, .. } => {
-                indices.iter().for_each(visit)
-            }
+            Self::GetNested { indices, .. }
+            | Self::GetNestedReal { indices, .. }
+            | Self::NestedSize { indices, .. } => indices.iter().for_each(visit),
             Self::GetString { key, .. }
             | Self::GetStringReal { key, .. }
             | Self::ExistsString { key, .. } => key.expressions(visit),
@@ -1145,9 +1172,9 @@ impl IrContainerExpr {
             Self::Get { index, .. }
             | Self::GetReal { index, .. }
             | Self::Exists { key: index, .. } => visit(index),
-            Self::GetNested { indices, .. } | Self::GetNestedReal { indices, .. } => {
-                indices.iter_mut().for_each(visit)
-            }
+            Self::GetNested { indices, .. }
+            | Self::GetNestedReal { indices, .. }
+            | Self::NestedSize { indices, .. } => indices.iter_mut().for_each(visit),
             Self::GetString { key, .. }
             | Self::GetStringReal { key, .. }
             | Self::ExistsString { key, .. } => key.expressions_mut(visit),

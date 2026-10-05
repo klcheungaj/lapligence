@@ -339,16 +339,36 @@ Macros, includes and their edition-specific behavior are counted in §11.
   restricted. SV §6.16 **[SV-2005]**.
 - 🟨 **Events** — Scalar/fixed-array declarations, indexed/hierarchical access,
   null/default handles, reassignment and task aliases retain event identity.
-  Dynamic/associative/queue event storage is unsupported. SV §6.17 **[SV-2005]**.
+  Dynamic, associative and queue event storage (module, subroutine formal and
+  local) copies handles, so triggers, waits and `.triggered` follow the event
+  through reorder, insertion, reallocation and copies; new elements are new
+  events and missing ones read null
+  ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md)).
+  Event formals of virtual-interface tasks remain restricted (SIM-012).
+  SV §§6.17, 7.4.5, 15.5 **[SV-2005]**.
 - 🟨 **Dynamic arrays, associative arrays and queues** — Allocation, resize,
   delete, copy, bounded patterns, generic/nested leaves, associative defaults and
   traversal, queue slices/overflow, collected value-port copies and bit/part
   selects of packed elements (written as one element read/modify/write) are
   present.
-  Contents/shape changes notify readers. General subroutine storage, non-packed
-  endpoint/pop expressions, string-key index-result queues, nested scalar queries
-  and broader recursive/object forms remain restricted. Methods are in §7.
-  SV §§7.5, 7.8, 7.10, 7.12 **[SV-2005]**.
+  Contents/shape changes notify readers. Containers are values in subroutine
+  formals, results and locals (automatic per activation, static per
+  declaration), procedural-block locals and class properties (instance
+  containers inside their class's methods, static ones anywhere); calls copy
+  them in and out and pattern actuals build at the call. Elements may be
+  records (whole and member access, push/insert/pop), nested containers
+  (written from dynamic arrays, patterns or concatenations; nested `size()`)
+  and identity handles. Associative reads through an X/Z key or of a missing
+  entry warn and return the default unless an explicit default is set;
+  invalid-key writes warn and do nothing; one element accepts compound
+  assignment and `++`/`--`
+  ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md)).
+  `ref` container formals (SIM-008), fork capture of automatic containers
+  (SIM-010), handle-qualified class container properties (SIM-011), mutating
+  methods of nested elements, record-element equality (SIM-007), string-key
+  index-result queues and event controls on subroutine containers remain
+  restricted ([known issue](known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
+  Methods are in §7. SV §§7.5, 7.8, 7.10, 7.12 **[SV-2005]**.
 - 🟨 **Chandle** — Typed native-pointer null/copy/identity/Boolean operations,
   locals, admitted aggregate/class fields, mixed signatures, returns and
   input/output/inout/ref/const-ref calls are present. Untimed and `#delay`
@@ -379,7 +399,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 | NBA target or source | module record: yes (untimed and `#delay`); static subroutine root target: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)); automatic: illegal | yes, issue-time copy | n/a | constant: yes | n/a | commit or cancellation |
 | Fork-join_none capture | SIM-010 | SIM-010 | n/a | n/a | n/a | SIM-010 |
 | Unpacked array element, slice | SIM-007 | SIM-007 | SIM-007 | SIM-007 | SIM-008 | SIM-007 |
-| Queue/dynamic/associative element | SIM-006 | SIM-006 | SIM-006 | SIM-006 | SIM-008 | SIM-006 |
+| Queue/dynamic/associative element | yes (missing: default) | yes, whole element and push/insert/pop | SIM-007 | constant and run-time element index: yes | SIM-008 | delete, resize, container close |
 | Class property | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-018 |
 | DPI argument | SIM-040 | SIM-040 | n/a | n/a | n/a | n/a |
 | Process-block local, call initializer | SIM-022 | SIM-022 | SIM-022 | SIM-022 | n/a | SIM-022 |
@@ -1084,8 +1104,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   formal storage; only inout copy-in overwrites it, while automatic outputs get
   typed defaults. Native records cross input/output/inout formals and results
   by value, including nested calls, recursion, suspension and cancellation
-  (SIM-003). Resizable containers in subroutine storage, native ref formals and
-  arrays of native records remain restricted.
+  (SIM-003). Resizable containers cross formals and results by value and live in
+  automatic or static subroutine locals (SIM-006). Container and native `ref`
+  formals and fixed arrays of native records remain restricted.
   V §§10.2–10.3; SV §§13.3–13.5 **[1995/2001/SV-2005]**.
 - 🟦 **Automatic/reentrant and finite zero-time calls** — Per-activation
   storage, finite recursion, local named-block exits, selected copy-out and
@@ -1410,11 +1431,12 @@ These are bounded implementations, not full verification-infrastructure support.
   field/capture layouts and constrained randomization remain restricted.
   SV ch.8 **[SV-2005]**.
 - 🟨 **Virtual interfaces** — Typed instance/modport identity survives rebinding,
-  class/formal/fixed-array and bounded dynamic/queue storage. Packed member access,
+  class/formal storage, fixed arrays (any range) and dynamic, queue and
+  associative storage. Packed member access,
   delay-free methods, null/type checks and clocking-input samples are present.
-  Timed tasks, event-formal dispatch, dynamic clocking output/inout dispatch,
-  modport expression ports, associative/nested layouts and broader
-  polymorphic/capture forms reject.
+  Timed tasks and event-formal dispatch (SIM-012), dynamic clocking output/inout
+  dispatch (SIM-034), modport expression ports and broader polymorphic/capture
+  forms reject.
   SV §§25.5, 25.7, 25.9–25.10 **[SV-2009]**.
 - 🟨 **Programs** — Initials launch in Reactive; `#0`/NBA stay in the reactive
   set. `$exit` cancels only its program-initial origin and is ignored outside
@@ -1435,18 +1457,23 @@ These are bounded implementations, not full verification-infrastructure support.
   SV ch.14 **[SV-2005]**.
 - 🟨 **Process control** — `process::self/status/kill/suspend/resume/await`
   retain identity, wait conditions, descendant cleanup and terminal status.
-  Process formals/arrays and the broader class API remain unsupported.
+  By-value process formals borrow the caller's handle; fixed and resizable
+  process arrays hold counted handles. Randstate and the broader class API
+  remain unsupported (SIM-015).
   SV §9.7 **[SV-2005]**.
 - 🟨 **Semaphores** — `new/get/put/try_get`, zero-key operations, FIFO blocking,
-  cancellation cleanup and automatic task-handle arguments are represented;
-  semaphore arrays remain unsupported. SV §15.3 **[SV-2005]**.
+  cancellation cleanup, automatic task-handle arguments and fixed/resizable
+  semaphore arrays (handles copied, never the semaphore) are represented.
+  SV §15.3 **[SV-2005]**.
 - 🟨 **Mailboxes** — Typed/untyped bounded/unbounded FIFO
   `new/num/put/get/peek/try_put/try_get/try_peek` supports packed, real/shortreal,
   string and admitted handle messages with nominal enum/class/handle identity.
   Empty, mismatch and delivery differ; mismatch preserves message/destination,
   peek does not consume, and consuming delivery commits before callbacks.
-  Delivery survives admitted reentrancy/cancellation; arrays, general aggregates
-  and arbitrary automatic native/shared captures reject. SV §15.4 **[SV-2005]**.
+  Delivery survives admitted reentrancy/cancellation; fixed and resizable
+  mailbox arrays share mailboxes by handle. General aggregate messages and
+  arbitrary automatic native/shared captures reject (SIM-017).
+  SV §15.4 **[SV-2005]**.
 
 ### Assertions and sampled values — partial
 

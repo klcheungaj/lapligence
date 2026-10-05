@@ -410,6 +410,51 @@ the SIM-006 container elements and container formals/locals already do.
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv` and
 `sim_004/neg_static_native_record_nba.sv`.
 
+## Resizable containers at subroutine, object and nesting boundaries
+
+**Status:** open; SIM-006 implements containers as subroutine formals,
+results and locals, procedural-block locals, class properties, record and
+handle elements and nested containers.
+
+### Symptom
+
+These legal forms reject with explicit diagnostics: `ref` container formals;
+a fork branch reading an automatic container of the enclosing activation; an
+instance container property selected through a handle (`h.q`) rather than
+inside the class's own methods, and an initializer on such a property; a
+container-result call used other than as a whole assignment source or a
+statement (`f()[i]`, `f().size()`); a container argument in expression
+position that is neither a variable of the formal's type nor a packed/real
+assignment pattern; event controls and monitors on subroutine or object
+containers; mutating methods of a nested container element (`q[i].push_back`;
+`q[i].size()` works); a nested element written from a queue or associative
+variable; `foreach` over a container of containers; equality of record
+elements; and compound or nonblocking writes to a record element. Reads of a
+missing nested associative element return the default without the SV 7.8.6
+warning.
+
+### Cause
+
+Container operations name their storage by a container index: model storage
+by a global, activation and object storage by a frame binding. A
+handle-qualified property, a nested element and a call result have no binding
+the operation can name without an addressed-container operand; references
+need retained element cells and fork branches need capture pins. Nested
+storage is a dynamic-array value, so queue methods on it would need dynamic
+array forms of every queue mutation.
+
+### Intended direction
+
+An addressed-container operand (receiver or parent container plus index
+path) for container statements and queries, receiver-qualified class
+properties (SIM-011), retained cells for `ref` (SIM-008), fork capture pins
+(SIM-010) and record-element comparison through the native leaf machinery
+(SIM-007).
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`.
+
 ## Real references and real-array expressions outside stable storage
 
 **Status:** open; SIM-005 implements real/shortreal references to stable

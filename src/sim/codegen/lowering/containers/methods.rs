@@ -37,6 +37,13 @@ impl<'a> Codegen<'a> {
                 return Ok(Some(statement));
             }
         }
+        if self.nested_container_receiver(receiver).is_some() {
+            return Err(format!(
+                "method `{name}` of a nested container element in `{path}` is not supported"
+            ));
+        }
+        // Statements that build a nested source before the operation.
+        let mut prelude = Vec::new();
         let Some(container) = self.container_of(receiver) else {
             return Ok(None);
         };
@@ -102,25 +109,16 @@ impl<'a> Codegen<'a> {
                     container: container.ir,
                     value: self.lower_container_handle(path, element, *value)?,
                 },
-                IrContainerElement::Container { .. } => {
-                    let source = self.container_of(*value).ok_or_else(|| {
-                        format!(
-                            "recursive queue push_front in {path} requires a dynamic array source"
-                        )
-                    })?;
-                    if !matches!(
-                        self.model.containers[source.ir].kind,
-                        IrContainerKind::Dynamic
-                    ) {
-                        return Err(format!(
-                            "recursive queue push_front in {path} requires a dynamic array source"
-                        ));
-                    }
-                    IrContainerStmt::QueuePushFrontContainer {
-                        container: container.ir,
-                        source: source.ir,
-                    }
-                }
+                IrContainerElement::Container { .. } => IrContainerStmt::QueuePushFrontContainer {
+                    container: container.ir,
+                    source: self.nested_container_source(
+                        path,
+                        container.ir,
+                        1,
+                        *value,
+                        &mut prelude,
+                    )?,
+                },
                 _ => IrContainerStmt::QueuePushFront {
                     container: container.ir,
                     value: self.lower_container_value(path, container.ir, *value)?,
@@ -135,25 +133,16 @@ impl<'a> Codegen<'a> {
                     container: container.ir,
                     value: self.lower_container_handle(path, element, *value)?,
                 },
-                IrContainerElement::Container { .. } => {
-                    let source = self.container_of(*value).ok_or_else(|| {
-                        format!(
-                            "recursive queue push_back in {path} requires a dynamic array source"
-                        )
-                    })?;
-                    if !matches!(
-                        self.model.containers[source.ir].kind,
-                        IrContainerKind::Dynamic
-                    ) {
-                        return Err(format!(
-                            "recursive queue push_back in {path} requires a dynamic array source"
-                        ));
-                    }
-                    IrContainerStmt::QueuePushBackContainer {
-                        container: container.ir,
-                        source: source.ir,
-                    }
-                }
+                IrContainerElement::Container { .. } => IrContainerStmt::QueuePushBackContainer {
+                    container: container.ir,
+                    source: self.nested_container_source(
+                        path,
+                        container.ir,
+                        1,
+                        *value,
+                        &mut prelude,
+                    )?,
+                },
                 _ => IrContainerStmt::QueuePushBack {
                     container: container.ir,
                     value: self.lower_container_value(path, container.ir, *value)?,
@@ -173,26 +162,17 @@ impl<'a> Codegen<'a> {
                         index,
                         value: self.lower_container_handle(path, element, *value)?,
                     },
-                    IrContainerElement::Container { .. } => {
-                        let source = self.container_of(*value).ok_or_else(|| {
-                            format!(
-                                "recursive queue insert in {path} requires a dynamic array source"
-                            )
-                        })?;
-                        if !matches!(
-                            self.model.containers[source.ir].kind,
-                            IrContainerKind::Dynamic
-                        ) {
-                            return Err(format!(
-                                "recursive queue insert in {path} requires a dynamic array source"
-                            ));
-                        }
-                        IrContainerStmt::QueueInsertContainer {
-                            container: container.ir,
-                            index,
-                            source: source.ir,
-                        }
-                    }
+                    IrContainerElement::Container { .. } => IrContainerStmt::QueueInsertContainer {
+                        container: container.ir,
+                        index,
+                        source: self.nested_container_source(
+                            path,
+                            container.ir,
+                            1,
+                            *value,
+                            &mut prelude,
+                        )?,
+                    },
                     _ => IrContainerStmt::QueueInsert {
                         container: container.ir,
                         index,
@@ -288,7 +268,12 @@ impl<'a> Codegen<'a> {
             }
             _ => return Ok(None),
         };
-        Ok(Some(IrStmt::Container(Box::new(operation))))
+        let operation = IrStmt::Container(Box::new(operation));
+        if prelude.is_empty() {
+            return Ok(Some(operation));
+        }
+        prelude.push(operation);
+        Ok(Some(IrStmt::Block(prelude)))
     }
 
     fn lower_fixed_array_reverse(

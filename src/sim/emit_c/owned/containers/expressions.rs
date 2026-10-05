@@ -143,6 +143,27 @@ pub(super) fn render(
             super::indices(frame, owners, indices)?,
             indices.len()
         ),
+        IrContainerExpr::NestedSize { container, indices } => {
+            let locator = match ctx.model.containers[*container].kind {
+                IrContainerKind::Dynamic => "llg_dyn_value_element",
+                IrContainerKind::Queue { .. } => "llg_queue_value_element",
+                IrContainerKind::Associative { .. } => "llg_assoc_value_element_integral",
+            };
+            let create = if matches!(
+                ctx.model.containers[*container].kind,
+                IrContainerKind::Associative { .. }
+            ) {
+                ", 0"
+            } else {
+                ""
+            };
+            format!(
+                "sv4_from_u64((uint64_t)llg_value_container_size({locator}(&{}, {}, {}{create})), 32, 1)",
+                name(frame, *container)?,
+                super::indices(frame, owners, indices)?,
+                indices.len()
+            )
+        }
         IrContainerExpr::GetNestedReal { container, indices } => format!(
             "{}(&{}, {}, {})",
             match ctx.model.containers[*container].kind {

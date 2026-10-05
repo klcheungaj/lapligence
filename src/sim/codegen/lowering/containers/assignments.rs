@@ -60,24 +60,14 @@ impl<'a> Codegen<'a> {
                     .into_iter()
                     .map(|index| self.lower_container_index(path, index))
                     .collect::<Result<Vec<_>, _>>()?;
-                let source = self.container_of(rhs).ok_or_else(|| {
-                    format!("nested container assignment in {path} requires a dynamic array")
-                })?;
-                if !matches!(
-                    self.model.containers[source.ir].kind,
-                    IrContainerKind::Dynamic
-                ) {
-                    return Err(format!(
-                        "nested container assignment in {path} requires a dynamic array"
-                    ));
-                }
-                return Ok(Some(IrStmt::Container(Box::new(
-                    IrContainerStmt::SetContainer {
-                        container,
-                        indices,
-                        source: source.ir,
-                    },
-                ))));
+                let mut prelude = Vec::new();
+                let source = self.nested_container_source(path, container, 1, rhs, &mut prelude)?;
+                prelude.push(IrStmt::Container(Box::new(IrContainerStmt::SetContainer {
+                    container,
+                    indices,
+                    source,
+                })));
+                return Ok(Some(IrStmt::Block(prelude)));
             }
             if source_indices.len() > 1 {
                 if !blocking {
@@ -177,24 +167,16 @@ impl<'a> Codegen<'a> {
                 .container_element_type(container.ir, 1)
                 .is_some_and(|element| matches!(element, IrContainerElement::Container { .. }))
             {
-                let source = self.container_of(rhs).ok_or_else(|| {
-                    format!("nested container assignment in {path} requires a dynamic array")
-                })?;
-                if !matches!(
-                    self.model.containers[source.ir].kind,
-                    IrContainerKind::Dynamic
-                ) {
-                    return Err(format!(
-                        "nested container assignment in {path} requires a dynamic array"
-                    ));
-                }
-                return Ok(Some(IrStmt::Container(Box::new(
-                    IrContainerStmt::SetContainer {
-                        container: container.ir,
-                        indices: vec![self.lower_container_index(path, index)?],
-                        source: source.ir,
-                    },
-                ))));
+                let indices = vec![self.lower_container_index(path, index)?];
+                let mut prelude = Vec::new();
+                let source =
+                    self.nested_container_source(path, container.ir, 1, rhs, &mut prelude)?;
+                prelude.push(IrStmt::Container(Box::new(IrContainerStmt::SetContainer {
+                    container: container.ir,
+                    indices,
+                    source,
+                })));
+                return Ok(Some(IrStmt::Block(prelude)));
             }
             let operation = match self.model.containers[container.ir].kind {
                 IrContainerKind::Associative {

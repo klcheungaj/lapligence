@@ -182,6 +182,9 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
             super::objects::render_indices(ctx, indices)?,
             indices.len()
         ),
+        IrContainerExpr::NestedSize { .. } => {
+            return Err("nested container sizes require whole-model ownership emission".into())
+        }
         IrContainerExpr::GetNestedReal { container, indices } => format!(
             "{}(&{}, {}, {})",
             match ctx.model.containers[*container].kind {

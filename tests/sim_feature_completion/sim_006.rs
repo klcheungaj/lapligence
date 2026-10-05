@@ -29,6 +29,13 @@ fn class_container_properties_are_per_object() {
 }
 
 #[test]
+fn nested_containers_copy_patterns_and_concatenations() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_006/nested_containers.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_containers", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "nested_containers", expected);
+}
+
+#[test]
 fn record_elements_copy_resize_delete_and_pop() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_006/record_elements.out");
     sim_cli::run_case_backend_parity(SUITE, "record_elements", expected, &[], &[]);
@@ -181,6 +188,11 @@ fn unsupported_container_boundaries_are_explicit() {
         SUITE,
         "neg_class_container_outside",
         "class container property `q` in `tb` is accessible only inside its class's methods (SIM-011)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_nested_element_method",
+        "method `push_back` of a nested container element in `tb` is not supported",
     );
     sim_cli::reject_case(
         SUITE,

@@ -479,6 +479,9 @@ void llg_queue_value_touch(llg_queue_value_array_t* queue);
 void llg_assoc_value_touch(llg_assoc_value_t* array);
 /* Replace initialized `dst` with a converted copy of `element`, or with the
  * Table 7-1 default when `element` is NULL. */
+/* Size of a nested container element returned by a locator; 0 for a missing
+ * element or a non-container value. */
+size_t llg_value_container_size(const llg_value_t* value);
 void llg_value_element_read(llg_value_t* dst, const llg_value_t* element);
 /* Whole-element writes borrow `value` and copy it with conversion; they
  * return 0 without writing for an invalid index (a queue accepts `$+1`). */

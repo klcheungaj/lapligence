@@ -422,6 +422,25 @@ impl<'a> Codegen<'a> {
                 receiver: Some(receiver),
                 ..
             } => {
+                if let Some((container, indices)) = self.nested_container_receiver(*receiver) {
+                    if !matches!(name.as_str(), "size" | "num")
+                        || !self.node(node).children[1..].is_empty()
+                    {
+                        return Err(format!(
+                            "method `{name}` of a nested container element in `{path}` is not supported; only `size()` is"
+                        ));
+                    }
+                    let indices = self.lower_container_path_indices(path, container, indices)?;
+                    return Ok(Some(IrExpr::new(
+                        IrExprKind::Container(Box::new(IrContainerExpr::NestedSize {
+                            container,
+                            indices,
+                        })),
+                        32,
+                        true,
+                        None,
+                    )));
+                }
                 let Some(container) = self.container_of(*receiver) else {
                     return Ok(None);
                 };
