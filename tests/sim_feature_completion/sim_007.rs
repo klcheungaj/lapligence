@@ -118,3 +118,55 @@ fn record_elements_of_containers_compare_member_wise() {
         include_str!("../fixtures/sim/feature_completion/sim_007/record_element_equality.out");
     sim_cli::run_case_backend_parity(SUITE, "record_element_equality", expected, &[], &[]);
 }
+
+#[test]
+fn native_patterns_keep_key_precedence_copies_and_source_order() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_007/native_patterns.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_patterns", expected, &[], &[]);
+    sim_cli::reject_case(
+        SUITE,
+        "bad_pattern_keys",
+        "assignment pattern has multiple keys for index 0",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_pattern_keys",
+        "assignment pattern has multiple keys for member 's'",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_pattern_shape",
+        "assignment pattern for 'string$[2]' requires 2 elements but 3 were provided",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_pattern_shape",
+        "value of type 'real' cannot be assigned to type 'string'",
+    );
+}
+
+#[test]
+fn records_with_queue_members_are_rejected_explicitly() {
+    sim_cli::reject_case(
+        SUITE,
+        "bad_record_queue_member",
+        "unpacked aggregate member `m.q` has unsupported recursive storage type `Queue`",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_record_queue_formal",
+        "with a queue, dynamic or associative array member is not supported",
+    );
+}
+
+#[test]
+fn nested_native_records_cross_calls_ports_and_selects() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_007/native_lifecycle.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_lifecycle", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "native_lifecycle", expected);
+    sim_cli::reject_case(
+        SUITE,
+        "bad_handle_record_port",
+        "record port `tb.u.i` with a class handle member is not supported by value links",
+    );
+}

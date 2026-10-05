@@ -317,8 +317,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   indices into native member arrays select among at most 64 elements
   (`NATIVE_MEMBER_SELECT_LIMIT`); packed members of module native records take
   bit/part selects ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)).
-  Multidimensional native arrays, queue/dynamic/associative record members,
-  `f().m` on a native result, native ref formals, static subroutine-root NBAs
+  Patterns that read their own destination see the old string and handle
+  members. Multidimensional native arrays, queue/dynamic/associative record
+  members, record ports with class-handle members, `f().m` on a native result, native ref formals, static subroutine-root NBAs
   and fork capture remain restricted. SV §§6.7, 7.2–7.4 **[SV-2005]**.
 - 🟨 **Tagged unions** — Packed and unpacked tagged unions with fixed payloads
   use one finite storage owner: the tag in the most significant bits and each

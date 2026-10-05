@@ -462,6 +462,15 @@ impl<'a> Codegen<'a> {
                 "multidimensional fixed array of `{}` elements is not supported",
                 element.name
             )),
+            TypeShape::Aggregate(layout) if layout.members.iter().any(|member| {
+                has_resizable_member(&member.descriptor)
+            }) =>
+            {
+                Some(format!(
+                    "record `{}` with a queue, dynamic or associative array member is not supported",
+                    descriptor.name
+                ))
+            }
             _ => None,
         }
     }
@@ -1149,5 +1158,19 @@ impl<'a> Codegen<'a> {
             self.container_initializers.push((node, ir));
         }
         Ok(ContainerInfo { ir })
+    }
+}
+
+/// Whether a record member is, or contains below fixed arrays and nested
+/// records, a resizable container.
+fn has_resizable_member(descriptor: &TypeDescriptor) -> bool {
+    match &descriptor.shape {
+        TypeShape::Container { .. } => true,
+        TypeShape::FixedArray { element, .. } => has_resizable_member(element),
+        TypeShape::Aggregate(layout) => layout
+            .members
+            .iter()
+            .any(|member| has_resizable_member(&member.descriptor)),
+        _ => false,
     }
 }
