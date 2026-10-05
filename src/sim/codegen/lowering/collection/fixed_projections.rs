@@ -204,6 +204,11 @@ impl Codegen<'_> {
             }
         }
         if let Some((owner, aggregate)) = self.unpacked_aggregate_info(node) {
+            if aggregate.columns {
+                // Column-layout records are never one packed composite;
+                // member selects resolve their own leaf or column.
+                return Ok(None);
+            }
             let descriptor = self
                 .query_descriptor(owner)
                 .cloned()
@@ -262,7 +267,11 @@ impl Codegen<'_> {
                 }));
             }
         }
-        if let Some(array) = self.array_of(node).cloned().filter(|array| !array.real) {
+        if let Some(array) = self
+            .array_of(node)
+            .cloned()
+            .filter(|array| !array.real && self.record_column_array(node).is_none())
+        {
             if let Some(descriptor) = self.query_descriptor(node).cloned() {
                 if let Some(width) = fixed_width(&descriptor) {
                     let mut parts = Vec::new();

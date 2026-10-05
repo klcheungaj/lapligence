@@ -691,12 +691,17 @@ impl<'a> Codegen<'a> {
                         two_state,
                     ));
                 }
-                let ai = self.array_of(*base).cloned().ok_or_else(|| {
-                    format!(
-                        "cannot resolve array base of select `{}` in `{path}`",
-                        self.node(*base).name,
-                    )
-                })?;
+                let ai = self
+                    .record_column_select(lhs)
+                    .map(|(column, _)| column)
+                    .or_else(|| self.array_of(*base))
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!(
+                            "cannot resolve array base of select `{}` in `{path}`",
+                            self.node(*base).name,
+                        )
+                    })?;
                 let ndims = ai.dims.len();
                 if indices.len() == ndims {
                     let ies = indices

@@ -46,6 +46,7 @@ mod port_net_types;
 mod ports;
 mod processes;
 mod real_arrays;
+mod record_columns;
 mod return_flow;
 mod signatures;
 mod strength_views;

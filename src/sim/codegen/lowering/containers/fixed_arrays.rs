@@ -74,6 +74,9 @@ impl<'a> Codegen<'a> {
             "assignment-pattern lvalue",
         )?;
 
+        if let Some(statement) = self.lower_record_pattern_scatter(path, pattern, rhs, !blocking)? {
+            return Ok(Some(statement));
+        }
         let mut targets = Vec::new();
         self.p30_collect_pattern_lvalue_targets(path, pattern, &target_descriptor, &mut targets)?;
         // Oversized sources scatter descriptor rows for every assignment
@@ -645,6 +648,9 @@ impl<'a> Codegen<'a> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.p30_array_prefix_base(*operand),
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                if let Some((column, indices)) = self.record_column_select(node) {
+                    return (indices.len() < column.dims.len()).then_some((column, indices.len()));
+                }
                 let (array, consumed) = self.p30_array_prefix_base(*base)?;
                 let consumed = consumed.checked_add(indices.len())?;
                 (consumed < array.dims.len()).then_some((array, consumed))

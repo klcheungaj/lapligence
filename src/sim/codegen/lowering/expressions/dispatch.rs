@@ -1078,7 +1078,12 @@ impl<'a> Codegen<'a> {
                         None,
                     ));
                 }
-                let ai = self.array_of(*base).cloned().ok_or_else(|| {
+                let ai = self
+                    .record_column_select(h)
+                    .map(|(column, _)| column)
+                    .or_else(|| self.array_of(*base))
+                    .cloned()
+                    .ok_or_else(|| {
                     format!(
                         "cannot resolve array base of select `{}` in `{scope_path}` (base kind: {:?})",
                         self.node(*base).name,
