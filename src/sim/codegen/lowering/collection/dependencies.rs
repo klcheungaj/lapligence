@@ -1944,11 +1944,25 @@ impl<'a> Codegen<'a> {
                 }
                 Ok(())
             }
-            NodeKind::Expr(ExprKind::HierPath { .. }) => {
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
                 // A hierarchical LHS base signal must not trigger the owning
-                // process (same rule as a plain LHS ref). The backend supports only
-                // constant indices/bounds on hierarchical targets, so there
-                // are no index/bounds reads to collect.
+                // process (same rule as a plain LHS ref). A member path rooted
+                // at an element select (`s[i].lo`) keeps that select node among
+                // its references; its selectors choose the written element,
+                // so they are reads of the writer.
+                for root in refs.iter().flatten() {
+                    if matches!(self.kind(*root), NodeKind::Expr(_)) {
+                        self.walk_lhs_select_reads_bound(
+                            scope_path,
+                            *root,
+                            seen,
+                            visited,
+                            out,
+                            include_function_bodies,
+                            bindings,
+                        )?;
+                    }
+                }
                 Ok(())
             }
             _ => Ok(()), // plain ref LHS: not part of the read set

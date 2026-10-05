@@ -94,3 +94,20 @@ endmodule
         ]
     );
 }
+
+#[test]
+fn packed_array_element_members_drive_ports_nets_and_wake_readers() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_select_bugs/element_member_views.out");
+    sim_cli::run_case(SUITE, "element_member_views", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "element_member_views", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "element_member_views", expected);
+}
+
+#[test]
+fn runtime_selected_member_targets_wait_on_their_selectors() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_select_bugs/selector_retarget.out");
+    sim_cli::run_case(SUITE, "selector_retarget", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "selector_retarget", expected, &[], &[]);
+}

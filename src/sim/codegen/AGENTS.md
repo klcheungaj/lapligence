@@ -47,6 +47,10 @@ diagnostic labels remain separate from C symbols. The
   packed dimension visible at its base; element width is the remaining
   dimensions times the element type (so records count whole). Map labels to bits
   only through `lowering/packed_geometry.rs`, never with per-site stride math.
+  A member path whose first reference is an element select (`ps[i].hi`) names
+  that select's root only as a label: resolve it through the select chain,
+  never by the root's name, which would drop the select. Its selectors are
+  reads of a writer (sensitivity and continuous re-evaluation).
 - `PackedChain` preserves each selection relative to its preceding result,
   including remaining packed-element stride, bounds, direction and right bound.
   Partial reads keep valid bits and fill missing bits with X; invalid writes do

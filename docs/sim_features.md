@@ -436,8 +436,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   dependencies. Fixed outputs admit whole arrays, constant rows/slices, aggregate
   values, nested member and member-array targets and instance-array
   distribution; interface modport arrays link through generate and forwarding.
-  A variable output target with runtime selects is an implied continuous
-  assignment: selector changes retarget it and unknown selectors write nothing.
+  A variable output target with runtime selects, including a member target
+  such as `.a(s[i].lo)`, is an implied continuous assignment: selector changes
+  retarget it and unknown selectors write nothing.
   Descriptor-backed arrays (to 16M cells) cross ports as descriptor copies.
   String and native-record value ports carry independent copies, including an
   output driven by a child `assign` (SIM-004).
@@ -533,7 +534,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   initial and always procedure has started; include transitive function reads
   and exclude written expressions. Fixed arrays (including 65,537-cell
   descriptor arrays, by contents marker rather than per cell), nested record and
-  packed members, constant/runtime selectors, conditional arms, sequential
+  packed members, constant/runtime selectors (including those of a written
+  member target such as `s[i].lo`), conditional arms, sequential
   predicates, ref ports (nested, to members and cells), string variables and
   string record members, and aggregate input links contribute dependencies.
   Unchanged results do not notify downstream readers; a closed latch retains
