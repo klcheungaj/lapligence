@@ -3,10 +3,14 @@
 The emitter consumes validated execution IR and renders standalone models with
 ordered setup, evaluation and cleanup. It has no frontend dependency.
 
-Rendering borrows the execution model when the computed arena-callee set matches
-its current analysis, and copies it only when reanalysis changes that set. Exact
-body sharing groups candidates as they arrive, retaining one normalized body and
-one comparison key per group while preserving member and group order.
+Model generation passes the execution model by value: each process's operations
+are released once its body is rendered, and a changed arena-callee set is
+reanalyzed in place. The borrowed entry points used by tests copy the model only
+when reanalysis changes that set. Exact body sharing groups candidates as they
+arrive, retaining one normalized body and one comparison key per group while
+preserving member and group order; operand text is interned, not copied per
+member. Assembly moves rendered bodies into the model text and shortens
+identifiers in that buffer instead of building a second copy.
 
 `owned/` handles expressions, typed lvalues, calls, captures, native services and
 registered temporary/local scopes. Its model layer emits persistent storage,
