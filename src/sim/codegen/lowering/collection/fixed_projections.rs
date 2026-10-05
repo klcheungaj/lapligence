@@ -660,6 +660,28 @@ impl Codegen<'_> {
         }))
     }
 
+    /// The tag guard of member `path` of record value `value`, if the member
+    /// lies inside a column-layout tagged union of that value.
+    pub(in super::super) fn record_value_guard(
+        &self,
+        value: &RecordValue,
+        path: &[AggregatePathPart],
+    ) -> Result<Option<RecordSelectGuard>, String> {
+        let Some((tag, guard)) = self.record_union_guard(value, path)? else {
+            return Ok(None);
+        };
+        Ok(Some(RecordSelectGuard {
+            tag_read: self.record_column_read(&tag)?,
+            tag_target: self.record_column_lhs(&tag)?,
+            guard: crate::sim::ir::IrTaggedMemberGuard {
+                member_index: u32::try_from(guard.member_index)
+                    .map_err(|_| "tagged union member index overflow")?,
+                tag_width: guard.tag_width,
+                member_name: guard.member_name,
+            },
+        }))
+    }
+
     /// One-bit check that a column-layout tagged union member is active: 1
     /// when it is; otherwise the inactive access is reported at `location`
     /// and the check yields X, exactly as a guarded element access does.
@@ -812,6 +834,11 @@ impl Codegen<'_> {
         }
         if let Some(root) = self.record_leaf_projection(node)? {
             return Ok(Some(root));
+        }
+        // An element of a column-layout record member array is read from
+        // its column, never from another projection of the record.
+        if self.record_column_select(node).is_some() {
+            return Ok(None);
         }
         if let Some(root) = self.fixed_root(path, node)? {
             return Ok(Some(root));

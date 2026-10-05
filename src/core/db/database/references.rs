@@ -236,6 +236,11 @@ pub(super) fn array_select_from_slang(
         indices.push(index);
         return Ok(Some((base, indices)));
     }
+    // A member array of a call result (`f(x).m[i]`) selects from the member
+    // access itself, which imports as a member selection of the call.
+    if call_member_access(snapshot, ids, base_semantic)? {
+        return Ok(Some((raw_base, vec![index])));
+    }
     // A select of a computed value (for example an instance-array slice of a
     // literal or operator terminal) has no declaration to resolve; it is an
     // ordinary bit select of that expression.
@@ -409,4 +414,33 @@ pub(super) fn expression_reference_target(
     }
     let edges = semantic_edges(snapshot, node)?;
     edge_target(ids, edges, SemanticEdgeRole::Reference)
+}
+
+/// Whether a member-access node selects, possibly through further member
+/// accesses, from a function call result (`f(x).m`, `f(x).s.m`).
+pub(super) fn call_member_access(
+    snapshot: &SlangSnapshot,
+    ids: &SemanticIds,
+    node: &SemanticNode,
+) -> Result<bool, DbError> {
+    let mut current = node;
+    for _ in 0..=snapshot.semantic_nodes.len() {
+        if current.kind != SemanticKind::Expression || current.subkind != 75 {
+            return Ok(false);
+        }
+        let edges = semantic_edges(snapshot, current)?;
+        let Some(base) = edge_target(ids, edges, SemanticEdgeRole::Base)? else {
+            return Ok(false);
+        };
+        let Some(base) = snapshot.semantic_nodes.get(base.index()) else {
+            return Ok(false);
+        };
+        if base.kind == SemanticKind::FunctionCall {
+            return Ok(true);
+        }
+        current = base;
+    }
+    Err(DbError::InvalidSnapshot(
+        "member access chain contains a cycle".into(),
+    ))
 }

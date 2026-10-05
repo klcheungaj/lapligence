@@ -1090,6 +1090,10 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             collect_lhs_rw(&mutation.lhs, model, rw);
             collect_expr_reads(&mutation.value, model, rw);
         }
+        IrExprKind::Sequence(sequence) => {
+            collect_stmts_rw(&sequence.statements, model, rw);
+            collect_expr_reads(&sequence.value, model, rw);
+        }
         IrExprKind::TaggedSelect { base, steps, .. } => {
             collect_expr_reads(base, model, rw);
             for step in steps {

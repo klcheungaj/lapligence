@@ -239,6 +239,10 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
             walk_lhs_mut(&mut mutation.lhs, f);
             walk_expr_mut(&mut mutation.value, f);
         }
+        IrExprKind::Sequence(sequence) => {
+            walk_stmts_mut(&mut sequence.statements, f);
+            walk_expr_mut(&mut sequence.value, f);
+        }
         IrExprKind::TaggedSelect { base, steps, .. } => {
             walk_expr_mut(base, f);
             for step in steps {

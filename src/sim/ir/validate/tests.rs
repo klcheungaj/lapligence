@@ -1656,3 +1656,84 @@ fn runtime_queries_name_existing_storage_with_their_fixed_shape() {
             .expect_err("a runtime query must name storage and keep its shape");
     }
 }
+
+#[test]
+fn statement_sequences_admit_only_non_suspending_setup() {
+    // A sequence expression (RTL-101b) declares lexical storage, copies and
+    // calls, then yields its value; a statement that can suspend or that
+    // queues an update is never part of an expression.
+    let mut model = valid_model();
+    model.arrays.push(IrArray {
+        activation: true,
+        descriptor: false,
+        net: None,
+        net_elements: Vec::new(),
+        element_default: None,
+        element_uninitialized: None,
+        c_name: "column".to_string(),
+        hdl_name: String::new(),
+        elem_width: 1,
+        signed: false,
+        two_state: false,
+        real: false,
+        shortreal: false,
+        dims: vec![(0, 0)],
+        total: 1,
+    });
+    let read = IrExpr::new(
+        IrExprKind::ArrayRead {
+            arr: 0,
+            indices: vec![packed_const(0, 32)],
+            elem_sel: IrElemSel::Whole,
+        },
+        1,
+        false,
+        None,
+    );
+    let sequence = |statements: Vec<IrStmt>, value: IrExpr| {
+        let (width, signed) = (value.width, value.signed);
+        IrStmt::Assign {
+            lhs: IrLhs::Whole(0),
+            rhs: IrExpr::new(
+                IrExprKind::Sequence(Box::new(IrSequenceExpr { statements, value })),
+                width,
+                signed,
+                None,
+            ),
+            nba: false,
+        }
+    };
+    model
+        .validate_stmt(
+            &sequence(vec![IrStmt::FixedArrayDeclare(0)], read.clone()),
+            None,
+        )
+        .expect("a declaration followed by a read is a sequence");
+    model
+        .validate_stmt(
+            &sequence(
+                vec![
+                    IrStmt::FixedArrayDeclare(0),
+                    IrStmt::Delay {
+                        ticks: IrDelay::Constant(1),
+                    },
+                ],
+                read.clone(),
+            ),
+            None,
+        )
+        .expect_err("a delay suspends");
+    model
+        .validate_stmt(
+            &sequence(
+                vec![IrStmt::Assign {
+                    lhs: IrLhs::Whole(0),
+                    rhs: packed_const(1, 1),
+                    nba: true,
+                }],
+                packed_const(1, 1),
+            ),
+            None,
+        )
+        .expect_err("a nonblocking assignment queues an update");
+}

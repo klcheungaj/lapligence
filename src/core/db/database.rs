@@ -72,9 +72,9 @@ pub use expressions::{
 };
 mod references;
 use references::{
-    array_select_from_slang, canonical_reference_target, edge_target, edge_target_at, edge_targets,
-    expression_reference_target, hierarchical_reference_target, member_path_from_slang,
-    resolved_edge_target, semantic_edges, semantic_id, SemanticIds,
+    array_select_from_slang, call_member_access, canonical_reference_target, edge_target,
+    edge_target_at, edge_targets, expression_reference_target, hierarchical_reference_target,
+    member_path_from_slang, resolved_edge_target, semantic_edges, semantic_id, SemanticIds,
 };
 mod clocking;
 use clocking::{

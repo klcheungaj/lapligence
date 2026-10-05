@@ -1437,6 +1437,10 @@ fn collect_expression_effects(
                 collect_expression_effects(ir, value, effects, visited_calls);
             }
         }
+        IrExprKind::Sequence(sequence) => {
+            collect_effects(ir, &sequence.statements, effects, visited_calls);
+            collect_expression_effects(ir, &sequence.value, effects, visited_calls);
+        }
         IrExprKind::TaggedSelect { base, steps, .. } => {
             effects.push(ExecutionEffect::RuntimeService);
             collect_expression_effects(ir, base, effects, visited_calls);

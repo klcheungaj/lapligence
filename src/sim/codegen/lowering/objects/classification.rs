@@ -240,6 +240,15 @@ impl Codegen<'_> {
         if self.native_leaf_kind(node) == Some(IrClassFieldType::String) {
             return true;
         }
+        if matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::MemberSelect { .. })
+        ) && self
+            .query_descriptor(node)
+            .is_some_and(|descriptor| descriptor.shape == TypeShape::String)
+        {
+            return true;
+        }
         if self.is_native_conditional(node, &TypeShape::String) {
             return true;
         }

@@ -143,6 +143,14 @@ pub enum IrExprKind {
     /// is the old target value for post forms or the committed target value
     /// otherwise.
     Mutation(Box<IrMutationExpr>),
+    /// Run `statements`, then yield `value` (RTL-101b). The statements set
+    /// up an operand that has no packed value of its own, such as a
+    /// column-layout record call result or a whole-value pattern binding:
+    /// they declare lexical fixed arrays and native values (released with
+    /// the expression's value scope), copy into those or into binding
+    /// storage, and call functions. Validation admits only non-suspending
+    /// statement kinds, so the expression never waits or leaves.
+    Sequence(Box<IrSequenceExpr>),
     /// Read a packed value through one or more member selections of a tagged
     /// union. The receiver is evaluated once; every tag is checked before its
     /// corresponding payload is projected. A failed check reports a runtime
@@ -410,6 +418,13 @@ pub struct IrExpr {
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
     pub(in crate::sim) fill: Option<u8>,
+}
+
+/// Statements and result of an [`IrExprKind::Sequence`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrSequenceExpr {
+    pub(in crate::sim) statements: Vec<IrStmt>,
+    pub(in crate::sim) value: IrExpr,
 }
 
 /// Explicit sequencing metadata for an expression-valued mutation.

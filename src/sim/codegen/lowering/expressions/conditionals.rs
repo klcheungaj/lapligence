@@ -1041,9 +1041,12 @@ impl Codegen<'_> {
         let layout = layout.clone();
         match info.kind {
             ConditionalPatternKind::Wildcard => Ok(pattern_truth(true)),
-            ConditionalPatternKind::Binding => Err(format!(
-                "binding a whole value beyond packed capacity to a pattern variable is not supported in `{scope_path}`"
-            )),
+            ConditionalPatternKind::Binding => {
+                let target = info.binding.ok_or_else(|| {
+                    format!("conditional pattern binding has no declaration in `{scope_path}`")
+                })?;
+                self.lower_record_binding(scope_path, target, value)
+            }
             ConditionalPatternKind::Tagged => {
                 if layout.kind != AggregateKind::TaggedUnion {
                     return Err(format!(
@@ -1206,9 +1209,17 @@ impl Codegen<'_> {
                 member.name
             ));
         };
+        if let (true, RecordColumn::Array(column)) = (path.is_empty(), column) {
+            if info.kind == ConditionalPatternKind::Binding {
+                let target = info.binding.ok_or_else(|| {
+                    format!("conditional pattern binding has no declaration in `{scope_path}`")
+                })?;
+                return self.lower_array_binding(scope_path, target, *column);
+            }
+        }
         if !path.is_empty() || matches!(column, RecordColumn::Array(_)) {
             return Err(format!(
-                "pattern on member array `{}` of a value beyond packed capacity supports only `.*` in `{scope_path}`",
+                "pattern on member array `{}` of a value beyond packed capacity supports only `.*` and `.name` in `{scope_path}`",
                 member.name
             ));
         }

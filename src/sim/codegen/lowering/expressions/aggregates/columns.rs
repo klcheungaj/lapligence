@@ -1295,6 +1295,350 @@ impl Codegen<'_> {
         Ok(Some(out))
     }
 
+    /// The function a record-returning call node invokes, if `node` is one.
+    fn record_call_function(&self, node: NodeId) -> Result<Option<NodeId>, String> {
+        let NodeKind::FuncCall { name, callee, .. } = self.kind(node) else {
+            return Ok(None);
+        };
+        let (name, callee) = (name.clone(), *callee);
+        let (function, _) = self.resolve_callee_env(self.inst, &name, false, callee)?;
+        Ok(self.record_return(function).then_some(function))
+    }
+
+    /// The result of record call `node` in a fresh lexical temporary,
+    /// declared and filled by the statements pushed to `out`.
+    fn record_call_result_value(
+        &mut self,
+        path: &str,
+        function: NodeId,
+        node: NodeId,
+        out: &mut Vec<IrStmt>,
+    ) -> Result<RecordValue, String> {
+        let descriptor = self
+            .activation_records
+            .get(&function)
+            .map(|value| value.descriptor.clone())
+            .ok_or("record result has no columns")?;
+        let temporary = self.record_temporary(path, &descriptor, out)?;
+        let call = self
+            .lower_record_call_into(path, &temporary, node, false)?
+            .ok_or("record call did not lower to a record result")?;
+        out.extend(call);
+        Ok(temporary)
+    }
+
+    /// `a == b` (or `!=`, `===`, `!==`) where an operand is a call returning
+    /// a column-layout record. Each call runs once into its own lexical
+    /// temporary, owned by the comparison's value scope, before the columns
+    /// compare (SV 11.4.5).
+    pub(in crate::sim::codegen::lowering) fn lower_record_call_comparison(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        case: bool,
+        negate: bool,
+    ) -> Result<Option<IrExpr>, String> {
+        let mut statements = Vec::new();
+        let operand = |this: &mut Self, node: NodeId, statements: &mut Vec<IrStmt>| {
+            let node = this.p30_unwrap_cast(node);
+            if let Some(value) = this.column_record_storage(node) {
+                return Ok(value);
+            }
+            match this.record_call_function(node)? {
+                Some(function) => this.record_call_result_value(path, function, node, statements),
+                None => Err(format!(
+                    "equality of a column-layout record value in `{path}` requires record storage or function call operands"
+                )),
+            }
+        };
+        let left = operand(self, lhs, &mut statements)?;
+        let right = operand(self, rhs, &mut statements)?;
+        let equality = self.record_equality(path, &left, &right, case)?;
+        let value = if negate {
+            IrExpr::new(
+                IrExprKind::Un {
+                    op: IrUnOp::LogNot,
+                    a: Box::new(equality),
+                },
+                1,
+                false,
+                None,
+            )
+        } else {
+            equality
+        };
+        Ok(Some(Self::record_sequence(statements, value)))
+    }
+
+    fn record_sequence(statements: Vec<IrStmt>, value: IrExpr) -> IrExpr {
+        if statements.is_empty() {
+            return value;
+        }
+        let (width, signed) = (value.width, value.signed);
+        IrExpr::new(
+            IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                statements,
+                value,
+            })),
+            width,
+            signed,
+            None,
+        )
+    }
+
+    /// A member, or an element of a member array, of a call returning a
+    /// column-layout record (`f(x).m`, `f(x).s.m`, `f(x).a[i]`). The call
+    /// runs once into a lexical temporary owned by the expression's value
+    /// scope; the selected column is read from it. Members inside a
+    /// column-layout tagged union keep their tag check.
+    pub(in crate::sim::codegen::lowering) fn lower_record_call_select(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let (member_node, indices) = match self.kind(node) {
+            NodeKind::Expr(ExprKind::MemberSelect { .. }) => (node, Vec::new()),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
+                if matches!(
+                    self.kind(*base),
+                    NodeKind::Expr(ExprKind::MemberSelect { .. })
+                ) =>
+            {
+                (*base, indices.clone())
+            }
+            NodeKind::Expr(ExprKind::BitSelect { base, index })
+                if matches!(
+                    self.kind(*base),
+                    NodeKind::Expr(ExprKind::MemberSelect { .. })
+                ) =>
+            {
+                (*base, vec![*index])
+            }
+            _ => return Ok(None),
+        };
+        // Walk the member chain down to the call.
+        let mut members = Vec::new();
+        let mut current = member_node;
+        let call = loop {
+            match self.kind(current) {
+                NodeKind::Expr(ExprKind::MemberSelect { base, member }) => {
+                    members.push(AggregatePathPart::Member(member.clone()));
+                    current = *base;
+                }
+                _ => break current,
+            }
+        };
+        members.reverse();
+        let Some(function) = self.record_call_function(call)? else {
+            return Ok(None);
+        };
+        let mut statements = Vec::new();
+        let value = self.record_call_result_value(path, function, call, &mut statements)?;
+        let column = value
+            .columns
+            .iter()
+            .find(|(column_path, _)| *column_path == members)
+            .map(|(_, column)| column.clone())
+            .ok_or_else(|| {
+                format!(
+                    "selection `{}` of a column-layout record call result in `{path}` must name a scalar member or a member array element",
+                    aggregate_path_suffix(&members)
+                )
+            })?;
+        let read = match (&column, indices.is_empty()) {
+            (RecordColumn::Cell(_), true) => self.record_column_read(&column)?,
+            (RecordColumn::Native(..), true) => {
+                let leaf = Self::record_leaf_endpoint(&column)
+                    .ok_or("record native member has no endpoint")?;
+                match self.native_leaf_value(&leaf)? {
+                    crate::sim::ir::IrNativeLeafExpr::Packed(value)
+                    | crate::sim::ir::IrNativeLeafExpr::Real(value) => value,
+                    _ => {
+                        return Err(format!(
+                            "string or chandle member of a record call result in `{path}` is not a packed or real value"
+                        ))
+                    }
+                }
+            }
+            (RecordColumn::Array(array), false) => {
+                let array = *array;
+                if indices.len() != self.model.arrays[array].dims.len() {
+                    return Err(format!(
+                        "element select of a record call result member array in `{path}` must select one element"
+                    ));
+                }
+                let indices = indices
+                    .iter()
+                    .map(|index| self.lower_expr(path, *index))
+                    .collect::<Result<Vec<_>, _>>()?;
+                IrExpr::new(
+                    IrExprKind::ArrayRead {
+                        arr: self.reference_array(array),
+                        indices,
+                        elem_sel: IrElemSel::Whole,
+                    },
+                    self.model.arrays[array].elem_width,
+                    self.model.arrays[array].signed,
+                    None,
+                )
+            }
+            _ => {
+                return Err(format!(
+                    "selection `{}` of a column-layout record call result in `{path}` must name a scalar member or a member array element",
+                    aggregate_path_suffix(&members)
+                ))
+            }
+        };
+        let read = match self.record_value_guard(&value, &members)? {
+            Some(guard) => {
+                let (tag, guard) = (guard.tag_read, guard.guard);
+                let (tag_width, width, signed) = (tag.width, read.width, read.signed);
+                if read.is_real() {
+                    return Err(format!(
+                        "real member of a tagged union record call result in `{path}` is not supported"
+                    ));
+                }
+                IrExpr::new(
+                    IrExprKind::TaggedSelect {
+                        base: Box::new(IrExpr::new(
+                            IrExprKind::Concat {
+                                parts: vec![tag, read],
+                            },
+                            tag_width + width,
+                            false,
+                            None,
+                        )),
+                        steps: vec![crate::sim::ir::IrTaggedSelectStep {
+                            selection: crate::sim::ir::IrPackedSelect {
+                                base: lhs_integer_expr(0),
+                                width,
+                            },
+                            two_state: false,
+                            guard: Some(guard),
+                        }],
+                        location: self.source_location(node),
+                    },
+                    width,
+                    signed,
+                    None,
+                )
+            }
+            None => read,
+        };
+        Ok(Some(Self::record_sequence(statements, read)))
+    }
+
+    /// `source matches .v` for a value beyond packed capacity (SV 12.6.1):
+    /// the whole value is copied into `v`'s storage when the pattern is
+    /// tested, and the binding itself always matches.
+    pub(in crate::sim::codegen::lowering) fn lower_record_binding(
+        &mut self,
+        path: &str,
+        target: NodeId,
+        value: &RecordValue,
+    ) -> Result<IrExpr, String> {
+        let storage = match self.record_declaration_value(target) {
+            Some(storage) => storage,
+            None if self.automatic_block_record(path, target)? => self
+                .activation_records
+                .get(&target)
+                .cloned()
+                .ok_or("pattern binding has no columns")?,
+            None => {
+                return Err(format!(
+                    "pattern binding `{}` beyond packed capacity has no storage in `{path}`",
+                    self.node(target).name
+                ))
+            }
+        };
+        self.declare_binding_columns(path, &storage)?;
+        let mut statements = Vec::new();
+        self.record_copy(path, &storage, value, false, &mut statements)?;
+        Ok(Self::record_sequence(statements, binding_match()))
+    }
+
+    /// `tagged m .v` binding member array column `column` of a value beyond
+    /// packed capacity: the column is copied into `v`'s array storage.
+    pub(in crate::sim::codegen::lowering) fn lower_array_binding(
+        &mut self,
+        path: &str,
+        target: NodeId,
+        column: usize,
+    ) -> Result<IrExpr, String> {
+        let array = match self.array_globals.get(&target).map(|array| array.ir) {
+            Some(array) => array,
+            None => {
+                let info = self.fixed_activation_array(target).map_err(|error| {
+                    format!(
+                        "pattern binding `{}` in `{path}`: {error}",
+                        self.node(target).name
+                    )
+                })?;
+                let array = info.ir;
+                if self.db.variable_lifetime(target) == VariableLifetime::Automatic {
+                    self.array_globals.insert(target, info);
+                } else {
+                    let mut info = info;
+                    self.make_fixed_array_persistent(&mut info);
+                    self.model.arrays[array].descriptor = true;
+                    self.array_globals.insert(target, info);
+                }
+                array
+            }
+        };
+        if self.model.arrays[array].total != self.model.arrays[column].total {
+            return Err(format!(
+                "pattern binding `{}` in `{path}` does not have its member's shape",
+                self.node(target).name
+            ));
+        }
+        if self.model.arrays[array].activation {
+            self.pend_binding_declaration(path, IrStmt::FixedArrayDeclare(array))?;
+        } else if !self.model.arrays[array].sparse() {
+            return Err(format!(
+                "pattern binding `{}` in `{path}` needs descriptor array storage",
+                self.node(target).name
+            ));
+        }
+        let statements = vec![IrStmt::FixedValueAssign {
+            dst: self.record_column_view(array),
+            src: Box::new(IrFixedValue::Array(self.record_column_view(column))),
+            nba: false,
+        }];
+        Ok(Self::record_sequence(statements, binding_match()))
+    }
+
+    /// Declare the lexical columns of a binding target before the statement
+    /// that tests the pattern; persistent storage needs no declaration.
+    fn declare_binding_columns(&mut self, path: &str, value: &RecordValue) -> Result<(), String> {
+        let lexical = value.columns.iter().any(|(_, column)| match column {
+            RecordColumn::Array(array) | RecordColumn::Cell(array) => {
+                self.model.arrays[*array].activation
+            }
+            RecordColumn::Native(native, _) => self.model.native_values[*native].activation,
+            RecordColumn::Leaf(_) => false,
+        });
+        if lexical {
+            for declaration in self.declare_record_columns(value) {
+                self.pend_binding_declaration(path, declaration)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn pend_binding_declaration(&mut self, path: &str, declaration: IrStmt) -> Result<(), String> {
+        let pending = self.record_binding_declarations.as_mut().ok_or_else(|| {
+            format!(
+                "a whole-value pattern binding beyond packed capacity in `{path}` must be part of a procedural statement"
+            )
+        })?;
+        if !pending.contains(&declaration) {
+            pending.push(declaration);
+        }
+        Ok(())
+    }
+
     /// One descriptor operand per column of a record actual, then one
     /// native operand for its real, string and chandle members. Those
     /// members pass as the actual's own native value when it is a whole
@@ -1462,4 +1806,17 @@ fn uniform_constant(width: u32, signed: bool, two_state: bool) -> IrConst {
     };
     IrConst::packed(vec![0; words], x, Vec::new(), width, signed, None)
         .expect("checked record member width")
+}
+
+/// The truth of a binding, which matches any value.
+fn binding_match() -> IrExpr {
+    IrExpr::new(
+        IrExprKind::Const(
+            IrConst::packed(vec![1], vec![0], vec![0], 1, false, None)
+                .expect("one-bit binding truth"),
+        ),
+        1,
+        false,
+        None,
+    )
 }

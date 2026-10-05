@@ -114,6 +114,12 @@ pub enum ExprKind {
         parts: Vec<String>,
         refs: Vec<Option<NodeId>>,
     },
+    /// A member selection whose base is a computed value rather than a
+    /// declaration path, such as a function call result (`f(x).m`).
+    MemberSelect {
+        base: NodeId,
+        member: String,
+    },
     /// Dynamic-array construction (`new[size]`), with an optional source
     /// array whose elements initialize the newly allocated array.
     NewArray {

@@ -8,7 +8,16 @@ impl EmitCtx<'_, '_> {
     /// the pre-IR emitter decision-for-decision: same errors, warnings,
     /// sensitivity sets and wait tracking.
     pub(in super::super) fn lower_stmt(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
-        let mut statements = self.lower_stmt_operations(h)?;
+        // Whole-value pattern bindings of this statement declare their
+        // lexical storage before it, so the bound value outlives the test.
+        let outer = self.cg.record_binding_declarations.replace(Vec::new());
+        let statements = self.lower_stmt_operations(h);
+        let declarations =
+            std::mem::replace(&mut self.cg.record_binding_declarations, outer).unwrap_or_default();
+        let mut statements = statements?;
+        if !declarations.is_empty() {
+            statements.splice(0..0, declarations);
+        }
         locate_suspensions(&mut statements, &self.cg.origin(h));
         Ok(statements)
     }

@@ -1950,8 +1950,14 @@ impl<'a> Codegen<'a> {
         };
         let writes = self.ir_process_writes(self.collect_process_writes(stmt)?);
         let fn_name = self.new_fn_name(path, "proc");
-        let pattern_decls = self
+        // Bindings beyond packed capacity get lexical columns where the
+        // pattern is tested.
+        let pattern_targets = self
             .conditional_pattern_targets(stmt)
+            .into_iter()
+            .filter(|target| !self.column_binding_target(*target))
+            .collect::<Vec<_>>();
+        let pattern_decls = pattern_targets
             .into_iter()
             .filter_map(|target| match self.collect_loop_var(path, target) {
                 Ok(info) if info.static_signal.is_none() => Some(Ok(IrStmt::DeclLocal {

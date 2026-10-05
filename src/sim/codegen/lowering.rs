@@ -1224,6 +1224,10 @@ struct Codegen<'a> {
     /// A whole tagged-union member array whose tag the enclosing assignment
     /// already checks, so its operand needs no check of its own.
     record_guarded_source: Option<NodeId>,
+    /// Declarations of the lexical storage of whole-value pattern bindings
+    /// beyond packed capacity, made while one procedural statement is
+    /// lowered and placed before it; `None` outside procedural statements.
+    record_binding_declarations: Option<Vec<IrStmt>>,
     /// Native record declarations (formals, results, locals) → type layout.
     native_layouts: HashMap<NodeId, NativeLayout>,
     /// `(instance, declaration)` → native value storage.
@@ -1556,6 +1560,7 @@ impl<'a> Codegen<'a> {
             record_array_infos: HashMap::new(),
             record_call_result: false,
             record_guarded_source: None,
+            record_binding_declarations: None,
             native_layouts: HashMap::new(),
             native_storage: HashMap::new(),
             native_value_layouts: HashMap::new(),

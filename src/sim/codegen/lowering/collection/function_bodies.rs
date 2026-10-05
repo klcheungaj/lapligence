@@ -178,6 +178,12 @@ impl<'a> Codegen<'a> {
             if locals.contains_key(target) {
                 continue;
             }
+            // Bindings of values beyond packed capacity (column-layout
+            // records and descriptor arrays) get lexical column storage
+            // where the pattern is tested.
+            if self.column_binding_target(*target) {
+                continue;
+            }
             let ty = match self.kind(*target) {
                 NodeKind::Var { ty } | NodeKind::Array { ty } => ty,
                 other => {

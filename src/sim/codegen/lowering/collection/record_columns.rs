@@ -1083,6 +1083,20 @@ impl Codegen<'_> {
         Ok(())
     }
 
+    /// Whether a pattern variable binds a value beyond packed capacity (a
+    /// column-layout record or a descriptor array), which gets lexical column
+    /// storage where its pattern is tested instead of a packed local.
+    pub(in super::super) fn column_binding_target(&self, target: NodeId) -> bool {
+        self.query_descriptor(target).is_some_and(|descriptor| {
+            record_column_layout(descriptor)
+                || fixed_width_bits(descriptor)
+                    .is_some_and(|width| width > u64::from(LLG_MAX_WIDTH))
+                || matches!(&descriptor.shape, TypeShape::FixedArray { dimensions, .. }
+                    if fixed_array_cell_count(dimensions)
+                        .map_or(true, |cells| cells > LLG_DENSE_FIXED_ARRAY_CELLS))
+        })
+    }
+
     /// Allocate lexical columns for an automatic column-layout record
     /// declared in a procedural block; false for any other declaration.
     pub(in super::super) fn automatic_block_record(

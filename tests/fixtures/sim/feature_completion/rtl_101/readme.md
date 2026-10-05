@@ -42,7 +42,8 @@ column. Expected values are derived by hand below; none were captured from
   record, and `casex` treats the X tag bit as a wildcard.
 - `scale_65537` and `scale_1048576`: the same design at two extents; the
   generated models differ only in the spelled bounds.
-- Negative cases: binding a whole value beyond the packed limit to a pattern
-  variable and comparing a record function result (no packed value exists)
-  are rejected; a procedural write to a record driven by a continuous
+- `whole_binding` and `record_result_operand` were limits of RTL-101 and are
+  legal since RTL-101b: the bound copy of `r` has tag `3`; `f(r) == r` has an
+  equal `t` and X cells in every `w`, so the equality is `x`.
+- Negative cases: a procedural write to a record driven by a continuous
   assignment or an output port violates the single-writer rule (SV 6.5).

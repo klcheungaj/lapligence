@@ -189,6 +189,9 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
         IrExprKind::TaggedSelect { .. } => {
             return Err("tagged-union checked reads require the owned emitter".to_owned())
         }
+        IrExprKind::Sequence(_) => {
+            return Err("expression statement sequences require the owned emitter".to_owned())
+        }
         IrExprKind::DynamicCast(cast) => render_dynamic_cast(ctx, e, cast)?,
         IrExprKind::Bin { op, a, b } => {
             let ra = w(a)?;
