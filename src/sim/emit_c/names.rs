@@ -191,39 +191,46 @@ pub(crate) fn event_global_name(path: &str, name: &str) -> String {
 pub(super) fn identifier_spans(text: &str) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
     let bytes = text.as_bytes();
     let mut index = 0;
-    std::iter::from_fn(move || {
-        while index < bytes.len() {
-            let byte = bytes[index];
-            if matches!(byte, b'"' | b'\'') {
-                index += 1;
-                while index < bytes.len() && bytes[index] != byte {
-                    index += if bytes[index] == b'\\' { 2 } else { 1 };
-                }
-                index = (index + 1).min(bytes.len());
-            } else if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
-                index = text[index + 2..]
-                    .find("*/")
-                    .map_or(bytes.len(), |offset| index + 2 + offset + 2);
-            } else if byte == b'/' && bytes.get(index + 1) == Some(&b'/') {
-                index = text[index..]
-                    .find('\n')
-                    .map_or(bytes.len(), |offset| index + offset);
-            } else if byte == b'_' || byte.is_ascii_alphanumeric() {
-                let start = index;
-                while index < bytes.len()
-                    && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
-                {
-                    index += 1;
-                }
-                if !byte.is_ascii_digit() {
-                    return Some(start..index);
-                }
-            } else {
-                index += 1;
+    std::iter::from_fn(move || next_identifier(bytes, &mut index))
+}
+
+/// Advance `index` past the next identifier of `bytes` and return its span.
+/// The scan reads only bytes at or after `index`, so a caller may rewrite the
+/// bytes before it between calls.
+fn next_identifier(bytes: &[u8], index: &mut usize) -> Option<std::ops::Range<usize>> {
+    while *index < bytes.len() {
+        let byte = bytes[*index];
+        if matches!(byte, b'"' | b'\'') {
+            *index += 1;
+            while *index < bytes.len() && bytes[*index] != byte {
+                *index += if bytes[*index] == b'\\' { 2 } else { 1 };
             }
+            *index = (*index + 1).min(bytes.len());
+        } else if byte == b'/' && bytes.get(*index + 1) == Some(&b'*') {
+            *index = bytes[*index + 2..]
+                .windows(2)
+                .position(|window| window == b"*/")
+                .map_or(bytes.len(), |offset| *index + 2 + offset + 2);
+        } else if byte == b'/' && bytes.get(*index + 1) == Some(&b'/') {
+            *index = bytes[*index..]
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(bytes.len(), |offset| *index + offset);
+        } else if byte == b'_' || byte.is_ascii_alphanumeric() {
+            let start = *index;
+            while *index < bytes.len()
+                && (bytes[*index] == b'_' || bytes[*index].is_ascii_alphanumeric())
+            {
+                *index += 1;
+            }
+            if !byte.is_ascii_digit() {
+                return Some(start..*index);
+            }
+        } else {
+            *index += 1;
         }
-        None
-    })
+    }
+    None
 }
 
 /// Rewrite identifiers in emitted C without touching user-visible text.
@@ -242,6 +249,47 @@ pub(super) fn rewrite_identifiers<S: AsRef<str>>(
     }
     out.push_str(&text[copied..]);
     out
+}
+
+/// Rewrite identifiers like [`rewrite_identifiers`], reusing the buffer of
+/// `text` when no replacement is longer than the identifier it replaces.
+///
+/// The whole model text is the largest single allocation of C emission, so
+/// shortening its identifiers in place avoids holding a second copy.
+pub(super) fn rewrite_identifiers_in_place(
+    text: String,
+    renamed: &std::collections::HashMap<String, String>,
+) -> String {
+    if renamed
+        .iter()
+        .any(|(original, replacement)| replacement.len() > original.len())
+    {
+        return rewrite_identifiers(&text, |name| renamed.get(name).map(String::as_str));
+    }
+    let mut bytes = text.into_bytes();
+    let (mut read, mut write, mut copied) = (0, 0, 0);
+    while let Some(span) = next_identifier(&bytes, &mut read) {
+        // Identifiers are ASCII, so every span is valid UTF-8.
+        let replacement = std::str::from_utf8(&bytes[span.clone()])
+            .ok()
+            .and_then(|name| renamed.get(name));
+        if let Some(replacement) = replacement {
+            bytes.copy_within(copied..span.start, write);
+            write += span.start - copied;
+            bytes[write..write + replacement.len()].copy_from_slice(replacement.as_bytes());
+            write += replacement.len();
+            copied = span.end;
+        }
+    }
+    let end = bytes.len();
+    bytes.copy_within(copied..end, write);
+    bytes.truncate(write + end - copied);
+    // Only ASCII identifiers were replaced by ASCII text, so the bytes remain
+    // valid UTF-8; the conversion is checked rather than assumed.
+    let mut text = String::from_utf8(bytes)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
+    text.shrink_to_fit();
+    text
 }
 
 pub(crate) struct BoundedIdentifiers {
@@ -327,14 +375,20 @@ pub(super) fn bound_identifiers(
             symbols_tsv: String::new(),
         };
     }
-    let occupied = identifier_spans(&source)
-        .map(|span| &source[span])
-        .collect::<std::collections::HashSet<_>>();
-    let mut oversized = occupied
-        .iter()
-        .copied()
-        .filter(|name| name.len() > MAX_C_IDENTIFIER_LEN && !is_external(name))
-        .collect::<Vec<_>>();
+    // Every replacement is exactly `MAX_C_IDENTIFIER_LEN` long (see
+    // `bounded_name`), so only occupied identifiers of that length can
+    // collide with one.
+    let mut occupied = std::collections::HashSet::new();
+    let mut oversized = std::collections::HashSet::new();
+    for span in identifier_spans(&source) {
+        let name = &source[span];
+        if name.len() == MAX_C_IDENTIFIER_LEN {
+            occupied.insert(name);
+        } else if name.len() > MAX_C_IDENTIFIER_LEN && !is_external(name) {
+            oversized.insert(name);
+        }
+    }
+    let mut oversized = oversized.into_iter().collect::<Vec<_>>();
     oversized.sort_unstable();
     let mut symbols = std::collections::BTreeMap::new();
     let mut sequence = 0usize;
@@ -351,20 +405,18 @@ pub(super) fn bound_identifiers(
         };
         symbols.insert(replacement, name);
     }
-    let renamed = symbols
-        .iter()
-        .map(|(short, original)| (*original, short.as_str()))
-        .collect::<std::collections::HashMap<_, _>>();
-    let source = rewrite_identifiers(&source, |name| renamed.get(name).copied());
     let mut symbols_tsv = String::new();
+    let mut renamed = std::collections::HashMap::with_capacity(symbols.len());
     for (short, original) in symbols {
         symbols_tsv.push_str(&short);
         symbols_tsv.push('\t');
         symbols_tsv.push_str(original);
         symbols_tsv.push('\n');
+        renamed.insert(original.to_owned(), short);
     }
+    drop(occupied);
     BoundedIdentifiers {
-        source,
+        source: rewrite_identifiers_in_place(source, &renamed),
         symbols_tsv,
     }
 }
@@ -578,6 +630,40 @@ mod tests {
         for span in identifier_spans(&bounded.source) {
             let name = &bounded.source[span];
             assert!(name.len() <= MAX_C_IDENTIFIER_LEN || name == foreign);
+        }
+    }
+
+    #[test]
+    fn in_place_rewrite_matches_the_copying_rewrite() {
+        let text = "int long_name_a; /* long_name_a */ char *s = \"long_name_a \\\" x\";\n\
+                    char c = '\\''; long_name_b(long_name_a, 12long_name_a); // long_name_b\n\
+                    é long_name_b_tail long_name_b";
+        let shorter = std::collections::HashMap::from([
+            ("long_name_a".to_owned(), "a".to_owned()),
+            ("long_name_b".to_owned(), "bb".to_owned()),
+        ]);
+        let longer = std::collections::HashMap::from([
+            ("long_name_a".to_owned(), "a".to_owned()),
+            ("long_name_b".to_owned(), "much_longer_name_b".to_owned()),
+        ]);
+        for renamed in [&shorter, &longer, &std::collections::HashMap::new()] {
+            let expected = rewrite_identifiers(text, |name| renamed.get(name).map(String::as_str));
+            assert_eq!(
+                rewrite_identifiers_in_place(text.to_owned(), renamed),
+                expected
+            );
+        }
+        let in_place = rewrite_identifiers_in_place(text.to_owned(), &shorter);
+        assert!(in_place.starts_with("int a; /* long_name_a */ char *s = \"long_name_a "));
+        assert!(in_place.ends_with("é long_name_b_tail bb"));
+        assert!(in_place.contains("bb(a, 12long_name_a); // long_name_b\n"));
+        // An unterminated trailing comment or literal keeps the remaining text.
+        for tail in ["/* long_name_a", "\"long_name_a", "// long_name_a"] {
+            let text = format!("long_name_a {tail}");
+            assert_eq!(
+                rewrite_identifiers_in_place(text.clone(), &shorter),
+                format!("a {tail}")
+            );
         }
     }
 

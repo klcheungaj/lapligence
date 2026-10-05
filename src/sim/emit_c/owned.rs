@@ -1164,10 +1164,12 @@ impl<'a, 'm> Frame<'a, 'm> {
             let loads = self
                 .cached_fields
                 .prologue_loads(|name| self.layout.field_access(name));
+            let mut layout = self.layout;
+            layout.release_emission_state();
             Ok(CoroutineBody {
                 body: format!("{loads}{rewritten}"),
                 cached_locals: self.cached_fields.locals(),
-                layout: self.layout,
+                layout,
             })
         }
     }

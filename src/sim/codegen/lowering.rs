@@ -609,7 +609,7 @@ fn finish_generation(
     execution.validate().map_err(|error| error.to_string())?;
     drop(optimization_stage);
     let render_stage = crate::profile::Stage::new("render");
-    let rendered = crate::sim::emit_c::render_with_value_config(&execution, options.value_config)?;
+    let rendered = crate::sim::emit_c::render_with_value_config(execution, options.value_config)?;
     drop(render_stage);
     Ok(GeneratedModel {
         design_name,

@@ -1591,6 +1591,40 @@ mod tests {
     }
 
     #[test]
+    fn owned_rendering_matches_borrowed_rendering_with_and_without_reanalysis() {
+        let unchanged = chain_model(3, vec![0]);
+        // Rendering finds no oversized frame, so it must reanalyze a model
+        // whose analysis forces an arena callee.
+        let mut reanalyzed = chain_model(3, vec![0]);
+        reanalyzed
+            .reanalyze_with_forced_arena_callees(&BTreeSet::from([1]))
+            .unwrap();
+        for model in [unchanged, reanalyzed] {
+            let borrowed = crate::sim::emit_c::render_with_symbols(&model).unwrap();
+            let owned = crate::sim::emit_c::render_with_value_config(
+                model.clone(),
+                crate::sim::value_backend::ValueConfig::default(),
+            )
+            .unwrap();
+            assert_eq!(owned.source, borrowed.source);
+            assert_eq!(owned.symbols_tsv, borrowed.symbols_tsv);
+            model.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn released_process_operations_keep_the_process_shell() {
+        let mut model = chain_model(2, vec![0]);
+        let region = model.processes()[0].region;
+        model.release_process_operations(0);
+        model.release_process_operations(1);
+        assert_eq!(model.processes().len(), 1);
+        assert!(model.processes()[0].blocks.is_empty());
+        assert_eq!(model.processes()[0].region, region);
+        assert!(model.validate().is_err());
+    }
+
+    #[test]
     fn inline_expanded_definition_adds_sites_only_to_its_host() {
         let mut function = IrFunc::new(
             "inline_template".into(),
