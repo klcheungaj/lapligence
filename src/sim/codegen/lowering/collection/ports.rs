@@ -338,6 +338,31 @@ impl<'a> Codegen<'a> {
                     }
                     self.reference_signals.insert(child_signal.ir, target);
                 }
+                (None, None, None, None)
+                    if child_leaf.array.is_some() && parent_leaf.array.is_some() =>
+                {
+                    // Column-layout record members alias column for column.
+                    let (child_array, parent_array) = (
+                        child_leaf.array.as_ref().expect("checked column").ir,
+                        parent_leaf.array.as_ref().expect("checked column").ir,
+                    );
+                    let (child_meta, parent_meta) = (
+                        &self.model.arrays[child_array],
+                        &self.model.arrays[parent_array],
+                    );
+                    if child_meta.total != parent_meta.total
+                        || child_meta.elem_width != parent_meta.elem_width
+                        || child_meta.two_state != parent_meta.two_state
+                    {
+                        return Err(format!(
+                            "reference port `{}` aggregate member `{}` has incompatible storage",
+                            self.display_name(port),
+                            aggregate_path_suffix(&child_leaf.path)
+                        ));
+                    }
+                    self.reference_arrays
+                        .insert(child_array, self.reference_array(parent_array));
+                }
                 (None, None, Some(child_object), Some(parent_object)) => {
                     if self.model.objects[child_object].ty != self.model.objects[parent_object].ty {
                         return Err(format!(
@@ -1365,6 +1390,13 @@ impl<'a> Codegen<'a> {
     fn aggregate_link_dependencies(&self, aggregate: &UnpackedAggregateInfo) -> Vec<IrDependency> {
         let mut reads = Vec::new();
         for leaf in &aggregate.leaves {
+            if let Some(array) = &leaf.array {
+                let dependency = IrDependency::ArrayContents(self.reference_array(array.ir));
+                if !reads.contains(&dependency) {
+                    reads.push(dependency);
+                }
+                continue;
+            }
             if let Some(object) = leaf.object {
                 let dependency = IrDependency::Object(self.reference_object(object));
                 if !reads.contains(&dependency) {
@@ -1393,6 +1425,7 @@ impl<'a> Codegen<'a> {
         internal: NodeId,
     ) -> Result<bool, String> {
         if self.fixed_value_width(internal).is_some()
+            && !self.column_record_type(internal)
             && self.query_descriptor(internal).is_some_and(|descriptor| {
                 matches!(&descriptor.shape, TypeShape::Aggregate(layout) if matches!(layout.kind,
                     AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion))
