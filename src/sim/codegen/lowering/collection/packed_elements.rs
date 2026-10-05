@@ -88,6 +88,21 @@ impl<'a> Codegen<'a> {
         for (base, select) in outer.into_iter().rev() {
             self.packed_selection_steps(path, base, select, &mut parent_width, &mut steps)?;
         }
+        if let Some(guard) = self.record_select_guard(array_select)? {
+            let element = IrLhs::ArrayElem {
+                arr: self.reference_array(array.ir),
+                indices,
+                elem_sel: IrElemSel::Whole,
+            };
+            return Ok(Some(self.record_guarded_element_lhs(
+                guard,
+                element,
+                array.elem_width,
+                steps,
+                false,
+                self.source_location(node),
+            )));
+        }
         Ok(Some(IrLhs::ArrayElem {
             arr: self.reference_array(array.ir),
             indices,

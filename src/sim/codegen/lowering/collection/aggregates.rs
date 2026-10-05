@@ -47,6 +47,72 @@ impl<'a> Codegen<'a> {
                 return Ok(false);
             }
             AggregateKind::TaggedUnion => {
+                if let Some(descriptor) = self
+                    .query_descriptor(node)
+                    .filter(|descriptor| super::record_columns::column_tagged_union(descriptor))
+                    .cloned()
+                {
+                    if !matches!(self.kind(node), NodeKind::Var { .. }) {
+                        if matches!(
+                            self.kind(node),
+                            NodeKind::Net { .. }
+                                | NodeKind::Array { .. }
+                                | NodeKind::Port { .. }
+                                | NodeKind::IoDecl { .. }
+                        ) {
+                            return Err(format!(
+                                "tagged union `{}` in `{path}` beyond packed capacity must be a variable",
+                                self.node(node).name
+                            ));
+                        }
+                        // Type declarations allocate no storage.
+                        return Ok(false);
+                    }
+                    // Beyond packed capacity, the tag is one cell and each
+                    // member keeps its own columns (RTL-101).
+                    let object_name = self.node(node).name.clone();
+                    let root = AggregateMember {
+                        initializer: None,
+                        name: object_name.clone(),
+                        ty: descriptor.info.clone(),
+                        two_state: descriptor.two_state,
+                        packed_ranges: Vec::new(),
+                        aggregate: None,
+                        descriptor: descriptor.clone(),
+                    };
+                    let mut leaves = Vec::new();
+                    self.collect_tagged_columns(
+                        path,
+                        node,
+                        &object_name,
+                        &root,
+                        &descriptor,
+                        &[],
+                        &mut leaves,
+                    )?;
+                    let members = layout
+                        .members
+                        .iter()
+                        .map(|member| AggregateMemberInfo {
+                            member: member.clone(),
+                            signal: None,
+                            object: None,
+                            array: None,
+                            path: vec![AggregatePathPart::Member(member.name.clone())],
+                        })
+                        .collect();
+                    self.unpacked_aggregates.insert(
+                        node,
+                        UnpackedAggregateInfo {
+                            kind: layout.kind,
+                            type_identity: layout.type_identity,
+                            columns: true,
+                            members,
+                            leaves,
+                        },
+                    );
+                    return Ok(true);
+                }
                 if self
                     .query_descriptor(node)
                     .is_some_and(|descriptor| Self::fixed_descriptor_width(descriptor).is_some())
@@ -304,7 +370,7 @@ impl<'a> Codegen<'a> {
     /// This is an emission detail only; compatibility and copy policy remain
     /// governed by the recursive descriptor captured in `core::db`.
     #[allow(clippy::too_many_arguments)]
-    fn collect_aggregate_descriptor_leaves(
+    pub(super) fn collect_aggregate_descriptor_leaves(
         &mut self,
         path: &str,
         object: NodeId,
@@ -316,6 +382,17 @@ impl<'a> Codegen<'a> {
         columns: bool,
         leaves: &mut Vec<AggregateMemberInfo>,
     ) -> Result<(), String> {
+        if columns && shared.is_none() && super::record_columns::column_tagged_union(descriptor) {
+            return self.collect_tagged_columns(
+                path,
+                object,
+                object_name,
+                member,
+                descriptor,
+                member_path,
+                leaves,
+            );
+        }
         if columns
             && shared.is_none()
             && member_path

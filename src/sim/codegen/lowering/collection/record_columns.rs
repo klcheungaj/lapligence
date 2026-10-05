@@ -40,12 +40,22 @@ pub(super) fn record_column_layout(descriptor: &TypeDescriptor) -> bool {
     let TypeShape::Aggregate(layout) = &descriptor.shape else {
         return false;
     };
+    if column_tagged_union(descriptor) {
+        return true;
+    }
     layout.kind == AggregateKind::UnpackedStruct
         && (fixed_width_bits(descriptor).is_some_and(|width| width > u64::from(LLG_MAX_WIDTH))
             || layout
                 .members
                 .iter()
                 .any(|member| large_member_array(&member.descriptor)))
+}
+
+/// A finite tagged union whose tag and payload exceed packed capacity: its
+/// tag is one cell and every member keeps its own columns.
+pub(in super::super) fn column_tagged_union(descriptor: &TypeDescriptor) -> bool {
+    matches!(&descriptor.shape, TypeShape::Aggregate(layout) if layout.kind == AggregateKind::TaggedUnion)
+        && fixed_width_bits(descriptor).is_some_and(|width| width > u64::from(LLG_MAX_WIDTH))
 }
 
 fn large_member_array(descriptor: &TypeDescriptor) -> bool {
@@ -137,6 +147,37 @@ fn column_shapes(
     two_state: bool,
     out: &mut Vec<(Vec<AggregatePathPart>, ColumnShape)>,
 ) -> Result<(), String> {
+    if column_tagged_union(descriptor) {
+        let TypeShape::Aggregate(layout) = &descriptor.shape else {
+            unreachable!("tagged union shape");
+        };
+        let tag = layout
+            .tag_bits()
+            .filter(|width| *width > 0)
+            .ok_or_else(|| {
+                format!(
+                    "tagged union `{}` has no representable tag",
+                    aggregate_path_suffix(prefix)
+                )
+            })?;
+        out.push((
+            prefix.to_vec(),
+            ColumnShape::Packed {
+                width: tag,
+                signed: false,
+                two_state: descriptor.two_state,
+            },
+        ));
+        for member in &layout.members {
+            if matches!(&member.descriptor.shape, TypeShape::Opaque { kind } if kind == "Void") {
+                continue;
+            }
+            let mut path = prefix.to_vec();
+            path.push(AggregatePathPart::Member(member.name.clone()));
+            column_shapes(&member.descriptor, &path, member.two_state, out)?;
+        }
+        return Ok(());
+    }
     match &descriptor.shape {
         TypeShape::FixedArray { .. } => {
             out.push((prefix.to_vec(), ColumnShape::Array(descriptor.clone())));
@@ -326,6 +367,111 @@ impl Codegen<'_> {
             }),
             path: member_path.to_vec(),
         })
+    }
+
+    /// The tag cell and member columns of a tagged union too wide for one
+    /// packed value, rooted at `member_path` of `object`.
+    pub(super) fn collect_tagged_columns(
+        &mut self,
+        path: &str,
+        object: NodeId,
+        object_name: &str,
+        member: &AggregateMember,
+        descriptor: &TypeDescriptor,
+        member_path: &[AggregatePathPart],
+        leaves: &mut Vec<AggregateMemberInfo>,
+    ) -> Result<(), String> {
+        let TypeShape::Aggregate(layout) = &descriptor.shape else {
+            return Err(format!(
+                "tagged union `{object_name}` in `{path}` has no layout"
+            ));
+        };
+        let width = layout
+            .tag_bits()
+            .filter(|width| *width > 0)
+            .ok_or_else(|| {
+                format!("tagged union `{object_name}` in `{path}` has no representable tag")
+            })?;
+        let suffix = if member_path.is_empty() {
+            "tag".to_owned()
+        } else {
+            format!("{}__tag", aggregate_path_suffix(member_path))
+        };
+        let c_name = self.c_name("A", path, &[object_name, &suffix]);
+        let mut hdl_name = self.waveform_name(object);
+        if !member_path.is_empty() {
+            hdl_name.push('\u{1f}');
+            hdl_name.push_str(&record_member_label(member_path));
+        }
+        hdl_name.push_str("\u{1f}tag");
+        let ir = self.model.arrays.len();
+        self.model.arrays.push(crate::sim::ir::IrArray {
+            activation: false,
+            descriptor: true,
+            net: None,
+            net_elements: Vec::new(),
+            element_default: None,
+            element_uninitialized: None,
+            c_name: c_name.clone(),
+            hdl_name,
+            elem_width: width,
+            signed: false,
+            two_state: descriptor.two_state,
+            real: false,
+            shortreal: false,
+            dims: vec![(0, 0)],
+            total: 1,
+        });
+        let mut tag = member.clone();
+        tag.descriptor = TypeDescriptor {
+            two_state: descriptor.two_state,
+            id: descriptor.id,
+            name: format!("{} tag", descriptor.name),
+            info: crate::core::model::TypeInfo {
+                kind: "logic".to_owned(),
+                width: Some(width),
+                signed: false,
+                type_name: None,
+            },
+            shape: TypeShape::PackedAtom { ranges: Vec::new() },
+        };
+        leaves.push(AggregateMemberInfo {
+            member: leaf_member(&tag, &tag.descriptor),
+            signal: None,
+            object: None,
+            array: Some(ArrayInfo {
+                global: c_name,
+                elem_width: width,
+                signed: false,
+                real: false,
+                shortreal: false,
+                is_net: false,
+                dims: vec![(0, 0)],
+                init: None,
+                ir,
+            }),
+            path: member_path.to_vec(),
+        });
+        for nested in &layout.members {
+            if matches!(&nested.descriptor.shape, TypeShape::Opaque { kind } if kind == "Void") {
+                continue;
+            }
+            let mut nested_path = member_path.to_vec();
+            nested_path.push(AggregatePathPart::Member(nested.name.clone()));
+            self.collect_aggregate_descriptor_leaves(
+                path,
+                object,
+                object_name,
+                nested,
+                &nested.descriptor,
+                &nested_path,
+                None,
+                true,
+                leaves,
+            )?;
+        }
+        self.record_columns = true;
+        Ok(())
     }
 
     /// Default of the leaf at `path`, evaluated on the outermost member that
@@ -615,9 +761,11 @@ impl Codegen<'_> {
 
     /// Whether a subroutine returns a column-layout record.
     pub(in super::super) fn record_return(&self, function: NodeId) -> bool {
-        self.record_columns
-            && matches!(self.kind(function), NodeKind::FuncTask { ret: Some(_), .. })
-            && self.activation_records.contains_key(&function)
+        // Decided by type: signature queries can precede column allocation.
+        matches!(self.kind(function), NodeKind::FuncTask { ret: Some(_), .. })
+            && self
+                .query_descriptor(function)
+                .is_some_and(record_column_layout)
     }
 
     /// Whether a formal, result or local is a column-layout record value.

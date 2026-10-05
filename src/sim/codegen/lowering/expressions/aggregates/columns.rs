@@ -5,7 +5,7 @@
 //! member arrays through descriptor views. Sources that are not storage
 //! (patterns, conditionals, calls) are first built into a lexical temporary
 //! record, so every source is evaluated once before any destination write.
-use super::super::super::collection::{RecordColumn, RecordValue};
+use super::super::super::collection::{column_tagged_union, RecordColumn, RecordValue};
 use super::*;
 use crate::sim::ir::{IrFixedValue, IrMemoryView};
 
@@ -22,9 +22,7 @@ impl Codegen<'_> {
         if let Some((root, prefix)) = self.activation_record_path(node) {
             let value = self.activation_records.get(&root)?;
             let descriptor = Self::descriptor_at_path(&value.descriptor, &prefix)?;
-            if !matches!(&descriptor.shape,
-                TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct)
-            {
+            if !Self::column_record_value_type(&descriptor) {
                 return None;
             }
             let columns = value
@@ -39,10 +37,7 @@ impl Codegen<'_> {
             });
         }
         let selection = self.resolve_unpacked_aggregate(node)?;
-        if !selection.storage.columns
-            || !matches!(&selection.descriptor.shape,
-                TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct)
-        {
+        if !selection.storage.columns || !Self::column_record_value_type(&selection.descriptor) {
             return None;
         }
         let columns = selection
@@ -66,6 +61,14 @@ impl Codegen<'_> {
         })
     }
 
+    /// Whether a column-layout value of this type moves as a whole: an
+    /// unpacked structure or a column-layout tagged union.
+    fn column_record_value_type(descriptor: &TypeDescriptor) -> bool {
+        matches!(&descriptor.shape,
+            TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct)
+            || column_tagged_union(descriptor)
+    }
+
     /// Whether an assignment or comparison operand involves a column-layout
     /// record type.
     pub(in crate::sim::codegen::lowering) fn column_record_type(&self, node: NodeId) -> bool {
@@ -76,7 +79,7 @@ impl Codegen<'_> {
     }
 
     /// Allocate a lexical temporary with the column layout of `descriptor`.
-    fn record_temporary(
+    pub(in crate::sim::codegen::lowering) fn record_temporary(
         &mut self,
         path: &str,
         descriptor: &TypeDescriptor,
@@ -87,7 +90,10 @@ impl Codegen<'_> {
         Ok(value)
     }
 
-    fn record_column_read(&self, column: &RecordColumn) -> Result<IrExpr, String> {
+    pub(in crate::sim::codegen::lowering) fn record_column_read(
+        &self,
+        column: &RecordColumn,
+    ) -> Result<IrExpr, String> {
         match column {
             RecordColumn::Leaf(leaf) => {
                 let value = self.aggregate_leaf_read(leaf)?;
@@ -114,7 +120,10 @@ impl Codegen<'_> {
         }
     }
 
-    fn record_column_lhs(&self, column: &RecordColumn) -> Result<IrLhs, String> {
+    pub(in crate::sim::codegen::lowering) fn record_column_lhs(
+        &self,
+        column: &RecordColumn,
+    ) -> Result<IrLhs, String> {
         match column {
             RecordColumn::Leaf(leaf) => self.aggregate_leaf_lhs(leaf),
             RecordColumn::Cell(cell) => self.reference_lhs(IrLhs::ArrayElem {
@@ -126,7 +135,10 @@ impl Codegen<'_> {
         }
     }
 
-    fn record_column_view(&self, array: usize) -> IrMemoryView {
+    pub(in crate::sim::codegen::lowering) fn record_column_view(
+        &self,
+        array: usize,
+    ) -> IrMemoryView {
         self.fixed_view_at(self.reference_array(array), &[])
     }
 
@@ -154,7 +166,7 @@ impl Codegen<'_> {
     }
 
     /// Copy `src` into `dst` column by column.
-    fn record_copy(
+    pub(in crate::sim::codegen::lowering) fn record_copy(
         &mut self,
         path: &str,
         dst: &RecordValue,
@@ -342,6 +354,12 @@ impl Codegen<'_> {
             let operands = operands.clone();
             return self.lower_record_conditional_into(path, dst, &operands, nba, out);
         }
+        if let NodeKind::Expr(ExprKind::TaggedUnion { member, value }) = self.kind(node) {
+            let (member, value) = (member.clone(), *value);
+            let temporary = self.record_temporary(path, &dst.descriptor, out)?;
+            self.lower_tagged_into(path, &temporary, &member, value, out)?;
+            return self.record_copy(path, dst, &temporary, nba, out);
+        }
         if self.assignment_pattern_operands(path, node)?.is_some() {
             let temporary = self.record_temporary(path, &dst.descriptor, out)?;
             self.lower_record_pattern_into(path, &temporary, node, out)?;
@@ -459,6 +477,48 @@ impl Codegen<'_> {
         let TypeShape::Aggregate(layout) = &dst.descriptor.shape else {
             return Err(format!("record merge in `{path}` has no structure type"));
         };
+        if layout.kind == AggregateKind::TaggedUnion {
+            // The tag cell merges as one unit: equal tags survive, others
+            // become the tag's uninitialized value.
+            let tag = |value: &RecordValue| {
+                value
+                    .columns
+                    .iter()
+                    .find(|(column_path, _)| column_path.is_empty())
+                    .map(|(_, column)| column.clone())
+                    .ok_or("tagged union value has no tag column")
+            };
+            let (target, from_left, from_right) = (tag(dst)?, tag(left)?, tag(right)?);
+            let RecordColumn::Cell(target_cell) = target.clone() else {
+                return Err(format!("tagged union tag in `{path}` is not a cell"));
+            };
+            let equal = common_cmp_expr_ir(
+                IrBinOp::Eq,
+                self.record_column_read(&from_left)?,
+                self.record_column_read(&from_right)?,
+                path,
+            )?;
+            let mut keep = Vec::new();
+            self.record_column_copy(path, &target, &from_left, nba, &mut keep)?;
+            let width = self.model.arrays[target_cell].elem_width;
+            let two_state = self.model.arrays[target_cell].two_state;
+            let reset = vec![IrStmt::FixedArrayFill {
+                array: self.reference_array(target_cell),
+                value: IrExpr::new(
+                    IrExprKind::Const(uniform_constant(width, false, two_state)),
+                    width,
+                    false,
+                    None,
+                ),
+                nba,
+            }];
+            out.push(IrStmt::If {
+                cond: equal,
+                then_: keep,
+                els: Some(reset),
+                check: IrUniquePriorityCheck::None,
+            });
+        }
         for member in &layout.members {
             let key = AggregatePathPart::Member(member.name.clone());
             let select = |value: &RecordValue| RecordValue {
@@ -871,6 +931,127 @@ impl Codegen<'_> {
     }
 
     /// Calls returning a column-layout record (filled in by the call ABI).
+    /// `tagged m value` into the fresh temporary `dst`: the tag names `m`,
+    /// `m` receives the value and every other member its uninitialized value,
+    /// as the payload padding of a packed tagged union does.
+    fn lower_tagged_into(
+        &mut self,
+        path: &str,
+        dst: &RecordValue,
+        member_name: &str,
+        value: Option<NodeId>,
+        out: &mut Vec<IrStmt>,
+    ) -> Result<(), String> {
+        let TypeShape::Aggregate(layout) = &dst.descriptor.shape else {
+            return Err(format!("tagged expression in `{path}` has no union type"));
+        };
+        let layout = layout.clone();
+        let index = layout
+            .members
+            .iter()
+            .position(|member| member.name == member_name)
+            .ok_or_else(|| format!("tagged union has no member `{member_name}` in `{path}`"))?;
+        let Some((_, tag)) = dst
+            .columns
+            .iter()
+            .find(|(column_path, _)| column_path.is_empty())
+        else {
+            return Err(format!("tagged union in `{path}` has no tag column"));
+        };
+        let tag_lhs = self.record_column_lhs(tag)?;
+        let tag_width =
+            packed_lhs_width(&self.model, &tag_lhs).ok_or("tagged union tag has no width")?;
+        let tag_value = IrConst::packed(
+            vec![u64::try_from(index).map_err(|_| "tagged union member index overflows")?],
+            Vec::new(),
+            Vec::new(),
+            tag_width,
+            false,
+            None,
+        )
+        .map_err(|error| error.to_string())?;
+        out.push(IrStmt::Assign {
+            lhs: tag_lhs,
+            rhs: IrExpr::new(IrExprKind::Const(tag_value), tag_width, false, None),
+            nba: false,
+        });
+        for (position, member) in layout.members.iter().enumerate() {
+            let key = AggregatePathPart::Member(member.name.clone());
+            let columns = dst
+                .columns
+                .iter()
+                .filter(|(column_path, _)| column_path.first() == Some(&key))
+                .cloned()
+                .collect::<Vec<_>>();
+            if columns.is_empty() {
+                continue;
+            }
+            if position != index {
+                let target = RecordValue {
+                    descriptor: member.descriptor.clone(),
+                    columns,
+                };
+                self.record_fill_uninitialized(path, member, &target, false, out)?;
+                continue;
+            }
+            let Some(value) = value else {
+                return Err(format!(
+                    "tagged member `{member_name}` has no value in `{path}`"
+                ));
+            };
+            let relative = RecordValue {
+                descriptor: member.descriptor.clone(),
+                columns: columns
+                    .iter()
+                    .map(|(column_path, column)| (column_path[1..].to_vec(), column.clone()))
+                    .collect(),
+            };
+            match &member.descriptor.shape {
+                TypeShape::FixedArray { element, .. } => {
+                    let Some((_, RecordColumn::Array(array))) = relative.columns.first() else {
+                        return Err(format!(
+                            "tagged member `{member_name}` has no column in `{path}`"
+                        ));
+                    };
+                    let array = *array;
+                    self.lower_record_array_item(
+                        path,
+                        array,
+                        &member.descriptor,
+                        element,
+                        value,
+                        out,
+                    )?;
+                }
+                _ if Self::column_record_value_type(&member.descriptor) => {
+                    self.lower_record_value_into(path, &relative, value, false, out)?;
+                }
+                _ => {
+                    let Some((_, column)) = relative.columns.first() else {
+                        return Err(format!(
+                            "tagged member `{member_name}` has no column in `{path}`"
+                        ));
+                    };
+                    let lhs = self.record_column_lhs(column)?;
+                    let width =
+                        packed_lhs_width(&self.model, &lhs).ok_or("tagged member has no width")?;
+                    let source = ir_to_storage(
+                        self.lower_expr(path, value)?,
+                        width,
+                        member.descriptor.info.signed,
+                        member.descriptor.two_state,
+                    )?;
+                    out.push(IrStmt::Assign {
+                        rhs: apply_lhs_assignment_context(&self.model, &lhs, source),
+                        lhs,
+                        nba: false,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// `dst = f(...)` for a function returning a column-layout record: the
     /// call writes one trailing output per result column. A blocking store
     /// into descriptor columns binds them directly (outputs copy back after
