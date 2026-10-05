@@ -877,7 +877,7 @@ fn high_fanout_generate_edges_keep_child_order_across_the_index_threshold() {
             .find(|node| node.name == "g" && node.kind == slang::SemanticKind::GenerateScope)
             .expect("generate array");
         let edges = &snapshot.semantic_edges
-            [array.edge_start as usize..(array.edge_start + array.edge_count) as usize];
+            [array.edge_start() as usize..(array.edge_start() + array.edge_count()) as usize];
         let blocks: Vec<_> = edges
             .iter()
             .filter(|edge| edge.role == slang::SemanticEdgeRole::Child)
@@ -890,7 +890,7 @@ fn high_fanout_generate_edges_keep_child_order_across_the_index_threshold() {
         for (ordinal, edge) in blocks.iter().enumerate() {
             let block = &snapshot.semantic_nodes[edge.target_id as usize];
             assert_eq!(block.name, format!("g[{ordinal}]"));
-            assert_eq!(block.parent_id, Some(array.id));
+            assert_eq!(block.parent_id(), Some(array.id));
             assert_eq!(edge.index, blocks[0].index + ordinal as u32);
         }
         let database = llg::core::db::Db::from_slang(&snapshot).expect("owned import");
@@ -923,7 +923,7 @@ fn high_fanout_operand_roles_and_repeated_pattern_ids_survive_index_mutation() {
             })
             .expect("high-fanout expression");
         let edges = &snapshot.semantic_edges
-            [node.edge_start as usize..(node.edge_start + node.edge_count) as usize];
+            [node.edge_start() as usize..(node.edge_start() + node.edge_count()) as usize];
         let operands: Vec<_> = edges
             .iter()
             .filter(|edge| edge.role == slang::SemanticEdgeRole::Operand)

@@ -19,10 +19,10 @@ pub(super) fn node_kind_from_slang(
             } else {
                 node.definition_name.to_string()
             },
-            is_top: node.is_top,
+            is_top: node.is_top(),
             is_interface: node.definition_kind == Some(SemanticDefinitionKind::Interface),
-            timeunit: time_exponent(node.time_scale, false)?,
-            timeprecision: time_exponent(node.time_scale, true)?,
+            timeunit: time_exponent(node.time_scale(), false)?,
+            timeprecision: time_exponent(node.time_scale(), true)?,
         },
         SemanticKind::Package => NodeKind::Package,
         SemanticKind::Class => NodeKind::ClassDef,
@@ -45,14 +45,14 @@ pub(super) fn node_kind_from_slang(
                 high,
                 low: resolved_edge_target(snapshot, ids, edges, SemanticEdgeRole::LowConnection)?,
                 high_expr,
-                high_present: node.port_connection_present,
-                high_open: node.port_connection_open,
+                high_present: node.port_connection_present(),
+                high_open: node.port_connection_open(),
             }
         }
         SemanticKind::Modport => NodeKind::ModPort,
         SemanticKind::InterfaceConnection => NodeKind::IfaceConn {
             actual: node
-                .target_id
+                .target_id()
                 .map(|id| semantic_id(ids, id))
                 .transpose()?
                 .ok_or_else(|| {
@@ -76,10 +76,10 @@ pub(super) fn node_kind_from_slang(
         SemanticKind::Parameter => NodeKind::Param {
             ty,
             value: node
-                .constant_id
+                .constant_id()
                 .and_then(|id| snapshot.constants.get(id as usize))
                 .and_then(|constant| val_from_slang(&constant.value)),
-            local: node.is_local,
+            local: node.is_local(),
         },
         SemanticKind::Process => NodeKind::Process {
             kind: match node.subkind {
@@ -105,7 +105,7 @@ pub(super) fn node_kind_from_slang(
             strength0: strength_from_slang(node.strength0),
             strength1: strength_from_slang(node.strength1),
         },
-        SemanticKind::Primitive if node.is_primitive_instance => {
+        SemanticKind::Primitive if node.is_primitive_instance() => {
             let terms = edges
                 .iter()
                 .filter(|edge| edge.role == SemanticEdgeRole::Actual)
@@ -135,7 +135,7 @@ pub(super) fn node_kind_from_slang(
                 .collect::<Result<Vec<_>, DbError>>()?;
             let prim_type = primitive_type_from_subkind(node.subkind);
             let udp = if prim_type == PrimitiveType::Combinational {
-                let primitive_id = node.target_id.ok_or_else(|| {
+                let primitive_id = node.target_id().ok_or_else(|| {
                     DbError::InvalidSnapshot(format!(
                         "combinational UDP instance `{}` has no declaration identity",
                         node.definition_name
@@ -169,7 +169,7 @@ pub(super) fn node_kind_from_slang(
                 None
             };
             let is_array_element = node
-                .parent_id
+                .parent_id()
                 .and_then(|parent| snapshot.semantic_nodes.get(parent as usize))
                 .is_some_and(|parent| {
                     parent.kind == SemanticKind::Instance && parent.subkind == 193
@@ -211,22 +211,22 @@ pub(super) fn node_kind_from_slang(
         }
         SemanticKind::Primitive => NodeKind::Other,
         SemanticKind::Subroutine => NodeKind::FuncTask {
-            is_task: node.is_task,
-            automatic: node.is_automatic,
+            is_task: node.is_task(),
+            automatic: node.is_automatic(),
             is_static: node.auxiliary & crate::ffi::slang::SUBROUTINE_STATIC != 0,
             is_virtual: node.auxiliary & crate::ffi::slang::SUBROUTINE_VIRTUAL != 0,
             is_pure: node.auxiliary & crate::ffi::slang::SUBROUTINE_PURE != 0,
             is_final: node.auxiliary & crate::ffi::slang::SUBROUTINE_FINAL != 0,
             is_constructor: node.auxiliary & crate::ffi::slang::SUBROUTINE_CONSTRUCTOR != 0,
-            ret: (!node.is_task && ty.kind != "void").then_some(ty),
+            ret: (!node.is_task() && ty.kind != "void").then_some(ty),
             body: first(SemanticEdgeRole::Body)?,
         },
         SemanticKind::Argument => NodeKind::FuncArg {
             direction: direction_from_slang(node),
             ty,
             default: first(SemanticEdgeRole::DefaultValue)?,
-            const_ref: node.is_const_ref,
-            ref_static: node.is_ref_static,
+            const_ref: node.is_const_ref(),
+            ref_static: node.is_ref_static(),
         },
         SemanticKind::Statement => {
             statement_from_slang(snapshot, type_projector, node, edges, ids)?
@@ -245,13 +245,13 @@ pub(super) fn node_kind_from_slang(
         },
         SemanticKind::FunctionCall => NodeKind::FuncCall {
             name: node.name.to_string(),
-            is_task: node.is_task,
+            is_task: node.is_task(),
             is_super: node.auxiliary & crate::ffi::slang::CALL_SUPER != 0,
             callee: first(SemanticEdgeRole::Callee)?,
         },
         SemanticKind::EnumConstant => NodeKind::EnumConst {
             value: node
-                .constant_id
+                .constant_id()
                 .and_then(|id| snapshot.constants.get(id as usize))
                 .and_then(|constant| val_from_slang(&constant.value)),
         },

@@ -190,7 +190,7 @@ pub fn project_slang(
             .filter(|node| {
                 token.role == LexicalRole::Declaration && node.kind == SemanticKind::Instance
             })
-            .and_then(|node| node.target_id)
+            .and_then(|node| node.target_id())
             .and_then(|id| semantic.get(&id).copied())
             .filter(|node| node.kind == SemanticKind::Definition);
         if matches!(
@@ -253,7 +253,7 @@ pub fn project_slang(
 
 fn declaration_detail(node: &crate::ffi::slang::SemanticNode, snapshot: &Snapshot) -> String {
     let ty = node
-        .type_id
+        .type_id()
         .and_then(|id| snapshot.types.iter().find(|ty| ty.id == id))
         .map(|ty| ty.display_name.as_str())
         .filter(|name| !name.is_empty());
@@ -270,11 +270,11 @@ fn declaration_detail(node: &crate::ffi::slang::SemanticNode, snapshot: &Snapsho
         SemanticKind::Package => format!("package {name}"),
         SemanticKind::Class => format!("class {name}"),
         SemanticKind::Port => {
-            let direction = if node.is_input {
+            let direction = if node.is_input() {
                 "input"
-            } else if node.is_output {
+            } else if node.is_output() {
                 "output"
-            } else if node.is_inout {
+            } else if node.is_inout() {
                 "inout"
             } else {
                 "port"
@@ -285,7 +285,7 @@ fn declaration_detail(node: &crate::ffi::slang::SemanticNode, snapshot: &Snapsho
             }
         }
         SemanticKind::Parameter => {
-            let keyword = if node.is_local {
+            let keyword = if node.is_local() {
                 "localparam"
             } else {
                 "parameter"
@@ -301,8 +301,8 @@ fn declaration_detail(node: &crate::ffi::slang::SemanticNode, snapshot: &Snapsho
             None => format!("{} {name}", semantic_kind(node.kind)),
         },
         SemanticKind::Subroutine => {
-            let keyword = if node.is_task { "task" } else { "function" };
-            match (node.is_task, ty) {
+            let keyword = if node.is_task() { "task" } else { "function" };
+            match (node.is_task(), ty) {
                 (false, Some(ty)) => format!("{keyword} {ty} {name}"),
                 _ => format!("{keyword} {name}"),
             }

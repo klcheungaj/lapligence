@@ -48,7 +48,7 @@ pub(super) fn expression_from_slang(
     // during elaboration and retains the result on the comparison node;
     // import that value while keeping its children for source navigation.
     if node.subkind == 67
-        && node.constant_id.is_some()
+        && node.constant_id().is_some()
         && edges.iter().any(|edge| {
             matches!(edge.role, SemanticEdgeRole::Left | SemanticEdgeRole::Right)
                 && usize::try_from(edge.target_id)
@@ -58,7 +58,7 @@ pub(super) fn expression_from_slang(
         })
     {
         let value = node
-            .constant_id
+            .constant_id()
             .and_then(|id| snapshot.constants.get(id as usize))
             .map(|constant| value_data_from_slang(&constant.value))
             .ok_or_else(|| {
@@ -86,7 +86,7 @@ pub(super) fn expression_from_slang(
     Ok(NodeKind::Expr(match node.subkind {
         64 | 85 => {
             let value = node
-                .constant_id
+                .constant_id()
                 .and_then(|id| snapshot.constants.get(id as usize))
                 .map(|constant| value_data_from_slang(&constant.value))
                 .unwrap_or(ValueData::None);
@@ -108,13 +108,13 @@ pub(super) fn expression_from_slang(
                     .map(ConstantSource::Exact)
                     .unwrap_or(ConstantSource::Unavailable),
                 time_scale: (node.subkind == 85)
-                    .then(|| time_literal_scale(node.time_scale))
+                    .then(|| time_literal_scale(node.time_scale()))
                     .flatten(),
             }
         }
         65 => ExprKind::Ref {
             target: node
-                .target_id
+                .target_id()
                 .map(|id| {
                     if node.detail == "HierarchicalValue" {
                         hierarchical_reference_target(snapshot, ids, id)
@@ -130,11 +130,11 @@ pub(super) fn expression_from_slang(
             size_cast: false,
             size_cast_expr: None,
             cast_kind_known: true,
-            propagated: node.is_propagated_conversion,
+            propagated: node.is_propagated_conversion(),
             two_state: snapshot
                 .types
                 .iter()
-                .find(|candidate| Some(candidate.id) == node.type_id)
+                .find(|candidate| Some(candidate.id) == node.type_id())
                 .is_some_and(|candidate| !candidate.is_four_state),
         },
         73 => {
@@ -150,11 +150,11 @@ pub(super) fn expression_from_slang(
                 }
             }
         }
-        74 if node.is_indexed_up || node.is_indexed_down => ExprKind::IndexedPartSelect {
+        74 if node.is_indexed_up() || node.is_indexed_down() => ExprKind::IndexedPartSelect {
             base: required(SemanticEdgeRole::Base, "indexed select base")?,
             base_expr: required(SemanticEdgeRole::Left, "indexed select base expression")?,
             width_expr: required(SemanticEdgeRole::Right, "indexed select width")?,
-            neg: node.is_indexed_down,
+            neg: node.is_indexed_down(),
         },
         74 => ExprKind::PartSelect {
             base: required(SemanticEdgeRole::Base, "range select base")?,
@@ -181,13 +181,13 @@ pub(super) fn expression_from_slang(
         },
         87 => ExprKind::NewClass {
             class_name: ty.type_name.clone(),
-            class_type: node.type_id.map(TypeId),
+            class_type: node.type_id().map(TypeId),
             constructor: first(SemanticEdgeRole::Initializer)?,
             is_super_class: node.auxiliary & crate::ffi::slang::NEW_CLASS_SUPER != 0,
         },
         90 => {
             let target = node
-                .target_id
+                .target_id()
                 .map(|id| semantic_id(ids, id))
                 .transpose()?
                 .ok_or_else(|| {
@@ -240,7 +240,7 @@ pub(super) fn expression_from_slang(
                 })?;
             if timing.kind != SemanticKind::TimingControl
                 || timing.subkind != 113
-                || (!timing.is_posedge && !timing.is_negedge)
+                || (!timing.is_posedge() && !timing.is_negedge())
             {
                 ExprKind::Other
             } else {
@@ -255,7 +255,7 @@ pub(super) fn expression_from_slang(
                     let gate = edge_target(ids, timing_edges, SemanticEdgeRole::Condition)?;
                     ExprKind::ClockingEvent {
                         signal,
-                        posedge: timing.is_posedge,
+                        posedge: timing.is_posedge(),
                         gate,
                     }
                 }
@@ -263,7 +263,7 @@ pub(super) fn expression_from_slang(
         }
         81..=84 => {
             let key_type = if node.subkind == 82 {
-                let type_id = node.type_id.ok_or_else(|| {
+                let type_id = node.type_id().ok_or_else(|| {
                     DbError::InvalidSnapshot("assignment pattern type key has no type".into())
                 })?;
                 let projection = type_projector.project(type_id)?;
@@ -280,7 +280,7 @@ pub(super) fn expression_from_slang(
             let index_key = first(SemanticEdgeRole::Index)?;
             let index_value = index_key
                 .and_then(|index| snapshot.semantic_nodes.get(index.index()))
-                .and_then(|index| index.constant_id)
+                .and_then(|index| index.constant_id())
                 .and_then(|constant| snapshot.constants.get(constant as usize))
                 .map(|constant| value_data_from_slang(&constant.value));
             ExprKind::TaggedPattern {
@@ -663,7 +663,7 @@ fn member_select_name(
     node: &SemanticNode,
 ) -> Result<Option<String>, DbError> {
     let member = node
-        .target_id
+        .target_id()
         .map(|id| canonical_reference_target(snapshot, ids, id))
         .transpose()?;
     Ok(member

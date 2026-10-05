@@ -81,14 +81,14 @@ fn foreach_mixed_owned_import_requires_the_iterated_expression_type() {
         .position(|node| matches!(node.kind, NodeKind::Stmt(StmtKind::Foreach { .. })))
         .expect("foreach statement");
     let statement = &snapshot.semantic_nodes[index];
-    let start = usize::try_from(statement.edge_start).unwrap();
-    let end = start + usize::try_from(statement.edge_count).unwrap();
+    let start = usize::try_from(statement.edge_start()).unwrap();
+    let end = start + usize::try_from(statement.edge_count()).unwrap();
     let base = snapshot.semantic_edges[start..end]
         .iter()
         .find(|edge| edge.role == SemanticEdgeRole::Base)
         .expect("iterated expression edge")
         .target_id;
-    snapshot.semantic_nodes[usize::try_from(base).unwrap()].type_id = None;
+    snapshot.semantic_nodes[usize::try_from(base).unwrap()].set_type_id(None);
     let error = db::Db::from_slang(&snapshot).expect_err("missing bounds source must fail closed");
     assert!(error
         .to_string()
