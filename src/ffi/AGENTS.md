@@ -30,6 +30,9 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   line and file there. Reject unknown files and offsets outside the file;
   sort by file and offset and collapse agreeing duplicates (one include read
   as several buffers), rejecting disagreeing ones.
+- Snapshot `edition_findings` records (v14) give a known-file source range and
+  a nonempty label, in capture order; at most `MAX_EDITION_FINDINGS`. Only a
+  Verilog-2001 compile produces them.
 - Bound defines, tops, includes, parameter overrides, source bytes, diagnostics,
   value bits, output bytes, semantic records/edges and tokens on both ABI sides
   before/during allocation. The capture arrives through the `LlgSlangSink`

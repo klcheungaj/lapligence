@@ -59,6 +59,15 @@ removal linear in that target's duplicates.
   preprocessor's `` `__LINE__``/`` `__FILE__``. A directive on the last line
   maps nothing. Promote `RefArgAutomaticFunc` (ref formal of a static
   subroutine, IEEE 1800-2009 13.5.2) to an error before issuing diagnostics.
+- A Verilog-2001 compile runs `Verilog2001SyntaxProfile` over every syntax
+  tree after lexical capture. It is closed: a syntax kind absent from its
+  IEEE 1364-2001 Annex A allowlist is a finding (not descended into), and
+  admitted kinds get shape checks for optional parts 2001 lacks. Trees are
+  macro-expanded, so macro-built forms report at the use site through
+  `Capture::span`. Export at most `LLG_SLANG_MAX_EDITION_FINDINGS`
+  `edition_findings` records (range plus an ABI-owned English label); Rust
+  renders the diagnostic. When a Slang upgrade adds syntax kinds, classify
+  each against Annex A: unlisted kinds reject by default.
 - Snapshot ownership includes typed tables, lexical/source data and uninstantiated
   source-instance records. Bound all size-derived allocation/traversal before work.
   Preserve source spelling/coordinates without deriving semantics from text.
