@@ -1,5 +1,6 @@
-// An overloaded compound assignment reads and writes its target separately,
-// so a target whose selection has side effects is rejected.
+// Formerly the RTL-017 negative `neg_target_side_effects`: an overloaded
+// compound assignment evaluates its target, including a side-effecting index
+// call, exactly once for both the read and the write (IEEE 1800-2009 11.11).
 typedef struct { int n; } T;
 typedef struct { longint n; } W;
 function automatic T addt(T a, T b);
@@ -26,5 +27,11 @@ module tb;
     k++;
     return k;
   endfunction
-  initial arr[next()] += b;
+  initial begin
+    foreach (arr[i]) arr[i].n = 10 * i;
+    b.n = 5;
+    arr[next()] += b;
+    $display("%0d %0d %0d %0d k=%0d", arr[0].n, arr[1].n, arr[2].n, arr[3].n, k);
+    $finish(0);
+  end
 endmodule

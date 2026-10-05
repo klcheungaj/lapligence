@@ -1,6 +1,6 @@
 //! Safe, owned Rust facade over the Slang C ABI.
 //!
-//! [`compile`] receives the finished capture through the ABI v12 record
+//! [`compile`] receives the finished capture through the ABI v13 record
 //! stream (see the `stream` module) and owns every decoded record. No Slang
 //! pointer or native allocation escapes it.
 
@@ -34,7 +34,7 @@ use values::{
 mod stream;
 use stream::{sink_for, StreamBuilder};
 
-const ABI_VERSION: u32 = 12;
+const ABI_VERSION: u32 = 13;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -727,6 +727,9 @@ pub const SEMANTIC_EXPR_ASSERTION_INSTANCE: u32 = 90;
 pub const SEMANTIC_EXPR_CLOCKING_EVENT: u32 = 91;
 /// Expression tag for a typed tagged-union member constructor.
 pub const SEMANTIC_EXPR_TAGGED_UNION: u32 = 92;
+/// Expression tag for the current target value read by an overloaded update
+/// ([`SemanticOperation::OverloadUpdate`]); it has no edges.
+pub const SEMANTIC_EXPR_UPDATE_CURRENT: u32 = 93;
 
 /// Immediate assertion metadata carried in [`SemanticNode::auxiliary`].
 pub const SEMANTIC_ASSERTION_DEFERRED: u64 = 1 << 0;
@@ -822,6 +825,12 @@ pub enum SemanticOperation {
     AssertionSAlways,
     AssertionEventually,
     AssertionSEventually,
+    /// An overloaded compound assignment or increment whose target is bound
+    /// once (IEEE 1800-2009 11.11); it yields the assigned value.
+    OverloadUpdate,
+    /// The postfix form of [`Self::OverloadUpdate`]; it yields the target's
+    /// previous value.
+    OverloadPostUpdate,
 }
 
 /// Exact source time scale attached by Slang to a definition or instance.

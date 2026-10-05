@@ -640,8 +640,18 @@ impl<'a> Codegen<'a> {
         let lhs_node = *operands.first().ok_or_else(|| {
             format!("assignment-like expression in `{scope_path}` has no left operand")
         })?;
+        let overloaded = matches!(
+            op,
+            Operation::OverloadUpdate | Operation::OverloadPostUpdate
+        );
+        if overloaded {
+            self.check_overloaded_update_target(scope_path, lhs_node)?;
+        }
         let lhs = self.lower_lhs(scope_path, lhs_node)?;
-        if matches!(lhs, IrLhs::Stream { .. }) {
+        // An overload's target is an ordinary typed lvalue (an unpacked
+        // record's members form a `Stream` of leaves), never a streaming
+        // concatenation: those have no type an overload could match.
+        if matches!(lhs, IrLhs::Stream { .. }) && !overloaded {
             return Err(format!(
                 "assignment-like expression to a streaming target in `{scope_path}` is not supported"
             ));
@@ -650,9 +660,24 @@ impl<'a> Codegen<'a> {
         // runtime read is reconstructed from the canonical descriptor, so a
         // dynamic index is never evaluated by both the read and the write.
         let current_type = self.lower_expr(scope_path, lhs_node)?;
-        let post = matches!(op, Operation::PostIncrement | Operation::PostDecrement);
+        let post = matches!(
+            op,
+            Operation::PostIncrement | Operation::PostDecrement | Operation::OverloadPostUpdate
+        );
         let reads_current = !matches!(op, Operation::Assignment);
-        let value = if op == Operation::Assignment {
+        let value = if overloaded {
+            // IEEE 1800-2009 11.11: the bound function's call reads the target
+            // through the mutation's captured current value, so the target's
+            // selectors run once for the read and the write.
+            let call = *operands.get(1).ok_or_else(|| {
+                format!("overloaded update in `{scope_path}` has no function call")
+            })?;
+            self.overload_current
+                .push((current_type.width, current_type.signed));
+            let value = self.lower_expr(scope_path, call);
+            self.overload_current.pop();
+            apply_lhs_assignment_context(&self.model, &lhs, value?)
+        } else if op == Operation::Assignment {
             let rhs_node = *operands.get(1).ok_or_else(|| {
                 format!("assignment expression in `{scope_path}` has no right operand")
             })?;
@@ -718,6 +743,69 @@ impl<'a> Codegen<'a> {
             current_type.signed,
             None,
         ))
+    }
+
+    /// An overloaded update (IEEE 1800-2009 11.11) that yields a value or binds
+    /// its target once runs as one packed mutation. Targets above the packed
+    /// value limit and native records have no such form yet; the statement
+    /// forms with side-effect-free targets keep their ordinary assignment.
+    pub(in super::super) fn check_overloaded_update_target(
+        &self,
+        scope_path: &str,
+        target: NodeId,
+    ) -> Result<(), String> {
+        let Some(descriptor) = self.query_descriptor(target) else {
+            return Ok(());
+        };
+        if !matches!(
+            descriptor.shape,
+            TypeShape::FixedArray { .. } | TypeShape::Aggregate(_)
+        ) {
+            return Ok(());
+        }
+        let limited = match Self::fixed_descriptor_width_bits(descriptor) {
+            Some(width) => width > u64::from(LLG_MAX_WIDTH),
+            None => true,
+        };
+        if limited {
+            return Err(format!(
+                "an overloaded operator update whose value is used or whose target selector has side effects requires a target within the {LLG_MAX_WIDTH}-bit packed value limit without native members in `{scope_path}`"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The target value an overloaded update's function call reads
+    /// (`OverloadCurrent`): the enclosing mutation expression's capture.
+    pub(in super::super) fn overload_current_read(
+        &self,
+        scope_path: &str,
+        node: NodeId,
+    ) -> Option<Result<IrExpr, String>> {
+        if !matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::OverloadCurrent,
+                ..
+            })
+        ) {
+            return None;
+        }
+        Some(
+            self.overload_current
+                .last()
+                .map(|&(width, signed)| {
+                    IrExpr::new(
+                        IrExprKind::LocalRead("_llg_mut_current".to_owned()),
+                        width,
+                        signed,
+                        None,
+                    )
+                })
+                .ok_or_else(|| {
+                    format!("overloaded operator target value outside its update in `{scope_path}`")
+                }),
+        )
     }
 
     pub(super) fn lower_member_select_index(

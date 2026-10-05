@@ -64,6 +64,27 @@ impl EmitCtx<'_, '_> {
         if is_declaration_initializer {
             return Ok(IrStmt::Nop);
         }
+        if matches!(
+            op,
+            Operation::OverloadUpdate | Operation::OverloadPostUpdate
+        ) {
+            // IEEE 1800-2009 11.11: a target the frontend binds once (its
+            // selectors have side effects) is read and written by one
+            // mutation; statement position discards its value.
+            return self.lower_discarded_mutation(op, &[lhs, rhs]);
+        }
+        if let NodeKind::Expr(ExprKind::Operation {
+            op: Operation::OverloadUpdate | Operation::OverloadPostUpdate,
+            operands,
+            ..
+        }) = self.cg.kind(rhs)
+        {
+            // Aggregate and native destinations otherwise misreport the value.
+            if let Some(target) = operands.first() {
+                self.cg
+                    .check_overloaded_update_target(&self.path, *target)?;
+            }
+        }
         if let Some(target) = self.cg.event_target_of(lhs) {
             if op != Operation::Assignment {
                 return Err(format!(
