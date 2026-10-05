@@ -337,3 +337,26 @@ fn component_strength_view_descriptor_is_validated_and_emitted() {
     dangling.net_groups[0].strength_view = Some(9);
     assert!(dangling.validate().is_err());
 }
+
+#[test]
+fn unreferenced_activation_descriptor_tables_are_omitted() {
+    let tables = vec![
+        (
+            "S_a_llg_value_".to_owned(),
+            "static const llg_value_desc_t S_a_llg_value_desc_0;\n".to_owned(),
+        ),
+        (
+            "S_b_llg_value_".to_owned(),
+            "static const llg_value_desc_t S_b_llg_value_desc_0;\nstatic const llg_value_desc_t S_b_llg_value_desc_1;\n".to_owned(),
+        ),
+        (
+            "S_c_llg_value_".to_owned(),
+            "static const llg_value_desc_t S_c_llg_value_desc_0;\n".to_owned(),
+        ),
+    ];
+    // `S_b` is used only through a child table; the label string of `S_c`
+    // and the lookalike `S_a_llg_value_desc_00` are not uses.
+    let rendered = "f(&S_b_llg_value_desc_1, \"S_c\");\nS_a_llg_value_desc_00 = 0;\n";
+    assert_eq!(referenced_descriptor_tables(rendered, &tables), tables[1].1);
+    assert!(referenced_descriptor_tables(rendered, &[]).is_empty());
+}
