@@ -108,6 +108,12 @@ impl Frame<'_, '_> {
                 return Ok(value);
             }
             IrChandleExpr::Mailbox(mailbox) => return self.mailbox_handle(mailbox),
+            IrChandleExpr::ContainerElement {
+                container,
+                indices,
+                key,
+                write,
+            } => return self.container_element(*container, indices, key.as_deref(), *write),
             IrChandleExpr::Process(process) => {
                 // The retained temporary stays alive until its lexical scope
                 // ends, after the consuming element store has retained it.
@@ -456,5 +462,76 @@ impl Frame<'_, '_> {
         });
         self.discard(value);
         Ok(())
+    }
+}
+
+impl Frame<'_, '_> {
+    /// Address of one element of descriptor-backed container storage for an
+    /// element-item access. A missing or invalid element resolves to a fresh
+    /// default value owned by the current lexical scope, so reads see the
+    /// Table 7-1 default and writes to it are discarded (SV 7.4.6, 7.8.6).
+    fn container_element(
+        &mut self,
+        container: usize,
+        indices: &[IrExpr],
+        key: Option<&IrStringExpr>,
+        write: bool,
+    ) -> Result<String, String> {
+        if write && self.read_only_callback {
+            return Err(pending("container element writes in read-only callbacks"));
+        }
+        let storage = self.ctx.model.containers[container].clone();
+        let name = storage.c_name.clone();
+        let (call, depth, touch) = match storage.kind {
+            IrContainerKind::Associative {
+                key: IrAssocKey::String,
+            } => {
+                let key = key.ok_or("string-keyed element locator requires a key")?;
+                let key = self.string(key)?;
+                let call = format!(
+                    "llg_assoc_value_element_string(&{name}, ({})->data, ({})->len, {})",
+                    key.address,
+                    key.address,
+                    i32::from(write)
+                );
+                let element = self.scalar("llg_value_t*", call);
+                self.native_discard(key);
+                (element, 1, "llg_assoc_value_touch")
+            }
+            kind => {
+                let (list, values) = self.container_indices(indices)?;
+                let call = match kind {
+                    IrContainerKind::Dynamic => {
+                        format!("llg_dyn_value_element(&{name}, {list}, {})", indices.len())
+                    }
+                    IrContainerKind::Queue { .. } => format!(
+                        "llg_queue_value_element(&{name}, {list}, {})",
+                        indices.len()
+                    ),
+                    IrContainerKind::Associative { .. } => format!(
+                        "llg_assoc_value_element_integral(&{name}, {list}, {}, {})",
+                        indices.len(),
+                        i32::from(write)
+                    ),
+                };
+                let element = self.scalar("llg_value_t*", call);
+                for value in values {
+                    self.discard(value);
+                }
+                let touch = match kind {
+                    IrContainerKind::Dynamic => "llg_dyn_value_touch",
+                    IrContainerKind::Queue { .. } => "llg_queue_value_touch",
+                    IrContainerKind::Associative { .. } => "llg_assoc_value_touch",
+                };
+                (element, indices.len(), touch)
+            }
+        };
+        self.line(format!(
+            "if (!{call}) {{ {call} = (llg_value_t*)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_value_t), llg_native_value_destroy)); llg_native_value_init({call}, llg_value_element_desc({name}.element, {depth})); }}"
+        ));
+        if write {
+            self.pending_touches.push((name, touch));
+        }
+        Ok(call)
     }
 }

@@ -767,6 +767,99 @@ pub(super) fn render(
                 name(ctx, *source)
             )
         }
+        IrContainerStmt::SetValue {
+            container,
+            slot,
+            value,
+        } => {
+            let root = frame.native_value_address(*value)?;
+            let target = name(ctx, *container);
+            let kind = ctx.model.containers[*container].kind.clone();
+            let call = match (slot, kind) {
+                (IrValueSlot::Element { key: Some(key), .. }, _) => {
+                    let key = key_operand(frame, strings, key)?;
+                    format!(
+                        "llg_assoc_value_set_element_string(&{target}, ({key}).data, ({key}).len, {root})"
+                    )
+                }
+                (IrValueSlot::Element { indices, .. }, kind) => {
+                    let list = super::indices(frame, owners, indices)?;
+                    let function = match kind {
+                        IrContainerKind::Dynamic => "llg_dyn_value_set_element",
+                        IrContainerKind::Queue { .. } => "llg_queue_value_set_element",
+                        IrContainerKind::Associative { .. } => {
+                            "llg_assoc_value_set_element_integral"
+                        }
+                    };
+                    format!("{function}(&{target}, {list}, {}, {root})", indices.len())
+                }
+                (IrValueSlot::PushFront, _) => {
+                    format!("llg_queue_value_push_value(&{target}, 0, {root})")
+                }
+                (IrValueSlot::PushBack, _) => {
+                    format!("llg_queue_value_push_value(&{target}, 1, {root})")
+                }
+                (IrValueSlot::Insert(index), _) => format!(
+                    "llg_queue_value_insert_value(&{target}, {}, {root})",
+                    operand(frame, owners, index)?.code
+                ),
+                (IrValueSlot::PopFront | IrValueSlot::PopBack, _) => {
+                    return Err("a pop slot cannot receive a value".into())
+                }
+            };
+            format!("    (void){call};\n")
+        }
+        IrContainerStmt::GetValue {
+            container,
+            slot,
+            value,
+        } => {
+            if frame.read_only_callback
+                && matches!(slot, IrValueSlot::PopFront | IrValueSlot::PopBack)
+            {
+                return Err(pending("mutating container query in a read-only callback"));
+            }
+            let root = frame.native_value_address(*value)?;
+            let target = name(ctx, *container);
+            let kind = ctx.model.containers[*container].kind.clone();
+            let element = match (slot, kind) {
+                (IrValueSlot::Element { key: Some(key), .. }, _) => {
+                    let key = key_operand(frame, strings, key)?;
+                    format!(
+                        "llg_assoc_value_element_string(&{target}, ({key}).data, ({key}).len, 0)"
+                    )
+                }
+                (IrValueSlot::Element { indices, .. }, kind) => {
+                    let list = super::indices(frame, owners, indices)?;
+                    match kind {
+                        IrContainerKind::Dynamic => format!(
+                            "llg_dyn_value_element(&{target}, {list}, {})",
+                            indices.len()
+                        ),
+                        IrContainerKind::Queue { .. } => format!(
+                            "llg_queue_value_element(&{target}, {list}, {})",
+                            indices.len()
+                        ),
+                        IrContainerKind::Associative { .. } => format!(
+                            "llg_assoc_value_element_integral(&{target}, {list}, {}, 0)",
+                            indices.len()
+                        ),
+                    }
+                }
+                (IrValueSlot::PopFront, _) => {
+                    return Ok(format!(
+                        "    llg_queue_value_pop_value(&{target}, 0, {root});\n"
+                    ))
+                }
+                (IrValueSlot::PopBack, _) => {
+                    return Ok(format!(
+                        "    llg_queue_value_pop_value(&{target}, 1, {root});\n"
+                    ))
+                }
+                _ => return Err("a push or insert slot cannot be read".into()),
+            };
+            format!("    llg_value_element_read({root}, {element});\n")
+        }
         IrContainerStmt::DeleteIndex { container, index } => {
             let method = match ctx.model.containers[*container].kind {
                 IrContainerKind::Queue { .. }

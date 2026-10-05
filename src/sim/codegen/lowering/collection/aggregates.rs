@@ -708,14 +708,8 @@ impl<'a> Codegen<'a> {
     /// so runtime selects copy identities without flattening objects;
     /// process elements keep their reference counts in that storage.
     pub(super) fn is_fixed_handle_element(element: &TypeDescriptor) -> bool {
-        match &element.shape {
-            TypeShape::Opaque { kind } => match kind.as_str() {
-                "Chandle" | "VirtualInterface" => true,
-                "Class" => true,
-                _ => false,
-            },
-            _ => false,
-        }
+        matches!(&element.shape, TypeShape::Opaque { kind }
+            if matches!(kind.as_str(), "Chandle" | "VirtualInterface" | "Class"))
     }
 
     pub(super) fn container_info(

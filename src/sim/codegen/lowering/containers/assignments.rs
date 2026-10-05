@@ -27,6 +27,19 @@ impl<'a> Codegen<'a> {
         if self.p30_fixed_array_assignment_candidate(lhs) {
             return self.lower_p30_fixed_array_assignment(path, lhs, rhs, blocking, op);
         }
+        if self.is_container_record(lhs) {
+            if !blocking {
+                return Err(format!(
+                    "nonblocking assignment to resizable container element in `{path}` is illegal"
+                ));
+            }
+            if op != Operation::Assignment {
+                return Err(format!(
+                    "compound assignment to a record container element in `{path}` is not supported"
+                ));
+            }
+            return self.lower_container_record_assignment(path, lhs, rhs);
+        }
         if let Some((container, source_indices)) = self.container_element_path(lhs) {
             if source_indices.len() == 1
                 && self
@@ -100,7 +113,7 @@ impl<'a> Codegen<'a> {
                         indices,
                         value: self.lower_string(path, rhs)?,
                     },
-                    ref element if element.is_handle() => IrContainerStmt::SetNestedChandle {
+                    element if element.is_handle() => IrContainerStmt::SetNestedChandle {
                         container,
                         indices,
                         value: self.lower_container_handle(path, element, rhs)?,

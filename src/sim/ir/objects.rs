@@ -319,6 +319,16 @@ pub enum IrChandleExpr {
     /// handle). Only container element writes consume it: an event element
     /// stores this identity, never a copy of the object.
     EventObject(Box<IrEventRef>),
+    /// Borrowed address of one element of descriptor-backed container
+    /// storage, used only as the receiver of an `ElementItem` native access.
+    /// A missing or invalid element resolves to a default scratch value; a
+    /// `write` locator first creates a missing associative entry.
+    ContainerElement {
+        container: usize,
+        indices: Vec<IrExpr>,
+        key: Option<Box<IrStringExpr>>,
+        write: bool,
+    },
     /// A process handle stored into a process element of container storage.
     /// The element retains its own reference (see `LLG_VALUE_PROCESS`).
     Process(Box<IrProcessExpr>),
@@ -1750,6 +1760,24 @@ impl IrChandleExpr {
             Self::Null => Ok(()),
             Self::Mailbox(mailbox) => mailbox.validate(model, formals, chandle_return),
             Self::Process(process) => process.validate(model, formals),
+            Self::ContainerElement {
+                container,
+                indices,
+                key,
+                ..
+            } => {
+                let Some(container) = model.containers.get(*container) else {
+                    return Err(super::IrValidationError::new(
+                        "container element",
+                        "container index is out of bounds",
+                    ));
+                };
+                let slot = super::IrValueSlot::Element {
+                    indices: indices.clone(),
+                    key: key.as_deref().cloned(),
+                };
+                slot.element(container, true, None, model).map(|_| ())
+            }
             Self::QueuePop { container, .. } => {
                 if !model.containers.get(*container).is_some_and(|container| {
                     container.element.is_handle()
@@ -1992,6 +2020,12 @@ impl IrChandleExpr {
             Self::EventObject(event) => event.expressions(visit),
             Self::Mailbox(mailbox) => mailbox.expressions(visit),
             Self::Process(process) => process.expressions(visit),
+            Self::ContainerElement { indices, key, .. } => {
+                indices.iter().for_each(&mut *visit);
+                if let Some(key) = key {
+                    key.expressions(visit);
+                }
+            }
             _ => {}
         }
     }
@@ -2021,6 +2055,12 @@ impl IrChandleExpr {
             Self::EventObject(event) => event.expressions_mut(visit),
             Self::Mailbox(mailbox) => mailbox.expressions_mut(visit),
             Self::Process(process) => process.expressions_mut(visit),
+            Self::ContainerElement { indices, key, .. } => {
+                indices.iter_mut().for_each(&mut *visit);
+                if let Some(key) = key {
+                    key.expressions_mut(visit);
+                }
+            }
             _ => {}
         }
     }

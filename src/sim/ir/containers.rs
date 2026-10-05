@@ -599,6 +599,134 @@ pub enum IrContainerStmt {
         container: usize,
         key: IrStringExpr,
     },
+    /// Copy a whole record/fixed-array element from a native value root of
+    /// the element's type into `slot` (SV 7.5-7.10 value semantics; the root
+    /// stays unchanged). Reachable slots: an element, push or insert.
+    SetValue {
+        container: usize,
+        slot: IrValueSlot,
+        value: usize,
+    },
+    /// Copy an element (or the Table 7-1 default for a missing one) into a
+    /// native value root; pop slots also remove it.
+    GetValue {
+        container: usize,
+        slot: IrValueSlot,
+        value: usize,
+    },
+}
+
+/// Where a whole-element value transfer reads or writes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrValueSlot {
+    /// One element: integral indices through nested containers, or a key of
+    /// a string-indexed associative array.
+    Element {
+        indices: Vec<IrExpr>,
+        key: Option<IrStringExpr>,
+    },
+    PushFront,
+    PushBack,
+    Insert(IrExpr),
+    PopFront,
+    PopBack,
+}
+
+impl IrValueSlot {
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        match self {
+            Self::Element { indices, key } => {
+                indices.iter().for_each(&mut *visit);
+                if let Some(key) = key {
+                    key.expressions(visit);
+                }
+            }
+            Self::Insert(index) => visit(index),
+            Self::PushFront | Self::PushBack | Self::PopFront | Self::PopBack => {}
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        match self {
+            Self::Element { indices, key } => {
+                indices.iter_mut().for_each(&mut *visit);
+                if let Some(key) = key {
+                    key.expressions_mut(visit);
+                }
+            }
+            Self::Insert(index) => visit(index),
+            Self::PushFront | Self::PushBack | Self::PopFront | Self::PopBack => {}
+        }
+    }
+
+    /// Validate the slot against `container` for a write (`SetValue`) or a
+    /// read (`GetValue`), returning the element shape it transfers.
+    pub(in crate::sim) fn element<'a>(
+        &self,
+        container: &'a IrContainer,
+        write: bool,
+        string_return: Option<bool>,
+        model: &super::IrModel,
+    ) -> Result<&'a IrContainerElement, IrValidationError> {
+        let queue = matches!(container.kind, IrContainerKind::Queue { .. });
+        let string_keyed = matches!(
+            container.kind,
+            IrContainerKind::Associative {
+                key: IrAssocKey::String
+            }
+        );
+        let depth = match self {
+            Self::Element { indices, key } => {
+                if let Some(key) = key {
+                    if !string_keyed || !indices.is_empty() {
+                        return Err(IrValidationError::new(
+                            "container value",
+                            "a string key selects one element of a string-keyed array",
+                        ));
+                    }
+                    key.validate(model, string_return)?;
+                    1
+                } else {
+                    if string_keyed || indices.is_empty() || indices.iter().any(IrExpr::is_real) {
+                        return Err(IrValidationError::new(
+                            "container value",
+                            "element indices must be integral and match the key kind",
+                        ));
+                    }
+                    indices.len()
+                }
+            }
+            Self::PushFront | Self::PushBack | Self::Insert(_) if write && queue => {
+                if matches!(self, Self::Insert(index) if index.is_real()) {
+                    return Err(IrValidationError::new(
+                        "container value",
+                        "queue insert index must be integral",
+                    ));
+                }
+                1
+            }
+            Self::PopFront | Self::PopBack if !write && queue => 1,
+            _ => {
+                return Err(IrValidationError::new(
+                    "container value",
+                    "queue slot is not valid for this transfer direction or container",
+                ))
+            }
+        };
+        let element = nested_element(container, depth).ok_or_else(|| {
+            IrValidationError::new("container value", "slot crosses a non-container element")
+        })?;
+        if !matches!(
+            element,
+            IrContainerElement::Aggregate { .. } | IrContainerElement::FixedArray { .. }
+        ) {
+            return Err(IrValidationError::new(
+                "container value",
+                "whole-value transfers apply to record and fixed-array elements",
+            ));
+        }
+        Ok(element)
+    }
 }
 
 pub(super) fn validate_stream_selector(
@@ -1692,6 +1820,34 @@ impl IrContainerStmt {
                 string_container(model, *container)?;
                 key.validate(model, string_return)
             }
+            Self::SetValue {
+                container,
+                slot,
+                value,
+            }
+            | Self::GetValue {
+                container,
+                slot,
+                value,
+            } => {
+                let container = container_kind(model, *container, None)?;
+                let element = slot.element(
+                    container,
+                    matches!(self, Self::SetValue { .. }),
+                    string_return,
+                    model,
+                )?;
+                let root = model.native_values.get(*value).ok_or_else(|| {
+                    IrValidationError::new("container value", "native value is out of bounds")
+                })?;
+                if model.native_types.get(root.ty) != Some(element) {
+                    return Err(IrValidationError::new(
+                        "container value",
+                        "native value type differs from the element type",
+                    ));
+                }
+                Ok(())
+            }
             Self::QueuePushFront { container, .. }
             | Self::QueuePushBack { container, .. }
             | Self::QueueInsert { container, .. } => {
@@ -1850,6 +2006,7 @@ impl IrContainerStmt {
             Self::QueueInsertContainer { index, .. } => visit(index),
             Self::DeleteIndex { index, .. } => visit(index),
             Self::DeleteString { key, .. } => key.expressions(visit),
+            Self::SetValue { slot, .. } | Self::GetValue { slot, .. } => slot.expressions(visit),
             Self::AssignValues { values, .. } | Self::AssignRealValues { values, .. } => {
                 values.iter().for_each(visit)
             }
@@ -1936,6 +2093,9 @@ impl IrContainerStmt {
             Self::QueueInsertContainer { index, .. } => visit(index),
             Self::DeleteIndex { index, .. } => visit(index),
             Self::DeleteString { key, .. } => key.expressions_mut(visit),
+            Self::SetValue { slot, .. } | Self::GetValue { slot, .. } => {
+                slot.expressions_mut(visit)
+            }
             Self::AssignValues { values, .. } | Self::AssignRealValues { values, .. } => {
                 values.iter_mut().for_each(visit)
             }

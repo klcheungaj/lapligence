@@ -287,6 +287,11 @@ impl Validator<'_> {
             }
             IrStmt::Container(operation) => {
                 operation.validate(self.model, self.string_return.get())?;
+                if let IrContainerStmt::SetValue { value, .. }
+                | IrContainerStmt::GetValue { value, .. } = operation.as_ref()
+                {
+                    self.validate_native_value_use(*value, path)?;
+                }
                 let mut result = Ok(());
                 operation.expressions(&mut |child| {
                     result = result

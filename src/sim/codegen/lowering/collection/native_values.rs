@@ -14,6 +14,7 @@ use crate::sim::ir::{
 };
 
 mod conditionals;
+mod elements;
 
 /// Largest number of leaves of one native record. Leaf-wise transfers to and
 /// from flattened module storage emit one operation per leaf, so larger
@@ -628,10 +629,11 @@ impl Codegen<'_> {
     /// Packed or real read of a native leaf; `None` for other expressions.
     pub(in super::super) fn native_leaf_expr(
         &mut self,
+        path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
         let Some((value, leaf)) = self.native_leaf_of(node)? else {
-            return Ok(None);
+            return self.element_leaf_read(path, node);
         };
         Ok(match self.native_leaf_read(value, &leaf) {
             LeafValue::Packed(value) | LeafValue::Real(value) => Some(value),
@@ -642,10 +644,11 @@ impl Codegen<'_> {
     /// Packed or real target of a native leaf; `None` for other lvalues.
     pub(in super::super) fn native_leaf_target(
         &mut self,
+        path: &str,
         node: NodeId,
     ) -> Result<Option<IrLhs>, String> {
         let Some((value, leaf)) = self.native_leaf_of(node)? else {
-            return Ok(None);
+            return self.element_leaf_target(path, node);
         };
         Ok(matches!(
             leaf.ty,
@@ -657,11 +660,24 @@ impl Codegen<'_> {
     /// Access name of a native string or chandle leaf, for reads and writes.
     pub(in super::super) fn native_object_leaf(
         &mut self,
+        path: &str,
         node: NodeId,
         string: bool,
     ) -> Result<Option<String>, String> {
         let Some((value, leaf)) = self.native_leaf_of(node)? else {
-            return Ok(None);
+            // Reads of element strings and handles resolve earlier (see
+            // `lower_string`/`lower_chandle`); this path names write targets.
+            let wanted = if string {
+                IrClassFieldType::String
+            } else {
+                IrClassFieldType::Chandle
+            };
+            if self.element_leaf_kind(node) != Some(wanted) {
+                return Ok(None);
+            }
+            return Ok(self
+                .element_leaf_symbol(path, node, true)?
+                .map(|(name, _)| name));
         };
         let matches = if string {
             leaf.ty == IrClassFieldType::String
@@ -677,6 +693,7 @@ impl Codegen<'_> {
             .ok()
             .flatten()
             .map(|(_, leaf)| leaf.ty)
+            .or_else(|| self.element_leaf_kind(node))
     }
 
     /// Whether an lvalue writes native subroutine storage.
@@ -1200,6 +1217,11 @@ impl Codegen<'_> {
         if self.native_record_conditional(source) {
             return self.native_conditional_into(path, target, descriptor, source, nba);
         }
+        if !nba {
+            if let Some(statement) = self.container_record_into(path, target, source)? {
+                return Ok(statement);
+            }
+        }
         let (source, _) = self
             .native_endpoint(source)?
             .ok_or_else(|| format!("native record assignment in `{path}` has no record source"))?;
@@ -1238,7 +1260,8 @@ impl Codegen<'_> {
             .flatten()
             .is_some()
             || self.native_call_node(rhs)
-            || self.native_record_conditional(self.p30_unwrap_cast(rhs));
+            || self.native_record_conditional(self.p30_unwrap_cast(rhs))
+            || self.is_container_record(rhs);
         if !lhs_native && !rhs_native {
             return Ok(None);
         }

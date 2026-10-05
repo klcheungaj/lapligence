@@ -42,6 +42,34 @@ impl<'a> Codegen<'a> {
         };
         let args = self.container_method_arguments(path, node, receiver)?;
         let with_clause = self.db.method_call_has_with_clause(node);
+        if matches!(
+            self.model.containers[container.ir].element,
+            IrContainerElement::Aggregate { .. } | IrContainerElement::FixedArray { .. }
+        ) && matches!(
+            self.model.containers[container.ir].kind,
+            IrContainerKind::Queue { .. }
+        ) {
+            // Record elements are built in a typed temporary, then copied in.
+            let slot = match (name.as_str(), args.as_slice()) {
+                ("push_front", [value]) => Some((crate::sim::ir::IrValueSlot::PushFront, *value)),
+                ("push_back", [value]) => Some((crate::sim::ir::IrValueSlot::PushBack, *value)),
+                ("insert", [index, value]) => Some((
+                    crate::sim::ir::IrValueSlot::Insert(self.lower_queue_method_index_with_end(
+                        path,
+                        container.ir,
+                        *index,
+                        true,
+                    )?),
+                    *value,
+                )),
+                _ => None,
+            };
+            if let Some((slot, value)) = slot {
+                return self
+                    .lower_container_record_push(path, container.ir, slot, value)
+                    .map(Some);
+            }
+        }
         let operation = match (name.as_str(), args.as_slice()) {
             ("delete", []) => IrContainerStmt::Delete(container.ir),
             ("delete", [index]) => match self.model.containers[container.ir].kind {

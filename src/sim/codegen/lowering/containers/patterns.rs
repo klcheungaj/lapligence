@@ -399,7 +399,7 @@ impl<'a> Codegen<'a> {
                             key: IrStringExpr::Literal(bytes),
                             value: self.lower_string(path, value)?,
                         },
-                        ref element if element.is_handle() => IrContainerStmt::SetStringChandle {
+                        element if element.is_handle() => IrContainerStmt::SetStringChandle {
                             container,
                             key: IrStringExpr::Literal(bytes),
                             value: self.lower_container_handle(path, element, value)?,
@@ -435,7 +435,7 @@ impl<'a> Codegen<'a> {
                             index,
                             value: self.lower_string(path, value)?,
                         },
-                        ref element if element.is_handle() => IrContainerStmt::SetChandleValue {
+                        element if element.is_handle() => IrContainerStmt::SetChandleValue {
                             container,
                             index,
                             value: self.lower_container_handle(path, element, value)?,

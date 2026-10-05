@@ -455,6 +455,53 @@ int llg_queue_value_insert_container(llg_queue_value_array_t* queue,
 int llg_queue_value_insert_container_from_packed(
     llg_queue_value_array_t* queue, sv4_t index, const llg_dyn_array_t* source);
 int llg_queue_value_delete_index(llg_queue_value_array_t* queue, sv4_t index);
+/* Whole elements and in-place members of descriptor-backed containers
+ * (SIM-006). Locators return the element at `indices` (`count` >= 1, nested
+ * through container elements) or NULL for an invalid index or missing key;
+ * `create` inserts a missing associative entry with its initial value, as a
+ * write does (SV 7.8). The pointer is borrowed until the next mutation of
+ * that container; after storing through it, call the matching `touch`.
+ * `llg_value_element_desc` gives the descriptor `count` levels deep. */
+const llg_value_desc_t* llg_value_element_desc(const llg_value_desc_t* element,
+                                               size_t count);
+llg_value_t* llg_dyn_value_element(llg_dyn_value_array_t* array,
+                                   const sv4_t* indices, size_t count);
+llg_value_t* llg_queue_value_element(llg_queue_value_array_t* queue,
+                                     const sv4_t* indices, size_t count);
+llg_value_t* llg_assoc_value_element_integral(llg_assoc_value_t* array,
+                                              const sv4_t* indices,
+                                              size_t count, int create);
+llg_value_t* llg_assoc_value_element_string(llg_assoc_value_t* array,
+                                            const void* key, size_t length,
+                                            int create);
+void llg_dyn_value_touch(llg_dyn_value_array_t* array);
+void llg_queue_value_touch(llg_queue_value_array_t* queue);
+void llg_assoc_value_touch(llg_assoc_value_t* array);
+/* Replace initialized `dst` with a converted copy of `element`, or with the
+ * Table 7-1 default when `element` is NULL. */
+void llg_value_element_read(llg_value_t* dst, const llg_value_t* element);
+/* Whole-element writes borrow `value` and copy it with conversion; they
+ * return 0 without writing for an invalid index (a queue accepts `$+1`). */
+int llg_dyn_value_set_element(llg_dyn_value_array_t* array,
+                              const sv4_t* indices, size_t count,
+                              const llg_value_t* value);
+int llg_queue_value_set_element(llg_queue_value_array_t* queue,
+                                const sv4_t* indices, size_t count,
+                                const llg_value_t* value);
+void llg_queue_value_push_value(llg_queue_value_array_t* queue, int back,
+                                const llg_value_t* value);
+int llg_queue_value_insert_value(llg_queue_value_array_t* queue, sv4_t index,
+                                 const llg_value_t* value);
+int llg_assoc_value_set_element_integral(llg_assoc_value_t* array,
+                                         const sv4_t* indices, size_t count,
+                                         const llg_value_t* value);
+int llg_assoc_value_set_element_string(llg_assoc_value_t* array,
+                                       const void* key, size_t length,
+                                       const llg_value_t* value);
+/* Remove an endpoint into initialized `dst` (the default when empty). */
+void llg_queue_value_pop_value(llg_queue_value_array_t* queue, int back,
+                               llg_value_t* dst);
+
 /* Remove the front (`back` == 0) or back element and return it as an
  * independent result: a real, the moved string (into the empty or
  * expression-owned `dst`) or the handle identity. An empty queue yields the

@@ -243,6 +243,7 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
         | IrChandleExpr::QueuePop { .. }
         | IrChandleExpr::Mailbox(_)
         | IrChandleExpr::Process(_)
+        | IrChandleExpr::ContainerElement { .. }
         | IrChandleExpr::InterfaceInstance { .. } => {
             return Err("typed native operations require whole-model ownership emission".to_owned())
         }

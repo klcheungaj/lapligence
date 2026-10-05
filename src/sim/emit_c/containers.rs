@@ -308,6 +308,9 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
 
 pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<String, String> {
     Ok(match operation {
+        IrContainerStmt::SetValue { .. } | IrContainerStmt::GetValue { .. } => {
+            return Err("container record values require whole-model ownership emission".into())
+        }
         IrContainerStmt::StreamAssign {
             container,
             source,

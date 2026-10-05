@@ -130,6 +130,11 @@ impl Codegen<'_> {
         if let Some(value) = self.lower_container_chandle_query(path, node)? {
             return Ok(value);
         }
+        if self.element_leaf_kind(node) == Some(IrClassFieldType::Chandle) {
+            if let Some((name, _)) = self.element_leaf_symbol(path, node, false)? {
+                return Ok(IrChandleExpr::LocalRead(name));
+            }
+        }
         if let Some((predicate, then, otherwise)) =
             self.lower_native_conditional_parts(path, node, &chandle_shape())?
         {

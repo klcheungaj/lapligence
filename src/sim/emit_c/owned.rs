@@ -174,6 +174,9 @@ pub(super) struct Frame<'a, 'm> {
     cancellation_points: usize,
     may_disable: HashMap<usize, bool>,
     access_stack: Vec<String>,
+    /// Containers written in place through element-item accesses during the
+    /// current statement; their readers are notified once it completes.
+    pending_touches: Vec<(String, &'static str)>,
     construction_stack: Vec<usize>,
     layout: FrameLayout,
     declarations: Vec<DeferredDeclaration>,
@@ -328,6 +331,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             cancellation_points: 0,
             may_disable: HashMap::new(),
             access_stack: Vec::new(),
+            pending_touches: Vec::new(),
             construction_stack: Vec::new(),
             layout: FrameLayout::with_backend(storage, ctx.value_backend),
             declarations: Vec::new(),

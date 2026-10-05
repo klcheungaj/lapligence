@@ -95,6 +95,21 @@ impl Frame<'_, '_> {
     }
 
     pub(super) fn statement(&mut self, statement: &IrStmt) -> Result<(), String> {
+        let touches = self.pending_touches.len();
+        self.statement_body(statement)?;
+        // Element members written in place are published after the store.
+        let pending = self.pending_touches.split_off(touches);
+        let mut seen = Vec::new();
+        for (container, function) in pending {
+            if !seen.contains(&container) {
+                self.line(format!("{function}(&{container});"));
+                seen.push(container);
+            }
+        }
+        Ok(())
+    }
+
+    fn statement_body(&mut self, statement: &IrStmt) -> Result<(), String> {
         let cancellation_mark = self.cancellation_mark();
         match statement {
             IrStmt::Located { statement, .. } => return self.statement(statement),

@@ -257,7 +257,10 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    pub(super) fn container_element_path(&self, node: NodeId) -> Option<(usize, Vec<NodeId>)> {
+    pub(in super::super) fn container_element_path(
+        &self,
+        node: NodeId,
+    ) -> Option<(usize, Vec<NodeId>)> {
         let (base, indices) = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, vec![*index]),
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if !indices.is_empty() => {
@@ -326,7 +329,10 @@ impl<'a> Codegen<'a> {
         .then_some((container.ir, key))
     }
 
-    pub(super) fn associative_string_element(&self, node: NodeId) -> Option<(usize, NodeId)> {
+    pub(in super::super) fn associative_string_element(
+        &self,
+        node: NodeId,
+    ) -> Option<(usize, NodeId)> {
         let (base, key) = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, *index),
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {
@@ -344,7 +350,7 @@ impl<'a> Codegen<'a> {
         .then_some((container.ir, key))
     }
 
-    pub(super) fn container_element_type(
+    pub(in super::super) fn container_element_type(
         &self,
         container: usize,
         depth: usize,
@@ -359,7 +365,7 @@ impl<'a> Codegen<'a> {
         Some(element)
     }
 
-    pub(super) fn lower_container_path_indices(
+    pub(in super::super) fn lower_container_path_indices(
         &mut self,
         path: &str,
         container: usize,

@@ -8,6 +8,11 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrStringExpr, String> {
+        if self.element_leaf_kind(node) == Some(IrClassFieldType::String) {
+            if let Some((name, _)) = self.element_leaf_symbol(path, node, false)? {
+                return Ok(IrStringExpr::LocalRead(name));
+            }
+        }
         if let Some(target) = self.class_field_string_lvalue(path, node)? {
             return Ok(IrStringExpr::LocalRead(target));
         }

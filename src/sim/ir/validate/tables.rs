@@ -813,9 +813,20 @@ impl Validator<'_> {
                 );
             }
             if !access.item_path.is_empty()
-                && !matches!(access.kind, IrNativeAccessKind::ValueItem { .. })
+                && !matches!(
+                    access.kind,
+                    IrNativeAccessKind::ValueItem { .. } | IrNativeAccessKind::ElementItem { .. }
+                )
             {
                 return self.fail(&path, "only native value items carry an item path");
+            }
+            if matches!(access.receiver, IrChandleExpr::ContainerElement { .. })
+                != matches!(access.kind, IrNativeAccessKind::ElementItem { .. })
+            {
+                return self.fail(
+                    &path,
+                    "container element locators address element items only",
+                );
             }
             match access.kind {
                 IrNativeAccessKind::ClassField { class, field } => {
@@ -837,6 +848,9 @@ impl Validator<'_> {
                     {
                         return self.fail(&path, "interface member reference is out of bounds");
                     }
+                }
+                IrNativeAccessKind::ElementItem { ty } => {
+                    self.validate_element_leaf(&access.receiver, &access.item_path, ty, &path)?;
                 }
                 IrNativeAccessKind::ValueItem { value, ty } => {
                     self.validate_native_leaf(value, &access.item_path, ty, &path)?;
