@@ -168,6 +168,17 @@ resumed-task fixtures run on every backend (set `LLG_TEST_GMP_ROOT` for the GMP
 lane) and after snapshot and Db destruction. Each `neg_2001_*.v` holds one
 later form that must reject under `--edition 2001` and compile under 2009.
 
+RTL-106's mapped-diagnostic and strict-2001 fixtures use
+`-E 'binary(sim_feature_completion) & test(rtl_106::)'`, with
+`test(line_mapped) | test(lint_diagnostics_add)` for the LSP projection.
+Each `neg_*.v` holds one later form (several built by macros) or variable
+driver, rejects under 2001 at an exact `file:line:col` and compiles under 2009;
+`legal_2001.v` executes on every backend (set `LLG_TEST_GMP_ROOT`) in both
+editions. To re-audit the 2001 profile, run every `.v`/`.sv` fixture with
+`llg --edition 2001 --gen-only` and compare the strict-edition diagnostics with
+the previous revision: no fixture accepted before may newly reject unless it is
+language-illegal.
+
 SIM-003's native record fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_003::)'`. Positive call,
 lifetime and sensitivity fixtures run in both optimizer modes on every backend

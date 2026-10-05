@@ -20,6 +20,7 @@ mod tests {
             line: 1,
             col: 1,
             message: "expected a statement".to_owned(),
+            logical: None,
         };
         assert_eq!(user_message(&diagnostic), "expected a statement");
     }

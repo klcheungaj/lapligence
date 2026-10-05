@@ -4,15 +4,17 @@ Rules consume owned `Db`/`DesignModel` through `LintCtx`: no native traversal,
 raw FFI, I/O, `unsafe` or LSP dependencies. The LSP runs lint in `analyze` and
 publishes `source: "llg-lint"`, severity mappings and rule ID as diagnostic code.
 `llg --lint` prints `file:line:col: [SEVERITY] rule: message` and exits 1 on errors
-before codegen.
+before codegen; a `` `line``-mapped position appends `` (`line file:line)`` after
+`col`, and the LSP adds it as related information.
 
 ## API and registry
 
 - `LintRule`: stateless `id()` (stable lowercase-hyphenated), `description()` and
   `check(&LintCtx) -> Vec<LintDiag>`. Per-pass state belongs to `LintCtx<'a>` with
   `db: &'a Db` and `model: &'a DesignModel`.
-- `LintDiag`: rule, Error/Warning/Info severity, optional file, one-based line/col
-  and message. `RuleConfig` defaults to enabled, with no severity override.
+- `LintDiag`: rule, Error/Warning/Info severity, optional file, one-based line/col,
+  message and `logical` (the `` `line``-mapped position). Rules leave `logical`
+  `None`; the registry fills it from the Db source map. `RuleConfig` defaults to enabled, with no severity override.
 - `LintConfig`: private rule map with `new`, `set`, `get`, `is_enabled` and
   `severity`; absent rules retain defaults. `parse_toml` uses no serde/TOML
   dependency and reports line-numbered `Err(Vec<String>)`, retaining valid
@@ -27,6 +29,9 @@ before codegen.
 ```json
 {"diagnostics":[{"rule":"id","severity":"error|warning|info","file":null,"line":3,"col":10,"message":"text"}],"summary":{"errors":0,"warnings":1,"infos":0,"total":1}}
 ```
+
+`"logical_file"` and `"logical_line"` follow `"col"` only when a `` `line``
+directive maps the position.
 
 `file` is an absolute path or null; coordinates stay one-based. Escape quotes,
 backslashes and U+0000..U+001F with JSON escapes (`\b`, `\f`, `\n`, `\r`, `\t`

@@ -73,7 +73,13 @@ pub fn lsp_diagnostics_with_fallback(
             code_description: None,
             source: Some("slang".to_owned()),
             message: llg::core::diagnostics::user_message(d),
-            related_information: None,
+            related_information: d
+                .logical
+                .as_ref()
+                .and_then(|logical| {
+                    super::slang::mapped_origin(path, range, &logical.file, logical.line)
+                })
+                .map(|origin| vec![origin]),
             tags: None,
             data: None,
         });
@@ -100,7 +106,13 @@ pub fn lsp_diagnostics_with_fallback(
             code_description: None,
             source: Some("llg-lint".to_owned()),
             message: d.message.clone(),
-            related_information: None,
+            related_information: d
+                .logical
+                .as_ref()
+                .and_then(|logical| {
+                    super::slang::mapped_origin(path, range, &logical.file, logical.line)
+                })
+                .map(|origin| vec![origin]),
             tags: None,
             data: None,
         });

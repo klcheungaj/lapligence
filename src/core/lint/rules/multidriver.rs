@@ -54,6 +54,7 @@ impl LintRule for MultiDriverRule {
                 let node = db.node(sig);
                 LintDiag {
                     rule: "multi-driver".to_string(),
+                    logical: None,
                     severity: LintSeverity::Warning,
                     file: node.file().map(str::to_owned),
                     line: node.line,

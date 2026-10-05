@@ -32,6 +32,7 @@ impl LintRule for ImplicitNetRule {
             let node = db.node(id);
             out.push(LintDiag {
                 rule: "implicit-net".to_string(),
+                logical: None,
                 severity: LintSeverity::Warning,
                 file: node.file().map(str::to_owned),
                 line: node.line,

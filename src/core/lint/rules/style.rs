@@ -144,6 +144,7 @@ impl LintRule for StyleRule {
 fn diag(message: String, file: Option<String>, line: u32, col: u32) -> LintDiag {
     LintDiag {
         rule: "naming-style".to_string(),
+        logical: None,
         severity: LintSeverity::Info,
         file,
         line,

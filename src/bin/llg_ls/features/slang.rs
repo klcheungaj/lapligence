@@ -29,6 +29,9 @@ pub(super) fn project_snapshot_diagnostics(
         .iter()
         .find(|input| input.is_compilation_unit)
         .or_else(|| inputs.first());
+    let source_map = (!snapshot.line_directives.is_empty())
+        .then(|| llg::core::db::SourceMap::from_snapshot(snapshot).ok())
+        .flatten();
     snapshot
         .diagnostics
         .iter()
@@ -43,7 +46,7 @@ pub(super) fn project_snapshot_diagnostics(
                 DiagnosticProvider::Compilation => "compiler",
                 DiagnosticProvider::Analysis => "analysis",
             };
-            let related_information: Vec<_> = diagnostic
+            let mut related_information: Vec<_> = diagnostic
                 .related
                 .iter()
                 .filter_map(|related| {
@@ -55,6 +58,12 @@ pub(super) fn project_snapshot_diagnostics(
                     })
                 })
                 .collect();
+            if let Some(origin) = source_map.as_ref().and_then(|map| {
+                let logical = map.logical_position(&path, range.start.line.saturating_add(1))?;
+                mapped_origin(&path, range, logical.file, logical.line)
+            }) {
+                related_information.insert(0, origin);
+            }
             let name = if diagnostic.name.is_empty() {
                 format!("{:?}.{}", diagnostic.subsystem, diagnostic.code)
             } else {
@@ -85,6 +94,22 @@ pub(super) fn project_snapshot_diagnostics(
             ))
         })
         .collect()
+}
+
+/// Related information naming the `` `line``-mapped origin (IEEE 1364-2001
+/// 19.7, IEEE 1800-2009 22.12) of a diagnostic. The location stays the
+/// physical buffer range, which is the one an editor can open; the mapped
+/// file need not exist on disk.
+pub(super) fn mapped_origin(
+    path: &str,
+    range: Range,
+    logical_file: &str,
+    logical_line: u64,
+) -> Option<DiagnosticRelatedInformation> {
+    Some(DiagnosticRelatedInformation {
+        location: Location::new(Url::from_file_path(path).ok()?, range),
+        message: format!("`line origin: {logical_file}:{logical_line}"),
+    })
 }
 
 fn project_range(

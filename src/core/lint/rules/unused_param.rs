@@ -60,6 +60,7 @@ impl LintRule for UnusedParameterRule {
                 let node = db.node(*c);
                 out.push(LintDiag {
                     rule: "unused-parameter".to_string(),
+                    logical: None,
                     severity: LintSeverity::Info,
                     file: node.file().map(str::to_owned),
                     line: node.line,
