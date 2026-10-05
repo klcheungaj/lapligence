@@ -52,7 +52,7 @@ fn legal_2001_composition_executes_in_both_editions() {
         for edition in ["2001", "2009"] {
             sim_cli::run_case_with_inputs(
                 SUITE,
-                "legal_2001",
+                "legal_2001.v",
                 &[],
                 include_str!("../fixtures/sim/feature_completion/rtl_106/legal_2001.out"),
                 "llg: $finish at time 10 at tb:120:5\n",
@@ -70,10 +70,22 @@ fn macro_built_later_forms_reject_in_2001() {
     for (fixture, position, label) in [
         ("neg_macro_end_label", "5:3", "end label"),
         ("neg_macro_cast", "4:15", "cast"),
-        ("neg_macro_dot_name", "6:9", "implicit named port connection"),
+        (
+            "neg_macro_dot_name",
+            "6:9",
+            "implicit named port connection",
+        ),
         ("neg_macro_size_dim", "3:15", "unpacked dimension size"),
-        ("neg_macro_empty_call", "6:11", "empty subroutine argument list"),
-        ("neg_macro_empty_task", "3:13", "empty subroutine argument list"),
+        (
+            "neg_macro_empty_call",
+            "6:11",
+            "empty subroutine argument list",
+        ),
+        (
+            "neg_macro_empty_task",
+            "3:13",
+            "empty subroutine argument list",
+        ),
         ("neg_macro_statement_label", "4:5", "statement label"),
         (
             "neg_macro_param_port",
@@ -94,7 +106,7 @@ fn macro_built_later_forms_reject_in_2001() {
     ] {
         sim_cli::reject_case_with_args(
             SUITE,
-            fixture,
+            &format!("{fixture}.v"),
             &format!("{fixture}.v:{position} `{label}` {LATER}"),
             &["--edition", "2001"],
         );
@@ -112,14 +124,26 @@ fn keyword_free_later_forms_reject_in_2001() {
             "1:14",
             "parameter port without the parameter keyword",
         ),
-        ("neg_nested_assignment", "5:10", "assignment within an expression"),
-        ("neg_unnamed_generate_loop", "5:35", "unnamed generate loop block"),
+        (
+            "neg_nested_assignment",
+            "5:10",
+            "assignment within an expression",
+        ),
+        (
+            "neg_unnamed_generate_loop",
+            "5:35",
+            "unnamed generate loop block",
+        ),
         ("neg_module_lifetime", "1:8", "module lifetime"),
-        ("neg_argument_direction", "2:22", "argument without a direction"),
+        (
+            "neg_argument_direction",
+            "2:22",
+            "argument without a direction",
+        ),
     ] {
         sim_cli::reject_case_with_args(
             SUITE,
-            fixture,
+            &format!("{fixture}.v"),
             &format!("{fixture}.v:{position} `{label}` {LATER}"),
             &["--edition", "2001"],
         );
@@ -131,14 +155,22 @@ fn keyword_free_later_forms_reject_in_2001() {
 #[test]
 fn variable_drivers_reject_in_2001() {
     for (fixture, position, label) in [
-        ("neg_assign_reg", "3:10", "continuous assignment to a variable"),
-        ("neg_output_reg", "7:19", "output port connected to a variable"),
+        (
+            "neg_assign_reg",
+            "3:10",
+            "continuous assignment to a variable",
+        ),
+        (
+            "neg_output_reg",
+            "7:19",
+            "output port connected to a variable",
+        ),
         ("neg_gate_reg", "4:9", "gate output connected to a variable"),
         ("neg_input_reg", "2:9", "variable input or inout port"),
     ] {
         sim_cli::reject_case_with_args(
             SUITE,
-            fixture,
+            &format!("{fixture}.v"),
             &format!("{fixture}.v:{position} `{label}` {LATER}"),
             &["--edition", "2001"],
         );
@@ -206,7 +238,7 @@ fn frontend_diagnostics_append_the_line_mapped_position() {
     }
     sim_cli::reject_case_with_args(
         SUITE,
-        "neg_macro_line",
+        "neg_macro_line.v",
         &format!("neg_macro_line.v:6:3 (`line orig_rtl.v:72) `end label` {LATER}"),
         &["--edition", "2001"],
     );
@@ -233,7 +265,7 @@ fn lint_findings_append_the_line_mapped_position() {
     for edition in ["2001", "2009"] {
         let output = sim_cli::invoke_with_env(
             SUITE,
-            "line_lint",
+            "line_lint.v",
             true,
             &["--edition", edition, "--lint"],
             &[],
@@ -243,13 +275,11 @@ fn lint_findings_append_the_line_mapped_position() {
         assert_eq!(output.status.code(), Some(0), "{stderr}");
         assert_eq!(String::from_utf8_lossy(&output.stdout), "y=1\n");
         assert!(
-            stderr.contains(
-                "line_lint.v:6:5 (`line orig_lint.v:31): [WARNING] incomplete-case:"
-            ),
+            stderr.contains("line_lint.v:6:5 (`line orig_lint.v:31): [WARNING] incomplete-case:"),
             "{stderr}"
         );
     }
-    let output = sim_cli::invoke_with_env(SUITE, "line_lint", true, &["--lint-json"], &[], &[]);
+    let output = sim_cli::invoke_with_env(SUITE, "line_lint.v", true, &["--lint-json"], &[], &[]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("\"logical_file\": \"orig_lint.v\",\n      \"logical_line\": 31,"),

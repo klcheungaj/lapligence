@@ -182,22 +182,27 @@ fn line_mapped_frontend_diagnostics_add_their_origin_as_related_information() {
     };
     std::env::set_current_dir(&dir).expect("chdir to temp dir");
     let sv = dir.join("mapped.sv");
-    // Physical line 3 is logical orig.sv:40, so physical line 5 is 42.
+    // The directive on line 2 makes physical line 3 orig.sv:40, so line 5 is 42.
     std::fs::write(
         &sv,
         "module top;\n`line 40 \"orig.sv\" 0\n  logic a;\n  initial begin\n    a = undefined_name;\n  end\nendmodule\n",
     )
     .expect("write design");
     let v = dir.join("mapped.v");
-    // Physical line 3 is logical gen.v:100; the later form is on line 4.
+    // The directive on line 3 makes physical line 4, the later form, gen.v:100.
     std::fs::write(
         &v,
         "module top;\n  reg r;\n`line 100 \"gen.v\" 0\n  assign r = 1'b1;\nendmodule\n",
     )
     .expect("write design");
     for (file, edition, expected_line, origin) in [
-        (&sv, compile::LanguageEdition::SystemVerilog2009, 4, "orig.sv:42"),
-        (&v, compile::LanguageEdition::Verilog2001, 3, "gen.v:101"),
+        (
+            &sv,
+            compile::LanguageEdition::SystemVerilog2009,
+            4,
+            "orig.sv:42",
+        ),
+        (&v, compile::LanguageEdition::Verilog2001, 3, "gen.v:100"),
     ] {
         let path = file.to_string_lossy().into_owned();
         let a = analyze(&CompileOpts {
