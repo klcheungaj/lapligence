@@ -1046,18 +1046,21 @@ fn render_model(
                 function: index,
                 helper,
             };
-            if let Some(artifact) = coroutine_branches.get(&owner) {
-                out.push_str(&artifact.source);
+            if let Some(artifact) = coroutine_branches.get_mut(&owner) {
+                out.push_str(&std::mem::take(&mut artifact.source));
             } else {
                 out.push_str(&super::owned::model::pre_function(&ctx, pre)?);
             }
         }
-        if let Some(artifact) = coroutine_functions.get(&index) {
-            out.push_str(&artifact.source);
-        } else if let Some(artifact) = recursive_functions.get(&index) {
-            out.push_str(&artifact.source);
+        if let Some(artifact) = coroutine_functions.get_mut(&index) {
+            out.push_str(&std::mem::take(&mut artifact.source));
+        } else if let Some(artifact) = recursive_functions.get_mut(&index) {
+            out.push_str(&std::mem::take(&mut artifact.source));
         } else {
-            out.push_str(&plain_functions[&index]);
+            let source = plain_functions
+                .remove(&index)
+                .ok_or_else(|| format!("missing rendered function {}", f.c_name))?;
+            out.push_str(&source);
         }
     }
     render_virtual_interface_call_bodies(model, &mut out);
@@ -1071,18 +1074,28 @@ fn render_model(
                 process: executable.semantic_process,
                 helper,
             };
-            if let Some(artifact) = coroutine_branches.get(&owner) {
-                out.push_str(&artifact.source);
+            if let Some(artifact) = coroutine_branches.get_mut(&owner) {
+                out.push_str(&std::mem::take(&mut artifact.source));
             } else {
                 out.push_str(&super::owned::model::pre_function(&ctx, pre)?);
             }
         }
-        if let Some(artifact) = &coroutine_processes[index] {
-            out.push_str(&artifact.source);
+        if let Some(artifact) = &mut coroutine_processes[index] {
+            out.push_str(&std::mem::take(&mut artifact.source));
         } else {
             out.push_str(&super::owned::model::process(&ctx, p, executable)?);
         }
     }
+    // Every body has been moved into the model text; release the artifacts
+    // and their frame layouts before the remaining sections and the
+    // identifier pass.
+    drop((
+        coroutine_functions,
+        recursive_functions,
+        coroutine_processes,
+        coroutine_branches,
+        plain_functions,
+    ));
     out.push_str(&sharing.bodies);
     out.push_str(&super::owned::assertions::callbacks(
         model,
