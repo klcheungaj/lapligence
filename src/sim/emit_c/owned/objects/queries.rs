@@ -106,7 +106,9 @@ impl Frame<'_, '_> {
         }
         match &query.target {
             IrArrayQueryTarget::Container { container, .. } => {
-                let container = self.ctx.model.containers[*container].clone();
+                let container_name = self.container_name(*container)?;
+                let mut container = self.ctx.model.containers[*container].clone();
+                container.c_name = container_name;
                 let name = &container.c_name;
                 let generic = if container.element.is_packed() {
                     ""

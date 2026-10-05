@@ -44,6 +44,9 @@ pub enum IrContainerElement {
     },
 }
 
+/// `IrContainerElement::Opaque` kind of a built-in `process` class handle.
+pub const PROCESS_ELEMENT_KIND: &str = "Process";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IrContainerMember {
     pub name: String,
@@ -117,6 +120,33 @@ impl IrContainerElement {
 
     pub fn is_chandle(&self) -> bool {
         matches!(self, Self::Chandle)
+    }
+
+    pub fn is_event(&self) -> bool {
+        matches!(self, Self::Event)
+    }
+
+    /// Handles lowered as ordinary chandle-typed expressions: chandles and
+    /// class-like object handles (class, semaphore, mailbox, virtual
+    /// interface). Events keep their own handle lowering.
+    pub fn is_object_handle(&self) -> bool {
+        match self {
+            Self::Chandle => true,
+            Self::Opaque { kind, .. } => kind != PROCESS_ELEMENT_KIND,
+            _ => false,
+        }
+    }
+
+    /// `process` handles: identities that keep a reference count.
+    pub fn is_process(&self) -> bool {
+        matches!(self, Self::Opaque { kind, .. } if kind == PROCESS_ELEMENT_KIND)
+    }
+
+    /// Elements stored as one pointer-sized identity: borrowed chandles,
+    /// event synchronization objects and class-like object handles. Copies
+    /// share the referenced object (SV 6.17, 8.4); none is deep-copied.
+    pub fn is_handle(&self) -> bool {
+        matches!(self, Self::Chandle | Self::Event | Self::Opaque { .. })
     }
 
     /// Assignment compatibility for container element values. Integral
@@ -199,6 +229,37 @@ pub struct IrContainer {
     /// The main initializer allocates this many null/default elements before
     /// any process can assign or read one.
     pub initial_size: Option<u64>,
+    /// Per-activation subroutine storage: a formal, result, automatic local
+    /// or call temporary. It is created by [`IrContainerStmt::Declare`] (or
+    /// bound to a container formal), owned by the enclosing lexical value
+    /// scope and has no model-global declaration or change dependencies.
+    pub activation: bool,
+    /// Instance property storage of class `.0`, field `.1`: one container
+    /// per object, reached through the receiver of the enclosing method.
+    pub class_field: Option<(usize, usize)>,
+}
+
+impl IrContainer {
+    /// Whether this container is one model-global variable with change
+    /// dependencies (neither activation nor per-object storage).
+    pub fn is_global_storage(&self) -> bool {
+        !self.activation && self.class_field.is_none()
+    }
+
+    /// Whether `other` uses the same runtime storage type: the same container
+    /// kind (queue bounds aside), associative key and element shape.
+    pub fn same_storage_type(&self, other: &Self) -> bool {
+        let kind = match (&self.kind, &other.kind) {
+            (IrContainerKind::Dynamic, IrContainerKind::Dynamic)
+            | (IrContainerKind::Queue { .. }, IrContainerKind::Queue { .. }) => true,
+            (
+                IrContainerKind::Associative { key: left },
+                IrContainerKind::Associative { key: right },
+            ) => left == right,
+            _ => false,
+        };
+        kind && self.element == other.element
+    }
 }
 
 /// One bound of a queue slice. `$` is kept distinct from an ordinary
@@ -287,6 +348,12 @@ pub enum IrContainerExpr {
         container: usize,
         indices: Vec<IrExpr>,
     },
+    /// `size()` of a nested container element selected by integral
+    /// indices; a missing element has size 0.
+    NestedSize {
+        container: usize,
+        indices: Vec<IrExpr>,
+    },
     GetString {
         container: usize,
         key: IrStringExpr,
@@ -372,6 +439,9 @@ pub enum IrContainerMethod {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrContainerStmt {
+    /// Create one empty activation container ([`IrContainer::activation`])
+    /// owned by the enclosing lexical value scope.
+    Declare(usize),
     /// Unstream a packed value into a packed-element dynamic array or queue.
     /// Selector expressions are retained so the runtime can resize the target
     /// and update the requested logical elements after evaluating them once.
@@ -569,6 +639,134 @@ pub enum IrContainerStmt {
         container: usize,
         key: IrStringExpr,
     },
+    /// Copy a whole record/fixed-array element from a native value root of
+    /// the element's type into `slot` (SV 7.5-7.10 value semantics; the root
+    /// stays unchanged). Reachable slots: an element, push or insert.
+    SetValue {
+        container: usize,
+        slot: IrValueSlot,
+        value: usize,
+    },
+    /// Copy an element (or the Table 7-1 default for a missing one) into a
+    /// native value root; pop slots also remove it.
+    GetValue {
+        container: usize,
+        slot: IrValueSlot,
+        value: usize,
+    },
+}
+
+/// Where a whole-element value transfer reads or writes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrValueSlot {
+    /// One element: integral indices through nested containers, or a key of
+    /// a string-indexed associative array.
+    Element {
+        indices: Vec<IrExpr>,
+        key: Option<IrStringExpr>,
+    },
+    PushFront,
+    PushBack,
+    Insert(IrExpr),
+    PopFront,
+    PopBack,
+}
+
+impl IrValueSlot {
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        match self {
+            Self::Element { indices, key } => {
+                indices.iter().for_each(&mut *visit);
+                if let Some(key) = key {
+                    key.expressions(visit);
+                }
+            }
+            Self::Insert(index) => visit(index),
+            Self::PushFront | Self::PushBack | Self::PopFront | Self::PopBack => {}
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        match self {
+            Self::Element { indices, key } => {
+                indices.iter_mut().for_each(&mut *visit);
+                if let Some(key) = key {
+                    key.expressions_mut(visit);
+                }
+            }
+            Self::Insert(index) => visit(index),
+            Self::PushFront | Self::PushBack | Self::PopFront | Self::PopBack => {}
+        }
+    }
+
+    /// Validate the slot against `container` for a write (`SetValue`) or a
+    /// read (`GetValue`), returning the element shape it transfers.
+    pub(in crate::sim) fn element<'a>(
+        &self,
+        container: &'a IrContainer,
+        write: bool,
+        string_return: Option<bool>,
+        model: &super::IrModel,
+    ) -> Result<&'a IrContainerElement, IrValidationError> {
+        let queue = matches!(container.kind, IrContainerKind::Queue { .. });
+        let string_keyed = matches!(
+            container.kind,
+            IrContainerKind::Associative {
+                key: IrAssocKey::String
+            }
+        );
+        let depth = match self {
+            Self::Element { indices, key } => {
+                if let Some(key) = key {
+                    if !string_keyed || !indices.is_empty() {
+                        return Err(IrValidationError::new(
+                            "container value",
+                            "a string key selects one element of a string-keyed array",
+                        ));
+                    }
+                    key.validate(model, string_return)?;
+                    1
+                } else {
+                    if string_keyed || indices.is_empty() || indices.iter().any(IrExpr::is_real) {
+                        return Err(IrValidationError::new(
+                            "container value",
+                            "element indices must be integral and match the key kind",
+                        ));
+                    }
+                    indices.len()
+                }
+            }
+            Self::PushFront | Self::PushBack | Self::Insert(_) if write && queue => {
+                if matches!(self, Self::Insert(index) if index.is_real()) {
+                    return Err(IrValidationError::new(
+                        "container value",
+                        "queue insert index must be integral",
+                    ));
+                }
+                1
+            }
+            Self::PopFront | Self::PopBack if !write && queue => 1,
+            _ => {
+                return Err(IrValidationError::new(
+                    "container value",
+                    "queue slot is not valid for this transfer direction or container",
+                ))
+            }
+        };
+        let element = nested_element(container, depth).ok_or_else(|| {
+            IrValidationError::new("container value", "slot crosses a non-container element")
+        })?;
+        if !matches!(
+            element,
+            IrContainerElement::Aggregate { .. } | IrContainerElement::FixedArray { .. }
+        ) {
+            return Err(IrValidationError::new(
+                "container value",
+                "whole-value transfers apply to record and fixed-array elements",
+            ));
+        }
+        Ok(element)
+    }
 }
 
 pub(super) fn validate_stream_selector(
@@ -758,6 +956,27 @@ impl IrContainerExpr {
                 }
                 return Ok(());
             }
+            Self::NestedSize { container, indices } => {
+                let container = container_kind(model, *container, None)?;
+                if matches!(
+                    container.kind,
+                    IrContainerKind::Associative {
+                        key: IrAssocKey::String
+                    }
+                ) || indices.is_empty()
+                    || indices.iter().any(IrExpr::is_real)
+                    || !matches!(
+                        nested_element(container, indices.len()),
+                        Some(IrContainerElement::Container { .. })
+                    )
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "nested size requires integral indices selecting a container element",
+                    ));
+                }
+                return Ok(());
+            }
             Self::GetNestedReal { container, indices } => {
                 let container = container_kind(model, *container, None)?;
                 if matches!(
@@ -933,9 +1152,9 @@ impl IrContainerExpr {
             Self::Get { index, .. }
             | Self::GetReal { index, .. }
             | Self::Exists { key: index, .. } => visit(index),
-            Self::GetNested { indices, .. } | Self::GetNestedReal { indices, .. } => {
-                indices.iter().for_each(visit)
-            }
+            Self::GetNested { indices, .. }
+            | Self::GetNestedReal { indices, .. }
+            | Self::NestedSize { indices, .. } => indices.iter().for_each(visit),
             Self::GetString { key, .. }
             | Self::GetStringReal { key, .. }
             | Self::ExistsString { key, .. } => key.expressions(visit),
@@ -953,9 +1172,9 @@ impl IrContainerExpr {
             Self::Get { index, .. }
             | Self::GetReal { index, .. }
             | Self::Exists { key: index, .. } => visit(index),
-            Self::GetNested { indices, .. } | Self::GetNestedReal { indices, .. } => {
-                indices.iter_mut().for_each(visit)
-            }
+            Self::GetNested { indices, .. }
+            | Self::GetNestedReal { indices, .. }
+            | Self::NestedSize { indices, .. } => indices.iter_mut().for_each(visit),
             Self::GetString { key, .. }
             | Self::GetStringReal { key, .. }
             | Self::ExistsString { key, .. } => key.expressions_mut(visit),
@@ -1170,7 +1389,11 @@ impl IrContainerStmt {
                     IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
                 ) || !(container.element.is_packed()
                     || (callback.is_none()
-                        && matches!(container.element, IrContainerElement::Real { .. })))
+                        && (matches!(container.element, IrContainerElement::Real { .. })
+                            || matches!(
+                                method,
+                                IrContainerMethod::Reverse | IrContainerMethod::Shuffle
+                            ))))
                 {
                     return Err(IrValidationError::new(
                         "container",
@@ -1309,7 +1532,7 @@ impl IrContainerStmt {
                         "chandle value assignment requires a dynamic array or queue",
                     ));
                 }
-                if !container.element.is_chandle() {
+                if !container.element.is_handle() {
                     return Err(IrValidationError::new(
                         "container",
                         "chandle value assignment requires a chandle container element type",
@@ -1393,7 +1616,7 @@ impl IrContainerStmt {
                 container, index, ..
             } => {
                 let container = container_kind(model, *container, None)?;
-                if index.is_real() || !container.element.is_chandle() {
+                if index.is_real() || !container.element.is_handle() {
                     return Err(IrValidationError::new(
                         "container",
                         "chandle container write requires an integral index and chandle element type",
@@ -1572,7 +1795,7 @@ impl IrContainerStmt {
             }
             Self::SetDefaultChandle { container, .. } => {
                 let container = container_kind(model, *container, Some("associative"))?;
-                if !container.element.is_chandle() {
+                if !container.element.is_handle() {
                     return Err(IrValidationError::new(
                         "container",
                         "chandle associative default requires a chandle element type",
@@ -1582,6 +1805,15 @@ impl IrContainerStmt {
             }
             Self::ResetDefault(container) => {
                 container_kind(model, *container, Some("associative")).map(|_| ())
+            }
+            Self::Declare(container) => {
+                if !container_kind(model, *container, None)?.activation {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "only activation containers have lexical declarations",
+                    ));
+                }
+                Ok(())
             }
             Self::SetString { container, key, .. } => {
                 let container = string_container(model, *container)?;
@@ -1625,7 +1857,7 @@ impl IrContainerStmt {
             }
             Self::SetStringChandle { container, key, .. } => {
                 let container = string_container(model, *container)?;
-                if !container.element.is_chandle() {
+                if !container.element.is_handle() {
                     return Err(IrValidationError::new(
                         "container",
                         "chandle string-keyed associative write requires a chandle element type",
@@ -1658,6 +1890,34 @@ impl IrContainerStmt {
                 string_container(model, *container)?;
                 key.validate(model, string_return)
             }
+            Self::SetValue {
+                container,
+                slot,
+                value,
+            }
+            | Self::GetValue {
+                container,
+                slot,
+                value,
+            } => {
+                let container = container_kind(model, *container, None)?;
+                let element = slot.element(
+                    container,
+                    matches!(self, Self::SetValue { .. }),
+                    string_return,
+                    model,
+                )?;
+                let root = model.native_values.get(*value).ok_or_else(|| {
+                    IrValidationError::new("container value", "native value is out of bounds")
+                })?;
+                if model.native_types.get(root.ty) != Some(element) {
+                    return Err(IrValidationError::new(
+                        "container value",
+                        "native value type differs from the element type",
+                    ));
+                }
+                Ok(())
+            }
             Self::QueuePushFront { container, .. }
             | Self::QueuePushBack { container, .. }
             | Self::QueueInsert { container, .. } => {
@@ -1684,7 +1944,7 @@ impl IrContainerStmt {
             Self::QueuePushFrontChandle { container, .. }
             | Self::QueuePushBackChandle { container, .. } => {
                 let container = container_kind(model, *container, Some("queue"))?;
-                if !container.element.is_chandle() {
+                if !container.element.is_handle() {
                     return Err(IrValidationError::new(
                         "container",
                         "chandle queue operation requires a chandle element type",
@@ -1726,7 +1986,7 @@ impl IrContainerStmt {
                 container, index, ..
             } => {
                 let container = container_kind(model, *container, Some("queue"))?;
-                if !container.element.is_chandle() || index.is_real() {
+                if !container.element.is_handle() || index.is_real() {
                     return Err(IrValidationError::new(
                         "container",
                         "chandle queue insertion requires an integral index and chandle element",
@@ -1816,6 +2076,7 @@ impl IrContainerStmt {
             Self::QueueInsertContainer { index, .. } => visit(index),
             Self::DeleteIndex { index, .. } => visit(index),
             Self::DeleteString { key, .. } => key.expressions(visit),
+            Self::SetValue { slot, .. } | Self::GetValue { slot, .. } => slot.expressions(visit),
             Self::AssignValues { values, .. } | Self::AssignRealValues { values, .. } => {
                 values.iter().for_each(visit)
             }
@@ -1840,7 +2101,8 @@ impl IrContainerStmt {
             | Self::MethodAssign { .. }
             | Self::Method { .. }
             | Self::Delete(_)
-            | Self::ResetDefault(_) => {}
+            | Self::ResetDefault(_)
+            | Self::Declare(_) => {}
         }
     }
 
@@ -1902,6 +2164,9 @@ impl IrContainerStmt {
             Self::QueueInsertContainer { index, .. } => visit(index),
             Self::DeleteIndex { index, .. } => visit(index),
             Self::DeleteString { key, .. } => key.expressions_mut(visit),
+            Self::SetValue { slot, .. } | Self::GetValue { slot, .. } => {
+                slot.expressions_mut(visit)
+            }
             Self::AssignValues { values, .. } | Self::AssignRealValues { values, .. } => {
                 values.iter_mut().for_each(visit)
             }
@@ -1926,7 +2191,8 @@ impl IrContainerStmt {
             | Self::MethodAssign { .. }
             | Self::Method { .. }
             | Self::Delete(_)
-            | Self::ResetDefault(_) => {}
+            | Self::ResetDefault(_)
+            | Self::Declare(_) => {}
         }
     }
 }
@@ -1974,7 +2240,7 @@ pub(super) fn nested_string_element(container: &IrContainer, depth: usize) -> bo
 }
 
 pub(super) fn nested_chandle_element(container: &IrContainer, depth: usize) -> bool {
-    nested_element(container, depth).is_some_and(IrContainerElement::is_chandle)
+    nested_element(container, depth).is_some_and(IrContainerElement::is_handle)
 }
 
 pub(super) fn container_kind<'a>(

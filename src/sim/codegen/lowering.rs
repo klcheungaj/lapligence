@@ -1225,6 +1225,12 @@ struct Codegen<'a> {
     native_layouts: HashMap<NodeId, NativeLayout>,
     /// `(instance, declaration)` → native value storage.
     native_storage: HashMap<(NodeId, NodeId), usize>,
+    /// Container storage of subroutine formals, results and locals, keyed by
+    /// (instance, declaration).
+    subroutine_containers: HashMap<(NodeId, NodeId), usize>,
+    /// Set while lowering a container-result call whose result storage the
+    /// caller appends (`lower_container_result_into`).
+    container_result_call: bool,
     /// Native value → declaration whose layout describes it.
     native_value_layouts: HashMap<usize, NodeId>,
     /// Native declarations of the subroutine instance being lowered.
@@ -1283,6 +1289,10 @@ struct Codegen<'a> {
     /// Dynamic arrays, queues, and associative arrays use owned runtime
     /// storage and never alias fixed unpacked-array storage.
     container_globals: HashMap<NodeId, ContainerInfo>,
+    /// Declared `[left:right]` range of one-dimensional fixed handle arrays
+    /// stored as fixed-size container views, keyed by container index. Their
+    /// HDL indices are normalized to storage positions at every access.
+    fixed_view_ranges: HashMap<usize, (i32, i32)>,
     /// Resizable-container declaration patterns are lowered after all
     /// functions and processes exist, so nonconstant elements use the same
     /// expression/capture machinery as procedural assignments.
@@ -1551,6 +1561,8 @@ impl<'a> Codegen<'a> {
             record_call_result: false,
             native_layouts: HashMap::new(),
             native_storage: HashMap::new(),
+            subroutine_containers: HashMap::new(),
+            container_result_call: false,
             native_value_layouts: HashMap::new(),
             native_roots: HashMap::new(),
             native_leaf_symbols: HashMap::new(),
@@ -1571,6 +1583,7 @@ impl<'a> Codegen<'a> {
             arrays: Vec::new(),
             array_globals: HashMap::new(),
             container_globals: HashMap::new(),
+            fixed_view_ranges: HashMap::new(),
             container_initializers: Vec::new(),
             container_iterator: None,
             sampled_real_signals: std::collections::BTreeSet::new(),

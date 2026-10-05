@@ -422,6 +422,21 @@ Reals stay numeric (SIM-005): real `ref` formals bind the actual's cell
 values lower to per-element expressions (`containers/real_array_values.rs`,
 bounded by `REAL_ARRAY_ELEMENTWISE_LIMIT`). Never encode a real as packed bits
 except as the exact 64-bit image a sampled history transports.
+Resizable containers in subroutine, procedural-block and class storage
+(SIM-006) use `collection/subroutine_containers.rs`: storage per (instance,
+declaration), bound into `container_globals` for the body being lowered, with
+activation containers declared at their declaration statement. A function's
+result container is visible only inside its own body (`container_of`). Calls
+copy container inputs in and outputs back (`IrCallArg::Container`); a pattern
+actual in expression position becomes `ContainerValues`, other non-variable
+actuals need a statement prelude. Record elements go through
+`collection/native_values/elements.rs` (whole-element transfers via native
+temporaries, member leaves via element accesses). A read-modify-write of one
+element (`c[k] op= v`, `c[k]++`) needs an index free of side effects; an
+implicit conversion around a container index is stripped so X/Z bits reach the
+runtime's invalid-index check. Reject `ref` container formals (SIM-008), fork
+capture of activation containers (SIM-010) and handle-qualified class container
+properties (SIM-011) explicitly.
 
 An invalid index reads the element type's uninitialized default (SV 7.4.6), not
 an all-X payload: mixed-state aggregate elements keep two-state leaves at zero

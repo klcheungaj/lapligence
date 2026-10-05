@@ -197,11 +197,12 @@ sv4_t llg_assoc_get_integral(const llg_assoc_t* array, sv4_t key) {
     sv4_t normalized = SV4_EMPTY;
     const sv4_t* result = &array->default_value;
     if (!llg_assoc_normalize_key(array, key, &normalized)) {
-        llg_container_warning("invalid associative-array integral key read");
+        llg_assoc_read_miss(0, array->has_default_value);
     } else {
         int found;
         size_t position = llg_assoc_integral_position(array, normalized, &found);
         if (found) result = &array->entries[position].value;
+        else llg_assoc_read_miss(1, array->has_default_value);
     }
     sv4_destroy(&normalized);
     return sv4_clone(result);
@@ -377,6 +378,7 @@ sv4_t llg_assoc_get_string(const llg_assoc_t* array, const void* key,
     int found;
     size_t position = llg_assoc_string_position(array, key, key_length, &found);
     if (found) return sv4_clone(&array->entries[position].value);
+    llg_assoc_read_miss(1, array->has_default_value);
     return sv4_clone(&array->default_value);
 }
 

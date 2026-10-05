@@ -413,6 +413,7 @@ typedef struct {
     llg_process_handle_t* process_handles; // stable identities for live/exited procs
     llg_semaphore_t* semaphores; // all semaphore objects owned by this run
     llg_mailbox_t* mailboxes;       // runtime-owned mailbox objects
+    struct llg_dynamic_event_t* dynamic_events; // container event objects, owned until cleanup
     llg_fork_group_t* zombie_groups; // completed/killed groups awaiting teardown
     llg_activation_t* activations; // active named block/task invocations
     llg_monitor_state_t mon;   // the active $monitor (at most one)

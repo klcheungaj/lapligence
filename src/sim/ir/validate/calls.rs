@@ -176,6 +176,14 @@ impl Validator<'_> {
             {
                 return self.fail(&arg_path, "native-value formal and operand must match");
             }
+            if formal.container.is_some()
+                != matches!(
+                    arg,
+                    IrCallArg::Container(_) | IrCallArg::ContainerValues { .. }
+                )
+            {
+                return self.fail(&arg_path, "container formal and operand must match");
+            }
             if formal.real_array.is_some()
                 != matches!(
                     arg,
@@ -279,6 +287,44 @@ impl Validator<'_> {
                             .fail(&arg_path, "native leaf operand requires an input formal");
                     }
                     self.validate_native_leaf_values(*ty, leaves, formals, &arg_path)?;
+                }
+                IrCallArg::ContainerValues { container, values } => {
+                    let actual = self.model.containers.get(*container);
+                    let expected = formal
+                        .container
+                        .and_then(|container| self.model.containers.get(container));
+                    let Some((actual, expected)) = actual.zip(expected) else {
+                        return self.fail(&arg_path, "container argument type mismatch");
+                    };
+                    if formal.is_address()
+                        || !actual.activation
+                        || !actual.same_storage_type(expected)
+                        || matches!(actual.kind, IrContainerKind::Associative { .. })
+                        || !(actual.element.is_packed() || actual.element.is_real())
+                    {
+                        return self.fail(
+                            &arg_path,
+                            "container values require a packed or real dynamic array or queue input",
+                        );
+                    }
+                    for (index, value) in values.iter().enumerate() {
+                        self.validate_expr(value, formals, &format!("{arg_path}.values[{index}]"))?;
+                        if value.is_real() != actual.element.is_real() {
+                            return self.fail(&arg_path, "container value kind mismatch");
+                        }
+                    }
+                }
+                IrCallArg::Container(container) => {
+                    let actual = self.model.containers.get(*container);
+                    let expected = formal
+                        .container
+                        .and_then(|container| self.model.containers.get(container));
+                    if formal.is_ref()
+                        || !matches!((actual, expected), (Some(actual), Some(expected))
+                            if actual.same_storage_type(expected))
+                    {
+                        return self.fail(&arg_path, "container argument type mismatch");
+                    }
                 }
                 IrCallArg::NativeValue(value) => {
                     self.validate_native_value_use(*value, &arg_path)?;

@@ -182,6 +182,9 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
             super::objects::render_indices(ctx, indices)?,
             indices.len()
         ),
+        IrContainerExpr::NestedSize { .. } => {
+            return Err("nested container sizes require whole-model ownership emission".into())
+        }
         IrContainerExpr::GetNestedReal { container, indices } => format!(
             "{}(&{}, {}, {})",
             match ctx.model.containers[*container].kind {
@@ -308,6 +311,11 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
 
 pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<String, String> {
     Ok(match operation {
+        IrContainerStmt::SetValue { .. }
+        | IrContainerStmt::GetValue { .. }
+        | IrContainerStmt::Declare(_) => {
+            return Err("container record values require whole-model ownership emission".into())
+        }
         IrContainerStmt::StreamAssign {
             container,
             source,
@@ -1307,8 +1315,12 @@ pub(super) fn value_descriptor_tables(
                 0,
                 0,
             ),
-            IrContainerElement::Opaque { type_id, .. } => (
-                "LLG_VALUE_OPAQUE",
+            IrContainerElement::Opaque { type_id, kind } => (
+                if kind == crate::sim::ir::PROCESS_ELEMENT_KIND {
+                    "LLG_VALUE_PROCESS"
+                } else {
+                    "LLG_VALUE_OPAQUE"
+                },
                 nominal_type_id(*type_id, container_name)?,
                 0,
                 0,
@@ -1344,87 +1356,63 @@ pub(super) fn value_descriptor_tables(
     Ok((out, names[root].clone()))
 }
 
-pub(super) fn declaration_and_init(
+/// Descriptor tables, C storage type and initialization of `target` (an
+/// lvalue of that type) for one container. Initialization leaves change
+/// dependencies and notification unset.
+fn storage_parts(
     container: &crate::sim::ir::IrContainer,
-) -> Result<(String, String), String> {
+    target: &str,
+) -> Result<(String, &'static str, String), String> {
     if !container.element.is_packed() {
         let (descriptor, root) = value_descriptor(container)?;
-        let (declaration, init) = match &container.kind {
+        let (ty, init) = match &container.kind {
             IrContainerKind::Dynamic => (
-                format!(
-                    "{descriptor}static llg_dyn_value_array_t {};\n",
-                    container.c_name
-                ),
-                format!(
-                    "    llg_dyn_value_init(&{}, &{});\n",
-                    container.c_name, root
-                ),
+                "llg_dyn_value_array_t",
+                format!("    llg_dyn_value_init(&{target}, &{root});\n"),
             ),
             IrContainerKind::Queue { maximum_elements } => (
+                "llg_queue_value_array_t",
                 format!(
-                    "{descriptor}static llg_queue_value_array_t {};\n",
-                    container.c_name
-                ),
-                format!(
-                    "    llg_queue_value_init(&{}, &{}, {});\n",
-                    container.c_name,
-                    root,
+                    "    llg_queue_value_init(&{target}, &{root}, {});\n",
                     maximum_elements
                         .map(|value| format!("{value}ULL"))
                         .unwrap_or_else(|| "UINT64_MAX".to_owned())
                 ),
             ),
-            IrContainerKind::Associative { key } => {
-                let init = match key {
-                    IrAssocKey::Wildcard => format!(
-                        "    llg_assoc_value_init_integral(&{}, &{}, 0, 0, 0);\n",
-                        container.c_name, root
-                    ),
+            IrContainerKind::Associative { key } => (
+                "llg_assoc_value_t",
+                match key {
+                    IrAssocKey::Wildcard => {
+                        format!("    llg_assoc_value_init_integral(&{target}, &{root}, 0, 0, 0);\n")
+                    }
                     IrAssocKey::Integral {
                         width,
                         signed,
                         two_state,
                     } => format!(
-                        "    llg_assoc_value_init_integral(&{}, &{}, {}, {}, {});\n",
-                        container.c_name, root, width, *signed as u8, *two_state as u8
+                        "    llg_assoc_value_init_integral(&{target}, &{root}, {}, {}, {});\n",
+                        width, *signed as u8, *two_state as u8
                     ),
-                    IrAssocKey::String => format!(
-                        "    llg_assoc_value_init_string(&{}, &{});\n",
-                        container.c_name, root
-                    ),
-                };
-                (
-                    format!(
-                        "{descriptor}static llg_assoc_value_t {};\n",
-                        container.c_name
-                    ),
-                    init,
-                )
-            }
+                    IrAssocKey::String => {
+                        format!("    llg_assoc_value_init_string(&{target}, &{root});\n")
+                    }
+                },
+            ),
         };
         let init = format!(
-            "    llg_value_desc_check(&{root}, {});\n{init}    {}.contents_dependency = &{}_llg_contents_dep;\n\
-             {}.shape_dependency = &{}_llg_shape_dep;\n\
-             {}.notify = llg_dependency_notify;\n",
+            "    llg_value_desc_check(&{root}, {});\n{init}",
             super::constants::c_string_literal(&container.c_name),
-            container.c_name,
-            container.c_name,
-            container.c_name,
-            container.c_name,
-            container.c_name
         );
-        return Ok((declaration, init));
+        return Ok((descriptor, ty, init));
     }
     let (width, signed, two_state) = container.element.packed().unwrap();
-    let declaration = format!("static {} {};\n", c_type(&container.kind), container.c_name);
     let init = match &container.kind {
         IrContainerKind::Dynamic => format!(
-            "    llg_dyn_init(&{}, {width}, {}, {});\n",
-            container.c_name, signed as u8, two_state as u8
+            "    llg_dyn_init(&{target}, {width}, {}, {});\n",
+            signed as u8, two_state as u8
         ),
         IrContainerKind::Queue { maximum_elements } => format!(
-            "    llg_queue_init(&{}, {width}, {}, {}, {});\n",
-            container.c_name,
+            "    llg_queue_init(&{target}, {width}, {}, {}, {});\n",
             signed as u8,
             two_state as u8,
             maximum_elements
@@ -1433,37 +1421,97 @@ pub(super) fn declaration_and_init(
         ),
         IrContainerKind::Associative { key } => match key {
             IrAssocKey::Wildcard => format!(
-                "    llg_assoc_init_integral(&{}, {width}, {}, {}, 0, 0, 0);\n",
-                container.c_name, signed as u8, two_state as u8
+                "    llg_assoc_init_integral(&{target}, {width}, {}, {}, 0, 0, 0);\n",
+                signed as u8, two_state as u8
             ),
             IrAssocKey::Integral {
                 width: key_width,
                 signed: key_signed,
                 two_state: key_two_state,
             } => format!(
-                "    llg_assoc_init_integral(&{}, {width}, {}, {}, {key_width}, {}, {});\n",
-                container.c_name,
-                signed as u8,
-                two_state as u8,
-                *key_signed as u8,
-                *key_two_state as u8
+                "    llg_assoc_init_integral(&{target}, {width}, {}, {}, {key_width}, {}, {});\n",
+                signed as u8, two_state as u8, *key_signed as u8, *key_two_state as u8
             ),
             IrAssocKey::String => format!(
-                "    llg_assoc_init_string(&{}, {width}, {}, {});\n",
-                container.c_name, signed as u8, two_state as u8
+                "    llg_assoc_init_string(&{target}, {width}, {}, {});\n",
+                signed as u8, two_state as u8
             ),
         },
     };
+    Ok((String::new(), c_type(&container.kind), init))
+}
+
+pub(super) fn declaration_and_init(
+    container: &crate::sim::ir::IrContainer,
+) -> Result<(String, String), String> {
+    if !container.is_global_storage() {
+        // Activation and per-object storage is created by its owner; only
+        // its descriptor tables are model-global.
+        return Ok((
+            storage_parts(container, &container.c_name)?.0,
+            String::new(),
+        ));
+    }
+    let name = &container.c_name;
+    let (descriptor, ty, init) = storage_parts(container, name)?;
+    let declaration = format!("{descriptor}static {ty} {name};\n");
     let init = format!(
-        "{init}    {}.contents_dependency = &{}_llg_contents_dep;\n\
-             {}.shape_dependency = &{}_llg_shape_dep;\n\
-             {}.notify = llg_dependency_notify;\n",
-        container.c_name, container.c_name, container.c_name, container.c_name, container.c_name
+        "{init}    {name}.contents_dependency = &{name}_llg_contents_dep;\n\
+         {name}.shape_dependency = &{name}_llg_shape_dep;\n\
+         {name}.notify = llg_dependency_notify;\n"
     );
     Ok((declaration, init))
 }
 
+/// C storage type, runtime initialization of `target` and the generated
+/// `void (*)(void*)` destroy adapter of an activation container.
+pub(in crate::sim::emit_c) fn activation_storage(
+    container: &crate::sim::ir::IrContainer,
+    target: &str,
+) -> Result<(&'static str, String, String), String> {
+    let (_, ty, init) = storage_parts(container, target)?;
+    Ok((ty, init, format!("llg_owned_drop_{ty}")))
+}
+
+/// Destroy adapters for the activation container storage types of `model`.
+pub(in crate::sim::emit_c) fn activation_drop_helpers(model: &crate::sim::ir::IrModel) -> String {
+    let mut types = std::collections::BTreeSet::new();
+    for container in model
+        .containers
+        .iter()
+        .filter(|container| !container.is_global_storage())
+    {
+        let ty = if container.element.is_packed() {
+            c_type(&container.kind)
+        } else {
+            match container.kind {
+                IrContainerKind::Dynamic => "llg_dyn_value_array_t",
+                IrContainerKind::Queue { .. } => "llg_queue_value_array_t",
+                IrContainerKind::Associative { .. } => "llg_assoc_value_t",
+            }
+        };
+        types.insert(ty);
+    }
+    types
+        .into_iter()
+        .map(|ty| {
+            let destroy = match ty {
+                "llg_dyn_array_t" => "llg_dyn_destroy",
+                "llg_queue_t" => "llg_queue_destroy",
+                "llg_assoc_t" => "llg_assoc_destroy",
+                "llg_dyn_value_array_t" => "llg_dyn_value_destroy",
+                "llg_queue_value_array_t" => "llg_queue_value_destroy",
+                _ => "llg_assoc_value_destroy",
+            };
+            format!("static void llg_owned_drop_{ty}(void* p) {{ {destroy}(({ty}*)p); }}\n")
+        })
+        .collect()
+}
+
 pub(super) fn destroy(container: &crate::sim::ir::IrContainer) -> String {
+    if !container.is_global_storage() {
+        return String::new();
+    }
     if !container.element.is_packed() {
         let function = match &container.kind {
             IrContainerKind::Dynamic => "llg_dyn_value_destroy",

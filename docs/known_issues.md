@@ -375,15 +375,17 @@ that commit; allocation failure is fatal, so no partial image is observed.
 ## Native record values outside by-value subroutine storage
 
 **Status:** open; SIM-003 implements descriptor-backed native records for
-subroutine formals, results and locals.
+subroutine formals, results and locals; SIM-006 stores them as elements of
+queues, dynamic and associative arrays.
 
 ### Symptom
 
 Unpacked records with string, real or chandle leaves copy, compare and cross
-input/output/inout formals and results as runtime values. These legal forms
-still reject with explicit diagnostics: module-level unpacked arrays and
-queue/dynamic/associative containers of native records or strings, their
-slices, a run-time index into a native member array of an automatic record, `ref`
+input/output/inout formals and results as runtime values, and are whole or
+member-addressed elements of resizable containers (SIM-006). These legal forms
+still reject with explicit diagnostics: module-level fixed unpacked arrays of
+native records, their slices, compound or nonblocking writes to a record
+element of a resizable container, a run-time index into a native member array of an automatic record, `ref`
 formals of native record type, nonblocking writes to a static subroutine
 native record (module records and persistent strings/chandles are queued since
 SIM-004), fork-join_none capture of automatic native records,
@@ -405,13 +407,58 @@ run-time item addressing plus per-element change records.
 Run-time item paths and element change records (SIM-007), native ref aliases
 (SIM-008), a root-plus-item-path pending record for static native roots
 (a queued leaf pointer would dangle because a root replaces its leaves on
-assignment), fork capture pins (SIM-010) and
-container formals/locals (SIM-006) reuse the same descriptors and root registry.
+assignment), fork capture pins (SIM-010) reuse the same descriptors and root registry, as
+the SIM-006 container elements and container formals/locals already do.
 
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv` and
 `sim_004/neg_static_native_record_nba.sv`.
+
+## Resizable containers at subroutine, object and nesting boundaries
+
+**Status:** open; SIM-006 implements containers as subroutine formals,
+results and locals, procedural-block locals, class properties, record and
+handle elements and nested containers.
+
+### Symptom
+
+These legal forms reject with explicit diagnostics: `ref` container formals;
+a fork branch reading an automatic container of the enclosing activation; an
+instance container property selected through a handle (`h.q`) rather than
+inside the class's own methods, and an initializer on such a property; a
+container-result call used other than as a whole assignment source or a
+statement (`f()[i]`, `f().size()`); a container argument in expression
+position that is neither a variable of the formal's type nor a packed/real
+assignment pattern; event controls and monitors on subroutine or object
+containers; mutating methods of a nested container element (`q[i].push_back`;
+`q[i].size()` works); a nested element written from a queue or associative
+variable; `foreach` over a container of containers; equality of record
+elements; and compound or nonblocking writes to a record element. Reads of a
+missing nested associative element return the default without the SV 7.8.6
+warning.
+
+### Cause
+
+Container operations name their storage by a container index: model storage
+by a global, activation and object storage by a frame binding. A
+handle-qualified property, a nested element and a call result have no binding
+the operation can name without an addressed-container operand; references
+need retained element cells and fork branches need capture pins. Nested
+storage is a dynamic-array value, so queue methods on it would need dynamic
+array forms of every queue mutation.
+
+### Intended direction
+
+An addressed-container operand (receiver or parent container plus index
+path) for container statements and queries, receiver-qualified class
+properties (SIM-011), retained cells for `ref` (SIM-008), fork capture pins
+(SIM-010) and record-element comparison through the native leaf machinery
+(SIM-007).
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`.
 
 ## Real references and real-array expressions outside stable storage
 

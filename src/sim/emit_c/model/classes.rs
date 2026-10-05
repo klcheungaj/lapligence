@@ -15,6 +15,7 @@ pub(super) fn render_class_decls(model: &IrModel, out: &mut String) {
 typedef struct {
     unsigned kind;
     union { sv4_t packed; double real; llg_string_t string; void* handle; } value;
+    void (*drop)(void*);
 } llg_class_field_t;
 typedef struct llg_class_object {
     uint32_t class_id;
@@ -41,6 +42,7 @@ static void llg_class_storage_destroy(void) {
         for (size_t i = 0; i < object->count; ++i) {
             if (object->fields[i].kind == 0) sv4_destroy(&object->fields[i].value.packed);
             else if (object->fields[i].kind == 2) llg_string_destroy(&object->fields[i].value.string);
+            else if (object->fields[i].kind == 4) { object->fields[i].drop(object->fields[i].value.handle); free(object->fields[i].value.handle); }
         }
         free(object->fields);
         free(object);
@@ -75,6 +77,26 @@ static llg_class_field_t* llg_class_field(void* handle, uint32_t expected, size_
         out.push_str("    object->next = llg_class_objects; llg_class_objects = object;\n");
         for (field_index, field) in class.fields.iter().enumerate() {
             use crate::sim::ir::IrClassFieldType;
+            if let Some(container) = field
+                .container
+                .and_then(|index| model.containers.get(index))
+            {
+                // Kind 4: owned per-object container storage.
+                let slot = format!("object->fields[{field_index}]");
+                let target = format!(
+                    "(*({}*){slot}.value.handle)",
+                    container_storage_type(container)
+                );
+                match super::super::containers::activation_storage(container, &target) {
+                    Ok((ty, init, drop)) => out.push_str(&format!(
+                        "    {slot}.kind = 4; {slot}.drop = {drop}; {slot}.value.handle = malloc(sizeof({ty}));\n    if (!{slot}.value.handle) abort();\n{init}"
+                    )),
+                    // The same descriptor failure rejects the model when the
+                    // container tables are declared.
+                    Err(_) => out.push_str("#error \"unrepresentable class container property\"\n"),
+                }
+                continue;
+            }
             match field.ty {
                 IrClassFieldType::Packed { width, signed, two_state } => out.push_str(&format!("    object->fields[{field_index}].kind = 0; object->fields[{field_index}].value.packed = {};\n", packed_default(width, signed, two_state))),
                 IrClassFieldType::Real { .. } => out.push_str(&format!("    object->fields[{field_index}].kind = 1;\n")),
@@ -84,6 +106,12 @@ static llg_class_field_t* llg_class_field(void* handle, uint32_t expected, size_
         }
         out.push_str("    return object;\n}\n");
     }
+}
+
+fn container_storage_type(container: &crate::sim::ir::IrContainer) -> &'static str {
+    super::super::containers::activation_storage(container, "")
+        .map(|(ty, _, _)| ty)
+        .unwrap_or("void")
 }
 
 fn virtual_slots(model: &IrModel) -> Vec<(usize, usize)> {

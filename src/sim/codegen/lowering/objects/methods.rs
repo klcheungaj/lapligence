@@ -140,6 +140,11 @@ impl Codegen<'_> {
             if const_ref {
                 return Err("cannot mutate a const-ref string formal".to_owned());
             }
+            if let Some(property) = self.foreign_class_container(receiver) {
+                return Err(format!(
+                    "class container property `{property}` in `{path}` is accessible only inside its class's methods (SIM-011)"
+                ));
+            }
             return Err("unsupported object method receiver".to_owned());
         }
         if let Some(index) = index {

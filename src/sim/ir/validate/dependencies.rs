@@ -154,6 +154,17 @@ impl Validator<'_> {
                 }
                 Ok(())
             }
+            IrEventRef::Handle(handle) => {
+                handle
+                    .validate(self.model, formals, self.chandle_return.get())
+                    .map_err(|error| IrValidationError::new(path.to_owned(), error.to_string()))?;
+                let mut indices = Vec::new();
+                handle.expressions(&mut |expression| indices.push(expression.clone()));
+                for (index, expression) in indices.iter().enumerate() {
+                    self.validate_expr(expression, formals, &format!("{path}.handle[{index}]"))?;
+                }
+                Ok(())
+            }
             IrEventRef::Formal(index) => {
                 if formals
                     .get(*index)

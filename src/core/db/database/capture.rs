@@ -239,6 +239,7 @@ impl Db {
             .collect();
         let mut arrays = HashMap::new();
         let mut event_arrays = HashMap::new();
+        let mut subroutine_arrays = HashMap::new();
         let mut array_select_paths = HashMap::new();
         let mut vars_init = HashMap::new();
         let mut net_delays = HashMap::new();
@@ -607,6 +608,26 @@ impl Db {
                             .then(|| net_type_from_subkind(semantic.subkind)),
                     },
                 );
+            }
+            if matches!(
+                semantic.kind,
+                SemanticKind::Argument | SemanticKind::Subroutine
+            ) {
+                if let Some(array) = projection
+                    .as_ref()
+                    .and_then(|projection| projection.array.as_ref())
+                    .filter(|array| !matches!(array.kind, ArrayKind::Static))
+                {
+                    subroutine_arrays.insert(
+                        id,
+                        ArrayMeta {
+                            kind: array.kind.clone(),
+                            dims: array.dimensions.clone(),
+                            init: None,
+                            net_type: None,
+                        },
+                    );
+                }
             }
             if is_event_array {
                 let array = projection
@@ -1075,6 +1096,7 @@ impl Db {
             design_name,
             arrays,
             event_arrays,
+            subroutine_arrays,
             array_select_paths,
             vars_init,
             net_delays,

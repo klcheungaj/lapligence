@@ -536,9 +536,15 @@ int llg_real_sort_order(const double* keys, size_t count, int descending,
     return 0;
 }
 
-static int llg_real_value_reorder(llg_value_t* data, size_t count,
+static int llg_value_reorder(llg_value_t* data, size_t count,
                                   const llg_value_desc_t* element, int method) {
-    if (count && (!data || !element || element->kind != LLG_VALUE_REAL))
+    if (count && (!data || !element))
+        llg_container_fatal("malformed recursive array-method target");
+    /* Reverse and shuffle move whole descriptors and suit every element
+     * kind; only the ordering methods compare values, and only reals. */
+    if (count && element->kind != LLG_VALUE_REAL &&
+        method != LLG_CONTAINER_METHOD_REVERSE &&
+        method != LLG_CONTAINER_METHOD_SHUFFLE)
         llg_container_fatal("array method requires real container elements");
     if (count < 2) return 0;
     if (method == LLG_CONTAINER_METHOD_REVERSE ||
@@ -599,7 +605,7 @@ static int llg_real_value_reorder(llg_value_t* data, size_t count,
 
 void llg_dyn_value_method(llg_dyn_value_array_t* array, int method) {
     if (!array) llg_container_fatal("null dynamic-array method target");
-    if (llg_real_value_reorder(array->data, array->size, array->element,
+    if (llg_value_reorder(array->data, array->size, array->element,
                                method))
         llg_notify(array->notify, array->contents_dependency,
                    array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
@@ -607,7 +613,7 @@ void llg_dyn_value_method(llg_dyn_value_array_t* array, int method) {
 
 void llg_queue_value_method(llg_queue_value_array_t* queue, int method) {
     if (!queue) llg_container_fatal("null queue method target");
-    if (llg_real_value_reorder(queue->data, queue->size, queue->element,
+    if (llg_value_reorder(queue->data, queue->size, queue->element,
                                method)) {
         llg_queue_value_invalidate_refs(queue);
         llg_notify(queue->notify, queue->contents_dependency,

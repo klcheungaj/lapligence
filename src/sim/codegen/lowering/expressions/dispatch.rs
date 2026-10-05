@@ -1086,6 +1086,16 @@ impl<'a> Codegen<'a> {
                         None,
                     ));
                 }
+                if let Some(function) = self.container_result_base(*base) {
+                    return Err(format!(
+                        "container result of `{function}` in `{scope_path}` must be assigned whole to a container variable"
+                    ));
+                }
+                if let Some(property) = self.foreign_class_container(*base) {
+                    return Err(format!(
+                        "class container property `{property}` in `{scope_path}` is accessible only inside its class's methods (SIM-011)"
+                    ));
+                }
                 let ai = self
                     .record_column_select(h)
                     .map(|(column, _)| column)
@@ -1902,6 +1912,11 @@ impl<'a> Codegen<'a> {
                 return Ok(value);
             }
             if let NodeKind::EnumConst { value } = self.kind(t) {
+                if value.is_none() {
+                    if let Some(state) = self.builtin_process_state(t) {
+                        return Ok(state);
+                    }
+                }
                 return enum_value_expr(value.as_ref(), &self.node(t).name);
             }
             return Err(format!(
@@ -2143,4 +2158,42 @@ fn packed_step_read(value: IrExpr, step: crate::sim::ir::IrPackedSelect) -> IrEx
         false,
         None,
     )
+}
+
+impl Codegen<'_> {
+    /// Values of the built-in `process::state` enumeration (SV 9.7), whose
+    /// constants the frontend captures without a value: FINISHED, RUNNING,
+    /// WAITING, SUSPENDED and KILLED in declaration order. `status()` yields
+    /// the same 32-bit encoding.
+    fn builtin_process_state(&self, constant: NodeId) -> Option<IrExpr> {
+        let value = match self.node(constant).name.as_str() {
+            "FINISHED" => 0,
+            "RUNNING" => 1,
+            "WAITING" => 2,
+            "SUSPENDED" => 3,
+            "KILLED" => 4,
+            _ => return None,
+        };
+        // The frontend names the built-in type `std::process::state`.
+        let builtin = self
+            .db
+            .type_descriptor(constant)
+            .is_some_and(|descriptor| descriptor.name == "std::process::state");
+        builtin.then(|| {
+            IrExpr::new(
+                IrExprKind::Const(IrConst {
+                    bits: vec![value],
+                    x: vec![0],
+                    z: vec![0],
+                    width: 32,
+                    signed: false,
+                    real: None,
+                    fill: None,
+                }),
+                32,
+                false,
+                None,
+            )
+        })
+    }
 }

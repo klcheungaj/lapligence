@@ -849,6 +849,26 @@ fn render_model(
         out.push_str(super::owned::containers::key_adapters());
     }
     super::owned::native::helpers(&mut out);
+    out.push_str(&super::containers::activation_drop_helpers(model));
+    // Container storage and descriptor tables precede class layouts, whose
+    // constructors create per-object container properties.
+    // Activation descriptors are inserted here once the whole model is
+    // rendered: storage prepared for a formal that no call instantiates
+    // (an uncalled function, or only pattern actuals) leaves its tables
+    // unreferenced, and C compilers warn about unused static constants.
+    let activation_descriptors_at = out.len();
+    let mut activation_descriptors = Vec::new();
+    for container in &model.containers {
+        let declaration = super::containers::declaration_and_init(container)?.0;
+        if container.activation && container.class_field.is_none() {
+            if !declaration.is_empty() {
+                activation_descriptors
+                    .push((format!("{}_llg_value_", container.c_name), declaration));
+            }
+        } else {
+            out.push_str(&declaration);
+        }
+    }
     render_class_decls(model, &mut out);
     super::owned::udp::tables(model, &mut out);
     render_signal_decls(model, &mut out);
@@ -856,9 +876,6 @@ fn render_model(
     render_vpi_compile_calls(model, &mut out);
     render_static_local_decls(model, &mut out);
     super::owned::model::persistent_returns(model, &mut out);
-    for container in &model.containers {
-        out.push_str(&super::containers::declaration_and_init(container)?.0);
-    }
     out.push_str(&super::owned::native_values::native_type_tables(model)?.0);
     for object in &model.objects {
         if object.ty == crate::sim::ir::IrObjectType::String {
@@ -922,7 +939,11 @@ fn render_model(
                 array.c_name, array.elem_width, u8::from(array.signed), part_count, array.c_name));
         }
     }
-    for container in &model.containers {
+    for container in model
+        .containers
+        .iter()
+        .filter(|container| container.is_global_storage())
+    {
         out.push_str(&format!(
             "static sv4_t {}_llg_contents_dep = SV4_EMPTY;\n\
              static sv4_t {}_llg_shape_dep = SV4_EMPTY;\n",
@@ -1028,6 +1049,8 @@ fn render_model(
     super::owned::model::storage_lifecycle(model, &constants, config.backend, &mut out)?;
     out.push_str(&constants.lifecycle());
     out.push_str(&super::owned::model::main(execution, &sharing.spawns)?);
+    let referenced = referenced_descriptor_tables(&out, &activation_descriptors);
+    out.insert_str(activation_descriptors_at, &referenced);
     out.insert_str(constant_declarations_at, &constants.declarations());
     let external = model
         .funcs
@@ -1037,6 +1060,29 @@ fn render_model(
     drop(assemble_stage);
     let _identifiers_stage = crate::profile::Stage::new("render.identifiers");
     Ok(bound_identifiers(out, &external))
+}
+
+/// The descriptor tables in `tables` (each with the identifier prefix of its
+/// names) that `rendered` references. `rendered` excludes the tables, so any
+/// occurrence of one of a table's names is a use.
+fn referenced_descriptor_tables(rendered: &str, tables: &[(String, String)]) -> String {
+    if tables.is_empty() {
+        return String::new();
+    }
+    let identifiers = c_identifiers(rendered).collect::<std::collections::HashSet<_>>();
+    tables
+        .iter()
+        .filter(|(prefix, declaration)| {
+            c_identifiers(declaration)
+                .any(|name| name.starts_with(prefix.as_str()) && identifiers.contains(name))
+        })
+        .map(|(_, declaration)| declaration.as_str())
+        .collect()
+}
+
+fn c_identifiers(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
+        .filter(|token| token.starts_with(|ch: char| ch == '_' || ch.is_ascii_alphabetic()))
 }
 
 #[cfg(test)]

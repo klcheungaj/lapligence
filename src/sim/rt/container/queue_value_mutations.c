@@ -289,3 +289,84 @@ int llg_queue_value_delete_index(llg_queue_value_array_t* queue, sv4_t index) {
                LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
     return 1;
 }
+
+/* Remove one endpoint element (SV 7.10.2.4-5) and transfer its value to
+ * `removed`, which must be empty. Returns 0 and leaves `removed` empty for an
+ * empty queue. The caller publishes the result before notifying readers. */
+static int llg_queue_value_take(llg_queue_value_array_t* queue, int back,
+                                llg_value_t* removed) {
+    if (!queue) llg_container_fatal("null queue pop target");
+    if (!queue->size) return 0;
+    size_t position = back ? queue->size - 1 : 0;
+    *removed = queue->data[position]; // exclusive ownership transfer
+    if (!back && queue->size > 1)
+        memmove(queue->data, queue->data + 1,
+                (queue->size - 1) * sizeof(*queue->data));
+    --queue->size;
+    // Relocation transfers ownership; the unused tail must not retain an alias.
+    memset(&queue->data[queue->size], 0, sizeof(*queue->data));
+    llg_queue_value_invalidate_refs(queue);
+    return 1;
+}
+
+static void llg_queue_value_pop_notify(llg_queue_value_array_t* queue) {
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency,
+               LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
+}
+
+double llg_queue_value_pop_real(llg_queue_value_array_t* queue, int back) {
+    llg_value_t removed = {0};
+    if (!llg_queue_value_take(queue, back, &removed)) return 0.0;
+    double result = removed.desc && removed.desc->kind == LLG_VALUE_REAL
+        ? removed.value.real
+        : 0.0;
+    llg_value_drop(&removed);
+    llg_queue_value_pop_notify(queue);
+    return result;
+}
+
+void llg_queue_value_pop_string_to(llg_string_t* dst,
+                                   llg_queue_value_array_t* queue, int back) {
+    if (!dst) llg_container_fatal("queue pop requires output storage");
+    llg_value_t removed = {0};
+    llg_string_destroy(dst);
+    if (!llg_queue_value_take(queue, back, &removed)) return;
+    if (removed.desc && removed.desc->kind == LLG_VALUE_STRING) {
+        *dst = removed.value.string; // the result owner adopts the bytes
+        removed.value.string = (llg_string_t){0};
+    }
+    llg_value_drop(&removed);
+    llg_queue_value_pop_notify(queue);
+}
+
+void* llg_queue_value_pop_chandle(llg_queue_value_array_t* queue, int back) {
+    if (queue && queue->element && queue->element->kind == LLG_VALUE_PROCESS)
+        llg_container_fatal("process queue pop requires a reference destination");
+    llg_value_t removed = {0};
+    if (!llg_queue_value_take(queue, back, &removed)) return NULL;
+    void* result = llg_value_is_handle_kind(removed.desc)
+        ? removed.value.handle
+        : NULL;
+    llg_value_drop(&removed);
+    llg_queue_value_pop_notify(queue);
+    return result;
+}
+
+void llg_queue_value_pop_process_to(void** dst, llg_queue_value_array_t* queue,
+                                    int back) {
+    if (!dst) llg_container_fatal("queue pop requires output storage");
+    if (!queue || !queue->element || queue->element->kind != LLG_VALUE_PROCESS)
+        llg_container_fatal("process pop used with a non-process queue");
+    llg_value_t removed = {0};
+    void* previous = *dst;
+    *dst = NULL;
+    int taken = llg_queue_value_take(queue, back, &removed);
+    if (taken) {
+        *dst = removed.value.handle; // the element's reference moves to dst
+        removed.value.handle = NULL;
+        llg_value_drop(&removed);
+    }
+    llg_value_handle_release(queue->element, previous);
+    if (taken) llg_queue_value_pop_notify(queue);
+}

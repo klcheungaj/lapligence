@@ -137,6 +137,30 @@ equal values and otherwise yields `""` or null. Native record conditionals
 lower to ordinary `If` statements over captured leaves, never to
 `IrFixedValue`.
 
+## Recursive containers and handle storage (SIM-006)
+
+`IrContainer` storage has three homes. A model-global container
+(`is_global_storage`) is one static variable with contents and shape
+dependencies. An activation container (`activation`) is created by
+`IrContainerStmt::Declare` (subroutine and procedural-block automatic locals,
+call temporaries) or bound to a container formal (`IrFormal::container`, a
+`void*` parameter naming caller-created storage of the same type); it has no
+dependencies, so event controls and monitors on it are rejected. A class
+property container (`class_field`) lives in each object and is addressed only
+through the receiver of the class's own methods. Calls pass
+`IrCallArg::Container` (the call copies inputs in and outputs back, so the
+callee never aliases the actual) or `ContainerValues` (a packed/real pattern
+built at the call); a container result is a trailing output formal.
+
+Element types may be records, fixed arrays and identity handles (events,
+processes, class-like objects, chandles). Whole record elements move through
+`IrContainerStmt::SetValue`/`GetValue` with `IrValueSlot` (element, push,
+insert, pop) and native temporaries; members are read and written in place
+through `IrNativeAccessKind::ElementItem` with a `ContainerElement` receiver,
+and writes notify readers once the statement completes. Event elements are
+reached through `IrEventRef::Handle`; process elements through
+`IrProcessExpr::Handle`. Containers never travel as `IrFixedValue`.
+
 ## Real references, real arrays and real sampling (SIM-005)
 
 Reals stay numeric and never enter the integral fixed-value contract.

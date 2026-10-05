@@ -171,7 +171,9 @@ impl Codegen<'_> {
                 .iter()
                 .take_while(|reference| **reference != Some(field))
                 .flatten()
-                .find(|base| self.object_of(path, **base).is_some())
+                .find(|base| {
+                    self.object_of(path, **base).is_some() || self.is_container_chandle_expr(**base)
+                })
             {
                 return self.lower_chandle(path, *base);
             }
@@ -259,7 +261,7 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
         let Some(field) = self.class_field_target(node) else {
-            return self.native_leaf_expr(node);
+            return self.native_leaf_expr(path, node);
         };
         if let Some(info) = self.class_static_signals.get(&field).cloned() {
             return Ok(Some(self.signal_read_expr(&info)?));
@@ -300,7 +302,7 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Result<Option<IrLhs>, String> {
         let Some(field) = self.class_field_target(node) else {
-            return self.native_leaf_target(node);
+            return self.native_leaf_target(path, node);
         };
         if let Some(info) = self.class_static_signals.get(&field).cloned() {
             return Ok(Some(IrLhs::Whole(info.ir)));
@@ -340,7 +342,7 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Result<Option<String>, String> {
         let Some(field) = self.class_field_target(node) else {
-            return self.native_object_leaf(node, false);
+            return self.native_object_leaf(path, node, false);
         };
         if !matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind)) {
             return Ok(None);
@@ -364,7 +366,7 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Result<Option<String>, String> {
         let Some(field) = self.class_field_target(node) else {
-            return self.native_object_leaf(node, true);
+            return self.native_object_leaf(path, node, true);
         };
         if !matches!(self.kind(field), NodeKind::Var { ty } if ty.kind == "string") {
             return Ok(None);

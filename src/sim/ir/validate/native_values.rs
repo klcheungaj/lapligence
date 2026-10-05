@@ -158,4 +158,43 @@ impl Validator<'_> {
         }
         Ok(())
     }
+
+    /// The item path of a container element leaf must select a leaf of the
+    /// declared type inside the located element's record shape.
+    pub(super) fn validate_element_leaf(
+        &self,
+        receiver: &IrChandleExpr,
+        item_path: &[u32],
+        ty: IrClassFieldType,
+        path: &str,
+    ) -> ValidationResult {
+        let IrChandleExpr::ContainerElement {
+            container,
+            indices,
+            key,
+            ..
+        } = receiver
+        else {
+            return self.fail(path, "element item requires a container element locator");
+        };
+        let Some(storage) = self.model.containers.get(*container) else {
+            return self.fail(path, "element item references a missing container");
+        };
+        let slot = IrValueSlot::Element {
+            indices: indices.clone(),
+            key: key.as_deref().cloned(),
+        };
+        let element = slot
+            .element(storage, true, self.string_return.get(), self.model)
+            .map_err(|error| IrValidationError::new(path.to_owned(), error.to_string()))?;
+        if item_path.is_empty()
+            || !native_leaf_type(element, item_path).is_some_and(|leaf| leaf_matches(leaf, ty))
+        {
+            return self.fail(
+                path,
+                "element item path does not select a leaf of that type",
+            );
+        }
+        Ok(())
+    }
 }

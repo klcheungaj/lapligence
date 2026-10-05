@@ -110,9 +110,9 @@ static llg_value_t llg_value_from_chandle(const llg_value_desc_t* desc,
                                           void* value) {
     llg_value_t result = {0};
     llg_value_default(&result, desc);
-    if (desc->kind != LLG_VALUE_CHANDLE && desc->kind != LLG_VALUE_EVENT)
+    if (!llg_value_is_handle_kind(desc))
         llg_container_fatal("handle value used with an incompatible queue element");
-    result.value.handle = value;
+    llg_value_store_handle(&result, value);
     return result;
 }
 
@@ -349,8 +349,7 @@ llg_string_t llg_queue_value_get_string(const llg_queue_value_array_t* queue,
 void* llg_queue_value_get_chandle(const llg_queue_value_array_t* queue,
                                   sv4_t index) {
     llg_value_t* value = llg_queue_value_at(queue, index);
-    return value && (value->desc->kind == LLG_VALUE_CHANDLE ||
-                     value->desc->kind == LLG_VALUE_EVENT)
+    return value && llg_value_is_handle_kind(value->desc)
         ? value->value.handle
         : NULL;
 }
@@ -463,8 +462,7 @@ llg_string_t llg_queue_value_get_nested_string(
 void* llg_queue_value_get_nested_chandle(
     const llg_queue_value_array_t* queue, const sv4_t* indices, size_t count) {
     llg_value_t* value = llg_queue_value_nested_at(queue, indices, count);
-    return value && (value->desc->kind == LLG_VALUE_CHANDLE ||
-                     value->desc->kind == LLG_VALUE_EVENT)
+    return value && llg_value_is_handle_kind(value->desc)
         ? value->value.handle
         : NULL;
 }
@@ -534,8 +532,7 @@ int llg_queue_value_set_nested_chandle(
     void* value) {
     int change = 0;
     llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
-    if (!target || (target->desc->kind != LLG_VALUE_CHANDLE &&
-                    target->desc->kind != LLG_VALUE_EVENT))
+    if (!target || !llg_value_is_handle_kind(target->desc))
         return 0;
     llg_value_t source = llg_value_from_chandle(target->desc, value);
     int result = llg_queue_value_set_nested_source(queue, indices, count, &source, &change);

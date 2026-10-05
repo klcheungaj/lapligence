@@ -17,6 +17,9 @@ mod sim_004;
 #[path = "sim_feature_completion/sim_005.rs"]
 mod sim_005;
 
+#[path = "sim_feature_completion/sim_006.rs"]
+mod sim_006;
+
 #[path = "sim_feature_completion/ki_packed_range.rs"]
 mod ki_packed_range;
 

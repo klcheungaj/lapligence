@@ -8,6 +8,9 @@ pub(super) fn render(
 ) -> Result<String, String> {
     let ctx = frame.ctx;
     Ok(match operation {
+        IrContainerStmt::Declare(_) => {
+            return Err("container declarations are emitted by the frame".into())
+        }
         IrContainerStmt::StreamAssign {
             container,
             source,
@@ -26,7 +29,7 @@ pub(super) fn render(
             };
             format!(
                 "    {function}(&{}, {}, {slice}, {}, {selector_kind}, {first}, {second});\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 source.code,
                 matches!(direction, IrStreamDirection::RightToLeft) as u8
             )
@@ -44,10 +47,11 @@ pub(super) fn render(
             };
             format!(
                 "    {function}(&{}, {}, {});\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 operand(frame, owners, size)?.code,
                 initializer
-                    .map(|index| format!("&{}", name(ctx, index)))
+                    .map(|index| name(frame, index).map(|name| format!("&{name}")))
+                    .transpose()?
                     .unwrap_or_else(|| "NULL".to_owned())
             )
         }
@@ -68,8 +72,8 @@ pub(super) fn render(
             };
             format!(
                 "    {function}(&{}, &{});\n",
-                name(ctx, *dst),
-                name(ctx, *src)
+                name(frame, *dst)?,
+                name(frame, *src)?
             )
         }
         IrContainerStmt::MethodAssign {
@@ -83,10 +87,10 @@ pub(super) fn render(
             } else {
                 "llg_real_method_assign_values"
             };
-            let source = name(ctx, *src);
+            let source = name(frame, *src)?;
             format!(
                 "    {function}(&{}, {source}.data, {source}.size, {}, {}, NULL);\n",
-                name(ctx, *dst),
+                name(frame, *dst)?,
                 method_code(*method),
                 callback.as_deref().unwrap_or("NULL")
             )
@@ -104,8 +108,8 @@ pub(super) fn render(
             };
             format!(
                 "    {function}(&{}, &{}, {}, {}, NULL);\n",
-                name(ctx, *dst),
-                name(ctx, *src),
+                name(frame, *dst)?,
+                name(frame, *src)?,
                 method_code(*method),
                 callback.as_deref().unwrap_or("NULL")
             )
@@ -130,7 +134,7 @@ pub(super) fn render(
             };
             format!(
                 "    {function}(&{}, {});\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 method_code(*method)
             )
         }
@@ -148,7 +152,7 @@ pub(super) fn render(
             };
             format!(
                 "    {function}(&{}, {}, {}, NULL);\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 method_code(*method),
                 callback.as_deref().unwrap_or("NULL")
             )
@@ -167,7 +171,7 @@ pub(super) fn render(
             format!(
                 "    {}_assign_values(&{}, {}, {});\n",
                 prefix(&ctx.model.containers[*container].kind),
-                name(ctx, *container),
+                name(frame, *container)?,
                 data,
                 values.len()
             )
@@ -180,7 +184,7 @@ pub(super) fn render(
                 .map(|source| {
                     let (queue, left, right, left_unbounded, right_unbounded) = match source {
                         IrQueueSource::Whole(source) => (
-                            name(ctx, *source),
+                            name(frame, *source)?,
                             zero_operand(frame, owners),
                             zero_operand(frame, owners),
                             0,
@@ -191,6 +195,7 @@ pub(super) fn render(
                             left,
                             right,
                         } => {
+                            let queue = name(frame, *source)?;
                             let mut render_bound = |bound: &IrQueueBound| match bound {
                                 IrQueueBound::Value(value) => {
                                     operand(frame, owners, value).map(|value| value.code)
@@ -200,7 +205,7 @@ pub(super) fn render(
                                 ),
                             };
                             (
-                                name(ctx, *source),
+                                queue,
                                 render_bound(left)?,
                                 render_bound(right)?,
                                 matches!(left, IrQueueBound::Unbounded) as u8,
@@ -232,7 +237,7 @@ pub(super) fn render(
             };
             format!(
                 "    {function}(&{}, {}, {});\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 data,
                 source_count
             )
@@ -264,7 +269,7 @@ pub(super) fn render(
             };
             format!(
                 "    {function}(&{}, {}, {});\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 data,
                 values.len()
             )
@@ -289,7 +294,7 @@ pub(super) fn render(
             };
             format!(
                 "    {function}(&{}, {}, {});\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 data,
                 values.len()
             )
@@ -314,7 +319,7 @@ pub(super) fn render(
             };
             format!(
                 "    {function}(&{}, {}, {});\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 data,
                 values.len()
             )
@@ -324,7 +329,7 @@ pub(super) fn render(
                 format!(
                     "    {}_delete(&{});\n",
                     prefix(&ctx.model.containers[*index].kind),
-                    name(ctx, *index)
+                    name(frame, *index)?
                 )
             } else {
                 let function = match ctx.model.containers[*index].kind {
@@ -332,7 +337,7 @@ pub(super) fn render(
                     IrContainerKind::Queue { .. } => "llg_queue_value_delete",
                     IrContainerKind::Associative { .. } => "llg_assoc_value_delete",
                 };
-                format!("    {function}(&{});\n", name(ctx, *index))
+                format!("    {function}(&{});\n", name(frame, *index)?)
             }
         }
         IrContainerStmt::Set {
@@ -371,7 +376,7 @@ pub(super) fn render(
             };
             format!(
                 "    (void){method}(&{}, {}, {});\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 operand(frame, owners, index)?.code,
                 operand(frame, owners, value)?.code
             )
@@ -395,7 +400,7 @@ pub(super) fn render(
             };
             format!(
                 "    (void){function}(&{}, {}, {});\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 index_code,
                 value
             )
@@ -412,7 +417,7 @@ pub(super) fn render(
             };
             format!(
                 "    (void){function}(&{}, {}, {});\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 operand(frame, owners, index)?.code,
                 text_operand(frame, strings, value)?
             )
@@ -429,7 +434,7 @@ pub(super) fn render(
             };
             format!(
                 "    (void){function}(&{}, {}, {});\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 operand(frame, owners, index)?.code,
                 frame.chandle(value)?
             )
@@ -445,7 +450,7 @@ pub(super) fn render(
                 IrContainerKind::Queue { .. } => "llg_queue_value_set_nested",
                 IrContainerKind::Associative { .. } => "llg_assoc_value_set_nested_integral",
             },
-            name(ctx, *container),
+            name(frame, *container)?,
             super::indices(frame, owners, indices)?,
             indices.len(),
             operand(frame, owners, value)?.code
@@ -470,7 +475,7 @@ pub(super) fn render(
                     IrContainerKind::Associative { .. } =>
                         "llg_assoc_value_set_nested_integral_real",
                 },
-                name(ctx, *container),
+                name(frame, *container)?,
                 indices_code,
                 indices.len(),
                 value
@@ -487,7 +492,7 @@ pub(super) fn render(
                 IrContainerKind::Queue { .. } => "llg_queue_value_set_nested_string",
                 IrContainerKind::Associative { .. } => "llg_assoc_value_set_nested_integral_string",
             },
-            name(ctx, *container),
+            name(frame, *container)?,
             super::indices(frame, owners, indices)?,
             indices.len(),
             text_operand(frame, strings, value)?
@@ -504,7 +509,7 @@ pub(super) fn render(
                 IrContainerKind::Associative { .. } =>
                     "llg_assoc_value_set_nested_integral_chandle",
             },
-            name(ctx, *container),
+            name(frame, *container)?,
             super::indices(frame, owners, indices)?,
             indices.len(),
             frame.chandle(value)?
@@ -538,10 +543,10 @@ pub(super) fn render(
                     }
                 }
             };
-            let source = format!("&{}", name(ctx, *source));
+            let source = format!("&{}", name(frame, *source)?);
             format!(
                 "    (void){function}(&{}, {}, {}, {source});\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 super::indices(frame, owners, indices)?,
                 indices.len(),
             )
@@ -561,16 +566,20 @@ pub(super) fn render(
                 } else {
                     format!("sv4_to_real({})", rendered.code)
                 };
-            format!("    {function}(&{}, {});\n", name(ctx, *container), value)
+            format!(
+                "    {function}(&{}, {});\n",
+                name(frame, *container)?,
+                value
+            )
         }
         IrContainerStmt::SetDefaultString { container, value } => format!(
             "    llg_assoc_value_set_default_string(&{}, {});\n",
-            name(ctx, *container),
+            name(frame, *container)?,
             text_operand(frame, strings, value)?
         ),
         IrContainerStmt::SetDefaultChandle { container, value } => format!(
             "    llg_assoc_value_set_default_chandle(&{}, {});\n",
-            name(ctx, *container),
+            name(frame, *container)?,
             frame.chandle(value)?
         ),
         IrContainerStmt::ResetDefault(container) => {
@@ -579,7 +588,7 @@ pub(super) fn render(
             } else {
                 "llg_assoc_value_reset_default"
             };
-            format!("    {function}(&{});\n", name(ctx, *container))
+            format!("    {function}(&{});\n", name(frame, *container)?)
         }
         IrContainerStmt::SetString {
             container,
@@ -587,7 +596,7 @@ pub(super) fn render(
             value,
         } => format!(
             "    (void)llg_owned_assoc_set_string(&{}, {}, {});\n",
-            name(ctx, *container),
+            name(frame, *container)?,
             key_operand(frame, strings, key)?,
             operand(frame, owners, value)?.code
         ),
@@ -605,7 +614,7 @@ pub(super) fn render(
             };
             format!(
                 "    (void)llg_owned_assoc_value_set_real(&{}, {}, {});\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 key_code,
                 value
             )
@@ -616,7 +625,7 @@ pub(super) fn render(
             value,
         } => format!(
             "    (void)llg_owned_assoc_value_set_string(&{}, {}, {});\n",
-            name(ctx, *container),
+            name(frame, *container)?,
             key_operand(frame, strings, key)?,
             text_operand(frame, strings, value)?
         ),
@@ -626,7 +635,7 @@ pub(super) fn render(
             value,
         } => format!(
             "    (void)llg_owned_assoc_value_set_chandle(&{}, {}, {});\n",
-            name(ctx, *container),
+            name(frame, *container)?,
             key_operand(frame, strings, key)?,
             frame.chandle(value)?
         ),
@@ -637,7 +646,7 @@ pub(super) fn render(
             } else {
                 "llg_queue_value_push_front_real"
             },
-            name(ctx, *container),
+            name(frame, *container)?,
             {
                 let rendered = operand(frame, owners, value)?;
                 if ctx.model.containers[*container].element.is_real() && rendered.width != 0 {
@@ -654,7 +663,7 @@ pub(super) fn render(
             } else {
                 "llg_queue_value_push_back_real"
             },
-            name(ctx, *container),
+            name(frame, *container)?,
             {
                 let rendered = operand(frame, owners, value)?;
                 if ctx.model.containers[*container].element.is_real() && rendered.width != 0 {
@@ -666,22 +675,22 @@ pub(super) fn render(
         ),
         IrContainerStmt::QueuePushFrontString { container, value } => format!(
             "    llg_queue_value_push_front_string(&{}, {});\n",
-            name(ctx, *container),
+            name(frame, *container)?,
             text_operand(frame, strings, value)?
         ),
         IrContainerStmt::QueuePushBackString { container, value } => format!(
             "    llg_queue_value_push_back_string(&{}, {});\n",
-            name(ctx, *container),
+            name(frame, *container)?,
             text_operand(frame, strings, value)?
         ),
         IrContainerStmt::QueuePushFrontChandle { container, value } => format!(
             "    llg_queue_value_push_front_chandle(&{}, {});\n",
-            name(ctx, *container),
+            name(frame, *container)?,
             frame.chandle(value)?
         ),
         IrContainerStmt::QueuePushBackChandle { container, value } => format!(
             "    llg_queue_value_push_back_chandle(&{}, {});\n",
-            name(ctx, *container),
+            name(frame, *container)?,
             frame.chandle(value)?
         ),
         IrContainerStmt::QueuePushFrontContainer { container, source } => {
@@ -692,8 +701,8 @@ pub(super) fn render(
             };
             format!(
                 "    {function}(&{}, &{});\n",
-                name(ctx, *container),
-                name(ctx, *source)
+                name(frame, *container)?,
+                name(frame, *source)?
             )
         }
         IrContainerStmt::QueuePushBackContainer { container, source } => {
@@ -704,8 +713,8 @@ pub(super) fn render(
             };
             format!(
                 "    {function}(&{}, &{});\n",
-                name(ctx, *container),
-                name(ctx, *source)
+                name(frame, *container)?,
+                name(frame, *source)?
             )
         }
         IrContainerStmt::QueueInsert {
@@ -719,7 +728,7 @@ pub(super) fn render(
             } else {
                 "llg_queue_value_insert_real"
             },
-            name(ctx, *container),
+            name(frame, *container)?,
             operand(frame, owners, index)?.code,
             {
                 let rendered = operand(frame, owners, value)?;
@@ -736,7 +745,7 @@ pub(super) fn render(
             value,
         } => format!(
             "    (void)llg_queue_value_insert_string(&{}, {}, {});\n",
-            name(ctx, *container),
+            name(frame, *container)?,
             operand(frame, owners, index)?.code,
             text_operand(frame, strings, value)?
         ),
@@ -746,7 +755,7 @@ pub(super) fn render(
             value,
         } => format!(
             "    (void)llg_queue_value_insert_chandle(&{}, {}, {});\n",
-            name(ctx, *container),
+            name(frame, *container)?,
             operand(frame, owners, index)?.code,
             frame.chandle(value)?
         ),
@@ -762,10 +771,103 @@ pub(super) fn render(
             };
             format!(
                 "    (void){function}(&{}, {}, &{});\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 operand(frame, owners, index)?.code,
-                name(ctx, *source)
+                name(frame, *source)?
             )
+        }
+        IrContainerStmt::SetValue {
+            container,
+            slot,
+            value,
+        } => {
+            let root = frame.native_value_address(*value)?;
+            let target = name(frame, *container)?;
+            let kind = ctx.model.containers[*container].kind.clone();
+            let call = match (slot, kind) {
+                (IrValueSlot::Element { key: Some(key), .. }, _) => {
+                    let key = key_operand(frame, strings, key)?;
+                    format!(
+                        "llg_assoc_value_set_element_string(&{target}, ({key}).data, ({key}).len, {root})"
+                    )
+                }
+                (IrValueSlot::Element { indices, .. }, kind) => {
+                    let list = super::indices(frame, owners, indices)?;
+                    let function = match kind {
+                        IrContainerKind::Dynamic => "llg_dyn_value_set_element",
+                        IrContainerKind::Queue { .. } => "llg_queue_value_set_element",
+                        IrContainerKind::Associative { .. } => {
+                            "llg_assoc_value_set_element_integral"
+                        }
+                    };
+                    format!("{function}(&{target}, {list}, {}, {root})", indices.len())
+                }
+                (IrValueSlot::PushFront, _) => {
+                    format!("llg_queue_value_push_value(&{target}, 0, {root})")
+                }
+                (IrValueSlot::PushBack, _) => {
+                    format!("llg_queue_value_push_value(&{target}, 1, {root})")
+                }
+                (IrValueSlot::Insert(index), _) => format!(
+                    "llg_queue_value_insert_value(&{target}, {}, {root})",
+                    operand(frame, owners, index)?.code
+                ),
+                (IrValueSlot::PopFront | IrValueSlot::PopBack, _) => {
+                    return Err("a pop slot cannot receive a value".into())
+                }
+            };
+            format!("    (void){call};\n")
+        }
+        IrContainerStmt::GetValue {
+            container,
+            slot,
+            value,
+        } => {
+            if frame.read_only_callback
+                && matches!(slot, IrValueSlot::PopFront | IrValueSlot::PopBack)
+            {
+                return Err(pending("mutating container query in a read-only callback"));
+            }
+            let root = frame.native_value_address(*value)?;
+            let target = name(frame, *container)?;
+            let kind = ctx.model.containers[*container].kind.clone();
+            let element = match (slot, kind) {
+                (IrValueSlot::Element { key: Some(key), .. }, _) => {
+                    let key = key_operand(frame, strings, key)?;
+                    format!(
+                        "llg_assoc_value_element_string(&{target}, ({key}).data, ({key}).len, 0)"
+                    )
+                }
+                (IrValueSlot::Element { indices, .. }, kind) => {
+                    let list = super::indices(frame, owners, indices)?;
+                    match kind {
+                        IrContainerKind::Dynamic => format!(
+                            "llg_dyn_value_element(&{target}, {list}, {})",
+                            indices.len()
+                        ),
+                        IrContainerKind::Queue { .. } => format!(
+                            "llg_queue_value_element(&{target}, {list}, {})",
+                            indices.len()
+                        ),
+                        IrContainerKind::Associative { .. } => format!(
+                            "llg_assoc_value_element_integral(&{target}, {list}, {}, 0)",
+                            indices.len()
+                        ),
+                    }
+                }
+                (IrValueSlot::PopFront, _) => {
+                    return Ok(format!(
+                        "    llg_queue_value_pop_value(&{target}, 0, {root});\n"
+                    ))
+                }
+                (IrValueSlot::PopBack, _) => {
+                    return Ok(format!(
+                        "    llg_queue_value_pop_value(&{target}, 1, {root});\n"
+                    ))
+                }
+                _ => return Err("a push or insert slot cannot be read".into()),
+            };
+            format!("    llg_value_element_read({root}, {element});\n")
         }
         IrContainerStmt::DeleteIndex { container, index } => {
             let method = match ctx.model.containers[*container].kind {
@@ -787,7 +889,7 @@ pub(super) fn render(
             };
             format!(
                 "    (void){method}(&{}, {});\n",
-                name(ctx, *container),
+                name(frame, *container)?,
                 operand(frame, owners, index)?.code
             )
         }
@@ -798,7 +900,7 @@ pub(super) fn render(
             } else {
                 "llg_owned_assoc_value_delete_string"
             },
-            name(ctx, *container),
+            name(frame, *container)?,
             key_operand(frame, strings, key)?
         ),
     })

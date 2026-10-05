@@ -199,6 +199,9 @@ pub(in super::super) fn event_ref_code(
         crate::sim::ir::IrEventRef::Formal(_) => {
             Err("event formal handles require the ownership emitter".to_string())
         }
+        crate::sim::ir::IrEventRef::Handle(_) => {
+            Err("container event handles require the ownership emitter".to_string())
+        }
         crate::sim::ir::IrEventRef::Static(index) => {
             let event = ctx
                 .model

@@ -19,7 +19,16 @@ fn net_and_two_state_conversion_at_maximum_width() {
 
 #[test]
 fn arrays_containers_and_aggregates_preserve_state_domains() {
-    super::run_case_with_stderr("state-storage", "PASS state storage\n", "");
+    // The two missing associative reads warn (SV 7.8.6) and return the
+    // element default.
+    super::run_case_with_stderr(
+        "state-storage",
+        "PASS state storage\n",
+        concat!(
+            "llg container warning: associative-array read of a nonexistent entry returns the default\n",
+            "llg container warning: associative-array read of a nonexistent entry returns the default\n",
+        ),
+    );
 }
 
 #[test]

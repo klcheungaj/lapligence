@@ -1,0 +1,15 @@
+size 4 null 1 nulls 1
+alias 1
+after delete 3 1
+pop 1 2
+missing 1 1 exists 1
+fresh 1 1
+shared 1
+d1 woke 1
+q0 triggered 2
+resized shared 1 new 1
+reversed 1 1
+big 65 1 63
+e1 via fire_all 3
+e2 via fire_all 3
+empty 0 1

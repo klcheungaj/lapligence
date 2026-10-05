@@ -42,6 +42,50 @@ void llg_event_object_reset(llg_event_object_t* ev) {
     ev->triggered = 0;
 }
 
+// Synchronization objects created for new event elements of resizable
+// containers (SV Table 6-7). Like class objects they stay valid until runtime
+// cleanup: handles may be copied into any other storage and there is no
+// collector yet. The object is the first member, so a handle is its address.
+typedef struct llg_dynamic_event_t {
+    llg_event_object_t object;
+    struct llg_dynamic_event_t* next;
+} llg_dynamic_event_t;
+
+static void* dynamic_event_new(void) {
+    llg_dynamic_event_t* event = (llg_dynamic_event_t*)llg_checked_malloc(
+        1, sizeof(*event), "event object");
+    memset(event, 0, sizeof(*event));
+    event->next = g.dynamic_events;
+    g.dynamic_events = event;
+    return &event->object;
+}
+
+static void free_dynamic_events(void) {
+    while (g.dynamic_events) {
+        llg_dynamic_event_t* event = g.dynamic_events;
+        g.dynamic_events = event->next;
+        llg_event_object_reset(&event->object);
+        free(event);
+    }
+}
+
+static void value_process_retain(void* handle) {
+    llg_process_retain((llg_process_handle_t*)handle);
+}
+
+static void value_process_release(void* handle) {
+    llg_process_release((llg_process_handle_t*)handle);
+}
+
+static void install_value_handle_hooks(void) {
+    const llg_value_handle_hooks_t hooks = {
+        dynamic_event_new,
+        value_process_retain,
+        value_process_release,
+    };
+    llg_value_set_handle_hooks(&hooks);
+}
+
 // Slot arrays share the event-list allocation; a single ordinary event uses
 // the existing inline payload. Positions survive waiter-table reallocations.
 static llg_event_object_t** event_wait_list_new(int count, int** slots) {

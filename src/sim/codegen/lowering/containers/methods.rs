@@ -37,11 +37,46 @@ impl<'a> Codegen<'a> {
                 return Ok(Some(statement));
             }
         }
+        if self.nested_container_receiver(receiver).is_some() {
+            return Err(format!(
+                "method `{name}` of a nested container element in `{path}` is not supported"
+            ));
+        }
+        // Statements that build a nested source before the operation.
+        let mut prelude = Vec::new();
         let Some(container) = self.container_of(receiver) else {
             return Ok(None);
         };
         let args = self.container_method_arguments(path, node, receiver)?;
         let with_clause = self.db.method_call_has_with_clause(node);
+        if matches!(
+            self.model.containers[container.ir].element,
+            IrContainerElement::Aggregate { .. } | IrContainerElement::FixedArray { .. }
+        ) && matches!(
+            self.model.containers[container.ir].kind,
+            IrContainerKind::Queue { .. }
+        ) {
+            // Record elements are built in a typed temporary, then copied in.
+            let slot = match (name.as_str(), args.as_slice()) {
+                ("push_front", [value]) => Some((crate::sim::ir::IrValueSlot::PushFront, *value)),
+                ("push_back", [value]) => Some((crate::sim::ir::IrValueSlot::PushBack, *value)),
+                ("insert", [index, value]) => Some((
+                    crate::sim::ir::IrValueSlot::Insert(self.lower_queue_method_index_with_end(
+                        path,
+                        container.ir,
+                        *index,
+                        true,
+                    )?),
+                    *value,
+                )),
+                _ => None,
+            };
+            if let Some((slot, value)) = slot {
+                return self
+                    .lower_container_record_push(path, container.ir, slot, value)
+                    .map(Some);
+            }
+        }
         let operation = match (name.as_str(), args.as_slice()) {
             ("delete", []) => IrContainerStmt::Delete(container.ir),
             ("delete", [index]) => match self.model.containers[container.ir].kind {
@@ -70,29 +105,20 @@ impl<'a> Codegen<'a> {
                     container: container.ir,
                     value: self.lower_string(path, *value)?,
                 },
-                IrContainerElement::Chandle => IrContainerStmt::QueuePushFrontChandle {
+                ref element if element.is_handle() => IrContainerStmt::QueuePushFrontChandle {
                     container: container.ir,
-                    value: self.lower_chandle(path, *value)?,
+                    value: self.lower_container_handle(path, element, *value)?,
                 },
-                IrContainerElement::Container { .. } => {
-                    let source = self.container_of(*value).ok_or_else(|| {
-                        format!(
-                            "recursive queue push_front in {path} requires a dynamic array source"
-                        )
-                    })?;
-                    if !matches!(
-                        self.model.containers[source.ir].kind,
-                        IrContainerKind::Dynamic
-                    ) {
-                        return Err(format!(
-                            "recursive queue push_front in {path} requires a dynamic array source"
-                        ));
-                    }
-                    IrContainerStmt::QueuePushFrontContainer {
-                        container: container.ir,
-                        source: source.ir,
-                    }
-                }
+                IrContainerElement::Container { .. } => IrContainerStmt::QueuePushFrontContainer {
+                    container: container.ir,
+                    source: self.nested_container_source(
+                        path,
+                        container.ir,
+                        1,
+                        *value,
+                        &mut prelude,
+                    )?,
+                },
                 _ => IrContainerStmt::QueuePushFront {
                     container: container.ir,
                     value: self.lower_container_value(path, container.ir, *value)?,
@@ -103,29 +129,20 @@ impl<'a> Codegen<'a> {
                     container: container.ir,
                     value: self.lower_string(path, *value)?,
                 },
-                IrContainerElement::Chandle => IrContainerStmt::QueuePushBackChandle {
+                ref element if element.is_handle() => IrContainerStmt::QueuePushBackChandle {
                     container: container.ir,
-                    value: self.lower_chandle(path, *value)?,
+                    value: self.lower_container_handle(path, element, *value)?,
                 },
-                IrContainerElement::Container { .. } => {
-                    let source = self.container_of(*value).ok_or_else(|| {
-                        format!(
-                            "recursive queue push_back in {path} requires a dynamic array source"
-                        )
-                    })?;
-                    if !matches!(
-                        self.model.containers[source.ir].kind,
-                        IrContainerKind::Dynamic
-                    ) {
-                        return Err(format!(
-                            "recursive queue push_back in {path} requires a dynamic array source"
-                        ));
-                    }
-                    IrContainerStmt::QueuePushBackContainer {
-                        container: container.ir,
-                        source: source.ir,
-                    }
-                }
+                IrContainerElement::Container { .. } => IrContainerStmt::QueuePushBackContainer {
+                    container: container.ir,
+                    source: self.nested_container_source(
+                        path,
+                        container.ir,
+                        1,
+                        *value,
+                        &mut prelude,
+                    )?,
+                },
                 _ => IrContainerStmt::QueuePushBack {
                     container: container.ir,
                     value: self.lower_container_value(path, container.ir, *value)?,
@@ -140,31 +157,22 @@ impl<'a> Codegen<'a> {
                         index,
                         value: self.lower_string(path, *value)?,
                     },
-                    IrContainerElement::Chandle => IrContainerStmt::QueueInsertChandle {
+                    ref element if element.is_handle() => IrContainerStmt::QueueInsertChandle {
                         container: container.ir,
                         index,
-                        value: self.lower_chandle(path, *value)?,
+                        value: self.lower_container_handle(path, element, *value)?,
                     },
-                    IrContainerElement::Container { .. } => {
-                        let source = self.container_of(*value).ok_or_else(|| {
-                            format!(
-                                "recursive queue insert in {path} requires a dynamic array source"
-                            )
-                        })?;
-                        if !matches!(
-                            self.model.containers[source.ir].kind,
-                            IrContainerKind::Dynamic
-                        ) {
-                            return Err(format!(
-                                "recursive queue insert in {path} requires a dynamic array source"
-                            ));
-                        }
-                        IrContainerStmt::QueueInsertContainer {
-                            container: container.ir,
-                            index,
-                            source: source.ir,
-                        }
-                    }
+                    IrContainerElement::Container { .. } => IrContainerStmt::QueueInsertContainer {
+                        container: container.ir,
+                        index,
+                        source: self.nested_container_source(
+                            path,
+                            container.ir,
+                            1,
+                            *value,
+                            &mut prelude,
+                        )?,
+                    },
                     _ => IrContainerStmt::QueueInsert {
                         container: container.ir,
                         index,
@@ -220,17 +228,14 @@ impl<'a> Codegen<'a> {
                 }
             }
             ("reverse", []) if !with_clause => {
+                // Ordering methods move whole elements and need no relational
+                // operator (SV 7.12.2), so every element type is legal.
                 if !matches!(
                     self.model.containers[container.ir].kind,
                     IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
-                ) || !self.model.containers[container.ir].element.is_packed()
-                    && !matches!(
-                        self.model.containers[container.ir].element,
-                        IrContainerElement::Real { .. }
-                    )
-                {
+                ) {
                     return Err(format!(
-                        "array method `reverse` in `{path}` currently requires a packed dynamic array or queue"
+                        "array method `reverse` in `{path}` requires a dynamic array or queue"
                     ));
                 }
                 IrContainerStmt::Method {
@@ -240,17 +245,14 @@ impl<'a> Codegen<'a> {
                 }
             }
             ("shuffle", []) if !with_clause => {
+                // Ordering methods move whole elements and need no relational
+                // operator (SV 7.12.2), so every element type is legal.
                 if !matches!(
                     self.model.containers[container.ir].kind,
                     IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
-                ) || !self.model.containers[container.ir].element.is_packed()
-                    && !matches!(
-                        self.model.containers[container.ir].element,
-                        IrContainerElement::Real { .. }
-                    )
-                {
+                ) {
                     return Err(format!(
-                        "array method `shuffle` in `{path}` currently requires a packed dynamic array or queue"
+                        "array method `shuffle` in `{path}` requires a dynamic array or queue"
                     ));
                 }
                 IrContainerStmt::Method {
@@ -266,7 +268,12 @@ impl<'a> Codegen<'a> {
             }
             _ => return Ok(None),
         };
-        Ok(Some(IrStmt::Container(Box::new(operation))))
+        let operation = IrStmt::Container(Box::new(operation));
+        if prelude.is_empty() {
+            return Ok(Some(operation));
+        }
+        prelude.push(operation);
+        Ok(Some(IrStmt::Block(prelude)))
     }
 
     fn lower_fixed_array_reverse(

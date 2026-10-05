@@ -10,6 +10,48 @@ impl EmitCtx<'_, '_> {
         if self.func.is_some() && self.cg.record_declaration(declaration) {
             return self.cg.lower_record_local(&self.path, declaration);
         }
+        let container = if self.func.is_some() && self.cg.is_subroutine_container(declaration) {
+            self.cg
+                .container_globals
+                .get(&declaration)
+                .map(|info| info.ir)
+        } else if self.cg.subroutine_container_meta(declaration).is_some() {
+            let scope = self.cg.inst;
+            self.cg.procedural_container(declaration, scope)?
+        } else {
+            None
+        };
+        if let Some(container) = container {
+            // Container locals: automatic storage is created empty at each
+            // entry and then initialized; static storage persists and its
+            // initializer runs once with the static initializers.
+            if !self.cg.model.containers[container].activation {
+                return Ok(Vec::new());
+            }
+            let mut statements = vec![IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                container,
+            )))];
+            let initializer = self.cg.db.var_initializer(declaration).or_else(|| {
+                self.cg
+                    .db
+                    .array_meta(declaration)
+                    .and_then(|meta| meta.init)
+            });
+            if let Some(initializer) = initializer {
+                statements.push(
+                    self.cg
+                        .lower_container_assignment(
+                            &self.path,
+                            declaration,
+                            initializer,
+                            true,
+                            Operation::Assignment,
+                        )?
+                        .ok_or("container local initializer has no container assignment")?,
+                );
+            }
+            return Ok(statements);
+        }
         if let Some(value) = self
             .func
             .is_some()
