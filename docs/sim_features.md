@@ -353,8 +353,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   formals, results and automatic/static locals hold the same tag and member
   leaves in one native value, with the same checks, tagged-expression
   operands and string/real bindings; conditional operators keep equal
-  members under an unknown condition. Such unions as array elements, ports
-  and NBA targets, and dynamic payloads, reject with explicit diagnostics.
+  members under an unknown condition; input and output variable ports link
+  the tag and member storage. Such unions as array elements and NBA
+  targets, and dynamic payloads, reject with explicit diagnostics.
   **Q03 (resolved):** SV §§4.9.4 and 10.4.2 fix an NBA's target and RHS at
   issue and perform the member assignment at commit; SV §11.9 requires that
   assignment to be consistent with the tag current then, and SV §7.3.2 never
