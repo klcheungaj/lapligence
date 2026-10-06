@@ -269,7 +269,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   including descriptor-backed arrays, initializes per activation. SV `const`
   module variables and automatic-function locals retain their initialized
   values; subsequent writes diagnose. Explicit member defaults, recursive array
-  defaults and mixed state domains are retained.
+  defaults and mixed state domains are retained, including the member defaults
+  of module and procedural-block records with string, real, handle or
+  container members (a default whose value is such a record rejects).
+  Module string initializers join the same schedule.
   Timing-bearing initializer calls are illegal; unsupported native/resizable
   layouts, oversized records and ambiguous/opposite-lifetime captures remain
   rejected.
@@ -365,20 +368,24 @@ Macros, includes and their edition-specific behavior are counted in §11.
   Interprocess races are tested as allowed result sets (SV §§4.6–4.7).
   Pattern matching is covered in §5.
   SV §§7.3, 11.9, 12.6 **[SV-2005]**.
-- 🟨 **Strings** — Module/static/automatic byte strings support copies, casts,
+- 🟨 **Strings** — Module/static/automatic byte strings, including strings
+  declared in procedural blocks, support copies, casts,
   core methods, `atoreal/realtoa`, formatting, value/reference formals, copy-out,
   returns and collected input/output links. Contents changes feed sensitivity;
-  inputs/returns have independent ownership and string values never hold `"\0"`.
+  inputs/returns have independent ownership and string values never hold `"\0"`;
+  `@(s)` on a whole string or string record member waits for a contents change.
   Untimed and `#delay` nonblocking writes to persistent strings (module, package,
-  static subroutine and module-record members) queue an owned issue-time copy
+  static subroutine, static procedural-block and module-record members) queue an owned issue-time copy
   in issue order; continuous assignments and output ports driven by `assign`
   re-run on operand changes; conditional operators keep equal values or yield
   `""` for an ambiguous predicate
   ([sim_004](../tests/fixtures/sim/feature_completion/sim_004/readme.md)).
   String bytes and class properties are not nonblocking targets (SV §6.21).
-  Delayed continuous drivers, event/repeat-controlled string NBAs, block-local
-  string NBAs, automatic monitors and broader aggregate combinations remain
-  restricted. SV §6.16 **[SV-2005]**.
+  Delayed continuous drivers, event/repeat-controlled string NBAs, automatic
+  monitors and broader aggregate combinations remain restricted; automatic
+  procedural-block strings and handles share the fork limit of block records
+  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)).
+  SV §6.16 **[SV-2005]**.
 - 🟨 **Events** — Scalar/fixed-array declarations, indexed/hierarchical access,
   null/default handles, reassignment and task aliases retain event identity.
   Dynamic, associative and queue event storage (module, subroutine formal and
@@ -435,7 +442,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 
 | Context | Storage / default | Copy | `==`/`!=`, `===` | Member select | Reference | Destruction |
 | --- | --- | --- | --- | --- | --- | --- |
-| Module/static variable | yes | yes | yes | constant, run-time index (at most 64 elements) and packed-member bit/part select: yes | SIM-008 | model close |
+| Module/static variable | yes, member defaults applied; initializer from a pattern, copy, call result or conditional | yes | yes, including nested records and member arrays | constant, run-time index (at most 64 elements) and packed-member bit/part select: yes | SIM-008 | model close |
 | Automatic/static subroutine local | yes (root) | yes | yes | constant and run-time index (at most 64 elements): yes | SIM-008 | scope exit, cancel, close |
 | Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant and run-time index: yes; `f().m` rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | `ref` formal SIM-008 | scope exit, cancel, close |
 | NBA target or source | module record: yes (untimed and `#delay`); static subroutine root target: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)); automatic: illegal | yes, issue-time copy | n/a | constant: yes | n/a | commit or cancellation |
@@ -444,7 +451,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 | Queue/dynamic/associative element | yes (missing: default) | yes, whole element and push/insert/pop | whole dynamic arrays and queues: yes; record elements of resizable containers: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | constant and run-time element index: yes | SIM-008 | delete, resize, container close |
 | Class property | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-018 |
 | DPI argument | SIM-040 | SIM-040 | n/a | n/a | n/a | n/a |
-| Process-block local (static or automatic) | yes, including container members and call initializers ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); automatic record in or around a `join_any`/`join_none` fork, or with member defaults: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | yes | yes | constant and run-time index (at most 64 elements): yes | SIM-008 | model close; automatic leaves reset at the next entry |
+| Process-block local (static or automatic) | yes, including container members, member defaults and call initializers ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); automatic record that a `join_any`/`join_none` fork running again can keep live: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | yes | yes, including nested records and member arrays | constant and run-time index (at most 64 elements): yes | SIM-008 | model close; automatic leaves reset at the next entry |
 
 ## 3. Modules, ports, parameters, hierarchy
 

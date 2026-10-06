@@ -724,16 +724,35 @@ impl<'a> Codegen<'a> {
             })
             .collect();
         for (member_path, value_node) in values {
-            let left = aggregate
+            let Some(left) = aggregate
                 .leaves
                 .iter()
                 .find(|leaf| leaf.path == member_path)
-                .ok_or_else(|| {
-                    format!(
+            else {
+                // A whole nested record or member array item copies leaf by
+                // leaf; its sources join the pattern's captures.
+                let source = self.resolve_unpacked_aggregate(value_node);
+                let descriptor = self
+                    .query_descriptor(target)
+                    .and_then(|root| Self::descriptor_at_path(root, &member_path));
+                let (Some(source), Some(descriptor)) = (source, descriptor) else {
+                    return Err(format!(
                         "aggregate pattern path `{}` has no destination in `{path}`",
                         aggregate_path_suffix(&member_path)
-                    )
-                })?;
+                    ));
+                };
+                let destination = copies::AggregateSelection {
+                    root: target,
+                    prefix: member_path,
+                    descriptor,
+                    storage: aggregate.clone(),
+                };
+                let (sources, writes) =
+                    self.unpacked_subaggregate_copy_parts(path, &destination, &source, nba)?;
+                captures.extend(sources);
+                assignments.extend(writes);
+                continue;
+            };
             if let Some(container) = &left.container {
                 if nba {
                     return Err(format!(
@@ -1028,100 +1047,7 @@ impl<'a> Codegen<'a> {
                             aggregate_path_suffix(&left.path)
                         )
                     })?;
-                let member_equal = match (left.object, right.object) {
-                    _ if left.container.is_some() || right.container.is_some() => {
-                        let (Some(left_container), Some(right_container)) =
-                            (&left.container, &right.container)
-                        else {
-                            return Err(format!(
-                                "aggregate equality has mismatched container member `{}` in `{path}`",
-                                aggregate_path_suffix(&left.path)
-                            ));
-                        };
-                        if matches!(
-                            self.model.containers[left_container.ir].kind,
-                            IrContainerKind::Associative { .. }
-                        ) {
-                            return Err(format!(
-                                "equality of records with associative array member `{}` is not supported in `{path}` (associative array equality is not supported)",
-                                aggregate_path_suffix(&left.path)
-                            ));
-                        }
-                        // SV 7.2.2, 7.10: members compare element-wise.
-                        IrExpr::new(
-                            IrExprKind::Container(Box::new(IrContainerExpr::Equal {
-                                left: left_container.ir,
-                                right: right_container.ir,
-                                case: matches!(op, Operation::CaseEqual | Operation::CaseNotEqual),
-                                negate: false,
-                            })),
-                            1,
-                            false,
-                            None,
-                        )
-                    }
-                    (Some(left), Some(right)) => {
-                        let left_index = self.reference_object(left);
-                        let right_index = self.reference_object(right);
-                        if matches!(
-                            self.model.objects[left_index].ty,
-                            IrObjectType::Chandle | IrObjectType::Semaphore
-                        ) {
-                            if !matches!(
-                                self.model.objects[right_index].ty,
-                                IrObjectType::Chandle | IrObjectType::Semaphore
-                            ) {
-                                return Err(format!(
-                                    "aggregate equality has mismatched object members in `{path}`"
-                                ));
-                            }
-                            object_query(
-                                IrObjectQuery::ChandleEq(
-                                    IrChandleExpr::Read(left_index),
-                                    IrChandleExpr::Read(right_index),
-                                ),
-                                1,
-                                false,
-                            )
-                        } else {
-                            let compare = IrExpr::new(
-                                IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringCompare(
-                                    IrStringExpr::Read(left_index),
-                                    IrStringExpr::Read(right_index),
-                                    false,
-                                ))),
-                                32,
-                                true,
-                                None,
-                            );
-                            let zero = IrExpr::new(
-                                IrExprKind::Const(
-                                    IrConst::packed(vec![0], vec![], vec![], 32, true, None)
-                                        .map_err(|error| error.to_string())?,
-                                ),
-                                32,
-                                true,
-                                None,
-                            );
-                            cmp_expr_ir(IrBinOp::Eq, compare, zero)
-                        }
-                    }
-                    (None, None) => compare(
-                        if matches!(op, Operation::CaseEqual | Operation::CaseNotEqual) {
-                            IrBinOp::CaseEq
-                        } else {
-                            IrBinOp::Eq
-                        },
-                        self.aggregate_leaf_read(left)?,
-                        self.aggregate_leaf_read(right)?,
-                    )?,
-                    _ => {
-                        return Err(format!(
-                            "aggregate equality has mismatched object/scalar member `{}` in `{path}`",
-                            aggregate_path_suffix(&left.path)
-                        ));
-                    }
-                };
+                let member_equal = self.aggregate_leaf_equality(path, op, left, right)?;
                 equality = Some(match equality {
                     Some(previous) => cmp_expr_ir(IrBinOp::LogAnd, previous, member_equal),
                     None => member_equal,
@@ -1144,6 +1070,250 @@ impl<'a> Codegen<'a> {
                 equality
             },
         ))
+    }
+
+    /// Equality of one pair of corresponding record leaves.
+    fn aggregate_leaf_equality(
+        &mut self,
+        path: &str,
+        op: Operation,
+        left: &AggregateMemberInfo,
+        right: &AggregateMemberInfo,
+    ) -> Result<IrExpr, String> {
+        let compare = |op: IrBinOp, left: IrExpr, right: IrExpr| {
+            if op == IrBinOp::CaseEq || op == IrBinOp::CaseNeq {
+                if left.is_real() || right.is_real() {
+                    return Err(format!(
+                        "case equality on real aggregate member in `{path}` is not supported"
+                    ));
+                }
+                Ok(cmp_expr_ir(op, left, right))
+            } else {
+                common_cmp_expr_ir(op, left, right, path)
+            }
+        };
+        Ok(match (left.object, right.object) {
+            _ if left.container.is_some() || right.container.is_some() => {
+                let (Some(left_container), Some(right_container)) =
+                    (&left.container, &right.container)
+                else {
+                    return Err(format!(
+                        "aggregate equality has mismatched container member `{}` in `{path}`",
+                        aggregate_path_suffix(&left.path)
+                    ));
+                };
+                if matches!(
+                    self.model.containers[left_container.ir].kind,
+                    IrContainerKind::Associative { .. }
+                ) {
+                    return Err(format!(
+                        "equality of records with associative array member `{}` is not supported in `{path}` (associative array equality is not supported)",
+                        aggregate_path_suffix(&left.path)
+                    ));
+                }
+                // SV 7.2.2, 7.10: members compare element-wise.
+                IrExpr::new(
+                    IrExprKind::Container(Box::new(IrContainerExpr::Equal {
+                        left: left_container.ir,
+                        right: right_container.ir,
+                        case: matches!(op, Operation::CaseEqual | Operation::CaseNotEqual),
+                        negate: false,
+                    })),
+                    1,
+                    false,
+                    None,
+                )
+            }
+            (Some(left), Some(right)) => {
+                let left_index = self.reference_object(left);
+                let right_index = self.reference_object(right);
+                if matches!(
+                    self.model.objects[left_index].ty,
+                    IrObjectType::Chandle | IrObjectType::Semaphore
+                ) {
+                    if !matches!(
+                        self.model.objects[right_index].ty,
+                        IrObjectType::Chandle | IrObjectType::Semaphore
+                    ) {
+                        return Err(format!(
+                            "aggregate equality has mismatched object members in `{path}`"
+                        ));
+                    }
+                    object_query(
+                        IrObjectQuery::ChandleEq(
+                            IrChandleExpr::Read(left_index),
+                            IrChandleExpr::Read(right_index),
+                        ),
+                        1,
+                        false,
+                    )
+                } else {
+                    let compare = IrExpr::new(
+                        IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringCompare(
+                            IrStringExpr::Read(left_index),
+                            IrStringExpr::Read(right_index),
+                            false,
+                        ))),
+                        32,
+                        true,
+                        None,
+                    );
+                    let zero = IrExpr::new(
+                        IrExprKind::Const(
+                            IrConst::packed(vec![0], vec![], vec![], 32, true, None)
+                                .map_err(|error| error.to_string())?,
+                        ),
+                        32,
+                        true,
+                        None,
+                    );
+                    cmp_expr_ir(IrBinOp::Eq, compare, zero)
+                }
+            }
+            (None, None) => compare(
+                if matches!(op, Operation::CaseEqual | Operation::CaseNotEqual) {
+                    IrBinOp::CaseEq
+                } else {
+                    IrBinOp::Eq
+                },
+                self.aggregate_leaf_read(left)?,
+                self.aggregate_leaf_read(right)?,
+            )?,
+            _ => {
+                return Err(format!(
+                    "aggregate equality has mismatched object/scalar member `{}` in `{path}`",
+                    aggregate_path_suffix(&left.path)
+                ));
+            }
+        })
+    }
+
+    /// `==`/`!=`/`===`/`!==` where an operand is a nested record or member
+    /// array of a record with string, real, handle or container leaves
+    /// (a native record): member-wise like a whole record (SV 11.4.5).
+    /// Fixed records keep their fixed-value comparison.
+    pub(in super::super) fn lower_record_view_equality(
+        &mut self,
+        path: &str,
+        op: Operation,
+        operands: &[NodeId],
+    ) -> Result<Option<IrExpr>, String> {
+        if !matches!(
+            op,
+            Operation::Equal | Operation::NotEqual | Operation::CaseEqual | Operation::CaseNotEqual
+        ) {
+            return Ok(None);
+        }
+        let [lhs, rhs] = operands else {
+            return Ok(None);
+        };
+        let (Some(left), Some(right)) = (self.record_view(*lhs), self.record_view(*rhs)) else {
+            return Ok(None);
+        };
+        let native = |view: &copies::AggregateSelection| {
+            self.query_descriptor(view.root)
+                .is_some_and(|root| Self::fixed_descriptor_width_bits(root).is_none())
+        };
+        if (left.prefix.is_empty() && right.prefix.is_empty()) || !(native(&left) || native(&right))
+        {
+            return Ok(None);
+        }
+        self.lower_record_view_comparison(path, op, &left, &right)
+            .map(Some)
+    }
+
+    /// The record storage an equality operand names: a whole record
+    /// variable (empty prefix) or a nested record or member array selected
+    /// by constant member and index steps. One leaf (a scalar, string or
+    /// packed member) is not a view.
+    fn record_view(&self, node: NodeId) -> Option<copies::AggregateSelection> {
+        let selection = self.resolve_unpacked_aggregate(node)?;
+        let leaves = &selection.storage.leaves;
+        if selection.storage.columns
+            || (!selection.prefix.is_empty()
+                && (leaves.iter().any(|leaf| leaf.path == selection.prefix)
+                    || !leaves
+                        .iter()
+                        .any(|leaf| leaf.path.starts_with(&selection.prefix))))
+        {
+            return None;
+        }
+        Some(selection)
+    }
+
+    /// Member-wise equality of two record views of equivalent types. Leaves
+    /// pair by position, which is declaration and left-to-right index order,
+    /// so member arrays with different bounds of equal extent compare
+    /// element by element.
+    fn lower_record_view_comparison(
+        &mut self,
+        path: &str,
+        op: Operation,
+        left: &copies::AggregateSelection,
+        right: &copies::AggregateSelection,
+    ) -> Result<IrExpr, String> {
+        if left.descriptor != right.descriptor
+            && !copies::equivalent_copy_shape(&left.descriptor, &right.descriptor)
+        {
+            return Err(format!(
+                "aggregate equality compares incompatible types `{}` and `{}` in `{path}`",
+                left.descriptor.name, right.descriptor.name
+            ));
+        }
+        let leaves = |view: &copies::AggregateSelection| {
+            view.storage
+                .leaves
+                .iter()
+                .filter(|leaf| leaf.path.starts_with(&view.prefix))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let (left_leaves, right_leaves) = (leaves(left), leaves(right));
+        if left_leaves.len() != right_leaves.len() || left_leaves.is_empty() {
+            return Err(format!(
+                "aggregate equality in `{path}` has mismatched record leaves"
+            ));
+        }
+        let mut equality: Option<IrExpr> = None;
+        for (left_leaf, right_leaf) in left_leaves.iter().zip(&right_leaves) {
+            if left_leaf.path[left.prefix.len()..]
+                .iter()
+                .zip(&right_leaf.path[right.prefix.len()..])
+                .any(|pair| {
+                    matches!(
+                        pair,
+                        (AggregatePathPart::Member(a), AggregatePathPart::Member(b)) if a != b
+                    )
+                })
+            {
+                return Err(format!(
+                    "aggregate equality in `{path}` pairs different members `{}` and `{}`",
+                    aggregate_path_suffix(&left_leaf.path),
+                    aggregate_path_suffix(&right_leaf.path)
+                ));
+            }
+            let member_equal = self.aggregate_leaf_equality(path, op, left_leaf, right_leaf)?;
+            equality = Some(match equality {
+                Some(previous) => cmp_expr_ir(IrBinOp::LogAnd, previous, member_equal),
+                None => member_equal,
+            });
+        }
+        let equality = equality.expect("nonempty leaves checked above");
+        Ok(
+            if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {
+                IrExpr::new(
+                    IrExprKind::Un {
+                        op: IrUnOp::LogNot,
+                        a: Box::new(equality),
+                    },
+                    1,
+                    false,
+                    None,
+                )
+            } else {
+                equality
+            },
+        )
     }
 
     pub(in super::super) fn aggregate_leaf_lhs(

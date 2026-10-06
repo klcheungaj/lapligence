@@ -1,0 +1,8 @@
+A x 3 2.25 | in 1.50 5 0 a x
+B 1 2 3 4 | 7 8 [] 1 0
+C 4 in!
+D changed 0 x 7
+E x 3 | x 3 2.25 in 5 a
+E sb 4 | x 3 2.25 in 5 a
+I 1 x 4
+I 2 x 5

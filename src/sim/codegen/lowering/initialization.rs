@@ -156,6 +156,18 @@ impl<'a> Codegen<'a> {
         }
         // Value and statement initializers share one schedule: each runs
         // after the static declarations it reads (SV §§6.21, 10.5).
+        // String declaration values are assignments in the same schedule.
+        let mut string_values = Vec::new();
+        for (object, declaration) in &self.object_initializers {
+            if let Some(value) = model.objects[*object].initial.take() {
+                string_values.push((
+                    *declaration,
+                    IrStmt::Object(Box::new(crate::sim::ir::IrObjectStmt::StringAssign(
+                        *object, value,
+                    ))),
+                ));
+            }
+        }
         let declarations = self
             .declaration_inits
             .iter()
@@ -163,18 +175,23 @@ impl<'a> Codegen<'a> {
             .chain(
                 self.declaration_statements
                     .iter()
+                    .chain(&string_values)
                     .map(|(declaration, _)| *declaration),
             )
             .collect::<Vec<_>>();
         let values = self.declaration_inits.len();
+        let statements = self.declaration_statements.len();
         for entry in self.initializer_schedule(&declarations) {
             model.init_steps.push(match entry.checked_sub(values) {
                 None => IrInitStep::Initialize(self.declaration_inits[entry].clone()),
                 Some(statement) => {
-                    let (declaration, body) = &self.declaration_statements[statement];
+                    let (declaration, body) = match statement.checked_sub(statements) {
+                        None => self.declaration_statements[statement].clone(),
+                        Some(string) => string_values[string].clone(),
+                    };
                     IrInitStep::Execute {
-                        declaration: *declaration,
-                        body: Box::new(body.clone()),
+                        declaration,
+                        body: Box::new(body),
                     }
                 }
             });

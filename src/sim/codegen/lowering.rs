@@ -540,7 +540,8 @@ fn lower_model(db: &Db) -> Result<LoweredModel, String> {
     // their bodies may register initializers flushed below.
     cg.emit_task_specializations()?;
     cg.emit_array_initializers()?;
-    cg.emit_block_record_initializers()?;
+    cg.emit_record_statement_initializers()?;
+    cg.emit_block_native_initializers()?;
     cg.emit_container_initializers()?;
     cg.emit_class_object_initializers()?;
     cg.emit_semaphore_initializers()?;
@@ -1360,8 +1361,16 @@ struct Codegen<'a> {
     /// owning instance or generate-scope path.
     block_records: HashMap<NodeId, String>,
     /// `(declaration, initializer, path)` of static procedural-block
-    /// records, lowered into the static schedule after every body.
-    block_record_initializers: Vec<(NodeId, NodeId, String)>,
+    /// records and of module records whose initializer is not a leaf-wise
+    /// pattern, lowered as record assignments into the static schedule
+    /// after every body.
+    record_statement_initializers: Vec<(NodeId, NodeId, String)>,
+    /// Procedural-block strings, chandles and class handles with a model
+    /// object → owning instance or generate-scope path.
+    block_natives: HashMap<NodeId, String>,
+    /// `(declaration, initializer, path)` of static procedural-block
+    /// strings and handles, lowered into the static schedule.
+    block_native_initializers: Vec<(NodeId, NodeId, String)>,
     /// All lowered named events, in collection order (deterministic emission).
     events: Vec<EventInfo>,
     /// NamedEvent arena node → lowered event info.
@@ -1391,6 +1400,10 @@ struct Codegen<'a> {
     /// Static declaration initializers whose typed transport is a statement
     /// (descriptor-backed fixed arrays), as `(declaration, body)`.
     declaration_statements: Vec<(u32, IrStmt)>,
+    /// `(object, declaration)` of string objects whose `initial` value
+    /// joins the static schedule at its declaration's slot, so other
+    /// initializers that read the string run after it.
+    object_initializers: Vec<(usize, u32)>,
     /// Declaration identity -> collection-time declaration order, the
     /// tie-break of the static initialization schedule.
     initializer_order: HashMap<u32, usize>,
@@ -1643,7 +1656,9 @@ impl<'a> Codegen<'a> {
             array_initializers: Vec::new(),
             record_initializers: Vec::new(),
             block_records: HashMap::new(),
-            block_record_initializers: Vec::new(),
+            record_statement_initializers: Vec::new(),
+            block_natives: HashMap::new(),
+            block_native_initializers: Vec::new(),
             events: Vec::new(),
             event_globals: HashMap::new(),
             event_elements: HashMap::new(),
@@ -1654,6 +1669,7 @@ impl<'a> Codegen<'a> {
             declaration_inits: Vec::new(),
             deferred_declaration_inits: Vec::new(),
             declaration_statements: Vec::new(),
+            object_initializers: Vec::new(),
             initializer_order: HashMap::new(),
             initializer_sources: HashMap::new(),
             scope_array_names: HashMap::new(),

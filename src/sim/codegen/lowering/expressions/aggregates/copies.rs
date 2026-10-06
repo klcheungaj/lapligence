@@ -107,6 +107,25 @@ impl Codegen<'_> {
                 "compound assignment of unpacked aggregates in `{path}` is not supported"
             ));
         }
+        let (mut captures, assignments) =
+            self.unpacked_subaggregate_copy_parts(path, lhs, rhs, nba)?;
+        // Capture the entire RHS before any write, including native leaves.
+        // Self-copies and overlapping selected values cannot observe a prefix
+        // of this assignment as their own source.
+        captures.extend(assignments);
+        Ok(IrStmt::Block(captures))
+    }
+
+    /// The source captures and the destination writes of a selected
+    /// aggregate copy, kept apart so an enclosing pattern can capture every
+    /// source before its first write.
+    pub(super) fn unpacked_subaggregate_copy_parts(
+        &mut self,
+        path: &str,
+        lhs: &AggregateSelection,
+        rhs: &AggregateSelection,
+        nba: bool,
+    ) -> Result<(Vec<IrStmt>, Vec<IrStmt>), String> {
         if !equivalent_copy_shape(&lhs.descriptor, &rhs.descriptor) {
             return Err(format!(
                 "assignment between incompatible unpacked aggregate types `{}` and `{}` in `{path}`",
@@ -141,6 +160,10 @@ impl Codegen<'_> {
                 "selected aggregate copy has incompatible leaf storage in `{path}`"
             ));
         }
+        // Several copies can share one block (pattern items), so each copy
+        // names its captures uniquely.
+        let sequence = self.native_copy_sequence;
+        self.native_copy_sequence += 1;
         let mut captures = Vec::with_capacity(left.len());
         let mut assignments = Vec::with_capacity(left.len());
         for (position, (left, right)) in left.into_iter().zip(right).enumerate() {
@@ -151,7 +174,10 @@ impl Codegen<'_> {
                     "selected aggregate copy has incompatible leaf types in `{path}`"
                 ));
             }
-            let name = format!("_agg_copy_{}_{}_{}", lhs.root.0, rhs.root.0, position);
+            let name = format!(
+                "_agg_copy_{}_{}_{sequence}_{position}",
+                lhs.root.0, rhs.root.0
+            );
             if let (Some(lhs_object), Some(rhs_object)) = (left.object, right.object) {
                 let lhs_object = self.reference_object(lhs_object);
                 let rhs_object = self.reference_object(rhs_object);
@@ -215,11 +241,7 @@ impl Codegen<'_> {
                 nba,
             });
         }
-        // Capture the entire RHS before any write, including native leaves.
-        // Self-copies and overlapping selected values cannot observe a prefix
-        // of this assignment as their own source.
-        captures.extend(assignments);
-        Ok(IrStmt::Block(captures))
+        Ok((captures, assignments))
     }
 }
 
