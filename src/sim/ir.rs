@@ -23,6 +23,7 @@
 //!   post-simulation phase).
 
 mod containers;
+pub(in crate::sim) use containers::shared_container_capture_name;
 mod native_access;
 pub use native_access::{IrClassAllocation, IrNativeAccess, IrNativeAccessKind};
 mod native_values;
@@ -208,6 +209,8 @@ pub enum StorageKind {
     Event,
     /// An owned string value (`llg_string_t`), or a shared frame's string.
     String,
+    /// An activation container in a shared frame's object slot.
+    Container,
 }
 
 /// A typed reference to one slot in an activation frame.

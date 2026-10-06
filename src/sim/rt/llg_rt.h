@@ -1303,6 +1303,9 @@ typedef enum {
     LLG_FRAME_OPAQUE = 2,
     // An owned string value, destroyed when the frame is released.
     LLG_FRAME_STRING = 3,
+    // An owned heap object (a container), destroyed and freed when the frame
+    // is released.
+    LLG_FRAME_OBJECT = 4,
 } llg_frame_slot_kind_t;
 llg_frame_t* llg_frame_new(size_t slots);
 void llg_frame_retain(llg_frame_t* frame);
@@ -1319,6 +1322,12 @@ void llg_frame_capture_string(llg_frame_t* frame, size_t slot,
 // The string cell of a slot (following frame-to-frame aliases); stable for
 // the life of the frame.
 llg_string_t* llg_frame_string_address(llg_frame_t* frame, size_t slot);
+// Allocate a zeroed object of `size` bytes owned by the slot; `destroy` (may
+// be NULL) runs on it before it is freed with the frame.
+void* llg_frame_capture_object(llg_frame_t* frame, size_t slot, size_t size,
+                               void (*destroy)(void*));
+// The object of a slot (following frame-to-frame aliases).
+void* llg_frame_object_address(llg_frame_t* frame, size_t slot);
 void llg_frame_alias_value(llg_frame_t* frame, size_t slot, sv4_t* target);
 void llg_frame_alias_real(llg_frame_t* frame, size_t slot, double* target);
 void llg_frame_alias_slot(llg_frame_t* frame, size_t slot,

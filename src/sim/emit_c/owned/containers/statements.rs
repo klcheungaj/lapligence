@@ -8,7 +8,7 @@ pub(super) fn render(
 ) -> Result<String, String> {
     let ctx = frame.ctx;
     Ok(match operation {
-        IrContainerStmt::Declare(_) => {
+        IrContainerStmt::Declare(_) | IrContainerStmt::SharedDeclare(_) => {
             return Err("container declarations are emitted by the frame".into())
         }
         IrContainerStmt::StreamAssign {

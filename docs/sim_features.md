@@ -1256,9 +1256,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   side sees the other's writes (the shared loop variable reads its final
   value); fork block item declarations are created per fork execution
   ([sim_010](../tests/fixtures/sim/feature_completion/sim_010/readme.md)).
-  Automatic strings of subroutines are shared the same way and copied into
-  joined branches. Formals, handles and native values are still copied into
-  detached branches (SIM-010), and ref-formal captures reject. Static-local
+  Automatic strings and the resizable containers of subroutine storage are
+  shared the same way with branches of every fork kind. Formals, handles and
+  native records are still copied into detached branches, container formals
+  reject (SIM-010), and ref-formal captures reject. Static-local
   task NBAs are represented, including arrays; NBAs targeting automatic locals
   or automatic formals reject. V §§9.8.2, 10.2; SV §§9.3.2, 10.4.2, 13.3.2
   **[1995/SV-2005]**.

@@ -97,9 +97,14 @@ impl EmitCtx<'_, '_> {
             if !self.cg.model.containers[container].activation {
                 return Ok(Vec::new());
             }
-            let mut statements = vec![IrStmt::Container(Box::new(IrContainerStmt::Declare(
-                container,
-            )))];
+            // A container that fork branches use lives in a shared frame.
+            let declare = if self.cg.fork_shared(declaration) {
+                self.cg.shared_locals.insert(declaration);
+                IrContainerStmt::SharedDeclare(container)
+            } else {
+                IrContainerStmt::Declare(container)
+            };
+            let mut statements = vec![IrStmt::Container(Box::new(declare))];
             let initializer = self.cg.db.var_initializer(declaration).or_else(|| {
                 self.cg
                     .db

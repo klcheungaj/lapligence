@@ -154,7 +154,10 @@ impl EmitCtx<'_, '_> {
                     source.lifetime,
                     if join == IrJoinKind::Join
                         && source.lifetime == StorageLifetime::Automatic
-                        && !matches!(source.kind, StorageKind::Opaque | StorageKind::String)
+                        && !matches!(
+                            source.kind,
+                            StorageKind::Opaque | StorageKind::String | StorageKind::Container
+                        )
                         && !matches!(
                             self.cg.kind(*target),
                             NodeKind::FuncArg {
@@ -168,7 +171,10 @@ impl EmitCtx<'_, '_> {
                         && source.lifetime == StorageLifetime::Automatic
                         && matches!(
                             source.kind,
-                            StorageKind::Packed | StorageKind::Real | StorageKind::String
+                            StorageKind::Packed
+                                | StorageKind::Real
+                                | StorageKind::String
+                                | StorageKind::Container
                         )
                     {
                         // A detached branch shares the declaring frame's cell.

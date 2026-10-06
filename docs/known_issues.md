@@ -524,7 +524,7 @@ handle elements and nested containers.
 ### Symptom
 
 These legal forms reject with explicit diagnostics: a `ref` container formal
-whose actual is not a container variable of the formal's type; a fork branch reading an automatic container of the enclosing activation; an
+whose actual is not a container variable of the formal's type; a fork branch reading a container formal of the enclosing activation; an
 instance container property selected through a handle (`h.q`) rather than
 inside the class's own methods, and an initializer on such a property; a
 container-result call used other than as a whole assignment source or a
@@ -718,6 +718,34 @@ specialization like packed `ref` formals.
 `tests/fixtures/sim/feature_completion/sim_009/neg_event_local_native.sv`;
 `task automatic down(int n); logic l = 0; fork #1 l = 1; join_none @(posedge l); if (n > 0) down(n - 1); endtask`;
 `task automatic watch(ref string t); @(t); endtask`.
+
+## Event controls on automatics written by fork branches never wake
+
+**Status:** open (SIM-010).
+
+### Symptom
+
+An event control or `wait` in a process block or task on an automatic
+variable that only a `join_none`/`join_any` branch writes never resumes; the
+run ends with "simulation deadlock". `@(l)` on a bare task local instead
+rejects with "cannot resolve signal reference".
+
+### Cause
+
+Automatic variables have no change marker. A shared automatic's cell is in
+an activation frame that every sharing process writes directly, so a write
+does not notify the waiters of an evaluated event control.
+
+### Intended direction
+
+Give each fork-shared automatic that an event control or `wait` reads a
+change marker in its frame slot; writes through the shared cell publish it
+and the waiting process's evaluated control suspends on it.
+
+### Reproduce
+
+`initial begin automatic logic b = 0; fork #3 b = 1; join_none @(b); end`;
+`task automatic t(); logic l = 0; fork #2 l = 1; join_none @(posedge (l & 1'b1)); endtask`.
 
 ## Native stack frames grow with a statement's format-argument count
 

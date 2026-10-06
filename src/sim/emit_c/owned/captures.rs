@@ -17,13 +17,19 @@ fn check_capture(storage: StorageRef) -> Result<(), String> {
         && (storage.lifetime() != StorageLifetime::Automatic
             || !matches!(
                 storage.kind(),
-                StorageKind::Packed | StorageKind::Real | StorageKind::String
+                StorageKind::Packed
+                    | StorageKind::Real
+                    | StorageKind::String
+                    | StorageKind::Container
             ))
     {
         return Err("shared fork capture requires automatic numeric or string storage".to_owned());
     }
     if storage.kind() == StorageKind::String && storage.ownership() == StorageOwnership::Borrowed {
         return Err("string fork captures are copied or shared".to_owned());
+    }
+    if storage.kind() == StorageKind::Container && storage.ownership() != StorageOwnership::Shared {
+        return Err("container fork captures are shared".to_owned());
     }
     if storage.ownership() == StorageOwnership::Borrowed
         && (storage.lifetime() != StorageLifetime::Automatic
@@ -217,6 +223,30 @@ impl Frame<'_, '_> {
         source: &str,
     ) -> Result<(), String> {
         check_capture(storage)?;
+        if storage.kind() == StorageKind::Container {
+            let IrExprKind::LocalRead(local) = initial.kind() else {
+                return Err("container fork capture requires its capture name".to_owned());
+            };
+            let index = (0..self.ctx.model.containers.len())
+                .find(|index| crate::sim::ir::shared_container_capture_name(*index) == *local)
+                .ok_or("container fork capture names no container")?;
+            let (ty, _, _) = super::super::containers::activation_storage(
+                &self.ctx.model.containers[index],
+                "",
+            )?;
+            let pointer = self.declare(
+                &format!("{ty}*"),
+                "capture_container",
+                format!(
+                    "({ty}*)llg_frame_object_address({source}, {}u)",
+                    storage.slot()
+                ),
+            );
+            self.containers.insert(index, format!("(*{pointer})"));
+            self.shared_cells
+                .insert(local.clone(), (source.to_owned(), storage.slot()));
+            return Ok(());
+        }
         if storage.kind() == StorageKind::String {
             // A captured string keeps its source local's name, so the
             // branch's string reads and writes resolve unchanged.

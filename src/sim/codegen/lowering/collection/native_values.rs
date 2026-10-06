@@ -576,7 +576,9 @@ impl Codegen<'_> {
                     || self
                         .container_globals
                         .get(&target)
-                        .is_some_and(|container| self.model.containers[container.ir].activation);
+                        .is_some_and(|container| self.model.containers[container.ir].activation)
+                        // Shared activation containers live in a fork frame.
+                        && !self.shared_locals.contains(&target);
                 if activation && !self.node_is_within(target, branch) {
                     return Some(self.node(target).name.clone());
                 }

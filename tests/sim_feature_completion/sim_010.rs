@@ -21,3 +21,15 @@ fn detached_branches_share_enclosing_automatic_strings() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_010/shared_strings.out");
     sim_cli::run_case_backend_parity(SUITE, "shared_strings", expected, &[], &[]);
 }
+
+#[test]
+fn fork_branches_share_task_containers() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_010/shared_containers.out");
+    sim_cli::run_case_backend_parity(SUITE, "shared_containers", expected, &[], &[]);
+}
+
+#[test]
+fn joined_branches_share_automatic_strings() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_010/joined_strings.out");
+    sim_cli::run_case_backend_parity(SUITE, "joined_strings", expected, &[], &[]);
+}

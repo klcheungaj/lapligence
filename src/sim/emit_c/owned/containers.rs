@@ -48,6 +48,16 @@ impl Frame<'_, '_> {
     /// the current lexical value scope, and return its C lvalue. Activation
     /// containers and call-boundary copies use this storage.
     pub(super) fn new_container(&mut self, index: usize) -> Result<String, String> {
+        self.new_container_in(index, None)
+    }
+
+    /// Create activation container `index` owned by the lexical value scope,
+    /// or by slot 0 of the shared activation frame `frame`.
+    pub(super) fn new_container_in(
+        &mut self,
+        index: usize,
+        frame: Option<&str>,
+    ) -> Result<String, String> {
         let container = self
             .ctx
             .model
@@ -57,9 +67,14 @@ impl Frame<'_, '_> {
         let (ty, _, destroy) = super::super::containers::activation_storage(container, "")?;
         let pointer = self.scalar(
             &format!("{ty}*"),
-            format!(
-                "({ty}*)llg_value_scope_object(llg_value_scope_begin_object(sizeof({ty}), {destroy}))"
-            ),
+            match frame {
+                Some(frame) => format!(
+                    "({ty}*)llg_frame_capture_object({frame}, 0u, sizeof({ty}), {destroy})"
+                ),
+                None => format!(
+                    "({ty}*)llg_value_scope_object(llg_value_scope_begin_object(sizeof({ty}), {destroy}))"
+                ),
+            },
         );
         let target = format!("(*{pointer})");
         let (_, init, _) = super::super::containers::activation_storage(container, &target)?;
@@ -251,6 +266,24 @@ impl Frame<'_, '_> {
             }
             let target = self.new_container(*container)?;
             self.containers.insert(*container, target);
+            return Ok(());
+        }
+        if let IrContainerStmt::SharedDeclare(container) = operation {
+            if !self.ctx.model.containers[*container].activation {
+                return Err("only activation containers are declared lexically".to_owned());
+            }
+            let owner = self.scalar(
+                "llg_frame_t**",
+                "(llg_frame_t**)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_frame_t*), llg_owned_frame_drop))"
+                    .to_owned(),
+            );
+            self.line(format!("*{owner} = llg_frame_new(1ULL);"));
+            let target = self.new_container_in(*container, Some(&format!("*{owner}")))?;
+            self.containers.insert(*container, target);
+            self.shared_cells.insert(
+                crate::sim::ir::shared_container_capture_name(*container),
+                (format!("(*{owner})"), 0),
+            );
             return Ok(());
         }
         let mut values = Vec::new();

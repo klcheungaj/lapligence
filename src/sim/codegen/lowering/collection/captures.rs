@@ -89,6 +89,33 @@ impl<'a> Codegen<'a> {
                 kind: StorageKind::Event,
             });
         }
+        // A shared activation container is aliased through its frame slot.
+        if let Some(container) = self
+            .container_globals
+            .get(&target)
+            .map(|container| container.ir)
+            .filter(|container| {
+                self.model.containers[*container].activation && self.shared_locals.contains(&target)
+            })
+        {
+            return Some(CaptureSource {
+                info: ProcLocalInfo {
+                    c_name: crate::sim::ir::shared_container_capture_name(container),
+                    width: 0,
+                    signed: false,
+                    two_state: true,
+                    static_signal: None,
+                },
+                initial: IrExpr::new(
+                    IrExprKind::LocalRead(crate::sim::ir::shared_container_capture_name(container)),
+                    0,
+                    false,
+                    None,
+                ),
+                lifetime: StorageLifetime::Automatic,
+                kind: StorageKind::Container,
+            });
+        }
         let function = self.func.as_ref()?;
         // An automatic string local of the subroutine is captured by value
         // (or shared, see `fork_shared`) under its own local name.
@@ -276,13 +303,17 @@ impl<'a> Codegen<'a> {
             let mut shared = HashSet::new();
             for node in self.db.node_ids() {
                 let NodeKind::Stmt(StmtKind::Fork {
-                    join_kind: DbJoinKind::None | DbJoinKind::Any,
+                    join_kind,
                     branches,
                     ..
                 }) = self.kind(node)
                 else {
                     continue;
                 };
+                // Strings and containers are shared with branches of every
+                // fork; other variables only with detached (join_none/join_any)
+                // ones, since a join branch borrows the suspended parent's cell.
+                let detached = matches!(join_kind, DbJoinKind::None | DbJoinKind::Any);
                 for branch in branches {
                     if matches!(
                         self.kind(*branch),
@@ -300,9 +331,14 @@ impl<'a> Codegen<'a> {
                             target: Some(target),
                         }) = self.kind(current)
                         {
-                            if matches!(self.kind(*target), NodeKind::Var { .. })
-                                && !self.node_is_within(*target, *branch)
+                            if matches!(
+                                self.kind(*target),
+                                NodeKind::Var { .. } | NodeKind::Array { .. }
+                            ) && !self.node_is_within(*target, *branch)
                                 && self.db.variable_lifetime(*target) == VariableLifetime::Automatic
+                                && (detached
+                                    || matches!(self.kind(*target), NodeKind::Var { ty } if ty.kind == "string")
+                                    || self.subroutine_container_meta(*target).is_some())
                             {
                                 shared.insert(*target);
                             }
