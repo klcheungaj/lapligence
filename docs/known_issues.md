@@ -571,30 +571,6 @@ receivers computed by element selects or calls, retained element cells for
 
 `tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`.
 
-## Shallow class copies
-
-**Status:** open (SIM-011 follow-up).
-
-### Symptom
-
-A shallow copy `b = new a;` or `new this` (SV 8.12) fails with "unsupported
-executable node `CopyClass`".
-
-### Cause
-
-The frontend import records the copy as a `CopyClass` node that lowering has
-no IR form for.
-
-### Intended direction
-
-Lower `CopyClass` to an object allocation that copies each property slot
-(packed bits, reals, string and handle values, native record values and
-container contents, per the SV 8.12 shallow-copy rules).
-
-### Reproduce
-
-`P b = new a;` for any class `P`.
-
 ## Real references and real-array expressions outside stable storage
 
 **Status:** open; SIM-005 implements real/shortreal references to stable

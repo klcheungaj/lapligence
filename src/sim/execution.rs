@@ -2230,6 +2230,11 @@ fn collect_chandle_effects(
         IrChandleExpr::LocalRead(name) => {
             collect_native_access_effects(ir, name, effects, visited_calls)
         }
+        IrChandleExpr::CopyClass { source, .. } => {
+            // Allocation is observable even when the copy is discarded.
+            effects.push(ExecutionEffect::RuntimeService);
+            collect_chandle_effects(ir, source, effects, visited_calls);
+        }
         IrChandleExpr::SemaphoreNew(index) => {
             effects.push(ExecutionEffect::RuntimeService);
             collect_expression_effects(ir, index, effects, visited_calls)

@@ -276,6 +276,9 @@ impl Codegen<'_> {
                 *is_super_class,
             );
         }
+        if let NodeKind::Expr(ExprKind::CopyClass { source, class_type }) = self.kind(node) {
+            return self.lower_class_copy(path, node, *source, *class_type);
+        }
         if matches!(
             self.kind(node),
             NodeKind::Expr(ExprKind::Constant {

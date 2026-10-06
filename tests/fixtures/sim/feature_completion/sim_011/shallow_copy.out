@@ -1,0 +1,5 @@
+c a=1 b=x1z0 r=1.5 s=orig q=2:2 rec=rs/9 k=7
+c h.v=4 same=1
+runs ctor=1 init=1
+d a=10 s=changed q=3
+f tag=mine a=5 ctor=2

@@ -44,3 +44,9 @@ fn task_handle_formals_are_shared_with_fork_branches() {
         include_str!("../fixtures/sim/feature_completion/sim_016/shared_handle_formals.out");
     sim_cli::run_case_backend_parity(SUITE, "shared_handle_formals", expected, &[], &[]);
 }
+
+#[test]
+fn blocked_requests_are_served_in_arrival_order() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_016/fifo_contention.out");
+    sim_cli::run_case_backend_parity(SUITE, "fifo_contention", expected, &[], &[]);
+}

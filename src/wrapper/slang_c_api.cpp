@@ -1560,6 +1560,7 @@ uint32_t semanticExpressionKind(ExpressionKind kind) {
       return LLG_SLANG_EXPR_ASSIGNMENT_PATTERN;
     case ExpressionKind::NewArray: return LLG_SLANG_EXPR_NEW_ARRAY;
     case ExpressionKind::NewClass: return LLG_SLANG_EXPR_NEW_CLASS;
+    case ExpressionKind::CopyClass: return LLG_SLANG_EXPR_COPY_CLASS;
     case ExpressionKind::NewCovergroup: return LLG_SLANG_EXPR_NEW_COVERGROUP;
     case ExpressionKind::MinTypMax: return LLG_SLANG_EXPR_MIN_TYP_MAX;
     case ExpressionKind::ValueRange: return LLG_SLANG_EXPR_VALUE_RANGE;
@@ -3623,6 +3624,9 @@ private:
             LLG_SLANG_NEW_CLASS_SUPER;
       if (const Expression* constructor = expression.constructorCall())
         capture.semanticRole(id, constructor, LLG_SLANG_EDGE_INITIALIZER);
+    }
+    else if constexpr (std::same_as<T, CopyClassExpression>) {
+      capture.semanticRole(id, &expression.sourceExpr(), LLG_SLANG_EDGE_OPERAND);
     }
     else if constexpr (std::same_as<T, MinTypMaxExpression>) {
       capture.semanticRole(id, &expression.min(), LLG_SLANG_EDGE_OPERAND, 0);

@@ -140,7 +140,58 @@ static llg_class_field_t* llg_class_field(void* handle, uint32_t expected, size_
             }
         }
         out.push_str("    return object;\n}\n");
+        render_class_copy(model, index, class, out);
     }
+}
+
+/// Shallow copy `new h` (SV 8.11): allocate class `index` without running
+/// constructors or initializers and copy each field from `source`, whose
+/// object is of this class or a derived one (derived layouts start with the
+/// base fields). Packed, real and string values and nested containers and
+/// records are copied; handle fields copy the handle, not the object. A null
+/// source has already been reported by `llg_class_require`.
+fn render_class_copy(
+    model: &IrModel,
+    index: usize,
+    class: &crate::sim::ir::IrClass,
+    out: &mut String,
+) {
+    use crate::sim::ir::IrClassFieldType;
+    out.push_str(&format!(
+        "static void* llg_class_copy_{index}(void* source) {{\n    const llg_class_object_t* from = (const llg_class_object_t*)source;\n    if (!from) return NULL;\n    llg_class_object_t* object = (llg_class_object_t*)llg_class_new_{index}();\n"
+    ));
+    for (field_index, field) in class.fields.iter().enumerate() {
+        let to = format!("object->fields[{field_index}].value");
+        let from = format!("from->fields[{field_index}].value");
+        if let Some(container) = field
+            .container
+            .and_then(|index| model.containers.get(index))
+        {
+            let ty = container_storage_type(container);
+            out.push_str(&format!(
+                "    {}(({ty}*){to}.handle, (const {ty}*){from}.handle);\n",
+                super::super::owned::containers::copy_function(container)
+            ));
+            continue;
+        }
+        if field.native_value.is_some() {
+            out.push_str(&format!(
+                "    llg_native_value_copy((llg_value_t*){to}.handle, (const llg_value_t*){from}.handle);\n"
+            ));
+            continue;
+        }
+        out.push_str(&match field.ty {
+            IrClassFieldType::Packed { .. } => {
+                format!("    sv4_copy(&{to}.packed, &{from}.packed);\n")
+            }
+            IrClassFieldType::Real { .. } => format!("    {to}.real = {from}.real;\n"),
+            IrClassFieldType::String => {
+                format!("    llg_string_assign(&{to}.string, &{from}.string);\n")
+            }
+            IrClassFieldType::Chandle => format!("    {to}.handle = {from}.handle;\n"),
+        });
+    }
+    out.push_str("    return object;\n}\n");
 }
 
 fn container_storage_type(container: &crate::sim::ir::IrContainer) -> &'static str {

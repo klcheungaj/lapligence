@@ -126,6 +126,13 @@ pub enum ExprKind {
         size: NodeId,
         initializer: Option<NodeId>,
     },
+    /// Shallow class copy `new h` (IEEE 1800-2009 8.11): a new object of the
+    /// source expression's class type whose properties are copied from the
+    /// object `source` names, without running constructors or initializers.
+    CopyClass {
+        source: NodeId,
+        class_type: Option<TypeId>,
+    },
     /// Class-object construction (`new(...)`). The class name is retained
     /// from Slang's resolved expression type; the constructor call is the
     /// owned initializer edge when one exists.
