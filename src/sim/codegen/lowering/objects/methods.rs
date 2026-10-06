@@ -142,7 +142,7 @@ impl Codegen<'_> {
             }
             if let Some(property) = self.foreign_class_container(receiver) {
                 return Err(format!(
-                    "class container property `{property}` in `{path}` is accessible only inside its class's methods (SIM-011)"
+                    "class container property `{property}` in `{path}` selected through a handle is supported only in procedural statements (SIM-011)"
                 ));
             }
             return Err("unsupported object method receiver".to_owned());

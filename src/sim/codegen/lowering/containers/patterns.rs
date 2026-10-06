@@ -639,6 +639,7 @@ impl<'a> Codegen<'a> {
             initial_size: None,
             activation: true,
             class_field: None,
+            receiver: None,
         });
         prelude.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
             temporary,

@@ -893,6 +893,7 @@ impl<'a> Codegen<'a> {
                     initial_size: None,
                     activation: false,
                     class_field: None,
+                    receiver: None,
                 });
                 leaves.push(AggregateMemberInfo {
                     member: leaf_member(member, descriptor),
@@ -1194,6 +1195,7 @@ impl<'a> Codegen<'a> {
             initial_size,
             activation: false,
             class_field: None,
+            receiver: None,
         });
         if has_initializer {
             self.container_initializers.push((node, ir));

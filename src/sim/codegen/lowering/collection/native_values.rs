@@ -483,6 +483,8 @@ impl Codegen<'_> {
             ty: layout.ty,
             activation: automatic,
             companions,
+            class_field: None,
+            receiver: None,
         });
         self.native_storage.insert((inst, node), index);
         Ok(Some(index))
@@ -504,6 +506,7 @@ impl Codegen<'_> {
                     initial_size: None,
                     activation,
                     class_field: None,
+                    receiver: None,
                 });
                 ir
             })
@@ -540,6 +543,8 @@ impl Codegen<'_> {
             ty: layout.ty,
             activation: true,
             companions,
+            class_field: None,
+            receiver: None,
         });
         self.native_value_layouts.insert(index, node);
         Ok(index)
@@ -661,6 +666,27 @@ impl Codegen<'_> {
                     .map(|value| (node, *value))
             })
             .collect();
+        // A method names the native record properties of its class and its
+        // bases through `this` (SIM-011).
+        if let Some(class) = self.class_method_owner(function) {
+            let mut layers = Vec::new();
+            let mut current = self.class_nodes.get(&class).copied();
+            while let Some(index) = current {
+                layers.push(index);
+                current = self.model.classes.get(index).and_then(|class| class.base);
+            }
+            let properties = self
+                .class_native_fields
+                .iter()
+                .filter(|(_, value)| {
+                    self.model.native_values[**value]
+                        .class_field
+                        .is_some_and(|(owner, _)| layers.contains(&owner))
+                })
+                .map(|(node, value)| (*node, *value))
+                .collect::<Vec<_>>();
+            self.native_roots.extend(properties);
+        }
     }
 
     /// Callee storage of a native formal or result in one instance.
@@ -703,6 +729,25 @@ impl Codegen<'_> {
                 .get(&node)
                 .map(|value| (*value, Vec::new()))),
             NodeKind::Expr(ExprKind::HierPath { parts, refs }) => {
+                // A native record class property selected through an explicit
+                // handle (SIM-011).
+                if let Some(alias) = self.receiver_native_values.get(&node) {
+                    let field = self
+                        .native_value_layouts
+                        .get(alias)
+                        .copied()
+                        .and_then(|field| refs.iter().rposition(|target| *target == Some(field)))
+                        .ok_or("class record property alias lost its declaration")?;
+                    return Ok(Some((
+                        *alias,
+                        parts
+                            .iter()
+                            .skip(field + 1)
+                            .cloned()
+                            .map(AggregatePathPart::Member)
+                            .collect(),
+                    )));
+                }
                 let Some((index, value)) = refs.iter().enumerate().find_map(|(index, target)| {
                     target.and_then(|target| self.native_roots.get(&target).map(|v| (index, *v)))
                 }) else {
@@ -721,7 +766,17 @@ impl Codegen<'_> {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 // The frontend can name a record member array by a detached
                 // array node; the captured select path then gives its owner.
+                // The path child of a select names an explicit handle.
+                let aliased = self
+                    .node(node)
+                    .children
+                    .iter()
+                    .find_map(|child| self.receiver_native_values.get(child).map(|_| *child));
                 let rooted = match self.db.array_select_path(node) {
+                    Some(_) if aliased.is_some() => aliased
+                        .map(|child| self.native_path_of(child))
+                        .transpose()?
+                        .flatten(),
                     Some((owner, members)) => self.native_roots.get(&owner).map(|value| {
                         (
                             *value,

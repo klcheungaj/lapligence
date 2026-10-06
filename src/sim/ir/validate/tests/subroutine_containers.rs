@@ -12,6 +12,7 @@ fn queue(element: IrContainerElement, activation: bool, name: &str) -> IrContain
         initial_size: None,
         activation,
         class_field: None,
+        receiver: None,
     }
 }
 

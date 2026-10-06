@@ -24,8 +24,11 @@ typedef struct llg_class_object {
     struct llg_class_object* next;
 } llg_class_object_t;
 static llg_class_object_t* llg_class_objects;
+/* A null handle is a run-time error (SV 8.4). The first check of a failing
+ * statement reports at its source site; checks the same process reaches
+ * while it is exiting stay quiet. */
 static void* llg_class_require(void* object, const char* site) {
-    if (!object) {
+    if (!object && !llg_rt_exiting()) {
         fprintf(stderr, "llg: null class handle access: %s\n", site);
         llg_rt_mark_failed();
         llg_rt_fatal_typed(0, "null class handle access", NULL, 0, "", site);
@@ -59,10 +62,16 @@ static void llg_class_storage_destroy(void) {
     }
     out.push_str("        default: return 0;\n        }\n    }\n}\n");
     out.push_str(r#"
-static llg_class_field_t* llg_class_field(void* handle, uint32_t expected, size_t index) {
+/* After a failed access the statement continues on per-kind scratch
+ * storage (packed, real, string, handle) instead of a null object. */
+static llg_class_field_t llg_class_field_invalid[4] = { { .kind = 0, .value = { .packed = SV4_EMPTY } } };
+static llg_class_field_t* llg_class_field(void* handle, uint32_t expected, size_t index, unsigned kind) {
     llg_class_object_t* object = (llg_class_object_t*)llg_class_require(handle, "class field");
-    if (!llg_class_is_a(handle, expected) || index >= object->count)
-        { llg_rt_mark_failed(); llg_rt_fatal_typed(0, "invalid class field", NULL, 0, "", "class field"); }
+    if (!object) return &llg_class_field_invalid[kind & 3u];
+    if (!llg_class_is_a(handle, expected) || index >= object->count) {
+        llg_rt_mark_failed(); llg_rt_fatal_typed(0, "invalid class field", NULL, 0, "", "class field");
+        return &llg_class_field_invalid[kind & 3u];
+    }
     return &object->fields[index];
 }
 "#);
@@ -88,13 +97,39 @@ static llg_class_field_t* llg_class_field(void* handle, uint32_t expected, size_
                     container_storage_type(container)
                 );
                 match super::super::containers::activation_storage(container, &target) {
-                    Ok((ty, init, drop)) => out.push_str(&format!(
-                        "    {slot}.kind = 4; {slot}.drop = {drop}; {slot}.value.handle = malloc(sizeof({ty}));\n    if (!{slot}.value.handle) abort();\n{init}"
-                    )),
+                    Ok((ty, init, drop)) => {
+                        out.push_str(&format!(
+                            "    {slot}.kind = 4; {slot}.drop = {drop}; {slot}.value.handle = malloc(sizeof({ty}));\n    if (!{slot}.value.handle) abort();\n{init}"
+                        ));
+                        // A fixed-array property (SIM-011) starts with its
+                        // declared default elements.
+                        if let Some(size) = container.initial_size {
+                            let function = if container.element.is_packed() {
+                                "llg_dyn_new"
+                            } else {
+                                "llg_dyn_value_new"
+                            };
+                            out.push_str(&format!(
+                                "    {{ sv4_t size = sv4_from_u64({size}ULL, 64, 0); {function}(&{target}, size, NULL); sv4_destroy(&size); }}\n"
+                            ));
+                        }
+                    }
                     // The same descriptor failure rejects the model when the
                     // container tables are declared.
                     Err(_) => out.push_str("#error \"unrepresentable class container property\"\n"),
                 }
+                continue;
+            }
+            if let Some(value) = field
+                .native_value
+                .and_then(|index| model.native_values.get(index))
+            {
+                // Kind 4: an owned native record value (SIM-011).
+                let slot = format!("object->fields[{field_index}]");
+                out.push_str(&format!(
+                    "    {slot}.kind = 4; {slot}.drop = llg_native_root_destroy; {slot}.value.handle = malloc(sizeof(llg_native_root_t));\n    if (!{slot}.value.handle) abort();\n    llg_native_root_init((llg_native_root_t*){slot}.value.handle, &{});\n",
+                    super::super::owned::native_values::native_type_descriptor(value.ty)
+                ));
                 continue;
             }
             match field.ty {
@@ -153,7 +188,15 @@ pub(super) fn render_virtual_dispatch_prototypes(model: &IrModel, out: &mut Stri
     }
 }
 
-pub(super) fn render_virtual_dispatch_bodies(model: &IrModel, out: &mut String) {
+/// Plain dispatchers, one per slot. A suspending implementation is entered
+/// only through its slot's arena-dispatch helper (`recursion.rs`), so a
+/// plain dispatch that selects one fails instead of calling a coroutine
+/// entry with plain arguments.
+pub(super) fn render_virtual_dispatch_bodies(
+    model: &IrModel,
+    is_coroutine: impl Fn(usize) -> bool,
+    out: &mut String,
+) {
     for (slot, function) in virtual_slots(model) {
         let f = &model.funcs[function];
         let ret = function_return_type(f);
@@ -161,14 +204,20 @@ pub(super) fn render_virtual_dispatch_bodies(model: &IrModel, out: &mut String) 
             "static {ret} llg_class_dispatch_{slot}({}) {{\n",
             func_params(f)
         ));
-        out.push_str("    if (!_this) { fprintf(stderr, \"llg: virtual call on null class handle\\n\"); llg_rt_mark_failed(); llg_rt_fatal_typed(0, \"invalid virtual class call\", NULL, 0, \"\", \"class dispatch\"); }\n");
+        // A null receiver was reported at the call site; the dispatcher
+        // then returns the default result without selecting an override.
+        out.push_str("    if (!_this) { (void)llg_class_require(_this, \"virtual method call\"); goto _llg_dispatch_failed; }\n");
         out.push_str("    switch (llg_class_id(_this)) {\n");
         for class in 0..model.classes.len() {
             let Some(implementation) = virtual_impl_for_class(model, class, slot) else {
                 continue;
             };
             let target = &model.funcs[implementation];
-            if ret == "void" {
+            if is_coroutine(implementation) {
+                out.push_str(&format!(
+                    "    case {class}: fprintf(stderr, \"llg: suspending virtual task called without suspension\\n\"); llg_rt_mark_failed(); llg_rt_fatal_typed(0, \"invalid virtual class call\", NULL, 0, \"\", \"class dispatch\"); break;\n"
+                ));
+            } else if ret == "void" {
                 out.push_str(&format!(
                     "    case {class}: {}({}); return;\n",
                     target.c_name,
@@ -183,6 +232,7 @@ pub(super) fn render_virtual_dispatch_bodies(model: &IrModel, out: &mut String) 
             }
         }
         out.push_str("    default: fprintf(stderr, \"llg: invalid class type in virtual call\\n\"); llg_rt_mark_failed(); llg_rt_fatal_typed(0, \"invalid virtual class call\", NULL, 0, \"\", \"class dispatch\");\n");
+        out.push_str("    }\n    _llg_dispatch_failed:\n");
         if packed_result(f) {
             out.push_str(&format!(
                 "    {} return;\n",
@@ -199,7 +249,6 @@ pub(super) fn render_virtual_dispatch_bodies(model: &IrModel, out: &mut String) 
         } else {
             out.push_str(&format!("    return {};\n", f.ret_x()));
         }
-        out.push_str("    }\n");
         out.push_str("}\n\n");
     }
 }

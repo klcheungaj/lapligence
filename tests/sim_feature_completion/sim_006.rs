@@ -184,11 +184,6 @@ fn wildcard_index_traversal_is_rejected_by_the_frontend() {
 fn unsupported_container_boundaries_are_explicit() {
     sim_cli::reject_case(
         SUITE,
-        "neg_class_container_outside",
-        "class container property `q` in `tb` is accessible only inside its class's methods (SIM-011)",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "neg_nested_element_method",
         "method `push_back` of a nested container element in `tb` is not supported",
     );

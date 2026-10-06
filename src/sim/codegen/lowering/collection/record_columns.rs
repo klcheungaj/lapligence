@@ -842,6 +842,8 @@ impl Codegen<'_> {
                 ty,
                 activation,
                 companions: Vec::new(),
+                class_field: None,
+                receiver: None,
             });
         Ok(Some(index))
     }

@@ -237,6 +237,11 @@ pub struct IrContainer {
     /// Instance property storage of class `.0`, field `.1`: one container
     /// per object, reached through the receiver of the enclosing method.
     pub class_field: Option<(usize, usize)>,
+    /// The property's container selected through an explicit handle
+    /// (`h.q`, SIM-011): an alias of the object's storage, evaluated at each
+    /// use, instead of the enclosing method's `this`. Only side-effect-free
+    /// handle reads (see [`IrChandleExpr::is_plain_receiver`]) qualify.
+    pub receiver: Option<IrChandleExpr>,
 }
 
 impl IrContainer {

@@ -177,6 +177,7 @@ pub struct ExecutionAnalysis {
     function_depths: Vec<Option<usize>>,
     sites: BTreeMap<CoroutineId, BTreeMap<OperationPath, SuspensionSite>>,
     recursion: RecursionAnalysis,
+    suspending_slots: BTreeSet<usize>,
 }
 
 impl ExecutionAnalysis {
@@ -227,13 +228,27 @@ impl ExecutionAnalysis {
             .map(|(index, _)| index)
             .collect::<BTreeSet<_>>();
 
+        let suspending_slots = coroutine_functions
+            .iter()
+            .filter_map(|function| ir.funcs[*function].virtual_slot)
+            .collect::<BTreeSet<_>>();
+        let call_effects = CallEffects {
+            functions: &function_effects,
+            virtual_slots: ir
+                .funcs
+                .iter()
+                .map(|function| function.virtual_slot)
+                .collect(),
+            suspending_slots: &suspending_slots,
+        };
+        let function_effects = &call_effects;
         let mut drafts = BTreeMap::<CoroutineId, Vec<SiteDraft>>::new();
         for function in &coroutine_functions {
             let mut sites = Vec::new();
             scan_statements(
                 &ir.funcs[*function].body,
                 &OperationPath::default(),
-                &function_effects,
+                function_effects,
                 &mut sites,
             );
             drafts.insert(CoroutineId::Function(*function), sites);
@@ -242,7 +257,7 @@ impl ExecutionAnalysis {
             scan_branches(
                 &definition.pre_fns,
                 |helper| CoroutineId::FunctionBranch { function, helper },
-                &function_effects,
+                function_effects,
                 &mut drafts,
             );
         }
@@ -251,12 +266,7 @@ impl ExecutionAnalysis {
             for (block_index, block) in process.blocks.iter().enumerate() {
                 let block_path = OperationPath::default()
                     .child(OperationPathElement::ExecutionBlock(block_index));
-                scan_statements(
-                    &block.operations,
-                    &block_path,
-                    &function_effects,
-                    &mut sites,
-                );
+                scan_statements(&block.operations, &block_path, function_effects, &mut sites);
                 if matches!(
                     &block.terminator,
                     ExecutionTerminator::Suspend {
@@ -278,7 +288,7 @@ impl ExecutionAnalysis {
             scan_branches(
                 &definition.pre_fns,
                 |helper| CoroutineId::ProcessBranch { process, helper },
-                &function_effects,
+                function_effects,
                 &mut drafts,
             );
         }
@@ -384,6 +394,7 @@ impl ExecutionAnalysis {
             function_depths,
             sites,
             recursion,
+            suspending_slots,
         })
     }
 
@@ -449,6 +460,13 @@ impl ExecutionAnalysis {
         self.recursion.dispatch_slots()
     }
 
+    /// Class virtual slots with a suspending implementation (SIM-011).
+    /// Dispatch through them enters the selected implementation through an
+    /// arena-dispatch helper at an arena call site.
+    pub fn suspendable_dispatch_slots(&self) -> &BTreeSet<usize> {
+        &self.suspending_slots
+    }
+
     /// Virtual-interface methods with an arena-dispatch helper.
     pub fn recursive_interface_methods(&self) -> &BTreeSet<(usize, usize)> {
         self.recursion.interface_methods()
@@ -501,10 +519,31 @@ struct SiteDraft {
     origin: Option<crate::sim::semantic::Origin>,
 }
 
+/// Effects a call site observes: each function's own effects, and which
+/// class virtual slots have a suspending implementation.
+struct CallEffects<'a> {
+    functions: &'a [Vec<ExecutionEffect>],
+    virtual_slots: Vec<Option<usize>>,
+    suspending_slots: &'a BTreeSet<usize>,
+}
+
+impl CallEffects<'_> {
+    /// Whether class virtual dispatch through `function`'s slot may enter a
+    /// suspending implementation; a virtual method without a slot has only
+    /// itself as implementation.
+    fn dispatch_suspends(&self, function: usize) -> bool {
+        match self.virtual_slots.get(function) {
+            Some(Some(slot)) => self.suspending_slots.contains(slot),
+            Some(None) => self.functions[function].contains(&ExecutionEffect::Suspend),
+            None => true,
+        }
+    }
+}
+
 fn scan_branches(
     helpers: &[IrPreFn],
     owner: impl Fn(usize) -> CoroutineId,
-    function_effects: &[Vec<ExecutionEffect>],
+    function_effects: &CallEffects<'_>,
     drafts: &mut BTreeMap<CoroutineId, Vec<SiteDraft>>,
 ) {
     for (helper, pre_fn) in helpers.iter().enumerate() {
@@ -526,7 +565,7 @@ fn scan_branches(
 fn scan_statements(
     statements: &[IrStmt],
     parent: &OperationPath,
-    function_effects: &[Vec<ExecutionEffect>],
+    function_effects: &CallEffects<'_>,
     sites: &mut Vec<SiteDraft>,
 ) {
     for (index, statement) in statements.iter().enumerate() {
@@ -654,7 +693,7 @@ fn scan_statements(
 
 fn suspension_operation(
     statement: &IrStmt,
-    function_effects: &[Vec<ExecutionEffect>],
+    function_effects: &CallEffects<'_>,
 ) -> Option<(SuspensionOperation, Option<DirectCall>)> {
     let operation = match statement {
         IrStmt::Delay { .. } => SuspensionOperation::Delay,
@@ -696,15 +735,22 @@ fn suspension_operation(
         },
         IrStmt::Call(call) => {
             let indirect = call.virtual_dispatch || call.virtual_call.is_some();
-            let callee = function_effects.get(call.function_index());
-            // Lowering rejects timing-bearing class and virtual-interface
-            // dispatch.  The dispatch mechanism alone therefore cannot make
-            // an otherwise synchronous target suspend.
-            if callee.is_some_and(|effects| !effects.contains(&ExecutionEffect::Suspend)) {
+            let function = call.function_index();
+            let callee = function_effects.functions.get(function);
+            // Class virtual dispatch suspends when any implementation of the
+            // slot does (SIM-011). Lowering rejects timing-bearing
+            // virtual-interface tasks, so that dispatch alone cannot make an
+            // otherwise synchronous target suspend.
+            let suspends = if call.virtual_dispatch && call.virtual_call.is_none() {
+                function_effects.dispatch_suspends(function)
+            } else {
+                callee.is_none_or(|effects| effects.contains(&ExecutionEffect::Suspend))
+            };
+            if !suspends {
                 return None;
             }
             let call = DirectCall {
-                callee: callee.map(|_| call.function_index()),
+                callee: callee.map(|_| function),
                 indirect,
             };
             return Some((
@@ -959,6 +1005,34 @@ mod tests {
         IrExprKind, IrFunc, IrJoinKind, IrMailboxTarget, IrMailboxValue, IrModelParts, IrProcess,
         IrProcessExpr, IrShape,
     };
+
+    #[test]
+    fn virtual_dispatch_suspends_when_any_slot_implementation_does() {
+        // f0 and f1 share slot 3 and only the override f1 suspends; f2 is
+        // alone in slot 4.
+        let effects = vec![vec![], vec![ExecutionEffect::Suspend], vec![]];
+        let slots = [3].into_iter().collect::<BTreeSet<_>>();
+        let call_effects = CallEffects {
+            functions: &effects,
+            virtual_slots: vec![Some(3), Some(3), Some(4)],
+            suspending_slots: &slots,
+        };
+        let mut dispatch = IrCall::new(0, vec![], IrDepth::PROC, vec![], vec![]);
+        dispatch.virtual_dispatch = true;
+        let (operation, call) =
+            suspension_operation(&IrStmt::Call(Box::new(dispatch)), &call_effects)
+                .expect("dispatch through a suspending slot is a site");
+        assert_eq!(operation, SuspensionOperation::Call { callee: Some(0) });
+        assert!(call.is_some_and(|call| call.indirect));
+        // `super.run()` binds the non-suspending base statically.
+        let static_call = IrCall::new(0, vec![], IrDepth::PROC, vec![], vec![]);
+        assert!(
+            suspension_operation(&IrStmt::Call(Box::new(static_call)), &call_effects).is_none()
+        );
+        let mut other = IrCall::new(2, vec![], IrDepth::PROC, vec![], vec![]);
+        other.virtual_dispatch = true;
+        assert!(suspension_operation(&IrStmt::Call(Box::new(other)), &call_effects).is_none());
+    }
 
     fn statement_call(callee: usize, depth: IrDepth) -> IrStmt {
         IrStmt::Call(Box::new(IrCall::new(callee, vec![], depth, vec![], vec![])))
@@ -1360,21 +1434,27 @@ mod tests {
             ))),
             statement_call(0, IrDepth::PROC),
         ];
-        let function_effects = vec![vec![ExecutionEffect::Suspend]];
+        let effects = vec![vec![ExecutionEffect::Suspend]];
+        let slots = BTreeSet::new();
+        let function_effects = &CallEffects {
+            functions: &effects,
+            virtual_slots: vec![None],
+            suspending_slots: &slots,
+        };
         for statement in cases {
-            assert!(suspension_operation(&statement, &function_effects).is_some());
+            assert!(suspension_operation(&statement, function_effects).is_some());
         }
 
         let clocking = IrStmt::ClockingCycleWait {
             count: one(),
             specs: vec![],
         };
-        assert!(suspension_operation(&clocking, &function_effects).is_none());
+        assert!(suspension_operation(&clocking, function_effects).is_none());
         let mut sites = Vec::new();
         scan_statements(
             std::slice::from_ref(&clocking),
             &OperationPath::default(),
-            &function_effects,
+            function_effects,
             &mut sites,
         );
         assert_eq!(
@@ -1392,7 +1472,7 @@ mod tests {
                 branches: vec![("branch".into(), "top.branch".into())],
                 target: None,
             },
-            &function_effects,
+            function_effects,
         )
         .is_none());
         assert!(suspension_operation(
@@ -1405,7 +1485,7 @@ mod tests {
                 },
                 true,
             ))),
-            &function_effects,
+            function_effects,
         )
         .is_none());
     }

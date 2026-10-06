@@ -317,6 +317,15 @@ impl Codegen<'_> {
                 ));
             }
         }
+        // A static handle property is one model object (SV 8.9), named
+        // with or without a class scope or receiver.
+        if let Some(index) = self
+            .class_field_target(node)
+            .and_then(|field| self.class_static_objects.get(&field).copied())
+            .filter(|index| self.model.objects[*index].ty == IrObjectType::Chandle)
+        {
+            return Ok(IrChandleExpr::Read(index));
+        }
         if let Some(address) = self.class_field_chandle_lvalue(path, node)? {
             return Ok(IrChandleExpr::LocalRead(address));
         }
@@ -502,7 +511,7 @@ impl Codegen<'_> {
             }
             out_args.extend(in_args);
             return Ok(IrChandleExpr::Call {
-                receiver: self.class_method_receiver(node)?.map(Box::new),
+                receiver: self.class_method_receiver(path, node)?.map(Box::new),
                 virtual_dispatch: self.class_method_virtual_dispatch(node),
                 function,
                 args: out_args,

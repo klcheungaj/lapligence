@@ -46,6 +46,13 @@ impl Frame<'_, '_> {
                 return Ok(handle);
             }
             IrChandleExpr::Construct(index) => return self.construct_class(*index),
+            IrChandleExpr::Required { handle, site } => {
+                let handle = self.chandle(handle)?;
+                return Ok(self.scalar(
+                    "void*",
+                    format!("llg_class_require({handle}, {})", c_string_literal(site)),
+                ));
+            }
             IrChandleExpr::InterfaceInstance {
                 interface,
                 instance,

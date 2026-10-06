@@ -11,6 +11,7 @@ fn container_model(element: IrContainerElement) -> IrModel {
         initial_size: None,
         activation: false,
         class_field: None,
+        receiver: None,
     });
     model
 }
