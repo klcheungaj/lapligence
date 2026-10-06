@@ -83,6 +83,9 @@ fn dependency_pointer(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
         IrDependency::Object(object) => {
             format!("&{}_llg_dep", ctx.model.objects[*object].c_name)
         }
+        IrDependency::SharedCell { .. } => {
+            unreachable!("shared cells exist only in the owned emitter")
+        }
     }
 }
 
@@ -144,6 +147,9 @@ fn dependency_entry(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
                 "{{ .sig = &{}_llg_dep }}",
                 ctx.model.objects[*object].c_name
             )
+        }
+        IrDependency::SharedCell { .. } => {
+            unreachable!("shared cells exist only in the owned emitter")
         }
     }
 }
@@ -251,7 +257,7 @@ pub(super) fn event_capture_code(
     let mut replaced = code.to_owned();
     for capture in context.captures() {
         let replacement = match capture.storage().kind() {
-            StorageKind::Event => {
+            StorageKind::Event | StorageKind::String | StorageKind::Container => {
                 return Err("event captures require whole-model ownership emission".to_owned())
             }
             StorageKind::Real => format!(
@@ -274,7 +280,7 @@ pub(super) fn format_frame_capture(
     initial: &str,
 ) -> Result<String, String> {
     let call = match storage.kind() {
-        StorageKind::Event => {
+        StorageKind::Event | StorageKind::String | StorageKind::Container => {
             return Err("event captures require whole-model ownership emission".to_owned())
         }
         StorageKind::Packed => format!(

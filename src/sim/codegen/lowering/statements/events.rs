@@ -666,8 +666,27 @@ impl EmitCtx<'_, '_> {
     fn event_evaluator(&mut self, expression: NodeId) -> Result<(String, bool), String> {
         self.cg
             .check_event_expression_effects(expression, &self.path)?;
-        let value = self.cg.lower_expr(&self.path, expression)?;
+        let mut value = self.cg.lower_expr(&self.path, expression)?;
         let context = self.cg.event_context(expression)?;
+        // The evaluator reads captured formals from its context slots.
+        if context.as_ref().is_some_and(|context| {
+            context
+                .captures()
+                .iter()
+                .any(|capture| matches!(capture.initial().kind(), IrExprKind::FormalRead(_)))
+        }) {
+            crate::sim::opt::walk_expr_mut(&mut value, &mut |expression| {
+                if let IrExprKind::FormalRead(index) = expression.kind() {
+                    let local = Codegen::event_formal_local(*index);
+                    *expression = IrExpr::new(
+                        IrExprKind::LocalRead(local),
+                        expression.width,
+                        expression.signed,
+                        None,
+                    );
+                }
+            });
+        }
         let name = self.cg.new_fn_name(&self.path, "event_eval");
         let real = value.is_real();
         if real {
@@ -765,14 +784,15 @@ impl EmitCtx<'_, '_> {
         let selected_aggregate_member = self.cg.packed_member_info(expression).is_some()
             || self.cg.unpacked_member_info(expression).is_some()
             || self.cg.packed_element_member_select(expression).is_some();
+        // Formals and automatic locals of the subroutine have no signal; they
+        // wait through the evaluated path.
         let mapped_formal = matches!(
             self.cg.kind(expression),
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
-            }) if self
-                .func
-                .as_ref()
-                .is_some_and(|func| func.arg_ir.contains_key(target))
+            }) if self.func.as_ref().is_some_and(|func| {
+                func.arg_ir.contains_key(target) || func.locals.contains_key(target)
+            })
         );
         let persistent_subroutine_signal = match self.cg.kind(expression) {
             NodeKind::Expr(ExprKind::Ref {
@@ -865,7 +885,8 @@ impl EmitCtx<'_, '_> {
                 edge,
             ));
         }
-        let reads = self.cg.collect_read_signals(&self.path, expression)?;
+        let mut reads = self.cg.collect_read_signals(&self.path, expression)?;
+        reads.extend(self.cg.shared_event_dependencies(expression));
         let (eval, real) = self.event_evaluator(expression)?;
         if real && edge != IrEdge::Any {
             return Err(format!(

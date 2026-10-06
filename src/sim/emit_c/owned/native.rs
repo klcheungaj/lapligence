@@ -49,7 +49,8 @@ impl NativeValue {
 
 pub(in crate::sim::emit_c) fn helpers(out: &mut String) {
     out.push_str("static void llg_owned_string_drop(void* p) { llg_string_destroy((llg_string_t*)p); }\n\
-        static void llg_owned_process_drop(void* p) { llg_process_release(*(llg_process_handle_t**)p); }\n\n");
+        static void llg_owned_process_drop(void* p) { llg_process_release(*(llg_process_handle_t**)p); }\n\
+        static void llg_owned_frame_drop(void* p) { llg_frame_release(*(llg_frame_t**)p); }\n\n");
 }
 
 impl Frame<'_, '_> {
@@ -108,6 +109,20 @@ impl Frame<'_, '_> {
             .expect("native scope")
             .insert(name.to_owned(), binding.clone());
         binding
+    }
+    /// Bind `name` to existing native storage at `address`.
+    pub(super) fn bind_native(&mut self, name: &str, address: String, kind: NativeKind) {
+        self.native_bindings
+            .last_mut()
+            .expect("native scope")
+            .insert(
+                name.to_owned(),
+                NativeBinding {
+                    address,
+                    kind,
+                    automatic: true,
+                },
+            );
     }
     pub(super) fn native_lookup(
         &mut self,

@@ -62,6 +62,11 @@ pub struct IrFormal {
     /// Native arbitrary-byte string formal. String formals use
     /// `llg_string_t` values/pointers rather than packed storage.
     pub(in crate::sim) string: bool,
+    /// For a packed or real output/inout formal that a detached fork branch
+    /// shares: the local naming the shared frame cell that holds its value
+    /// during the activation. The callee creates the cell from `o{idx}` at
+    /// entry, outside the body's scopes, and copies it back at return.
+    pub(in crate::sim) shared_local: Option<String>,
 }
 
 /// Owned DPI-C linkage qualifiers attached to one imported subroutine.
@@ -118,6 +123,7 @@ impl IrFormal {
             chandle: false,
             event: false,
             string: false,
+            shared_local: None,
         })
     }
 

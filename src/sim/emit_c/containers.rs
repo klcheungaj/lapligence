@@ -342,7 +342,8 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
         | IrContainerStmt::CopyRange { .. }
         | IrContainerStmt::Merge { .. }
         | IrContainerStmt::Nonblocking { .. }
-        | IrContainerStmt::Declare(_) => {
+        | IrContainerStmt::Declare(_)
+        | IrContainerStmt::SharedDeclare(_) => {
             return Err("container record values require whole-model ownership emission".into())
         }
         IrContainerStmt::StreamAssign {

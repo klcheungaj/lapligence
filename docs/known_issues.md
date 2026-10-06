@@ -535,7 +535,7 @@ handle elements and nested containers.
 ### Symptom
 
 These legal forms reject with explicit diagnostics: a `ref` container formal
-whose actual is not a container variable of the formal's type; a fork branch reading an automatic container of the enclosing activation; an
+whose actual is not a container variable of the formal's type; a fork branch reading a container formal of the enclosing activation; an
 instance container property selected through a handle that is not a
 variable, formal or handle property (`list[i].q`, `f().q`), or outside a
 procedural statement (a continuous assignment, for instance); a
@@ -702,37 +702,41 @@ not wake.
 
 ### Symptom
 
-A task whose event control (`@(...)`) reads one of its own by-value formals,
-locals, or string or handle `ref` formals is expanded at each call site. These
-legal forms still reject: such a task that also has a native record or
-container formal ("needs caller-environment expansion, which is not
-supported"); a recursive such task; and `@(t)` on a string `ref` formal
-("cannot resolve signal reference"). `wait (cond)` over formals, event
-controls on module signals and on `ref` formals with module-signal actuals
-(including members of a native record `ref` formal bound to a module, static
-or block record), and event formals of every direction take the typed call
-path.
+A task whose event control reads a string or handle formal, or whose `ref`
+formal with an event control is bound to a block or subroutine automatic or
+to an array element, is expanded at each call site. These legal forms fail:
+`@(tag)` on a string formal ("cannot resolve signal reference"); an `iff`
+qualifier reading a string or handle formal ("ownership emission is not yet
+implemented for unresolved native storage"); an event control on a `ref`
+formal bound to an automatic that a fork branch writes (never wakes) or to a
+fixed-array element ("unresolved local read"); and such a task that also has a
+native record or container formal or recurses. Event controls on the task's
+own locals, by-value packed and real formals, `wait (cond)`, module signals,
+`ref` formals with module-signal actuals (including members of a native record
+`ref` formal bound to a module, static or block record) and event formals of
+every direction take the typed call path.
 
 ### Cause
 
-The typed body's evaluated event callbacks capture only process-block
-automatics; a shared task body has no private context for its own formals
-and locals, and no change marker for a string or handle `ref` actual, so
-call-site expansion supplies them. Expansion cannot carry native formals and
-cannot recurse.
+The typed body's evaluated event callbacks cannot name a string or handle
+actual's change marker, so such reads expand the task; the expansion's
+evaluator context copies a `ref` formal's automatic actual instead of aliasing
+its cell, binds no array-element reference, and cannot carry native formals or
+recurse.
 
 ### Intended direction
 
-Capture the by-value formals and locals an event expression reads into the
-evaluator's private context in the typed body, as process blocks do, and bind
-string and handle `ref` actuals' change markers per specialization like
-packed `ref` formals.
+Bind string and handle `ref` actuals' change markers per specialization like
+packed `ref` formals, copy by-value string and handle formals into the typed
+evaluator context (only the waiting activation can write them), and alias
+automatic `ref` actuals' cells (with their subscriptions) in expansions.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_009/neg_event_local_native.sv`;
-`task automatic down(int n); logic l = 0; fork #1 l = 1; join_none @(posedge l); if (n > 0) down(n - 1); endtask`;
-`task automatic watch(ref string t); @(t); endtask`.
+`task automatic w(input string tag); @(tag); endtask`;
+`task automatic w(input string tag); @(posedge c iff tag != ""); endtask`;
+`task automatic w(ref logic s); @(posedge s); endtask` called as `w(local)`
+with `fork #2 local = 1; join_none`, or as `w(mem[1])` on `logic mem [2]`.
 
 ## Native stack frames grow with a statement's format-argument count
 

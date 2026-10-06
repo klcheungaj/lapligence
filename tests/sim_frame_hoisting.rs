@@ -190,13 +190,16 @@ fn inline_expanded_task_storage_is_hoisted_into_its_host_frame() {
         "inline_event_frame.sv",
         r#"
 module tb;
-    logic level;
-    task automatic await_edge(input logic enable);
+    // A block-local ref actual expands the task at its call site.
+    task automatic await_edge(ref logic source);
         integer local_value;
-        @(posedge (level & enable));
+        @(posedge source);
         local_value = 1;
     endtask
-    initial await_edge(1'b1);
+    initial begin
+        automatic logic level;
+        await_edge(level);
+    end
 endmodule
 "#,
         ExecutionAnalysisOptions::default(),

@@ -97,9 +97,14 @@ impl EmitCtx<'_, '_> {
             if !self.cg.model.containers[container].activation {
                 return Ok(Vec::new());
             }
-            let mut statements = vec![IrStmt::Container(Box::new(IrContainerStmt::Declare(
-                container,
-            )))];
+            // A container that fork branches use lives in a shared frame.
+            let declare = if self.cg.fork_shared(declaration) {
+                self.cg.shared_locals.insert(declaration);
+                IrContainerStmt::SharedDeclare(container)
+            } else {
+                IrContainerStmt::Declare(container)
+            };
+            let mut statements = vec![IrStmt::Container(Box::new(declare))];
             let initializer = self.cg.db.var_initializer(declaration).or_else(|| {
                 self.cg
                     .db
@@ -331,6 +336,10 @@ impl EmitCtx<'_, '_> {
                             .var_initializer(declaration)
                             .map(|initializer| self.cg.lower_string(&self.path, initializer))
                             .transpose()?;
+                        if self.cg.fork_shared(declaration) {
+                            self.cg.shared_locals.insert(declaration);
+                            return Ok(vec![IrStmt::SharedString { name, init }]);
+                        }
                         return Ok(vec![IrStmt::DeclString { name, init }]);
                     }
                     let (_, width, signed, two_state, shortreal) = self
@@ -385,13 +394,14 @@ impl EmitCtx<'_, '_> {
                         .and_then(|function| function.locals.get(&declaration))
                         .map(|(name, ..)| name.clone())
                         .expect("automatic local storage checked above");
-                    Ok(vec![IrStmt::DeclLocal {
+                    Ok(vec![self.automatic_local(
+                        declaration,
                         name,
                         width,
                         signed,
                         two_state,
                         init,
-                    }])
+                    )])
                 }
                 VariableLifetime::Unavailable => Err(format!(
                     "resolved lifetime is unavailable for subprogram variable `{}` in `{}`",
@@ -509,12 +519,43 @@ impl EmitCtx<'_, '_> {
                 })
             })
             .or_else(|| default_real_local_initializer(info.width));
-        Ok(vec![IrStmt::DeclLocal {
-            name: info.c_name,
-            width: info.width,
-            signed: info.signed,
-            two_state: info.two_state,
+        Ok(vec![self.automatic_local(
+            declaration,
+            info.c_name,
+            info.width,
+            info.signed,
+            info.two_state,
             init,
-        }])
+        )])
+    }
+
+    /// The declaration of an automatic packed or real variable: a shared
+    /// frame cell when a `join_none`/`join_any` branch also uses it.
+    fn automatic_local(
+        &mut self,
+        declaration: NodeId,
+        name: String,
+        width: u32,
+        signed: bool,
+        two_state: bool,
+        init: Option<Box<IrExpr>>,
+    ) -> IrStmt {
+        if self.cg.fork_shared(declaration) {
+            self.cg.shared_locals.insert(declaration);
+            return IrStmt::SharedLocal {
+                name,
+                width,
+                signed,
+                two_state,
+                init,
+            };
+        }
+        IrStmt::DeclLocal {
+            name,
+            width,
+            signed,
+            two_state,
+            init,
+        }
     }
 }

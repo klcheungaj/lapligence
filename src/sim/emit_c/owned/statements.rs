@@ -186,6 +186,27 @@ impl Frame<'_, '_> {
                     self.string_assign(&binding.address, value)?;
                 }
             }
+            IrStmt::SharedString { name, init } => {
+                let owner = self.scalar(
+                    "llg_frame_t**",
+                    "(llg_frame_t**)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_frame_t*), llg_owned_frame_drop))"
+                        .to_owned(),
+                );
+                self.line(format!("*{owner} = llg_frame_new(1ULL);"));
+                self.line(format!(
+                    "llg_frame_capture_string(*{owner}, 0u, &(llg_string_t){{0}});"
+                ));
+                let address = self.scalar(
+                    "llg_string_t*",
+                    format!("llg_frame_string_address(*{owner}, 0u)"),
+                );
+                self.shared_cells
+                    .insert(name.clone(), (format!("(*{owner})"), 0));
+                self.bind_native(name, address.clone(), super::native::NativeKind::String);
+                if let Some(value) = init {
+                    self.string_assign(&address, value)?;
+                }
+            }
             IrStmt::DelayedStringAssign { target, rhs, ticks } => {
                 let binding = self.native_lookup(target, super::native::NativeKind::String)?;
                 if binding.automatic {
@@ -284,6 +305,13 @@ impl Frame<'_, '_> {
                 init,
                 two_state,
             } => self.local(name, *width, *signed, *two_state, init.as_deref())?,
+            IrStmt::SharedLocal {
+                name,
+                width,
+                signed,
+                init,
+                two_state,
+            } => self.shared_local(name, *width, *signed, *two_state, init.as_deref())?,
             IrStmt::InertialAssign { lhs, rhs, delay } => self.inertial_assign(lhs, rhs, *delay)?,
             IrStmt::PcaAssign { .. } | IrStmt::PcaDrive { .. } => self.pca_task(statement)?,
             IrStmt::PcaDeassign { sig } => {

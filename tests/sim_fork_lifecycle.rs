@@ -30,7 +30,7 @@ fn detached_captures_and_persistent_delayed_nba_survive_creator_exit() {
     sim_cli::run_case(
         "fork_lifecycle",
         "detached_storage",
-        "capture=7 t=1000\ncapture parent=9 t=1000\nqueued target=5a t=3000\n",
+        "capture=9 t=1000\ncapture parent=9 t=1000\nqueued target=5a t=3000\n",
         "",
         &[],
     );

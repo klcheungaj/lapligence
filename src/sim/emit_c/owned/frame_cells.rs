@@ -59,7 +59,9 @@ impl CellEligibility {
 
     fn dependency(&mut self, dependency: &IrDependency) {
         match dependency {
-            IrDependency::Scalar(name) | IrDependency::Real(name) => {
+            IrDependency::Scalar(name)
+            | IrDependency::Real(name)
+            | IrDependency::SharedCell { local: name, .. } => {
                 self.retained.insert(name.clone());
             }
             IrDependency::PackedRange { storage, .. } => self.dependency(storage),
@@ -349,12 +351,12 @@ impl CellEligibility {
             | IrStmt::ProgramExit
             | IrStmt::MonitorEnable(_)
             | IrStmt::PrintTimescale { .. } => {}
-            IrStmt::DeclLocal { init, .. } => {
+            IrStmt::DeclLocal { init, .. } | IrStmt::SharedLocal { init, .. } => {
                 if let Some(init) = init {
                     self.expression(ctx, init);
                 }
             }
-            IrStmt::DeclString { init, .. } => {
+            IrStmt::DeclString { init, .. } | IrStmt::SharedString { init, .. } => {
                 if let Some(init) = init {
                     self.string(ctx, init);
                 }

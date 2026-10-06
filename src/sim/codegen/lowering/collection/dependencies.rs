@@ -1185,7 +1185,8 @@ impl<'a> Codegen<'a> {
                 }
                 IrDependency::ContainerContents(_)
                 | IrDependency::ContainerShape(_)
-                | IrDependency::Object(_) => {
+                | IrDependency::Object(_)
+                | IrDependency::SharedCell { .. } => {
                     return Err(format!(
                         "container/object dependencies cannot yet drive force evaluators in `{scope_path}`"
                     ))

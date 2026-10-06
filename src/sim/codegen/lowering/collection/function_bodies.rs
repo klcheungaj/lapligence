@@ -300,6 +300,7 @@ impl<'a> Codegen<'a> {
         let mut string_write = HashMap::new();
         let mut string_addr = HashMap::new();
         let mut static_input_copies = Vec::new();
+        let mut shared_outputs = Vec::new();
         let mut callback_private_formal_copies = Vec::new();
         let mut event_args: HashMap<NodeId, IrEventRef> = HashMap::new();
 
@@ -583,6 +584,19 @@ impl<'a> Codegen<'a> {
                             IrObjectStmt::StringAssign(object, IrStringExpr::FormalRead(idx)),
                         )));
                     }
+                } else if automatic && !*is_out && self.fork_shared(*io) {
+                    // Shared with a detached fork branch like a packed input
+                    // formal (SV 9.3.2, 13.3).
+                    let name = format!("_llg_shared_formal_{idx}");
+                    locals.insert(*io, (name.clone(), 0, false, true, false));
+                    self.shared_locals.insert(*io);
+                    static_input_copies.push(IrStmt::SharedString {
+                        name: name.clone(),
+                        init: Some(IrStringExpr::FormalRead(idx)),
+                    });
+                    string_read.insert(*io, IrStringExpr::LocalRead(name.clone()));
+                    string_write.insert(*io, name.clone());
+                    string_addr.insert(*io, name);
                 } else {
                     string_read.insert(*io, IrStringExpr::FormalRead(idx));
                     string_write.insert(
@@ -718,9 +732,58 @@ impl<'a> Codegen<'a> {
                         nba: false,
                     });
                 }
+            } else if automatic && *is_out && self.fork_shared(*io) {
+                // An output or inout formal shared with a detached branch
+                // starts from the caller's value cell, lives in a shared
+                // frame cell during the activation and is copied back to
+                // `o{idx}` when the subroutine returns (SV 13.3, 9.3.2). The
+                // emitter creates the cell (`IrFormal::shared_local`).
+                let name = format!("_llg_shared_formal_{idx}");
+                let shortreal = matches!(
+                    self.kind(*io),
+                    NodeKind::FuncArg { ty, .. } if ty.kind == "shortreal"
+                );
+                locals.insert(*io, (name.clone(), w, s, two_state, shortreal));
+                self.shared_locals.insert(*io);
+                shared_outputs.push((idx, name));
+                arg_read.insert(
+                    *io,
+                    ArgMap {
+                        width: w,
+                        signed: s,
+                        two_state,
+                    },
+                );
             } else if *is_out {
                 arg_write.insert(*io, format!("o{idx}"));
                 arg_ir.insert(*io, formal_read_expr(idx, w, s));
+                arg_read.insert(
+                    *io,
+                    ArgMap {
+                        width: w,
+                        signed: s,
+                        two_state,
+                    },
+                );
+            } else if automatic && self.fork_shared(*io) {
+                // An input formal that a detached fork branch names is one
+                // variable shared with the branch (SV 9.3.2, 13.3): the
+                // activation copies the argument into a shared frame cell at
+                // entry and the body uses it as a local.
+                let name = format!("_llg_shared_formal_{idx}");
+                let shortreal = matches!(
+                    self.kind(*io),
+                    NodeKind::FuncArg { ty, .. } if ty.kind == "shortreal"
+                );
+                locals.insert(*io, (name.clone(), w, s, two_state, shortreal));
+                self.shared_locals.insert(*io);
+                static_input_copies.push(IrStmt::SharedLocal {
+                    name,
+                    width: w,
+                    signed: s,
+                    two_state,
+                    init: Some(Box::new(formal_read_expr(idx, w, s))),
+                });
                 arg_read.insert(
                     *io,
                     ArgMap {
@@ -990,6 +1053,11 @@ impl<'a> Codegen<'a> {
         entry.callback_return_independent = callback_return_independent;
         entry.pre_fns = pre_fns;
         entry.body = body_stmts;
+        for (index, name) in shared_outputs {
+            if let Some(formal) = entry.formals.get_mut(index) {
+                formal.shared_local = Some(name);
+            }
+        }
         let _ = (guard, decl, has_ret, ret_x, c_name.as_str());
         Ok(())
     }

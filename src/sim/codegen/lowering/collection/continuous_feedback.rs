@@ -165,7 +165,8 @@ impl Codegen<'_> {
             IrDependency::Real(_)
             | IrDependency::ContainerContents(_)
             | IrDependency::ContainerShape(_)
-            | IrDependency::Object(_) => {}
+            | IrDependency::Object(_)
+            | IrDependency::SharedCell { .. } => {}
         }
     }
 

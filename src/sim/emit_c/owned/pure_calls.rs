@@ -21,7 +21,7 @@ fn callback_safe_statements(body: &[IrStmt]) -> Result<(), String> {
         match statement.unlocated() {
             IrStmt::Nop | IrStmt::Label(_) | IrStmt::Goto(_) => {}
             IrStmt::Block(body) => callback_safe_statements(body)?,
-            IrStmt::DeclLocal { init, .. } => {
+            IrStmt::DeclLocal { init, .. } | IrStmt::SharedLocal { init, .. } => {
                 if let Some(init) = init {
                     callback_safe_expression(init)?;
                 }

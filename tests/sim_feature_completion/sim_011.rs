@@ -20,6 +20,17 @@ fn base_handle_calls_overridden_timed_tasks() {
 }
 
 #[test]
+fn adopted_timed_class_witness() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "witness_timed_class",
+        include_str!("../fixtures/sim/feature_completion/sim_011/witness_timed_class.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn super_static_and_hierarchical_task_calls_suspend() {
     sim_cli::run_case_backend_parity(
         SUITE,

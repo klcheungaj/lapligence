@@ -337,6 +337,11 @@ typedef struct {
         sv4_t packed;
         double real;
         void* opaque;
+        llg_string_t string;
+        struct {
+            void* data;
+            void (*destroy)(void*);
+        } object;
     } value;
     union {
         sv4_t* packed;
@@ -529,6 +534,12 @@ static void frame_clear_alias(llg_frame_slot_t* entry) {
     }
     if (entry->alias_kind == LLG_FRAME_ALIAS_NONE && entry->kind == LLG_FRAME_PACKED)
         sv4_destroy(&entry->value.packed);
+    if (entry->alias_kind == LLG_FRAME_ALIAS_NONE && entry->kind == LLG_FRAME_STRING)
+        llg_string_destroy(&entry->value.string);
+    if (entry->alias_kind == LLG_FRAME_ALIAS_NONE && entry->kind == LLG_FRAME_OBJECT) {
+        if (entry->value.object.destroy) entry->value.object.destroy(entry->value.object.data);
+        free(entry->value.object.data);
+    }
     memset(&entry->value, 0, sizeof(entry->value));
     entry->alias_kind = LLG_FRAME_ALIAS_NONE;
     entry->alias.packed = NULL;
@@ -661,6 +672,48 @@ sv4_t* llg_frame_value_address(llg_frame_t* frame, size_t slot) {
     return entry->alias_kind == LLG_FRAME_ALIAS_PACKED
                ? entry->alias.packed
                : &entry->value.packed;
+}
+
+void llg_frame_capture_string(llg_frame_t* frame, size_t slot,
+                              const llg_string_t* value) {
+    llg_frame_slot_t* entry = frame_slot(frame, slot);
+    llg_string_t copy = llg_string_clone(value);
+    frame_clear_alias(entry);
+    entry->kind = LLG_FRAME_STRING;
+    entry->value.string = copy;
+}
+
+llg_string_t* llg_frame_string_address(llg_frame_t* frame, size_t slot) {
+    llg_frame_slot_t* entry = frame_slot(frame, slot);
+    if (entry->alias_kind == LLG_FRAME_ALIAS_SLOT) {
+        return llg_frame_string_address(entry->alias.slot.frame, entry->alias.slot.slot);
+    }
+    if (entry->kind != LLG_FRAME_STRING) {
+        frame_kind_error(LLG_FRAME_STRING, entry->kind);
+    }
+    return &entry->value.string;
+}
+
+void* llg_frame_capture_object(llg_frame_t* frame, size_t slot, size_t size,
+                               void (*destroy)(void*)) {
+    llg_frame_slot_t* entry = frame_slot(frame, slot);
+    void* data = llg_checked_calloc(1, size ? size : 1, "activation frame object");
+    frame_clear_alias(entry);
+    entry->kind = LLG_FRAME_OBJECT;
+    entry->value.object.data = data;
+    entry->value.object.destroy = destroy;
+    return data;
+}
+
+void* llg_frame_object_address(llg_frame_t* frame, size_t slot) {
+    llg_frame_slot_t* entry = frame_slot(frame, slot);
+    if (entry->alias_kind == LLG_FRAME_ALIAS_SLOT) {
+        return llg_frame_object_address(entry->alias.slot.frame, entry->alias.slot.slot);
+    }
+    if (entry->kind != LLG_FRAME_OBJECT) {
+        frame_kind_error(LLG_FRAME_OBJECT, entry->kind);
+    }
+    return entry->value.object.data;
 }
 
 double* llg_frame_real_address(llg_frame_t* frame, size_t slot) {

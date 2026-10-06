@@ -497,6 +497,8 @@ fn is_emitted_trigger_storage(ir: &IrModel, dependency: &IrDependency) -> bool {
                 crate::sim::ir::IrObjectType::String | crate::sim::ir::IrObjectType::Chandle
             )
         }),
+        // A process-local cell is no static trigger storage.
+        IrDependency::SharedCell { .. } => false,
     }
 }
 
@@ -718,6 +720,7 @@ fn collect_effects(
             | IrStmt::PcaDrive { .. }
             | IrStmt::PcaDeassign { .. }
             | IrStmt::DeclLocal { .. }
+            | IrStmt::SharedLocal { .. }
             | IrStmt::Force { .. }
             | IrStmt::Release { .. }
             | IrStmt::Container(_)
@@ -1052,6 +1055,9 @@ fn collect_statement_expression_effects(
             collect_object_statement_effects(ir, operation, effects, visited_calls);
         }
         IrStmt::DeclLocal {
+            init: Some(init), ..
+        }
+        | IrStmt::SharedLocal {
             init: Some(init), ..
         } => collect_expression_effects(ir, init, effects, visited_calls),
         IrStmt::ClockingCycleWait { count, .. } => {
