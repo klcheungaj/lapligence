@@ -25,3 +25,17 @@ fn expanded_tasks_with_native_formals_are_explicit() {
         "task `t` with native record or container formals needs caller-environment expansion, which is not supported in `tb`",
     );
 }
+
+#[test]
+fn recursive_timed_tasks_keep_native_locals_event_and_ref_formals() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/recursive_activations.out");
+    sim_cli::run_case_backend_parity(SUITE, "recursive_activations", expected, &[], &[]);
+}
+
+#[test]
+fn static_tasks_share_storage_and_automatic_tasks_do_not() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/static_and_automatic_tasks.out");
+    sim_cli::run_case_backend_parity(SUITE, "static_and_automatic_tasks", expected, &[], &[]);
+}
