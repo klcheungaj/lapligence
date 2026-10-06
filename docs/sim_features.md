@@ -412,7 +412,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   through reorder, insertion, reallocation and copies; new elements are new
   events and missing ones read null
   ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md)).
-  Event formals of virtual-interface tasks remain restricted (SIM-012).
+  Event formals of every direction pass through virtual-interface dispatch
+  ([sim_012](../tests/fixtures/sim/feature_completion/sim_012/readme.md)).
   SV §§6.17, 7.4.5, 15.5 **[SV-2005]**.
 - 🟨 **Dynamic arrays, associative arrays and queues** — Allocation, resize,
   delete, copy, bounded patterns, generic/nested leaves, associative defaults and
@@ -1328,9 +1329,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   inline-only event/ref environments remain rejected. Typed recursive
   delay-bearing tasks use independent SCC/arena activations; direct and mutual
   recursion have witnesses in [the function/task suite](../tests/sim_function.rs).
-  Timing-bearing virtual-interface tasks (SIM-012) and jumps into other lexical
-  scopes/backward unstructured jumps remain rejected; timing-bearing class
-  tasks execute (SIM-011). Direct task calls and
+  Jumps into other lexical scopes/backward unstructured jumps remain
+  rejected; timing-bearing class tasks (SIM-011) and virtual-interface tasks
+  (SIM-012) execute. Direct task calls and
   blocking `#/@/wait` inside functions are illegal; timing in an admitted detached
   join_none branch is separate. Disabling a task leaves output/inout results
   unspecified, unlike local block-disable followed by normal task return.
@@ -1621,12 +1622,16 @@ These are bounded implementations, not full verification-infrastructure support.
   statements, and constrained randomization remain restricted.
   SV ch.8 **[SV-2005]**.
 - 🟨 **Virtual interfaces** — Typed instance/modport identity survives rebinding,
-  class/formal storage, fixed arrays (any range) and dynamic, queue and
-  associative storage. Packed member access,
-  delay-free methods, null/type checks and clocking-input samples are present.
-  Timed tasks and event-formal dispatch (SIM-012), dynamic clocking output/inout
-  dispatch (SIM-034), modport expression ports and broader polymorphic/capture
-  forms reject.
+  class/formal storage, record members, fixed arrays (any range) and dynamic,
+  queue and associative storage. Packed member access (also through class
+  properties and record members), methods, null/type checks and clocking-input
+  samples are present. Timed tasks dispatch through any receiver storage and
+  stay on the instance named at the call while the variable is rebound; event
+  formals of every direction keep their identity; a call through a null
+  handle is a run-time error at the call
+  ([sim_012](../tests/fixtures/sim/feature_completion/sim_012/readme.md)).
+  Dynamic clocking output/inout dispatch (SIM-034), modport expression ports
+  and broader polymorphic/capture forms reject.
   SV §§25.5, 25.7, 25.9–25.10 **[SV-2009]**.
 - 🟨 **Programs** — Initials launch in Reactive; `#0`/NBA stay in the reactive
   set. `$exit` cancels only its program-initial origin and is ignored outside

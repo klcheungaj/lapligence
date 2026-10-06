@@ -160,7 +160,6 @@ fn render_bounded(
             super::LLG_WIDTH_LIMIT
         )));
     }
-    super::owned::model::check_model(execution.ir()).map_err(EmitError::new)?;
     let prepare_stage = crate::profile::Stage::new("render.prepare");
     let (_, upper_bounds) = render_coroutine_functions(
         &execution,
@@ -1102,7 +1101,11 @@ fn render_model(
             out.push_str(&source);
         }
     }
-    render_virtual_interface_call_bodies(model, &mut out);
+    render_virtual_interface_call_bodies(
+        model,
+        |function| execution.analysis().is_coroutine_function(function),
+        &mut out,
+    );
     // Three passes lower comb drivers, links, then always/initial processes,
     // so every comb process, link, and process runs at t=0 in that order;
     // push order equals spawn order.

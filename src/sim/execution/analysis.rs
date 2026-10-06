@@ -178,6 +178,7 @@ pub struct ExecutionAnalysis {
     sites: BTreeMap<CoroutineId, BTreeMap<OperationPath, SuspensionSite>>,
     recursion: RecursionAnalysis,
     suspending_slots: BTreeSet<usize>,
+    suspending_interface_methods: BTreeSet<(usize, usize)>,
 }
 
 impl ExecutionAnalysis {
@@ -232,6 +233,27 @@ impl ExecutionAnalysis {
             .iter()
             .filter_map(|function| ir.funcs[*function].virtual_slot)
             .collect::<BTreeSet<_>>();
+        // A virtual-interface method suspends when the implementation of any
+        // instance does (a timed interface task, SIM-012).
+        let suspending_interface_methods = ir
+            .virtual_interfaces
+            .iter()
+            .enumerate()
+            .flat_map(|(interface, descriptor)| {
+                descriptor
+                    .methods
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, method)| {
+                        method
+                            .instances
+                            .iter()
+                            .flatten()
+                            .any(|function| coroutine_functions.contains(function))
+                    })
+                    .map(move |(method, _)| (interface, method))
+            })
+            .collect::<BTreeSet<_>>();
         let call_effects = CallEffects {
             functions: &function_effects,
             virtual_slots: ir
@@ -240,6 +262,7 @@ impl ExecutionAnalysis {
                 .map(|function| function.virtual_slot)
                 .collect(),
             suspending_slots: &suspending_slots,
+            suspending_interface_methods: &suspending_interface_methods,
         };
         let function_effects = &call_effects;
         let mut drafts = BTreeMap::<CoroutineId, Vec<SiteDraft>>::new();
@@ -395,6 +418,7 @@ impl ExecutionAnalysis {
             sites,
             recursion,
             suspending_slots,
+            suspending_interface_methods,
         })
     }
 
@@ -471,6 +495,13 @@ impl ExecutionAnalysis {
     pub fn recursive_interface_methods(&self) -> &BTreeSet<(usize, usize)> {
         self.recursion.interface_methods()
     }
+
+    /// Virtual-interface methods with a suspending implementation (SIM-012).
+    /// Calls through them enter the bound instance's implementation through
+    /// an arena-dispatch helper at an arena call site.
+    pub fn suspendable_interface_methods(&self) -> &BTreeSet<(usize, usize)> {
+        &self.suspending_interface_methods
+    }
 }
 
 /// A malformed coroutine analysis or side table, reported without panicking.
@@ -525,6 +556,7 @@ struct CallEffects<'a> {
     functions: &'a [Vec<ExecutionEffect>],
     virtual_slots: Vec<Option<usize>>,
     suspending_slots: &'a BTreeSet<usize>,
+    suspending_interface_methods: &'a BTreeSet<(usize, usize)>,
 }
 
 impl CallEffects<'_> {
@@ -738,10 +770,13 @@ fn suspension_operation(
             let function = call.function_index();
             let callee = function_effects.functions.get(function);
             // Class virtual dispatch suspends when any implementation of the
-            // slot does (SIM-011). Lowering rejects timing-bearing
-            // virtual-interface tasks, so that dispatch alone cannot make an
-            // otherwise synchronous target suspend.
-            let suspends = if call.virtual_dispatch && call.virtual_call.is_none() {
+            // slot does (SIM-011), virtual-interface dispatch when the
+            // method's implementation for any instance does (SIM-012).
+            let suspends = if let Some(virtual_call) = &call.virtual_call {
+                function_effects
+                    .suspending_interface_methods
+                    .contains(&(virtual_call.interface, virtual_call.method))
+            } else if call.virtual_dispatch {
                 function_effects.dispatch_suspends(function)
             } else {
                 callee.is_none_or(|effects| effects.contains(&ExecutionEffect::Suspend))
@@ -1016,6 +1051,7 @@ mod tests {
             functions: &effects,
             virtual_slots: vec![Some(3), Some(3), Some(4)],
             suspending_slots: &slots,
+            suspending_interface_methods: &BTreeSet::new(),
         };
         let mut dispatch = IrCall::new(0, vec![], IrDepth::PROC, vec![], vec![]);
         dispatch.virtual_dispatch = true;
@@ -1440,6 +1476,7 @@ mod tests {
             functions: &effects,
             virtual_slots: vec![None],
             suspending_slots: &slots,
+            suspending_interface_methods: &BTreeSet::new(),
         };
         for statement in cases {
             assert!(suspension_operation(&statement, function_effects).is_some());

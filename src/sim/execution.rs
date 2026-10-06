@@ -873,6 +873,8 @@ fn collect_effects(
                     collect_chandle_effects(ir, receiver, effects, visited_calls);
                 }
                 if let Some(virtual_call) = &call.virtual_call {
+                    // A null receiver is a fatal run-time error.
+                    effects.push(ExecutionEffect::Terminate);
                     collect_chandle_effects(ir, &virtual_call.receiver, effects, visited_calls);
                 }
                 visited_calls.record(CallTarget::of_call(
@@ -1539,6 +1541,8 @@ fn collect_expression_effects(
                 collect_chandle_effects(ir, receiver, effects, visited_calls);
             }
             if let Some(virtual_call) = &call.virtual_call {
+                // A null receiver is a fatal run-time error.
+                effects.push(ExecutionEffect::Terminate);
                 collect_chandle_effects(ir, &virtual_call.receiver, effects, visited_calls);
             }
             for argument in call.args() {

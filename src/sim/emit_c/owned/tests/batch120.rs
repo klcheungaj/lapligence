@@ -215,7 +215,6 @@ fn inline_expanded_templates_are_not_callable() {
     let mut model = numeric_model();
     model.funcs[0].inline_expanded = true;
     assert!(model::inline_template(&model.funcs[0]));
-    assert!(model::check_model(&model).is_ok());
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
@@ -238,10 +237,8 @@ fn input_event_formals_pass_the_object_identity_by_value() {
     let mut model = numeric_model();
     model.funcs[0].formals[0].event = true;
     assert!(!model::inline_template(&model.funcs[0]));
-    assert!(model::check_model(&model).is_ok());
     model.funcs[0].formals[0].mode = IrFormalMode::Output;
     model.funcs[0].formals[0].is_out = true;
-    assert!(model::check_model(&model).is_ok());
     let fields = crate::sim::emit_c::model::owned_func_param_fields(&model.funcs[0]);
     assert_eq!(fields[0], ("llg_event_t*".to_owned(), "o0".to_owned()));
     model.funcs[0].formals[0].mode = IrFormalMode::Input;

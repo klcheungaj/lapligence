@@ -476,6 +476,7 @@ impl<'a> Codegen<'a> {
                         interface: descriptor,
                         method,
                         receiver: self.lower_chandle(scope_path, receiver)?,
+                        site: self.source_site("virtual interface method call", scope_path, h),
                     }),
                 )
             } else if self.model.funcs[meta.ir].receiver_class.is_some()

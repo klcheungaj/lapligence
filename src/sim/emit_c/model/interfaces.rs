@@ -26,9 +26,14 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
          }} llg_vif_env_t;\n\n\
          static sv4_t llg_vif_invalid = SV4_EMPTY;\n\n\
          static void llg_vif_fail(const char *site) {{\n\
+             if (llg_rt_exiting()) return;\n\
              fprintf(stderr, \"llg: virtual interface access failed: %s\\n\", site);\n\
              llg_rt_mark_failed();\n\
              llg_rt_fatal_typed(0, \"virtual interface access failed\", NULL, 0, \"\", site);\n\
+         }}\n\n\
+         static void *llg_vif_require(void *raw, const char *site) {{\n\
+             if (!raw) llg_vif_fail(site);\n\
+             return raw;\n\
          }}\n\n\
          static sv4_t *llg_vif_member(void *raw, uint32_t interface_id,\n\
                                       uint32_t slot, const char *site) {{\n\
@@ -135,7 +140,15 @@ pub(super) fn render_virtual_interface_call_prototypes(model: &IrModel, out: &mu
     }
 }
 
-pub(super) fn render_virtual_interface_call_bodies(model: &IrModel, out: &mut String) {
+/// Plain dispatchers, one per method. A suspending implementation (a timed
+/// interface task, SIM-012) is entered only through the method's
+/// arena-dispatch helper (`recursion.rs`), so a plain dispatch that selects
+/// one fails instead of calling a coroutine entry with plain arguments.
+pub(super) fn render_virtual_interface_call_bodies(
+    model: &IrModel,
+    is_coroutine: impl Fn(usize) -> bool,
+    out: &mut String,
+) {
     for (interface_id, interface) in model.virtual_interfaces.iter().enumerate() {
         for (method_id, method) in interface.methods.iter().enumerate() {
             let Some(function) = model.funcs.get(method.function) else {
@@ -172,15 +185,19 @@ pub(super) fn render_virtual_interface_call_bodies(model: &IrModel, out: &mut St
                      switch (env->instance_id) {{\n"
             ));
             for (instance_id, concrete) in interface.instances.iter().enumerate() {
-                let Some(concrete_function) = method.instances.get(instance_id).and_then(|f| *f)
+                let Some(concrete_index) = method.instances.get(instance_id).and_then(|f| *f)
                 else {
                     continue;
                 };
-                let Some(concrete_function) = model.funcs.get(concrete_function) else {
+                let Some(concrete_function) = model.funcs.get(concrete_index) else {
                     continue;
                 };
                 out.push_str(&format!("        case {instance_id}:\n"));
-                if ret_type == "void" {
+                if is_coroutine(concrete_index) {
+                    out.push_str(&format!(
+                        "            llg_vif_fail(\"suspending virtual interface task called without suspension\");\n            {failure_return}\n"
+                    ));
+                } else if ret_type == "void" {
                     out.push_str(&format!(
                         "            {}({call_args});\n            return;\n",
                         concrete_function.c_name(),

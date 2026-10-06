@@ -110,8 +110,36 @@ impl Codegen<'_> {
         let width = metadata.width;
         let signed = metadata.signed;
         let two_state = metadata.two_state;
+        // A handle held in a record or class member (`r.v.x`) is the value
+        // of the member access expression, not of its declaration.
+        let handle = if position > 0 {
+            self.member_prefix_expression(node, position + 1)
+                .unwrap_or(handle)
+        } else {
+            handle
+        };
         let handle = self.lower_chandle(path, handle)?;
         Ok(Some((handle, descriptor, slot, width, signed, two_state)))
+    }
+
+    /// The nested member access of `node` whose path has `length` components.
+    /// The frontend nests each member access in the next one.
+    fn member_prefix_expression(&self, node: NodeId, length: usize) -> Option<NodeId> {
+        let mut current = node;
+        loop {
+            let [child] = self.node(current).children.as_slice() else {
+                return None;
+            };
+            match self.kind(*child) {
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) if refs.len() > length => {
+                    current = *child;
+                }
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) if refs.len() == length => {
+                    return Some(*child);
+                }
+                _ => return (length == 1).then_some(*child),
+            }
+        }
     }
 
     /// Lower a member path rooted at a virtual-interface handle. The runtime
