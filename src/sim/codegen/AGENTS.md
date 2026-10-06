@@ -425,7 +425,18 @@ declared in process blocks get the same leaf storage, collected per
 declaration and instance with the scope (`collection/block_records.rs`): static
 ones initialize in the static schedule, automatic ones are reset and
 initialized at their declaration statement, and an automatic one that a
-`join_any`/`join_none` fork could keep live across re-entry rejects. Reject
+`join_any`/`join_none` fork could keep live across re-entry rejects
+(`concurrent_block_activation`: an enclosing detached fork that runs again,
+or a block that runs again starting one that reads it). Block-declared
+strings, chandles, class handles and virtual interfaces get one model object
+per declaration and instance the same way (`collection/block_natives.rs`),
+resolved only by declaration identity, so change markers, NBAs and calls
+behave as for module variables. Native record leaves without a declaration
+initializer take their type's member defaults (`collection/record_defaults.rs`;
+the outermost default on a path wins); a module record initializer that is
+not a leaf-wise pattern is one record assignment in the static schedule.
+String object values (`IrObject::initial`) join that schedule at their
+declaration's slot. Reject
 run-time native indices, native ref formals, NBAs to native roots (their
 leaves move on replacement) and fork capture explicitly rather than
 flattening or copying shallowly. Native NBAs only target persistent whole

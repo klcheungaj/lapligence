@@ -304,16 +304,74 @@ fn procedural_block_record_boundaries_are_rejected_explicitly() {
     sim_cli::reject_case(
         SUITE,
         "bad_block_record_fork",
-        "automatic record `r` in `tb` declared in or around a fork with `join_any` or `join_none` is not supported",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "bad_block_record_member_default",
-        "member default of `s` in procedural-block record `r` in `tb` is not supported",
+        "automatic record `r` in `tb` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported",
     );
     sim_cli::reject_case(
         SUITE,
         "bad_block_record_automatic_nba",
         "nonblocking assignment to automatic variable 'r' is not allowed",
+    );
+}
+
+#[test]
+fn procedural_block_strings_and_handles_behave_like_module_variables() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_007/block_natives.out");
+    sim_cli::run_case_backend_parity(SUITE, "block_natives", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "block_natives", expected);
+}
+
+#[test]
+fn procedural_block_strings_and_handles_keep_static_and_automatic_lifetimes() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/block_native_lifetimes.out");
+    sim_cli::run_case_backend_parity(SUITE, "block_native_lifetimes", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "block_native_lifetimes", expected);
+}
+
+#[test]
+fn procedural_block_native_boundaries_are_rejected_explicitly() {
+    sim_cli::reject_case(
+        SUITE,
+        "bad_block_native_fork",
+        "automatic variable `name` in `tb` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_block_native_always_fork",
+        "automatic variable `h` in `tb` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported",
+    );
+}
+
+#[test]
+fn record_member_defaults_initialize_module_and_block_records() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_member_defaults.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_member_defaults", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "record_member_defaults", expected);
+    sim_cli::reject_case(
+        SUITE,
+        "bad_record_member_default",
+        "member default of `inner` is not supported: the value has no representation for this member type (record `m` in `tb`)",
+    );
+}
+
+#[test]
+fn module_record_initializers_accept_any_record_source() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_initializers.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_initializers", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "record_initializers", expected);
+}
+
+#[test]
+fn nested_records_and_member_arrays_compare_member_wise() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_view_equality.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_view_equality", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "record_view_equality", expected);
+    sim_cli::reject_case(
+        SUITE,
+        "bad_record_view_equality",
+        "equality of records with associative array member `sub__k` is not supported",
     );
 }

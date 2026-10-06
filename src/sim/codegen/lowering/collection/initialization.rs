@@ -30,6 +30,15 @@ impl<'a> Codegen<'a> {
                 self.collect_unpacked_aggregate_decl_init(path, *c, init, &aggregate)?;
                 continue;
             }
+            if let Some(object) = self
+                .object_globals
+                .get(c)
+                .copied()
+                .filter(|object| self.model.objects[*object].initial.is_some())
+            {
+                self.schedule_object_initializer(object, *c, init)?;
+                continue;
+            }
             let info = match self.signal_of(*c) {
                 Some(info) => info.clone(),
                 None => continue,
@@ -77,6 +86,20 @@ impl<'a> Codegen<'a> {
                 },
             }
         }
+        Ok(())
+    }
+
+    /// Run a string object's declaration value in the static schedule at
+    /// `declaration`'s slot, ordered by what `initializer` reads.
+    fn schedule_object_initializer(
+        &mut self,
+        object: usize,
+        declaration: NodeId,
+        initializer: NodeId,
+    ) -> Result<(), String> {
+        self.record_initializer_source(declaration, initializer);
+        let identity = self.declaration_identity(declaration)?;
+        self.object_initializers.push((object, identity));
         Ok(())
     }
 
@@ -190,7 +213,23 @@ impl<'a> Codegen<'a> {
             )
         })?;
         let mut values = Vec::new();
-        self.aggregate_pattern_leaf_values(path, init, layout, &[], &mut values)?;
+        let leafwise = self.assignment_pattern_operands(path, init)?.is_some()
+            && self
+                .aggregate_pattern_leaf_values(path, init, layout, &[], &mut values)
+                .is_ok()
+            && values.iter().all(|(member_path, _)| {
+                aggregate.leaves.iter().any(|leaf| {
+                    &leaf.path == member_path && (leaf.signal.is_some() || leaf.object.is_some())
+                })
+            });
+        if !leafwise {
+            // Any other record source (a copy, a call result, a pattern with
+            // whole sub-record or container items) is one record assignment
+            // in the static schedule.
+            self.record_statement_initializers
+                .push((object, init, path.to_owned()));
+            return Ok(());
+        }
         for (member_path, value_node) in values {
             let member = aggregate
                 .leaves
@@ -207,6 +246,7 @@ impl<'a> Codegen<'a> {
                     crate::sim::ir::IrObjectType::String => {
                         self.model.objects[index].initial =
                             Some(self.lower_string(path, value_node)?);
+                        self.schedule_object_initializer(index, object, value_node)?;
                     }
                     crate::sim::ir::IrObjectType::Chandle => {
                         if self.lower_chandle(path, value_node)? != IrChandleExpr::Null {

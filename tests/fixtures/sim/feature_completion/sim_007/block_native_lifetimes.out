@@ -1,0 +1,25 @@
+A [] 1 [] 1 1
+A [s] 0 [] 1 1
+A [ss] 0 [] 1 1
+A 3 10 12
+B n1 n2 2
+B n1 n3 3
+C []
+C 12
+C []
+C 12
+D t0
+D t1
+D child
+D child
+E fork
+E 77
+E done
+I one! 8
+I two! 9
+G g0
+G g1
+F + +
+F ++ +
+F ++
+H []

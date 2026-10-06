@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 
 mod aggregates;
 mod arguments;
+mod block_natives;
 mod block_records;
 pub(super) use arguments::CallWriteback;
 mod call_contracts;
@@ -52,6 +53,7 @@ mod ports;
 mod processes;
 mod real_arrays;
 mod record_columns;
+mod record_defaults;
 mod return_flow;
 mod signatures;
 mod strength_views;
