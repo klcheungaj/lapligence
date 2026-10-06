@@ -38,6 +38,9 @@ pub(in super::super) enum NativeEndpoint {
     Module(Box<AggregateSelection>),
 }
 
+/// Scalar leaf values of an input operand and the source storage of its
+/// container members, in companion order.
+type NativeInputLeaves = (Vec<IrNativeLeafValue>, Vec<usize>);
 /// Every leaf value of a record operand with its path, in declaration order.
 type LeafReads = Vec<(Vec<AggregatePathPart>, LeafValue)>;
 
@@ -1602,7 +1605,7 @@ impl Codegen<'_> {
         path: &str,
         layout: &NativeLayout,
         actual: NodeId,
-    ) -> Result<Option<(Vec<IrNativeLeafValue>, Vec<usize>)>, String> {
+    ) -> Result<Option<NativeInputLeaves>, String> {
         let mut leaves = Vec::new();
         let mut containers = Vec::new();
         let pattern = self.unwrap_assignment_pattern_cast(actual);
