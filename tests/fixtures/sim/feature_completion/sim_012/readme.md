@@ -13,3 +13,4 @@ Times are printed with `%0d $time` in the default unit.
 | `null_call` | §25.9. `slow` started on `a` writes `a.x` at 5 although `v` names `b` from 1: `a.x=1 b.x=0`. The call through the null `v` is a run-time error at `tb:20:5`; `unreached` is not printed. |
 | `neg_modport_write` | §25.5. Writing the input modport member `x` through view `ro` is a frontend error. |
 | `neg_specialization` | §25.9. An `ifc #(8)` instance cannot be assigned to a `virtual ifc #(4)`. |
+| `null_member` | §25.9. Through `a` the write and read work: `x=3`. The write through the null `v` is a run-time error at `tb:15:5`; `unreached` is not printed. |

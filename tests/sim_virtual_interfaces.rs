@@ -78,7 +78,7 @@ fn null_virtual_interface_access_fails_at_runtime() {
     sim_cli::reject_case(
         "virtual_interfaces",
         "null_access",
-        "llg: virtual interface access failed: tb.data",
+        "llg: virtual interface access failed: virtual interface member access at tb:12:9",
     );
 }
 

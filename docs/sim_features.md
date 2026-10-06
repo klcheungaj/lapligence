@@ -1627,8 +1627,9 @@ These are bounded implementations, not full verification-infrastructure support.
   properties and record members), methods, null/type checks and clocking-input
   samples are present. Timed tasks dispatch through any receiver storage and
   stay on the instance named at the call while the variable is rebound; event
-  formals of every direction keep their identity; a call through a null
-  handle is a run-time error at the call
+  formals of every direction keep their identity; a method call or member
+  access through a null handle is a run-time error at its source position
+  that stops the process
   ([sim_012](../tests/fixtures/sim/feature_completion/sim_012/readme.md)).
   Dynamic clocking output/inout dispatch (SIM-034), modport expression ports
   and broader polymorphic/capture forms reject.
