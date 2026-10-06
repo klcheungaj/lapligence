@@ -143,6 +143,13 @@ writes through the existing limb kernel, using scratch only for a full GMP
 product; known aliases compute a fresh owner before replacement. Unknown results
 fill X after inspecting inputs, promoting B only when needed; known replacement
 results remove B. Mismatched widths retain returning-operation extension rules.
+Bitwise `_into` destinations (V10) overwrite a live equal-width destination in
+place for known operands, exact aliases included; X/Z operands, other widths
+and empty destinations take the returning form.
+
+Net resolution starts with the A plane only and promotes B once, at the first
+word carrying X/Z, so a known resolved net costs one allocation instead of an
+allocation plus a shrinking reallocation.
 
 ## Platform qualification and GMP licensing
 

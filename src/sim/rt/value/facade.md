@@ -264,6 +264,14 @@ destinations reuse A, with full-product scratch only at the GMP threshold. Known
 operand aliases and mismatched widths compute a fresh result before replacement.
 Every published result retains exact-width canonical storage and masked padding.
 
+V10 adds `sv4_and_into`, `sv4_or_into`, `sv4_xor_into` and `sv4_xnor_into` with
+the same borrow/replace/alias contract; the `_to` bitwise forms route through
+them. Legacy keeps a fresh result. Compact overwrites a live destination in
+place when both operands are known and destination and operands share the
+result width (a known result removes an existing B); every other case uses the
+returning form. Generated statements chain operators through one temporary, so
+the second and later bitwise operators of an expression reuse its payload.
+
 ### Consumer primitives added by V06
 
 These additive legacy `static inline` operations replace consumer plane loops.

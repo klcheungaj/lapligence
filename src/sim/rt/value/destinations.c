@@ -107,8 +107,8 @@ void sv4_select_plan_slice_to(sv4_t* dst, const sv4_t* source,
     sv4_replace(dst, sv4_select_plan_slice(*source, plan, reverse));
 }
 
-/* Add/sub/mul keep their same-width payload reuse through the `_into` forms,
- * which already support exact destination/operand aliases. */
+/* Add/sub/mul and the bitwise forms keep their same-width payload reuse
+ * through the `_into` forms, which support exact destination/operand aliases. */
 void sv4_add_to(sv4_t* dst, const sv4_t* a, const sv4_t* b) {
     sv4_add_into(dst, *a, *b);
 }
@@ -121,10 +121,18 @@ void sv4_mul_to(sv4_t* dst, const sv4_t* a, const sv4_t* b) {
 LLG_SV4_TO_BINARY(div)
 LLG_SV4_TO_BINARY(mod)
 LLG_SV4_TO_BINARY(pow)
-LLG_SV4_TO_BINARY(and)
-LLG_SV4_TO_BINARY(or)
-LLG_SV4_TO_BINARY(xor)
-LLG_SV4_TO_BINARY(xnor)
+void sv4_and_to(sv4_t* dst, const sv4_t* a, const sv4_t* b) {
+    sv4_and_into(dst, *a, *b);
+}
+void sv4_or_to(sv4_t* dst, const sv4_t* a, const sv4_t* b) {
+    sv4_or_into(dst, *a, *b);
+}
+void sv4_xor_to(sv4_t* dst, const sv4_t* a, const sv4_t* b) {
+    sv4_xor_into(dst, *a, *b);
+}
+void sv4_xnor_to(sv4_t* dst, const sv4_t* a, const sv4_t* b) {
+    sv4_xnor_into(dst, *a, *b);
+}
 LLG_SV4_TO_BINARY(logand)
 LLG_SV4_TO_BINARY(logor)
 LLG_SV4_TO_BINARY(logimpl)
