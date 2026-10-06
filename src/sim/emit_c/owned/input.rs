@@ -89,14 +89,108 @@ impl Frame<'_, '_> {
         Ok((format!("&{reference}"), target))
     }
 
+    /// Bind a retained element cell for a container element destination and
+    /// return its reference address and the statement that releases the cell
+    /// after the synchronous input call (SIM-008).
+    fn element_reference(
+        &mut self,
+        read: &IrExpr,
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    ) -> Result<(String, String), String> {
+        let IrExprKind::Container(operation) = read.kind() else {
+            return Err("file input element target is not a container read".to_owned());
+        };
+        let (acquire, read_fn, write_fn, release) = match operation.as_ref() {
+            IrContainerExpr::Get { container, index } => {
+                let name = self.container_name(*container)?;
+                let index = self.expression(index)?;
+                let acquire = match self.ctx.model.containers[*container].kind {
+                    IrContainerKind::Queue { .. } => format!(
+                        "llg_queue_ref_acquire(&{name}, sv4_to_index({}))",
+                        index.code
+                    ),
+                    IrContainerKind::Dynamic => {
+                        format!("llg_dyn_ref_acquire(&{name}, {})", index.code)
+                    }
+                    IrContainerKind::Associative { .. } => {
+                        format!("llg_assoc_ref_acquire_integral(&{name}, {})", index.code)
+                    }
+                };
+                let queue = matches!(
+                    self.ctx.model.containers[*container].kind,
+                    IrContainerKind::Queue { .. }
+                );
+                let cell = self.declare("void*", "input_cell", acquire);
+                self.discard(index);
+                if queue {
+                    (
+                        cell,
+                        "llg_queue_cell_read",
+                        "llg_queue_cell_write",
+                        "llg_queue_ref_release",
+                    )
+                } else {
+                    (
+                        cell,
+                        "llg_element_cell_read",
+                        "llg_element_cell_write",
+                        "llg_element_ref_release",
+                    )
+                }
+            }
+            IrContainerExpr::GetString { container, key } => {
+                let name = self.container_name(*container)?;
+                let key = self.string(key)?;
+                let code = key.code();
+                let cell = self.declare(
+                    "void*",
+                    "input_cell",
+                    format!("llg_assoc_ref_acquire_string(&{name}, ({code}).data, ({code}).len)"),
+                );
+                self.native_discard(key);
+                (
+                    cell,
+                    "llg_element_cell_read",
+                    "llg_element_cell_write",
+                    "llg_element_ref_release",
+                )
+            }
+            _ => return Err("file input element target is not an element read".to_owned()),
+        };
+        let reference = self.declare(
+            "llg_ref_t",
+            "input_reference",
+            format!(
+                "{{ .kind = LLG_REF_QUEUE, .width = {width}, .is_signed = {}, .two_state = {}, .retained = {acquire}, .retained_read = {read_fn}, .retained_write = {write_fn} }}",
+                u8::from(signed),
+                u8::from(two_state)
+            ),
+        );
+        Ok((format!("&{reference}"), format!("{release}({acquire});")))
+    }
+
     fn input_targets(
         &mut self,
         targets: &[IrFileInputTarget],
+        releases: &mut Vec<String>,
     ) -> Result<(String, Vec<Target>), String> {
         let mut owners = Vec::new();
         let mut entries = Vec::new();
         for target in targets {
             entries.push(match target {
+                IrFileInputTarget::Element {
+                    read,
+                    width,
+                    signed,
+                    two_state,
+                } => {
+                    let (reference, release) =
+                        self.element_reference(read, *width, *signed, *two_state)?;
+                    releases.push(release);
+                    format!("{{ .kind = LLG_FILE_INPUT_PACKED, .packed = {reference} }}")
+                }
                 IrFileInputTarget::Packed {
                     lhs,
                     width,
@@ -149,6 +243,7 @@ impl Frame<'_, '_> {
             return Err(pending("file input in read-only callbacks"));
         }
         let mut targets_to_release = Vec::new();
+        let mut cells_to_release = Vec::new();
         let mut numeric = Vec::new();
         let mut text = Vec::new();
         let call = match input {
@@ -184,6 +279,17 @@ impl Frame<'_, '_> {
                         targets_to_release.push(target);
                         (address, true)
                     }
+                    IrFileInputTarget::Element {
+                        read,
+                        width,
+                        signed,
+                        two_state,
+                    } => {
+                        let (address, release) =
+                            self.element_reference(read, *width, *signed, *two_state)?;
+                        cells_to_release.push(release);
+                        (address, true)
+                    }
                     IrFileInputTarget::Real { .. } => {
                         return Err("line input target cannot be real".to_owned())
                     }
@@ -205,7 +311,7 @@ impl Frame<'_, '_> {
             } => {
                 let descriptor = self.descriptor(descriptor)?;
                 let format = self.input_text(format)?;
-                let (array, owners) = self.input_targets(targets)?;
+                let (array, owners) = self.input_targets(targets, &mut cells_to_release)?;
                 targets_to_release.extend(owners);
                 let call = format!(
                     "llg_file_scanf({descriptor}, {}, {array}, {})",
@@ -222,7 +328,7 @@ impl Frame<'_, '_> {
             } => {
                 let source = self.string(source)?;
                 let format = self.input_text(format)?;
-                let (array, owners) = self.input_targets(targets)?;
+                let (array, owners) = self.input_targets(targets, &mut cells_to_release)?;
                 targets_to_release.extend(owners);
                 let call = format!(
                     "llg_string_scanf({}, ({})->len, {}, {array}, {})",
@@ -310,6 +416,9 @@ impl Frame<'_, '_> {
             }
         };
         let result = self.integer_result(call);
+        for release in cells_to_release {
+            self.line(release);
+        }
         for target in targets_to_release {
             self.release_target(target);
         }
@@ -463,6 +572,36 @@ impl Frame<'_, '_> {
                 self.line("}");
                 self.discard(value);
                 self.release_target(target);
+                status
+            }
+            IrPlusArgTarget::Element {
+                read,
+                width,
+                signed,
+                two_state,
+            } => {
+                let (reference, release) =
+                    self.element_reference(read, *width, *signed, *two_state)?;
+                let value = self.value(
+                    format!("sv4_x({width}, {})", u8::from(*signed)),
+                    *width,
+                    *signed,
+                );
+                let status = self.scalar(
+                    "int",
+                    format!(
+                        "llg_value_plusargs_packed({code}, &{}, {width}, {}, {})",
+                        value.code,
+                        u8::from(*signed),
+                        u8::from(*two_state)
+                    ),
+                );
+                self.line(format!(
+                    "if ({status}) llg_ref_write({reference}, {});",
+                    value.code
+                ));
+                self.line(release);
+                self.discard(value);
                 status
             }
             IrPlusArgTarget::Real { lhs, shortreal } => {

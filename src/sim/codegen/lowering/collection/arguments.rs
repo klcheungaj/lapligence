@@ -956,6 +956,10 @@ impl<'a> Codegen<'a> {
         });
         if writable || self.lexical_proc_string_local(actual).is_some() {
             Ok(())
+        } else if self.container_of_ref_actual(actual) {
+            Err(format!(
+                "string element of a queue, dynamic or associative array as a ref actual or input destination in `{path}` is not supported (SIM-008)"
+            ))
         } else {
             Err(format!(
                 "string output/ref actual in `{path}` is a const-ref or non-writable lvalue"

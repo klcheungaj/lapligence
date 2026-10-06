@@ -1308,7 +1308,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Scanning/character/line input** — `$fscanf/$sscanf/$fgets/$fgetc/$ungetc`
   retain input/format values, admitted packed/selected/string/real destinations,
   EOF, byte and X/Z behavior. Fixed packed scanner sub-accesses through ref
-  formals preserve checked selection plans; general aggregate targets reject. V §17.2.4; SV §21.3.4 **[2001/SV-2005]**.
+  formals preserve checked selection plans. Packed queue, dynamic and
+  associative elements are destinations through retained element cells,
+  written only for converted items; string and real container elements and
+  general aggregate targets reject
+  ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
+  V §17.2.4; SV §21.3.4 **[2001/SV-2005]**.
 - 🟨 **Binary input** — `$fread` supports admitted packed/memory targets with
   bounded start/count. Rank-one memories advance from lowest to highest HDL
   address in either declaration direction. Packed reads accept and ignore
@@ -1446,7 +1451,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟦 **Plusargs** — Arguments after `--` reach `$test$plusargs/$value$plusargs`.
   Leading-`+` prefix matching, first repeated match, literal `%%`,
   `%d/%h/%x/%o/%b/%f/%e/%g/%s`, wide four-state values and unchanged destinations
-  on failure are represented. V §17.10; SV §21.6 **[1995/SV-2005]**.
+  on failure are represented, including packed container-element
+  destinations. `$cast` into a container element still rejects (SIM-008). V §17.10; SV §21.6 **[1995/SV-2005]**.
 - 🟦 **Host commands** — `$system` evaluates one optional string once and
   requires generated-process `LLG_ALLOW_SYSTEM=1` (also `true/yes/on`). Denial
   diagnoses, returns signed 32-bit -1 and fails without shell execution.

@@ -53,6 +53,38 @@ impl Validator<'_> {
                         );
                     }
                 }
+                IrFileInputTarget::Element {
+                    read,
+                    width,
+                    signed,
+                    two_state,
+                } => {
+                    self.validate_expr(read, formals, target_path)?;
+                    let container = match read.kind() {
+                        IrExprKind::Container(operation) => match operation.as_ref() {
+                            IrContainerExpr::Get { container, .. }
+                            | IrContainerExpr::GetString { container, .. } => {
+                                self.model.containers.get(*container)
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let matches = container.is_some_and(|container| {
+                        container.element
+                            == IrContainerElement::Packed {
+                                width: *width,
+                                signed: *signed,
+                                two_state: *two_state,
+                            }
+                    });
+                    if *width == 0 || !matches {
+                        return self.fail(
+                            target_path,
+                            "file scan element target must read a packed container element of its type",
+                        );
+                    }
+                }
             }
             Ok(())
         };

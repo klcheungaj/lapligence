@@ -873,6 +873,16 @@ pub enum IrFileInputTarget {
     String {
         address: String,
     },
+    /// A packed element of a queue, dynamic array or associative array.
+    /// `read` is the element's container read (`Get`/`GetString`); its
+    /// selector is evaluated once and the scan writes through a retained
+    /// element cell (SIM-008).
+    Element {
+        read: Box<IrExpr>,
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    },
 }
 
 /// Destination of `$fread`: one packed value or an unpacked array stored in
@@ -929,6 +939,7 @@ impl IrFileInputTarget {
         match self {
             Self::Packed { lhs, .. } | Self::Real { lhs, .. } => lhs.expressions(visit),
             Self::String { .. } => {}
+            Self::Element { read, .. } => visit(read),
         }
     }
 
@@ -936,6 +947,7 @@ impl IrFileInputTarget {
         match self {
             Self::Packed { lhs, .. } | Self::Real { lhs, .. } => lhs.expressions_mut(visit),
             Self::String { .. } => {}
+            Self::Element { read, .. } => visit(read),
         }
     }
 }
@@ -1145,6 +1157,14 @@ pub enum IrPlusArgTarget {
     },
     String {
         address: String,
+    },
+    /// A packed container element written through a retained element cell
+    /// on a successful match (see [`IrFileInputTarget::Element`]).
+    Element {
+        read: Box<IrExpr>,
+        width: u32,
+        signed: bool,
+        two_state: bool,
     },
 }
 

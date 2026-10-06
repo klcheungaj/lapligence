@@ -38,3 +38,27 @@ fn native_record_ref_formals_alias_subroutine_records() {
         "ref actual of native record formal `r` in `tb` must be a subroutine record variable of the same type (SIM-008)",
     );
 }
+
+#[test]
+fn input_system_functions_store_into_container_elements() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_008/scan_elements.out");
+    sim_cli::run_case_backend_parity(SUITE, "scan_elements", expected, &[], &[]);
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_008/plusarg_elements.out");
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "plusarg_elements",
+        expected,
+        &["--append-plusarg", "+N=4", "--append-plusarg", "+H=1f"],
+        &[],
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_string_element_scan",
+        "string element of a queue, dynamic or associative array as a ref actual or input destination in `tb` is not supported (SIM-008)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_real_element_scan",
+        "real element of a queue, dynamic or associative array as an input destination in `tb` is not supported (SIM-008)",
+    );
+}
