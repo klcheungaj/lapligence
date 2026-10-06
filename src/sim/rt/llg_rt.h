@@ -1331,6 +1331,8 @@ void* llg_frame_capture_object(llg_frame_t* frame, size_t slot, size_t size,
                                void (*destroy)(void*));
 // The object of a slot (following frame-to-frame aliases).
 void* llg_frame_object_address(llg_frame_t* frame, size_t slot);
+// The handle cell of an opaque slot (following frame-to-frame aliases).
+void** llg_frame_opaque_address(llg_frame_t* frame, size_t slot);
 // The frame that owns a slot's storage (following frame-to-frame aliases), so
 // a branch can reach the other slots of a shared environment frame.
 llg_frame_t* llg_frame_slot_frame(llg_frame_t* frame, size_t slot);
@@ -1406,6 +1408,9 @@ llg_co_arm_t llg_arm_process_suspend(llg_proc_t* self,
                                      llg_process_handle_t* handle);
 llg_co_arm_t llg_arm_process_await(llg_proc_t* self,
                                    llg_process_handle_t* handle);
+// Called when a granted get resumes: the request's keys are taken. A process
+// killed between the grant and this call returns its keys (SV 15.3).
+void llg_semaphore_grant_taken(llg_proc_t* self);
 llg_co_arm_t llg_arm_semaphore_get(llg_proc_t* self,
                                    llg_semaphore_t* semaphore,
                                    sv4_t key_count);

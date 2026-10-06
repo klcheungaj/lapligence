@@ -480,6 +480,7 @@ impl<'a> Codegen<'a> {
                 string_addr.insert(local, name.clone());
             }
         }
+        let event_formals = self.event_read_formals(body);
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             // A container formal that a fork branch names is copied into a
             // shared frame at entry (SV 9.3.2, 13.3); see
@@ -531,6 +532,21 @@ impl<'a> Codegen<'a> {
                     chandle_read.insert(*io, IrChandleExpr::FormalRead(idx));
                     continue;
                 }
+                if !is_ref && !*is_out && automatic && self.fork_shared(*io) {
+                    // Shared with a fork branch like a handle local (SV 9.3.2,
+                    // 13.3): copied into an opaque frame slot at entry.
+                    let name = format!("_llg_shared_formal_{idx}");
+                    self.shared_locals.insert(*io);
+                    static_input_copies.push(IrStmt::Object(Box::new(
+                        crate::sim::ir::IrObjectStmt::ChandleDeclareShared(
+                            name.clone(),
+                            Some(IrChandleExpr::FormalRead(idx)),
+                        ),
+                    )));
+                    chandle_read.insert(*io, IrChandleExpr::LocalRead(name.clone()));
+                    chandle_write.insert(*io, ChandleTarget::Local(name));
+                    continue;
+                }
                 if !is_ref && !*is_out {
                     if let Some(object) = (!automatic)
                         .then(|| self.static_chandle_formals.get(&(inst, *io)).copied())
@@ -548,7 +564,16 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 {
-                    chandle_read.insert(*io, IrChandleExpr::FormalRead(idx));
+                    // An event evaluator copies a by-value handle formal from
+                    // the activation local the callee binds it to.
+                    chandle_read.insert(
+                        *io,
+                        if !is_ref && !*is_out && event_formals.contains(io) {
+                            IrChandleExpr::LocalRead(format!("a{idx}"))
+                        } else {
+                            IrChandleExpr::FormalRead(idx)
+                        },
+                    );
                     if !const_ref {
                         let target = if is_ref {
                             format!("*r{idx}")
@@ -620,7 +645,16 @@ impl<'a> Codegen<'a> {
                     string_write.insert(*io, name.clone());
                     string_addr.insert(*io, name);
                 } else {
-                    string_read.insert(*io, IrStringExpr::FormalRead(idx));
+                    // An event evaluator copies a by-value string formal from the
+                    // activation local the callee binds it to.
+                    string_read.insert(
+                        *io,
+                        if !*is_out && event_formals.contains(io) {
+                            IrStringExpr::LocalRead(format!("a{idx}"))
+                        } else {
+                            IrStringExpr::FormalRead(idx)
+                        },
+                    );
                     string_write.insert(
                         *io,
                         if *is_out {

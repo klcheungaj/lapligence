@@ -148,6 +148,28 @@ impl<'a> Codegen<'a> {
             });
         }
         let function = self.func.as_ref()?;
+        // A shared handle local of the subroutine (chandle, class, semaphore
+        // or mailbox handle) is aliased under its own local name.
+        if matches!(
+            self.kind(target),
+            NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind)
+        ) && self.shared_locals.contains(&target)
+        {
+            if let Some(IrChandleExpr::LocalRead(name)) = function.chandle_read.get(&target) {
+                return Some(CaptureSource {
+                    info: ProcLocalInfo {
+                        c_name: name.clone(),
+                        width: 0,
+                        signed: false,
+                        two_state: true,
+                        static_signal: None,
+                    },
+                    initial: IrExpr::new(IrExprKind::LocalRead(name.clone()), 0, false, None),
+                    lifetime: StorageLifetime::Automatic,
+                    kind: StorageKind::Opaque,
+                });
+            }
+        }
         // An automatic string local of the subroutine is captured by value
         // (or shared, see `fork_shared`) under its own local name.
         let string_local = match self.kind(target) {
@@ -273,38 +295,6 @@ impl<'a> Codegen<'a> {
                     StorageLifetime::Static
                 },
                 kind: super::super::storage_kind(ret.width),
-            });
-        }
-        // A class-handle local or formal of an automatic subroutine is
-        // captured by handle identity for a `join` branch, during which the
-        // suspended parent cannot rebind it (SIM-011). A handle a detached
-        // branch names needs a shared cell, which handles do not have yet.
-        let detached = self
-            .fork_sets
-            .as_ref()
-            .is_none_or(|(shared, _)| shared.contains(&target));
-        if let Some(handle) = function
-            .chandle_read
-            .get(&target)
-            .filter(|handle| !matches!(handle, IrChandleExpr::Read(_)))
-            .filter(|_| self.function_is_automatic(function) && !detached)
-        {
-            return Some(CaptureSource {
-                info: ProcLocalInfo {
-                    c_name: String::new(),
-                    width: 1,
-                    signed: false,
-                    two_state: true,
-                    static_signal: None,
-                },
-                initial: IrExpr::new(
-                    IrExprKind::ObjectQuery(Box::new(IrObjectQuery::HandleCapture(handle.clone()))),
-                    1,
-                    false,
-                    None,
-                ),
-                lifetime: StorageLifetime::Automatic,
-                kind: StorageKind::Opaque,
             });
         }
         None
@@ -433,6 +423,11 @@ impl<'a> Codegen<'a> {
                                     || matches!(self.kind(*target), NodeKind::Var { ty } if ty.kind == "string")
                                     || self.subroutine_container_meta(*target).is_some()
                                     || self.native_value_type(*target).is_some()
+                                    || matches!(
+                                        self.kind(*target),
+                                        NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. }
+                                            if is_handle_kind(&ty.kind)
+                                    )
                                 {
                                     shared.insert(*target);
                                 }

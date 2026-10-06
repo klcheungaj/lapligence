@@ -412,6 +412,25 @@ static void semaphore_waiter_unlink(llg_wait_t* wait) {
     payload->keys = 0;
 }
 
+// A process killed after a grant but before it resumed never took its keys:
+// give them back and let the FIFO head try again.
+static void semaphore_return_grant(llg_proc_t* proc) {
+    llg_semaphore_wait_t* request = proc ? proc->granted_request : NULL;
+    if (!request) return;
+    proc->granted_request = NULL;
+    if (request->owner) {
+        request->owner->available += request->keys;
+        request->owner->cancelled_waiter = 1;
+    }
+    free(request);
+}
+
+void llg_semaphore_grant_taken(llg_proc_t* self) {
+    if (!self || !self->granted_request) return;
+    free(self->granted_request);
+    self->granted_request = NULL;
+}
+
 // Service only the head request.  A later smaller request cannot bypass a
 // larger request at the front of the specified semaphore FIFO.
 static void semaphore_wake_available(llg_semaphore_t* semaphore) {
@@ -429,7 +448,10 @@ static void semaphore_wake_available(llg_semaphore_t* semaphore) {
             continue;
         }
         semaphore->available -= node->keys;
-        free(node);
+        // Keep the request until the process takes its keys by resuming.
+        node->next = NULL;
+        free(proc->granted_request);
+        proc->granted_request = node;
         wait->payload.rare->semaphore.semaphore = NULL;
         wait->payload.rare->semaphore.waiter = NULL;
         wait->payload.rare->semaphore.keys = 0;

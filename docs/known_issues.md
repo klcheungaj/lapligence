@@ -571,39 +571,29 @@ receivers computed by element selects or calls, retained element cells for
 
 `tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`.
 
-## Fork branches using `this` and shallow class copies
+## Shallow class copies
 
-**Status:** open (SIM-011 follow-up; the fork part belongs to the fork
-capture work of SIM-010).
+**Status:** open (SIM-011 follow-up).
 
 ### Symptom
 
-Two legal class forms fail with generic errors instead of executing: a
-`fork` branch inside a class method that reads or writes a property or calls
-a method of `this` (explicitly or implicitly) fails with "ownership emission
-is not yet implemented for unresolved native storage _this", whatever the
-join kind; and a shallow copy `b = new a;` or `new this` (SV 8.12) fails with
-"unsupported executable node `CopyClass`".
+A shallow copy `b = new a;` or `new this` (SV 8.12) fails with "unsupported
+executable node `CopyClass`".
 
 ### Cause
 
-A method's receiver is an implicit formal (`_this`) of the activation, not a
-declared variable, so fork capture planning, which captures declared
-automatics, gives the branch no binding for it. The frontend import records
-the copy as a `CopyClass` node that lowering has no IR form for.
+The frontend import records the copy as a `CopyClass` node that lowering has
+no IR form for.
 
 ### Intended direction
 
-Capture the receiver into each fork branch by value (it cannot be reassigned,
-so a copy is exact for every join kind), and lower `CopyClass` to an object
-allocation that copies each property slot (packed bits, reals, string and
-handle values, native record values and container contents, per the SV 8.12
-shallow-copy rules).
+Lower `CopyClass` to an object allocation that copies each property slot
+(packed bits, reals, string and handle values, native record values and
+container contents, per the SV 8.12 shallow-copy rules).
 
 ### Reproduce
 
-`class W; int x; task run(); fork #1 x = 5; join endtask endclass` called as
-`w.run()`; `P b = new a;` for any class `P`.
+`P b = new a;` for any class `P`.
 
 ## Real references and real-array expressions outside stable storage
 
@@ -729,48 +719,20 @@ target of such a `->>`. Stores a `$monitor`/`$strobe` helper makes to its own
 static storage publish no event, so a hierarchical wait on that storage does
 not wake.
 
-## Fork branches copy subroutine handles
-
-**Status:** open (SIM-010).
-
-### Symptom
-
-A `join_none`/`join_any` branch reads its own copy of a class handle or
-chandle variable of the enclosing task, taken when it starts: a later
-assignment by the task (or the branch) is not seen by the other (SV 9.3.2
-shares them). Member access through a task-local class handle does not lower
-yet (SIM-011). Packed, real, string, container and native record automatics
-and formals are shared.
-
-### Cause
-
-Handle locals have no shared frame slot binding: their captures still copy
-the handle into the branch's frame.
-
-### Intended direction
-
-Bind handle locals to an opaque frame slot (`LLG_FRAME_OPAQUE`) like shared
-strings.
-
-### Reproduce
-
-`task automatic t(); pkt p = new(1); fork #2 $display(p.id); join_none p = new(2); #3; endtask`
-(prints 1 instead of 2 once task-local class handles lower, SIM-011).
-
 ## Event controls on subroutine storage in expanded tasks
 
 **Status:** open (SIM-009).
 
 ### Symptom
 
-A task whose event control reads a string or handle formal, or whose `ref`
-formal with an event control is bound to a block or subroutine automatic or
-to an array element, is expanded at each call site, so such a task cannot
-recurse or have a native record or container formal ("needs
+A task whose event control reads a string or handle `ref` formal, or whose
+`ref` formal with an event control is bound to a block or subroutine
+automatic or to an array element, is expanded at each call site, so such a
+task cannot recurse or have a native record or container formal ("needs
 caller-environment expansion, which is not supported"). `@(s)` on a
-subroutine string or handle rejects explicitly; an `iff` qualifier reads its
+subroutine string or handle rejects explicitly; an `iff` qualifier reads a
 string or handle copied when the control arms. Event controls on the task's
-own locals, by-value packed and real formals, `wait (cond)`, module signals,
+own locals, by-value formals of every type, `wait (cond)`, module signals,
 `ref` formals with module-signal actuals and event formals of every direction
 take the typed call path; an expansion's `ref` formal follows its automatic
 actual's shared cell and an element actual's frozen index.
@@ -784,14 +746,14 @@ Expansion cannot carry native formals and cannot recurse.
 ### Intended direction
 
 Bind string and handle `ref` actuals' change markers per specialization like
-packed `ref` formals, copy by-value string and handle formals into the typed
-evaluator context (only the waiting activation and its fork branches can
-write them), and give shared subroutine strings change markers.
+packed `ref` formals, subscribe typed bodies to automatic and element `ref`
+actuals through their descriptors, and give shared subroutine strings change
+markers.
 
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_009/neg_string_event_control.sv`;
-`task automatic r(input string t, int n); @(posedge c iff t != ""); if (n) r(t, n - 1); endtask`.
+`task automatic r(ref logic s, int n); @(posedge s); if (n) r(s, n - 1); endtask` called with a local.
 
 ## Symptom
 

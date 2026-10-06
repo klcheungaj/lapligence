@@ -53,6 +53,17 @@ fn running_method_keeps_its_receiver_after_rebinding() {
 }
 
 #[test]
+fn method_fork_branches_use_the_receiver() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "method_forks",
+        include_str!("../fixtures/sim/feature_completion/sim_011/method_forks.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn concurrent_and_recursive_methods_have_independent_locals() {
     sim_cli::run_case_backend_parity(
         SUITE,

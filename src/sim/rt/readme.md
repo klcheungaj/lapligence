@@ -73,8 +73,9 @@ trailing-hole trimming are amortized constant time per registration/removal;
 ordinary slot removal uses the process's stored position. Cancellation traversals
 that can remove other records restart as before.
 
-On 64-bit hosts the process record is 424 bytes, including a 128-byte wait
-record. Heap-path dependency memberships add 32 bytes each; a single narrow
+On 64-bit hosts the process record is 432 bytes, including a 128-byte wait
+record and the pointer to a granted semaphore request that the process has
+not resumed to take (its keys return if the process is killed first). Heap-path dependency memberships add 32 bytes each; a single narrow
 signal wait embeds its membership. Each live source row adds 32 bytes, and each
 hash bucket 8 bytes (geometric capacity at 75% load). Temporary key sorting uses
 pointer integer representations, while
@@ -88,7 +89,7 @@ runtime-content hashing invalidates older cached archives.
 word). Single packed any/edge waits and level targets through 64 bits copy their
 spec and neutral A/B words into the wait payload, alongside one subscription.
 Timed queue links share that union, keeping waits at 128 bytes and processes at
-424 bytes. A single named-event wait copies its resolved object into an inline
+432 bytes. A single named-event wait copies its resolved object into an inline
 list slot. Wide, multiple, mixed, expression and dependency waits keep owned heap
 storage. Source rows and named-event tables still allocate on first use/growth;
 there is no per-wait allocation for the inline paths after that shared storage is

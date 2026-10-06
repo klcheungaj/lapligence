@@ -289,7 +289,13 @@ impl Frame<'_, '_> {
                     if let Some(cells) = context_for(model, eval)
                         .and_then(|context| shared_reads.get(&context.frame()))
                     {
-                        dependencies.extend(cells.iter().cloned());
+                        // A read can already name the cell (an expanded `ref`
+                        // formal bound to a shared automatic).
+                        for cell in cells {
+                            if !dependencies.contains(cell) {
+                                dependencies.push(cell.clone());
+                            }
+                        }
                     }
                     if !dependencies.is_empty() {
                         let name = if arm {

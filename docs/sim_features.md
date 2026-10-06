@@ -1277,7 +1277,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   formals are shared like locals (outputs are copied out at return), and so
   are string outputs, native records with their companion containers and
   container formals, with branches of every fork kind and nested forks.
-  Handle variables are still copied into detached branches (SIM-010), and
+  Semaphore, mailbox, chandle and class-handle variables and by-value handle
+  formals are shared through an opaque frame slot
+  ([sim_016](../tests/fixtures/sim/feature_completion/sim_016/readme.md)); a
+  class method's branches use its receiver, implicitly or as `this`
+  ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)), and
   ref-formal captures reject. Static-local
   task NBAs are represented, including arrays; NBAs targeting automatic locals
   or automatic formals reject. V §§9.8.2, 10.2; SV §§9.3.2, 10.4.2, 13.3.2
@@ -1643,7 +1647,11 @@ These are bounded implementations, not full verification-infrastructure support.
 - 🟨 **Semaphores** — `new/get/put/try_get`, zero-key operations, FIFO blocking,
   cancellation cleanup, automatic task-handle arguments and fixed/resizable
   semaphore arrays (handles copied, never the semaphore) are represented.
-  SV §15.3 **[SV-2005]**.
+  Task semaphore variables are shared with fork branches; output and inout
+  semaphore formals copy out into container elements selected at call start
+  ([sim_016](../tests/fixtures/sim/feature_completion/sim_016/readme.md)).
+  `ref` semaphore formals bound to container elements and semaphore members
+  of records reject (SIM-016). SV §15.3 **[SV-2005]**.
 - 🟨 **Mailboxes** — Typed/untyped bounded/unbounded FIFO
   `new/num/put/get/peek/try_put/try_get/try_peek` supports packed, real/shortreal,
   string and admitted handle messages with nominal enum/class/handle identity.

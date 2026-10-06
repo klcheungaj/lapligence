@@ -505,6 +505,10 @@ pub enum IrObjectStmt {
     StringRealtoaLocal(String, IrExpr),
     /// Declare an automatic native chandle local at the source declaration.
     ChandleDeclareLocal(String, Option<IrChandleExpr>),
+    /// Declare an automatic handle local (chandle, class, semaphore or
+    /// mailbox handle) that fork branches share: the handle lives in an
+    /// opaque slot of a reference-counted activation frame (SIM-010).
+    ChandleDeclareShared(String, Option<IrChandleExpr>),
     ChandleAssign(usize, IrChandleExpr),
     ChandleAssignLocal(String, IrChandleExpr),
     SemaphorePut(IrChandleExpr, IrExpr),
@@ -1480,7 +1484,7 @@ impl IrObjectStmt {
                 }
                 Ok(())
             }
-            Self::ChandleDeclareLocal(name, value) => {
+            Self::ChandleDeclareLocal(name, value) | Self::ChandleDeclareShared(name, value) => {
                 if name.is_empty() {
                     return Err(super::IrValidationError::new(
                         "chandle local",
@@ -1634,7 +1638,8 @@ impl IrObjectStmt {
                 visit(value);
             }
             Self::StringItoaLocal(_, value, _) | Self::StringRealtoaLocal(_, value) => visit(value),
-            Self::ChandleDeclareLocal(_, Some(value)) => value.expressions(visit),
+            Self::ChandleDeclareLocal(_, Some(value))
+            | Self::ChandleDeclareShared(_, Some(value)) => value.expressions(visit),
             Self::SemaphorePut(receiver, keys) | Self::SemaphoreGet(receiver, keys) => {
                 receiver.expressions(visit);
                 visit(keys);
@@ -1648,6 +1653,7 @@ impl IrObjectStmt {
             | Self::ProcessControl { target: value, .. }
             | Self::ProcessAwait(value) => value.expressions(visit),
             Self::ChandleDeclareLocal(_, None)
+            | Self::ChandleDeclareShared(_, None)
             | Self::MailboxGet(..)
             | Self::MailboxGetLocal(..)
             | Self::ProcessDeclareLocal(_, None) => {}
@@ -1684,7 +1690,8 @@ impl IrObjectStmt {
                 visit(value);
             }
             Self::StringItoaLocal(_, value, _) | Self::StringRealtoaLocal(_, value) => visit(value),
-            Self::ChandleDeclareLocal(_, Some(value)) => value.expressions_mut(visit),
+            Self::ChandleDeclareLocal(_, Some(value))
+            | Self::ChandleDeclareShared(_, Some(value)) => value.expressions_mut(visit),
             Self::SemaphorePut(receiver, keys) | Self::SemaphoreGet(receiver, keys) => {
                 receiver.expressions_mut(visit);
                 visit(keys);
@@ -1698,6 +1705,7 @@ impl IrObjectStmt {
             | Self::ProcessControl { target: value, .. }
             | Self::ProcessAwait(value) => value.expressions_mut(visit),
             Self::ChandleDeclareLocal(_, None)
+            | Self::ChandleDeclareShared(_, None)
             | Self::MailboxGet(..)
             | Self::MailboxGetLocal(..)
             | Self::ProcessDeclareLocal(_, None) => {}
