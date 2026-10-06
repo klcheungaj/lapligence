@@ -23,6 +23,9 @@ static void free_proc_storage(llg_proc_t* p) {
     event_unlink(&p->wait);
     event_triggered_unlink(&p->wait);
     semaphore_waiter_unlink(&p->wait);
+    // A kill has already returned the keys of a grant it interrupted.
+    free(p->granted_request);
+    p->granted_request = NULL;
     if (p->wait.kind == W_MAILBOX_GET || p->wait.kind == W_MAILBOX_PUT)
         mailbox_unlink_wait(&p->wait);
     wait_payload_release(&p->wait);

@@ -24,3 +24,16 @@ fn ref_handle_element_actuals_are_explicit() {
         "ref actual of handle formal `s` in `tb` is a container element; element references of handles are not supported (SIM-016)",
     );
 }
+
+#[test]
+fn array_semaphores_keep_pools_and_aliases_share_them() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_016/pools_and_aliases.out");
+    sim_cli::run_case_backend_parity(SUITE, "pools_and_aliases", expected, &[], &[]);
+}
+
+#[test]
+fn killed_waiters_never_consume_granted_keys() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_016/grant_cancellation.out");
+    sim_cli::run_case_backend_parity(SUITE, "grant_cancellation", expected, &[], &[]);
+}

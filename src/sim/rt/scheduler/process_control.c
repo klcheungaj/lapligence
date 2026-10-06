@@ -58,6 +58,7 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
     p->suspended = 0;
     p->wake_pending = 0;
     cancel_proc_nbas(p);
+    semaphore_return_grant(p);
 
     llg_wait_t* w = &p->wait;
     if (w->kind != W_NONE) {

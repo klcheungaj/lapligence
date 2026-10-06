@@ -1408,6 +1408,9 @@ llg_co_arm_t llg_arm_process_suspend(llg_proc_t* self,
                                      llg_process_handle_t* handle);
 llg_co_arm_t llg_arm_process_await(llg_proc_t* self,
                                    llg_process_handle_t* handle);
+// Called when a granted get resumes: the request's keys are taken. A process
+// killed between the grant and this call returns its keys (SV 15.3).
+void llg_semaphore_grant_taken(llg_proc_t* self);
 llg_co_arm_t llg_arm_semaphore_get(llg_proc_t* self,
                                    llg_semaphore_t* semaphore,
                                    sv4_t key_count);

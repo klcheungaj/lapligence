@@ -430,6 +430,10 @@ struct llg_proc {
     uint64_t assertion_owner;      // stable per-run identity for deferred reports
     uint64_t action_assertion;     // assertion whose Reactive action spawned us
     int is_assertion_action;
+    // The granted semaphore request (owner and keys) this process has not
+    // resumed to take yet; its keys return to the semaphore if the process
+    // dies first (SV 15.3). Generated code releases it after the get.
+    llg_semaphore_wait_t* granted_request;
     // Resume-hot fields are packed next to the chain and appended root frame.
     llg_value_scope_t* value_scopes;
     llg_activation_t* activation_top;
@@ -460,7 +464,7 @@ _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) -
 _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) ==
                    sizeof(llg_proc_t),
                "coroutine chain must remain the process record's last member");
-_Static_assert(sizeof(llg_proc_t) == 424,
+_Static_assert(sizeof(llg_proc_t) == 432,
                "64-bit process record size changed; update the layout contract");
 #endif
 
@@ -503,6 +507,7 @@ static void free_assertion_clock_events(struct llg_concurrent_assertion* asserti
 static void wake_proc(llg_proc_t* p);
 static void wake_assertion_waiter(uint64_t identity);
 static void semaphore_waiter_unlink(llg_wait_t* wait);
+static void semaphore_return_grant(llg_proc_t* proc);
 static void semaphore_wake_available(llg_semaphore_t* semaphore);
 static void llg_kill_proc_tree(llg_proc_t* p);
 static void llg_kill_proc_tree_internal(llg_proc_t* p, int notify_parent);

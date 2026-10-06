@@ -249,6 +249,7 @@ impl Frame<'_, '_> {
                             keys.code
                         ),
                     )?;
+                    self.line("llg_semaphore_grant_taken(self);");
                 }
                 self.discard(keys);
             }

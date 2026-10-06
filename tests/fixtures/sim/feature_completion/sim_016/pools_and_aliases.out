@@ -1,0 +1,6 @@
+pool0 empty
+pool1 one key
+pool2 two keys
+take 1 3
+take 2 4
+take 3 5
