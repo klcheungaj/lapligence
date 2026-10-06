@@ -167,6 +167,30 @@ are never larger than legacy payloads, so heap and allocation counts must not
 grow, and RSS gets only 2% for page-granularity noise. Wall-time limits are
 looser because the host is shared.
 
+### Recorded value-backend results (Linux x86-64, 2026-10-05)
+
+Ryzen 9 7950X/WSL2, GCC 14.2, GMP 6.3.0, generated models at O3; seven
+interleaved rounds per workload on a shared host (one-minute load 5–50 during
+the run). Ratios are compact/legacy medians; CPU ranges are per-round paired
+ratios. Heap and allocation columns come from one heaptrack run per model.
+
+| Workload | CPU portable | CPU GMP | Peak RSS KiB legacy → compact | Peak heap legacy → compact | Allocation calls legacy → compact |
+| --- | ---: | ---: | --- | --- | --- |
+| `rtl-narrow` | 0.54 [0.49, 0.61] | 0.55 [0.49, 0.58] | 3,584 → 3,584 / 3,328 | 826 K → 765 K | 64.1 M → 32.6 M |
+| `rtl-wide` | 0.21 [0.20, 0.22] | 0.21 [0.20, 0.23] | 3,584 → 3,840 | 937 K → 818 K | 19.1 M → 12.7 M |
+| `scheduler` | 0.58 [0.52, 0.63] | 0.58 [0.51, 0.65] | 4,352 → 4,096 / 4,352 | 1.88 M → 1.67 M | 34.6 M → 12.6 M |
+| `containers` | 0.44 [0.41, 0.48] | 0.43 [0.41, 0.50] | 2,304 → 2,304 / 2,560 | 251 K → 176 K | 49.6 M → 18.6 M |
+| `assertions` | 0.73 [0.67, 0.77] | 0.71 [0.67, 0.77] | 219,856 → 163,344 / 163,468 | 189 M → 146 M | 14.2 M → 7.4 M |
+| `mul65` | 0.41 [0.34, 0.48] | 0.41 [0.32, 0.56] | 2,048 → 2,304 | 82 K → 82 K | 40.0 M → 25.0 M |
+
+Every CPU, wall, peak-heap and allocation budget is met. The only ratios
+outside budget are peak RSS of the 2–4 MiB workloads (`rtl-wide`, `mul65`,
+`containers`: one or two 256 KiB steps of the reported high-water mark). They
+follow code size, not values: compact executables are 120–320 KB larger
+(inline ≤64-bit operations at each site plus the compact units, and GMP when
+selected), while requested heap is equal or lower. Whether that fixed cost is
+an accepted trade-off or needs an absolute RSS allowance awaits review.
+
 ## SIGPROF sampling
 
 Build the preload library, run a generated simulator directly, then symbolize:
