@@ -462,10 +462,38 @@ fn render_function(
             frame.line(format!("sv4_copy({}, {name});", binding.address));
         }
     }
+    // Shared output cells are owned by the function scope, so they outlive
+    // the body's scopes until the copy-back below.
+    let mut shared_outputs = HashMap::new();
+    for (index, formal) in function.formals.iter().enumerate() {
+        if let Some(local) = &formal.shared_local {
+            let width = if formal.real { 0 } else { formal.width };
+            let initial = IrExpr::new(IrExprKind::FormalRead(index), width, formal.signed, None);
+            frame.shared_local(
+                local,
+                width,
+                formal.signed,
+                formal.two_state,
+                Some(&initial),
+            )?;
+            let address = frame
+                .lookup(local)
+                .ok_or("shared output formal has no cell")?
+                .address;
+            shared_outputs.insert(index, address);
+        }
+    }
     frame.block(&function.body)?;
     frame.line("goto _llg_return;");
     frame.line("_llg_return: ;");
     for (index, formal) in function.formals.iter().enumerate() {
+        if let Some(cell) = shared_outputs.get(&index) {
+            frame.line(if formal.real {
+                format!("*o{index} = *{cell};")
+            } else {
+                format!("sv4_copy(o{index}, {cell});")
+            });
+        }
         if formal.event && formal.is_out {
             let handle = frame
                 .event_bindings

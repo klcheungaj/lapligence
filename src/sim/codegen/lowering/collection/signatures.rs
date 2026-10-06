@@ -122,6 +122,7 @@ impl<'a> Codegen<'a> {
                                     chandle: is_handle_kind(&ty.kind),
                                     event: ty.kind == "event",
                                     string: ty.kind == "string",
+                                    shared_local: None,
                                 })
                             }
                             _ => unreachable!("formal kind"),

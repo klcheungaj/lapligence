@@ -1,6 +1,6 @@
-// SIM-010: a by-value input formal is an automatic variable of the
-// activation, so a detached fork branch shares it with the task body
-// (SV 9.3.2, 13.3), including after the task returns.
+// SIM-010: a by-value formal is an automatic variable of the activation, so
+// a detached fork branch shares it with the task body (SV 9.3.2, 13.3),
+// including after the task returns; outputs are copied out at return.
 module tb;
   task automatic t(input int v, output int o);
     fork
@@ -24,6 +24,12 @@ module tb;
     $display("go %0d", $time);
   endtask
 
+  task automatic outs(output int r, inout int io);
+    fork #1 begin r = 5; io = io + 1; end join_none
+    r = 1;
+    #2 $display("outs r=%0d io=%0d", r, io);
+  endtask
+
   task automatic outlive(input string s, input real r);
     fork #4 $display("outlive %s %0.1f %0d", s, r, $time); join_none
     s = {s, "!"};
@@ -31,11 +37,13 @@ module tb;
   endtask
 
   initial begin
-    int r;
+    int r, a, b = 3;
     t(1, r);
     $display("out %0d", r);
     loop_spawn(5);
     waiter(0);
+    outs(a, b);
+    $display("a=%0d b=%0d", a, b);
     outlive("hi", 1.25);
     #5 $finish;
   end

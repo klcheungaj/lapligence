@@ -352,7 +352,8 @@ endmodule
         ("output_event", false),
         ("formal_expression", false),
         ("ref_edge", true),
-        ("local_expression", true),
+        // Locals are read through their (fork-shared) cells.
+        ("local_expression", false),
         ("calls_expanded", false),
         ("forwards_ref", true),
         ("forwards_local", true),

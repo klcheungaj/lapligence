@@ -4,4 +4,6 @@ out 9
 n=105
 n=105
 go 6
-outlive hi! 2.5 10
+outs r=5 io=4
+a=5 b=4
+outlive hi! 2.5 12

@@ -1269,8 +1269,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `wait` on automatics that a fork branch names subscribe to the shared cell,
   so another process's store wakes them, and a task's event control on its own
   locals takes the typed call path (native formals, recursion). By-value
-  packed, real and string input formals are shared like locals; output and
-  inout formals, handles and native records are still copied into detached
+  packed, real and string input formals and packed and real output and inout
+  formals are shared like locals (outputs are copied out at return); string
+  outputs, handles and native records are still copied into detached
   branches, container formals reject (SIM-010), and ref-formal captures
   reject. Static-local
   task NBAs are represented, including arrays; NBAs targeting automatic locals
