@@ -447,11 +447,16 @@ impl<'a> SlangTypeProjector<'a> {
                 }
             }
             TypeKind::DynamicArray | TypeKind::AssociativeArray | TypeKind::Queue => {
+                let array = self
+                    .array(ty)?
+                    .ok_or_else(|| format!("missing container metadata for type {}", ty.id))?
+                    .kind;
                 TypeShape::Container {
                     kind: format!("{:?}", ty.kind),
                     element: Box::new(
                         self.descriptor(self.element_type(ty, "container")?, visiting)?,
                     ),
+                    array,
                 }
             }
             TypeKind::Chandle
@@ -970,6 +975,56 @@ mod tests {
                 .aggregate_layout
                 .expect("alias layout")
                 .type_identity
+        );
+    }
+
+    #[test]
+    fn container_descriptors_keep_queue_bounds_and_value_semantics() {
+        let element = ty(0, TypeKind::Integral, 32);
+        let mut queue = ty(1, TypeKind::Queue, 0);
+        queue.is_fixed_size = false;
+        queue.element_type_id = Some(0);
+        queue.range_count = 1;
+        let types = [element, queue];
+        let ranges = [TypeRange {
+            left: 0,
+            right: 3,
+            kind: TypeRangeKind::QueueBound,
+        }];
+        let projector = SlangTypeProjector {
+            constants: &[],
+            types: types.iter().map(|ty| (ty.id, ty)).collect(),
+            ranges: &ranges,
+            members: &[],
+        };
+
+        let descriptor = projector
+            .project(1)
+            .expect("project bounded queue")
+            .descriptor;
+        // A record member or nested container has no variable metadata of
+        // its own, so the bound travels with the type descriptor.
+        assert!(matches!(
+            &descriptor.shape,
+            TypeShape::Container {
+                array: ArrayKind::Queue {
+                    maximum_elements: Some(4)
+                },
+                ..
+            }
+        ));
+        assert_eq!(descriptor.copy_semantics(), ValueCopySemantics::Deep);
+        assert_eq!(
+            descriptor.default_semantics(),
+            ValueDefaultSemantics::EmptyContainer
+        );
+        assert_eq!(
+            descriptor.destroy_semantics(),
+            ValueDestroySemantics::Recursive
+        );
+        assert_eq!(
+            descriptor.equality_semantics(),
+            ValueEqualitySemantics::Recursive
         );
     }
 

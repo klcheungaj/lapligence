@@ -780,6 +780,27 @@ impl Db {
                     }
                 }
             }
+            if semantic.kind == SemanticKind::Statement && semantic.subkind == 59 {
+                // `foreach (r.q[i])` resolves its target to the member's
+                // declaration; keep the owning record and member path so a
+                // container member of a record instance can be iterated.
+                if let Some(base) = edge_target(&ids, edges, SemanticEdgeRole::Base)? {
+                    if let Some((parts, refs)) = member_path_from_slang(
+                        snapshot,
+                        &type_projector,
+                        &ids,
+                        &snapshot.semantic_nodes[base.index()],
+                        0,
+                    )? {
+                        if parts.len() > 1 {
+                            if let Some(owner) = refs.into_iter().flatten().next() {
+                                array_select_paths
+                                    .insert(id, (owner, parts.into_iter().skip(1).collect()));
+                            }
+                        }
+                    }
+                }
+            }
             if is_array {
                 let element_type = projection
                     .as_ref()

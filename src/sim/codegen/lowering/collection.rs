@@ -148,7 +148,7 @@ fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerEle
             dimensions: dimensions.clone(),
             element: Box::new(lower_container_element(element)?),
         }),
-        TypeShape::Container { kind, element } => Ok(IrContainerElement::Container {
+        TypeShape::Container { kind, element, .. } => Ok(IrContainerElement::Container {
             type_id: element.id.0,
             kind: kind.clone(),
             element: Box::new(lower_container_element(element)?),

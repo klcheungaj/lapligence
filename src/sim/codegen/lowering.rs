@@ -939,6 +939,9 @@ struct AggregateMemberInfo {
     /// A member array of a column-layout record (RTL-101) is one fixed-array
     /// column instead of one leaf per cell.
     array: Option<ArrayInfo>,
+    /// A queue, dynamic or associative member of a module or static record
+    /// (SIM-007) is its own container storage.
+    container: Option<ContainerInfo>,
     path: Vec<AggregatePathPart>,
 }
 

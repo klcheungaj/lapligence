@@ -903,7 +903,13 @@ impl EmitCtx<'_, '_> {
             return Ok(vec![IrStmt::Block(declarations)]);
         }
 
-        let Some(container) = self.cg.container_globals.get(&array).cloned() else {
+        let Some(container) = self
+            .cg
+            .container_globals
+            .get(&array)
+            .cloned()
+            .or_else(|| self.cg.container_of_select(h, array))
+        else {
             return Err(format!(
                 "`foreach` target `{}` in `{}` is not a supported fixed array or container",
                 self.cg.node(array).name,

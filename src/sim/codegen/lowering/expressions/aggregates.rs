@@ -500,6 +500,21 @@ impl<'a> Codegen<'a> {
                         aggregate_path_suffix(&left.path)
                     )
                 })?;
+            if let (Some(lhs), Some(rhs)) = (&left.container, &right.container) {
+                // SV 7.6: a queue, dynamic or associative member is copied
+                // by value into the destination's own container.
+                if nba {
+                    return Err(format!(
+                        "nonblocking assignment of a record with a queue, dynamic or associative member `{}` is not supported in `{path}`",
+                        aggregate_path_suffix(&left.path)
+                    ));
+                }
+                assignments.push(IrStmt::Container(Box::new(IrContainerStmt::Copy {
+                    dst: lhs.ir,
+                    src: rhs.ir,
+                })));
+                continue;
+            }
             if let (Some(lhs_object), Some(rhs_object)) = (left.object, right.object) {
                 let lhs_object = self.reference_object(lhs_object);
                 let rhs_object = self.reference_object(rhs_object);
@@ -694,6 +709,20 @@ impl<'a> Codegen<'a> {
         let mut assignments = Vec::with_capacity(values.len());
         let mut captures = Vec::new();
         let mut captured = HashMap::<NodeId, (String, u32, bool)>::new();
+        // Container members are written in place, so a pattern must not read
+        // another container member it also writes (SV 10.9 reads every
+        // source before writing).
+        let written_containers: Vec<usize> = values
+            .iter()
+            .filter_map(|(member_path, _)| {
+                aggregate
+                    .leaves
+                    .iter()
+                    .find(|leaf| &leaf.path == member_path)
+                    .and_then(|leaf| leaf.container.as_ref())
+                    .map(|container| container.ir)
+            })
+            .collect();
         for (member_path, value_node) in values {
             let left = aggregate
                 .leaves
@@ -705,6 +734,28 @@ impl<'a> Codegen<'a> {
                         aggregate_path_suffix(&member_path)
                     )
                 })?;
+            if let Some(container) = &left.container {
+                if nba {
+                    return Err(format!(
+                        "nonblocking pattern assignment to a record with a queue, dynamic or associative member `{}` is not supported in `{path}`",
+                        aggregate_path_suffix(&member_path)
+                    ));
+                }
+                if let Some(source) = self.container_of(value_node) {
+                    if source.ir != container.ir && written_containers.contains(&source.ir) {
+                        return Err(format!(
+                            "assignment pattern in `{path}` reads container member storage it also writes"
+                        ));
+                    }
+                }
+                assignments.push(self.lower_container_into(
+                    path,
+                    value_node,
+                    container.ir,
+                    value_node,
+                )?);
+                continue;
+            }
             if let Some(index) = left.object {
                 if nba {
                     let value = match self.model.objects[index].ty {
@@ -978,6 +1029,37 @@ impl<'a> Codegen<'a> {
                         )
                     })?;
                 let member_equal = match (left.object, right.object) {
+                    _ if left.container.is_some() || right.container.is_some() => {
+                        let (Some(left_container), Some(right_container)) =
+                            (&left.container, &right.container)
+                        else {
+                            return Err(format!(
+                                "aggregate equality has mismatched container member `{}` in `{path}`",
+                                aggregate_path_suffix(&left.path)
+                            ));
+                        };
+                        if matches!(
+                            self.model.containers[left_container.ir].kind,
+                            IrContainerKind::Associative { .. }
+                        ) {
+                            return Err(format!(
+                                "equality of records with associative array member `{}` is not supported in `{path}` (associative array equality is not supported)",
+                                aggregate_path_suffix(&left.path)
+                            ));
+                        }
+                        // SV 7.2.2, 7.10: members compare element-wise.
+                        IrExpr::new(
+                            IrExprKind::Container(Box::new(IrContainerExpr::Equal {
+                                left: left_container.ir,
+                                right: right_container.ir,
+                                case: matches!(op, Operation::CaseEqual | Operation::CaseNotEqual),
+                                negate: false,
+                            })),
+                            1,
+                            false,
+                            None,
+                        )
+                    }
                     (Some(left), Some(right)) => {
                         let left_index = self.reference_object(left);
                         let right_index = self.reference_object(right);

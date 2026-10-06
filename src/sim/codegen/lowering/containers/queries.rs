@@ -327,7 +327,7 @@ impl<'a> Codegen<'a> {
         }
         let operation = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
-                let Some(container) = self.container_of(*base) else {
+                let Some(container) = self.container_of_select(node, *base) else {
                     return Ok(None);
                 };
                 let element = self.model.containers[container.ir].element.clone();
@@ -370,7 +370,7 @@ impl<'a> Codegen<'a> {
                 }
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
-                let Some(container) = self.container_of(*base) else {
+                let Some(container) = self.container_of_select(node, *base) else {
                     return Ok(None);
                 };
                 if indices.len() != 1 {

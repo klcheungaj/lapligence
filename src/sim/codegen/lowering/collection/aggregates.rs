@@ -133,6 +133,7 @@ impl<'a> Codegen<'a> {
                             signal: None,
                             object: None,
                             array: None,
+                            container: None,
                             path: vec![AggregatePathPart::Member(member.name.clone())],
                         })
                         .collect();
@@ -253,6 +254,7 @@ impl<'a> Codegen<'a> {
                 signal: Some(signal),
                 object: None,
                 array: None,
+                container: None,
                 path: Vec::new(),
             };
             let members = layout
@@ -263,6 +265,7 @@ impl<'a> Codegen<'a> {
                     signal: None,
                     object: None,
                     array: None,
+                    container: None,
                     path: vec![AggregatePathPart::Member(member.name.clone())],
                 })
                 .collect();
@@ -366,6 +369,7 @@ impl<'a> Codegen<'a> {
                     signal: Some(signal.clone()),
                     object: None,
                     array: None,
+                    container: None,
                     path: vec![AggregatePathPart::Member(member.name.clone())],
                 });
                 continue;
@@ -425,6 +429,7 @@ impl<'a> Codegen<'a> {
                 signal: None,
                 object: None,
                 array: None,
+                container: None,
                 path: vec![path_part],
             }));
         }
@@ -504,6 +509,7 @@ impl<'a> Codegen<'a> {
                 signal: Some(signal),
                 object: None,
                 array: None,
+                container: None,
                 path: vec![AggregatePathPart::Member(NATIVE_TAG_MEMBER.to_owned())],
             });
         }
@@ -537,6 +543,7 @@ impl<'a> Codegen<'a> {
                         signal: None,
                         object: None,
                         array: None,
+                        container: None,
                         path: vec![part],
                     })
             })
@@ -643,6 +650,7 @@ impl<'a> Codegen<'a> {
                     signal: Some(signal),
                     object: None,
                     array: None,
+                    container: None,
                     path: member_path.to_vec(),
                 });
             }
@@ -670,6 +678,7 @@ impl<'a> Codegen<'a> {
                     signal: Some(signal),
                     object: None,
                     array: None,
+                    container: None,
                     path: member_path.to_vec(),
                 });
             }
@@ -696,6 +705,7 @@ impl<'a> Codegen<'a> {
                     signal: None,
                     object: Some(index),
                     array: None,
+                    container: None,
                     path: member_path.to_vec(),
                 });
             }
@@ -725,6 +735,7 @@ impl<'a> Codegen<'a> {
                     signal: Some(signal),
                     object: None,
                     array: None,
+                    container: None,
                     path: member_path.to_vec(),
                 });
             }
@@ -832,6 +843,31 @@ impl<'a> Codegen<'a> {
                     signal: None,
                     object: Some(index),
                     array: None,
+                    container: None,
+                    path: member_path.to_vec(),
+                });
+            }
+            // SIM-007: a resizable member of a module or static record is
+            // its own container, addressed through the member path like a
+            // string leaf's object. Unions and column layouts cannot hold one.
+            TypeShape::Container { element, array, .. } if shared.is_none() && !columns => {
+                let suffix = aggregate_path_suffix(member_path);
+                let display = format!("{object_name}.{suffix}");
+                let ir = self.model.containers.len();
+                self.model.containers.push(crate::sim::ir::IrContainer {
+                    c_name: self.c_name("G", path, &[object_name, &suffix]),
+                    element: lower_container_element(element)?,
+                    kind: ir_container_kind(array, &display, path)?,
+                    initial_size: None,
+                    activation: false,
+                    class_field: None,
+                });
+                leaves.push(AggregateMemberInfo {
+                    member: leaf_member(member, descriptor),
+                    signal: None,
+                    object: None,
+                    array: None,
+                    container: Some(ContainerInfo { ir }),
                     path: member_path.to_vec(),
                 });
             }
@@ -1099,36 +1135,7 @@ impl<'a> Codegen<'a> {
         element: IrContainerElement,
     ) -> Result<ContainerInfo, String> {
         let has_initializer = meta.initializer().is_some();
-        let kind = match meta.kind() {
-            // Fixed virtual-interface arrays use the same owned pointer-table
-            // runtime as dynamic arrays; their HDL bounds remain in the
-            // frontend descriptor and selectors are still checked by Slang.
-            ArrayKind::Static => IrContainerKind::Dynamic,
-            ArrayKind::Dynamic => IrContainerKind::Dynamic,
-            ArrayKind::Queue { maximum_elements } => IrContainerKind::Queue {
-                maximum_elements: *maximum_elements,
-            },
-            ArrayKind::Associative(index) => IrContainerKind::Associative {
-                key: match index {
-                    AssociativeIndex::Wildcard => IrAssocKey::Wildcard,
-                    AssociativeIndex::Integral {
-                        width,
-                        signed,
-                        two_state,
-                    } => IrAssocKey::Integral {
-                        width: *width,
-                        signed: *signed,
-                        two_state: *two_state,
-                    },
-                    AssociativeIndex::String => IrAssocKey::String,
-                    AssociativeIndex::Unsupported(kind) => {
-                        return Err(format!(
-                            "associative array `{name}` in `{path}` has unsupported index type `{kind}`"
-                        ))
-                    }
-                },
-            },
-        };
+        let kind = ir_container_kind(meta.kind(), name, path)?;
         let initial_size = matches!(meta.kind(), ArrayKind::Static)
             .then(|| {
                 meta.dimensions().iter().try_fold(1u64, |total, bounds| {
@@ -1159,6 +1166,41 @@ impl<'a> Codegen<'a> {
         }
         Ok(ContainerInfo { ir })
     }
+}
+
+/// Runtime container kind of a queue, dynamic or associative array type.
+/// Fixed arrays of handles reuse the dynamic-array runtime.
+fn ir_container_kind(array: &ArrayKind, name: &str, path: &str) -> Result<IrContainerKind, String> {
+    Ok(match array {
+        // Fixed virtual-interface arrays use the same owned pointer-table
+        // runtime as dynamic arrays; their HDL bounds remain in the
+        // frontend descriptor and selectors are still checked by Slang.
+        ArrayKind::Static => IrContainerKind::Dynamic,
+        ArrayKind::Dynamic => IrContainerKind::Dynamic,
+        ArrayKind::Queue { maximum_elements } => IrContainerKind::Queue {
+            maximum_elements: *maximum_elements,
+        },
+        ArrayKind::Associative(index) => IrContainerKind::Associative {
+            key: match index {
+                AssociativeIndex::Wildcard => IrAssocKey::Wildcard,
+                AssociativeIndex::Integral {
+                    width,
+                    signed,
+                    two_state,
+                } => IrAssocKey::Integral {
+                    width: *width,
+                    signed: *signed,
+                    two_state: *two_state,
+                },
+                AssociativeIndex::String => IrAssocKey::String,
+                AssociativeIndex::Unsupported(kind) => {
+                    return Err(format!(
+                        "associative array `{name}` in `{path}` has unsupported index type `{kind}`"
+                    ))
+                }
+            },
+        },
+    })
 }
 
 /// Whether a record member is, or contains below fixed arrays and nested

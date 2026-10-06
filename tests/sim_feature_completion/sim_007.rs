@@ -146,16 +146,41 @@ fn native_patterns_keep_key_precedence_copies_and_source_order() {
 }
 
 #[test]
-fn records_with_queue_members_are_rejected_explicitly() {
-    sim_cli::reject_case(
-        SUITE,
-        "bad_record_queue_member",
-        "unpacked aggregate member `m.q` has unsupported recursive storage type `Queue`",
-    );
+fn record_container_members_behave_as_owned_containers() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_007/record_containers.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_containers", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "record_containers", expected);
+}
+
+#[test]
+fn record_container_members_wake_their_readers() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_container_sensitivity.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_container_sensitivity", expected, &[], &[]);
+}
+
+#[test]
+fn discarded_queue_pops_remove_one_element() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_007/discarded_pops.out");
+    sim_cli::run_case_backend_parity(SUITE, "discarded_pops", expected, &[], &[]);
+}
+
+#[test]
+fn record_container_member_boundaries_are_rejected_explicitly() {
     sim_cli::reject_case(
         SUITE,
         "bad_record_queue_formal",
         "with a queue, dynamic or associative array member is not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_record_container_nba",
+        "nonblocking assignment of a record with a queue, dynamic or associative member `q` is not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_record_assoc_equality",
+        "equality of records with associative array member `k` is not supported",
     );
 }
 
