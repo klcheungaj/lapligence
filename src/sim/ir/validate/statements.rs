@@ -178,7 +178,7 @@ impl Validator<'_> {
                     return self.fail(path, "incompatible descriptor assignment shape or lifetime");
                 }
             }
-            IrStmt::NativeValueDeclare(index) => {
+            IrStmt::NativeValueDeclare(index) | IrStmt::NativeValueSharedDeclare(index) => {
                 if self
                     .model
                     .native_values

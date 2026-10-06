@@ -45,3 +45,40 @@ fn detached_branches_share_input_formals() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_010/shared_formals.out");
     sim_cli::run_case_backend_parity(SUITE, "shared_formals", expected, &[], &[]);
 }
+
+#[test]
+fn fork_branches_share_task_records() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_010/shared_records.out");
+    sim_cli::run_case_backend_parity(SUITE, "shared_records", expected, &[], &[]);
+}
+
+#[test]
+fn waits_on_shared_containers_wake_on_changes() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_010/container_waits.out");
+    sim_cli::run_case_backend_parity(SUITE, "container_waits", expected, &[], &[]);
+}
+
+#[test]
+fn disable_fork_and_task_disable_reach_their_targets_only() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_010/disable_scope.out");
+    sim_cli::run_case_backend_parity(SUITE, "disable_scope", expected, &[], &[]);
+}
+
+#[test]
+fn disabled_branches_never_resume_from_any_suspension() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_010/kill_suspensions.out");
+    sim_cli::run_case_backend_parity(SUITE, "kill_suspensions", expected, &[], &[]);
+}
+
+#[test]
+fn fork_branches_share_container_formals() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_010/container_formals.out");
+    sim_cli::run_case_backend_parity(SUITE, "container_formals", expected, &[], &[]);
+}
+
+#[test]
+fn recursive_task_children_outlive_returns_and_sibling_disables() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_010/recursive_lifetimes.out");
+    sim_cli::run_case_backend_parity(SUITE, "recursive_lifetimes", expected, &[], &[]);
+}

@@ -127,6 +127,7 @@ impl Frame<'_, '_> {
                 self.native_values.insert(*index, pointer);
                 self.declare_native_companions(*index)?;
             }
+            IrStmt::NativeValueSharedDeclare(index) => self.shared_native_value(*index)?,
             IrStmt::NativeValueCopy { dst, src } => {
                 let target = self.native_value_address(*dst)?;
                 let source = self.native_value_address(*src)?;

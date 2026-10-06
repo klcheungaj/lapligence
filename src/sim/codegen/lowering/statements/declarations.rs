@@ -144,7 +144,14 @@ impl EmitCtx<'_, '_> {
                 }
                 return Ok(Vec::new());
             }
-            let mut statements = vec![IrStmt::NativeValueDeclare(value)];
+            // A record that fork branches use lives in a shared frame.
+            let declare = if self.cg.fork_shared(declaration) {
+                self.cg.shared_locals.insert(declaration);
+                IrStmt::NativeValueSharedDeclare(value)
+            } else {
+                IrStmt::NativeValueDeclare(value)
+            };
+            let mut statements = vec![declare];
             if let Some(initializer) = self.cg.db.var_initializer(declaration) {
                 statements.push(
                     self.cg

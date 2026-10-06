@@ -719,6 +719,9 @@ int llg_process_set_randstate(llg_string_t state);
 void llg_dependency_bind(sv4_t* target, sv4_t* dependency);
 void llg_dependency_bind_real(double* target, sv4_t* dependency);
 void llg_dependency_changed(sv4_t* dependency);
+// `dependency`, or a marker that is never written when it is NULL (an
+// activation container no other process can change).
+sv4_t* llg_dependency_or_never(sv4_t* dependency);
 void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int change);
 
 void llg_display(const char* fmt, ...);  // formatted output followed by a newline
@@ -1328,6 +1331,9 @@ void* llg_frame_capture_object(llg_frame_t* frame, size_t slot, size_t size,
                                void (*destroy)(void*));
 // The object of a slot (following frame-to-frame aliases).
 void* llg_frame_object_address(llg_frame_t* frame, size_t slot);
+// The frame that owns a slot's storage (following frame-to-frame aliases), so
+// a branch can reach the other slots of a shared environment frame.
+llg_frame_t* llg_frame_slot_frame(llg_frame_t* frame, size_t slot);
 void llg_frame_alias_value(llg_frame_t* frame, size_t slot, sv4_t* target);
 void llg_frame_alias_real(llg_frame_t* frame, size_t slot, double* target);
 void llg_frame_alias_slot(llg_frame_t* frame, size_t slot,

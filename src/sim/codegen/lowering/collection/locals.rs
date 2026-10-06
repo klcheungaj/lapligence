@@ -843,6 +843,24 @@ impl<'a> Codegen<'a> {
         dependencies
     }
 
+    /// The subroutine string local that `target` reads, when an event
+    /// evaluator must copy it into its context.
+    fn event_string_local(&self, target: NodeId) -> Option<String> {
+        match self.func.as_ref()?.string_read.get(&target)? {
+            IrStringExpr::LocalRead(name) => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    /// The subroutine handle local that `target` reads, when an event
+    /// evaluator must copy it into its context.
+    fn event_handle_local(&self, target: NodeId) -> Option<String> {
+        match self.func.as_ref()?.chandle_read.get(&target)? {
+            IrChandleExpr::LocalRead(name) => Some(name.clone()),
+            _ => None,
+        }
+    }
+
     /// Evaluator-context local of a captured by-value formal.
     pub(in super::super) fn event_formal_local(index: usize) -> String {
         format!("_llg_event_formal_{index}")
@@ -867,6 +885,8 @@ impl<'a> Codegen<'a> {
                 if cg
                     .capture_source(target)
                     .is_some_and(|source| source.info.static_signal.is_none())
+                    || cg.event_string_local(target).is_some()
+                    || cg.event_handle_local(target).is_some()
                 {
                     out.insert(target);
                 }
@@ -887,61 +907,108 @@ impl<'a> Codegen<'a> {
         let sources = targets
             .iter()
             .map(|target| {
-                self.capture_source(*target).ok_or_else(|| {
-                    format!(
-                        "automatic declaration `{}` was not collected before event capture",
-                        self.node(*target).name
-                    )
-                })
+                self.capture_source(*target)
+                    .or_else(|| {
+                        // A subroutine string (such as an expansion's copy of a
+                        // string formal) is copied into the context.
+                        let (name, kind) = self
+                            .event_string_local(*target)
+                            .map(|name| (name, StorageKind::String))
+                            .or_else(|| {
+                                self.event_handle_local(*target)
+                                    .map(|name| (name, StorageKind::Opaque))
+                            })?;
+                        Some(CaptureSource {
+                            info: ProcLocalInfo {
+                                c_name: name.clone(),
+                                width: 0,
+                                signed: false,
+                                two_state: true,
+                                static_signal: None,
+                            },
+                            initial: IrExpr::new(IrExprKind::LocalRead(name), 0, false, None),
+                            lifetime: StorageLifetime::Automatic,
+                            kind,
+                        })
+                    })
+                    .ok_or_else(|| {
+                        format!(
+                            "automatic declaration `{}` was not collected before event capture",
+                            self.node(*target).name
+                        )
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
         let frame = self.new_frame_id()?;
-        let captures = sources
+        // (declaration, evaluator local, lifetime, kind, ownership, source)
+        let mut slots = Vec::new();
+        for (source, target) in sources.into_iter().zip(targets) {
+            // Inlined const-ref formals can be substituted directly with
+            // their signal/array actual. Such references already have a
+            // stable dependency and must not manufacture a frame whose
+            // initializer would be rendered outside the caller's formal
+            // context. Only lexical C locals need a copied evaluator slot.
+            // A by-value formal of the enclosing subroutine is copied into
+            // the context too; its evaluator reads the slot under the name
+            // `event_formal_local` gives it.
+            let local = match source.initial.kind() {
+                IrExprKind::LocalRead(local) => local.clone(),
+                IrExprKind::FormalRead(index) => Self::event_formal_local(*index),
+                // An expanded `ref` formal bound to an array element reads
+                // the model array at indices frozen in call locals; the
+                // evaluator gets copies of those locals.
+                IrExprKind::ArrayRead { indices, .. } => {
+                    for index in indices {
+                        if let IrExprKind::LocalRead(name) = index.kind() {
+                            slots.push((
+                                None,
+                                name.clone(),
+                                StorageLifetime::Automatic,
+                                StorageKind::Packed,
+                                StorageOwnership::Owned,
+                                index.clone(),
+                            ));
+                        }
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
+            // Another process can change a fork-visible automatic while the
+            // control waits, so the evaluator aliases its cell.
+            let ownership = self
+                .event_cell_ownership(target, &source)
+                .unwrap_or(StorageOwnership::Owned);
+            let kind = if matches!(source.kind, StorageKind::String | StorageKind::Opaque) {
+                source.kind
+            } else {
+                super::super::storage_kind(source.info.width)
+            };
+            slots.push((
+                Some(target),
+                local,
+                source.lifetime,
+                kind,
+                ownership,
+                source.initial,
+            ));
+        }
+        let captures = slots
             .into_iter()
-            .zip(targets)
-            .filter_map(|(source, target)| {
-                // Inlined const-ref formals can be substituted directly with
-                // their signal/array actual. Such references already have a
-                // stable dependency and must not manufacture a frame whose
-                // initializer would be rendered outside the caller's formal
-                // context. Only lexical C locals need a copied evaluator slot.
-                // A by-value formal of the enclosing subroutine is copied
-                // into the context too; its evaluator reads the slot under
-                // the name `event_formal_local` gives it.
-                let local = match source.initial.kind() {
-                    IrExprKind::LocalRead(local) => local.clone(),
-                    IrExprKind::FormalRead(index) => Self::event_formal_local(*index),
-                    _ => return None,
-                };
-                // Another process can change a fork-visible automatic while
-                // the control waits, so the evaluator aliases its cell.
-                let ownership = self
-                    .event_cell_ownership(target, &source)
-                    .unwrap_or(StorageOwnership::Owned);
-                Some((
-                    self.declaration_identity(target),
-                    local,
-                    source.lifetime,
-                    super::super::storage_kind(source.info.width),
-                    ownership,
-                    source.initial,
-                ))
-            })
             .enumerate()
             .map(
-                |(slot, (declaration, local, lifetime, kind, ownership, initial))| {
-                    Ok(IrEventCapture::new(
-                        StorageRef::for_declaration(
+                |(slot, (target, local, lifetime, kind, ownership, initial))| {
+                    let storage = match target {
+                        Some(target) => StorageRef::for_declaration(
                             frame,
                             slot as u32,
-                            declaration?,
+                            self.declaration_identity(target)?,
                             lifetime,
                             ownership,
-                        )
-                        .with_kind(kind),
-                        local,
-                        initial,
-                    ))
+                        ),
+                        None => StorageRef::new(frame, slot as u32, lifetime, ownership),
+                    };
+                    Ok(IrEventCapture::new(storage.with_kind(kind), local, initial))
                 },
             )
             .collect::<Result<Vec<_>, String>>()?;

@@ -1,4 +1,5 @@
 //! Atomic multi-source waits. Runtime descriptors adopt one reference per field.
+use super::captures::CapturedValue;
 use super::*;
 
 fn context_for(model: &IrModel, helper: &str) -> Option<IrEventContext> {
@@ -212,15 +213,44 @@ impl Frame<'_, '_> {
             }
         }
         let mut prepared = Vec::new();
+        // An evaluator copy of a local that lives in a shared frame cell (as
+        // in a call-site expansion whose `ref` actual is such a local) would
+        // miss other processes' stores: alias the cell and subscribe to it.
+        let mut shared_reads: HashMap<_, Vec<String>> = HashMap::new();
         for context in &contexts {
-            prepared.push(
-                self.prepare_captures(
-                    context
-                        .captures()
-                        .iter()
-                        .map(|capture| (capture.storage(), capture.initial())),
-                )?,
-            );
+            let mut values = self.prepare_captures(
+                context
+                    .captures()
+                    .iter()
+                    .map(|capture| (capture.storage(), capture.initial())),
+            )?;
+            for ((storage, value), capture) in values.iter_mut().zip(context.captures()) {
+                let IrExprKind::LocalRead(name) = capture.initial().kind() else {
+                    continue;
+                };
+                if storage.ownership() != StorageOwnership::Owned
+                    || !matches!(storage.kind(), StorageKind::Packed | StorageKind::Real)
+                {
+                    continue;
+                }
+                let Some((frame, slot)) = self.shared_cells.get(name).cloned() else {
+                    continue;
+                };
+                if let CapturedValue::Numeric(copy) =
+                    std::mem::replace(value, CapturedValue::Shared(frame, slot))
+                {
+                    self.discard(copy);
+                }
+                let dependency = self.dependency(&IrDependency::SharedCell {
+                    local: name.clone(),
+                    real: storage.kind() == StorageKind::Real,
+                })?;
+                shared_reads
+                    .entry(context.frame())
+                    .or_default()
+                    .push(dependency);
+            }
+            prepared.push(values);
         }
         let mut retained = Vec::new();
         let mut entries = Vec::new();
@@ -252,11 +282,16 @@ impl Frame<'_, '_> {
                         "eval"
                     };
                     fields.push(format!(".{field} = {eval}"));
-                    if !reads.is_empty() {
-                        let dependencies = reads
-                            .iter()
-                            .map(|item| self.dependency(item))
-                            .collect::<Result<Vec<_>, _>>()?;
+                    let mut dependencies = reads
+                        .iter()
+                        .map(|item| self.dependency(item))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if let Some(cells) = context_for(model, eval)
+                        .and_then(|context| shared_reads.get(&context.frame()))
+                    {
+                        dependencies.extend(cells.iter().cloned());
+                    }
+                    if !dependencies.is_empty() {
                         let name = if arm {
                             self.arm_array(
                                 "llg_wait_dependency_t",
@@ -274,7 +309,7 @@ impl Frame<'_, '_> {
                         };
                         fields.push(format!(
                             ".dependencies = {name}, .n_dependencies = {}",
-                            reads.len()
+                            dependencies.len()
                         ));
                     }
                     if let Some(context) = context_for(model, eval) {

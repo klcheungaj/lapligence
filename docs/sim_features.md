@@ -442,11 +442,13 @@ Macros, includes and their edition-specific behavior are counted in §11.
   `ref` formals of queue, dynamic and associative type alias the caller's
   container variable, including from timed tasks and fork branches
   ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
-  Fork capture of automatic containers
-  (SIM-010), class container properties selected through other handle
-  expressions (`a[i].q`) or outside procedural statements (SIM-011), mutating
-  methods of nested elements, record-element equality (SIM-007), string-key
-  index-result queues and event controls on subroutine containers remain
+  Automatic containers that fork branches use are shared with them, and
+  event controls and `wait` on them wake on another process's change
+  ([sim_010](../tests/fixtures/sim/feature_completion/sim_010/readme.md)).
+  Class container properties selected through other handle expressions
+  (`a[i].q`) or outside procedural statements (SIM-011), mutating methods of
+  nested elements, record-element equality (SIM-007) and string-key
+  index-result queues remain
   restricted ([known issue](known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
   Methods are in §7. SV §§7.5, 7.8, 7.10, 7.12 **[SV-2005]**.
 - 🟨 **Chandle** — Typed native-pointer null/copy/identity/Boolean operations,
@@ -1272,10 +1274,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   so another process's store wakes them, and a task's event control on its own
   locals takes the typed call path (native formals, recursion). By-value
   packed, real and string input formals and packed and real output and inout
-  formals are shared like locals (outputs are copied out at return); string
-  outputs, handles and native records are still copied into detached
-  branches, container formals reject (SIM-010), and ref-formal captures
-  reject. Static-local
+  formals are shared like locals (outputs are copied out at return), and so
+  are string outputs, native records with their companion containers and
+  container formals, with branches of every fork kind and nested forks.
+  Handle variables are still copied into detached branches (SIM-010), and
+  ref-formal captures reject. Static-local
   task NBAs are represented, including arrays; NBAs targeting automatic locals
   or automatic formals reject. V §§9.8.2, 10.2; SV §§9.3.2, 10.4.2, 13.3.2
   **[1995/SV-2005]**.

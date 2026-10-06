@@ -457,8 +457,7 @@ module, static or block record passed to a class method (whole subroutine
 records and module, static and block records or constant selections of
 them bind); an event control on a member of such a formal when the actual is
 a subroutine record (a generic lowering diagnostic); nonblocking writes
-to a static subroutine native record; fork-join_none capture of automatic
-native records; sub-record, member-array or handle selects of a native call
+to a static subroutine native record; sub-record, member-array or handle selects of a native call
 result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles
@@ -512,7 +511,7 @@ of statement staging); retained element cells (SIM-008 container element
 references) passed as one reference per leaf for element actuals of native
 `ref` formals, which specialization cannot bind; a root-plus-item-path pending record for static native roots
 (a queued leaf pointer would dangle because a root replaces its leaves on
-assignment); fork capture pins (SIM-010); a commit-time tag guard on queued
+assignment); a commit-time tag guard on queued
 native writes for tagged-union member NBAs; and per-activation native
 roots for forked automatic block records, strings and handles.
 
@@ -535,7 +534,7 @@ handle elements and nested containers.
 ### Symptom
 
 These legal forms reject with explicit diagnostics: a `ref` container formal
-whose actual is not a container variable of the formal's type; a fork branch reading a container formal of the enclosing activation; an
+whose actual is not a container variable of the formal's type; an
 instance container property selected through a handle that is not a
 variable, formal or handle property (`list[i].q`, `f().q`), or outside a
 procedural statement (a continuous assignment, for instance); a
@@ -730,11 +729,71 @@ target of such a `->>`. Stores a `$monitor`/`$strobe` helper makes to its own
 static storage publish no event, so a hierarchical wait on that storage does
 not wake.
 
+## Fork branches copy subroutine handles
+
+**Status:** open (SIM-010).
+
+### Symptom
+
+A `join_none`/`join_any` branch reads its own copy of a class handle or
+chandle variable of the enclosing task, taken when it starts: a later
+assignment by the task (or the branch) is not seen by the other (SV 9.3.2
+shares them). Member access through a task-local class handle does not lower
+yet (SIM-011). Packed, real, string, container and native record automatics
+and formals are shared.
+
+### Cause
+
+Handle locals have no shared frame slot binding: their captures still copy
+the handle into the branch's frame.
+
+### Intended direction
+
+Bind handle locals to an opaque frame slot (`LLG_FRAME_OPAQUE`) like shared
+strings.
+
+### Reproduce
+
+`task automatic t(); pkt p = new(1); fork #2 $display(p.id); join_none p = new(2); #3; endtask`
+(prints 1 instead of 2 once task-local class handles lower, SIM-011).
+
 ## Event controls on subroutine storage in expanded tasks
 
 **Status:** open (SIM-009).
 
 ### Symptom
+
+A task whose event control reads a string or handle formal, or whose `ref`
+formal with an event control is bound to a block or subroutine automatic or
+to an array element, is expanded at each call site, so such a task cannot
+recurse or have a native record or container formal ("needs
+caller-environment expansion, which is not supported"). `@(s)` on a
+subroutine string or handle rejects explicitly; an `iff` qualifier reads its
+string or handle copied when the control arms. Event controls on the task's
+own locals, by-value packed and real formals, `wait (cond)`, module signals,
+`ref` formals with module-signal actuals and event formals of every direction
+take the typed call path; an expansion's `ref` formal follows its automatic
+actual's shared cell and an element actual's frozen index.
+
+### Cause
+
+The typed body's evaluated event callbacks cannot name a string or handle
+actual's change marker, and subroutine strings and handles have none.
+Expansion cannot carry native formals and cannot recurse.
+
+### Intended direction
+
+Bind string and handle `ref` actuals' change markers per specialization like
+packed `ref` formals, copy by-value string and handle formals into the typed
+evaluator context (only the waiting activation and its fork branches can
+write them), and give shared subroutine strings change markers.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_009/neg_string_event_control.sv`;
+`task automatic r(input string t, int n); @(posedge c iff t != ""); if (n) r(t, n - 1); endtask`.
+
+## Symptom
 
 A task whose event control reads a string or handle formal, or whose `ref`
 formal with an event control is bound to a block or subroutine automatic or

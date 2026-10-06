@@ -291,9 +291,13 @@ fn render_with_frame(
 fn bind_context(frame: &mut Frame<'_, '_>, context: Option<&IrEventContext>) -> Result<(), String> {
     if let Some(context) = context {
         for capture in context.captures() {
-            // An aliased cell is bound through its slot address; copies are
-            // only read.
-            let source = if capture.storage().ownership() == StorageOwnership::Owned {
+            // Aliased cells and strings are bound through their slot
+            // addresses; packed and real copies are only read.
+            let source = if capture.storage().ownership() == StorageOwnership::Owned
+                && matches!(
+                    capture.storage().kind(),
+                    StorageKind::Packed | StorageKind::Real
+                ) {
                 "(const llg_frame_t*)context"
             } else {
                 "(llg_frame_t*)context"

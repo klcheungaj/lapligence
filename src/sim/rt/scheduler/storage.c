@@ -716,6 +716,14 @@ void* llg_frame_object_address(llg_frame_t* frame, size_t slot) {
     return entry->value.object.data;
 }
 
+llg_frame_t* llg_frame_slot_frame(llg_frame_t* frame, size_t slot) {
+    llg_frame_slot_t* entry = frame_slot(frame, slot);
+    if (entry->alias_kind == LLG_FRAME_ALIAS_SLOT) {
+        return llg_frame_slot_frame(entry->alias.slot.frame, entry->alias.slot.slot);
+    }
+    return frame;
+}
+
 double* llg_frame_real_address(llg_frame_t* frame, size_t slot) {
     llg_frame_slot_t* entry = frame_slot(frame, slot);
     if (entry->alias_kind == LLG_FRAME_ALIAS_SLOT) {

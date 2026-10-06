@@ -44,3 +44,33 @@ fn event_expressions_on_formals_use_the_typed_call_path() {
         include_str!("../fixtures/sim/feature_completion/sim_009/formal_event_expressions.out");
     sim_cli::run_case_backend_parity(SUITE, "formal_event_expressions", expected, &[], &[]);
 }
+
+#[test]
+fn expanded_ref_event_controls_wake_on_branch_writes() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/expanded_ref_wakeups.out");
+    sim_cli::run_case_backend_parity(SUITE, "expanded_ref_wakeups", expected, &[], &[]);
+}
+
+#[test]
+fn expanded_element_ref_event_controls_keep_their_element() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/expanded_element_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "expanded_element_refs", expected, &[], &[]);
+}
+
+#[test]
+fn expanded_qualifiers_read_string_and_handle_formals() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/expanded_native_qualifiers.out");
+    sim_cli::run_case_backend_parity(SUITE, "expanded_native_qualifiers", expected, &[], &[]);
+}
+
+#[test]
+fn event_controls_on_subroutine_strings_are_explicit() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_string_event_control",
+        "event control on subroutine string or handle `tag` in `tb` is not supported (SIM-009)",
+    );
+}

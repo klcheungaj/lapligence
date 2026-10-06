@@ -21,6 +21,7 @@ fn check_capture(storage: StorageRef) -> Result<(), String> {
                     | StorageKind::Real
                     | StorageKind::String
                     | StorageKind::Container
+                    | StorageKind::Native
             ))
     {
         return Err("shared fork capture requires automatic numeric or string storage".to_owned());
@@ -28,8 +29,10 @@ fn check_capture(storage: StorageRef) -> Result<(), String> {
     if storage.kind() == StorageKind::String && storage.ownership() == StorageOwnership::Borrowed {
         return Err("string fork captures are copied or shared".to_owned());
     }
-    if storage.kind() == StorageKind::Container && storage.ownership() != StorageOwnership::Shared {
-        return Err("container fork captures are shared".to_owned());
+    if matches!(storage.kind(), StorageKind::Container | StorageKind::Native)
+        && storage.ownership() != StorageOwnership::Shared
+    {
+        return Err("container and native record fork captures are shared".to_owned());
     }
     if storage.ownership() == StorageOwnership::Borrowed
         && (storage.lifetime() != StorageLifetime::Automatic
@@ -223,6 +226,18 @@ impl Frame<'_, '_> {
         source: &str,
     ) -> Result<(), String> {
         check_capture(storage)?;
+        if storage.kind() == StorageKind::Native {
+            let IrExprKind::LocalRead(local) = initial.kind() else {
+                return Err("native record fork capture requires its capture name".to_owned());
+            };
+            let index = (0..self.ctx.model.native_values.len())
+                .find(|index| crate::sim::ir::shared_native_capture_name(*index) == *local)
+                .ok_or("native record fork capture names no value")?;
+            self.bind_shared_native_value(index, source, storage.slot())?;
+            self.shared_cells
+                .insert(local.clone(), (source.to_owned(), storage.slot()));
+            return Ok(());
+        }
         if storage.kind() == StorageKind::Container {
             let IrExprKind::LocalRead(local) = initial.kind() else {
                 return Err("container fork capture requires its capture name".to_owned());

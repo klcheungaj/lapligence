@@ -156,7 +156,10 @@ impl EmitCtx<'_, '_> {
                         && source.lifetime == StorageLifetime::Automatic
                         && !matches!(
                             source.kind,
-                            StorageKind::Opaque | StorageKind::String | StorageKind::Container
+                            StorageKind::Opaque
+                                | StorageKind::String
+                                | StorageKind::Container
+                                | StorageKind::Native
                         )
                         && !matches!(
                             self.cg.kind(*target),
@@ -175,6 +178,7 @@ impl EmitCtx<'_, '_> {
                                 | StorageKind::Real
                                 | StorageKind::String
                                 | StorageKind::Container
+                                | StorageKind::Native
                         )
                     {
                         // A detached branch shares the declaring frame's cell.

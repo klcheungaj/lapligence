@@ -481,6 +481,18 @@ impl<'a> Codegen<'a> {
             }
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            // A container formal that a fork branch names is copied into a
+            // shared frame at entry (SV 9.3.2, 13.3); see
+            // `IrFormal::shared_local`.
+            if automatic && self.is_subroutine_container(*io) && self.fork_shared(*io) {
+                if let Some(container) = self.container_globals.get(io).map(|info| info.ir) {
+                    self.shared_locals.insert(*io);
+                    shared_outputs.push((
+                        idx,
+                        crate::sim::ir::shared_container_capture_name(container),
+                    ));
+                }
+            }
             if self.fixed_formal_array(*io).is_some()
                 || self.is_native_declaration(*io)
                 || self.is_subroutine_container(*io)
@@ -584,6 +596,16 @@ impl<'a> Codegen<'a> {
                             IrObjectStmt::StringAssign(object, IrStringExpr::FormalRead(idx)),
                         )));
                     }
+                } else if automatic && *is_out && self.fork_shared(*io) {
+                    // A shared string output: the emitter creates the cell
+                    // from `*o{idx}` and copies it back at return.
+                    let name = format!("_llg_shared_formal_{idx}");
+                    locals.insert(*io, (name.clone(), 0, false, true, false));
+                    self.shared_locals.insert(*io);
+                    string_read.insert(*io, IrStringExpr::LocalRead(name.clone()));
+                    string_write.insert(*io, name.clone());
+                    string_addr.insert(*io, name.clone());
+                    shared_outputs.push((idx, name));
                 } else if automatic && !*is_out && self.fork_shared(*io) {
                     // Shared with a detached fork branch like a packed input
                     // formal (SV 9.3.2, 13.3).
