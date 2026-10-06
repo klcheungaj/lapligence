@@ -383,6 +383,7 @@ struct llg_process_handle {
     llg_proc_t* proc;
     int status;
     int linked;
+    int pinned; // one permanent reference for uncounted storage
     struct llg_process_handle* next;
     struct llg_process_handle** prev_link;
 };

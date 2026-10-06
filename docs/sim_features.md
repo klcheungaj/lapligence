@@ -1675,10 +1675,18 @@ These are bounded implementations, not full verification-infrastructure support.
   Unsupported cross-clock forms remain excluded.
   SV ch.14 **[SV-2005]**.
 - 🟨 **Process control** — `process::self/status/kill/suspend/resume/await`
-  retain identity, wait conditions, descendant cleanup and terminal status.
-  By-value process formals borrow the caller's handle; fixed and resizable
-  process arrays hold counted handles. Randstate and the broader class API
-  remain unsupported (SIM-015).
+  retain identity, wait conditions, descendant cleanup and terminal status;
+  `status()` is a `process::state` value with its enum methods. Handles live
+  in process variables, fixed and resizable arrays, class properties, record
+  members, input/output/inout/`ref`/`const ref` formals, function results and
+  fork-shared task variables and formals; `srandom`, `get_randstate` and
+  `set_randstate` act on the named process's stream
+  ([sim_015](../tests/fixtures/sim/feature_completion/sim_015/readme.md)).
+  Methods through a null handle and `await` on the current process end the
+  simulation with an error. Handles in plain storage stay allocated until
+  teardown, an event that fires while its waiter is suspended is delivered on
+  resume, and `ref` formals bound to plain storage reject
+  ([known issues](known_issues.md#process-handles-in-plain-handle-storage-stay-allocated-until-teardown)).
   SV §9.7 **[SV-2005]**.
 - 🟨 **Semaphores** — `new/get/put/try_get`, zero-key operations, FIFO blocking,
   cancellation cleanup, automatic task-handle arguments and fixed/resizable

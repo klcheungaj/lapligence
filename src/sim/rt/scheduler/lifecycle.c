@@ -305,12 +305,18 @@ void llg_rt_cleanup(void) {
     }
     // External HDL references may keep terminal process identities alive, but
     // no handle may retain a pointer into the context being reset below.
+    // A pinned handle's permanent reference ends here; counted holders that
+    // outlive the context release (and then free) theirs later.
     llg_process_handle_t* handle = g.process_handles;
     while (handle) {
         llg_process_handle_t* next = handle->next;
         handle->linked = 0;
         handle->prev_link = NULL;
         handle->next = NULL;
+        if (handle->pinned) {
+            handle->pinned = 0;
+            llg_process_release(handle);
+        }
         handle = next;
     }
     g.process_handles = NULL;

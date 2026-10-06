@@ -52,6 +52,15 @@ impl Frame<'_, '_> {
             RandomState => {
                 self.native_value(NativeKind::String, "llg_process_get_randstate()".to_owned())
             }
+            ProcessRandState(target) => {
+                let target = self.process_value(target)?;
+                let value = self.native_value(
+                    NativeKind::String,
+                    format!("llg_process_handle_get_randstate({})", target.code()),
+                );
+                self.native_discard(target);
+                value
+            }
             Read(index) => self.native_value(
                 NativeKind::String,
                 format!(

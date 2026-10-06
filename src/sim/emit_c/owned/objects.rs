@@ -136,6 +136,13 @@ impl Frame<'_, '_> {
                 let value = self.process_value(process)?;
                 return Ok(self.scalar("void*", format!("(void*)*({})", value.address)));
             }
+            IrChandleExpr::PinnedProcess(process) => {
+                let value = self.process_value(process)?;
+                return Ok(self.scalar(
+                    "void*",
+                    format!("(void*)llg_process_pin(*({}))", value.address),
+                ));
+            }
             IrChandleExpr::QueuePop { container, back } => {
                 if self.read_only_callback {
                     return Err(pending("mutating container query in a read-only callback"));
@@ -210,7 +217,10 @@ impl Frame<'_, '_> {
         Ok(self.scalar("void*", code))
     }
 
-    fn process_value(&mut self, expression: &IrProcessExpr) -> Result<NativeValue, String> {
+    pub(super) fn process_value(
+        &mut self,
+        expression: &IrProcessExpr,
+    ) -> Result<NativeValue, String> {
         let source = match expression {
             IrProcessExpr::Null => "NULL".to_owned(),
             IrProcessExpr::SelfHandle => "llg_process_self(self)".to_owned(),
@@ -463,6 +473,30 @@ impl Frame<'_, '_> {
                     )?,
                     IrProcessControl::Resume => {
                         self.line(format!("llg_process_resume(self, {});", target.code()))
+                    }
+                }
+                self.native_discard(target);
+            }
+            ProcessRandom { target, op } => {
+                let target = self.process_value(target)?;
+                match op {
+                    crate::sim::ir::IrProcessRandom::Seed(seed) => {
+                        let seed = self.expression(seed)?;
+                        self.line(format!(
+                            "llg_process_handle_srandom({}, {});",
+                            target.code(),
+                            seed.code
+                        ));
+                        self.discard(seed);
+                    }
+                    crate::sim::ir::IrProcessRandom::SetState(state) => {
+                        let state = self.string(state)?;
+                        self.line(format!(
+                            "(void)llg_process_handle_set_randstate({}, {});",
+                            target.code(),
+                            state.take_string()
+                        ));
+                        self.native_discard(state);
                     }
                 }
                 self.native_discard(target);

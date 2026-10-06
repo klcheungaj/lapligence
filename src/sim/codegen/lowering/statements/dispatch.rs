@@ -613,7 +613,7 @@ impl EmitCtx<'_, '_> {
                 ..
             } => {
                 if (matches!(name.as_str(), "suspend" | "await")
-                    && self.cg.is_process_expr(&self.path, *receiver))
+                    && self.cg.is_process_value(&self.path, *receiver))
                     || (name == "get" && self.cg.is_semaphore_expr(&self.path, *receiver))
                 {
                     if self.in_final {

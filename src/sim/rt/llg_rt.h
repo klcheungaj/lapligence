@@ -1187,9 +1187,20 @@ void llg_process_assign(llg_process_handle_t** target,
 // runtime retains the slot's value until the owning process is completed or
 // killed, even when the C block that declared the slot has already unwound.
 void llg_process_local_register(llg_process_handle_t** slot);
+// Pin a handle stored into uncounted handle storage (class properties,
+// non-input formals, function results, fork-shared slots): the identity then
+// stays valid until runtime cleanup. Idempotent; returns `handle`.
+llg_process_handle_t* llg_process_pin(llg_process_handle_t* handle);
 // Kill/resume are nonblocking process-control services. Kill sets
 // self->chain.exiting to ABANDON when cancellation reaches `self`, or COMPLETE
 // when program completion requests finish. Generated code checks immediately.
+// Random-stream methods of a process handle (SV 18.14); the target's own
+// stream, never the caller's. A null handle is a null object access; a
+// terminated target reports an error and the call has no effect.
+void llg_process_handle_srandom(llg_process_handle_t* handle, sv4_t seed);
+llg_string_t llg_process_handle_get_randstate(llg_process_handle_t* handle);
+int llg_process_handle_set_randstate(llg_process_handle_t* handle,
+                                     llg_string_t state);
 void llg_process_kill(llg_proc_t* self, llg_process_handle_t* handle);
 void llg_process_resume(llg_proc_t* self, llg_process_handle_t* handle);
 
@@ -1880,6 +1891,7 @@ void llg_rt_ref_read_to(sv4_t* dst, const llg_ref_t* ref);
  * dst (destroyed first; it must carry no change callback) with the string
  * `X(...)` would return. Argument conventions match the packed forms above. */
 void llg_process_get_randstate_to(llg_string_t* dst);
+void llg_process_handle_get_randstate_to(llg_string_t* dst, llg_process_handle_t* handle);
 void llg_string_format_typed_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int n, const char* scope);
 /* Implemented with the container runtime; declared in both headers. */
 void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);

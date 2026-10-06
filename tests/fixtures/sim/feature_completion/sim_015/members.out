@@ -1,0 +1,6 @@
+defaults 1 1 null
+same 1 1 1 1
+rec 7 WAITING
+suspended SUSPENDED SUSPENDED
+killed KILLED KILLED
+cleared 1 1

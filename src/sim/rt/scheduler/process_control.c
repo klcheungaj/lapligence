@@ -185,13 +185,26 @@ static void llg_kill_proc_tree_internal(llg_proc_t* p, int notify_parent) {
     llg_kill_proc(p, notify_parent);
 }
 
+// Calling a process method through a null handle is a null object access
+// (SV 8.4); like a null class handle access it ends the simulation.
+static void process_handle_null(const char* method) {
+    if (llg_rt_exiting()) return;
+    fprintf(stderr, "llg: null process handle access: process::%s\n", method);
+    llg_rt_mark_failed();
+    llg_rt_fatal_typed(0, "null process handle access", NULL, 0, "", method);
+}
+
 llg_process_handle_t* llg_process_self(llg_proc_t* self) {
     llg_runtime_service_enter(self, "process::self");
     return self ? self->handle : NULL;
 }
 
 int llg_process_status(const llg_process_handle_t* handle) {
-    return handle ? handle->status : LLG_PROCESS_KILLED;
+    if (!handle) {
+        process_handle_null("status");
+        return LLG_PROCESS_KILLED;
+    }
+    return handle->status;
 }
 
 void llg_process_retain(llg_process_handle_t* handle) {
@@ -213,6 +226,13 @@ void llg_process_release(llg_process_handle_t* handle) {
     if (handle->refs != 0) return;
     process_handle_unlink(handle);
     free(handle);
+}
+
+llg_process_handle_t* llg_process_pin(llg_process_handle_t* handle) {
+    if (!handle || handle->pinned) return handle;
+    llg_process_retain(handle);
+    handle->pinned = 1;
+    return handle;
 }
 
 static llg_process_local_ref_t* process_local_find(llg_proc_t* proc,
@@ -266,7 +286,11 @@ void llg_process_assign(llg_process_handle_t** target,
 
 void llg_process_kill(llg_proc_t* self, llg_process_handle_t* handle) {
     llg_runtime_service_enter(self, "process::kill");
-    if (!handle || !handle->proc || !region_can_mutate("process control")) return;
+    if (!handle) {
+        process_handle_null("kill");
+        return;
+    }
+    if (!handle->proc || !region_can_mutate("process control")) return;
     llg_proc_t* target = handle->proc;
     llg_kill_proc_tree(target);
     service_program_completions();
@@ -281,7 +305,11 @@ void llg_process_kill(llg_proc_t* self, llg_process_handle_t* handle) {
 llg_co_arm_t llg_arm_process_suspend(llg_proc_t* self,
                                      llg_process_handle_t* handle) {
     llg_runtime_service_enter(self, "process::suspend");
-    if (!handle || !handle->proc || !region_can_mutate("process suspension"))
+    if (!handle) {
+        process_handle_null("suspend");
+        return self && self->chain.exiting ? LLG_CO_ARM_EXIT : LLG_CO_ARM_READY;
+    }
+    if (!handle->proc || !region_can_mutate("process suspension"))
         return LLG_CO_ARM_READY;
     llg_proc_t* target = handle->proc;
     if (target->suspended || target->killed || target->completed)
@@ -302,7 +330,11 @@ llg_co_arm_t llg_arm_process_suspend(llg_proc_t* self,
 
 void llg_process_resume(llg_proc_t* self, llg_process_handle_t* handle) {
     llg_runtime_service_enter(self, "process::resume");
-    if (!handle || !handle->proc || !region_can_mutate("process resumption")) return;
+    if (!handle) {
+        process_handle_null("resume");
+        return;
+    }
+    if (!handle->proc || !region_can_mutate("process resumption")) return;
     llg_proc_t* target = handle->proc;
     if (!target->suspended || target->killed || target->completed) return;
     target->suspended = 0;
@@ -320,10 +352,21 @@ void llg_process_resume(llg_proc_t* self, llg_process_handle_t* handle) {
 llg_co_arm_t llg_arm_process_await(llg_proc_t* self,
                                    llg_process_handle_t* handle) {
     llg_runtime_service_enter(self, "process::await");
+    if (!handle) {
+        process_handle_null("await");
+        return self && self->chain.exiting ? LLG_CO_ARM_EXIT : LLG_CO_ARM_READY;
+    }
     if (!self || !region_can_mutate("process await scheduling"))
         return LLG_CO_ARM_READY;
-    if (!handle || !handle->proc || handle->proc == self)
-        return LLG_CO_ARM_READY;
+    if (handle->proc == self) {
+        // SV 9.7: a process cannot wait for its own completion.
+        fprintf(stderr, "llg: process::await called on the current process\n");
+        llg_rt_mark_failed();
+        llg_rt_fatal_typed(0, "process::await called on the current process",
+                           NULL, 0, "", "process::await");
+        return self->chain.exiting ? LLG_CO_ARM_EXIT : LLG_CO_ARM_READY;
+    }
+    if (!handle->proc) return LLG_CO_ARM_READY;
     llg_wait_t* wait = &self->wait;
     wait->kind = W_PROCESS;
     wait->resume_region = region_is_reactive(self->region)
@@ -334,6 +377,54 @@ llg_co_arm_t llg_arm_process_await(llg_proc_t* self,
     register_wait();
     start_pending_fork_children(self);
     return LLG_CO_ARM_SUSPEND;
+}
+
+// Random-stream methods of an arbitrary process handle (SV 18.14). A
+// terminated process no longer owns a stream; the call reports an error and
+// leaves every other stream untouched.
+static llg_rng_state_t* process_handle_rng(const llg_process_handle_t* handle,
+                                           const char* method) {
+    if (!handle) {
+        process_handle_null(method);
+        return NULL;
+    }
+    if (!handle->proc) {
+        fprintf(stderr,
+                "llg: random runtime: process::%s on a terminated process\n",
+                method);
+        llg_last_failure = 1;
+        return NULL;
+    }
+    return &handle->proc->rng;
+}
+
+void llg_process_handle_srandom(llg_process_handle_t* handle, sv4_t seed) {
+    llg_rng_state_t* rng = process_handle_rng(handle, "srandom");
+    if (!rng) return;
+    uint32_t value = 0;
+    if (!llg_rng_argument(seed, &value)) {
+        fprintf(stderr, "llg: random runtime: srandom seed is unknown or real\n");
+        llg_last_failure = 1;
+        return;
+    }
+    llg_rng_state_seed(rng, value);
+}
+
+llg_string_t llg_process_handle_get_randstate(llg_process_handle_t* handle) {
+    llg_rng_state_t* rng = process_handle_rng(handle, "get_randstate");
+    return rng ? llg_rng_state_get(rng) : llg_string_bytes("", 0);
+}
+
+int llg_process_handle_set_randstate(llg_process_handle_t* handle,
+                                     llg_string_t state) {
+    llg_rng_state_t* rng = process_handle_rng(handle, "set_randstate");
+    int ok = rng && llg_rng_state_set(rng, &state);
+    if (rng && !ok) {
+        fprintf(stderr, "llg: random runtime: invalid randstate string\n");
+        llg_last_failure = 1;
+    }
+    llg_string_destroy(&state);
+    return ok;
 }
 
 llg_semaphore_t* llg_semaphore_new(sv4_t key_count) {

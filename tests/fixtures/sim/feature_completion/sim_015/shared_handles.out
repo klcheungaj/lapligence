@@ -1,0 +1,3 @@
+watch WAITING at 3
+sibling sees WAITING
+run KILLED at 4

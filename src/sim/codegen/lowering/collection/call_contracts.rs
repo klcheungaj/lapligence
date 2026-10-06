@@ -1129,7 +1129,7 @@ impl<'a> Codegen<'a> {
                 receiver: Some(receiver),
                 ..
             } if matches!(name.as_str(), "suspend" | "await")
-                && self.is_process_expr(&self.instance_path_of(inst), *receiver) =>
+                && self.is_process_value(&self.instance_path_of(inst), *receiver) =>
             {
                 true
             }

@@ -394,6 +394,28 @@ impl EmitCtx<'_, '_> {
                         ..
                     }
                 );
+                if (is_ref || *is_out) && self.cg.is_process_formal(*io) {
+                    let copy_in = matches!(
+                        self.cg.kind(*io),
+                        NodeKind::FuncArg {
+                            direction: DbDirection::Inout,
+                            ..
+                        }
+                    );
+                    if let Some((prelude, argument, store)) = self.cg.process_formal_binding(
+                        &self.path,
+                        *io,
+                        bound[idx].expr,
+                        is_ref,
+                        copy_in,
+                        &format!("_pout_{}_{idx}", h.0),
+                    )? {
+                        before.extend(prelude);
+                        after.extend(store);
+                        out_args.push(argument);
+                        continue;
+                    }
+                }
                 if !is_ref && *is_out {
                     let copy_in = matches!(
                         self.cg.kind(*io),
@@ -1314,6 +1336,12 @@ impl EmitCtx<'_, '_> {
         }
 
         for (local, cname) in &process_locals {
+            if self.cg.fork_shared(*local) {
+                // Shared with fork branches through an opaque frame slot.
+                chandle_read.insert(*local, IrChandleExpr::LocalRead(cname.clone()));
+                chandle_write.insert(*local, ChandleTarget::Local(cname.clone()));
+                continue;
+            }
             process_read.insert(
                 *local,
                 crate::sim::ir::IrProcessExpr::LocalRead(cname.clone()),

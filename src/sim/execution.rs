@@ -1970,14 +1970,24 @@ fn collect_object_statement_effects(
         | IrObjectStmt::MailboxTryGetLocal(_, mailbox, _, _) => {
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
         }
-        IrObjectStmt::ProcessControl {
-            op: crate::sim::ir::IrProcessControl::Kill,
-            ..
-        } => effects.push(ExecutionEffect::Terminate),
+        // Kill may cancel the caller; any control or random method through a
+        // null handle ends the simulation (SV 8.4).
+        IrObjectStmt::ProcessControl { .. } | IrObjectStmt::ProcessRandom { .. } => {
+            effects.push(ExecutionEffect::Terminate);
+            if let IrObjectStmt::ProcessRandom { op, .. } = statement {
+                match op {
+                    crate::sim::ir::IrProcessRandom::Seed(seed) => {
+                        collect_expression_effects(ir, seed, effects, visited_calls)
+                    }
+                    crate::sim::ir::IrProcessRandom::SetState(state) => {
+                        collect_string_effects(ir, state, effects, visited_calls)
+                    }
+                }
+            }
+        }
         IrObjectStmt::ProcessDeclareLocal(_, _)
         | IrObjectStmt::ProcessAssign(_, _)
         | IrObjectStmt::ProcessAssignLocal(_, _)
-        | IrObjectStmt::ProcessControl { .. }
         | IrObjectStmt::ProcessAwait(_) => {}
         IrObjectStmt::StringPutc(..)
         | IrObjectStmt::StringItoa(..)
@@ -2199,7 +2209,9 @@ fn collect_string_effects(
                 }
             }
         }
-        IrStringExpr::RandomState => effects.push(ExecutionEffect::RuntimeService),
+        IrStringExpr::RandomState | IrStringExpr::ProcessRandState(_) => {
+            effects.push(ExecutionEffect::RuntimeService)
+        }
         IrStringExpr::LocalRead(name) => {
             collect_native_access_effects(ir, name, effects, visited_calls)
         }
