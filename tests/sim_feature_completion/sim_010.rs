@@ -45,3 +45,9 @@ fn detached_branches_share_input_formals() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_010/shared_formals.out");
     sim_cli::run_case_backend_parity(SUITE, "shared_formals", expected, &[], &[]);
 }
+
+#[test]
+fn fork_branches_share_task_records() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_010/shared_records.out");
+    sim_cli::run_case_backend_parity(SUITE, "shared_records", expected, &[], &[]);
+}

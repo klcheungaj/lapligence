@@ -42,7 +42,10 @@ pub(in super::super) fn render_pre_fn_impl(
                     capture.storage().slot()
                 );
                 match capture.storage().kind() {
-                    StorageKind::Event | StorageKind::String | StorageKind::Container => {
+                    StorageKind::Event
+                    | StorageKind::String
+                    | StorageKind::Container
+                    | StorageKind::Native => {
                         return Err(
                             "event captures require whole-model ownership emission".to_owned()
                         )
@@ -118,7 +121,10 @@ pub(in super::super) fn render_pre_fn_impl(
                     capture.storage().slot()
                 );
                 match capture.storage().kind() {
-                    StorageKind::Event | StorageKind::String | StorageKind::Container => {
+                    StorageKind::Event
+                    | StorageKind::String
+                    | StorageKind::Container
+                    | StorageKind::Native => {
                         return Err(
                             "event captures require whole-model ownership emission".to_owned()
                         )
@@ -160,7 +166,10 @@ pub(in super::super) fn render_pre_fn_impl(
                     capture.storage().slot()
                 );
                 match capture.storage().kind() {
-                    StorageKind::Event | StorageKind::String | StorageKind::Container => {
+                    StorageKind::Event
+                    | StorageKind::String
+                    | StorageKind::Container
+                    | StorageKind::Native => {
                         return Err(
                             "event captures require whole-model ownership emission".to_owned()
                         )

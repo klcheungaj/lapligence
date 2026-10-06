@@ -7,7 +7,20 @@ impl<'a> Codegen<'a> {
     pub(in super::super) fn capture_source(&self, target: NodeId) -> Option<CaptureSource> {
         if let Some(binding) = self.capture_binding(target) {
             let info = binding.local.clone();
-            let name = Self::capture_local_name(binding.storage);
+            // A shared container or record keeps its canonical capture name,
+            // under which the branch binds it, so nested forks alias it too.
+            let name = match binding.storage.kind() {
+                StorageKind::Native => self
+                    .native_roots
+                    .get(&target)
+                    .map(|value| shared_native_capture_name(*value)),
+                StorageKind::Container => self
+                    .container_globals
+                    .get(&target)
+                    .map(|container| shared_container_capture_name(container.ir)),
+                _ => None,
+            }
+            .unwrap_or_else(|| Self::capture_local_name(binding.storage));
             let initial = IrExpr::new(
                 if binding.storage.kind() == StorageKind::Event {
                     IrExprKind::ObjectQuery(Box::new(IrObjectQuery::EventCapture(
@@ -87,6 +100,24 @@ impl<'a> Codegen<'a> {
                 ),
                 lifetime: StorageLifetime::Automatic,
                 kind: StorageKind::Event,
+            });
+        }
+        // A shared activation native record is aliased through its frame.
+        if let Some(value) = self.native_roots.get(&target).copied().filter(|value| {
+            self.model.native_values[*value].activation && self.shared_locals.contains(&target)
+        }) {
+            let name = crate::sim::ir::shared_native_capture_name(value);
+            return Some(CaptureSource {
+                info: ProcLocalInfo {
+                    c_name: name.clone(),
+                    width: 0,
+                    signed: false,
+                    two_state: true,
+                    static_signal: None,
+                },
+                initial: IrExpr::new(IrExprKind::LocalRead(name), 0, false, None),
+                lifetime: StorageLifetime::Automatic,
+                kind: StorageKind::Native,
             });
         }
         // A shared activation container is aliased through its frame slot.
@@ -328,9 +359,10 @@ impl<'a> Codegen<'a> {
                 else {
                     continue;
                 };
-                // Strings and containers are shared with branches of every
-                // fork; other variables only with detached (join_none/join_any)
-                // ones, since a join branch borrows the suspended parent's cell.
+                // Strings, containers and native records are shared with
+                // branches of every fork; other variables only with detached
+                // (join_none/join_any) ones, since a join branch borrows the
+                // suspended parent's cell.
                 let detached = matches!(join_kind, DbJoinKind::None | DbJoinKind::Any);
                 for branch in branches {
                     if matches!(
@@ -368,6 +400,7 @@ impl<'a> Codegen<'a> {
                                 if detached
                                     || matches!(self.kind(*target), NodeKind::Var { ty } if ty.kind == "string")
                                     || self.subroutine_container_meta(*target).is_some()
+                                    || self.native_value_type(*target).is_some()
                                 {
                                     shared.insert(*target);
                                 }

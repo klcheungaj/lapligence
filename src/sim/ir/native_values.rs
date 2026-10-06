@@ -46,6 +46,11 @@ impl IrNativeValue {
     }
 }
 
+/// Capture name of shared activation native value `index` (SIM-010).
+pub(in crate::sim) fn shared_native_capture_name(index: usize) -> String {
+    format!("_llg_shared_native_{index}")
+}
+
 /// One scalar leaf value of a native record built at a call boundary.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrNativeLeafExpr {

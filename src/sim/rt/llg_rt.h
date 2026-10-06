@@ -1328,6 +1328,9 @@ void* llg_frame_capture_object(llg_frame_t* frame, size_t slot, size_t size,
                                void (*destroy)(void*));
 // The object of a slot (following frame-to-frame aliases).
 void* llg_frame_object_address(llg_frame_t* frame, size_t slot);
+// The frame that owns a slot's storage (following frame-to-frame aliases), so
+// a branch can reach the other slots of a shared environment frame.
+llg_frame_t* llg_frame_slot_frame(llg_frame_t* frame, size_t slot);
 void llg_frame_alias_value(llg_frame_t* frame, size_t slot, sv4_t* target);
 void llg_frame_alias_real(llg_frame_t* frame, size_t slot, double* target);
 void llg_frame_alias_slot(llg_frame_t* frame, size_t slot,

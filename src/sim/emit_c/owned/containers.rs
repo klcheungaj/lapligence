@@ -52,11 +52,11 @@ impl Frame<'_, '_> {
     }
 
     /// Create activation container `index` owned by the lexical value scope,
-    /// or by slot 0 of the shared activation frame `frame`.
+    /// or by slot `slot` of the shared activation frame `frame`.
     pub(super) fn new_container_in(
         &mut self,
         index: usize,
-        frame: Option<&str>,
+        frame: Option<(&str, u32)>,
     ) -> Result<String, String> {
         let container = self
             .ctx
@@ -68,8 +68,8 @@ impl Frame<'_, '_> {
         let pointer = self.scalar(
             &format!("{ty}*"),
             match frame {
-                Some(frame) => format!(
-                    "({ty}*)llg_frame_capture_object({frame}, 0u, sizeof({ty}), {destroy})"
+                Some((frame, slot)) => format!(
+                    "({ty}*)llg_frame_capture_object({frame}, {slot}u, sizeof({ty}), {destroy})"
                 ),
                 None => format!(
                     "({ty}*)llg_value_scope_object(llg_value_scope_begin_object(sizeof({ty}), {destroy}))"
@@ -278,7 +278,7 @@ impl Frame<'_, '_> {
                     .to_owned(),
             );
             self.line(format!("*{owner} = llg_frame_new(1ULL);"));
-            let target = self.new_container_in(*container, Some(&format!("*{owner}")))?;
+            let target = self.new_container_in(*container, Some((&format!("*{owner}"), 0)))?;
             self.containers.insert(*container, target);
             self.shared_cells.insert(
                 crate::sim::ir::shared_container_capture_name(*container),
