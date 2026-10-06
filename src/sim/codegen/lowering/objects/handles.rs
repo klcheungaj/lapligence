@@ -114,6 +114,84 @@ impl Codegen<'_> {
         Ok(None)
     }
 
+    /// Copy-out of an output or inout handle formal whose actual is an
+    /// element of a container of handles (SV 13.3): a caller temporary that
+    /// the callee writes, and the element store after the call. The element
+    /// is selected when the call starts. Returns the statements before the
+    /// call, the temporary's address and the store, or `None` when `node`
+    /// names no such element.
+    pub(in super::super) fn handle_element_copy_out(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        copy_in: bool,
+        temporary: &str,
+    ) -> Result<Option<(Vec<IrStmt>, String, IrStmt)>, String> {
+        let selected = match self.kind(node) {
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) => self
+                .container_of_select(node, *base)
+                .map(|container| (container.ir, *index)),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => self
+                .container_of_select(node, *base)
+                .map(|container| (container.ir, indices[0])),
+            _ => None,
+        };
+        let Some((container, index)) = selected else {
+            return Ok(None);
+        };
+        if !self.model.containers[container].element.is_handle() {
+            return Ok(None);
+        }
+        let mut before = Vec::new();
+        let key_name = format!("{temporary}_key");
+        let store = match self.model.containers[container].kind {
+            IrContainerKind::Associative {
+                key: IrAssocKey::String,
+            } => {
+                let key = self.lower_string(path, index)?;
+                before.push(IrStmt::DeclString {
+                    name: key_name.clone(),
+                    init: Some(key),
+                });
+                IrContainerStmt::SetStringChandle {
+                    container,
+                    key: IrStringExpr::LocalRead(key_name),
+                    value: IrChandleExpr::LocalRead(temporary.to_owned()),
+                }
+            }
+            _ => {
+                let index = self.lower_container_top_index(path, container, index)?;
+                let (width, signed) = (index.width, index.signed);
+                before.push(IrStmt::DeclLocal {
+                    name: key_name.clone(),
+                    width,
+                    signed,
+                    two_state: false,
+                    init: Some(Box::new(index)),
+                });
+                IrContainerStmt::SetChandleValue {
+                    container,
+                    index: IrExpr::new(IrExprKind::LocalRead(key_name), width, signed, None),
+                    value: IrChandleExpr::LocalRead(temporary.to_owned()),
+                }
+            }
+        };
+        let initial = if copy_in {
+            Some(self.lower_chandle(path, node)?)
+        } else {
+            None
+        };
+        before.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+            temporary.to_owned(),
+            initial,
+        ))));
+        Ok(Some((
+            before,
+            format!("&{temporary}"),
+            IrStmt::Container(Box::new(store)),
+        )))
+    }
+
     pub(in super::super) fn chandle_target_address(&self, target: &ChandleTarget) -> String {
         match target {
             ChandleTarget::Object(index) => format!("&{}", self.model.objects[*index].c_name),

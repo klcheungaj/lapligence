@@ -396,8 +396,41 @@ impl EmitCtx<'_, '_> {
                         ..
                     }
                 );
+                if !is_ref && *is_out {
+                    let copy_in = matches!(
+                        self.cg.kind(*io),
+                        NodeKind::FuncArg {
+                            direction: DbDirection::Inout,
+                            ..
+                        }
+                    );
+                    if let Some((prelude, address, store)) = self.cg.handle_element_copy_out(
+                        &self.path,
+                        bound[idx].expr,
+                        copy_in,
+                        &format!("_hout_{}_{idx}", h.0),
+                    )? {
+                        before.extend(prelude);
+                        after.push(store);
+                        out_args.push(IrCallArg::ChandleAddr(address));
+                        continue;
+                    }
+                }
                 if is_ref || *is_out {
-                    let (target, _) = self.cg.lower_chandle_lvalue(&self.path, bound[idx].expr)?;
+                    let (target, _) = self
+                        .cg
+                        .lower_chandle_lvalue(&self.path, bound[idx].expr)
+                        .map_err(|error| {
+                            if is_ref && self.cg.is_container_element(bound[idx].expr) {
+                                format!(
+                                    "ref actual of handle formal `{}` in `{}` is a container element; element references of handles are not supported (SIM-016)",
+                                    self.cg.node(*io).name,
+                                    self.cg.source_path(&self.path)
+                                )
+                            } else {
+                                error
+                            }
+                        })?;
                     let address = self.cg.chandle_target_address(&target);
                     if is_ref {
                         out_args.push(IrCallArg::ChandleRefAddr(address));

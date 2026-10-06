@@ -9,3 +9,18 @@ fn task_handle_variables_are_shared_with_fork_branches() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_016/shared_handles.out");
     sim_cli::run_case_backend_parity(SUITE, "shared_handles", expected, &[], &[]);
 }
+
+#[test]
+fn handle_outputs_copy_out_into_container_elements() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_016/element_outputs.out");
+    sim_cli::run_case_backend_parity(SUITE, "element_outputs", expected, &[], &[]);
+}
+
+#[test]
+fn ref_handle_element_actuals_are_explicit() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_ref_element_handle",
+        "ref actual of handle formal `s` in `tb` is a container element; element references of handles are not supported (SIM-016)",
+    );
+}
