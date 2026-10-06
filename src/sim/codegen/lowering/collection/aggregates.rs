@@ -843,16 +843,14 @@ impl<'a> Codegen<'a> {
                 }
             }
             // Class and virtual-interface handles are identity leaves stored
-            // like chandles; the built-in semaphore, mailbox and process
-            // classes keep their own object kinds and are not record leaves.
+            // like chandles, and a semaphore member is a semaphore object
+            // (SIM-016); the built-in mailbox and process classes keep their
+            // own object kinds and are not record leaves.
             TypeShape::Opaque { kind }
                 if kind == "Chandle"
                     || kind == "VirtualInterface"
                     || (kind == "Class"
-                        && !matches!(
-                            descriptor.name.as_str(),
-                            "semaphore" | "mailbox" | "process"
-                        )) =>
+                        && !matches!(descriptor.name.as_str(), "mailbox" | "process")) =>
             {
                 if shared.is_some() {
                     return Err(format!(
@@ -867,7 +865,11 @@ impl<'a> Codegen<'a> {
                         path,
                         &[object_name, &aggregate_path_suffix(member_path)],
                     ),
-                    ty: crate::sim::ir::IrObjectType::Chandle,
+                    ty: if kind == "Class" && descriptor.name == "semaphore" {
+                        crate::sim::ir::IrObjectType::Semaphore
+                    } else {
+                        crate::sim::ir::IrObjectType::Chandle
+                    },
                     initial: None,
                 });
                 self.aggregate_objects.insert((object, key), index);

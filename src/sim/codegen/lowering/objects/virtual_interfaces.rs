@@ -155,10 +155,7 @@ impl Codegen<'_> {
         else {
             return Ok(None);
         };
-        let site = format!(
-            "{path}.{}",
-            self.model.virtual_interfaces[descriptor].members[slot].name
-        );
+        let site = self.source_site("virtual interface member access", path, node);
         let name = self.native_access_symbol_at(
             handle,
             crate::sim::ir::IrNativeAccessKind::InterfaceMember {
@@ -185,10 +182,7 @@ impl Codegen<'_> {
         else {
             return Ok(None);
         };
-        let site = format!(
-            "{path}.{}",
-            self.model.virtual_interfaces[descriptor].members[slot].name
-        );
+        let site = self.source_site("virtual interface member access", path, node);
         let name = self.native_access_symbol_at(
             handle,
             crate::sim::ir::IrNativeAccessKind::InterfaceMember {

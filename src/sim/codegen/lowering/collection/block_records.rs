@@ -398,10 +398,10 @@ impl Codegen<'_> {
                                 _ => Vec::new(),
                             }),
                         ),
-                        IrObjectType::Chandle => {
+                        IrObjectType::Chandle | IrObjectType::Semaphore => {
                             IrObjectStmt::ChandleAssign(object, IrChandleExpr::Null)
                         }
-                        IrObjectType::Semaphore | IrObjectType::Process => {
+                        IrObjectType::Process => {
                             return Err(format!(
                                 "record member `{}` in `{path}` has no resettable storage",
                                 aggregate_path_suffix(&leaf.path)

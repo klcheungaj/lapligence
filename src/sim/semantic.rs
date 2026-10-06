@@ -755,7 +755,13 @@ fn semaphore_reference(db: &Db, id: NodeId) -> bool {
                     } if ty.kind == "class" && ty.type_name.as_deref() == Some("semaphore")
                 );
             }
-            _ => return false,
+            // A record member or other expression of semaphore type (SIM-016).
+            _ => {
+                return db.type_descriptor(current).is_some_and(|descriptor| {
+                    matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "Class")
+                        && descriptor.name == "semaphore"
+                })
+            }
         }
     }
     false

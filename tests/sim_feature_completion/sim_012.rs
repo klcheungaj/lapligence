@@ -17,17 +17,11 @@ fn event_formals_keep_identity_through_interface_dispatch() {
     sim_cli::run_case_backend_parity(SUITE, "event_formals", expected, &[], &[]);
 }
 
-#[test]
-fn null_interface_calls_fail_at_their_source_site() {
-    sim_cli::run_case_checked_matrix(SUITE, "null_call", &[], &|label, output: &Output| {
+fn null_interface_check(stdout: &'static str, site: &'static str) -> impl Fn(&str, &Output) {
+    move |label, output| {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
-        assert_eq!(
-            String::from_utf8_lossy(&output.stdout),
-            "a.x=1 b.x=0\n",
-            "{label}"
-        );
-        let site = "virtual interface method call at tb:20:5";
+        assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{label}");
         let runtime = stderr
             .lines()
             .filter(|line| !line.starts_with("Warning: "))
@@ -40,7 +34,23 @@ fn null_interface_calls_fail_at_their_source_site() {
             ),
             "{label}"
         );
-    });
+    }
+}
+
+#[test]
+fn null_interface_calls_and_accesses_fail_at_their_source_site() {
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "null_call",
+        &[],
+        &null_interface_check("a.x=1 b.x=0\n", "virtual interface method call at tb:20:5"),
+    );
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "null_member",
+        &[],
+        &null_interface_check("x=3\n", "virtual interface member access at tb:15:5"),
+    );
 }
 
 #[test]

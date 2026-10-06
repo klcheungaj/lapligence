@@ -429,6 +429,15 @@ impl Codegen<'_> {
         {
             return true;
         }
+        // So does a semaphore member of a native record (SIM-016).
+        if self.native_leaf_kind(node).is_some()
+            && self.query_descriptor(node).is_some_and(|descriptor| {
+                matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "Class")
+                    && descriptor.name == "semaphore"
+            })
+        {
+            return true;
+        }
         if matches!(
             self.kind(node),
             NodeKind::Expr(ExprKind::NewClass {

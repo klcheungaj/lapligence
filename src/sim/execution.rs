@@ -1338,6 +1338,13 @@ fn collect_native_access_effects(
         effects.push(ExecutionEffect::RuntimeService);
         return;
     };
+    // A null virtual-interface receiver is a fatal run-time error.
+    if matches!(
+        access.kind,
+        crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. }
+    ) {
+        effects.push(ExecutionEffect::Terminate);
+    }
     if visited_calls.insert(key) {
         collect_chandle_effects(ir, &access.receiver, effects, visited_calls);
         visited_calls.remove(&key);

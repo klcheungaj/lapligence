@@ -1627,8 +1627,9 @@ These are bounded implementations, not full verification-infrastructure support.
   properties and record members), methods, null/type checks and clocking-input
   samples are present. Timed tasks dispatch through any receiver storage and
   stay on the instance named at the call while the variable is rebound; event
-  formals of every direction keep their identity; a call through a null
-  handle is a run-time error at the call
+  formals of every direction keep their identity; a method call or member
+  access through a null handle is a run-time error at its source position
+  that stops the process
   ([sim_012](../tests/fixtures/sim/feature_completion/sim_012/readme.md)).
   Dynamic clocking output/inout dispatch (SIM-034), modport expression ports
   and broader polymorphic/capture forms reject.
@@ -1662,8 +1663,10 @@ These are bounded implementations, not full verification-infrastructure support.
   Task semaphore variables are shared with fork branches; output and inout
   semaphore formals copy out into container elements selected at call start
   ([sim_016](../tests/fixtures/sim/feature_completion/sim_016/readme.md)).
-  `ref` semaphore formals bound to container elements and semaphore members
-  of records reject (SIM-016). SV §15.3 **[SV-2005]**.
+  Semaphore members of module, block and automatic records, record arrays and
+  record formals hold handles to shared semaphores. `ref` semaphore formals
+  bound to container elements and record ports with semaphore members reject
+  (SIM-016). SV §15.3 **[SV-2005]**.
 - 🟨 **Mailboxes** — Typed/untyped bounded/unbounded FIFO
   `new/num/put/get/peek/try_put/try_get/try_peek` supports packed, real/shortreal,
   string and admitted handle messages with nominal enum/class/handle identity.
