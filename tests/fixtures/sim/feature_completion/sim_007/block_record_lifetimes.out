@@ -1,0 +1,17 @@
+A 1 s 0 1 1 a 0 1
+A 2 ss 0 2 1 a 1 1
+A 3 sss 0 3 1 a 2 1
+B 0 0
+C i 11 2 j 21 3 5
+B 0 0
+C i 12 3 j 21 3 5
+D 0
+D 1
+E 1 + 1
+E 2 ++ 1
+I tb.u1 one 3
+I tb.u3 three 5
+G 0 g
+G 1 g
+H other 0
+F ++ 2

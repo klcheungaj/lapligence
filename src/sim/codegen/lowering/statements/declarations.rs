@@ -10,6 +10,14 @@ impl EmitCtx<'_, '_> {
         if self.func.is_some() && self.cg.record_declaration(declaration) {
             return self.cg.lower_record_local(&self.path, declaration);
         }
+        if self.func.is_none() {
+            if let Some(statements) = self
+                .cg
+                .lower_block_record_declaration(&self.path, declaration)?
+            {
+                return Ok(statements);
+            }
+        }
         if self.func.is_none()
             && self.cg.db.variable_lifetime(declaration) == VariableLifetime::Automatic
             && self.cg.automatic_block_record(&self.path, declaration)?
