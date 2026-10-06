@@ -312,6 +312,8 @@ impl<'db> SemanticModel<'db> {
                     | "get_randstate"
                     | "set_randstate"
             ) && process_reference(self.db, *receiver);
+            // A virtual interface variable, or an element or member
+            // expression of virtual-interface type (SIM-012).
             let is_virtual_interface = match self.db.node_kind(*receiver) {
                 NodeKind::Expr(ExprKind::Ref {
                     target: Some(target),
@@ -320,7 +322,9 @@ impl<'db> SemanticModel<'db> {
                     NodeKind::Var { ty } | NodeKind::Array { ty }
                         if ty.kind == "virtual_interface"
                 ),
-                _ => false,
+                _ => self.db.type_descriptor(*receiver).is_some_and(|descriptor| {
+                    matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "VirtualInterface")
+                }),
             };
             let is_semaphore_method = matches!(name.as_str(), "put" | "get" | "try_get")
                 && semaphore_reference(self.db, *receiver);

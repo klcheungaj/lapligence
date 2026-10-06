@@ -285,6 +285,9 @@ pub struct IrVirtualCall {
     pub(in crate::sim) interface: usize,
     pub(in crate::sim) method: usize,
     pub(in crate::sim) receiver: IrChandleExpr,
+    /// Source site reported when the receiver is null (SV 25.9): the call is
+    /// a fatal run-time error and the process does not continue.
+    pub(in crate::sim) site: String,
 }
 
 /// Recursion depth argument of a call site: `"0"` in process contexts,

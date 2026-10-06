@@ -74,24 +74,32 @@ impl Frame<'_, '_> {
         Ok(())
     }
 
-    /// Suspendable class virtual call (SIM-011): the slot's arena-dispatch
-    /// helper selects the implementation from the receiver evaluated at the
-    /// call, so a later rebinding of the receiver variable cannot change the
-    /// running activation's `this`. A suspending implementation gets an
-    /// arena frame entered here; any other ran as a plain call and the helper
-    /// returned NULL.
+    /// Suspendable class virtual call (SIM-011) or virtual-interface call
+    /// (SIM-012): the slot's or method's arena-dispatch helper selects the
+    /// implementation from the receiver evaluated at the call, so a later
+    /// rebinding of the receiver variable cannot change the running
+    /// activation's `this` or interface instance. A suspending implementation
+    /// gets an arena frame entered here; any other ran as a plain call and
+    /// the helper returned NULL.
     fn dispatch_coroutine_call(
         &mut self,
         function_index: usize,
         function: &IrFunc,
+        virtual_call: Option<&IrVirtualCall>,
         parameters: &[String],
     ) -> Result<(), String> {
         if function.ret.is_some() || function.ret_string || function.ret_chandle {
             return Err("a suspendable subprogram cannot return a value".to_owned());
         }
-        let virtual_slot = function
-            .virtual_slot
-            .ok_or_else(|| "virtual call has no slot".to_owned())?;
+        let helper = match virtual_call {
+            Some(call) => format!("llg_vif_co_enter_{}_{}", call.interface, call.method),
+            None => format!(
+                "llg_class_co_enter_{}",
+                function
+                    .virtual_slot
+                    .ok_or_else(|| "virtual call has no slot".to_owned())?
+            ),
+        };
         let slot = self.take_call_slot(function_index, "llg_co_anchor_t")?;
         if slot.mechanism != crate::sim::execution::CallMechanism::Arena {
             return Err(format!(
@@ -102,10 +110,7 @@ impl Frame<'_, '_> {
         let storage = self.declare("llg_co_anchor_t*", "arena_call", "NULL".to_owned());
         let mut arguments = vec!["ch".to_owned()];
         arguments.extend(parameters.iter().cloned());
-        self.line(format!(
-            "{storage} = llg_class_co_enter_{virtual_slot}({});",
-            arguments.join(", ")
-        ));
+        self.line(format!("{storage} = {helper}({});", arguments.join(", ")));
         self.line(format!("if ({storage}) {{"));
         self.line(format!(
             "LLG_CO_CALL_ARENA(co, ch, {}, {storage}->desc, {storage});",
@@ -259,7 +264,14 @@ impl Frame<'_, '_> {
         let mut parameters = Vec::new();
         let mut callee = function.c_name.clone();
         if let Some(call) = virtual_call {
-            parameters.push(self.chandle(&call.receiver)?);
+            let receiver = self.chandle(&call.receiver)?;
+            parameters.push(self.scalar(
+                "void*",
+                format!(
+                    "llg_vif_require({receiver}, {})",
+                    super::c_string_literal(&call.site)
+                ),
+            ));
             callee = format!("llg_vif_call_{}_{}", call.interface, call.method);
         } else if let Some(receiver) = receiver {
             parameters.push(self.chandle(receiver)?);
@@ -285,11 +297,17 @@ impl Frame<'_, '_> {
         // Class virtual dispatch to a slot with a suspending implementation
         // enters the selected implementation through its arena-dispatch
         // helper with the plain parameters (SIM-011).
-        let dispatch_coroutine = virtual_dispatch
-            && virtual_call.is_none()
-            && function
-                .virtual_slot
-                .is_some_and(|slot| self.suspendable_slots.contains(&slot));
+        let dispatch_coroutine = match virtual_call {
+            Some(call) => self
+                .suspendable_interface_methods
+                .contains(&(call.interface, call.method)),
+            None => {
+                virtual_dispatch
+                    && function
+                        .virtual_slot
+                        .is_some_and(|slot| self.suspendable_slots.contains(&slot))
+            }
+        };
         let coroutine = !dispatch_coroutine && self.coroutine_functions.contains(&f);
         // A recursive coroutine enters its own component through the chain
         // arena (see `execution::recursion`): statically with the callee's
@@ -766,7 +784,7 @@ impl Frame<'_, '_> {
             self.coroutine_call(f, &function, &parameters)?;
             None
         } else if dispatch_coroutine {
-            self.dispatch_coroutine_call(f, &function, &parameters)?;
+            self.dispatch_coroutine_call(f, &function, virtual_call, &parameters)?;
             None
         } else if recursive {
             self.recursive_call(&function, recursive_target, parameters, native_result)?

@@ -60,7 +60,13 @@ pub(super) fn render_arena_dispatch(
         }
         out.push_str(&format!("    default: fprintf(stderr, \"llg: invalid class type in virtual call\\n\"); llg_rt_mark_failed(); llg_rt_fatal_typed(0, \"invalid virtual class call\", NULL, 0, \"\", \"class dispatch\"); {default} return NULL;\n    }}\n}}\n\n"));
     }
-    for &(interface_id, method_id) in execution.analysis().recursive_interface_methods() {
+    // Methods with a suspending implementation (SIM-012) share the helper.
+    let methods = analysis
+        .recursive_interface_methods()
+        .union(analysis.suspendable_interface_methods())
+        .copied()
+        .collect::<BTreeSet<_>>();
+    for (interface_id, method_id) in methods {
         let Some(interface) = model.virtual_interfaces.get(interface_id) else {
             continue;
         };

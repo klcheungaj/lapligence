@@ -207,6 +207,8 @@ pub(super) struct Frame<'a, 'm> {
     /// Class virtual slots with a suspending implementation; dispatch through
     /// them is an arena call site (SIM-011).
     suspendable_slots: BTreeSet<usize>,
+    /// Virtual-interface methods whose dispatch may suspend (SIM-012).
+    suspendable_interface_methods: BTreeSet<(usize, usize)>,
     /// A recursive subprogram's coroutine, run by a synchronous driver: it
     /// keeps plain-function exit semantics and numbers its resume points
     /// (all arena calls) during emission.
@@ -236,6 +238,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             .filter(|function| analysis.is_coroutine_function(*function))
             .collect();
         frame.suspendable_slots = analysis.suspendable_dispatch_slots().clone();
+        frame.suspendable_interface_methods = analysis.suspendable_interface_methods().clone();
         let mut sites = analysis
             .sites(owner)
             .into_iter()
@@ -267,6 +270,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             .filter(|function| analysis.is_coroutine_function(*function))
             .collect();
         frame.suspendable_slots = analysis.suspendable_dispatch_slots().clone();
+        frame.suspendable_interface_methods = analysis.suspendable_interface_methods().clone();
         frame.recursive_targets =
             crate::sim::execution::direct_call_targets(ctx.model, &ctx.model.func(function).body)
                 .into_iter()
@@ -365,6 +369,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             stack_cells: String::new(),
             recursive_targets: BTreeSet::new(),
             suspendable_slots: BTreeSet::new(),
+            suspendable_interface_methods: BTreeSet::new(),
             synchronous: false,
             scope_fields: false,
         }
