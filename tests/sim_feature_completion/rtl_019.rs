@@ -22,10 +22,10 @@ fn fixture(name: &str) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// Value-backend lanes: legacy, compact portable and, when a GMP root is
-/// supplied, compact GMP. A missing GMP root is reported as blocked.
+/// Value-backend lanes: legacy, compact portable and compact GMP (bundled
+/// unless `gmp` names an installation).
 fn backend_lanes(gmp: &str) -> Vec<Vec<(&'static str, String)>> {
-    let mut lanes = vec![
+    vec![
         vec![
             ("LLG_VALUE_BACKEND", "legacy".to_owned()),
             ("LLG_COMPACT_KERNELS", "portable".to_owned()),
@@ -34,17 +34,12 @@ fn backend_lanes(gmp: &str) -> Vec<Vec<(&'static str, String)>> {
             ("LLG_VALUE_BACKEND", "compact".to_owned()),
             ("LLG_COMPACT_KERNELS", "portable".to_owned()),
         ],
-    ];
-    if gmp.is_empty() {
-        let _ = super::sim_harness::test_gmp_root("GMP parity");
-    } else {
-        lanes.push(vec![
+        vec![
             ("LLG_VALUE_BACKEND", "compact".to_owned()),
             ("LLG_COMPACT_KERNELS", "gmp".to_owned()),
             ("GMP_ROOT", gmp.to_owned()),
-        ]);
-    }
-    lanes
+        ],
+    ]
 }
 
 const LINE_MAP_STDERR: &str = "llg: $finish at time 0 at tb:14:5\n";
@@ -54,7 +49,7 @@ const LINE_MAP_STDERR: &str = "llg: $finish at time 0 at tb:14:5\n";
 /// body expanding `__LINE__` at its use site.
 #[test]
 fn mapped_file_and_line_values_follow_includes_and_line_directives() {
-    let gmp = std::env::var("LLG_TEST_GMP_ROOT").unwrap_or_default();
+    let gmp = super::sim_harness::test_gmp_root();
     for lane in backend_lanes(&gmp) {
         let envs: Vec<(&str, &str)> = lane.iter().map(|(k, v)| (*k, v.as_str())).collect();
         sim_cli::run_case_with_inputs(
@@ -132,7 +127,7 @@ fn line_locations_stderr() -> String {
 #[test]
 fn resumed_task_and_assertion_locations_survive_includes_and_line() {
     let stderr = line_locations_stderr();
-    let gmp = std::env::var("LLG_TEST_GMP_ROOT").unwrap_or_default();
+    let gmp = super::sim_harness::test_gmp_root();
     for lane in backend_lanes(&gmp) {
         let envs: Vec<(&str, &str)> = lane.iter().map(|(k, v)| (*k, v.as_str())).collect();
         sim_cli::run_case_with_inputs(
@@ -266,7 +261,7 @@ fn component_logical_positions_survive_snapshot_destruction() {
 /// every value backend; the same file rejects under 2001.
 #[test]
 fn later_forms_execute_in_2009_and_reject_in_2001() {
-    let gmp = std::env::var("LLG_TEST_GMP_ROOT").unwrap_or_default();
+    let gmp = super::sim_harness::test_gmp_root();
     for lane in backend_lanes(&gmp) {
         let envs: Vec<(&str, &str)> = lane.iter().map(|(k, v)| (*k, v.as_str())).collect();
         sim_cli::run_case_with_inputs(

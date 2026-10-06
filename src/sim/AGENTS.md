@@ -164,9 +164,11 @@ CLI comparisons independently run checked-in HDL in both modes. Follow
 The driver reads `LLG_VALUE_BACKEND=legacy|compact` and
 `LLG_COMPACT_KERNELS=portable|gmp`, default legacy/portable. `CodegenOptions` and
 `CmakeBuildOpts` share `value_config`; mismatching generated guards fail before
-export. `gmp_root` overrides `GMP_ROOT`, required only for compact GMP kernels.
-An explicit root is authoritative and has no system fallback. Hash its header and
-library contents; CMake verifies version agreement, required mpn APIs and 64-bit
+export. Compact GMP kernels compile the bundled `vendor/gmp` subset
+(`rt/gmp.rs`, `rt/gmp/llg_gmp.cmake`) into the runtime archive, keyed by its
+content hash. `gmp_root` overrides `GMP_ROOT`; either names an installation
+instead. An explicit root is authoritative and has no system fallback. Hash its
+header and library contents; CMake verifies version agreement, required mpn APIs and 64-bit
 nail-free limbs (any 64-bit limb C type; see `value_gmp/readme.md`). Legacy never
 discovers/links GMP.
 Source-only projects compile their selected runtime as a static archive. Apply

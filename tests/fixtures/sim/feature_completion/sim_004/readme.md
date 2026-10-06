@@ -2,7 +2,7 @@
 
 The task module runs every positive fixture through the public CLI in both HDL
 optimizer modes; all but the adopted witnesses also run on legacy,
-compact/portable and compact/GMP backends (GMP when `LLG_TEST_GMP_ROOT` is set),
+compact/portable and compact/GMP backends,
 and the single-file ones execute after the frontend snapshot and owned Db are
 destroyed. Expected outputs are derived by hand from the cited clauses, not
 captured from llg.

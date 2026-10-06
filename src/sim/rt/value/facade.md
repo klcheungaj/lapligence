@@ -50,8 +50,9 @@ removed before returning. Mixed-width add/sub allocate only the result.
 Legacy production retains value ABI **4**. The experimental compact descriptor
 uses value ABI **5**. Emission and build callers pass the same `ValueConfig`; the driver reads
 `LLG_VALUE_BACKEND=legacy|compact` and `LLG_COMPACT_KERNELS=portable|gmp`.
-Defaults are legacy/portable. GMP kernels require an explicit `GMP_ROOT` with
-matching headers/library, verified 64-bit nail-free limbs and mpn APIs.
+Defaults are legacy/portable. GMP kernels use the bundled `vendor/gmp` subset, or
+an explicit `GMP_ROOT` with matching headers/library, verified 64-bit nail-free
+limbs and mpn APIs.
 Legacy/portable builds never inspect GMP inputs. Generated guards record backend,
 kernel and ABI; `llg_value_build.h` records the GMP content fingerprint and names
 the required link symbol. Source exports carry only the selected backend.

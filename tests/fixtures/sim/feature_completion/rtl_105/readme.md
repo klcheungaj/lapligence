@@ -3,8 +3,7 @@
 IEEE 1800-2009 §§6.5, 6.6.2, 7.4.6, 10.3, 10.3.2, 11.5.1, 11.5.3,
 23.3.3.6–23.3.3.7 and Annex A.3.3/A.6.1/A.8.5 supply the oracles. Every `.out`
 file is hand-derived from those clauses. Positive sources run through the
-public CLI in both optimizer modes, on the legacy, compact/portable and (with
-`LLG_TEST_GMP_ROOT`) compact/GMP value backends, and after snapshot/Db
+public CLI in both optimizer modes, on the legacy, compact/portable and compact/GMP value backends, and after snapshot/Db
 destruction.
 
 - `uwire_inout_formal`: ANSI and non-ANSI `inout uwire` formals. §6.6.2 forbids

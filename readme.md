@@ -76,7 +76,11 @@ All platforms require:
 
 Waveform support needs no system zlib. `llg` embeds the zlib sources it needs
 from the `vendor/zlib` submodule (v1.3.2) and compiles them, with prefixed
-symbols, only into generated models that use waveform tasks.
+symbols, only into generated models that use waveform tasks. Likewise, GMP
+value kernels (`LLG_VALUE_BACKEND=compact LLG_COMPACT_KERNELS=gmp`) need no
+installed GMP: `llg` writes the generic-C GMP subset they use from the
+`vendor/gmp` submodule (6.3.0) beside the model and compiles it with CMake;
+`GMP_ROOT` may name an installation instead.
 
 `Cargo.lock` pins the Rust dependency graph. Use Cargo's `--locked` option for
 reproducible builds and tests; the root commit's gitlink pins `vendor/slang`.

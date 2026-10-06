@@ -1,8 +1,7 @@
 # Native aggregates, tagged values and pattern expressions (SIM-007)
 
 The task module runs every positive fixture through the public CLI in both HDL
-optimizer modes on legacy, compact/portable and compact/GMP values (GMP when
-`LLG_TEST_GMP_ROOT` is set), and after the frontend snapshot and owned Db are
+optimizer modes on legacy, compact/portable and compact/GMP values, and after the frontend snapshot and owned Db are
 destroyed. Expected outputs are derived by hand from the cited clauses, not
 captured from llg.
 

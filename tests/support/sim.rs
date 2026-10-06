@@ -411,20 +411,21 @@ pub fn write_value_backend_sources(dir: &std::path::Path) {
     }
 }
 
-/// The GMP installation for compact/GMP lanes (`LLG_TEST_GMP_ROOT`). Without it
-/// the lane is reported BLOCKED and skipped, unless `LLG_TEST_REQUIRE_GMP=1`
-/// (the CI GMP qualification lane), where a missing root is a failure so the
-/// lane can never pass without exercising GMP.
-pub(crate) fn test_gmp_root(lane: &str) -> Option<String> {
-    match std::env::var("LLG_TEST_GMP_ROOT") {
-        Ok(root) if !root.is_empty() => Some(root),
-        _ => {
-            assert!(
-                std::env::var("LLG_TEST_REQUIRE_GMP").as_deref() != Ok("1"),
-                "{lane}: LLG_TEST_REQUIRE_GMP=1 but LLG_TEST_GMP_ROOT is unset"
-            );
-            eprintln!("BLOCKED {lane}: set LLG_TEST_GMP_ROOT");
-            None
-        }
+/// `GMP_ROOT` for compact/GMP lanes: `LLG_TEST_GMP_ROOT` to qualify an
+/// external GMP, otherwise empty, which selects the bundled GMP sources (an
+/// empty `GMP_ROOT` also masks one inherited from the environment).
+pub(crate) fn test_gmp_root() -> String {
+    std::env::var("LLG_TEST_GMP_ROOT").unwrap_or_default()
+}
+
+/// The external installation for tests of the `GMP_ROOT` override itself,
+/// which need `include/gmp.h` and a static library; without
+/// `LLG_TEST_GMP_ROOT` they are reported and skipped.
+pub(crate) fn test_gmp_installation(test: &str) -> Option<std::path::PathBuf> {
+    let root = test_gmp_root();
+    if root.is_empty() {
+        eprintln!("SKIP {test}: set LLG_TEST_GMP_ROOT to test an external GMP");
+        return None;
     }
+    Some(root.into())
 }

@@ -592,8 +592,20 @@ pub fn generate_model_sources_with_opts(
     if waveform {
         super::rt::write_waveform_sources(out_dir)?;
     }
+    // Written even when a cached runtime will be linked, so the project also
+    // builds standalone.
+    let bundled_gmp = value::uses_bundled_gmp(opts)?;
+    if bundled_gmp {
+        super::rt::write_bundled_gmp_sources(out_dir)?;
+    }
     write_cmakelists(out_dir, extra, waveform, opts)?;
-    prune_stale_entries_for(out_dir, extra, waveform, opts.value_config.backend);
+    prune_stale_entries_for(
+        out_dir,
+        extra,
+        waveform,
+        bundled_gmp,
+        opts.value_config.backend,
+    );
     Ok(())
 }
 
@@ -636,6 +648,7 @@ fn prune_stale_entries_for(
     out_dir: &Path,
     extra: &[(&str, &str)],
     waveform: bool,
+    bundled_gmp: bool,
     backend: super::value_backend::ValueBackend,
 ) {
     let canonical = match crate::ffi::platform::canonicalize(out_dir) {
@@ -653,28 +666,33 @@ fn prune_stale_entries_for(
             .iter()
             .filter_map(|(name, _)| name.split('/').next()),
     );
-    if waveform {
-        expected.extend(
-            super::rt::waveform_sources()
-                .iter()
-                .filter_map(|(name, _)| name.split('/').next()),
-        );
-    }
-    expected.extend(extra.iter().map(|(name, _)| *name));
-    // Compare paths by component: on Windows the relative path of a
-    // written `value/backend.h` is spelled `value\backend.h`.
     let waveform_sources: &[(&str, &str)] = if waveform {
         super::rt::waveform_sources()
     } else {
         &[]
     };
+    let gmp_sources: &[(&str, &str)] = if bundled_gmp {
+        super::rt::gmp::bundled_gmp_sources()
+    } else {
+        &[]
+    };
+    expected.extend(
+        waveform_sources
+            .iter()
+            .chain(gmp_sources)
+            .filter_map(|(name, _)| name.split('/').next()),
+    );
+    expected.extend(extra.iter().map(|(name, _)| *name));
+    // Compare paths by component: on Windows the relative path of a
+    // written `value/backend.h` is spelled `value\backend.h`.
     let nested = super::rt::value_backend_sources(backend)
         .iter()
         .chain(waveform_sources)
+        .chain(gmp_sources)
         .filter(|(name, _)| name.contains('/'))
         .map(|(name, _)| Path::new(*name))
         .collect::<Vec<_>>();
-    for directory in ["value", "value_gmp", "zlib"] {
+    for directory in ["value", "value_gmp", "zlib", "gmp"] {
         let mut paths = Vec::new();
         collect_paths(&out_dir.join(directory), &mut paths);
         for path in paths {
@@ -895,6 +913,9 @@ fn prepare_runtime_cache(
     )?;
     if waveform {
         super::rt::write_waveform_sources(&entry)?;
+    }
+    if value::uses_bundled_gmp(opts)? {
+        super::rt::write_bundled_gmp_sources(&entry)?;
     }
     let runtime_sources = runtime_source_names_for(waveform, opts.value_config.backend).join(" ");
     let cmakelists = RUNTIME_CMAKELISTS_TEMPLATE
@@ -1571,7 +1592,7 @@ mod tests {
             super::super::write_sim_sources(&directory, &[], config).unwrap();
             super::super::rt::write_waveform_sources(&directory).unwrap();
             std::fs::write(directory.join("zlib/stale.c"), "stale").unwrap();
-            prune_stale_entries_for(&directory, &[], true, backend);
+            prune_stale_entries_for(&directory, &[], true, false, backend);
             let written = super::super::rt::value_backend_sources(backend)
                 .iter()
                 .chain(super::super::rt::waveform_sources());
@@ -1581,8 +1602,18 @@ mod tests {
             assert!(!directory.join("value/stale.h").exists());
             assert!(!directory.join("zlib/stale.c").exists());
             // Without waveform tasks the bundled zlib directory is stale.
-            prune_stale_entries_for(&directory, &[], false, backend);
+            prune_stale_entries_for(&directory, &[], false, false, backend);
             assert!(!directory.join("zlib").exists());
+            // Bundled GMP sources follow the same rule.
+            super::super::rt::write_bundled_gmp_sources(&directory).unwrap();
+            std::fs::write(directory.join("gmp/mpn/generic/stale.c"), "stale").unwrap();
+            prune_stale_entries_for(&directory, &[], false, true, backend);
+            for (name, _) in super::super::rt::gmp::bundled_gmp_sources() {
+                assert!(directory.join(name).is_file(), "{name} was pruned");
+            }
+            assert!(!directory.join("gmp/mpn/generic/stale.c").exists());
+            prune_stale_entries_for(&directory, &[], false, false, backend);
+            assert!(!directory.join("gmp").exists());
             std::fs::remove_dir_all(&directory).unwrap();
         }
     }

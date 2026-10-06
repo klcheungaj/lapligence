@@ -1,8 +1,7 @@
 # Semaphore collections and shared-lifetime synchronization (SIM-016)
 
 The task module runs every positive fixture through the public CLI in both HDL
-optimizer modes on legacy, compact/portable and compact/GMP values (GMP when
-`LLG_TEST_GMP_ROOT` is set). Expected outputs are derived by hand from the
+optimizer modes on legacy, compact/portable and compact/GMP values. Expected outputs are derived by hand from the
 cited clauses, not captured from llg.
 
 | Fixture | Clause and independent oracle |

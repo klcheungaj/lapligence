@@ -3,7 +3,7 @@
 IEEE 1800-2009 §§3.14, 4.4–4.7, 9.4.1, 16.5, 20.4 and 24.3, and IEEE
 1364-2001 §9.7.1 supply the oracles; every expectation is computed by hand
 from those clauses. Every source runs through the public CLI in both optimizer
-modes on the legacy and compact (portable and, with `LLG_TEST_GMP_ROOT`, GMP)
+modes on the legacy and compact (portable and GMP)
 value backends.
 
 Outputs whose interprocess order the standard leaves open are not compared as

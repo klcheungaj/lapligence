@@ -1,8 +1,7 @@
 # Virtual-interface methods and dynamic receivers (SIM-012)
 
 The task module runs every positive fixture through the public CLI in both HDL
-optimizer modes on legacy, compact/portable and compact/GMP values (GMP when
-`LLG_TEST_GMP_ROOT` is set). Expected outputs are derived by hand from the
+optimizer modes on legacy, compact/portable and compact/GMP values. Expected outputs are derived by hand from the
 cited clauses (IEEE 1800-2009 §§25.5, 25.9, 13.5, 15.5), not captured from llg.
 Times are printed with `%0d $time` in the default unit.
 

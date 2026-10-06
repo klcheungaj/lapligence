@@ -24,18 +24,16 @@ fn dynamic_storage_and_waveform_snapshots_compact_portable() {
     );
 }
 
-/// The compact probes with GMP kernels; requires `LLG_TEST_GMP_ROOT`.
+/// The compact probes with GMP kernels: the bundled GMP, or the installation
+/// named by `LLG_TEST_GMP_ROOT`.
 #[test]
 fn dynamic_storage_and_waveform_snapshots_compact_gmp() {
-    let Some(gmp) = sim_harness::test_gmp_root("compact GMP storage probes") else {
-        return;
-    };
     run_storage_tests(
         "runtime-value-storage-gmp",
         &[
             "-DLLG_STORAGE_TEST_VALUE_BACKEND=compact".to_owned(),
             "-DLLG_STORAGE_TEST_COMPACT_KERNELS=gmp".to_owned(),
-            format!("-DLLG_GMP_ROOT={gmp}"),
+            format!("-DLLG_GMP_ROOT={}", sim_harness::test_gmp_root()),
         ],
     );
 }

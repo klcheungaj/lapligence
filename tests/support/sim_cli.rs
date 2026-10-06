@@ -374,8 +374,7 @@ pub(crate) fn run_case_backend_parity(
     args: &[&str],
     envs: &[(&str, &str)],
 ) {
-    let gmp = sim_harness::test_gmp_root(&format!("GMP parity for {suite}/{fixture}"))
-        .unwrap_or_default();
+    let gmp = sim_harness::test_gmp_root();
     for optimized in [false, true] {
         let mut controls = envs.to_vec();
         controls.extend([
@@ -396,9 +395,6 @@ pub(crate) fn run_case_backend_parity(
             "{suite}/{fixture}, legacy, optimized={optimized}: independent output mismatch"
         );
         for kernel in ["portable", "gmp"] {
-            if kernel == "gmp" && gmp.is_empty() {
-                continue;
-            }
             let mut controls = envs.to_vec();
             controls.extend([
                 ("LLG_VALUE_BACKEND", "compact"),
@@ -424,7 +420,7 @@ pub(crate) fn run_case_backend_parity(
 }
 
 /// Run one fixture through the public CLI in both optimizer modes on legacy,
-/// compact/portable and, with `LLG_TEST_GMP_ROOT`, compact/GMP values, and
+/// compact/portable and compact/GMP values, and
 /// hand each labeled output to `check`. For outputs that are not a single
 /// exact string: permitted race outcomes, partial orders, or runtime failures
 /// after some output.
@@ -438,24 +434,19 @@ pub(crate) fn run_case_checked_matrix(
         llg::sim::build::cmake_available(),
         "CLI tests require CMake"
     );
-    let gmp =
-        sim_harness::test_gmp_root(&format!("GMP lane for {suite}/{fixture}")).unwrap_or_default();
+    let gmp = sim_harness::test_gmp_root();
     for optimized in [false, true] {
         for (backend, kernel) in [
             ("legacy", "portable"),
             ("compact", "portable"),
             ("compact", "gmp"),
         ] {
-            if kernel == "gmp" && gmp.is_empty() {
-                continue;
-            }
             let controls = [
                 ("LLG_VALUE_BACKEND", backend),
                 ("LLG_COMPACT_KERNELS", kernel),
                 ("GMP_ROOT", gmp.as_str()),
             ];
-            let remove: &[&str] = if gmp.is_empty() { &["GMP_ROOT"] } else { &[] };
-            let output = invoke_with_env(suite, fixture, optimized, args, &controls, remove);
+            let output = invoke_with_env(suite, fixture, optimized, args, &controls, &[]);
             let label = format!("{suite}/{fixture}, {backend}/{kernel}, optimized={optimized}");
             check(&label, &output);
         }

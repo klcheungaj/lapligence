@@ -18,17 +18,13 @@ fn source_stderr(fixture: &str, template: &str) -> String {
 /// HDL optimizer modes and on every available value backend.
 fn assert_runtime_errors(fixture: &str, template: &str) {
     let expected = source_stderr(fixture, template);
-    let gmp = std::env::var("LLG_TEST_GMP_ROOT").unwrap_or_default();
+    let gmp = super::sim_harness::test_gmp_root();
     for optimized in [false, true] {
         for (backend, kernel) in [
             ("legacy", "portable"),
             ("compact", "portable"),
             ("compact", "gmp"),
         ] {
-            if kernel == "gmp" && gmp.is_empty() {
-                let _ = super::sim_harness::test_gmp_root("GMP parity");
-                continue;
-            }
             let controls = [
                 ("LLG_VALUE_BACKEND", backend),
                 ("LLG_COMPACT_KERNELS", kernel),
