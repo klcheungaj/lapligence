@@ -443,11 +443,12 @@ impl Frame<'_, '_> {
                 }
             }
             ProcessAssign(index, source) => {
+                // Readers wait on the handle object's change marker.
                 let value = self.process_value(source)?;
+                let name = &self.ctx.model.objects[*index].c_name;
                 self.line(format!(
-                    "llg_process_assign(&{}, {});",
-                    self.ctx.model.objects[*index].c_name,
-                    value.code()
+                    "if ({value} != {name}) {{ llg_process_assign(&{name}, {value}); llg_dependency_changed(&{name}_llg_dep); }}",
+                    value = value.code()
                 ));
                 self.native_discard(value);
             }

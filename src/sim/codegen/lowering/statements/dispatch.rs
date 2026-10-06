@@ -427,6 +427,7 @@ impl EmitCtx<'_, '_> {
                     self.saw_wait = true;
                     return Ok(vec![IrStmt::WaitEventTriggered { event, body }]);
                 }
+                self.cg.reject_process_status_wait(&self.path, *cond)?;
                 let c = self.cg.lower_expr(&self.path, *cond)?;
                 let mut sens = self.cg.collect_read_signals(&self.path, *cond)?;
                 sens.extend(self.cg.shared_event_dependencies(*cond));

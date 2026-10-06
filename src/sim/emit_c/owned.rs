@@ -993,14 +993,11 @@ impl<'a, 'm> Frame<'a, 'm> {
         // The one-bit change marker of a string or handle object, which a
         // whole-handle event control waits on (SIM-007).
         let marker = name.strip_suffix("_llg_dep").is_some_and(|object| {
-            self.ctx.model.objects.iter().any(|candidate| {
-                candidate.c_name == object
-                    && matches!(
-                        candidate.ty,
-                        crate::sim::ir::IrObjectType::String
-                            | crate::sim::ir::IrObjectType::Chandle
-                    )
-            })
+            self.ctx
+                .model
+                .objects
+                .iter()
+                .any(|candidate| candidate.c_name == object && candidate.ty.has_change_marker())
         });
         marker.then(|| Binding {
             address: format!("&{name}"),

@@ -657,8 +657,18 @@ impl Frame<'_, '_> {
                     parameters.push(self.native_address(address, NativeKind::String)?.address);
                 }
                 IrCallArg::ChandleRefAddr(address) if self.is_process_slot(address) => {
-                    // A `ref` process formal aliases counted process storage.
+                    // A `ref` process formal aliases counted process storage;
+                    // a module object's readers learn of a rebinding after the
+                    // call (only the pointer value is compared).
                     let slot = self.native_address(address, NativeKind::Process)?.address;
+                    if let Some(object) = self.ctx.model.objects.iter().find(|object| {
+                        object.ty == crate::sim::ir::IrObjectType::Process
+                            && slot == format!("&{}", object.c_name)
+                    }) {
+                        let name = object.c_name.clone();
+                        let previous = self.scalar("void*", format!("(void*){name}"));
+                        handle_publishes.push((name, previous));
+                    }
                     parameters.push(format!("(void**){slot}"));
                 }
                 IrCallArg::ChandleAddr(address) | IrCallArg::ChandleRefAddr(address) => {
@@ -855,7 +865,7 @@ impl Frame<'_, '_> {
         }
         for (name, previous) in handle_publishes {
             self.line(format!(
-                "if ({name} != {previous}) llg_dependency_changed(&{name}_llg_dep);"
+                "if ((void*){name} != {previous}) llg_dependency_changed(&{name}_llg_dep);"
             ));
         }
         for (target, storage) in string_copyouts {

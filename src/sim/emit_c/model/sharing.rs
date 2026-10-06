@@ -175,7 +175,7 @@ fn registry(
             object.c_name.clone(),
             Operand::pointer(ty, format!("{:?}", object.ty), &object.c_name),
         );
-        if matches!(object.ty, IrObjectType::String | IrObjectType::Chandle) {
+        if object.ty.has_change_marker() {
             let name = format!("{}_llg_dep", object.c_name);
             registry.insert(
                 name.clone(),
