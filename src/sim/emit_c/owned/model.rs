@@ -289,7 +289,26 @@ fn render_function(
             let storage = &ctx.model.containers[container];
             let (ty, _, _) = super::super::containers::activation_storage(storage, "")?;
             let bound = format!("(*({ty}*){parameter})");
-            if storage.activation {
+            if storage.activation && formal.shared_local.is_some() {
+                // Shared with fork branches: a copy in a function-scope
+                // shared frame, copied back to an output at return.
+                let owner = frame.scalar(
+                    "llg_frame_t**",
+                    "(llg_frame_t**)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_frame_t*), llg_owned_frame_drop))"
+                        .to_owned(),
+                );
+                frame.line(format!("*{owner} = llg_frame_new(3ULL);"));
+                let target = frame.new_container_in(container, Some((&format!("*{owner}"), 0)))?;
+                frame.line(format!(
+                    "{}(&{target}, &{bound});",
+                    super::containers::copy_function(storage)
+                ));
+                frame.containers.insert(container, target);
+                frame.shared_cells.insert(
+                    crate::sim::ir::shared_container_capture_name(container),
+                    (format!("(*{owner})"), 0),
+                );
+            } else if storage.activation {
                 frame.containers.insert(container, bound);
             } else if matches!(formal.mode, IrFormalMode::Input | IrFormalMode::Inout) {
                 // Static subroutine storage keeps its own container; the
@@ -466,7 +485,18 @@ fn render_function(
     // the body's scopes until the copy-back below.
     let mut shared_outputs = HashMap::new();
     for (index, formal) in function.formals.iter().enumerate() {
-        if let Some(local) = &formal.shared_local {
+        if let Some(local) = formal.shared_local.as_ref().filter(|_| formal.string) {
+            frame.statement(&IrStmt::SharedString {
+                name: local.clone(),
+                init: Some(IrStringExpr::FormalRead(index)),
+            })?;
+            continue;
+        }
+        if let Some(local) = formal
+            .shared_local
+            .as_ref()
+            .filter(|_| formal.container.is_none())
+        {
             let width = if formal.real { 0 } else { formal.width };
             let initial = IrExpr::new(IrExprKind::FormalRead(index), width, formal.signed, None);
             frame.shared_local(
@@ -487,6 +517,24 @@ fn render_function(
     frame.line("goto _llg_return;");
     frame.line("_llg_return: ;");
     for (index, formal) in function.formals.iter().enumerate() {
+        if let Some(container) = formal
+            .container
+            .filter(|_| formal.shared_local.is_some() && formal.is_out)
+        {
+            let storage = &ctx.model.containers[container];
+            let (ty, _, _) = super::super::containers::activation_storage(storage, "")?;
+            let target = frame.container_name(container)?;
+            frame.line(format!(
+                "{}(({ty}*)o{index}, &{target});",
+                super::containers::copy_function(storage)
+            ));
+        }
+        if let Some(local) = formal.shared_local.as_ref().filter(|_| formal.string) {
+            frame.string_assign(
+                &format!("o{index}"),
+                &IrStringExpr::LocalRead(local.clone()),
+            )?;
+        }
         if let Some(cell) = shared_outputs.get(&index) {
             frame.line(if formal.real {
                 format!("*o{index} = *{cell};")

@@ -532,7 +532,7 @@ handle elements and nested containers.
 ### Symptom
 
 These legal forms reject with explicit diagnostics: a `ref` container formal
-whose actual is not a container variable of the formal's type; a fork branch reading a container formal of the enclosing activation; an
+whose actual is not a container variable of the formal's type; an
 instance container property selected through a handle (`h.q`) rather than
 inside the class's own methods, and an initializer on such a property; a
 container-result call used other than as a whole assignment source or a
@@ -689,6 +689,34 @@ and event handles other than declared named events in such a list or as the
 target of such a `->>`. Stores a `$monitor`/`$strobe` helper makes to its own
 static storage publish no event, so a hierarchical wait on that storage does
 not wake.
+
+## Fork branches copy subroutine handles
+
+**Status:** open (SIM-010).
+
+### Symptom
+
+A `join_none`/`join_any` branch reads its own copy of a class handle or
+chandle variable of the enclosing task, taken when it starts: a later
+assignment by the task (or the branch) is not seen by the other (SV 9.3.2
+shares them). Member access through a task-local class handle does not lower
+yet (SIM-011). Packed, real, string, container and native record automatics
+and formals are shared.
+
+### Cause
+
+Handle locals have no shared frame slot binding: their captures still copy
+the handle into the branch's frame.
+
+### Intended direction
+
+Bind handle locals to an opaque frame slot (`LLG_FRAME_OPAQUE`) like shared
+strings.
+
+### Reproduce
+
+`task automatic t(); pkt p = new(1); fork #2 $display(p.id); join_none p = new(2); #3; endtask`
+(prints 1 instead of 2 once task-local class handles lower, SIM-011).
 
 ## Event controls on subroutine storage in expanded tasks
 

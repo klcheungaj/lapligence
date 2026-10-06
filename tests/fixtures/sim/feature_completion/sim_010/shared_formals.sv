@@ -30,6 +30,12 @@ module tb;
     #2 $display("outs r=%0d io=%0d", r, io);
   endtask
 
+  task automatic sout(output string o);
+    o = "a";
+    fork #1 o = "b"; join_none
+    #2 $display("sout in %s", o);
+  endtask
+
   task automatic outlive(input string s, input real r);
     fork #4 $display("outlive %s %0.1f %0d", s, r, $time); join_none
     s = {s, "!"};
@@ -38,12 +44,15 @@ module tb;
 
   initial begin
     int r, a, b = 3;
+    string so;
     t(1, r);
     $display("out %0d", r);
     loop_spawn(5);
     waiter(0);
     outs(a, b);
     $display("a=%0d b=%0d", a, b);
+    sout(so);
+    $display("sout %s", so);
     outlive("hi", 1.25);
     #5 $finish;
   end
