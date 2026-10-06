@@ -65,7 +65,6 @@ fn input_system_functions_store_into_container_elements() {
 
 #[test]
 fn ref_formals_mix_with_inputs_and_recursive_forwarding() {
-    let expected =
-        include_str!("../fixtures/sim/feature_completion/sim_008/mixed_ref_formals.out");
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_008/mixed_ref_formals.out");
     sim_cli::run_case_backend_parity(SUITE, "mixed_ref_formals", expected, &[], &[]);
 }
