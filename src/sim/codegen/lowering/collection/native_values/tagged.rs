@@ -7,15 +7,24 @@
 //! source-addressed runtime error and yields the member's default, an
 //! inactive write reports the error and stores nothing (SV 7.3.2, 11.9).
 //! Matching reads the tag and the selected member's leaves in place.
+//! Subroutine storage holds the same tag and member leaves in one native
+//! value (`native_tagged_element`), checked the same way.
 
-use super::super::aggregates::NATIVE_TAG_MEMBER;
 use super::*;
 use crate::sim::ir::{IrPackedSelect, IrTaggedMemberGuard, IrTaggedSelectStep};
+
+/// The storage of a tagged union with native members: the leaves of a
+/// module or static declaration, or a native subroutine value.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::sim::codegen) enum NativeTaggedRoot {
+    Module(NodeId),
+    Value(usize),
+}
 
 /// One member access below a native tagged union variable.
 #[derive(Clone)]
 pub(in crate::sim::codegen) struct NativeTaggedMember {
-    pub(in crate::sim::codegen) root: NodeId,
+    pub(in crate::sim::codegen) root: NativeTaggedRoot,
     pub(in crate::sim::codegen) index: u32,
     pub(in crate::sim::codegen) name: String,
     pub(in crate::sim::codegen) tag_bits: u32,
@@ -24,18 +33,78 @@ pub(in crate::sim::codegen) struct NativeTaggedMember {
 impl Codegen<'_> {
     /// The union variable `node` names directly, when it is a tagged union
     /// with native members.
-    pub(in crate::sim::codegen) fn native_tagged_root(&self, node: NodeId) -> Option<NodeId> {
-        let (root, info) = self.unpacked_aggregate_info(self.p30_unwrap_cast(node))?;
-        (info.kind == AggregateKind::TaggedUnion && !info.columns).then_some(root)
+    pub(in crate::sim::codegen) fn native_tagged_root(
+        &self,
+        node: NodeId,
+    ) -> Option<NativeTaggedRoot> {
+        let node = self.p30_unwrap_cast(node);
+        if let Ok(Some((value, path))) = self.native_path_of(node) {
+            return (path.is_empty()
+                && self
+                    .native_tagged_layout(NativeTaggedRoot::Value(value))
+                    .is_some())
+            .then_some(NativeTaggedRoot::Value(value));
+        }
+        let (root, info) = self.unpacked_aggregate_info(node)?;
+        (info.kind == AggregateKind::TaggedUnion && !info.columns)
+            .then_some(NativeTaggedRoot::Module(root))
     }
 
-    fn native_tagged_layout(&self, root: NodeId) -> Option<AggregateLayout> {
-        match &self.query_descriptor(root)?.shape {
+    fn native_tagged_layout(&self, root: NativeTaggedRoot) -> Option<AggregateLayout> {
+        let descriptor = match root {
+            NativeTaggedRoot::Module(root) => self.query_descriptor(root)?,
+            NativeTaggedRoot::Value(value) => &self.native_layout_of_value(value).ok()?.descriptor,
+        };
+        match &descriptor.shape {
             TypeShape::Aggregate(layout) if layout.kind == AggregateKind::TaggedUnion => {
                 Some(layout.clone())
             }
             _ => None,
         }
+    }
+
+    /// The member leaf at `path` of a tagged union's storage.
+    fn native_tagged_leaf(
+        &self,
+        root: NativeTaggedRoot,
+        path: &[AggregatePathPart],
+    ) -> Option<NativeEndpointLeaf> {
+        match root {
+            NativeTaggedRoot::Module(root) => self
+                .unpacked_aggregates
+                .get(&root)?
+                .leaves
+                .iter()
+                .find(|leaf| leaf.path == path)
+                .map(|leaf| NativeEndpointLeaf::Module(Box::new(leaf.clone()))),
+            NativeTaggedRoot::Value(value) => self
+                .native_layout_of_value(value)
+                .ok()?
+                .leaves
+                .iter()
+                .find(|leaf| leaf.path == path)
+                .map(|leaf| NativeEndpointLeaf::Value(value, leaf.clone())),
+        }
+    }
+
+    /// The storage of the members below `prefix` as a transfer endpoint.
+    fn native_tagged_endpoint(
+        &self,
+        root: NativeTaggedRoot,
+        prefix: Vec<AggregatePathPart>,
+        descriptor: &TypeDescriptor,
+    ) -> Option<NativeEndpoint> {
+        Some(match root {
+            NativeTaggedRoot::Module(root) => {
+                NativeEndpoint::Module(Box::new(AggregateSelection {
+                    root,
+                    prefix,
+                    descriptor: descriptor.clone(),
+                    storage: self.unpacked_aggregates.get(&root)?.clone(),
+                }))
+            }
+            NativeTaggedRoot::Value(value) => NativeEndpoint::Value { value, prefix },
+        })
     }
 
     /// The union member that a member selection below a native tagged union
@@ -44,11 +113,18 @@ impl Codegen<'_> {
         &self,
         node: NodeId,
     ) -> Option<NativeTaggedMember> {
-        let (root, path) = self.unpacked_path_for_expr(node)?;
-        let info = self.unpacked_aggregates.get(&root)?;
-        if info.kind != AggregateKind::TaggedUnion || info.columns {
-            return None;
-        }
+        let (root, path) = match self.native_path_of(node) {
+            Ok(Some((value, path))) => (NativeTaggedRoot::Value(value), path),
+            Ok(None) => {
+                let (root, path) = self.unpacked_path_for_expr(node)?;
+                let info = self.unpacked_aggregates.get(&root)?;
+                if info.kind != AggregateKind::TaggedUnion || info.columns {
+                    return None;
+                }
+                (NativeTaggedRoot::Module(root), path)
+            }
+            Err(_) => return None,
+        };
         let AggregatePathPart::Member(name) = path.first()? else {
             return None;
         };
@@ -164,26 +240,26 @@ impl Codegen<'_> {
         }))
     }
 
-    fn native_tag_leaf(&self, root: NodeId) -> Option<AggregateMemberInfo> {
-        self.unpacked_aggregates
-            .get(&root)?
-            .leaves
-            .iter()
-            .find(|leaf| {
-                leaf.path.as_slice() == [AggregatePathPart::Member(NATIVE_TAG_MEMBER.to_owned())]
-            })
-            .cloned()
+    fn native_tag_leaf(&self, root: NativeTaggedRoot) -> Option<NativeEndpointLeaf> {
+        self.native_tagged_leaf(
+            root,
+            &[AggregatePathPart::Member(NATIVE_TAG_MEMBER.to_owned())],
+        )
     }
 
     /// The tag of a native tagged union; `None` for a one-member union,
     /// whose only member is always active.
     pub(in crate::sim::codegen) fn native_tag_read(
-        &self,
-        root: NodeId,
+        &mut self,
+        root: NativeTaggedRoot,
     ) -> Result<Option<IrExpr>, String> {
-        self.native_tag_leaf(root)
-            .map(|leaf| self.aggregate_leaf_read(&leaf))
-            .transpose()
+        let Some(leaf) = self.native_tag_leaf(root) else {
+            return Ok(None);
+        };
+        match self.endpoint_leaf_read(&leaf)? {
+            LeafValue::Packed(tag) => Ok(Some(tag)),
+            _ => Err("tagged union tag is not a packed leaf".to_owned()),
+        }
     }
 
     fn native_tag_guard(member: &NativeTaggedMember) -> IrTaggedMemberGuard {
@@ -197,7 +273,7 @@ impl Codegen<'_> {
     /// A checked packed read of `value` (a member leaf of `member`): the
     /// value while the member is active, otherwise X and a runtime error.
     pub(in crate::sim::codegen) fn native_tagged_packed_read(
-        &self,
+        &mut self,
         member: &NativeTaggedMember,
         value: IrExpr,
         site: NodeId,
@@ -235,7 +311,7 @@ impl Codegen<'_> {
     /// One-bit known test that `member` is active. A false test has
     /// already reported the inactive-member runtime error.
     pub(in crate::sim::codegen) fn native_tagged_check(
-        &self,
+        &mut self,
         member: &NativeTaggedMember,
         site: NodeId,
     ) -> Result<IrExpr, String> {
@@ -250,7 +326,7 @@ impl Codegen<'_> {
     pub(in crate::sim::codegen) fn lower_native_tagged_construct(
         &mut self,
         path: &str,
-        root: NodeId,
+        root: NativeTaggedRoot,
         rhs: NodeId,
         nba: bool,
     ) -> Result<Option<IrStmt>, String> {
@@ -279,20 +355,16 @@ impl Codegen<'_> {
         // reads the union observes its previous member.
         if let Some(value) = value {
             let prefix = vec![AggregatePathPart::Member(member_name.clone())];
-            let storage = self
-                .unpacked_aggregates
-                .get(&root)
-                .cloned()
+            let target = self
+                .native_tagged_endpoint(root, prefix.clone(), &member.descriptor)
                 .ok_or_else(|| format!("tagged union in `{path}` has no storage"))?;
-            let leaves: Vec<_> = storage
-                .leaves
-                .iter()
-                .filter(|leaf| leaf.path.starts_with(&prefix))
-                .cloned()
-                .collect();
+            let leaves = self.endpoint_leaves(&target)?;
             match leaves.as_slice() {
-                [leaf] if leaf.path == prefix => {
-                    let leaf = NativeEndpointLeaf::Module(Box::new(leaf.clone()));
+                [(
+                    relative,
+                    leaf @ (NativeEndpointLeaf::Module(_) | NativeEndpointLeaf::Value(..)),
+                )] if relative.is_empty() => {
+                    let leaf = leaf.clone();
                     let ty = leaf_field_type(&member.descriptor).ok_or_else(|| {
                         format!("tagged member `{member_name}` in `{path}` has no scalar type")
                     })?;
@@ -300,12 +372,6 @@ impl Codegen<'_> {
                     statements.push(self.endpoint_leaf_write(path, &leaf, source, false)?);
                 }
                 _ => {
-                    let target = NativeEndpoint::Module(Box::new(AggregateSelection {
-                        root,
-                        prefix,
-                        descriptor: member.descriptor.clone(),
-                        storage,
-                    }));
                     // Any record source (pattern, call, variable) is built in
                     // a temporary of the member type, then copied leaf by leaf.
                     let temporary = self.native_temporary(value)?;
@@ -329,7 +395,13 @@ impl Codegen<'_> {
             let tag_bits = layout
                 .tag_bits()
                 .ok_or_else(|| format!("tagged union in `{path}` has no tag"))?;
-            let lhs = self.aggregate_leaf_lhs(&tag)?;
+            let lhs = match &tag {
+                NativeEndpointLeaf::Module(leaf) => self.aggregate_leaf_lhs(leaf)?,
+                NativeEndpointLeaf::Value(value, leaf) => self.native_leaf_lhs(*value, leaf),
+                NativeEndpointLeaf::Container(_) => {
+                    return Err("tagged union tag is not a packed leaf".to_owned())
+                }
+            };
             let expected = IrConst::packed(
                 vec![u64::try_from(index).map_err(|_| "tagged member index overflows")?],
                 vec![0],
@@ -352,7 +424,7 @@ impl Codegen<'_> {
     /// only while the member is active, otherwise the runtime error is
     /// reported and nothing is stored.
     pub(in crate::sim::codegen) fn native_tagged_guarded_write(
-        &self,
+        &mut self,
         lhs: NodeId,
         write: IrStmt,
     ) -> Result<IrStmt, String> {
@@ -373,7 +445,7 @@ impl Codegen<'_> {
     pub(in crate::sim::codegen) fn native_tagged_pattern(
         &mut self,
         path: &str,
-        root: NodeId,
+        root: NativeTaggedRoot,
         member_name: &str,
         payload: Option<NodeId>,
     ) -> Result<NativeTaggedPattern, String> {
@@ -394,17 +466,10 @@ impl Codegen<'_> {
                 .ok_or_else(|| format!("tagged union in `{path}` has no tag"))?,
         };
         let descriptor = layout.members[index].descriptor.clone();
-        let leaf = self
-            .unpacked_aggregates
-            .get(&root)
-            .and_then(|info| {
-                info.leaves
-                    .iter()
-                    .find(|leaf| leaf.path == [AggregatePathPart::Member(member_name.to_owned())])
-            })
-            .cloned();
+        let leaf =
+            self.native_tagged_leaf(root, &[AggregatePathPart::Member(member_name.to_owned())]);
         let value = leaf
-            .map(|leaf| self.endpoint_leaf_read(&NativeEndpointLeaf::Module(Box::new(leaf))))
+            .map(|leaf| self.endpoint_leaf_read(&leaf))
             .transpose()?;
         Ok(NativeTaggedPattern {
             tag: self.native_tag_read(root)?,

@@ -211,6 +211,7 @@ impl Codegen<'_> {
                         | IrCallArg::StringRefAddr { .. }
                         | IrCallArg::StringOutTemp { .. }
                         | IrCallArg::NativeValue(_)
+                        | IrCallArg::NativeCall { .. }
                         | IrCallArg::Container(_)
                         | IrCallArg::NativeLeaves { .. }
                 )
