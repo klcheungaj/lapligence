@@ -227,9 +227,12 @@ static inline void llg_gmp_sv4_move(g4_t* v, g4_t* source) {
     llg_gmp_sv4_replace(v, *source);
     *source = g4_small(0, 0, 0, 0);
 }
+// Self-copy needs no inline test: exact-overlap struct assignment is a no-op
+// and llg_gmp_sv4_copy_wide keeps an aliased wide value. An inline
+// `v == source` branch let GCC thread a path on which a runtime-owned
+// temporary array equals the copied model global, then report later elements
+// as -Wstringop-overflow writes past that global; the path is infeasible.
 static inline void llg_gmp_sv4_copy(g4_t* v, const g4_t* source) {
-    if (v == source)
-        return;
     if (v->width <= 64 && source->width <= 64) {
         *v = *source;
         return;

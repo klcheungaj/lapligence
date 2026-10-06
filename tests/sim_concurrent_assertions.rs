@@ -45,13 +45,61 @@ fn concurrent_assertions_drop_pending_attempts_at_end_of_simulation() {
 
 #[test]
 fn concurrent_assertions_account_for_vacuous_successes() {
+    // The completed pass-action process is reclaimed before `$finish`, leaving
+    // the clock and initial processes registered.
     sim_cli::run_case(
         "concurrent_assertions",
         "vacuity",
         "VACUOUS_PASS\n",
-        "llg: $finish at time 2000 at tb:15:12\nllg: simulation statistics: processes=3\nllg: assertion vacuous=1\n",
+        "llg: $finish at time 2000 at tb:15:12\nllg: simulation statistics: processes=2\nllg: assertion vacuous=1\n",
         &[],
     );
+}
+
+/// Run `action_retention` for `cycles` posedges on every value backend and
+/// return the `$finish(2)` process statistic per backend/optimizer label.
+fn action_retention_processes(cycles: u64) -> std::collections::BTreeMap<String, u64> {
+    let define = format!("CYCLES={cycles}");
+    // Hand-derived: the sampled count at posedge k is k-1, so every attempt
+    // passes (three vacuously) and `$rose(count[0])` matches at even k.
+    let stdout = format!("passes={cycles} fails=0 covers={}\n", cycles / 2);
+    let finish = format!("llg: $finish at time {} at tb:31:9\n", 2000 * cycles);
+    let tail = format!(
+        "llg: assertion counts: assert_failed=0 assume_failed=0 cover={}\nllg: assertion vacuous=3\n",
+        cycles / 2
+    );
+    let counts = std::cell::RefCell::new(std::collections::BTreeMap::new());
+    sim_cli::run_case_checked_matrix(
+        "concurrent_assertions",
+        "action_retention",
+        &["--define", &define],
+        &|label, output| {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(output.status.success(), "{label}: {stderr}");
+            assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{label}");
+            let rest = stderr
+                .strip_prefix(finish.as_str())
+                .and_then(|rest| rest.strip_prefix("llg: simulation statistics: processes="))
+                .unwrap_or_else(|| panic!("{label}: unexpected stderr {stderr:?}"));
+            let (count, rest) = rest.split_once('\n').expect("statistics line");
+            assert_eq!(rest, tail, "{label}");
+            counts
+                .borrow_mut()
+                .insert(label.to_owned(), count.parse().expect("process count"));
+        },
+    );
+    counts.into_inner()
+}
+
+#[test]
+fn concurrent_assertions_release_completed_actions_and_history() {
+    // 4x the cycles runs 4x the action processes; reclaimed processes leave
+    // the registry exactly as large, and only the three static processes live.
+    let short = action_retention_processes(50);
+    let long = action_retention_processes(200);
+    assert!(!short.is_empty());
+    assert_eq!(short, long);
+    assert!(short.values().all(|count| *count <= 3), "{short:?}");
 }
 
 #[test]

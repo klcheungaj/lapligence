@@ -94,8 +94,12 @@ pub enum IrInitStep {
     },
     /// Fill a scalar net/var declaration initializer.
     SetScalar { sig: usize, value: IrConst },
-    /// Register a source signal with the runtime's preponed sampling history.
+    /// Register a source signal for its Preponed value and Observed clocking
+    /// copies; reals keep their numeric snapshot. Packed history is not kept.
     RegisterSampled(usize),
+    /// Register a packed clocking source whose skewed inputs read the value
+    /// at most `ticks` (at least 1) simulation ticks in the past.
+    RegisterSampledHistory { sig: usize, ticks: u64 },
     /// Register a packed source for its Preponed value only, without the
     /// per-slot history clocking skews read (procedural `$sampled`).
     RegisterSampledValue(usize),

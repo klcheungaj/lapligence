@@ -664,6 +664,12 @@ impl Validator<'_> {
                     "sampled clock must be an active packed signal",
                 );
             }
+            if domain.history_ticks == 0 {
+                return self.fail(
+                    format!("{path}.history_ticks"),
+                    "sampled history must retain at least one clock tick",
+                );
+            }
             self.validate_expr(&domain.sample, &[], &format!("{path}.sample"))?;
             if domain.sample.is_real() {
                 return self.fail(format!("{path}.sample"), "sampled value must be packed");

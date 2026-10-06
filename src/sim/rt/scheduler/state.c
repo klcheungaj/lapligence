@@ -91,7 +91,9 @@ typedef struct llg_sampled_value {
     struct llg_sampled_value* next;
     sv4_t* signal;
     sv4_t value;
-    struct llg_sampled_history* history;
+    struct llg_sampled_history* history; // newest first, one entry per slot
+    struct llg_sampled_history* history_tail;
+    uint64_t history_ticks; // deepest clocking skew read from this history
 } llg_sampled_value_t;
 
 /* Preponed snapshot of one real variable; the value is numeric, never a
@@ -103,13 +105,15 @@ typedef struct llg_sampled_real {
 } llg_sampled_real_t;
 
 typedef struct llg_sampled_history {
-    struct llg_sampled_history* next;
+    struct llg_sampled_history* next; // older
+    struct llg_sampled_history* prev; // newer
     uint64_t time;
     sv4_t value;
 } llg_sampled_history_t;
 
 typedef struct llg_sampled_domain_history {
-    struct llg_sampled_domain_history* next;
+    struct llg_sampled_domain_history* next; // older
+    struct llg_sampled_domain_history* prev; // newer
     uint64_t time;
     uint64_t sequence;
     sv4_t value;
@@ -124,7 +128,10 @@ typedef struct llg_sampled_domain {
     llg_sampled_domain_eval_fn gate;
     void* data;
     sv4_t initial;
-    llg_sampled_domain_history_t* history;
+    llg_sampled_domain_history_t* history; // newest first
+    llg_sampled_domain_history_t* history_tail;
+    uint64_t history_groups;   // distinct time steps in the history
+    uint64_t retained_groups;  // deepest read: $past ticks plus the current step
 } llg_sampled_domain_t;
 
 static llg_sampled_value_t* find_sampled_value(const sv4_t* signal);

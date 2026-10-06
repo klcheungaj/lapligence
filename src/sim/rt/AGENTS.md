@@ -231,6 +231,11 @@ coroutine; ordinary forks use `llg_fork`, captured forks `llg_fork_with_frame`.
 Every spawn/fork call supplies an immutable `llg_co_desc_t`. The runtime
 co-allocates and initializes its root frame after the process record and owns one
 arena until that record is reclaimed, including kill and teardown paths.
+A completed top-level process (static, assertion action or detached spawn) is
+retired at completion, or when its last join_none group detaches, and freed at
+the next `reap_retired_procs` boundary; it can no longer be killed, so its
+same-slot NBAs leave the cancellable owner list and commit from their queues.
+Fork children are freed with their zombie groups; finals never retire.
 Creators release frame references after spawn; children release on completion,
 cancellation and teardown. Joined children may borrow live parent cells; cancel
 children before releasing parent storage. Completed parents remain alive for
@@ -315,8 +320,13 @@ APIs. Globally filtering that storage class would change accepted runtime behavi
 Ordinary waits use their own snapshots, input skew sampling uses
 `sampling.c`, and named-event `.triggered` uses event-object state.
 `llg_sampled_register_value` keeps only a signal's Preponed value (procedural
-`$sampled`) in a separate list, so it adds no history and no per-write lookup;
-`llg_sampled_register` adds the history skews read.
+`$sampled`, every concurrent-assertion read) in a separate list, so it adds no
+history and no per-write lookup. `llg_sampled_register` adds Observed clocking
+copies; `llg_sampled_register_history` keeps the slots the deepest declared input
+skew can select (the newest at or before `now - ticks` and everything newer),
+promoting an earlier value-only entry. Sampled-value domains likewise keep only
+their registered `$past` depth plus the current step. Never retain history for
+an undeclared reader: memory must not grow with simulated time.
 
 Slot history retains any/positive/negative occurrence independently, so a later
 opposite edge cannot erase an earlier match. Time advance drops all entries except

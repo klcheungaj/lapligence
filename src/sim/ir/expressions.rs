@@ -724,6 +724,9 @@ pub struct IrSampledDomain {
     pub(in crate::sim) posedge: bool,
     pub(in crate::sim) gate: Option<IrExpr>,
     pub(in crate::sim) sample: IrExpr,
+    /// Deepest clock tick any call reads (`$past` ticks; 1 for status
+    /// functions). The runtime retains only that much history.
+    pub(in crate::sim) history_ticks: u64,
 }
 
 impl IrSampledDomain {
@@ -732,12 +735,14 @@ impl IrSampledDomain {
         posedge: bool,
         gate: Option<IrExpr>,
         sample: IrExpr,
+        history_ticks: u64,
     ) -> Self {
         Self {
             clock_signal,
             posedge,
             gate,
             sample,
+            history_ticks,
         }
     }
 }

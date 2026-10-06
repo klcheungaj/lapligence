@@ -610,7 +610,11 @@ impl Validator<'_> {
                 });
                 result?;
             }
-            IrStmt::ClockingSample { source, sample, .. } => {
+            IrStmt::ClockingSample {
+                source,
+                sample,
+                mode,
+            } => {
                 let Some(source_signal) = self.model.signals.get(*source) else {
                     return self.fail(
                         path,
@@ -631,6 +635,20 @@ impl Validator<'_> {
                         path,
                         "clocking sample source and destination must be matching packed signals",
                     );
+                }
+                // The runtime retains a source's history only as deep as its
+                // registration declares.
+                if let IrClockingSampleMode::History(ticks) = mode {
+                    let retained = self.model.init_steps.iter().any(|step| {
+                        matches!(step, IrInitStep::RegisterSampledHistory { sig, ticks: depth }
+                            if sig == source && depth >= ticks)
+                    });
+                    if !retained {
+                        return self.fail(
+                            path,
+                            "skewed clocking sample reads deeper than its source history",
+                        );
+                    }
                 }
             }
             IrStmt::ClockingDrive {
