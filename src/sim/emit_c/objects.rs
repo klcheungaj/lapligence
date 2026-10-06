@@ -824,11 +824,16 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrObjectStmt) -> Result<Stri
                 .unwrap_or_else(|| "NULL".to_owned())
         ),
         IrObjectStmt::ChandleAssign(index, value) => {
-            let name = &ctx.model.objects[*index].c_name;
-            format!(
-                "    {{ void *_llg_handle = {}; if (_llg_handle != {name}) {{ {name} = _llg_handle; llg_dependency_changed(&{name}_llg_dep); }} }}\n",
-                chandle(ctx, value)?
-            )
+            let object = &ctx.model.objects[*index];
+            let name = &object.c_name;
+            if object.ty == crate::sim::ir::IrObjectType::Chandle {
+                format!(
+                    "    {{ void *_llg_handle = {}; if (_llg_handle != {name}) {{ {name} = _llg_handle; llg_dependency_changed(&{name}_llg_dep); }} }}\n",
+                    chandle(ctx, value)?
+                )
+            } else {
+                format!("    {name} = {};\n", chandle(ctx, value)?)
+            }
         }
         IrObjectStmt::ChandleAssignLocal(target, value) => {
             format!("    {target} = {};\n", chandle(ctx, value)?)

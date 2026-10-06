@@ -371,11 +371,17 @@ impl Frame<'_, '_> {
             }
             ChandleAssign(index, value) => {
                 let value = self.chandle(value)?;
-                let name = &self.ctx.model.objects[*index].c_name;
-                // Readers wait on the handle's change marker (SIM-007).
-                self.line(format!(
-                    "{{ void *_llg_handle = {value}; if (_llg_handle != {name}) {{ {name} = _llg_handle; llg_dependency_changed(&{name}_llg_dep); }} }}"
-                ));
+                let object = &self.ctx.model.objects[*index];
+                let name = &object.c_name;
+                // Readers wait on a chandle or class handle's change marker
+                // (SIM-007); built-in semaphore handles have none.
+                if object.ty == crate::sim::ir::IrObjectType::Chandle {
+                    self.line(format!(
+                        "{{ void *_llg_handle = {value}; if (_llg_handle != {name}) {{ {name} = _llg_handle; llg_dependency_changed(&{name}_llg_dep); }} }}"
+                    ));
+                } else {
+                    self.line(format!("{name} = {value};"));
+                }
             }
             ChandleAssignLocal(name, value) => {
                 let address = self.native_lookup(name, NativeKind::Chandle)?.address;
