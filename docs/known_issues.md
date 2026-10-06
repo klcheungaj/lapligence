@@ -352,8 +352,8 @@ automatic declaration initializers, uniform member initializers, `real`,
 `string` and `chandle` members (a SIM-003 native value per subroutine record)
 and tag checks on whole member copies. Column records still reject: a member
 initializer that gives a column's cells different values (a column keeps one
-element default); selecting a whole member array, a sub-record, or a `string`
-or `chandle` member of a call result inside an expression, and comparing a
+element default); selecting a whole member array, a sub-record, or a
+`chandle` member of a call result inside an expression, and comparing a
 record pattern, conditional or tagged expression operand (only storage and
 calls compare); an output or inout record argument with `real`, `string` or
 `chandle` members of a function called inside an expression (statement calls
