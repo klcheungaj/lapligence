@@ -1598,10 +1598,15 @@ int llg_cancel_region_callback(llg_region_callback_id_t id);
 // Register a signal for a copied, immutable value sampled at the beginning of
 // each time slot. The returned pointer is runtime-owned and valid until the
 // next llg_rt_cleanup. Unregistered signals produce a controlled diagnostic.
+// The signal also serves Observed clocking copies; history is not retained.
 void llg_sampled_register(sv4_t* signal);
+// Like llg_sampled_register, and keep the per-slot history that clocking
+// input skews of at most `ticks` read. Repeated registrations keep the
+// largest depth; older slots are released as time advances.
+void llg_sampled_register_history(sv4_t* signal, uint64_t ticks);
 // Register a signal for its Preponed value only (procedural `$sampled`,
 // IEEE 1800-2009 16.9.3). It keeps no per-slot history, so its memory stays
-// constant; llg_sampled_register adds the history clocking skews read.
+// constant. A later history registration promotes it.
 void llg_sampled_register_value(sv4_t* signal);
 const sv4_t* llg_sampled_value(const sv4_t* signal);
 int llg_sampled_copy(const sv4_t* signal, sv4_t* out);
@@ -1611,17 +1616,22 @@ void llg_sampled_register_real(double* signal);
 double llg_sampled_real(const double* signal);
 /// One explicit sampled clock/history domain. The callback is evaluated at a
 /// matching clock edge using the immutable Preponed signal snapshots.
+/// `history_ticks` (at least 1) is the largest `$past` tick count read from
+/// the domain; status functions need 1. Older clock ticks are released, so
+/// a deeper read would see the initial value instead.
 typedef sv4_t (*llg_sampled_domain_eval_fn)(void* data);
 int llg_sampled_domain_register(uint64_t identity, sv4_t* clock, int edge,
                                 llg_sampled_domain_eval_fn value,
-                                llg_sampled_domain_eval_fn gate, void* data);
+                                llg_sampled_domain_eval_fn gate, void* data,
+                                uint64_t history_ticks);
 sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks);
 /// `kind`: 0 rose, 1 fell, 2 stable, 3 changed; 4 stable and 5 changed
 /// compare 64-bit real images numerically (`==` on the decoded reals).
 int llg_sampled_domain_status(uint64_t identity, int kind);
 // Clocking input copies. Observed copies are queued into the current time
 // slot's observed region; history copies read the preponed sample at or before
-// `ticks` simulation ticks in the past.
+// `ticks` simulation ticks in the past, where `ticks` must not exceed the
+// source's llg_sampled_register_history depth.
 int llg_clocking_sample_observed(sv4_t* source, sv4_t* sample);
 int llg_clocking_sample_history(sv4_t* source, sv4_t* sample,
                                 uint64_t ticks);

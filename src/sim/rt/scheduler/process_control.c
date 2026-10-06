@@ -107,8 +107,8 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
 }
 
 // The active coroutine's frames must survive until llg_co_run returns to the
-// scheduler. Other cancelled processes can be reclaimed after cancellation
-// traversal, including within a long-running caller.
+// scheduler. Other cancelled or completed processes can be reclaimed after
+// cancellation traversal, including within a long-running caller.
 static void reap_retired_procs(void) {
     llg_proc_t* current = llg_current();
     llg_proc_t** slot = &g.retired_procs;
@@ -122,6 +122,28 @@ static void reap_retired_procs(void) {
         release_killed_proc_resources(proc);
         free_proc_record(proc);
     }
+}
+
+// Retire a completed top-level process (static, assertion action or detached
+// spawn) once no runtime structure can reach its record or root frame, so
+// repeatedly spawned processes do not accumulate until teardown. Fork children
+// are reclaimed with their zombie groups, and final procedures run on a
+// caller-owned record that never reaches this path. A completed process is
+// never killed, so its same-slot NBAs need no cancellable owner list and
+// commit from their region queues alone. Live join_none groups may still use
+// the parent; fork_group_unlink retries when the last one detaches.
+// Destruction waits for the next reap_retired_procs boundary, so callers may
+// keep reading the record until then.
+static void proc_retire_completed(llg_proc_t* proc) {
+    if (!proc || !proc->completed || proc->killed || proc->grp ||
+        proc->fork_child || proc->registry_slot < 0 || proc->queued ||
+        proc->wait.kind != W_NONE || proc == g.stop_proc)
+        return;
+    nba_owner_release_all(proc);
+    if (proc->fork_groups) return;
+    unregister_proc(proc);
+    proc->next_retired = g.retired_procs;
+    g.retired_procs = proc;
 }
 
 // Kill every group spawned by `p`: each child (and its descendants) is freed

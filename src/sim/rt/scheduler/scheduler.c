@@ -60,11 +60,11 @@ static int run_region_queue(llg_region_t region) {
             llg_co_status_t status = llg_co_run(&process->chain);
             g.process_turn_active = 0;
             g.current = NULL;
-            if (status == LLG_CO_DONE) {
+            if (status == LLG_CO_DONE ||
+                (status == LLG_CO_EXIT &&
+                 process->chain.exiting == LLG_EXIT_COMPLETE)) {
                 proc_complete(process);
-            } else if (status == LLG_CO_EXIT &&
-                       process->chain.exiting == LLG_EXIT_COMPLETE) {
-                proc_complete(process);
+                proc_retire_completed(process);
             } else if (status == LLG_CO_CALLED) {
                 fprintf(stderr,
                         "llg runtime fatal: coroutine anchor escaped llg_co_run\n");

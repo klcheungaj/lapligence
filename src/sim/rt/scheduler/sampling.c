@@ -13,23 +13,41 @@ static void report_unregistered_sampled_signal(void) {
     g.finish = 1;
 }
 
-static void sampled_record_write(sv4_t* signal) {
-    llg_sampled_value_t* item = find_sampled_value(signal);
-    if (!item) return;
+// Record `value` as the slot's newest sample. A skewed read selects the
+// newest entry at or before `now - ticks`, so everything older than the newest
+// entry at or before `now - history_ticks` can never be selected again.
+static void sampled_history_record(llg_sampled_value_t* item, const sv4_t* value) {
     llg_sampled_history_t* last = item->history;
     if (last && last->time == g.now) {
-        sv4_copy(&last->value, signal);
+        sv4_copy(&last->value, value);
         return;
     }
     llg_sampled_history_t* history = (llg_sampled_history_t*)llg_checked_malloc(
         1, sizeof(*history), "sampled history");
     history->time = g.now;
-    history->value = sv4_clone(signal);
-    history->next = item->history;
+    history->value = sv4_clone(value);
+    history->prev = NULL;
+    history->next = last;
+    if (last) last->prev = history;
+    else item->history_tail = history;
     item->history = history;
+    const uint64_t horizon =
+        g.now < item->history_ticks ? 0 : g.now - item->history_ticks;
+    while (item->history_tail->prev && item->history_tail->prev->time <= horizon) {
+        llg_sampled_history_t* oldest = item->history_tail;
+        item->history_tail = oldest->prev;
+        item->history_tail->next = NULL;
+        sv4_destroy(&oldest->value);
+        free(oldest);
+    }
 }
 
-void llg_sampled_register(sv4_t* signal) {
+static void sampled_record_write(sv4_t* signal) {
+    llg_sampled_value_t* item = find_sampled_value(signal);
+    if (item) sampled_history_record(item, signal);
+}
+
+static void sampled_register(sv4_t* signal, uint64_t history_ticks) {
     if (!signal) {
         fprintf(stderr, "llg: cannot register a null sampled signal\n");
         llg_last_failure = 1;
@@ -37,21 +55,41 @@ void llg_sampled_register(sv4_t* signal) {
         return;
     }
     for (llg_sampled_value_t* item = g.sampled; item; item = item->next) {
-        if (item->signal == signal) return;
+        if (item->signal == signal) {
+            if (item->history_ticks < history_ticks) item->history_ticks = history_ticks;
+            return;
+        }
     }
-    llg_sampled_value_t* item = (llg_sampled_value_t*)llg_checked_malloc(
-        1, sizeof(*item), "sampled value");
+    // A value-only registration is promoted, so each signal is sampled once.
+    llg_sampled_value_t* item = NULL;
+    for (llg_sampled_value_t** link = &g.sampled_values; *link;
+         link = &(*link)->next) {
+        if ((*link)->signal == signal) {
+            item = *link;
+            *link = item->next;
+            sv4_destroy(&item->value);
+            break;
+        }
+    }
+    if (!item)
+        item = (llg_sampled_value_t*)llg_checked_malloc(1, sizeof(*item),
+                                                        "sampled value");
     item->signal = signal;
     item->value = sv4_clone(signal);
     item->history = NULL;
-    llg_sampled_history_t* history = (llg_sampled_history_t*)llg_checked_malloc(
-        1, sizeof(*history), "sampled history");
-    history->time = g.now;
-    history->value = sv4_clone(signal);
-    history->next = NULL;
-    item->history = history;
+    item->history_tail = NULL;
+    item->history_ticks = history_ticks;
+    sampled_history_record(item, signal);
     item->next = g.sampled;
     g.sampled = item;
+}
+
+void llg_sampled_register(sv4_t* signal) {
+    sampled_register(signal, 0);
+}
+
+void llg_sampled_register_history(sv4_t* signal, uint64_t ticks) {
+    sampled_register(signal, ticks);
 }
 
 void llg_sampled_register_value(sv4_t* signal) {
@@ -140,8 +178,10 @@ static void report_missing_sampled_domain(uint64_t identity) {
 
 int llg_sampled_domain_register(uint64_t identity, sv4_t* clock, int edge,
                                 llg_sampled_domain_eval_fn value,
-                                llg_sampled_domain_eval_fn gate, void* data) {
-    if (!clock || !value || (edge != LLG_EV_POSEDGE && edge != LLG_EV_NEGEDGE)) {
+                                llg_sampled_domain_eval_fn gate, void* data,
+                                uint64_t history_ticks) {
+    if (!clock || !value || history_ticks == 0 ||
+        (edge != LLG_EV_POSEDGE && edge != LLG_EV_NEGEDGE)) {
         fprintf(stderr, "llg: invalid sampled-value domain registration\n");
         llg_last_failure = 1;
         g.finish = 1;
@@ -164,9 +204,41 @@ int llg_sampled_domain_register(uint64_t identity, sv4_t* clock, int edge,
     domain->data = data;
     domain->initial = value(data);
     domain->history = NULL;
+    domain->history_tail = NULL;
+    domain->history_groups = 0;
+    // `$past(e, n)` may skip the current time step and then n - 1 earlier
+    // ones; rose/fell/stable/changed read the two newest entries.
+    domain->retained_groups =
+        history_ticks == UINT64_MAX ? UINT64_MAX : history_ticks + 1;
     domain->next = g.sampled_domains;
     g.sampled_domains = domain;
     return 1;
+}
+
+// Prepend the newest sample and drop whole time steps older than any
+// registered read can reach, so a domain's memory is independent of
+// simulated time.
+static void sampled_domain_history_push(llg_sampled_domain_t* domain,
+                                        llg_sampled_domain_history_t* history) {
+    llg_sampled_domain_history_t* head = domain->history;
+    if (!head || head->time != history->time) domain->history_groups++;
+    history->prev = NULL;
+    history->next = head;
+    if (head) head->prev = history;
+    else domain->history_tail = history;
+    domain->history = history;
+    while (domain->history_groups > domain->retained_groups) {
+        const uint64_t time = domain->history_tail->time;
+        while (domain->history_tail && domain->history_tail->time == time) {
+            llg_sampled_domain_history_t* oldest = domain->history_tail;
+            domain->history_tail = oldest->prev;
+            if (domain->history_tail) domain->history_tail->next = NULL;
+            else domain->history = NULL;
+            sv4_destroy(&oldest->value);
+            free(oldest);
+        }
+        domain->history_groups--;
+    }
 }
 
 static void sampled_domain_clock_signal_changed(sv4_t* signal, sv4_t old,
@@ -189,8 +261,7 @@ static void sampled_domain_clock_signal_changed(sv4_t* signal, sv4_t old,
         history->time = g.now;
         history->sequence = g.sampled_domain_sequence++;
         history->value = domain->value(domain->data);
-        history->next = domain->history;
-        domain->history = history;
+        sampled_domain_history_push(domain, history);
     }
 }
 
@@ -269,17 +340,7 @@ static void sample_preponed_values(void) {
         sv4_copy(&item->value, item->signal);
     for (llg_sampled_value_t* item = g.sampled; item; item = item->next) {
         sv4_copy(&item->value, item->signal);
-        llg_sampled_history_t* last = item->history;
-        if (last && last->time == g.now) {
-            sv4_copy(&last->value, &item->value);
-            continue;
-        }
-        llg_sampled_history_t* history = (llg_sampled_history_t*)llg_checked_malloc(
-            1, sizeof(*history), "sampled history");
-        history->time = g.now;
-        history->value = sv4_clone(&item->value);
-        history->next = item->history;
-        item->history = history;
+        sampled_history_record(item, &item->value);
     }
 }
 

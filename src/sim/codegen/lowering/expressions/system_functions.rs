@@ -198,6 +198,7 @@ impl<'a> Codegen<'a> {
             },
             argument.clone(),
             gate,
+            ticks,
         )?;
         let (width, signed) = if kind == IrSampledFunc::Past {
             (argument.width, argument.signed)

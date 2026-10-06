@@ -947,6 +947,7 @@ impl Codegen<'_> {
         clock: SampledClock,
         argument: IrExpr,
         gate: Option<IrExpr>,
+        history_ticks: u64,
     ) -> Result<usize, String> {
         if argument.is_real() {
             return Err(format!("sampled-value argument must be packed in `{path}`"));
@@ -957,6 +958,7 @@ impl Codegen<'_> {
             clock.posedge,
             gate,
             argument,
+            history_ticks.max(1),
         ));
         Ok(domain)
     }

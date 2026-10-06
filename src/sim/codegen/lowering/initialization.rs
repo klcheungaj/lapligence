@@ -216,7 +216,14 @@ impl<'a> Codegen<'a> {
             }
         }
         for (source, _) in sampled_sources {
-            model.init_steps.push(IrInitStep::RegisterSampled(source));
+            // Only skewed inputs read past slots; the runtime keeps each
+            // source's history no deeper than its largest skew.
+            model
+                .init_steps
+                .push(match self.clocking_history_ticks.get(&source) {
+                    Some(&ticks) => IrInitStep::RegisterSampledHistory { sig: source, ticks },
+                    None => IrInitStep::RegisterSampled(source),
+                });
         }
         for source in &self.sampled_real_signals {
             model.init_steps.push(IrInitStep::RegisterSampled(*source));

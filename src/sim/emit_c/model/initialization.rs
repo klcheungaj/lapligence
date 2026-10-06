@@ -141,6 +141,13 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
                 let s = model.signal(*sig);
                 out.push_str(&format!("    llg_sampled_register(&{});\n", s.c_name));
             }
+            IrInitStep::RegisterSampledHistory { sig, ticks } => {
+                let s = model.signal(*sig);
+                out.push_str(&format!(
+                    "    llg_sampled_register_history(&{}, {ticks}ULL);\n",
+                    s.c_name
+                ));
+            }
             IrInitStep::RegisterSampledValue(sig) => {
                 let s = model.signal(*sig);
                 out.push_str(&format!("    llg_sampled_register_value(&{});\n", s.c_name));
@@ -268,7 +275,10 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
     // expression reads without a second dependency collector in the emitter.
     for signal in &model.signals {
         if !signal.omit && matches!(signal.ty, IrType::Packed { .. }) {
-            out.push_str(&format!("    llg_sampled_register(&{});\n", signal.c_name));
+            out.push_str(&format!(
+                "    llg_sampled_register_value(&{});\n",
+                signal.c_name
+            ));
         }
     }
     for (index, domain) in model.sampled_domains().iter().enumerate() {
@@ -284,12 +294,13 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
             "NULL".to_owned()
         };
         out.push_str(&format!(
-            "    if (!llg_sampled_domain_register({}ULL, &{}, {}, {}, {}, NULL)) return 1;\n",
+            "    if (!llg_sampled_domain_register({}ULL, &{}, {}, {}, {}, NULL, {}ULL)) return 1;\n",
             index,
             clock,
             edge,
             sampled_domain_callback_name(index, "value"),
             gate,
+            domain.history_ticks,
         ));
     }
     for (index, assertion) in model.assertions().iter().enumerate() {

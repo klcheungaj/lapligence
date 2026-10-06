@@ -1315,6 +1315,10 @@ impl Validator<'_> {
                             if domain >= self.model.sampled_domains.len() || call.ticks == 0 {
                                 return self.fail(path, "$past history metadata is invalid");
                             }
+                            if call.ticks > self.model.sampled_domains[domain].history_ticks {
+                                return self
+                                    .fail(path, "$past reads deeper than its domain retains");
+                            }
                             if (expr.width, expr.signed)
                                 != (call.argument.width, call.argument.signed)
                             {
