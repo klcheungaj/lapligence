@@ -690,6 +690,35 @@ target of such a `->>`. Stores a `$monitor`/`$strobe` helper makes to its own
 static storage publish no event, so a hierarchical wait on that storage does
 not wake.
 
+## Fork branches copy subroutine handles and string outputs
+
+**Status:** open (SIM-010).
+
+### Symptom
+
+A `join_none`/`join_any` branch reads its own copy of a class handle or
+chandle variable of the enclosing task, and of a string output or inout
+formal, taken when it starts: a later assignment by the task (or the branch)
+is not seen by the other (SV 9.3.2 shares them). Member access through a
+task-local class handle does not lower yet (SIM-011). Packed, real, string,
+container and native record automatics, by-value input formals and packed,
+real and container output formals are shared.
+
+### Cause
+
+Handle locals and string output formals have no shared frame slot binding:
+their captures still copy the value into the branch's frame.
+
+### Intended direction
+
+Bind handle locals to an opaque frame slot (`LLG_FRAME_OPAQUE`) like shared
+strings, and copy string outputs back from a shared string cell at return.
+
+### Reproduce
+
+`task automatic t(); pkt p = new(1); fork #2 $display(p.id); join_none p = new(2); #3; endtask`
+(after SIM-011's receiver fix); `task automatic s(output string o); fork #1 o = "b"; join_none #2; endtask`.
+
 ## Event controls on subroutine storage in expanded tasks
 
 **Status:** open (SIM-009).
