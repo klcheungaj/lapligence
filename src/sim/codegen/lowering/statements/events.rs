@@ -841,6 +841,22 @@ impl EmitCtx<'_, '_> {
                 ));
             }
         }
+        // A subroutine string or handle has no change marker.
+        if let NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) = self.cg.kind(expression)
+        {
+            if self.func.as_ref().is_some_and(|func| {
+                func.string_read.contains_key(target) || func.chandle_read.contains_key(target)
+            }) && self.cg.object_of(&self.path, expression).is_none()
+            {
+                return Err(format!(
+                    "event control on subroutine string or handle `{}` in `{}` is not supported (SIM-009)",
+                    self.cg.node(*target).name,
+                    self.cg.source_path(&self.path)
+                ));
+            }
+        }
         if simple
             && !selected_aggregate_member
             && !unresolved_member

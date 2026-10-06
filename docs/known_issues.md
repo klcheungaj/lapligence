@@ -726,6 +726,38 @@ strings.
 
 A task whose event control reads a string or handle formal, or whose `ref`
 formal with an event control is bound to a block or subroutine automatic or
+to an array element, is expanded at each call site, so such a task cannot
+recurse or have a native record or container formal ("needs
+caller-environment expansion, which is not supported"). `@(s)` on a
+subroutine string or handle rejects explicitly; an `iff` qualifier reads its
+string or handle copied when the control arms. Event controls on the task's
+own locals, by-value packed and real formals, `wait (cond)`, module signals,
+`ref` formals with module-signal actuals and event formals of every direction
+take the typed call path; an expansion's `ref` formal follows its automatic
+actual's shared cell and an element actual's frozen index.
+
+### Cause
+
+The typed body's evaluated event callbacks cannot name a string or handle
+actual's change marker, and subroutine strings and handles have none.
+Expansion cannot carry native formals and cannot recurse.
+
+### Intended direction
+
+Bind string and handle `ref` actuals' change markers per specialization like
+packed `ref` formals, copy by-value string and handle formals into the typed
+evaluator context (only the waiting activation and its fork branches can
+write them), and give shared subroutine strings change markers.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_009/neg_string_event_control.sv`;
+`task automatic r(input string t, int n); @(posedge c iff t != ""); if (n) r(t, n - 1); endtask`.
+
+## Symptom
+
+A task whose event control reads a string or handle formal, or whose `ref`
+formal with an event control is bound to a block or subroutine automatic or
 to an array element, is expanded at each call site. These legal forms fail:
 `@(tag)` on a string formal ("cannot resolve signal reference"); an `iff`
 qualifier reading a string or handle formal ("ownership emission is not yet
