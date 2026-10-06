@@ -77,7 +77,7 @@ fn event_expression_and_nba_write_observe_the_same_slot_in_both_cli_modes() {
         EXPECTED_STDOUT,
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

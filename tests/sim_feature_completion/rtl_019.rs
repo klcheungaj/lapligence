@@ -63,7 +63,7 @@ fn mapped_file_and_line_values_follow_includes_and_line_directives() {
         );
     }
     // IEEE 1364-2001 19.7 has `line but not the predefined macros.
-    sim_cli::reject_case_with_args(SUITE, "line_map", "`__FILE__`", &["--edition", "2001"]);
+    sim_cli::reject_case_with_args(SUITE, "line_map", "`__FILE__`", &["--edition", "v2001"]);
 }
 
 /// A01 after snapshot destruction: the mapped values are compiled into the
@@ -103,7 +103,7 @@ fn line_state_stays_in_its_file_in_both_unit_modes() {
         "line_units",
         &["line_units_peer.sv"],
         "`__FILE__`",
-        &["--edition", "2001", "line_units_peer.sv"],
+        &["--edition", "v2001", "line_units_peer.sv"],
     );
 }
 
@@ -144,7 +144,7 @@ fn resumed_task_and_assertion_locations_survive_includes_and_line() {
         SUITE,
         "line_locations",
         "`$error` is not available in IEEE 2001",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -168,7 +168,7 @@ fn resumed_task_locations_execute_after_snapshot_and_db_destruction() {
 /// header's and the use site's physical positions in both editions.
 #[test]
 fn include_and_macro_errors_name_their_physical_source() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         let args = ["--edition", edition];
         sim_cli::reject_case_with_args(
             SUITE,
@@ -199,7 +199,7 @@ fn owned_errors_keep_physical_and_mapped_positions() {
         SUITE,
         "owned_error_line",
         "use of undeclared identifier 'logic'",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -278,7 +278,7 @@ fn later_forms_execute_in_2009_and_reject_in_2001() {
         SUITE,
         "sv_forms_2009",
         "`implicit named port connection` is not available in IEEE 2001",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -287,7 +287,7 @@ fn later_forms_execute_in_2009_and_reject_in_2001() {
 /// directive, execute in both editions.
 #[test]
 fn legacy_neighbours_and_memory_storage_arguments_stay_admitted() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             SUITE,
             "legacy_forms_2001.v",
@@ -303,7 +303,7 @@ fn legacy_neighbours_and_memory_storage_arguments_stay_admitted() {
 /// strict-edition diagnostic (`file:line:col `label``).
 #[test]
 fn single_later_forms_reject_in_2001() {
-    let args = ["--edition", "2001"];
+    let args = ["--edition", "v2001"];
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_2001_queue.v",
@@ -512,7 +512,7 @@ fn post_2009_bins_forms_reject_and_2009_bins_execute() {
         SUITE,
         "cover_bins_2009",
         "use of undeclared identifier 'bit'",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 

@@ -10,6 +10,6 @@ fn packed_union_function_and_child_port_paths_keep_four_state_fields() {
         "echo=a5z3 halves=a5,z3 captured=xx\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

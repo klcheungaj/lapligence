@@ -173,7 +173,7 @@ fn initializer_function_before_initial() {
         "x=42 observed=41\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

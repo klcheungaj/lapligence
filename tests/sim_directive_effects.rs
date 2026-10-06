@@ -5,7 +5,7 @@ use crate::sim_cli;
 const SUITE: &str = "directive_effects";
 
 fn editions() -> [&'static str; 2] {
-    ["2001", "2009"]
+    ["v2001", "sv2009"]
 }
 
 #[test]
@@ -16,9 +16,9 @@ fn macro_include_and_conditional_state_reaches_execution() {
         (&[][..], 33),
     ] {
         let args: Vec<&str> = if defines.is_empty() {
-            vec!["--edition", "2009"]
+            vec!["--edition", "sv2009"]
         } else {
-            vec!["--edition", "2009", defines[0], defines[1]]
+            vec!["--edition", "sv2009", defines[0], defines[1]]
         };
         let expected = format!("branch={branch} cat=a text=syn017\n");
         sim_cli::run_case_with_args(
@@ -68,7 +68,7 @@ fn line_directive_reaches_predefined_macros() {
         "file=syn017_mapped.sv line=125\n",
         "llg: $finish at time 0 at tb:9:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -123,13 +123,13 @@ fn macro_generated_systemverilog_keyword_observes_edition() {
         "x=1\n",
         "llg: $finish at time 0 at tb:13:5\n",
         &["combinational always process in `tb` reads no signals; evaluating once at time 0"],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "later_macro",
         "expected a declaration name",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 

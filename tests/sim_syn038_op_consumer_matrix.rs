@@ -67,7 +67,7 @@ fn expression_consumers_keep_distinct_contexts_in_both_cli_modes() {
         if !optimized {
             command.arg("--no-opt");
         }
-        command.args(["--edition", "2009"]).arg(&fixture_path);
+        command.args(["--edition", "sv2009"]).arg(&fixture_path);
         let output = sim_harness::run_command(&mut command, Duration::from_secs(180))
             .unwrap_or_else(|error| {
                 panic!("syn038_pairwise/op_consumer_matrix, optimized={optimized}: {error}")

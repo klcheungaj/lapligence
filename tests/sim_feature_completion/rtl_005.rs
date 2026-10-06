@@ -89,9 +89,15 @@ fn z_conditional_policy_witness() {
         "x\n",
         "llg: $finish at time 0 at tb:7:1\n",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
-    sim_cli::run_case_backend_parity(SUITE, "z_conditional.v", "x\n", &["--edition", "2001"], &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "z_conditional.v",
+        "x\n",
+        &["--edition", "v2001"],
+        &[],
+    );
 }
 
 #[test]

@@ -18,7 +18,7 @@ fn interface_union_field_nba_and_child_input_actual_match_in_both_modes() {
             "syn038_pairwise",
             "union_interface",
             optimized,
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
             &[],
             &[],
         );
@@ -35,6 +35,10 @@ fn interface_union_field_nba_and_child_input_actual_match_in_both_modes() {
             expected_stdout.as_bytes(),
             "{label}"
         );
-        assert_eq!(output.stderr.as_slice(), b"", "{label}");
+        assert_eq!(
+            crate::sim_harness::strip_lint_reports(&output.stderr),
+            "",
+            "{label}"
+        );
     }
 }

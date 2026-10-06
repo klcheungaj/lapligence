@@ -29,7 +29,7 @@ fn vector_edges_use_only_the_least_significant_bit() {
 
 #[test]
 fn constant_false_wait_suspends_without_blocking_time_advance() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         super::sim_cli::run_case_with_args(
             "partial_features",
             "wait_constant_false",

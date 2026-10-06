@@ -15,6 +15,6 @@ fn hierarchical_task_ref_updates_union_storage_and_named_view() {
         "hier=12ff child-local=ab41 view=12/ff\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

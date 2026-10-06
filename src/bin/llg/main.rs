@@ -3,46 +3,44 @@
 //! Usage:
 //!
 //! ```text
-//! llg [generate options] [build options] [<file.sv>...] [-- <plusargs>...]
-//! generate: --config <file>  --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --no-lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-gen-only  --no-opt  --opt  --stop-policy <resume|exit>  --max-export-mib <MiB>
+//! llg [generate options] [lint options] [wave options] [build options] [<file.sv>...] [-- <plusargs>...]
+//! generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --stop-policy <resume|exit>
+//! lint:     --lint-only  --no-lint-only  --lint-json [<path>]  -Werror  -Wno-error
+//! wave:     --wave <file.vcd|file.fst>  --wave-depth <N>  --no-wave
 //! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
 //! output:   --out-dir <dir>  --runtime-cache <dir>
 //! append:   --append-<list> <value>  (source, include-dir, define, param-override, define-system-task, libmap, libfile, library-order, dpi-lib, plusarg)
 //! ```
 //!
 //! Configuration: the file named by `--config` (which must exist) supplies
-//! defaults for the options above; `llg` never discovers `llg.toml` on its own.
-//! See `docs/config.md` and `settings.rs` for the key list and the precedence
-//! (command line > environment > config file > built-in default). A list
-//! option on the command line (`-I`, `-D`, source files, `--`, ...) replaces the
-//! file's list; its `--append-<list>` twin adds to the list instead, after any
-//! replacing values. With no arguments the driver prints usage and exits 2.
+//! defaults for the options above and the lint rule settings (`[lint]`);
+//! `llg` never discovers `llg.toml` on its own. See `docs/config.md` and
+//! `settings.rs` for the key list and the precedence (command line >
+//! environment > config file > built-in default). A list option on the command
+//! line (`-I`, `-D`, source files, `--`, ...) replaces the file's list; its
+//! `--append-<list>` twin adds to the list instead, after any replacing values.
+//! With no arguments the driver prints usage and exits 2.
 //!
-//! `--lint` runs the shared linter (`core::lint`) over the compiled design
-//! after elaboration and before codegen: each finding prints to stderr as
-//! `file:line:col: [SEVERITY] rule: message`, and any lint error aborts with
-//! exit code 1 before codegen.  `--lint-config <path>` reads a `llg-lint.toml`
-//! file that enables/disables rules and overrides severities for the lint pass
-//! (missing or malformed files abort with exit code 1).  Without `--lint` the
-//! driver behaves exactly as before.
+//! Every run lints the elaborated design (`core::lint`) before codegen: each
+//! finding prints to stderr as `file:line:col: [SEVERITY] rule: message`
+//! followed by a count line. Lint errors exit 1 before codegen; warnings do
+//! not stop the run unless `-Werror` reports them as errors. `--lint-only`
+//! stops after lint (exit 0 clean or warnings only, 1 on errors).
 //!
-//! `--lint-json` implies lint mode but is a report-only mode: it emits one
+//! `--lint-json` is a report-only mode (it implies `--lint-only`): it emits one
 //! machine-readable JSON object (see `core::lint::diags_to_json`) instead of
-//! the human-readable lines, then exits without running codegen or the
-//! simulation.  The JSON goes to stdout, or to the file given as
+//! the human-readable lines. The JSON goes to stdout, or to the file given as
 //! `--lint-json <path>` (the token after the flag is the output path when it
-//! does not start with `-`).  The human-readable lint lines are suppressed;
-//! Frontend diagnostics remain on stderr. When both `--lint` and `--lint-json`
-//! are given, `--lint-json` wins.  Exit codes: 0 clean, 1 on lint errors, 2
-//! usage errors.
+//! does not start with `-`). Frontend diagnostics remain on stderr. Exit
+//! codes: 0 clean, 1 on lint errors, 2 usage errors.
 //!
-//! `--max-export-mib <MiB>` sets the frontend export budget: the bytes of
-//! semantic records Slang capture may export for the whole elaborated design
-//! (default `SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES`, 4096 MiB; at most the native
-//! ceiling of 16384 MiB). The export grows linearly with the design, about
-//! 15 KiB per small `always` process; it is a finite guard because the driver
-//! has no other memory limit unless `LLG_MEMORY_LIMIT_MB` is set. A design that
-//! exhausts it fails with an error naming the limit and this option.
+//! `--wave <file>` makes the model dump every signal (or `--wave-depth N`
+//! levels below each top) into a `.vcd` or `.fst` file from time 0, without
+//! `$dumpfile`/`$dumpvars` in the design; the file replaces any `$dumpfile`
+//! name and the design's `$dumpvars` selections are ignored.
+//!
+//! The frontend export is not budgeted: a simulator compile may use all
+//! available memory (`LLG_MEMORY_LIMIT_MB` remains an optional process guard).
 //!
 //! Model build (CMake is the only supported model builder):
 //!
@@ -84,13 +82,12 @@
 use std::process::Command;
 
 use llg::core::compile;
-use llg::ffi::slang::NATIVE_HARD_MAX_OUTPUT_BYTES;
+use llg::core::lint::{LintDiag, LintSeverity};
 use llg::sim;
 
 mod cli;
 mod settings;
 
-use cli::MIB;
 use settings::{DriverOptions, SettingsError};
 
 fn main() -> std::process::ExitCode {
@@ -134,44 +131,6 @@ fn config_failure(error: SettingsError) -> i32 {
     1
 }
 
-/// Explain how to raise an exhausted frontend export budget. The native
-/// bridge names the exhausted budget; record-count ceilings are fixed, so only
-/// the byte budget is adjustable from the command line.
-fn export_limit_hint(error: &compile::StartupError, max_export_bytes: u64) -> Option<String> {
-    if error.kind() != compile::StartupErrorKind::LimitExceeded {
-        return None;
-    }
-    let ceiling = NATIVE_HARD_MAX_OUTPUT_BYTES / MIB;
-    let current = max_export_bytes / MIB;
-    if error.contains("export byte limit") {
-        Some(if current < ceiling {
-            format!(
-                "the elaborated design exceeds the {current} MiB frontend export budget; \
-                 raise it with --max-export-mib <MiB> (at most {ceiling})"
-            )
-        } else {
-            format!(
-                "the elaborated design exceeds the native {ceiling} MiB frontend export ceiling"
-            )
-        })
-    } else if [
-        "semantic node limit",
-        "semantic edge limit",
-        "constant limit",
-    ]
-    .iter()
-    .any(|limit| error.contains(limit))
-    {
-        Some(
-            "the elaborated design exceeds a native frontend record-count ceiling, \
-             which --max-export-mib cannot raise"
-                .to_owned(),
-        )
-    } else {
-        None
-    }
-}
-
 fn run(options: DriverOptions) -> i32 {
     let DriverOptions {
         top,
@@ -187,11 +146,12 @@ fn run(options: DriverOptions) -> i32 {
         default_library,
         files,
         runtime_args,
-        lint_mode,
+        lint_only,
+        warnings_as_errors,
         lint_json_mode,
         lint_json_path,
-        lint_config_path,
-        lint_config: config_lint,
+        lint_config,
+        wave,
         generator,
         dpi_libraries,
         launcher,
@@ -205,31 +165,8 @@ fn run(options: DriverOptions) -> i32 {
         gen_only,
         no_opt,
         stop_policy,
-        max_export_bytes,
         cli_build_options,
     } = options;
-    // 0. Lint rule settings: the `llg.toml` `[lint]` rules, replaced entirely
-    //    by an explicit `--lint-config` file. Read + parse before compiling so
-    //    a missing or malformed file aborts fast and with a clear message.
-    let mut lint_config = config_lint;
-    if let Some(path) = &lint_config_path {
-        lint_config = llg::core::lint::LintConfig::new();
-        let text = match std::fs::read_to_string(path) {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("llg: cannot read lint config {}: {e}", path.display());
-                return 1;
-            }
-        };
-        if let Err(errs) = lint_config.parse_toml(&text) {
-            for e in &errs {
-                eprintln!("llg: lint config: {e}");
-            }
-            eprintln!("llg: aborting due to lint config errors");
-            return 1;
-        }
-    }
-
     let _generation_stage = llg::profile::Stage::new("generation");
     let frontend_stage = llg::profile::Stage::new("frontend");
     // 1. Slang parse, compile and elaborate into an owned snapshot.
@@ -246,15 +183,12 @@ fn run(options: DriverOptions) -> i32 {
         library_files,
         library_order,
         default_library,
-        limits: llg::ffi::slang::Limits::simulator(max_export_bytes),
+        limits: llg::ffi::slang::Limits::simulator(llg::ffi::slang::NATIVE_HARD_MAX_OUTPUT_BYTES),
         ..Default::default()
     }) {
         Ok(out) => out,
         Err(compile::CompileError::Startup(e)) => {
             eprintln!("llg: compile failed to start: {e}");
-            if let Some(hint) = export_limit_hint(&e, max_export_bytes) {
-                eprintln!("llg: {hint}");
-            }
             return 1;
         }
         Err(compile::CompileError::FrontendDiagnostics(diagnostics)) => {
@@ -280,8 +214,8 @@ fn run(options: DriverOptions) -> i32 {
         );
     }
 
-    // 2. Lint gate (--lint mode): build the owned db + model, print findings,
-    //    and abort on lint errors before codegen.
+    // 2. Lint gate: every run lints the owned db before codegen. Errors
+    //    (and warnings under -Werror) stop the run.
     let db_stage = llg::profile::Stage::new("db.import");
     let codegen_db = match llg::core::db::Db::from_slang(&out.snapshot) {
         Ok(db) => db,
@@ -292,74 +226,44 @@ fn run(options: DriverOptions) -> i32 {
     };
     drop(db_stage);
     drop(out);
-    if lint_mode {
-        let model = llg::core::model::DesignModel::from_db(&codegen_db);
-        let findings = llg::core::lint::lint_with_config(&codegen_db, &model, &lint_config);
-
-        if lint_json_mode {
-            // Machine-readable report mode: one JSON object on stdout (or in
-            // a file), no human-readable lint lines, and no codegen/simulation
-            // afterwards — the report is the entire stdout output.
-            let json = llg::core::lint::diags_to_json(&findings);
-            match &lint_json_path {
-                Some(path) => {
-                    if let Err(e) = std::fs::write(path, format!("{json}\n")) {
-                        eprintln!("llg: cannot write lint JSON {}: {e}", path.display());
-                        return 1;
-                    }
-                }
-                None => println!("{json}"),
-            }
-            let errors = findings
-                .iter()
-                .filter(|d| d.severity == llg::core::lint::LintSeverity::Error)
-                .count();
-            if errors > 0 {
-                return 1;
-            }
-            return 0;
-        } else {
-            let mut errors = 0usize;
-            let mut warnings = 0usize;
-            for d in &findings {
-                let sev = match d.severity {
-                    llg::core::lint::LintSeverity::Error => {
-                        errors += 1;
-                        "ERROR"
-                    }
-                    llg::core::lint::LintSeverity::Warning => {
-                        warnings += 1;
-                        "WARNING"
-                    }
-                    llg::core::lint::LintSeverity::Info => "INFO",
-                };
-                let mut loc = String::new();
-                if let Some(f) = &d.file {
-                    loc.push_str(f);
-                    if d.line > 0 {
-                        loc.push_str(&format!(":{}", d.line));
-                        if d.col > 0 {
-                            loc.push_str(&format!(":{}", d.col));
-                        }
-                    }
-                    if let Some(logical) = &d.logical {
-                        loc.push_str(&format!(" (`line {}:{})", logical.file, logical.line));
-                    }
-                }
-                if !loc.is_empty() {
-                    loc.push_str(": ");
-                }
-                eprintln!("{loc}[{sev}] {}: {}", d.rule, d.message);
-            }
-            if findings.is_empty() {
-                eprintln!("lint: clean");
-            } else {
-                eprintln!("lint: {errors} error(s), {warnings} warning(s)");
-            }
-            if errors > 0 {
-                return 1;
+    let lint_stage = llg::profile::Stage::new("lint");
+    let model = llg::core::model::DesignModel::from_db(&codegen_db);
+    let mut findings = llg::core::lint::lint_with_config(&codegen_db, &model, &lint_config);
+    drop(model);
+    drop(lint_stage);
+    if warnings_as_errors {
+        for finding in &mut findings {
+            if finding.severity == LintSeverity::Warning {
+                finding.severity = LintSeverity::Error;
             }
         }
+    }
+    let lint_errors = findings
+        .iter()
+        .filter(|d| d.severity == LintSeverity::Error)
+        .count();
+    if lint_json_mode {
+        // Machine-readable report mode: one JSON object on stdout (or in a
+        // file), no human-readable lint lines, and no codegen/simulation
+        // afterwards — the report is the entire stdout output.
+        let json = llg::core::lint::diags_to_json(&findings);
+        match &lint_json_path {
+            Some(path) => {
+                if let Err(e) = std::fs::write(path, format!("{json}\n")) {
+                    eprintln!("llg: cannot write lint JSON {}: {e}", path.display());
+                    return 1;
+                }
+            }
+            None => println!("{json}"),
+        }
+        return i32::from(lint_errors > 0);
+    }
+    print_lint_findings(&findings, lint_only);
+    if lint_errors > 0 {
+        return 1;
+    }
+    if lint_only {
+        return 0;
     }
 
     // 3. Reuse the validated owned semantic database.
@@ -380,6 +284,7 @@ fn run(options: DriverOptions) -> i32 {
         &sim::codegen::CodegenOptions {
             optimization,
             value_config,
+            waveform: wave,
             ..Default::default()
         },
     );
@@ -459,6 +364,49 @@ fn run(options: DriverOptions) -> i32 {
     model_exit_code(status.code())
 }
 
+/// Print lint findings to stderr as `file:line:col: [SEVERITY] rule: message`
+/// followed by a count line. A clean design prints nothing unless the run
+/// stops after lint, which confirms it with `lint: clean`.
+fn print_lint_findings(findings: &[LintDiag], lint_only: bool) {
+    let mut errors = 0usize;
+    let mut warnings = 0usize;
+    for d in findings {
+        let sev = match d.severity {
+            LintSeverity::Error => {
+                errors += 1;
+                "ERROR"
+            }
+            LintSeverity::Warning => {
+                warnings += 1;
+                "WARNING"
+            }
+            LintSeverity::Info => "INFO",
+        };
+        let mut loc = String::new();
+        if let Some(f) = &d.file {
+            loc.push_str(f);
+            if d.line > 0 {
+                loc.push_str(&format!(":{}", d.line));
+                if d.col > 0 {
+                    loc.push_str(&format!(":{}", d.col));
+                }
+            }
+            if let Some(logical) = &d.logical {
+                loc.push_str(&format!(" (`line {}:{})", logical.file, logical.line));
+            }
+        }
+        if !loc.is_empty() {
+            loc.push_str(": ");
+        }
+        eprintln!("{loc}[{sev}] {}: {}", d.rule, d.message);
+    }
+    if !findings.is_empty() {
+        eprintln!("lint: {errors} error(s), {warnings} warning(s)");
+    } else if lint_only {
+        eprintln!("lint: clean");
+    }
+}
+
 /// The driver status for a model run. A model that exits normally with a
 /// status in the portable 0-255 range reports it unchanged. Termination by a
 /// signal (`None` on Unix) or any status outside that range becomes 1: a
@@ -489,7 +437,6 @@ fn gen_name(gen: &sim::codegen::GeneratedModel) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::parse_args;
 
     #[test]
     fn model_exit_codes_keep_byte_statuses_and_map_crashes_to_one() {
@@ -501,42 +448,5 @@ mod tests {
         assert_eq!(model_exit_code(Some(256)), 1);
         // STATUS_STACK_BUFFER_OVERRUN from abort() on Windows.
         assert_eq!(model_exit_code(Some(0xC000_0409_u32 as i32)), 1);
-    }
-
-    #[test]
-    fn export_budget_defaults_to_the_simulator_policy() {
-        let options = parse_args(vec!["design.sv".to_owned()]).unwrap();
-        assert_eq!(options.max_export_bytes, None);
-        let options = parse_args(vec![
-            "--max-export-mib".to_owned(),
-            "1".to_owned(),
-            "design.sv".to_owned(),
-        ])
-        .unwrap();
-        assert_eq!(options.max_export_bytes, Some(MIB));
-    }
-
-    #[test]
-    fn export_failure_hint_names_the_option_and_native_ceiling() {
-        let error = compile::compile_sources_checked(
-            &[compile::OwnedSource::compilation_unit(
-                "tb.sv",
-                "module tb; endmodule",
-            )],
-            &compile::CompileOpts {
-                limits: llg::ffi::slang::Limits::simulator(1),
-                ..Default::default()
-            },
-        )
-        .expect_err("the export cannot fit one byte");
-        let compile::CompileError::Startup(error) = error else {
-            panic!("expected startup limit failure");
-        };
-        let hint = export_limit_hint(&error, MIB).expect("adjustable export hint");
-        assert!(hint.contains("1 MiB frontend export budget"));
-        assert!(hint.contains("--max-export-mib <MiB> (at most 16384)"));
-        let hint = export_limit_hint(&error, NATIVE_HARD_MAX_OUTPUT_BYTES)
-            .expect("native export ceiling hint");
-        assert!(hint.contains("native 16384 MiB frontend export ceiling"));
     }
 }

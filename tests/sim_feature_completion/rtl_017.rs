@@ -198,6 +198,6 @@ fn verilog_2001_rejects_overload_declarations() {
         SUITE,
         "neg_v2001_overload.v",
         "neg_v2001_overload.v:7:8 expected a declaration name",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }

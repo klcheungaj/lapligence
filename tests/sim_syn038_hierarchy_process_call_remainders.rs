@@ -58,6 +58,6 @@ fn hierarchy_process_call_remainders_match_in_both_cli_modes() {
         "reduction=07 function=a6 latch=91 child_port=5c const=5,7,2a\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

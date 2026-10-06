@@ -72,9 +72,9 @@ fn selected_pattern_udp_and_configuration_paths_compose() {
     let map = map.to_string_lossy();
     let args = [
         "--edition",
-        "2009",
+        "sv2009",
         "--top",
-        "syn039_select:config",
+        "syn039_select",
         "--libmap",
         map.as_ref(),
     ];

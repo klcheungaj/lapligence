@@ -145,7 +145,7 @@ fn null_handle_check(stdout: &'static str, site: &'static str) -> impl Fn(&str, 
         // Frontend lint warnings precede the run-time report.
         let runtime = stderr
             .lines()
-            .filter(|line| !line.starts_with("Warning: "))
+            .filter(|line| !crate::sim_harness::is_compile_report_line(line))
             .map(|line| format!("{line}\n"))
             .collect::<String>();
         assert_eq!(

@@ -10,7 +10,7 @@ fn packed_union_projection_drives_constant_dimension_and_runtime_reads() {
         "base=a5 low=5 elaborated_width=10\nruntime=3c low=c\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -20,6 +20,6 @@ fn packed_union_constant_form_is_rejected_in_verilog_2001() {
         "syn038_pairwise",
         "union_constant",
         "`$bits` is not available in IEEE 2001",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }

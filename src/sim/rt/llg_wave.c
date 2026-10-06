@@ -111,10 +111,13 @@ typedef struct {
     int initialized;
     int worker_started;
     int producer_dumping;
+    // Set by llg_wave_start: the driver chose the file and selection, so the
+    // design's $dumpfile/$dumpvars calls are ignored.
+    int driver_selection;
     // Run-time placement read at init, before the writer thread starts; this
     // unit stays independent of the scheduler runtime.
     char* out_dir;        // LLG_SIM_OUT_DIR, or NULL
-    char* file_override;  // LLG_SIM_WAVE_FILE, or NULL
+    char* file_override;  // LLG_SIM_WAVE_FILE, else the llg_wave_start file, or NULL
 } wave_state_t;
 
 static wave_state_t g_wave;
@@ -1107,7 +1110,9 @@ int llg_wave_register_real(const char* name, double* value) {
 }
 
 void llg_wave_file(const char* path, uint64_t now) {
-    if (!require_producer("$dumpfile") || !path || !start_worker()) return;
+    if (!require_producer("$dumpfile") || g_wave.driver_selection || !path ||
+        !start_worker())
+        return;
     wave_event_t event = {0};
     event.kind = EV_FILE;
     event.now = now;
@@ -1125,7 +1130,7 @@ void llg_wave_dumpvars(uint64_t now) {
 
 void llg_wave_dumpvars_select(uint64_t now, uint32_t depth,
                               const char* const* names, uint32_t name_count) {
-    if (!require_producer("$dumpvars")) return;
+    if (!require_producer("$dumpvars") || g_wave.driver_selection) return;
     if (name_count && !names) {
         wave_error("$dumpvars selection list is null");
         return;
@@ -1133,6 +1138,27 @@ void llg_wave_dumpvars_select(uint64_t now, uint32_t depth,
     select_registrations(depth, names, name_count);
     g_wave.producer_dumping = 1;
     enqueue_snapshot(now, SNAP_DUMPVARS);
+}
+
+int llg_wave_start(const char* path, uint32_t depth, const char* const* names,
+                   uint32_t name_count) {
+    if (!require_producer("waveform start")) return -1;
+    if (!path || g_wave.driver_selection) {
+        wave_error("invalid driver waveform start");
+        return -1;
+    }
+    // LLG_SIM_WAVE_FILE, read at init, still wins over the generated name.
+    if (!g_wave.file_override) {
+        g_wave.file_override = wave_strdup(path);
+        if (!g_wave.file_override) {
+            wave_error("out of memory while recording `%s`", path);
+            return -1;
+        }
+    }
+    llg_wave_file(path, 0);
+    llg_wave_dumpvars_select(0, depth, names, name_count);
+    g_wave.driver_selection = 1;
+    return llg_atomic_int_load(&g_wave.error) ? -1 : 0;
 }
 
 void llg_wave_on(uint64_t now) {

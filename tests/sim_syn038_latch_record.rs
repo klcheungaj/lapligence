@@ -16,6 +16,6 @@ fn child_record_and_selected_record_array_latches_match_in_both_modes() {
         ),
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

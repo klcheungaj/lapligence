@@ -135,7 +135,7 @@ implemented simulator behavior. PLA tasks remain explicitly unsupported (§10).
 
 ## Target language editions
 
-`--edition 2001|2009` selects one compilation-wide policy; the default is 2009.
+`--edition v2001|sv2009` selects one compilation-wide policy; the default is `sv2009`.
 `` `begin_keywords `` / `` `end_keywords `` change lexical keywords in 2009,
 not that policy; the 2001 profile rejects them. The pinned Slang API exposes
 semantic checks from 2017 onward; the project's 2009 keyword, time and

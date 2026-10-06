@@ -452,7 +452,7 @@ fn blocking_written_whole_variables_reach_ref_and_inout_tasks_in_both_cli_modes(
         EXPECTED_STDOUT,
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

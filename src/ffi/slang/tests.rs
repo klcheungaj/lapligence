@@ -638,17 +638,17 @@ fn language_edition_parser_and_default_are_explicit() {
         LanguageEdition::default(),
         LanguageEdition::SystemVerilog2009
     );
-    assert_eq!(LanguageEdition::Verilog2001.to_string(), "2001");
-    assert_eq!(LanguageEdition::SystemVerilog2009.to_string(), "2009");
-    assert_eq!(
-        "1364-2001".parse::<LanguageEdition>(),
-        Ok(LanguageEdition::Verilog2001)
-    );
-    assert_eq!(
-        "1800-2009".parse::<LanguageEdition>(),
-        Ok(LanguageEdition::SystemVerilog2009)
-    );
-    assert!("2017".parse::<LanguageEdition>().is_err());
+    assert_eq!(LanguageEdition::Verilog2001.to_string(), "v2001");
+    assert_eq!(LanguageEdition::SystemVerilog2009.to_string(), "sv2009");
+    for edition in [
+        LanguageEdition::Verilog2001,
+        LanguageEdition::SystemVerilog2009,
+    ] {
+        assert_eq!(edition.to_string().parse::<LanguageEdition>(), Ok(edition));
+    }
+    for rejected in ["2001", "2009", "1364-2001", "1800-2009", "SV2009", "sv2017"] {
+        assert!(rejected.parse::<LanguageEdition>().is_err(), "{rejected}");
+    }
     assert_eq!(
         LanguageEdition::from_snapshot_flags(SNAPSHOT_EDITION_VERILOG_2001),
         Ok(LanguageEdition::Verilog2001)

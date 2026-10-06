@@ -492,7 +492,7 @@ fn hierarchical_child_drivers_match_in_v2001_and_sv2009() {
         if !optimized {
             command.arg("--no-opt");
         }
-        command.args(["--edition", "2001"]).arg(&fixture);
+        command.args(["--edition", "v2001"]).arg(&fixture);
         let output = sim_harness::run_command(&mut command, Duration::from_secs(180))
             .expect("run Verilog-2001 hierarchical driver fixture");
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -524,7 +524,7 @@ fn hierarchical_driver_preserves_r05_inout_compatibility() {
             "net_resolution",
             "hierarchical_r05_driver",
             optimized,
-            &["--edition", "2001"],
+            &["--edition", "v2001"],
             &[],
             &[],
         );
@@ -772,7 +772,7 @@ fn alias_bad_type_or_edition() {
         "net_resolution",
         "true_net_alias",
         "use of undeclared identifier 'alias'",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 

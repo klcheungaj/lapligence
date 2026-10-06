@@ -34,17 +34,28 @@ Keep reusable processing in the library. Bins import `llg::config`, `llg::core`,
   retains them in source-only output. `--no-opt` disables normally enabled IR
   passes; conformance fixtures exercise both modes.
 - `--include-dir`/`-I` admits bounded canonical files under source/configured
-  include roots. `--define`/`-D <NAME[=VALUE]>` seeds preprocessing before admission,
-  including macro-expanded include names. Native reads remain cache-only.
-- `--max-export-mib <MiB>` accepts 1–16384, default 4096, and supplies
-  `Limits::simulator` to checked compilation, including report-only lint.
-  Export exhaustion names the effective budget and the option; native record
-  ceilings are fixed. [FFI](../ffi/AGENTS.md) owns the separate library defaults
-  and native ceilings. The optional process-memory guard remains independent.
-- `--lint` runs shared lint before codegen and exits 1 on errors.
-  `--lint-config <path>` loads `llg-lint.toml`. `--lint-json [<path>]` takes
-  precedence over `--lint`, emits one JSON object to stdout/file and exits without
-  simulation. [Lint](../core/lint/AGENTS.md) owns schema and exit details.
+  include roots and is also the module-definition search path (core compile
+  owns the scan). `--define`/`-D <NAME[=VALUE]>` seeds preprocessing before
+  admission, including macro-expanded include names. Native reads remain
+  cache-only.
+- `--top` takes a module name only (`config::validate_top_name`): no `lib.`
+  prefix or `:config` suffix, on the command line and in `compile.top`.
+  `--edition` takes `v2001` or `sv2009`. Unknown `-` options are usage errors
+  (exit 2), never source files.
+- Simulator compiles use `Limits::simulator()` with no export budget;
+  [FFI](../ffi/AGENTS.md) owns the native limits. The optional process-memory
+  guard remains independent.
+- Every run lints the owned db before codegen with the `--config` file's
+  `[lint]` rules; errors exit 1, warnings print and continue, `-Werror`
+  (`lint.warnings_as_errors`) promotes warnings to errors. A clean run prints
+  nothing; `--lint-only` (`lint.only`) stops after lint and prints `lint: clean`
+  when clean. `--lint-json [<path>]` implies `--lint-only`, emits one JSON
+  object to stdout/file and exits. [Lint](../core/lint/AGENTS.md) owns schema
+  and exit details.
+- `--wave <file.vcd|file.fst>`/`--wave-depth <N>` (`[waveform] file/depth`)
+  reach codegen as `CodegenOptions::waveform`: the model registers every signal
+  and calls `llg_wave_start` at startup, after which design
+  `$dumpfile`/`$dumpvars` are ignored. `--no-wave` cancels a configured file.
 - `--stop-policy <resume|exit>` defaults to same-time coroutine resumption.
   `exit` returns from the child without draining work or running finals; embedders
   also have an explicit runtime resume hook.
@@ -66,8 +77,8 @@ command line (including source files and `--` plusargs) replaces the config
 list, and its `--append-<list>` twin adds to it (replacing values first, then
 appended ones; `settings::listed` is the one merge). A later `NAME=VALUE`
 define/override replaces an earlier one; other lists keep the first identical
-entry; booleans have `--no-X` opposites (`--no-gen-only`, `--opt`, `--no-lint`).
-`--config` and `--lint-config` are command-line only. A config error exits 1
+entry; booleans have opposites (`--no-gen-only`, `--opt`, `--no-lint-only`,
+`-Wno-error`, `--no-wave`). `--config` is command-line only. A config error exits 1
 naming file and key; entry-level warnings go to stderr. Add a new option to
 `cli.rs`, the config schema, `docs/config.md` (a new list needs both its
 replace and its `--append-` option, an `Appends` field and a row in the list

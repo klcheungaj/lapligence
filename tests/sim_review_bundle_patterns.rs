@@ -2,7 +2,7 @@
 use crate::sim_cli;
 
 const SUITE: &str = "review_bundle";
-const EDITION: &[&str] = &["--edition", "2009"];
+const EDITION: &[&str] = &["--edition", "sv2009"];
 
 #[test]
 fn fixed_array_type_keys_obey_last_match_recursion_and_default_coverage() {

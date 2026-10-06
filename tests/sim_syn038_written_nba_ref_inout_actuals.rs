@@ -249,7 +249,7 @@ fn prior_nba_values_reach_whole_ref_and_inout_tasks_in_both_cli_modes() {
         EXPECTED_STDOUT,
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

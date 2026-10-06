@@ -33,6 +33,6 @@ fn scope_initializer_remainders_match_in_both_cli_modes() {
         "subroutine=a1\ngenerate=11,22,33,44\ninterface=51,62,73\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

@@ -48,6 +48,6 @@ fn remaining_process_write_paths_match_in_both_cli_modes() {
         "ops=0,0,21,21 comb=24 latch=25 const_ref=a1\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

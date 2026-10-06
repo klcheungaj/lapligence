@@ -298,7 +298,7 @@ fn continuous_net_and_variable_events_match_exact_cli_oracle_in_both_modes() {
         EXPECTED_STDOUT,
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

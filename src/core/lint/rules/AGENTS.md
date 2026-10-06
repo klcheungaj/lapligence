@@ -12,7 +12,11 @@ native traversal or I/O.
 - `unused.rs` — `unused-signal`: signals that are never read or used.
 - `width.rs` — `width-mismatch`: assignments and port links with different known widths.
 - `latch.rs` — `incomplete-case`: exact cases without a default in combinational/latch logic.
-- `combloop.rs` — `combinational-loop`: combinational feedback paths.
+- `combloop.rs` — `combinational-loop`: combinational feedback paths. A
+  process's inputs are its exposed reads (read before a definite write on every
+  path; `if`/`case` arms intersect, loops define nothing), and process-locals
+  (`analysis::process_local_vars`) never form edges. Analysis is per whole
+  variable, so bit-level self reads (`v[0] = v[1]`) still report.
 - `multidriver.rs` — `multi-driver`: signals driven by multiple processes.
 - `casez.rs` — `casez-misuse`: overlapping wildcard case items and constant selectors.
 - `if_latch.rs` — `if-latch`: incomplete combinational `if` assignments that may infer a latch.

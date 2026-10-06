@@ -20,7 +20,7 @@ fn selected_array_process_targets_capture_expected_values() {
             "syn038_pairwise",
             "array_processes",
             optimized,
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
             &[],
             &[],
         );
@@ -33,6 +33,10 @@ fn selected_array_process_targets_capture_expected_values() {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(output.stdout.as_slice(), expected_stdout, "{label}");
-        assert_eq!(output.stderr.as_slice(), b"", "{label}");
+        assert_eq!(
+            crate::sim_harness::strip_lint_reports(&output.stderr),
+            "",
+            "{label}"
+        );
     }
 }

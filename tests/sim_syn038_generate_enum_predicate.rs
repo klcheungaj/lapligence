@@ -10,6 +10,6 @@ fn generated_enum_equality_event_and_child_predicate_match_in_both_modes() {
         "events=1\nseen=1\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

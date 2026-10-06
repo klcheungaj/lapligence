@@ -14,7 +14,7 @@ fn packed_conditional_policy_uses_published_z_z_cell_in_both_editions() {
         ),
         "x".repeat(65),
     );
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             "conditional_policy",
             "packed_mux_policy",

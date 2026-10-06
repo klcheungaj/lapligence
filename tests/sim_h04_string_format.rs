@@ -17,7 +17,7 @@ fn string_formatting_is_typed_and_retains_results() {
 fn packed_arguments_print_as_ascii_strings_in_both_editions() {
     // Independent oracle: the standards' `%s` examples (V 2.6.3 / 17.1.1,
     // SV 11.10); leading zero bytes are never printed (V 17.1.1.7).
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             "string_format",
             "packed_string_conversion",

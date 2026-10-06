@@ -168,6 +168,15 @@ pub enum LanguageEdition {
 }
 
 impl LanguageEdition {
+    /// The standard's publication year, as diagnostics name the edition
+    /// (`IEEE 2001`).
+    pub fn ieee_year(self) -> &'static str {
+        match self {
+            Self::Verilog2001 => "2001",
+            Self::SystemVerilog2009 => "2009",
+        }
+    }
+
     fn compile_flag(self) -> u32 {
         match self {
             Self::Verilog2001 => COMPILE_EDITION_VERILOG_2001,
@@ -192,8 +201,8 @@ impl LanguageEdition {
 impl fmt::Display for LanguageEdition {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::Verilog2001 => "2001",
-            Self::SystemVerilog2009 => "2009",
+            Self::Verilog2001 => "v2001",
+            Self::SystemVerilog2009 => "sv2009",
         })
     }
 }
@@ -202,11 +211,11 @@ impl str::FromStr for LanguageEdition {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value.to_ascii_lowercase().as_str() {
-            "2001" | "1364-2001" | "verilog-2001" => Ok(Self::Verilog2001),
-            "2009" | "1800-2009" | "systemverilog-2009" => Ok(Self::SystemVerilog2009),
+        match value {
+            "v2001" => Ok(Self::Verilog2001),
+            "sv2009" => Ok(Self::SystemVerilog2009),
             _ => Err(format!(
-                "unsupported language edition `{value}` (expected 2001 or 2009)"
+                "unsupported language edition `{value}` (expected v2001 or sv2009)"
             )),
         }
     }

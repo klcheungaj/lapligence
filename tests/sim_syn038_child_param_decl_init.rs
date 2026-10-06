@@ -13,6 +13,6 @@ fn child_parameter_initializers_keep_instance_identity_in_both_modes() {
         "decl=05 siblings=05/0a procedural=05\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

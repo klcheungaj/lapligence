@@ -1,7 +1,7 @@
 // llg-test-fixture: G1-34 rtl_composition_gate (strict IEEE 1364-2001 scope).
 // The 2001 counterpart of edition_scope_2009: same datapath and expected trace,
 // using only IEEE 1364-2001 constructs (reg/wire, always @*, generate for,
-// old-style function). Run with `--edition 2001`.
+// old-style function). Run with `--edition v2001`.
 module tb;
     parameter W = 8;
 

@@ -215,7 +215,7 @@ fn written_fixed_array_reductions_match_both_optimizer_modes() {
         EXPECTED_STDOUT,
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

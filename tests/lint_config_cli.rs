@@ -1,4 +1,6 @@
-//! CLI integration tests for `llg --lint --lint-config <path>`.
+//! CLI integration tests for the lint pass every `llg` run performs, its
+//! `--config` `[lint]` rule settings, `--lint-only`, `--lint-json` and
+//! `-Werror`.
 //!
 //! Each test drives the real `llg` binary (via `CARGO_BIN_EXE_llg`)
 //! in a fresh temp dir, so the generated `build/sim/` tree stays isolated
@@ -98,6 +100,12 @@ impl TempDir {
         TempDir { path }
     }
 
+    /// Write an `llg.toml` whose `[lint]` table holds `rules`, given as
+    /// `[lint.rules.<id>]` tables.
+    fn lint_config(&self, rules: &str) -> std::path::PathBuf {
+        self.write("llg.toml", &format!("schema_version = 1\n{rules}"))
+    }
+
     fn write(&self, name: &str, contents: &str) -> std::path::PathBuf {
         let p = self.path.join(name);
         std::fs::write(&p, contents).expect("write temp file");
@@ -131,17 +139,16 @@ fn stderr(out: &std::process::Output) -> String {
 }
 
 /// Disabling a rule in the config suppresses its findings; with nothing left,
-/// the lint pass reports clean and the driver proceeds to codegen + run.
+/// the lint pass prints nothing and the driver proceeds to codegen + run.
 #[test]
 fn cli_disabled_rule_suppresses_finding() {
     let dir = TempDir::new("disabled");
     dir.write("design.sv", UNUSED_SV);
-    let cfg = dir.write("llg-lint.toml", "[rules.unused-signal]\nenabled = false\n");
+    let cfg = dir.lint_config("[lint.rules.unused-signal]\nenabled = false\n");
     let out = run_llg(
         &dir.path,
         &[
-            "--lint",
-            "--lint-config",
+            "--config",
             cfg.to_str().unwrap(),
             "--top",
             "unused",
@@ -151,21 +158,24 @@ fn cli_disabled_rule_suppresses_finding() {
     let err = stderr(&out);
     assert!(out.status.success(), "stderr: {err}");
     assert!(!err.contains("unused-signal"), "finding suppressed: {err}");
-    assert!(err.contains("lint: clean"), "stderr: {err}");
+    assert!(
+        !err.contains("lint:"),
+        "a clean run prints no lint summary: {err}"
+    );
 }
 
 #[test]
 fn human_lint_reuses_delay_metadata_for_codegen() {
     let dir = TempDir::new("delayed_single_db");
     dir.write("design.sv", DELAYED_SV);
-    let out = run_llg(&dir.path, &["--lint", "--top", "delayed", "design.sv"]);
+    let out = run_llg(&dir.path, &["--top", "delayed", "design.sv"]);
     let err = stderr(&out);
     assert!(out.status.success(), "stderr: {err}");
     assert_eq!(String::from_utf8_lossy(&out.stdout), "value=1 time=3000\n");
 }
 
 #[test]
-fn simulation_admits_time_literal_sources_with_and_without_lint() {
+fn simulation_and_lint_only_admit_time_literal_sources() {
     let source = r#"`timescale 1ns/100ps
 module time_values;
     initial begin
@@ -174,19 +184,18 @@ module time_values;
     end
 endmodule
 "#;
-    for lint in [false, true] {
-        let dir = TempDir::new(if lint { "time_lint" } else { "time_no_lint" });
-        dir.write("design.sv", source);
-        let args = if lint {
-            vec!["--lint", "--top", "time_values", "design.sv"]
-        } else {
-            vec!["--top", "time_values", "design.sv"]
-        };
-        let output = run_llg(&dir.path, &args);
-        assert!(output.status.success(), "{}", stderr(&output));
-        // IEEE 1800-2009 5.8 rounds 2.15ns to the local 100ps precision.
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "literal=2.2\n");
-    }
+    let dir = TempDir::new("time_lint");
+    dir.write("design.sv", source);
+    let output = run_llg(&dir.path, &["--top", "time_values", "design.sv"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    // IEEE 1800-2009 5.8 rounds 2.15ns to the local 100ps precision.
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "literal=2.2\n");
+    let output = run_llg(
+        &dir.path,
+        &["--lint-only", "--top", "time_values", "design.sv"],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(output.stdout.is_empty(), "lint-only does not simulate");
 }
 
 /// Overriding a rule's severity to `error` promotes its findings; the lint
@@ -195,15 +204,11 @@ endmodule
 fn cli_severity_override_promotes_finding_to_error() {
     let dir = TempDir::new("severity");
     dir.write("design.sv", UNUSED_SV);
-    let cfg = dir.write(
-        "llg-lint.toml",
-        "[rules.unused-signal]\nseverity = \"error\"\n",
-    );
+    let cfg = dir.lint_config("[lint.rules.unused-signal]\nseverity = \"error\"\n");
     let out = run_llg(
         &dir.path,
         &[
-            "--lint",
-            "--lint-config",
+            "--config",
             cfg.to_str().unwrap(),
             "--top",
             "unused",
@@ -226,8 +231,7 @@ fn cli_missing_config_file_aborts() {
     let out = run_llg(
         &dir.path,
         &[
-            "--lint",
-            "--lint-config",
+            "--config",
             missing.to_str().unwrap(),
             "--top",
             "unused",
@@ -236,7 +240,7 @@ fn cli_missing_config_file_aborts() {
     );
     let err = stderr(&out);
     assert_eq!(out.status.code(), Some(1), "stderr: {err}");
-    assert!(err.contains("cannot read lint config"), "stderr: {err}");
+    assert!(err.contains("does not exist"), "stderr: {err}");
 }
 
 /// A malformed config file aborts with the parser's error messages.
@@ -244,12 +248,11 @@ fn cli_missing_config_file_aborts() {
 fn cli_malformed_config_aborts() {
     let dir = TempDir::new("malformed");
     dir.write("design.sv", UNUSED_SV);
-    let cfg = dir.write("llg-lint.toml", "[rules.nope]\nenabled = true\n");
+    let cfg = dir.lint_config("[lint.rules.nope]\nenabled = true\n");
     let out = run_llg(
         &dir.path,
         &[
-            "--lint",
-            "--lint-config",
+            "--config",
             cfg.to_str().unwrap(),
             "--top",
             "unused",
@@ -258,7 +261,7 @@ fn cli_malformed_config_aborts() {
     );
     let err = stderr(&out);
     assert_eq!(out.status.code(), Some(1), "stderr: {err}");
-    assert!(err.contains("unknown rule `nope`"), "stderr: {err}");
+    assert!(err.contains("unknown lint rule `nope`"), "stderr: {err}");
 }
 
 /// `--lint-json` emits one JSON object on stdout (the warning finding keeps
@@ -298,15 +301,12 @@ fn cli_lint_json_stdout_emits_json() {
 fn cli_lint_json_severity_override_exits_1() {
     let dir = TempDir::new("json_severity");
     dir.write("design.sv", UNUSED_SV);
-    let cfg = dir.write(
-        "llg-lint.toml",
-        "[rules.unused-signal]\nseverity = \"error\"\n",
-    );
+    let cfg = dir.lint_config("[lint.rules.unused-signal]\nseverity = \"error\"\n");
     let out = run_llg(
         &dir.path,
         &[
             "--lint-json",
-            "--lint-config",
+            "--config",
             cfg.to_str().unwrap(),
             "--top",
             "unused",
@@ -392,15 +392,12 @@ endmodule
 fn cli_lint_json_exposes_expanded_shared_rules_and_severity_override() {
     let dir = TempDir::new("expanded_rules");
     dir.write("design.sv", CARELESS_MORE_SV);
-    let cfg = dir.write(
-        "llg-lint.toml",
-        "[rules.duplicate-case-item]\nseverity = \"error\"\n",
-    );
+    let cfg = dir.lint_config("[lint.rules.duplicate-case-item]\nseverity = \"error\"\n");
     let out = run_llg(
         &dir.path,
         &[
             "--lint-json",
-            "--lint-config",
+            "--config",
             cfg.to_str().unwrap(),
             "--top",
             "careless_more",
@@ -472,18 +469,17 @@ fn cli_lint_json_exposes_control_rules_and_honors_config() {
         );
     }
 
-    let cfg = dir.write(
-        "llg-lint.toml",
-        "[rules.empty-implicit-sensitivity]\n\
+    let cfg = dir.lint_config(
+        "[lint.rules.empty-implicit-sensitivity]\n\
          enabled = false\n\
-         [rules.casex-statement]\n\
+         [lint.rules.casex-statement]\n\
          severity = \"error\"\n",
     );
     let configured = run_llg(
         &dir.path,
         &[
             "--lint-json",
-            "--lint-config",
+            "--config",
             cfg.to_str().unwrap(),
             "--top",
             "careless_control",
@@ -512,4 +508,142 @@ fn cli_lint_json_exposes_control_rules_and_honors_config() {
         .and_then(|diags| diags.iter().find(|diag| diag["rule"] == "casex-statement"))
         .expect("configured casex-statement diagnostic");
     assert_eq!(casex["severity"], "error", "{configured_report}");
+}
+
+/// Every run lints: warnings print with a count line and the model still
+/// builds and runs.
+#[test]
+fn lint_runs_without_an_option_and_warnings_do_not_stop_the_run() {
+    let dir = TempDir::new("always");
+    dir.write("design.sv", UNUSED_SV);
+    let out = run_llg(&dir.path, &["--top", "unused", "design.sv"]);
+    let err = stderr(&out);
+    assert!(out.status.success(), "stderr: {err}");
+    assert!(
+        err.contains("[WARNING] unused-signal"),
+        "lint ran without an option: {err}"
+    );
+    assert!(err.contains("lint: 0 error(s), 1 warning(s)"), "{err}");
+    assert!(err.contains("$finish"), "the model ran: {err}");
+}
+
+/// `-Werror` reports warnings as errors, which stop the run before codegen;
+/// `-Wno-error` restores a configured `warnings_as_errors = true`.
+#[test]
+fn werror_turns_lint_warnings_into_errors() {
+    let dir = TempDir::new("werror");
+    dir.write("design.sv", UNUSED_SV);
+    let out = run_llg(&dir.path, &["-Werror", "--top", "unused", "design.sv"]);
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "stderr: {err}");
+    assert!(err.contains("[ERROR] unused-signal"), "{err}");
+    assert!(err.contains("lint: 1 error(s), 0 warning(s)"), "{err}");
+    assert!(!err.contains("$finish"), "no model ran: {err}");
+    assert!(
+        !dir.path.join("build/sim").exists(),
+        "no model was generated"
+    );
+
+    let out = run_llg(
+        &dir.path,
+        &["-Werror", "--lint-json", "--top", "unused", "design.sv"],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(out.status.code(), Some(1), "stdout: {stdout}");
+    assert!(stdout.contains("\"errors\": 1"), "stdout: {stdout}");
+
+    let cfg = dir.write(
+        "llg.toml",
+        "schema_version = 1\n[lint]\nwarnings_as_errors = true\n",
+    );
+    let config = cfg.to_str().unwrap();
+    let out = run_llg(
+        &dir.path,
+        &["--config", config, "--top", "unused", "design.sv"],
+    );
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    let out = run_llg(
+        &dir.path,
+        &[
+            "--config",
+            config,
+            "-Wno-error",
+            "--top",
+            "unused",
+            "design.sv",
+        ],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+}
+
+/// `--lint-only` reports findings and exits without emitting C: 0 when only
+/// warnings remain, 1 on errors, and `lint: clean` for a clean design.
+#[test]
+fn lint_only_stops_before_code_generation() {
+    let dir = TempDir::new("lint_only");
+    dir.write("design.sv", UNUSED_SV);
+    let out = run_llg(&dir.path, &["--lint-only", "--top", "unused", "design.sv"]);
+    let err = stderr(&out);
+    assert!(out.status.success(), "stderr: {err}");
+    assert!(err.contains("[WARNING] unused-signal"), "{err}");
+    assert!(out.stdout.is_empty(), "nothing ran: {err}");
+    assert!(!dir.path.join("build").exists(), "no model was generated");
+
+    let out = run_llg(
+        &dir.path,
+        &["--lint-only", "-Werror", "--top", "unused", "design.sv"],
+    );
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+
+    dir.write("clean.sv", DELAYED_SV);
+    let out = run_llg(&dir.path, &["--lint-only", "--top", "delayed", "clean.sv"]);
+    let err = stderr(&out);
+    assert!(out.status.success(), "stderr: {err}");
+    assert_eq!(err, "lint: clean\n");
+
+    let cfg = dir.write("llg.toml", "schema_version = 1\n[lint]\nonly = true\n");
+    let config = cfg.to_str().unwrap();
+    let out = run_llg(
+        &dir.path,
+        &["--config", config, "--top", "delayed", "clean.sv"],
+    );
+    assert!(out.status.success() && out.stdout.is_empty(), "{out:?}");
+    let out = run_llg(
+        &dir.path,
+        &[
+            "--config",
+            config,
+            "--no-lint-only",
+            "--top",
+            "delayed",
+            "clean.sv",
+        ],
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "value=1 time=3000\n");
+}
+
+/// A lint error (default severity) stops the run before codegen.
+#[test]
+fn default_lint_errors_stop_the_run() {
+    let dir = TempDir::new("lint_error");
+    dir.write(
+        "design.sv",
+        r#"module mixed;
+    logic clk = 1'b0, a, b;
+    always @(posedge clk) begin
+        a = 1'b0;
+        b <= 1'b1;
+    end
+    initial begin
+        $display("SIM-OUTPUT");
+        $finish;
+    end
+endmodule
+"#,
+    );
+    let out = run_llg(&dir.path, &["--top", "mixed", "design.sv"]);
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "stderr: {err}");
+    assert!(err.contains("[ERROR] mixed-assignments"), "{err}");
+    assert!(out.stdout.is_empty(), "the model must not run");
 }

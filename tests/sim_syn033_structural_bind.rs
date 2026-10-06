@@ -16,7 +16,7 @@ fn module_and_instance_bind_execute_in_both_optimizer_modes() {
         "bind=1/0 selected=x/0\nbind=0/1 selected=x/1\n",
         "llg: $finish at time 2000 at tb:38:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -28,7 +28,7 @@ fn interface_bind_executes_in_both_optimizer_modes() {
         "interface_bind=1\ninterface_bind=0\n",
         "llg: $finish at time 2000 at tb:28:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -40,7 +40,7 @@ fn generated_instance_binds_execute_in_both_optimizer_modes() {
         "generated=100\ngenerated=011\n",
         "llg: $finish at time 2000 at tb:36:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -50,31 +50,31 @@ fn bind_diagnostics_keep_unknown_and_illegal_targets_single_fault() {
         SUITE,
         "syn_033_unknown_target",
         "unknown module 'syn033_missing_target'",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "syn_033_illegal_target",
         "not a valid bind target; only modules and interfaces are allowed",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "syn_033_interface_module",
         "cannot instantiate a module in an interface",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "syn_033_duplicate_bind",
         "redefinition of 'repeated'",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "syn_033_outside_scope",
         "use of undeclared identifier 'only_in_tb'",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

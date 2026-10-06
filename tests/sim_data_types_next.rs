@@ -169,7 +169,7 @@ fn packed_nominal_type_key_mismatch_falls_through_to_typed_default() {
         "PASS packed_nominal_type_key_default\n",
         "llg: $finish at time 0 at tb:19:9\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -179,7 +179,7 @@ fn packed_nominal_type_key_without_default_leaves_member_uncovered() {
         "data_types_next",
         "packed_nominal_type_key_uncovered",
         "not all elements of array are covered by an assignment pattern key",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

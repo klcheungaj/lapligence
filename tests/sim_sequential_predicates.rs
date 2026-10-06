@@ -10,7 +10,7 @@ fn sequential_predicate_truth_table() {
         "truth_table=64 true=1 false=21 unknown=42\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -22,7 +22,7 @@ fn sequential_predicate_branch_roles() {
         "branch_roles=pass\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -34,7 +34,7 @@ fn sequential_predicate_effects() {
         "effects=6 cases passed\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -46,7 +46,7 @@ fn sequential_predicate_constant_prefix() {
         "constant_prefix=pass calls=2\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -58,7 +58,7 @@ fn sequential_predicate_wide_truth() {
         "wide_truth=pass\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -70,7 +70,7 @@ fn sequential_predicate_real_result() {
         "real_result=pass calls=3,3\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -82,7 +82,7 @@ fn sequential_predicate_array_results() {
         "array_results=pass\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -94,7 +94,7 @@ fn sequential_predicate_clock_sensitivity() {
         "clock_sensitivity=pass\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -106,7 +106,7 @@ fn sequential_predicate_nested_qualifiers() {
         "nested_qualifiers=pass\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -118,7 +118,7 @@ fn sequential_predicate_reduction_context() {
         "reduction_context=pass\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -130,7 +130,7 @@ fn syn_022_basic_patterns() {
         "patterns=pass result=3c calls=1\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -142,7 +142,7 @@ fn syn_023_recursive_structure_patterns() {
         "structure_patterns=pass checks=6 calls=1\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -154,7 +154,7 @@ fn syn_024_tagged_patterns_guard_tags_and_bind_payloads() {
         "tagged_patterns=pass checks=5 calls=1\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -172,7 +172,7 @@ fn syn_025_pattern_case_items_filters_and_qualifiers() {
         "pattern_case=pass result=5a calls=1\n",
         "",
         &[warning.as_str()],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -182,7 +182,7 @@ fn sequential_predicate_bad_matches_if() {
         "sequential_predicates",
         "bad_matches_if",
         "pattern",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -192,7 +192,7 @@ fn sequential_predicate_bad_matches_conditional() {
         "sequential_predicates",
         "bad_matches_conditional",
         "too few",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -202,7 +202,7 @@ fn sequential_predicate_bad_matches_incompatible() {
         "sequential_predicates",
         "bad_matches_incompatible",
         "not a struct",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -212,7 +212,7 @@ fn sequential_predicate_bad_matches_out_of_scope() {
         "sequential_predicates",
         "bad_matches_out_of_scope",
         "undeclared identifier",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -222,7 +222,7 @@ fn sequential_predicate_bad_tagged_pattern_tag() {
         "sequential_predicates",
         "bad_tagged_pattern_tag",
         "missing",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -232,6 +232,6 @@ fn sequential_predicate_bad_tagged_pattern_type() {
         "sequential_predicates",
         "bad_tagged_pattern_type",
         "tagged",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

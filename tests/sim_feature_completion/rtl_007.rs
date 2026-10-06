@@ -101,13 +101,13 @@ fn stateful_event_helper_witness() {
         expected,
         "llg: $finish at time 1000 at tb:7:1\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_backend_parity(
         SUITE,
         "stateful_event_witness",
         expected,
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[],
     );
 }
@@ -123,13 +123,13 @@ fn real_readonly_helper_witness() {
         expected,
         "llg: $finish at time 1000 at tb:7:1\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_backend_parity(
         SUITE,
         "real_readonly_witness",
         expected,
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[],
     );
 }

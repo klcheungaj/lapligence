@@ -11,6 +11,6 @@ fn enum_initializer_cast_stream_and_inside_rhs_execute() {
         "runtime=00000101 calls=1\nstream=00000101 eq=1 inside=1 miss=0 direct=00000001\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

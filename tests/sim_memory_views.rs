@@ -14,7 +14,7 @@ fn multidimensional_read_walks_rows_and_honors_outer_address_jumps() {
         "m0_2=12 m0_3=13 m1_2=22 m1_3=23\n",
         "llg: simulation ended without $finish (no processes remain) at time 0\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("multi.mem", "@1\n22\n23\n@0\n12\n13\n")],
     );
 }
@@ -27,7 +27,7 @@ fn selected_rows_and_slices_preserve_unselected_cells() {
         "r0=aa r1=bb r2=cc untouched=ee\n",
         "llg: simulation ended without $finish (no processes remain) at time 0\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("row.mem", "aa\nbb\ncc\n")],
     );
     sim_cli::run_case_with_files(
@@ -36,7 +36,7 @@ fn selected_rows_and_slices_preserve_unselected_cells() {
         "s0=41 s1=42 other=ee\n",
         "llg: simulation ended without $finish (no processes remain) at time 0\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("slice.mem", "41\n42\n")],
     );
 }
@@ -52,7 +52,7 @@ fn partial_final_row_keeps_unread_subwords_unchanged() {
             "llg: simulation ended without $finish (no processes remain) at time 0\n",
         ),
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("partial.mem", "11\n22\n")],
     );
 }
@@ -65,7 +65,7 @@ fn reversed_negative_ranges_and_writer_round_trip_keep_row_order() {
         "m-2-1=11 m-2-2=12 m-1-1=21 m-1-2=22\n",
         "llg: simulation ended without $finish (no processes remain) at time 0\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("negative.mem", "11\n12\n21\n22\n31\n32\n")],
     );
     sim_cli::run_case_with_files(
@@ -74,7 +74,7 @@ fn reversed_negative_ranges_and_writer_round_trip_keep_row_order() {
         "m-2-0=21 m-2-1=22 m-1-0=11 m-1-1=12\n",
         "llg: simulation ended without $finish (no processes remain) at time 0\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("negative_jump.mem", "@-1\n11\n12\n@-2\n21\n22\n")],
     );
     sim_cli::run_case_with_files(
@@ -83,7 +83,7 @@ fn reversed_negative_ranges_and_writer_round_trip_keep_row_order() {
         "w0=11 w1=12 w2=21 w3=22\n",
         "llg: simulation ended without $finish (no processes remain) at time 0\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[],
     );
     sim_cli::run_case_with_files(
@@ -92,7 +92,7 @@ fn reversed_negative_ranges_and_writer_round_trip_keep_row_order() {
         "s0=12 s1=34\n",
         "llg: simulation ended without $finish (no processes remain) at time 0\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("struct.mem", "12\n34\n")],
     );
 }
@@ -103,13 +103,13 @@ fn unsupported_memory_view_shapes_fail_at_lowering() {
         "memory_views",
         "reject_range",
         "unsupported executable node",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "memory_views",
         "reject_real",
         "invalid argument type",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -121,7 +121,7 @@ fn review_bundle_readmem_accepts_slices_and_runtime_rows() {
         "PASS r09_readmem_slice\n",
         "llg: $finish at time 0 at tb:11:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[(
             "words.hex",
             include_str!("fixtures/sim/review_bundle/words.hex"),
@@ -133,7 +133,7 @@ fn review_bundle_readmem_accepts_slices_and_runtime_rows() {
         "PASS r09_readmem_runtime_row\n",
         "llg: $finish at time 0 at tb:14:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[(
             "words.hex",
             include_str!("fixtures/sim/review_bundle/words.hex"),
@@ -148,7 +148,7 @@ fn review_bundle_readmem_accepts_slices_and_runtime_rows() {
             "llg: $finish at time 0 at tb:10:5\n",
         ),
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[(
             "words.hex",
             include_str!("fixtures/sim/review_bundle/words.hex"),
@@ -160,7 +160,7 @@ fn review_bundle_readmem_accepts_slices_and_runtime_rows() {
         "PASS r09_readmem_reversed_decl\n",
         "llg: $finish at time 0 at tb:10:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[(
             "words.hex",
             include_str!("fixtures/sim/review_bundle/words.hex"),
@@ -176,7 +176,7 @@ fn runtime_memory_view_selector_is_evaluated_once() {
         "PASS r09_readmem_runtime_selector_once calls=1\n",
         "llg: $finish at time 0 at tb:20:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[(
             "words.hex",
             include_str!("fixtures/sim/review_bundle/words.hex"),

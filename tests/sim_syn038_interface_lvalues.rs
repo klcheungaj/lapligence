@@ -10,6 +10,6 @@ fn interface_member_lvalues_and_initializer_keep_separate_readbacks() {
         "interface=01,a0,b2,01 seeded=12 lanes=34,56\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

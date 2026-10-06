@@ -10,7 +10,7 @@ fn signed_unsigned_enum_and_packed_record_ordering() {
         "PASS syn_028_fixed_sort\n",
         "llg: $finish at time 0 at tb:134:9\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -20,7 +20,7 @@ fn fixed_sort_is_rejected_in_verilog_2001() {
         "data_types_completion",
         "syn028_edition_boundary",
         "not available in IEEE 2001",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -32,7 +32,7 @@ fn fixed_sort_and_rsort_are_available_in_systemverilog_2009() {
         "PASS syn028_edition_boundary\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -44,7 +44,7 @@ fn unpacked_records_keep_key_payload_pairs_across_sort_directions() {
         "PASS syn028_unpacked_record_maps\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -54,12 +54,12 @@ fn incompatible_map_and_const_ref_receiver_are_rejected() {
         "data_types_completion",
         "syn_028_sort_bad_map",
         "integral",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "data_types_completion",
         "syn_028_sort_const_ref",
         "const",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

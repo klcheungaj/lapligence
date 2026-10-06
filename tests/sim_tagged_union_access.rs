@@ -10,7 +10,7 @@ fn run(fixture: &str, optimized: bool) -> std::process::Output {
         "review_bundle",
         fixture,
         optimized,
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[],
         &[],
     )
@@ -135,6 +135,6 @@ fn repeated_nested_tagged_guards_release_value_owners() {
         "PASS n05_tagged_guard_stress\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

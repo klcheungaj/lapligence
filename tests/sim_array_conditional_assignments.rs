@@ -9,7 +9,7 @@ fn array_conditional_assignment_comb() {
         "false=a6,3c\ntrue=a5,3c\nunknown=xx,3c\nhighz=xx,3c\nequal=a5,3c\nchanged=a5,xx\nknown_one=a5,f0\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -21,7 +21,7 @@ fn array_conditional_assignment_effects() {
         "effects=6,4,2 result=11,22,33\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -33,7 +33,7 @@ fn array_conditional_assignment_overlap() {
         "overlap=11,22,11,22\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -45,7 +45,7 @@ fn array_conditional_assignment_nba() {
         "nba=33,ee row=xx,5a\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -57,7 +57,7 @@ fn array_conditional_assignment_clocked() {
         "clock0=a6,5a\nclock1=a5,5a\nclockx=xx,5a\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -69,7 +69,7 @@ fn array_conditional_assignment_views() {
         "views=33,44 calls=2,2\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -81,7 +81,7 @@ fn array_conditional_assignment_shapes() {
         "shapes passed\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -93,7 +93,7 @@ fn array_conditional_assignment_expressions() {
         "expressions=12,ab,55,55\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -103,7 +103,7 @@ fn array_conditional_assignment_rejects_incompatible_rank() {
         "array_conditional_assignments",
         "wrong_shape",
         "no implicit conversion",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -113,7 +113,7 @@ fn array_conditional_assignment_rejects_incompatible_elements() {
         "array_conditional_assignments",
         "wrong_elements",
         "cannot be assigned to type",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -125,7 +125,7 @@ fn array_conditional_assignment_nested_defaults_preserve_bound_element_order() {
         "nested_defaults passed\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -137,7 +137,7 @@ fn array_conditional_assignment_typed_defaults_preserve_byte_values() {
         "typed_defaults passed\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -149,7 +149,7 @@ fn array_conditional_assignment_deep_defaults_preserve_shared_wide_values() {
         "deep_defaults passed\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -161,6 +161,6 @@ fn array_conditional_assignment_repeated_values_preserve_effects_and_resumes() {
         "repeated_values passed\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

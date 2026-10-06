@@ -613,8 +613,6 @@ fn config_lint_rules_apply_to_the_lint_gate() {
     project.write(
         "llg.toml",
         r#"schema_version = 1
-[lint]
-run = true
 [lint.rules.unused-signal]
 severity = "error"
 "#,
@@ -633,15 +631,18 @@ severity = "error"
         "{}",
         stderr(&output)
     );
-    // --no-lint overrides the file's run = true.
+    // The configured `[lint]` table also governs JSON reports.
     let output = project.run(&[
         "--config",
         "llg.toml",
-        "--no-lint",
+        "--lint-json",
         "--top",
         "lint_top",
-        "--gen-only",
         "lint.sv",
     ]);
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("\"errors\": 1"));
+    // Without the config the rule keeps its warning severity.
+    let output = project.run(&["--top", "lint_top", "--gen-only", "lint.sv"]);
     assert!(output.status.success(), "{}", stderr(&output));
 }

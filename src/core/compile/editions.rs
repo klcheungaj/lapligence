@@ -1549,7 +1549,7 @@ pub(super) fn edition_diagnostics(
         });
         Some(Diag {
             severity: Severity::Error, file, line, col,
-            message: format!("`{label}` is not available in IEEE {edition} and is rejected by the strict edition profile"),
+            message: format!("`{label}` is not available in IEEE {} and is rejected by the strict edition profile", edition.ieee_year()),
             logical: None,
         })
     }).collect()

@@ -1,0 +1,8 @@
+# llg.toml for simulation fixtures that deliberately mix blocking and
+# nonblocking assignments in one process. Their tests first check that the
+# default lint run stops with `mixed-assignments` errors, then run with this
+# file, which disables the rule, and check the simulation.
+schema_version = 1
+
+[lint.rules.mixed-assignments]
+enabled = false

@@ -216,7 +216,7 @@ fn typed_operation_contexts_keep_source_and_use_site_in_both_cli_modes() {
         if !optimized {
             command.arg("--no-opt");
         }
-        command.args(["--edition", "2009"]).arg(&fixture_path);
+        command.args(["--edition", "sv2009"]).arg(&fixture_path);
         let output = sim_harness::run_command(&mut command, Duration::from_secs(180))
             .unwrap_or_else(|error| {
                 panic!("syn038_pairwise/operation_context_matrix, optimized={optimized}: {error}")
@@ -230,7 +230,11 @@ fn typed_operation_contexts_keep_source_and_use_site_in_both_cli_modes() {
             String::from_utf8_lossy(&output.stdout)
         );
         assert_eq!(output.stdout.as_slice(), EXPECTED_STDOUT, "{label}");
-        assert_eq!(output.stderr.as_slice(), EXPECTED_STDERR, "{label}");
+        assert_eq!(
+            crate::sim_harness::strip_lint_reports(&output.stderr).as_bytes(),
+            EXPECTED_STDERR,
+            "{label}"
+        );
 
         let negative_root =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sim/syn038_pairwise");
@@ -263,7 +267,7 @@ fn typed_operation_contexts_keep_source_and_use_site_in_both_cli_modes() {
                 negative_command.arg("--no-opt");
             }
             negative_command
-                .args(["--edition", "2009"])
+                .args(["--edition", "sv2009"])
                 .arg(&negative_path);
             let negative_output =
                 sim_harness::run_command(&mut negative_command, Duration::from_secs(180))

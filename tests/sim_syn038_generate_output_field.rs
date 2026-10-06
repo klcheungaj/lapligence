@@ -10,6 +10,6 @@ fn generated_child_output_propagates_to_a_packed_struct_field() {
         "hi=5a\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

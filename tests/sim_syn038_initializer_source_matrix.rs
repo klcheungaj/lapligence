@@ -10,6 +10,6 @@ fn declaration_initializers_read_each_source_storage_kind() {
         "automatic=11,21,31,41 formal=52,62,72 return=84,94,a4,b4 static=01,01,02 interface=00,00,d5\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

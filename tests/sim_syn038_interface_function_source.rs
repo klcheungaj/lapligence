@@ -41,7 +41,7 @@ fn mutable_interface_member_source_flows_through_function_result_in_both_modes()
         EXPECTED_STDOUT,
         EXPECTED_STDERR,
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

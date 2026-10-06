@@ -68,7 +68,7 @@ fn configured_bound_generate_composition_runs_on_every_backend() {
                 COMPOSE_STDERR,
                 &[
                     "--top",
-                    "rtl018_cfg:config",
+                    "rtl018_cfg",
                     "--compilation-units",
                     mode,
                     "--libmap",
@@ -142,7 +142,7 @@ fn component_library_bindings_survive_snapshot_destruction() {
 /// command-line defines seed every unit, in both editions.
 #[test]
 fn library_units_follow_compilation_mode_and_map_macro_scope() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         for (mode, expected) in [
             ("separate", "mark=17 shared=0 map_only=0 cli=0 late=0\n"),
             ("merged", "mark=17 shared=7 map_only=0 cli=0 late=9\n"),
@@ -224,7 +224,7 @@ fn global_include_root_precedes_library_incdir() {
 /// `use` clause overrides it. `%l` reports the bound library.cell (SV §33.7).
 #[test]
 fn library_order_and_configuration_select_the_bound_cell() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         for (order, expected) in [
             ("rtl,gate", "pick rtl.rtl018_pick\npicked=11 local=40\n"),
             ("gate,rtl", "pick gate.rtl018_pick\npicked=22 local=40\n"),
@@ -249,7 +249,7 @@ fn library_order_and_configuration_select_the_bound_cell() {
                 "--edition",
                 edition,
                 "--top",
-                "rtl018_gate_cfg:config",
+                "rtl018_gate_cfg",
                 "--libmap",
                 "binding.map",
                 "-L",
@@ -272,7 +272,7 @@ fn missing_unreachable_and_ambiguous_bindings_reject() {
         "unknown library 'nolib'",
         &[
             "--top",
-            "rtl018_missing_cfg:config",
+            "rtl018_missing_cfg",
             "--libmap",
             "binding.map",
             "binding_missing.sv",
@@ -285,7 +285,7 @@ fn missing_unreachable_and_ambiguous_bindings_reject() {
         "unknown module 'rtl018_local'",
         &[
             "--top",
-            "rtl018_liblist_cfg:config",
+            "rtl018_liblist_cfg",
             "--libmap",
             "binding.map",
             "binding_liblist.sv",
@@ -316,7 +316,7 @@ fn adopted_library_witnesses_execute() {
         "llg: $finish at time 1000 at tb:5:34\n",
         &[
             "--edition",
-            "2001",
+            "v2001",
             "--libmap",
             "witness/empty_incdir.map",
             "-L",
@@ -332,7 +332,7 @@ fn adopted_library_witnesses_execute() {
         "llg: $finish at time 1000 at tb:5:34\n",
         &[
             "--edition",
-            "2001",
+            "v2001",
             "--libmap",
             "witness/macro_map.map",
             "-L",
@@ -456,7 +456,7 @@ fn unauthorized_library_and_include_paths_reject() {
         "`include in a library map is unsupported; use a map include declaration",
         &[
             "--edition",
-            "2001",
+            "v2001",
             "--libmap",
             "witness/compiler_include.map",
             "-L",
@@ -470,7 +470,7 @@ fn unauthorized_library_and_include_paths_reject() {
         "library -incdir `nonexistent` matched no directories",
         &[
             "--edition",
-            "2001",
+            "v2001",
             "--libmap",
             "witness/missing_incdir.map",
             "-L",

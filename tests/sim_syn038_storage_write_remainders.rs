@@ -24,7 +24,7 @@ fn storage_write_remainder_cells_run_in_both_optimizer_modes() {
             "syn038_pairwise",
             "storage_write_remainders",
             optimized,
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
             &[],
             &[],
         );
@@ -32,7 +32,7 @@ fn storage_write_remainder_cells_run_in_both_optimizer_modes() {
         assert_eq!(output.status.code(), Some(0), "{label}");
         assert_eq!(output.stdout.as_slice(), expected_stdout, "{label}");
         assert_eq!(
-            String::from_utf8_lossy(&output.stderr),
+            crate::sim_harness::strip_lint_reports(&output.stderr),
             expected_stderr,
             "{label}"
         );

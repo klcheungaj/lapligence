@@ -22,6 +22,8 @@ pub(super) struct RawConfig {
     #[serde(default)]
     pub simulator: RawSimulator,
     #[serde(default)]
+    pub waveform: RawWaveform,
+    #[serde(default)]
     pub build: RawBuild,
     #[serde(default)]
     pub output: RawOutput,
@@ -83,7 +85,8 @@ pub(super) struct RawLint {
     pub enabled: Option<bool>,
     #[serde(default)]
     pub rules: BTreeMap<String, RawRule>,
-    pub run: Option<bool>,
+    pub only: Option<bool>,
+    pub warnings_as_errors: Option<bool>,
     pub json: Option<bool>,
     pub json_file: Option<String>,
 }
@@ -99,9 +102,15 @@ pub(super) struct RawRule {
 #[serde(deny_unknown_fields)]
 pub(super) struct RawSimulator {
     pub stop_policy: Option<String>,
-    pub max_export_mib: Option<u64>,
     pub optimize: Option<bool>,
     pub plusargs: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawWaveform {
+    pub file: Option<String>,
+    pub depth: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]

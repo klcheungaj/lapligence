@@ -44,7 +44,7 @@ fn static_block_local_hierarchical_port_actual_runs_in_both_optimizer_modes() {
         "static_hierarchical_block_port_actual=passed\n",
         "llg: $finish at time 1000 at tb:32:9\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -116,6 +116,6 @@ llg: Slang reported errors; aborting\n"
         "syn038_pairwise",
         "static_unqualified_block_port_actual_rejected",
         &expected_stderr,
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

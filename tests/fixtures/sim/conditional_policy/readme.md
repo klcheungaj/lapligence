@@ -10,4 +10,4 @@ survive; differing bits and the Z/Z table cell produce X. Known selectors
 still return the selected branch, including Z bits.
 
 The Rust test runs this fixture and the held-out R10 Z/Z witness through both
-optimizer modes under `--edition 2001` and `--edition 2009`.
+optimizer modes under `--edition v2001` and `--edition sv2009`.

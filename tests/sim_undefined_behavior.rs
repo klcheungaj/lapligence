@@ -34,9 +34,9 @@ fn characterize(stem: &str, extension: &str) {
         _ => &[],
     };
     let editions: &[&str] = if extension == "v" {
-        &["2001", "2009"]
+        &["v2001", "sv2009"]
     } else {
-        &["2009"]
+        &["sv2009"]
     };
     for &edition in editions {
         for optimized in [true, false] {
@@ -58,7 +58,9 @@ fn characterize(stem: &str, extension: &str) {
             command.arg(&source);
             let output = sim_harness::run_command(&mut command, Duration::from_secs(180))
                 .unwrap_or_else(|error| panic!("{label}: {error}"));
-            let prefix = format!("{stem}.{edition}.{mode}.llg");
+            // Goldens are named by the standard's year (`2001`, `2009`).
+            let year = edition.trim_start_matches(['s', 'v']);
+            let prefix = format!("{stem}.{year}.{mode}.llg");
             let expected_stdout = std::fs::read(root.join(format!("{prefix}.out")))
                 .unwrap_or_else(|error| panic!("{label}: stdout golden: {error}"));
             let expected_stderr = std::fs::read(root.join(format!("{prefix}.err")))
@@ -70,7 +72,11 @@ fn characterize(stem: &str, extension: &str) {
                 .parse()
                 .unwrap_or_else(|error| panic!("{label}: invalid status golden: {error}"));
             assert_eq!(output.stdout, expected_stdout, "{label}: stdout");
-            assert_eq!(output.stderr, expected_stderr, "{label}: stderr");
+            assert_eq!(
+                crate::sim_harness::strip_lint_reports(&output.stderr).as_bytes(),
+                expected_stderr,
+                "{label}: stderr"
+            );
             assert_eq!(
                 output.status.code(),
                 Some(expected_status),

@@ -16,6 +16,12 @@ void llg_wave_file(const char* path, uint64_t now);
 void llg_wave_dumpvars(uint64_t now);
 void llg_wave_dumpvars_select(uint64_t now, uint32_t depth,
                               const char* const* names, uint32_t name_count);
+// Driver-requested dumping (`llg --wave`): open `path` (unless
+// LLG_SIM_WAVE_FILE replaces it) and select like $dumpvars at time zero. The
+// design's later $dumpfile/$dumpvars calls are ignored; $dumpon/$dumpoff,
+// $dumpall, $dumpflush and $dumplimit keep working. Returns 0 on success.
+int llg_wave_start(const char* path, uint32_t depth, const char* const* names,
+                   uint32_t name_count);
 void llg_wave_on(uint64_t now);
 void llg_wave_off(uint64_t now);
 void llg_wave_dumpall(uint64_t now);

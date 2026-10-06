@@ -25,10 +25,9 @@ use std::path::{Path, PathBuf};
 
 use llg::config::{self, LlgConfig, StopPolicy};
 use llg::core::compile;
-use llg::ffi::slang::SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES;
 use llg::sim;
 
-use crate::cli::{Cli, MIB};
+use crate::cli::Cli;
 
 /// Default output root: models go to `build/sim/<design>` and the runtime
 /// cache to `build/llg-runtime-cache`, both under the current directory.
@@ -50,14 +49,16 @@ pub(crate) struct DriverOptions {
     pub default_library: Option<String>,
     pub files: Vec<String>,
     pub runtime_args: Vec<String>,
-    pub lint_mode: bool,
+    /// Stop after lint (`--lint-only`, implied by a JSON report).
+    pub lint_only: bool,
+    /// Lint warnings stop the run like errors (`-Werror`).
+    pub warnings_as_errors: bool,
     pub lint_json_mode: bool,
     pub lint_json_path: Option<PathBuf>,
-    /// Legacy `llg-lint.toml` named on the command line; replaces the rule
-    /// settings in `lint_config`.
-    pub lint_config_path: Option<PathBuf>,
-    /// Rule settings from `llg.toml`, or the defaults.
+    /// Rule settings from the `--config` file's `[lint]`, or the defaults.
     pub lint_config: llg::core::lint::LintConfig,
+    /// Waveform dumping from time 0 (`--wave`, `[waveform]`).
+    pub wave: Option<sim::codegen::WaveformOptions>,
     pub generator: Option<String>,
     pub dpi_libraries: Vec<PathBuf>,
     pub launcher: Option<String>,
@@ -71,7 +72,6 @@ pub(crate) struct DriverOptions {
     pub gen_only: bool,
     pub no_opt: bool,
     pub stop_policy: StopPolicy,
-    pub max_export_bytes: u64,
     /// Whether the command line itself named a build-tool option, so
     /// `--gen-only` can warn that it is ignored. Config values do not warn.
     pub cli_build_options: bool,
@@ -351,6 +351,7 @@ pub(crate) fn resolve(
         append.runtime_args,
     );
 
+    // `--no-lint-only` also cancels a configured JSON report.
     let lint_json_mode = cli.lint_json_mode.unwrap_or(
         config
             .lint_run
@@ -364,8 +365,37 @@ pub(crate) fn resolve(
     } else {
         config.lint_run.json_file.clone()
     };
-    // `--lint-json` implies lint mode.
-    let lint_mode = lint_json_mode || cli.lint_mode.or(config.lint_run.run).unwrap_or(false);
+    // A JSON report replaces the run, so it implies lint-only.
+    let lint_only = lint_json_mode || cli.lint_only.or(config.lint_run.only).unwrap_or(false);
+    let warnings_as_errors = cli
+        .warnings_as_errors
+        .or(config.lint_run.warnings_as_errors)
+        .unwrap_or(false);
+
+    // `--wave` replaces the configured file and `--no-wave` cancels it; the
+    // depth layers independently but needs a file.
+    let wave_file = match cli.wave_file {
+        Some(file) => file,
+        None => config.waveform.file.clone(),
+    };
+    let wave_depth = cli.wave_depth.or(config.waveform.depth);
+    let wave = match wave_file {
+        Some(file) => Some(sim::codegen::WaveformOptions {
+            file: file.into_os_string().into_string().map_err(|file| {
+                SettingsError(format!(
+                    "waveform file {} is not valid UTF-8",
+                    PathBuf::from(file).display()
+                ))
+            })?,
+            depth: wave_depth.unwrap_or(0),
+        }),
+        None if cli.wave_depth.is_some() => {
+            return Err(SettingsError(
+                "--wave-depth requires --wave <file> or a [waveform] file".to_owned(),
+            ));
+        }
+        None => None,
+    };
 
     let cli_build_options = cli.generator.is_some()
         || cli.launcher.is_some()
@@ -394,11 +424,12 @@ pub(crate) fn resolve(
             .or_else(|| config.libraries.default.clone()),
         files,
         runtime_args,
-        lint_mode,
+        lint_only,
+        warnings_as_errors,
         lint_json_mode,
         lint_json_path,
-        lint_config_path: cli.lint_config_path,
         lint_config: config.lint.clone(),
+        wave,
         generator: layered(
             cli.generator,
             env.generator.clone(),
@@ -433,10 +464,6 @@ pub(crate) fn resolve(
             .stop_policy
             .or(config.simulator.stop_policy)
             .unwrap_or(StopPolicy::Resume),
-        max_export_bytes: cli
-            .max_export_bytes
-            .or(config.simulator.max_export_mib.map(|mib| mib * MIB))
-            .unwrap_or(SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES),
         cli_build_options,
     })
 }
@@ -473,7 +500,7 @@ mod tests {
     const FULL: &str = r#"schema_version = 1
 [compile]
 top = "cfg_top"
-edition = "2001"
+edition = "v2001"
 compilation_units = "merged"
 include_dirs = ["inc"]
 defines = ["CFG_A", "CFG_B=2"]
@@ -487,9 +514,14 @@ order = ["lib"]
 default = "cfglib"
 [simulator]
 stop_policy = "exit"
-max_export_mib = 7
 optimize = false
 plusargs = ["+cfg"]
+[waveform]
+file = "cfg.fst"
+depth = 3
+[lint]
+only = true
+warnings_as_errors = true
 [build]
 generator = "Ninja"
 cc = "cfgcc"
@@ -511,8 +543,9 @@ files = ["a.sv"]
         assert_eq!(options.top, None);
         assert_eq!(options.out_dir, PathBuf::from(DEFAULT_OUT_DIR));
         assert_eq!(options.stop_policy, StopPolicy::Resume);
-        assert_eq!(options.max_export_bytes, SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES);
-        assert!(!options.no_opt && !options.gen_only && !options.lint_mode);
+        assert!(!options.no_opt && !options.gen_only);
+        assert!(!options.lint_only && !options.warnings_as_errors && !options.lint_json_mode);
+        assert_eq!(options.wave, None);
         assert!(options.include_dirs.is_empty() && options.runtime_args.is_empty());
     }
 
@@ -539,7 +572,14 @@ files = ["a.sv"]
         assert_eq!(options.files, [path_string(&dir.join("a.sv"))]);
         assert_eq!(options.runtime_args, ["+cfg"]);
         assert_eq!(options.stop_policy, StopPolicy::Exit);
-        assert_eq!(options.max_export_bytes, 7 * MIB);
+        assert_eq!(
+            options.wave,
+            Some(sim::codegen::WaveformOptions {
+                file: path_string(&dir.join("cfg.fst")),
+                depth: 3,
+            })
+        );
+        assert!(options.lint_only && options.warnings_as_errors);
         assert!(options.no_opt);
         assert_eq!(options.generator.as_deref(), Some("Ninja"));
         assert_eq!(options.cc.as_deref(), Some("cfgcc"));
@@ -561,15 +601,17 @@ files = ["a.sv"]
                 "--top",
                 "cli_top",
                 "--edition",
-                "2009",
+                "sv2009",
                 "--compilation-units",
                 "separate",
                 "--default-library",
                 "clilib",
                 "--stop-policy",
                 "resume",
-                "--max-export-mib",
-                "9",
+                "--wave",
+                "cli.vcd",
+                "--no-lint-only",
+                "-Wno-error",
                 "--opt",
                 "--generator",
                 "Make",
@@ -603,7 +645,15 @@ files = ["a.sv"]
         );
         assert_eq!(options.default_library.as_deref(), Some("clilib"));
         assert_eq!(options.stop_policy, StopPolicy::Resume);
-        assert_eq!(options.max_export_bytes, 9 * MIB);
+        assert_eq!(
+            options.wave,
+            Some(sim::codegen::WaveformOptions {
+                file: "cli.vcd".to_owned(),
+                depth: 3,
+            }),
+            "--wave replaces the file; the configured depth still applies"
+        );
+        assert!(!options.lint_only && !options.warnings_as_errors);
         assert!(!options.no_opt, "--opt overrides optimize = false");
         assert_eq!(options.generator.as_deref(), Some("Make"));
         assert_eq!(options.cc.as_deref(), Some("clicc"));
@@ -1061,15 +1111,12 @@ files = ["a.sv"]
     #[test]
     fn lint_selection_follows_the_precedence_rules() {
         let dir = temp("lint");
-        let on = config(
-            &dir,
-            "schema_version = 1\n[lint]\nrun = true\njson_file = \"r.json\"\n",
-        );
+        let on = config(&dir, "schema_version = 1\n[lint]\njson_file = \"r.json\"\n");
         let options = resolve_no_env(cli(&["x.sv"]), Some(&on)).unwrap();
-        assert!(options.lint_mode && options.lint_json_mode);
+        assert!(options.lint_only && options.lint_json_mode);
         assert_eq!(options.lint_json_path, Some(dir.join("r.json")));
-        let options = resolve_no_env(cli(&["--no-lint", "x.sv"]), Some(&on)).unwrap();
-        assert!(!options.lint_mode && !options.lint_json_mode);
+        let options = resolve_no_env(cli(&["--no-lint-only", "x.sv"]), Some(&on)).unwrap();
+        assert!(!options.lint_only && !options.lint_json_mode);
         let options = resolve_no_env(cli(&["x.sv", "--lint-json"]), Some(&on)).unwrap();
         assert!(options.lint_json_mode);
         assert_eq!(
@@ -1079,11 +1126,80 @@ files = ["a.sv"]
         let off = config(&dir, "schema_version = 1\n");
         let options =
             resolve_no_env(cli(&["--lint-json", "out.json", "x.sv"]), Some(&off)).unwrap();
-        assert!(options.lint_mode && options.lint_json_mode);
+        assert!(options.lint_only && options.lint_json_mode);
         assert_eq!(options.lint_json_path, Some(PathBuf::from("out.json")));
-        let options = resolve_no_env(cli(&["--lint", "x.sv"]), Some(&off)).unwrap();
-        assert!(options.lint_mode && !options.lint_json_mode);
+        let options = resolve_no_env(cli(&["--lint-only", "x.sv"]), Some(&off)).unwrap();
+        assert!(options.lint_only && !options.lint_json_mode);
+        let options = resolve_no_env(cli(&["-Werror", "x.sv"]), Some(&off)).unwrap();
+        assert!(options.warnings_as_errors && !options.lint_only);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn waveform_options_follow_the_precedence_rules() {
+        let dir = temp("wave");
+        let on = config(
+            &dir,
+            "schema_version = 1\n[waveform]\nfile = \"w/dump.vcd\"\n",
+        );
+        let options = resolve_no_env(cli(&["x.sv"]), Some(&on)).unwrap();
+        let wave = options.wave.expect("configured waveform");
+        assert_eq!(wave.file, path_string(&dir.join("w/dump.vcd")));
+        assert_eq!(wave.depth, 0, "the default depth dumps every level");
+        let options = resolve_no_env(cli(&["--no-wave", "x.sv"]), Some(&on)).unwrap();
+        assert_eq!(options.wave, None);
+        let options = resolve_no_env(cli(&["--wave-depth", "2", "x.sv"]), Some(&on)).unwrap();
+        assert_eq!(options.wave.map(|wave| wave.depth), Some(2));
+        let error = resolve_no_env(cli(&["--wave-depth", "2", "x.sv"]), None)
+            .expect_err("a depth needs a file");
+        assert!(error.0.contains("--wave-depth requires"), "{error:?}");
+        for rejected in [
+            &["--wave", "dump.txt", "x.sv"][..],
+            &["--wave"][..],
+            &["--wave", "d.vcd", "--wave-depth", "-1", "x.sv"][..],
+        ] {
+            assert_eq!(
+                parse_args(rejected.iter().map(|arg| (*arg).to_owned()).collect()).err(),
+                Some(2),
+                "{rejected:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn top_accepts_a_module_name_only() {
+        assert_eq!(cli(&["--top", "tb", "x.sv"]).top.as_deref(), Some("tb"));
+        for rejected in ["work.tb", "cfg:config", "a b", ""] {
+            assert_eq!(
+                parse_args(vec![
+                    "--top".to_owned(),
+                    rejected.to_owned(),
+                    "x.sv".to_owned()
+                ])
+                .err(),
+                Some(2),
+                "{rejected}"
+            );
+        }
+    }
+
+    #[test]
+    fn removed_and_unknown_options_are_usage_errors() {
+        for removed in [
+            "--lint",
+            "--no-lint",
+            "--lint-config",
+            "--max-export-mib",
+            "-Wall",
+            "--bogus",
+        ] {
+            assert_eq!(
+                parse_args(vec![removed.to_owned(), "x.sv".to_owned()]).err(),
+                Some(2),
+                "{removed}"
+            );
+        }
     }
 
     #[test]

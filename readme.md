@@ -194,23 +194,37 @@ Common options:
   `--append-libfile`, `--append-library-order`, `--append-dpi-lib`,
   `--append-plusarg`).
 - `--param-override <NAME=VALUE>` / `-G`: override a top-level parameter.
-- `--no-lint`, `--no-gen-only`, `--opt`: undo `lint.run`, `build.gen_only` and
+- `--no-lint-only`, `-Wno-error`, `--no-wave`, `--no-gen-only`, `--opt`: undo
+  `lint.only`, `lint.warnings_as_errors`, `[waveform]`, `build.gen_only` and
   `simulator.optimize = false` from the config file.
 
-- `--top <module>`: select the top-level module.
-- `--edition <2001|2009>`: select the compilation language edition (default `2009`).
+- `--top <module>`: select the top-level module by name (no library prefix or
+  `:config` suffix; a configuration is selected by its plain name).
+- `--edition <v2001|sv2009>`: select the compilation language edition (default `sv2009`).
 - `--compilation-units <separate|merged>`: select per-file or shared
   preprocessing and `$unit` scope (default `separate`).
-- `--include-dir <path>` / `-I <path>`: add a bounded, canonical include root.
+- `--include-dir <path>` / `-I <path>`: add a search directory for both
+  `` `include `` files and module definitions. Pass only the top-level source:
+  a module, interface, program or package the given sources use but do not
+  define is loaded from the `.v`/`.sv` file in these directories that declares
+  it (files directly inside each directory, not subdirectories). Two files
+  declaring the same needed name is an error.
 - `--define <NAME[=VALUE]>` / `-D <NAME[=VALUE]>`: seed preprocessing macros.
-- `--lint`: lint before simulation; lint errors stop the build.
-- `--lint-json [<path>]`: write a JSON lint report and exit.
-- `--lint-config <file>`: load rule settings from a TOML file.
+- Lint always runs before code generation, with the rule settings of the
+  `--config` file's `[lint]` table. Lint errors stop the run; warnings are
+  printed and the run continues.
+- `--lint-only`: lint and exit without generating, building or running.
+- `--lint-json [<path>]`: write a JSON lint report and exit (implies `--lint-only`).
+- `-Werror`: treat lint warnings as errors.
+- `--wave <file>`: dump waveforms from time 0 into a `.vcd` or `.fst` file
+  (the extension picks the format) without `$dumpfile`/`$dumpvars` in the
+  design. It replaces the design's `$dumpfile` name and `$dumpvars` selection;
+  `$dumpon`/`$dumpoff`/`$dumpall`/`$dumpflush`/`$dumplimit` still apply.
+- `--wave-depth <N>`: dump only N hierarchy levels below each top (default 0,
+  every level); requires `--wave` or a configured `[waveform]` file.
 - `--gen-only`: generate C11 sources and `CMakeLists.txt` without building.
-- `--max-export-mib <MiB>`: bound frontend snapshot export for the elaborated
-  design (default 4096 MiB; range 1–16384). An exhausted budget reports its
-  effective limit. Export bytes cover captured records and strings, not total
-  process memory; use `LLG_MEMORY_LIMIT_MB` for the optional process-wide guard.
+  The frontend has no export budget: elaboration may use all available memory
+  (`LLG_MEMORY_LIMIT_MB` is the optional process-wide guard).
 - `--out-dir <dir>`: output root (default `build`). The model is written to
   `<dir>/sim/<design>`; its executable is `<dir>/sim/<design>/build/bin/sim`.
 - `--runtime-cache <dir>`: runtime archive cache (default
@@ -265,8 +279,11 @@ The generated sources and executable are written under `build/sim/hello/`.
 Other useful invocations:
 
 ```sh
-# Lint and then simulate.
-target/release/llg --lint --top hello hello.sv
+# Lint only, treating warnings as errors.
+target/release/llg --lint-only -Werror --top hello hello.sv
+
+# Simulate and dump every signal into an FST waveform.
+target/release/llg --wave hello.fst --top hello hello.sv
 
 # Produce a machine-readable lint report without simulating.
 target/release/llg --lint-json lint-results.json hello.sv
@@ -275,8 +292,8 @@ target/release/llg --lint-json lint-results.json hello.sv
 target/release/llg --gen-only --top hello hello.sv
 ```
 
-To generate waveforms, use `$dumpfile("trace.vcd")` or
-`$dumpfile("trace.fst")` with `$dumpvars` in the HDL source.
+To generate waveforms, pass `--wave trace.vcd` (or `.fst`), or use
+`$dumpfile("trace.vcd")` with `$dumpvars` in the HDL source.
 
 ### Rerunning a built model
 

@@ -66,6 +66,6 @@ fn finish_number_is_constant_in_both_target_editions() {
     reject_case_with_args(
         "finish_runtime_argument",
         "$finish argument at",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }

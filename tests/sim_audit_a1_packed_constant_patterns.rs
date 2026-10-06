@@ -12,7 +12,7 @@ fn whole_packed_struct_and_union_constants_match_runtime_values() {
             "whole_values",
             expected,
             "",
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
             &[value],
         );
     }
@@ -43,7 +43,7 @@ fn nested_tagged_wide_mixed_and_case_modes_keep_integral_semantics() {
             "contexts",
             expected,
             "",
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
             &args,
         );
     }
@@ -55,13 +55,13 @@ fn nonintegral_constant_patterns_remain_rejected() {
         "audit_a1_packed_constant_patterns",
         "unpacked_subject",
         "unpacked",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "audit_a1_packed_constant_patterns",
         "real_constant",
         "integral",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -71,6 +71,6 @@ fn packed_pattern_syntax_remains_systemverilog_only() {
         "audit_a1_packed_constant_patterns",
         "whole_values",
         "undeclared identifier 'matches'",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }

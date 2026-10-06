@@ -32,7 +32,7 @@ fn assert_runtime_errors(fixture: &str, template: &str) {
             ];
             let output = sim_cli::invoke_with_env(SUITE, fixture, optimized, &[], &controls, &[]);
             let label = format!("{fixture}, {backend}/{kernel}, optimized={optimized}");
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = crate::sim_harness::strip_lint_reports(&output.stderr);
             assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
             assert!(output.stdout.is_empty(), "{label}: {output:?}");
             assert_eq!(stderr, expected, "{label}");
@@ -181,7 +181,7 @@ fn q03_interprocess_races_end_in_the_retagged_value() {
         "blocking_target B=55\nqueued_target B=55\nllg: $finish at time 2000 at tb:32:9\n";
     for optimized in [false, true] {
         let output = sim_cli::invoke_with_env(SUITE, "q03_race", optimized, &[], &[], &[]);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = crate::sim_harness::strip_lint_reports(&output.stderr);
         assert_eq!(
             output.status.code(),
             Some(1),

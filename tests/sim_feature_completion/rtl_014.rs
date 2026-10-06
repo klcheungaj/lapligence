@@ -146,6 +146,6 @@ fn neg_verilog_2001_has_no_array_methods() {
         SUITE,
         "neg_methods_2001.v",
         "is not available in IEEE 2001",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }

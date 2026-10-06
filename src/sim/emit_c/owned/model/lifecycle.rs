@@ -287,6 +287,29 @@ pub(in crate::sim::emit_c) fn main(
             }
         }
         tables.render(&registrations, &mut out);
+        if let Some(start) = &model.wave_start {
+            let selection = start.selection();
+            let names = if selection.names().is_empty() {
+                "NULL".to_owned()
+            } else {
+                out.push_str(&format!(
+                    "    static const char* const llg_wave_start_scopes[] = {{{}}};\n",
+                    selection
+                        .names()
+                        .iter()
+                        .map(|name| c_string_literal(name))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                "llg_wave_start_scopes".to_owned()
+            };
+            out.push_str(&format!(
+                "    if (llg_wave_start({}, {}u, {names}, {}u) != 0) goto start_failed;\n",
+                c_string_literal(start.file()),
+                selection.depth(),
+                selection.names().len()
+            ));
+        }
     }
     out.push_str(&format!("    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count) || !llg_vpi_startup()) goto start_failed;\n", c_string_literal(model.design_name())));
     for (index, call) in model.vpi_compile_calls.iter().enumerate() {

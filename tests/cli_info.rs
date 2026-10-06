@@ -54,7 +54,7 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
     check_information(env!("CARGO_BIN_EXE_llg"), "llg", "--gen-only");
     let output = invoke(env!("CARGO_BIN_EXE_llg"), &["--help"]);
     assert!(String::from_utf8_lossy(&output.stdout).contains("--no-opt"));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("--edition <2001|2009>"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("--edition <v2001|sv2009>"));
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("--compilation-units <separate|merged>")
     );
@@ -75,7 +75,13 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
         "--cmake <program>",
         "--build-jobs <N>",
         "--model-opt-level <O0|O1|O2|O3|Os>",
-        "--max-export-mib <MiB>",
+        "--top <module>",
+        "--lint-only",
+        "--lint-json [<path>]",
+        "-Werror",
+        "--wave <file>",
+        "--wave-depth <N>",
+        "--config <file>",
     ] {
         assert!(
             String::from_utf8_lossy(&output.stdout).contains(option),
@@ -115,9 +121,11 @@ fn simulator_missing_option_value_is_a_usage_error() {
         ("--cflags", "--cflags requires a flag string"),
         ("--cmake", "--cmake requires a program"),
         ("--build-jobs", "--build-jobs requires a positive integer"),
+        ("--top", "--top requires a module name"),
+        ("--wave", "--wave requires a file ending in .vcd or .fst"),
         (
-            "--max-export-mib",
-            "--max-export-mib requires an integer from 1 to 16384",
+            "--wave-depth",
+            "--wave-depth requires a non-negative integer",
         ),
         (
             "--model-opt-level",
@@ -173,8 +181,8 @@ fn simulator_build_jobs_rejects_non_positive_and_non_numeric_values() {
 #[test]
 fn simulator_edition_option_rejects_missing_and_unknown_values() {
     for (args, expected) in [
-        (&["--edition"][..], "requires 2001 or 2009"),
-        (&["--edition", "2017"][..], "expected 2001 or 2009"),
+        (&["--edition"][..], "requires v2001 or sv2009"),
+        (&["--edition", "2009"][..], "expected v2001 or sv2009"),
     ] {
         let output = invoke(env!("CARGO_BIN_EXE_llg"), args);
         assert_eq!(output.status.code(), Some(2), "{output:?}");
@@ -266,23 +274,20 @@ fn server_invalid_arguments_do_not_start_the_protocol() {
 }
 
 #[test]
-fn simulator_export_budget_rejects_invalid_values_and_accepts_boundaries() {
-    for value in ["0", "-1", "many", "", "16385", "18446744073709551615"] {
-        let output = invoke(env!("CARGO_BIN_EXE_llg"), &["--max-export-mib", value]);
+fn simulator_removed_options_are_usage_errors() {
+    for option in [
+        "--max-export-mib",
+        "--lint",
+        "--no-lint",
+        "--lint-config",
+        "-Wall",
+    ] {
+        let output = invoke(env!("CARGO_BIN_EXE_llg"), &[option, "4096", "design.sv"]);
         assert_eq!(output.status.code(), Some(2), "{output:?}");
         assert!(output.stdout.is_empty(), "{output:?}");
         assert!(
-            String::from_utf8_lossy(&output.stderr)
-                .contains("--max-export-mib requires an integer from 1 to 16384"),
+            String::from_utf8_lossy(&output.stderr).contains(&format!("unknown option `{option}`")),
             "{output:?}"
         );
-    }
-    for value in ["1", "4096", "16384"] {
-        let output = invoke(
-            env!("CARGO_BIN_EXE_llg"),
-            &["--max-export-mib", value, "--help"],
-        );
-        assert!(output.status.success(), "{output:?}");
-        assert!(output.stderr.is_empty(), "{output:?}");
     }
 }

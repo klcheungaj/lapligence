@@ -88,7 +88,7 @@ Warning: {}:{}:{} initializer for static variable 'copy' refers to 'value' which
         if !optimized {
             command.arg("--no-opt");
         }
-        command.args(["--edition", "2009"]).arg(&fixture_path);
+        command.args(["--edition", "sv2009"]).arg(&fixture_path);
         let output = sim_harness::run_command(&mut command, Duration::from_secs(180))
             .unwrap_or_else(|error| panic!("optimized={optimized}: {error}"));
         assert!(
@@ -102,7 +102,7 @@ Warning: {}:{}:{} initializer for static variable 'copy' refers to 'value' which
             "optimized={optimized}"
         );
         assert_eq!(
-            String::from_utf8_lossy(&output.stderr),
+            crate::sim_harness::strip_lint_reports(&output.stderr),
             expected_stderr,
             "optimized={optimized}"
         );

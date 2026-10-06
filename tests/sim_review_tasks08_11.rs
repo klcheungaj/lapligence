@@ -9,7 +9,7 @@ fn tagged_pattern_comparisons_inherit_the_case_mode() {
         "PASS n09_tagged_case_modes\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -21,13 +21,13 @@ fn whole_fixed_patterns_keep_types_snapshots_and_scopes() {
         "PASS n08_whole_patterns\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "review_bundle",
         "n08_binding_scope_error",
         "undeclared identifier",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -39,7 +39,7 @@ fn mixed_recursive_assignment_patterns_preserve_contexts_and_precedence() {
         "PASS n03_mixed_record_patterns\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_with_args(
         "review_bundle",
@@ -47,7 +47,7 @@ fn mixed_recursive_assignment_patterns_preserve_contexts_and_precedence() {
         "PASS n03_mixed_row_patterns\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_with_args(
         "review_bundle",
@@ -55,13 +55,13 @@ fn mixed_recursive_assignment_patterns_preserve_contexts_and_precedence() {
         "PASS n03_mixed_pattern_port\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "review_bundle",
         "n03_mixed_duplicate_index",
         "multiple keys",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -87,7 +87,7 @@ fn library_specificity_and_duplicate_safe_mapping_work_in_both_editions() {
         "directory.map",
     ] {
         let map = library_fixture(name);
-        for edition in ["2001", "2009"] {
+        for edition in ["v2001", "sv2009"] {
             sim_cli::run_case_with_source_prefix(
                 "review_library_precedence",
                 "top",
@@ -95,14 +95,7 @@ fn library_specificity_and_duplicate_safe_mapping_work_in_both_editions() {
                 "mapped=22\n",
                 "",
                 &[],
-                &[
-                    "--edition",
-                    edition,
-                    "--top",
-                    "choose:config",
-                    "--libmap",
-                    &map,
-                ],
+                &["--edition", edition, "--top", "choose", "--libmap", &map],
             );
         }
     }
@@ -112,7 +105,7 @@ fn library_specificity_and_duplicate_safe_mapping_work_in_both_editions() {
 fn explicit_library_assignment_overrides_overlapping_maps() {
     let map = library_fixture("override.map");
     let source = format!("chosen={}", library_fixture("rtl/cell.sv"));
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_source_prefix(
             "review_library_precedence",
             "top",
@@ -124,7 +117,7 @@ fn explicit_library_assignment_overrides_overlapping_maps() {
                 "--edition",
                 edition,
                 "--top",
-                "choose:config",
+                "choose",
                 "--libmap",
                 &map,
                 "--libfile",
@@ -137,7 +130,7 @@ fn explicit_library_assignment_overrides_overlapping_maps() {
 #[test]
 fn unresolved_winning_rank_library_ties_are_diagnosed() {
     let map = library_fixture("ambiguous.map");
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::reject_case_with_args(
             "review_library_precedence",
             "top",

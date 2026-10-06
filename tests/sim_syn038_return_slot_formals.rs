@@ -15,7 +15,7 @@ fn static_function_return_slots_bind_each_writable_formal_direction() {
             "syn038_pairwise",
             "return_slot_formals",
             optimized,
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
             &[],
             &[],
         );

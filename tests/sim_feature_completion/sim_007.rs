@@ -66,7 +66,7 @@ fn inactive_native_tagged_members_of_subroutine_values_report() {
         "native_tagged_inactive_calls",
         &[],
         &|label, output| {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = crate::sim_harness::strip_lint_reports(&output.stderr);
             assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
             assert_eq!(
                 String::from_utf8_lossy(&output.stdout),
@@ -89,7 +89,7 @@ fn inactive_native_tagged_members_report_and_store_nothing() {
          llg: runtime error: access to inactive tagged-union member I at {source}:17:9\n",
     );
     sim_cli::run_case_checked_matrix(SUITE, "native_tagged_inactive", &[], &|label, output| {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = crate::sim_harness::strip_lint_reports(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
         assert_eq!(
             String::from_utf8_lossy(&output.stdout),
@@ -400,7 +400,7 @@ fn inactive_members_of_native_tagged_elements_report() {
         "native_tagged_array_inactive",
         &[],
         &|label, output| {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = crate::sim_harness::strip_lint_reports(&output.stderr);
             assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
             assert_eq!(
                 String::from_utf8_lossy(&output.stdout),

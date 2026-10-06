@@ -9,7 +9,7 @@ fn fixed_array_reduction_basic() {
         "sum=9 product=24 and=0 or=7 xor=5 bits=8\nchanged=13\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -21,7 +21,7 @@ fn fixed_array_reduction_widths() {
         "sum=0 wide=256 named=256 sizes=8,32\nproduct=0 wide=256\nflags=1 widened=3 fill=1\nmapped=7,12,0,7,7\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -33,7 +33,7 @@ fn fixed_array_reduction_signed() {
         "sum=-7 product=12 wide=-7 enum=-7 record=-7\nmapped=-7 width=64\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -45,7 +45,7 @@ fn fixed_array_reduction_four_state() {
         "sum=xxxx product=xxxx and=00x0 or=111x xor=11xx\nsingleton=zzzz,zzzz,zzzz,zzzz,zzzz\nsingle_x=10xz clean=8\nzero_and=0000 unknown_product=xxxx\none_or=1111\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -57,7 +57,7 @@ fn fixed_array_reduction_wide() {
         "wide=ok\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -69,7 +69,7 @@ fn fixed_array_reduction_nested() {
         "nested=50 named=50 indexed=52\nbounds=1,-1\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -81,7 +81,7 @@ fn fixed_array_reduction_iterator_indices() {
         "ascending=9,9,9 dynamic=9 narrow=9 dimension_calls=3\ndescending=0 dynamic=0\nnested=0 dynamic=-2\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -91,7 +91,7 @@ fn fixed_array_reduction_rejects_zero_iterator_dimension() {
         "fixed_array_reductions",
         "iterator_index_zero",
         "undefined dimension 0",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -101,7 +101,7 @@ fn fixed_array_reduction_rejects_packed_item_dimension() {
         "fixed_array_reductions",
         "iterator_index_out_of_range",
         "undefined dimension 2",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -113,7 +113,7 @@ fn fixed_array_reduction_aggregates() {
         "packed=100 field=6 records=-7 lanes=23\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -125,7 +125,7 @@ fn fixed_array_reduction_functions() {
         "receiver=15 calls=1 captured=27 local=36 skipped=7\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -137,7 +137,7 @@ fn fixed_array_reduction_views() {
         "selected=6 calls=1 slice=30 indices=5\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -149,7 +149,7 @@ fn fixed_array_reduction_ports() {
         "total=259\ntotal=60\ntotal=6\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -161,7 +161,7 @@ fn fixed_array_reduction_resizable_control() {
         "dynamic=6 queue=24 assoc=6 mapped=9\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -171,7 +171,7 @@ fn fixed_array_reduction_rejects_unmapped_row() {
         "fixed_array_reductions",
         "unmapped_row",
         "can only be called on unpacked arrays of integral values",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -181,7 +181,7 @@ fn fixed_array_reduction_rejects_nonintegral_map() {
         "fixed_array_reductions",
         "nonintegral_map",
         "can only be called on unpacked arrays of integral values",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -191,6 +191,6 @@ fn fixed_array_reduction_rejects_iterator_without_with() {
         "fixed_array_reductions",
         "iterator_without_with",
         "without corresponding 'with' clause",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

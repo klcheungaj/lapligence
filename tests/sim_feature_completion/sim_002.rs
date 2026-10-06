@@ -10,7 +10,7 @@ use std::path::Path;
 use super::{sim_cli, sim_harness};
 
 const SUITE: &str = "feature_completion/sim_002";
-const V2001: &[&str] = &["--edition", "2001"];
+const V2001: &[&str] = &["--edition", "v2001"];
 
 #[test]
 fn printtimescale_reports_the_named_or_current_scope() {

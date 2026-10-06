@@ -26,7 +26,7 @@ fn invoke(optimized: bool, define: Option<&str>) -> Output {
     if !optimized {
         command.arg("--no-opt");
     }
-    command.args(["--edition", "2009"]);
+    command.args(["--edition", "sv2009"]);
     if let Some(define) = define {
         command.args(["--define", define]);
     }
@@ -57,7 +57,7 @@ fn assert_exact_cli(
             "{label}"
         );
         assert_eq!(
-            String::from_utf8_lossy(&output.stderr),
+            crate::sim_harness::strip_lint_reports(&output.stderr),
             expected_stderr,
             "{label}"
         );
@@ -76,7 +76,7 @@ fn invoke_call_route(optimized: bool) -> Output {
         command.arg("--no-opt");
     }
     command
-        .args(["--edition", "2009", "--define", "SYN038_CALL_ROUTE"])
+        .args(["--edition", "sv2009", "--define", "SYN038_CALL_ROUTE"])
         .arg(source);
     let output = sim_harness::run_command(&mut command, Duration::from_secs(180))
         .expect("public llg CLI invocation for continuous function-call source");
@@ -140,7 +140,7 @@ Warning: {}:43:27 non-void function 'f' does not return a value\n",
             "{label}"
         );
         assert_eq!(
-            String::from_utf8_lossy(&output.stderr),
+            crate::sim_harness::strip_lint_reports(&output.stderr),
             expected_stderr,
             "{label}"
         );

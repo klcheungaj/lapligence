@@ -40,7 +40,7 @@ fn whole_tagged_union_members_are_checked_against_the_tag() {
             "{label}"
         );
         assert_eq!(
-            String::from_utf8_lossy(&output.stderr),
+            crate::sim_harness::strip_lint_reports(&output.stderr),
             expected_stderr,
             "{label}"
         );
@@ -70,7 +70,7 @@ fn inactive_members_of_record_call_results_report_runtime_errors() {
             "{label}"
         );
         assert_eq!(
-            String::from_utf8_lossy(&output.stderr),
+            crate::sim_harness::strip_lint_reports(&output.stderr),
             expected_stderr,
             "{label}"
         );

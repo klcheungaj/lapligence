@@ -15,6 +15,6 @@ fn storage_and_hierarchical_routes_run_in_both_optimizer_modes() {
         "storage_hier_route_remainders=passed\n",
         "llg: $finish at time 2000 at tb:146:9\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

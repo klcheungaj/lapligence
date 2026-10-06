@@ -33,7 +33,7 @@ fn mutable_interface_member_drives_nested_child_port_readback_in_both_modes() {
         "interface-child-port=a5,a5\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

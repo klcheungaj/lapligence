@@ -63,6 +63,6 @@ fn source_routes_keep_their_lexical_scope_and_storage_identity() {
         EXPECTED_STDOUT,
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

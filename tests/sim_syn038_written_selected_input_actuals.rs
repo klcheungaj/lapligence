@@ -388,7 +388,7 @@ fn written_selected_sources_reach_task_inputs_in_both_cli_modes() {
         EXPECTED_STDOUT,
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

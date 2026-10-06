@@ -44,7 +44,7 @@ fn static_helpers_keep_fixed_array_and_qualified_values_private() {
         "fixed_array changes=2 value=9\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     super::sim_cli::run_case(
         "syn011_rtl_helper_events",
@@ -59,7 +59,7 @@ fn static_helpers_keep_fixed_array_and_qualified_values_private() {
         "verilog_static changes=2 classify=4\n",
         "",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 

@@ -132,7 +132,7 @@ fn read_fixture_vcd(fixture: &str, optimized: bool) -> (sim_harness::TempDir, St
     let diagnostics = String::from_utf8_lossy(&output.stderr);
     let runtime_diagnostics = diagnostics
         .lines()
-        .filter(|line| !line.starts_with("Warning: "))
+        .filter(|line| !crate::sim_harness::is_compile_report_line(line))
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
@@ -488,7 +488,7 @@ fn read_fixture_vcd_with_defines(
     assert!(
         diagnostics
             .lines()
-            .all(|line| line.starts_with("Warning: ")),
+            .all(|line| crate::sim_harness::is_compile_report_line(line)),
         "{fixture}, optimized={optimized} wrote runtime diagnostics: {diagnostics}"
     );
     let vcd = std::fs::read_to_string(dir.path().join("trace.vcd")).expect("read generated VCD");
@@ -705,7 +705,7 @@ fn fst_is_written_by_the_generated_model() {
         let diagnostics = String::from_utf8_lossy(&output.stderr);
         let runtime_diagnostics = diagnostics
             .lines()
-            .filter(|line| !line.starts_with("Warning: "))
+            .filter(|line| !crate::sim_harness::is_compile_report_line(line))
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
@@ -949,4 +949,180 @@ fn vcd_partitioned_nets_preserve_declared_shapes_and_values() {
             declarations["tb.r$5B0$5D"].2
         )));
     }
+}
+
+/// Runs `llg --top tb <args> <fixture>` in a fresh directory, requiring
+/// success, and returns the directory.
+fn run_fixture_with_args(fixture: &str, optimized: bool, args: &[&str]) -> sim_harness::TempDir {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/waveform")
+        .join(format!("{fixture}.sv"));
+    let dir = sim_harness::TempDir::new(&format!("waveform-cli-{fixture}"))
+        .unwrap_or_else(|error| panic!("{fixture}: {error}"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+    command
+        .current_dir(dir.path())
+        .args(["--top", "tb"])
+        .args(args);
+    if !optimized {
+        command.arg("--no-opt");
+    }
+    command.arg(source);
+    let output = sim_harness::run_command(&mut command, Duration::from_secs(180))
+        .unwrap_or_else(|error| panic!("run {fixture}: {error}"));
+    assert!(
+        output.status.success(),
+        "{fixture} {args:?}, optimized={optimized}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    dir
+}
+
+fn read_text(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+}
+
+/// The value-change records of the VCD variable `id`, as `(time, value)`.
+fn vcd_changes(vcd: &str, id: &str) -> Vec<(u64, String)> {
+    let mut time = 0;
+    let mut changes = Vec::new();
+    for line in vcd.lines() {
+        if let Some(stamp) = line.strip_prefix('#') {
+            time = stamp.parse().expect("VCD timestamp");
+        } else if let Some((value, record)) = line
+            .strip_prefix('b')
+            .and_then(|vector| vector.split_once(' '))
+        {
+            if record == id {
+                changes.push((time, value.to_owned()));
+            }
+        } else if line.len() > 1 && line[1..] == *id && "01xz".contains(&line[..1]) {
+            changes.push((time, line[..1].to_owned()));
+        }
+    }
+    changes
+}
+
+#[test]
+fn cli_wave_dumps_every_level_of_a_design_without_dump_tasks() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    for optimized in [true, false] {
+        let dir = run_fixture_with_args("cli_wave", optimized, &["--wave", "out.vcd"]);
+        let vcd = read_text(&dir.path().join("out.vcd"));
+        let declarations = assert_vcd_names(
+            &vcd,
+            &[
+                "tb.child.child_value",
+                "tb.child.leaf.leaf_value",
+                "tb.top_value",
+            ],
+        );
+        // Times are in 1ps precision ticks.
+        assert_eq!(
+            vcd_changes(&vcd, &declarations["tb.top_value"].2),
+            [
+                (0, "xxxx".to_owned()),
+                (0, "0011".to_owned()),
+                (3000, "1010".to_owned())
+            ],
+            "optimized={optimized}: {vcd}"
+        );
+        assert_eq!(
+            vcd_changes(&vcd, &declarations["tb.child.child_value"].2),
+            [
+                (0, "x".to_owned()),
+                (0, "0".to_owned()),
+                (1000, "1".to_owned())
+            ],
+            "optimized={optimized}: {vcd}"
+        );
+        assert_eq!(
+            vcd_changes(&vcd, &declarations["tb.child.leaf.leaf_value"].2),
+            [
+                (0, "xx".to_owned()),
+                (0, "01".to_owned()),
+                (2000, "10".to_owned())
+            ],
+            "optimized={optimized}: {vcd}"
+        );
+    }
+}
+
+#[test]
+fn cli_wave_depth_limits_levels_below_each_top() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    for (depth, expected) in [
+        ("1", &["tb.top_value"][..]),
+        ("2", &["tb.child.child_value", "tb.top_value"][..]),
+    ] {
+        let dir = run_fixture_with_args(
+            "cli_wave",
+            true,
+            &["--wave", "out.vcd", "--wave-depth", depth],
+        );
+        assert_vcd_names(&read_text(&dir.path().join("out.vcd")), expected);
+    }
+}
+
+/// The option's file replaces the design's `$dumpfile`, and its selection
+/// replaces the design's `$dumpvars(1, tb)`.
+#[test]
+fn cli_wave_overrides_design_dump_file_and_selection() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    for optimized in [true, false] {
+        let dir = run_fixture_with_args("depth", optimized, &["--wave", "cli.vcd"]);
+        assert!(
+            !dir.path().join("trace.vcd").exists(),
+            "the design's $dumpfile was replaced"
+        );
+        assert_vcd_names(
+            &read_text(&dir.path().join("cli.vcd")),
+            &[
+                "tb.child.child_value",
+                "tb.child.leaf.leaf_value",
+                "tb.memory$5B2$5D",
+                "tb.memory$5B3$5D",
+                "tb.omitted",
+                "tb.selected",
+            ],
+        );
+    }
+}
+
+#[test]
+fn cli_wave_writes_fst_and_follows_the_config_file() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = run_fixture_with_args("cli_wave", true, &["--wave", "out.fst"]);
+    let fst = std::fs::read(dir.path().join("out.fst")).expect("FST written");
+    // An FST file starts with its header block (type 0, FST_BL_HDR).
+    assert_eq!(fst.first(), Some(&0), "FST header block");
+    assert!(!dir.path().join("dump.vcd").exists());
+
+    let config = dir.path().join("llg.toml");
+    std::fs::write(
+        &config,
+        "schema_version = 1\n[waveform]\nfile = \"cfg.vcd\"\ndepth = 1\n",
+    )
+    .expect("write config");
+    let config = config.to_string_lossy().into_owned();
+    let configured = run_fixture_with_args("cli_wave", true, &["--config", &config]);
+    // A relative configured file resolves from the config directory.
+    assert_vcd_names(&read_text(&dir.path().join("cfg.vcd")), &["tb.top_value"]);
+    assert!(!configured.path().join("cfg.vcd").exists());
+
+    std::fs::remove_file(dir.path().join("cfg.vcd")).expect("remove configured waveform");
+    let cancelled = run_fixture_with_args("cli_wave", true, &["--config", &config, "--no-wave"]);
+    assert!(!dir.path().join("cfg.vcd").exists() && !cancelled.path().join("cfg.vcd").exists());
 }

@@ -572,7 +572,7 @@ fn driver_keys_resolve_relative_to_the_config_directory() {
 [sources]
 files = ["rtl/top.sv", "../shared/pkg.sv"]
 [compile]
-edition = "2001"
+edition = "v2001"
 compilation_units = "merged"
 system_tasks = ["$my_task(input int)"]
 [libraries]
@@ -581,14 +581,17 @@ files = ["lib_a=libs/a.sv", "libs/b.sv"]
 order = ["lib_a", "work"]
 default = "work"
 [lint]
-run = true
+only = true
+warnings_as_errors = true
 json = true
 json_file = "out/lint.json"
 [simulator]
 stop_policy = "exit"
-max_export_mib = 64
 optimize = false
 plusargs = ["+seed=1"]
+[waveform]
+file = "waves/run.FST"
+depth = 2
 [build]
 gen_only = true
 generator = "Ninja"
@@ -636,14 +639,21 @@ runtime_cache = "../cache"
     );
     assert_eq!(config.libraries.order, vec!["lib_a", "work"]);
     assert_eq!(config.libraries.default.as_deref(), Some("work"));
-    assert_eq!(config.lint_run.run, Some(true));
+    assert_eq!(config.lint_run.only, Some(true));
+    assert_eq!(config.lint_run.warnings_as_errors, Some(true));
     assert_eq!(config.lint_run.json, Some(true));
     assert_eq!(
         config.lint_run.json_file,
         Some(native(&base, "out/lint.json"))
     );
     assert_eq!(config.simulator.stop_policy, Some(StopPolicy::Exit));
-    assert_eq!(config.simulator.max_export_mib, Some(64));
+    assert_eq!(
+        config.waveform,
+        WaveformConfig {
+            file: Some(native(&base, "waves/run.FST")),
+            depth: Some(2),
+        }
+    );
     assert_eq!(config.simulator.optimize, Some(false));
     assert_eq!(config.simulator.plusargs, Some(vec!["+seed=1".to_owned()]));
     assert_eq!(config.build.gen_only, Some(true));
@@ -671,6 +681,7 @@ fn unset_driver_keys_stay_none_so_precedence_can_fall_through() {
     assert_eq!(config.build, BuildConfig::default());
     assert_eq!(config.output, OutputConfig::default());
     assert_eq!(config.lint_run, LintRunConfig::default());
+    assert_eq!(config.waveform, WaveformConfig::default());
     assert!(!config.sources.directories_configured);
     assert_eq!(config.sources.directories, vec![base()]);
 }
@@ -688,6 +699,9 @@ fn explicit_source_directories_are_recorded() {
 fn invalid_driver_values_name_their_key() {
     for (text, key) in [
         ("[compile]\nedition = \"2005\"\n", "compile.edition"),
+        ("[compile]\nedition = \"2001\"\n", "compile.edition"),
+        ("[compile]\ntop = \"work.tb\"\n", "compile.top"),
+        ("[compile]\ntop = \"cfg:config\"\n", "compile.top"),
         (
             "[compile]\ncompilation_units = \"split\"\n",
             "compile.compilation_units",
@@ -703,12 +717,16 @@ fn invalid_driver_values_name_their_key() {
             "simulator.stop_policy",
         ),
         (
-            "[simulator]\nmax_export_mib = 0\n",
+            "[simulator]\nmax_export_mib = 4096\n",
             "simulator.max_export_mib",
         ),
+        ("[lint]\nrun = true\n", "lint.run"),
+        ("[waveform]\nfile = \"dump.txt\"\n", "waveform.file"),
+        ("[waveform]\nfile = \"\"\n", "waveform.file"),
+        ("[waveform]\ndepth = 1\n", "waveform.depth"),
         (
-            "[simulator]\nmax_export_mib = 16385\n",
-            "simulator.max_export_mib",
+            "[waveform]\nfile = \"d.vcd\"\ndepth = 4294967296\n",
+            "waveform.depth",
         ),
         (
             "[build]\nmodel_opt_level = \"O4\"\n",

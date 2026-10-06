@@ -185,7 +185,7 @@ fn foreach_mixed_order_reads_and_writes_every_logical_dimension() {
         ),
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -197,7 +197,7 @@ fn foreach_mixed_omissions_keep_original_dimension_positions() {
         "middle=40 leading=8 trailing=5 prefix=5 omitted=17 errors=0\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -209,7 +209,7 @@ fn foreach_mixed_control_keeps_source_loop_jumps_and_signed_endpoints() {
         "1:2 1:0 1:-1 0:2 visits=4 outer=55 nested=68 endpoints=7\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -221,7 +221,7 @@ fn foreach_mixed_calls_use_formal_and_automatic_local_dimensions() {
         "source=1010,0100 result=0101,1011 counts=3,5 local=8\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -233,7 +233,7 @@ fn foreach_mixed_types_keep_integer_record_enum_and_singleton_dimensions() {
         "bytes=32 integers=64 records=8 enums=12 enum_indices=30 scalars=2 singletons=2 packed=4 data=aaaa,aaaa\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -245,7 +245,7 @@ fn foreach_mixed_ports_preserve_formal_bounds_and_combinational_reads() {
         "sum=66\nsum=45\nsum=69\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -255,7 +255,7 @@ fn foreach_mixed_too_many_iterators_remain_illegal() {
         "loops",
         "foreach_mixed_too_many",
         "too many loop variables",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -265,7 +265,7 @@ fn foreach_mixed_scalar_elements_do_not_create_an_extra_dimension() {
         "loops",
         "foreach_mixed_scalar_extra",
         "too many loop variables",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -275,7 +275,7 @@ fn foreach_mixed_iterators_remain_readonly() {
         "loops",
         "foreach_mixed_readonly",
         "cannot assign to read-only variable",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -290,13 +290,13 @@ fn syn_037_finite_control_preserves_local_targets_and_copyout() {
         ),
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
 #[test]
 fn syn_037_verilog_2001_local_disable_preserves_loop_and_copyout() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             "loops",
             "syn_037_finite_control_2001",
@@ -319,7 +319,7 @@ fn syn_037_function_steps_preserve_order_copyout_and_automatic_owners() {
         ),
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -329,6 +329,6 @@ fn syn_037_task_calls_are_not_admitted_as_function_steps() {
         "loops",
         "syn_037_task_step_rejected",
         "requires a function call, not a task",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

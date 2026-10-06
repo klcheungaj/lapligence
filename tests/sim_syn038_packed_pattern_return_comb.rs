@@ -10,6 +10,6 @@ fn packed_pattern_function_return_runs_in_always_comb() {
         "result=a5\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

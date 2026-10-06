@@ -14,7 +14,7 @@ fn systemverilog_2009_rounds_time_literals_before_value_use() {
         "CHECK: literal=2.0\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_with_args(
         "partial_features",
@@ -25,7 +25,7 @@ fn systemverilog_2009_rounds_time_literals_before_value_use() {
         ),
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -37,7 +37,7 @@ fn systemverilog_2009_preserves_exact_femtosecond_literal_boundaries() {
         "exact=1.000001 -1.000001 0.000001 delay=1.000001\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -49,7 +49,7 @@ fn declaration_initialization_keeps_edition_specific_scheduling() {
         "PASS declaration_init_edition\n",
         "llg: $finish at time 0 at tb:15:9\n",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
     sim_cli::run_case_with_args(
         "partial_features",
@@ -57,7 +57,7 @@ fn declaration_initialization_keeps_edition_specific_scheduling() {
         "PASS declaration_init_edition\n",
         "llg: $finish at time 0 at tb:15:9\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -69,7 +69,7 @@ fn selected_edition_matrix_accepts_legacy_and_systemverilog_cli_forms() {
         "legacy=1 ansi=1 comb=1 signed=-1 init=1\n",
         "llg: $finish at time 0 at tb:31:9\n",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
     sim_cli::run_case_with_args(
         "partial_features",
@@ -77,7 +77,7 @@ fn selected_edition_matrix_accepts_legacy_and_systemverilog_cli_forms() {
         "legacy=1 ansi=1 comb=1 signed=-1 init=x\n",
         "llg: $finish at time 0 at tb:31:9\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_with_args(
         "partial_features",
@@ -85,7 +85,7 @@ fn selected_edition_matrix_accepts_legacy_and_systemverilog_cli_forms() {
         "sv_types=0b width=4\n",
         "llg: $finish at time 0 at tb:25:9\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_with_args(
         "partial_features",
@@ -93,7 +93,7 @@ fn selected_edition_matrix_accepts_legacy_and_systemverilog_cli_forms() {
         "whole=12 34 equal=1\n",
         "llg: $finish at time 0 at tb:27:9\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_with_args(
         "partial_features",
@@ -101,7 +101,7 @@ fn selected_edition_matrix_accepts_legacy_and_systemverilog_cli_forms() {
         "legacy_name=1\n",
         "llg: $finish at time 0 at tb:10:9\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -111,7 +111,7 @@ fn verilog_2001_rejects_systemverilog_constructs() {
         "partial_features",
         "edition_2001_sv_only",
         "always_comb",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -149,10 +149,10 @@ fn selected_edition_matrix_rejects_single_fault_2001_and_later_builtin_fixtures(
             "partial_features",
             fixture,
             diagnostic,
-            &["--edition", "2001"],
+            &["--edition", "v2001"],
         );
     }
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::reject_case_with_args(
             "partial_features",
             "edition_2009_countbits",
@@ -304,13 +304,13 @@ fn edition_later_forms_cli_contrast() {
         "partial_features",
         "edition_assert_final",
         "is not available in IEEE 2009",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "partial_features",
         "edition_assertcontrol",
         "is not available in IEEE 2001",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
     sim_cli::run_case_with_args(
         "partial_features",
@@ -321,7 +321,7 @@ fn edition_later_forms_cli_contrast() {
             "llg: simulation statistics: processes=1\n",
         ),
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -605,7 +605,7 @@ fn compilation_unit_value_order_is_checked_in_both_snapshot_modes() {
 
 #[test]
 fn syn_019_memory_fread_is_legal_storage_in_both_editions() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             "partial_features",
             "edition_fread_memory",
@@ -628,13 +628,13 @@ fn syn_019_unbased_literals_have_a_real_edition_boundary() {
         "fill=fff/000 x=1 z=1 self=1\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "partial_features",
         "edition_unbased_rejected",
         "unbased unsized literal",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
     for literal in ["'0", "'1", "'x", "'X", "'z", "'Z"] {
         let source = format!(
@@ -690,13 +690,13 @@ fn syn_019_for_headers_are_qualified_in_the_selected_edition() {
             expected,
             "",
             &[],
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
         );
         sim_cli::reject_case_with_args(
             "partial_features",
             fixture,
             "SystemVerilog for-loop header",
-            &["--edition", "2001"],
+            &["--edition", "v2001"],
         );
     }
     // The semantic check is deliberately tested on an execution snapshot:

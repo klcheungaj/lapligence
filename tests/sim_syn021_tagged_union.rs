@@ -12,7 +12,7 @@ fn struct_payload_construction_ref_and_nba_work_in_both_modes() {
         "PASS syn021_struct_contexts\n",
         "llg: $finish at time 1000 at tb:126:9\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -22,7 +22,7 @@ fn tagged_union_is_rejected_in_verilog_2001() {
         "syn021_tagged_union",
         "struct_contexts",
         "not available in IEEE 2001",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -32,19 +32,19 @@ fn invalid_tagged_constructors_and_nonpacked_member_are_rejected() {
         "syn021_tagged_union",
         "invalid_member_constructor",
         "no member named 'missing'",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "syn021_tagged_union",
         "invalid_void_constructor",
         "cannot be assigned to type 'void'",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "syn021_tagged_union",
         "nonpacked_member",
         "packed members must be of integral type",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -61,7 +61,7 @@ fn reject_fixture_tagged_access(
         "syn021_tagged_union",
         fixture,
         optimized,
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[],
         &[],
     );

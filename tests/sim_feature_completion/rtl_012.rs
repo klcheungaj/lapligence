@@ -76,7 +76,7 @@ fn matrix_expected() -> String {
 #[test]
 fn scalar_strength_matrix_matches_exhaustive_oracle() {
     let expected = matrix_expected();
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             SUITE,
             "scalar_matrix.v",
@@ -178,7 +178,7 @@ fn wide_nets_compose_omitted_inputs_gate_arrays_and_competing_drivers() {
 #[test]
 fn unknown_enables_drive_l_and_h() {
     let expected = include_str!("../fixtures/sim/feature_completion/rtl_012/tristate_lh.out");
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             SUITE,
             "tristate_lh.v",
@@ -257,7 +257,7 @@ fn omitted_and_connected_net_array_formals_resolve_per_cell() {
 fn neg_strength_syntax_keeps_context_prohibitions() {
     let supply = "drive strength on continuous assignment to supply net `s` is not permitted";
     sim_cli::reject_case(SUITE, "neg_supply_strength", supply);
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         let args = ["--edition", edition];
         sim_cli::reject_case_with_args(SUITE, "neg_supply_decl_strength.v", supply, &args);
         sim_cli::reject_case_with_args(

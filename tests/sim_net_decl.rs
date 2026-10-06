@@ -121,7 +121,7 @@ fn net_declaration_propagation_is_after_resolution_and_not_double_delayed() {
         "t2 z z x z x\nt3 1 1 1 x x\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

@@ -54,7 +54,7 @@ fn joined_task_forks_share_persistent_events_and_automatic_outputs() {
                 "syn038_pairwise",
                 stem,
                 optimized,
-                &["--edition", "2009"],
+                &["--edition", "sv2009"],
                 &[],
                 &[],
             );
@@ -74,8 +74,8 @@ fn joined_task_forks_share_persistent_events_and_automatic_outputs() {
                 })
                 .collect::<String>();
             assert_eq!(
-                output.stderr,
-                warnings.as_bytes(),
+                crate::sim_harness::strip_lint_reports(&output.stderr),
+                warnings,
                 "{stem}, optimized={optimized}"
             );
         }

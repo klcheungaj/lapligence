@@ -10,7 +10,7 @@ fn fixed_lengths_bounds_and_local_reverse_run_through_cli() {
         "PASS syn_027_fixed_reverse\n",
         "llg: $finish at time 0 at tb:122:9\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -22,7 +22,7 @@ fn selected_rows_and_records_publish_reversed_values() {
         "PASS syn027_reverse_notifications\n",
         "llg: $finish at time 3 at tb:47:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -34,7 +34,7 @@ fn automatic_formals_keep_selection_and_copy_semantics() {
         "PASS syn027_reverse_formals\n",
         "llg: $finish at time 2 at tb:56:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -46,7 +46,7 @@ fn reverse_is_available_in_systemverilog_2009() {
         "PASS syn027_reverse_edition\n",
         "llg: $finish at time 0 at tb:13:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -56,7 +56,7 @@ fn reverse_is_rejected_in_verilog_2001() {
         "syn027_fixed_reverse",
         "edition_boundary",
         "`whole unpacked array value` is not available in IEEE 2001",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -68,6 +68,6 @@ fn real_elements_reverse_numerically() {
         "-2.25 -0.00 1.50 8000000000000000\n",
         "llg: $finish at time 0 at tb:12:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

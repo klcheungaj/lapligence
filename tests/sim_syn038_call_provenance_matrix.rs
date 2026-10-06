@@ -68,6 +68,6 @@ fn call_provenance_paths_match_in_both_optimizer_modes() {
         "calls=13,1,19,21,18 task=13,12 routes=12,12,5a,12 reductions=6,1,6,12,05,05,0d,09 processes=12,05,05,1 parameter=0 overrides=51,84\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

@@ -164,7 +164,7 @@ fn function_source_replacement_witnesses_match_in_both_optimizer_modes() {
         EXPECTED_STDOUT,
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

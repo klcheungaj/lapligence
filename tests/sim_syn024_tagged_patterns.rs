@@ -9,7 +9,7 @@ fn tagged_bindings_nested_payloads_and_conditional_arms() {
         "tagged_runtime=pass checks=10 calls=1\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -21,7 +21,7 @@ fn tagged_pattern_tags_follow_the_enclosing_case_mode() {
         "tagged_case_modes=pass checks=8 calls=4\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -33,13 +33,13 @@ fn tagged_patterns_require_systemverilog() {
         "tagged_edition=pass\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "syn024_tagged_patterns",
         "edition_boundary",
         "undeclared identifier 'matches'",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -50,7 +50,7 @@ fn wrong_tag_and_source_type_are_rejected() {
             "syn024_tagged_patterns",
             fixture,
             diagnostic,
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
         );
     }
 }

@@ -10,6 +10,6 @@ fn typed_initializers_keep_their_constant_and_runtime_values() {
         "const=1234,b5c6,1 runtime=2143,c5d6,1 static=3153,d5e6,1 auto=4163,e5f6,1\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

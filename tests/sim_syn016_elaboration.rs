@@ -23,7 +23,7 @@ fn elaboration_matrix_matches_both_compilation_unit_policies_and_optimizers() {
             EXPECTED,
             expected_stderr,
             &[],
-            &["--edition", "2009", "--compilation-units", policy],
+            &["--edition", "sv2009", "--compilation-units", policy],
         );
     }
 }
@@ -34,7 +34,7 @@ fn edition_and_range_controls_are_single_fault_rejections() {
         SUITE,
         "type_parameter_2001",
         "use of undeclared identifier 'type'",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
     sim_cli::reject_case(
         SUITE,
@@ -99,7 +99,7 @@ fn owned_model_preserves_specialized_parameter_types_and_generate_scopes() {
 
 #[test]
 fn legacy_defparam_and_constant_recursion_keep_specializations_distinct() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             SUITE,
             "legacy_specialization",
@@ -126,7 +126,7 @@ fn dependent_defaults_nominal_types_and_folded_constants_cross_unit_policies() {
             ),
             "",
             &[],
-            &["--edition", "2009", "--compilation-units", policy],
+            &["--edition", "sv2009", "--compilation-units", policy],
         );
         sim_cli::run_case_with_args(
             SUITE,
@@ -137,7 +137,7 @@ fn dependent_defaults_nominal_types_and_folded_constants_cross_unit_policies() {
             ),
             "",
             &[],
-            &["--edition", "2009", "--compilation-units", policy],
+            &["--edition", "sv2009", "--compilation-units", policy],
         );
     }
 }
@@ -151,7 +151,7 @@ fn real_file_boundaries_distinguish_unit_names_from_package_names() {
         "unit=8 bits=5 package=3\n",
         "",
         &[],
-        &["--edition", "2009", "--compilation-units", "merged"],
+        &["--edition", "sv2009", "--compilation-units", "merged"],
     );
     for policy in ["separate", "merged"] {
         sim_cli::run_case_with_source_prefix(
@@ -161,7 +161,7 @@ fn real_file_boundaries_distinguish_unit_names_from_package_names() {
             "package=5 bits=3\n",
             "",
             &[],
-            &["--edition", "2009", "--compilation-units", policy],
+            &["--edition", "sv2009", "--compilation-units", policy],
         );
     }
 }
@@ -223,14 +223,14 @@ fn invalid_sizes_and_incompatible_nominal_types_remain_language_errors() {
             SUITE,
             fixture,
             "value must be positive",
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
         );
     }
     sim_cli::reject_case_with_args(
         SUITE,
         "nominal_enum_mismatch",
         "no implicit conversion",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

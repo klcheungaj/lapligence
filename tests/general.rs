@@ -12,6 +12,8 @@ mod generated_c_lint;
 #[allow(dead_code)]
 #[path = "../build_support/host_platform.rs"]
 mod host_platform;
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 mod support;

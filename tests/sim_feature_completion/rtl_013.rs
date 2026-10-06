@@ -88,9 +88,13 @@ fn descriptor_arrays_in_processes_without_flattening() {
             .join("tests/fixtures/sim/feature_completion/rtl_013/descriptor_processes.sv");
         let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
         command
-            .arg(source)
+            .arg(&source)
             .args(["--top", "tb", "--gen-only", "--out-dir"]);
         command.arg(directory.path());
+        // The fixture's deliberate lint errors are checked by `run_case`.
+        if let Some(lint) = sim_cli::expected_lint(&source) {
+            command.args(lint.allow_args());
+        }
         if !optimized {
             command.arg("--no-opt");
         }

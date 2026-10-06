@@ -15,7 +15,7 @@ fn fixed_record_reduction_initializes_automatic_local() {
             "syn038_pairwise",
             "record_reduction_init",
             optimized,
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
             &[],
             &[],
         );
@@ -28,6 +28,10 @@ fn fixed_record_reduction_initializes_automatic_local() {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(output.stdout.as_slice(), expected_stdout, "{label}");
-        assert_eq!(output.stderr.as_slice(), b"", "{label}");
+        assert_eq!(
+            crate::sim_harness::strip_lint_reports(&output.stderr),
+            "",
+            "{label}"
+        );
     }
 }

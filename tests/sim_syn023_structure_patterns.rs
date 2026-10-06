@@ -9,7 +9,7 @@ fn recursive_fixed_structure_patterns_preserve_values_and_scope() {
         "structure_patterns=pass checks=11 calls=3\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -21,7 +21,7 @@ fn mixed_state_structure_constants_read_each_member_in_its_state_domain() {
         "mixed_state_patterns=pass checks=4\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -33,13 +33,13 @@ fn structure_patterns_require_systemverilog() {
         "structure_edition=pass\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "syn023_structure_patterns",
         "edition_boundary",
         "undeclared identifier 'matches'",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -55,7 +55,7 @@ fn malformed_or_out_of_scope_structure_patterns_are_rejected() {
             "syn023_structure_patterns",
             fixture,
             diagnostic,
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
         );
     }
 }

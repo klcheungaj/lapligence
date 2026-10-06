@@ -50,9 +50,13 @@ fn record_arrays_beyond_the_packed_limit_execute_as_values() {
             .join("tests/fixtures/sim/feature_completion/rtl_099/record_array_values.sv");
         let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
         command
-            .arg(source)
+            .arg(&source)
             .args(["--top", "tb", "--gen-only", "--out-dir"]);
         command.arg(directory.path());
+        // The fixture's deliberate lint errors are checked by `run_case`.
+        if let Some(lint) = sim_cli::expected_lint(&source) {
+            command.args(lint.allow_args());
+        }
         if !optimized {
             command.arg("--no-opt");
         }

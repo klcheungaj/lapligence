@@ -154,7 +154,7 @@ fn verilog_declaration_races_are_not_converted_to_static_initialization() {
         "1 0 6\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     // Verilog-2001: the declaration assignment is an initial-time assignment
     // racing with the `always`; both outcomes are legal.
@@ -163,7 +163,7 @@ fn verilog_declaration_races_are_not_converted_to_static_initialization() {
             SUITE,
             "edition_race.v",
             optimized,
-            &["--edition", "2001"],
+            &["--edition", "v2001"],
             &[],
             &[],
         );
@@ -178,8 +178,8 @@ fn verilog_declaration_races_are_not_converted_to_static_initialization() {
             "optimized={optimized}: {stdout:?}"
         );
     }
-    assert!(declaration_init_processes("edition_race.v", "2001"));
-    assert!(!declaration_init_processes("edition_race.v", "2009"));
+    assert!(declaration_init_processes("edition_race.v", "v2001"));
+    assert!(!declaration_init_processes("edition_race.v", "sv2009"));
 }
 
 #[test]
@@ -191,7 +191,7 @@ fn package_string_call_witness() {
         "ok\n",
         "llg: $finish at time 0 at tb:4:49\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -259,7 +259,7 @@ fn neg_let_verilog() {
         SUITE,
         "neg_let_verilog.v",
         "unknown module 'let'",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 

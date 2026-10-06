@@ -100,14 +100,17 @@ option or key, so no precedence applies to it.
   directories are include-search directories, as in the language server; `-I`
   replaces only `compile.include_dirs`, not the source directories.
 - Booleans have explicit opposites so the command line can override either
-  value: `--gen-only`/`--no-gen-only`, `--no-opt`/`--opt`, `--lint`/`--no-lint`.
-  `--no-lint` also cancels `lint.json`. `--lint-json [<path>]` chooses its own
-  destination (stdout without a path) instead of the file's `lint.json_file`.
-- `--lint-config <file>` (the legacy `llg-lint.toml` rule file) replaces the
-  `[lint]` rule settings of `llg.toml`; without it, the `[lint]` rules
-  (`enabled`, `rules.<id>`) of `llg.toml` apply to `llg --lint`.
-- `--help` and `--version` act before any file is read. `--config` and
-  `--lint-config` are command-line only.
+  value: `--gen-only`/`--no-gen-only`, `--no-opt`/`--opt`,
+  `--lint-only`/`--no-lint-only`, `-Werror`/`-Wno-error`. `--no-lint-only` also
+  cancels `lint.json`. `--lint-json [<path>]` chooses its own destination
+  (stdout without a path) instead of the file's `lint.json_file`.
+- `--wave <file>` replaces `waveform.file` and `--no-wave` cancels it;
+  `--wave-depth` replaces `waveform.depth` and needs a file from either layer.
+- Every `llg` run lints. The `[lint]` rule settings (`enabled`, `rules.<id>`)
+  of the `--config` file apply to it; without `--config` every rule runs with
+  its default severity.
+- `--help` and `--version` act before any file is read. `--config` is
+  command-line only.
 
 ## Errors
 
@@ -140,8 +143,8 @@ server, accepted and ignored by `llg`.
 | `sources.directories` | strings | both | source directories; `llg` discovers only when set |
 | `sources.include` / `sources.exclude` | globs | both | discovery filters |
 | `sources.files` | strings | llg | explicit source files (`<file.sv>...`) |
-| `compile.top` | string | both | `--top` (`llg` also takes `module:config`) |
-| `compile.edition` | `"2001"` \| `"2009"` | llg | `--edition`; the server compiles 2009 |
+| `compile.top` | module name | both | `--top`; no `library.` prefix or `:config` suffix |
+| `compile.edition` | `"v2001"` \| `"sv2009"` | llg | `--edition`; the server compiles sv2009 |
 | `compile.compilation_units` | `"separate"` \| `"merged"` | llg | `--compilation-units`; the server always separates |
 | `compile.include_dirs` | strings | both | `-I` |
 | `compile.defines` | `NAME[=VALUE]` strings | both | `-D` |
@@ -151,15 +154,17 @@ server, accepted and ignored by `llg`.
 | `libraries.files` | `[lib=]path` strings | llg | `--libfile`; only the path is resolved |
 | `libraries.order` | strings | llg | `--library-order` |
 | `libraries.default` | string | llg | `--default-library` |
-| `lint.enabled`, `lint.rules.<id>` | | both | rule switches/severities (`llg` applies them with `--lint`) |
-| `lint.run` | bool | llg | `--lint` |
-| `lint.json` | bool | llg | `--lint-json` (stdout) |
+| `lint.enabled`, `lint.rules.<id>` | | both | rule switches/severities (applied to every `llg` lint pass) |
+| `lint.only` | bool | llg | `--lint-only` |
+| `lint.warnings_as_errors` | bool | llg | `-Werror` |
+| `lint.json` | bool | llg | `--lint-json` (stdout); implies `only` |
 | `lint.json_file` | string | llg | `--lint-json <path>`; implies `json` |
 | `analysis.max_file_bytes`, `analysis.max_total_input_bytes` | integers | ls | input budgets |
 | `simulator.stop_policy` | `"resume"` \| `"exit"` | llg | `--stop-policy` |
-| `simulator.max_export_mib` | 1 to 16384 | llg | `--max-export-mib` |
 | `simulator.optimize` | bool | llg | `--no-opt` is `optimize = false` |
 | `simulator.plusargs` | strings | llg | arguments after `--` (they replace; `--append-plusarg` adds) |
+| `waveform.file` | `.vcd`/`.fst` path | llg | `--wave` |
+| `waveform.depth` | integer 0 to 4294967295 | llg | `--wave-depth`; requires `file` |
 | `build.gen_only` | bool | llg | `--gen-only` |
 | `build.generator`, `build.launcher`, `build.cc`, `build.cmake` | strings | llg | `--generator`, `--launcher`, `--cc`, `--cmake` |
 | `build.cflags` | string | llg | `--cflags` (an empty value means no flags) |
@@ -169,8 +174,8 @@ server, accepted and ignored by `llg`.
 | `output.out_dir` | string | llg | `--out-dir` |
 | `output.runtime_cache` | string | llg | `--runtime-cache` |
 
-Command-line-only: `--config`, `--lint-config`, `--help`, `--version`, and the
-negations `--no-gen-only`, `--opt`, `--no-lint`.
+Command-line-only: `--config`, `--help`, `--version`, and the negations
+`--no-gen-only`, `--opt`, `--no-lint-only`, `-Wno-error`, `--no-wave`.
 
 ```toml
 schema_version = 1
@@ -188,10 +193,13 @@ defines = ["WIDTH=8", "ENABLE_SIM"]
 W = 16
 
 [lint]
-run = true
+warnings_as_errors = true
 
 [simulator]
 stop_policy = "exit"
+
+[waveform]
+file = "build/waves/tb.fst"
 
 [build]
 model_opt_level = "O2"
@@ -222,17 +230,22 @@ Required integer; must be `1`.
 
 ## `[compile]` — compilation inputs
 
-- `top` (string) — elaboration top module (auto-detected when omitted); `llg`
-  also accepts `module:config`.
-- `edition` (`"2001"` or `"2009"`, `llg` only) — language edition
-  (`--edition`, default 2009). `llg_ls` always compiles the 2009 edition.
+- `top` (string) — elaboration top module name (auto-detected when omitted).
+  A `library.` prefix or `:config` suffix is rejected; a configuration is
+  selected by its plain name when no module has that name.
+- `edition` (`"v2001"` or `"sv2009"`, `llg` only) — language edition
+  (`--edition`, default `sv2009`). `llg_ls` always compiles SystemVerilog-2009.
 - `compilation_units` (`"separate"` or `"merged"`, `llg` only) — compilation-unit
   grouping (`--compilation-units`, default `separate`). `merged` preserves each
   source buffer's identity while sharing preprocessing and `$unit` scope;
   library sources group per library, in admission order, separately from work
   sources. `llg_ls` always uses `separate`.
 - `include_dirs` (array of strings) — additional include-search directories
-  (may be external); source directories are already include dirs.
+  (may be external); source directories are already include dirs. In `llg`
+  they are also searched for module definitions: a module, interface, program
+  or package that the sources use but do not define is loaded from the
+  `.v`/`.sv` file directly inside one of these directories that declares it,
+  and two files declaring the same needed name is an error.
 - `defines` (array of `NAME` or `NAME=VALUE`) — preprocessor defines applied
   to every analyzed source (`-D`); they drive `` `ifdef ``/`` `elsif ``
   selection and macro expansion.
@@ -261,15 +274,20 @@ source diagnostic without reading the host path.
 
 ## `[lint]` — linter configuration
 
+Every `llg` run lints the elaborated design before generating the model:
+lint errors stop the run (exit 1), warnings are printed and the run continues.
+
 - `enabled` (bool) — global switch; `false` disables every rule (a per-rule
   entry can re-enable individual rules).
 - `rules.<id>` (table per rule) — `enabled` (bool) and `severity`
   (`"error"` | `"warning"` | `"info"`). Unknown rule ids are errors. `llg`
-  applies `enabled` and `rules` when linting (`--lint`), unless
-  `--lint-config` supplies a rule file instead.
-- `run` (bool, `llg` only) — run the linter before simulation (`--lint`).
+  applies `enabled` and `rules` to every lint pass.
+- `only` (bool, `llg` only) — lint and exit without generating the model
+  (`--lint-only`).
+- `warnings_as_errors` (bool, `llg` only) — report lint warnings as errors,
+  which stop the run (`-Werror`).
 - `json` (bool, `llg` only) — report lint as JSON on stdout and exit
-  (`--lint-json`); implies `run`.
+  (`--lint-json`); implies `only`.
 - `json_file` (string, `llg` only) — write the JSON report to this file
   (`--lint-json <path>`); implies `json`.
 
@@ -336,11 +354,25 @@ severity = "error"
 
 - `stop_policy` (`"resume"` or `"exit"`) — `$stop` handling (`--stop-policy`,
   default `resume`).
-- `max_export_mib` (integer 1 to 16384) — frontend export budget for the
-  elaborated design (`--max-export-mib`, default 4096).
 - `optimize` (bool) — simulator IR optimization passes; `false` is `--no-opt`.
 - `plusargs` (array of strings) — arguments passed to the generated simulator
   (the arguments after `--`).
+
+The frontend export of the elaborated design has no budget; a simulator
+compile may use all available memory. `LLG_MEMORY_LIMIT_MB` remains the
+optional process-wide guard.
+
+## `[waveform]` — waveform dumping (`llg` only)
+
+- `file` (string) — dump waveforms from time 0 into this `.vcd` or `.fst` file
+  (`--wave`); the extension picks the format and a relative path resolves
+  from the config directory. The design needs no `$dumpfile`/`$dumpvars`: the
+  file replaces any `$dumpfile` name and the design's `$dumpvars` selections
+  are ignored, while `$dumpon`, `$dumpoff`, `$dumpall`, `$dumpflush` and
+  `$dumplimit` still apply. `LLG_SIM_WAVE_FILE` replaces the name when a
+  built model is rerun.
+- `depth` (integer, default 0) — hierarchy levels dumped below each top
+  instance, as `$dumpvars(depth, top)`; 0 dumps every level (`--wave-depth`).
 
 ## `[build]` — model build (`llg` only)
 

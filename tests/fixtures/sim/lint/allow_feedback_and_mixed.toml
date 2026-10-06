@@ -1,0 +1,11 @@
+# llg.toml for simulation fixtures that deliberately contain both
+# combinational feedback and mixed blocking/nonblocking assignments. Their
+# tests first check that the default lint run stops with both errors, then run
+# with this file, which disables both rules, and check the simulation.
+schema_version = 1
+
+[lint.rules.combinational-loop]
+enabled = false
+
+[lint.rules.mixed-assignments]
+enabled = false

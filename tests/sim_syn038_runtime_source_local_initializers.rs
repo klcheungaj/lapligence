@@ -10,6 +10,6 @@ fn runtime_sources_initialize_static_and_automatic_locals() {
         "runtime-local-init=39,39 color=5c,5c lanes=39,4a:39,4a\n",
         "llg: simulation ended without $finish (no processes remain) at time 0\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

@@ -15,7 +15,7 @@ fn zero_time_calls_preserve_fixed_values_lifetimes_and_references() {
 
 #[test]
 fn verilog_2001_zero_time_calls_preserve_automatic_activations() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             "syn013_zero_time_calls",
             "legacy_calls",
@@ -35,13 +35,13 @@ fn static_local_array_nba_publishes_after_task_return() {
         "value=a5\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
 #[test]
 fn legacy_static_task_memory_nba_runs_in_both_editions() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             "syn013_zero_time_calls",
             "legacy_static_array_nba",
@@ -61,7 +61,7 @@ fn static_array_rows_slices_instances_and_wakeups() {
         "first=23/21 second=43 wakeups=4/2\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -73,7 +73,7 @@ fn static_array_delayed_nbas_publish_in_time_and_issue_order() {
         "ordered=22 delayed=44\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -85,7 +85,7 @@ fn static_function_arrays_keep_issued_nbas_and_previous_values() {
         "static=46 explicit=64 old=35/53\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -97,7 +97,7 @@ fn explicit_static_array_in_automatic_task_publishes_after_return() {
         "value=67\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -111,7 +111,7 @@ fn automatic_array_and_formal_nbas_remain_rejected() {
             "syn013_zero_time_calls",
             fixture,
             "nonblocking assignment to automatic variable",
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
         );
     }
 }

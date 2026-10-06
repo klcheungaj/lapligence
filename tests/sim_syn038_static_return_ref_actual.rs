@@ -15,7 +15,7 @@ fn hierarchical_static_function_return_slot_binds_to_task_ref_formal() {
             "syn038_pairwise",
             "static_return_ref_actual",
             optimized,
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
             &[],
             &[],
         );
@@ -27,7 +27,7 @@ fn hierarchical_static_function_return_slot_binds_to_task_ref_formal() {
             "{label}"
         );
         assert_eq!(
-            String::from_utf8_lossy(&output.stderr),
+            crate::sim_harness::strip_lint_reports(&output.stderr),
             expected_stderr,
             "{label}"
         );

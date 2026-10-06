@@ -9,7 +9,7 @@ fn unpacked_record_reverse_preserves_fields() {
         "PASS r07_unpacked_record_reverse\n",
         "llg: $finish at time 0 at tb:13:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -21,7 +21,7 @@ fn unpacked_record_sort_uses_integral_map_key() {
         "PASS r07_unpacked_record_sort\n",
         "llg: $finish at time 0 at tb:13:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -33,7 +33,7 @@ fn fixed_rows_are_reversed_and_sorted_as_owned_elements() {
         "PASS r07_fixed_rows\n",
         "llg: $finish at time 0 at tb:35:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -43,6 +43,6 @@ fn unpacked_record_sort_requires_an_integral_comparison_key() {
         "review_bundle",
         "r07_unmapped_record_sort",
         "can only be called on unpacked arrays of comparable values",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

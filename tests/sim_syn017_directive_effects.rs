@@ -8,7 +8,7 @@ const SUITE: &str = "syn017_directives";
 
 #[test]
 fn legacy_parameter_macros_conditionals_and_generated_ranges_execute() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             SUITE,
             "legacy_macro",
@@ -22,7 +22,7 @@ fn legacy_parameter_macros_conditionals_and_generated_ranges_execute() {
 
 #[test]
 fn legacy_ifdef_elsif_else_selects_each_executable_branch() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         for (define, expected) in [
             (Some("ENABLE"), "choice=11\n"),
             (Some("ALT"), "choice=22\n"),
@@ -52,19 +52,19 @@ fn modern_macro_operators_execute_only_in_2009() {
         "name=value_field value=37\n",
         "llg: $finish at time 0 at tb:11:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "modern_macro",
         "not available in IEEE 2001",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
 #[test]
 fn implicit_net_policy_follows_compilation_unit_boundary() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         for (prefix, mode) in [
             ("nettype_def", "separate"),
             ("nettype_wire", "merged"),
@@ -119,27 +119,27 @@ fn later_directives_and_predefined_macros_are_edition_gated() {
             expected,
             &format!("llg: $finish at time 0 at tb:{finish_line}:5\n"),
             &[],
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
         );
-        sim_cli::reject_case_with_args(SUITE, fixture, diagnostic, &["--edition", "2001"]);
+        sim_cli::reject_case_with_args(SUITE, fixture, diagnostic, &["--edition", "v2001"]);
     }
     sim_cli::reject_case_with_args(
         "directive_effects",
         "line_mapping",
         "`__FILE__`",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
     sim_cli::reject_case_with_args(
         "directive_effects",
         "macros_include",
         "macro token paste",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
 #[test]
 fn later_forms_in_untaken_ifdef_are_ignored() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             SUITE,
             "inactive_later_forms",
@@ -159,13 +159,13 @@ fn later_directive_in_else_follows_selected_branch() {
         "if\n",
         "llg: $finish at time 0 at tb:6:5\n",
         &[],
-        &["--edition", "2001", "--define", "TAKE_IF"],
+        &["--edition", "v2001", "--define", "TAKE_IF"],
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "else_directive_activity",
         "`pragma`",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
     sim_cli::run_case_with_args(
         SUITE,
@@ -173,7 +173,7 @@ fn later_directive_in_else_follows_selected_branch() {
         "else\n",
         "llg: $finish at time 0 at tb:14:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -182,7 +182,7 @@ fn caller_header_precedes_later_include_directory() {
     let later =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sim/syn017_directives/later");
     let later = later.to_str().expect("fixture directory is UTF-8");
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             SUITE,
             "include_order",
@@ -196,7 +196,7 @@ fn caller_header_precedes_later_include_directory() {
 
 #[test]
 fn escaped_identifier_with_macro_range_executes() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             SUITE,
             "escaped_range",
@@ -210,7 +210,7 @@ fn escaped_identifier_with_macro_range_executes() {
 
 #[test]
 fn standard_attribute_is_simulation_neutral() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             SUITE,
             "attribute_neutral",

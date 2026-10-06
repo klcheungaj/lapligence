@@ -21,6 +21,16 @@ shared helpers from the crate root (`use crate::sim_harness;`), never a per-suit
   status, and specific frontend/lowering/runtime diagnostics. Positive migration
   or unsupported-feature rejection is failure, never a skip/success substitute.
   Preserve each suite's existing frontend, timeout and sanitizer contracts.
+- Every `llg` run lints. Simulation expectations ignore lint warning/info lines
+  and the count line (`sim_harness::is_compile_report_line`,
+  `sim_harness::strip_lint_reports`) like frontend `Warning:` lines; lint
+  errors still fail the run. A fixture that deliberately mixes blocking and
+  nonblocking assignments or contains combinational feedback is listed with
+  its exact errors in `fixtures/sim/lint/expected_errors.tsv`: `sim_cli` first
+  requires the default run to stop with exactly those errors, then reruns with
+  the `fixtures/sim/lint/allow_*.toml` config disabling the rules and checks
+  the test's expectations. Add new such fixtures to the manifest instead of
+  passing a config by hand; custom harnesses use `sim_cli::expected_lint`.
 - Independent oracles use explicit truth tables, bit strings and width/sign
   arithmetic, not production implementation helpers. Keep specification-derived
   X/Z, scope, signedness and capacity boundaries. Expected-output changes need

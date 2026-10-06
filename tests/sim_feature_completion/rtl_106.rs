@@ -13,7 +13,7 @@ use std::path::Path;
 
 const SUITE: &str = "feature_completion/rtl_106";
 const LATER: &str = "is not available in IEEE 2001";
-const ARGS_2001: [&str; 2] = ["--edition", "2001"];
+const ARGS_2001: [&str; 2] = ["--edition", "v2001"];
 
 /// Value-backend lanes: legacy, compact portable and compact GMP (bundled
 /// unless `gmp` names an installation).
@@ -45,7 +45,7 @@ fn legal_2001_composition_executes_in_both_editions() {
     let gmp = super::sim_harness::test_gmp_root();
     for lane in backend_lanes(&gmp) {
         let envs: Vec<(&str, &str)> = lane.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        for edition in ["2001", "2009"] {
+        for edition in ["v2001", "sv2009"] {
             sim_cli::run_case_with_inputs(
                 SUITE,
                 "legal_2001.v",
@@ -244,9 +244,9 @@ fn component_negatives_compile_in_2009_and_fail_in_2001() {
 /// then the mapped one; a 2001 later form in a `` `line`` region likewise.
 #[test]
 fn frontend_diagnostics_append_the_line_mapped_position() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         let args = ["--edition", edition];
-        if edition == "2009" {
+        if edition == "sv2009" {
             sim_cli::reject_case_with_args(
                 SUITE,
                 "line_slang_error",
@@ -271,14 +271,14 @@ fn frontend_diagnostics_append_the_line_mapped_position() {
         SUITE,
         "neg_macro_line.v",
         &format!("neg_macro_line.v:6:3 (`line orig_rtl.v:72) `end label` {LATER}"),
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
     // A diagnostic before the directive stays physical only.
     let output = sim_cli::invoke_with_env(
         SUITE,
         "line_macro_error",
         true,
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[],
         &[],
     );
@@ -297,28 +297,39 @@ fn lint_findings_append_the_line_mapped_position() {
         .join("tests/fixtures/sim")
         .join(SUITE)
         .join("line_lint.v");
-    let stderr = format!(
+    let lint = format!(
         "{}:7:5 (`line orig_lint.v:31): [WARNING] incomplete-case: case without default in combinational process may infer a latch\n\
-         lint: 0 error(s), 1 warning(s)\n\
-         llg: $finish at time 1 at tb:15:5\n",
+         lint: 0 error(s), 1 warning(s)\n",
         fixture.display()
     );
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
+        // The simulation is unchanged by the warning...
         sim_cli::run_case_with_args(
             SUITE,
             "line_lint.v",
             "y=1\n",
-            &stderr,
+            "llg: $finish at time 1 at tb:15:5\n",
             &[],
-            &["--edition", edition, "--lint"],
+            &["--edition", edition],
         );
+        // ...and the lint report itself carries the mapped position.
+        let output = sim_cli::invoke_with_env(
+            SUITE,
+            "line_lint.v",
+            true,
+            &["--lint-only", "--edition", edition],
+            &[],
+            &[],
+        );
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(String::from_utf8_lossy(&output.stderr), lint, "{edition}");
     }
     // `--lint-json` takes a following operand as its output path.
     let output = sim_cli::invoke_with_env(
         SUITE,
         "line_lint.v",
         true,
-        &["--lint-json", "--edition", "2009"],
+        &["--lint-json", "--edition", "sv2009"],
         &[],
         &[],
     );

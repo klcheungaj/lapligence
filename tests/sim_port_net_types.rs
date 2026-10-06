@@ -9,7 +9,7 @@ fn port_net_type_wire_wired() {
         "known=01/01\nunknown=0x/0x\none=11/11\nreleased=zz/zz\n",
         "",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -21,7 +21,7 @@ fn port_net_type_hierarchy() {
         "chain=000\none=111\nforce=000\nrelease=111\nfloat=zzz\n",
         "",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -33,7 +33,7 @@ fn port_net_type_bias_strengths() {
         "zero=01001/011\none=01101\nunknown=01x01\nfloat=01101\n",
         "",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -45,7 +45,7 @@ fn port_net_type_selected() {
         "selected=f0/f0\nforce=f4/f4\nrelease=f0/f0\nunknown=f0/f0\nfloat=zz/zz\n",
         "",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -57,7 +57,7 @@ fn port_net_type_arrays() {
         "arrays=0z/0z selected=zz1z/zzzz\nchanged=5/5\nfloat=z/z\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -69,7 +69,7 @@ fn port_net_type_aliases() {
         "aliases=1000/1000/0010\nchanged=1010/1010/1010\nzero_parent=0000/0000/0000\nzero_child=0000/0000/0000\nfloat=zzzz/zzzz/zzzz\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -81,7 +81,7 @@ fn port_net_type_delays() {
         "t3=zz/11\nt5=11/11\nt10=11/00\nt12=00/00\nt14=00/zz\nt16=zz/zz\n",
         "",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -93,7 +93,7 @@ fn port_net_type_selected_delays() {
         "t2=z1\nt5=11\n",
         "",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -105,7 +105,7 @@ fn port_net_type_ascending_disjoint_selections() {
         "wired=11 split=1001 cell=11/1\nzero=00 cell=00/0\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -132,7 +132,7 @@ fn assert_collapse_warnings(output: std::process::Output, expected: &str, count:
     }
     for line in stderr.lines() {
         assert!(
-            line.starts_with("llg: warning: ") || line.starts_with("Warning: "),
+            line.starts_with("llg: warning: ") || crate::sim_harness::is_compile_report_line(line),
             "{stderr}"
         );
     }
@@ -149,7 +149,7 @@ fn port_net_type_warning_pairs_use_the_external_type() {
             "port_net_types",
             "warnings",
             optimized,
-            &["--edition", "2001"],
+            &["--edition", "v2001"],
             &[],
             &[],
         );
@@ -168,7 +168,7 @@ fn port_net_type_sibling_tie_order_is_deterministic() {
             "port_net_types",
             "siblings",
             optimized,
-            &["--edition", "2001"],
+            &["--edition", "v2001"],
             &[],
             &[],
         );
@@ -184,7 +184,7 @@ fn port_net_type_uwire_formal_keeps_one_collapsed_driver() {
         "port_net_types",
         "bad_uwire",
         "a collapsed uwire net has 2 drivers",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -194,7 +194,7 @@ fn port_net_type_does_not_relax_alias_legality() {
         "port_net_types",
         "bad_alias",
         "all nets in a net alias statement must have a common nettype",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -204,7 +204,7 @@ fn port_net_type_trireg_remains_explicitly_unsupported() {
         "port_net_types",
         "bad_trireg",
         "unsupported net type",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -216,7 +216,7 @@ fn port_net_type_admits_undriven_uwire_actual() {
         "uwire=z/z\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -228,7 +228,7 @@ fn port_net_type_keeps_unconnected_same_type_uwire_aliases() {
         "alias=11\nalias=00\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -240,6 +240,6 @@ fn port_net_type_concat_actual_without_high_declaration_is_connected() {
         "concat=10/00/1000\nchanged=01/01/0101\nparent_only=11/00/1100\nfloat=zz/zz/zzzz\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

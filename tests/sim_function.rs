@@ -1113,6 +1113,6 @@ fn sim_packed_struct_return() {
         "swap=3412 widen=13cb src=1234\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

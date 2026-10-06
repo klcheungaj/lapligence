@@ -10,6 +10,6 @@ fn typed_actuals_keep_formal_directions_distinct_from_storage() {
         "enum=01,01,01 pair=5aa5 union=5aa5 records=11/a1,22/b2 inout=c3/44 ref=31/c7\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

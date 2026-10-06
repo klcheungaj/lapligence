@@ -19,5 +19,12 @@ fn legacy_random_distributions_match_annex_n_in_both_optimizer_modes() {
 
 #[test]
 fn legacy_random_distributions_match_verilog_2001_policy() {
-    sim_cli::run_case_with_args("random", "basic", EXPECTED, "", &[], &["--edition", "2001"]);
+    sim_cli::run_case_with_args(
+        "random",
+        "basic",
+        EXPECTED,
+        "",
+        &[],
+        &["--edition", "v2001"],
+    );
 }

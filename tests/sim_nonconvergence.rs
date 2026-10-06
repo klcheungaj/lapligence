@@ -48,7 +48,9 @@ fn assert_success(fixture: &str, expected: &[u8]) {
             "{fixture}, optimized={optimized}: {stderr}"
         );
         assert!(
-            stderr.lines().all(|line| line.starts_with("Warning: ")),
+            stderr
+                .lines()
+                .all(|line| crate::sim_harness::is_compile_report_line(line)),
             "{stderr}"
         );
     }

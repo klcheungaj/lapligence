@@ -23,7 +23,7 @@ fn assert_runtime_errors(fixture: &str, expected: &str) {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let runtime: String = stderr
                 .lines()
-                .filter(|line| !line.starts_with("Warning: "))
+                .filter(|line| !crate::sim_harness::is_compile_report_line(line))
                 .map(|line| format!("{line}\n"))
                 .collect();
             assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");

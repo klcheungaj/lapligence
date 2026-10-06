@@ -4,19 +4,18 @@
 //! "not given"), so `settings` can apply the documented precedence: command
 //! line, then environment, then `llg.toml`, then built-in defaults.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use llg::config::StopPolicy;
 use llg::core::compile;
-use llg::ffi::slang::{NATIVE_HARD_MAX_OUTPUT_BYTES, SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES};
 use llg::sim;
-
-pub(crate) const MIB: u64 = 1024 * 1024;
 
 /// Usage printed when `llg` is run without arguments. `llg` never discovers
 /// `llg.toml`, so there is nothing else to run from.
 pub(crate) const USAGE: &str = "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
-generate: --config <file>  --top <module[:config]>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --lint  --no-lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-gen-only  --no-opt  --opt  --max-export-mib <MiB>
+generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt
+lint:     --lint-only  --no-lint-only  --lint-json [<path>]  -Werror  -Wno-error  # lint always runs
+wave:     --wave <file.vcd|file.fst>  --wave-depth <N>  --no-wave
 build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
 output:   --out-dir <dir>  --runtime-cache <dir>
 append:   --append-<list> <value>  # adds to the list instead of replacing it; see --help
@@ -61,10 +60,13 @@ pub(crate) struct Cli {
     /// plusargs.
     pub runtime_args: Option<Vec<String>>,
     pub append: Appends,
-    pub lint_mode: Option<bool>,
+    pub lint_only: Option<bool>,
+    pub warnings_as_errors: Option<bool>,
     pub lint_json_mode: Option<bool>,
     pub lint_json_path: Option<PathBuf>,
-    pub lint_config_path: Option<PathBuf>,
+    /// `Some(None)` after `--no-wave`, which cancels a configured waveform.
+    pub wave_file: Option<Option<PathBuf>>,
+    pub wave_depth: Option<u32>,
     pub generator: Option<String>,
     pub dpi_libraries: Vec<PathBuf>,
     pub launcher: Option<String>,
@@ -78,7 +80,6 @@ pub(crate) struct Cli {
     pub gen_only: Option<bool>,
     pub optimize: Option<bool>,
     pub stop_policy: Option<StopPolicy>,
-    pub max_export_bytes: Option<u64>,
 }
 
 pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
@@ -97,10 +98,12 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
     let mut runtime_args: Option<Vec<String>> = None;
     let mut config_path: Option<PathBuf> = None;
     let mut append = Appends::default();
-    let mut lint_mode: Option<bool> = None;
+    let mut lint_only: Option<bool> = None;
+    let mut warnings_as_errors: Option<bool> = None;
     let mut lint_json_mode: Option<bool> = None;
     let mut lint_json_path: Option<PathBuf> = None;
-    let mut lint_config_path: Option<PathBuf> = None;
+    let mut wave_file: Option<Option<PathBuf>> = None;
+    let mut wave_depth: Option<u32> = None;
     let mut generator: Option<String> = None;
     let mut dpi_libraries: Vec<PathBuf> = Vec::new();
     let mut launcher: Option<String> = None;
@@ -114,7 +117,6 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
     let mut gen_only: Option<bool> = None;
     let mut optimize: Option<bool> = None;
     let mut stop_policy: Option<StopPolicy> = None;
-    let mut max_export_bytes: Option<u64> = None;
     let mut it = args.into_iter().peekable();
     while let Some(a) = it.next() {
         if a == "--" {
@@ -127,6 +129,9 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
                     "Lapligence Verilog/SystemVerilog simulator
 
 Usage: llg [OPTIONS] [<file.sv>...] [-- <plusargs>...]
+
+Every run lints the design first: lint errors stop the run, warnings do not
+(unless -Werror).
 
 Options and sources may also come from an llg.toml (docs/config.md), read only
 when named with --config. Precedence: command line, then environment, then the
@@ -142,12 +147,16 @@ replaces an earlier one for the same NAME.
 Options:
   -h, --help                 Print help and exit
   -V, --version              Print the package version and exit
-      --config <file>        Read this llg.toml (a missing file is an error)
-      --top <module[:config]> Select the top module or configured design
-      --edition <2001|2009> Select the language edition (default: 2009)
+      --config <file>        Read this llg.toml (a missing file is an error); its
+                              [lint] rules configure the linter
+      --top <module>         Select the top module by name
+      --edition <v2001|sv2009>
+                              Select the language edition (default: sv2009)
       --compilation-units <separate|merged>
                               Select compilation-unit grouping (default: separate)
-  -I, --include-dir <path>   Include-search directory (repeatable)
+  -I, --include-dir <path>   Search directory for `include files and for the
+                              definitions of modules the sources do not define
+                              (repeatable)
   -D, --define <NAME[=VALUE]> Define a preprocessor macro (repeatable)
   -G, --param-override <NAME=VALUE>
                               Override a top-level parameter (repeatable)
@@ -160,18 +169,22 @@ Options:
                               Set the default configuration library search order
       --default-library <name>
                               Name the default source library (default: work)
-      --lint                 Run lint before simulation
-      --no-lint              Do not lint (overrides llg.toml)
-      --lint-json [<path>]   Report lint as JSON and exit
-      --lint-config <file>   Load lint configuration (replaces the llg.toml [lint] rules)
+      --lint-only            Lint without generating or running the model
+      --no-lint-only         Generate and run after lint (overrides llg.toml)
+      --lint-json [<path>]   Report lint as JSON and exit (implies --lint-only)
+      -Werror                Treat lint warnings as errors
+      -Wno-error             Keep lint warnings as warnings (overrides llg.toml)
+      --wave <file>          Dump every signal from time 0 into this .vcd or .fst
+                              file; replaces the $dumpfile name and $dumpvars
+                              selection
+      --wave-depth <N>       Dump N hierarchy levels below each top (default: 0, all)
+      --no-wave              Do not dump (overrides llg.toml [waveform])
       --gen-only             Emit C model sources without building
       --no-gen-only          Build and run (overrides llg.toml gen_only)
       --no-opt               Disable simulator optimization passes
       --opt                  Enable simulator optimization passes (overrides llg.toml)
       --stop-policy <resume|exit>
                               Handle `$stop` by resuming (default) or exiting
-      --max-export-mib <MiB> Frontend export budget for the elaborated design
-                              (default: {export_default}, at most {export_ceiling})
       --                    Pass remaining arguments to the generated simulator
                               (replaces the llg.toml plusargs, even when empty)
       --generator <backend>  Select the CMake generator
@@ -194,8 +207,6 @@ Options:
                     model_opt_default = sim::build::DEFAULT_MODEL_OPT_LEVEL
                         .gnu_flag()
                         .trim_start_matches('-'),
-                    export_default = SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES / MIB,
-                    export_ceiling = NATIVE_HARD_MAX_OUTPUT_BYTES / MIB,
                 );
                 return Err(0);
             }
@@ -203,7 +214,19 @@ Options:
                 println!("llg {}", env!("CARGO_PKG_VERSION"));
                 return Err(0);
             }
-            "--top" | "-top" => top = it.next(),
+            "--top" | "-top" => match it.next() {
+                Some(name) => match llg::config::validate_top_name(&name) {
+                    Ok(()) => top = Some(name),
+                    Err(error) => {
+                        eprintln!("llg: --top: {error}");
+                        return Err(2);
+                    }
+                },
+                None => {
+                    eprintln!("llg: --top requires a module name");
+                    return Err(2);
+                }
+            },
             "--edition" => match it.next() {
                 Some(value) => match value.parse() {
                     Ok(value) => edition = Some(value),
@@ -213,7 +236,7 @@ Options:
                     }
                 },
                 None => {
-                    eprintln!("llg: --edition requires 2001 or 2009");
+                    eprintln!("llg: --edition requires v2001 or sv2009");
                     return Err(2);
                 }
             },
@@ -407,18 +430,25 @@ Options:
                     return Err(2);
                 }
             },
-            "--max-export-mib" => match it.next().map(|value| value.parse::<u64>()) {
-                Some(Ok(mib)) if (1..=NATIVE_HARD_MAX_OUTPUT_BYTES / MIB).contains(&mib) => {
-                    max_export_bytes = Some(mib * MIB);
+            "--wave" => match it.next() {
+                Some(path) if llg::config::is_waveform_file(Path::new(&path)) => {
+                    wave_file = Some(Some(PathBuf::from(path)));
                 }
                 _ => {
-                    eprintln!(
-                        "llg: --max-export-mib requires an integer from 1 to {}",
-                        NATIVE_HARD_MAX_OUTPUT_BYTES / MIB
-                    );
+                    eprintln!("llg: --wave requires a file ending in .vcd or .fst");
                     return Err(2);
                 }
             },
+            "--wave-depth" => {
+                match it.next().map(|value| value.parse::<u32>()) {
+                    Some(Ok(depth)) => wave_depth = Some(depth),
+                    _ => {
+                        eprintln!("llg: --wave-depth requires a non-negative integer (0 dumps all levels)");
+                        return Err(2);
+                    }
+                }
+            }
+            "--no-wave" => wave_file = Some(None),
             "--gen-only" | "-gen-only" => gen_only = Some(true),
             "--no-gen-only" => gen_only = Some(false),
             "--no-opt" => optimize = Some(false),
@@ -436,13 +466,14 @@ Options:
                     return Err(2);
                 }
             },
-            "--lint" | "-lint" => lint_mode = Some(true),
-            "--no-lint" => {
-                lint_mode = Some(false);
+            "--lint-only" => lint_only = Some(true),
+            "--no-lint-only" => {
+                lint_only = Some(false);
                 lint_json_mode = Some(false);
             }
+            "-Werror" => warnings_as_errors = Some(true),
+            "-Wno-error" => warnings_as_errors = Some(false),
             "--lint-json" | "-lint-json" => {
-                lint_mode = Some(true);
                 lint_json_mode = Some(true);
                 // The optional output path is the next token when it does not
                 // start with `-`; otherwise the JSON goes to stdout.
@@ -452,13 +483,10 @@ Options:
                     }
                 }
             }
-            "--lint-config" => match it.next() {
-                Some(p) => lint_config_path = Some(PathBuf::from(p)),
-                None => {
-                    eprintln!("llg: --lint-config requires a file path");
-                    return Err(2);
-                }
-            },
+            option if option.starts_with('-') => {
+                eprintln!("llg: unknown option `{option}` (see llg --help)");
+                return Err(2);
+            }
             _ => files.push(a),
         }
     }
@@ -478,10 +506,12 @@ Options:
         files,
         runtime_args,
         append,
-        lint_mode,
+        lint_only,
+        warnings_as_errors,
         lint_json_mode,
         lint_json_path,
-        lint_config_path,
+        wave_file,
+        wave_depth,
         generator,
         dpi_libraries,
         launcher,
@@ -495,7 +525,6 @@ Options:
         gen_only,
         optimize,
         stop_policy,
-        max_export_bytes,
     })
 }
 

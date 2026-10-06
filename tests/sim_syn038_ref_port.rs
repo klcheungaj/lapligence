@@ -10,6 +10,6 @@ fn module_ref_port_tracks_parent_and_child_updates_in_both_modes() {
         "refport=c3\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

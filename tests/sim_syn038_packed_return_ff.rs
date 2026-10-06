@@ -10,6 +10,6 @@ fn packed_cast_function_return_is_captured_by_always_ff() {
         "12 34\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

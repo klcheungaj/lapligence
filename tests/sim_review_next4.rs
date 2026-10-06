@@ -9,13 +9,13 @@ fn singleton_concat_preserves_unsigned_and_self_determined_semantics() {
         "PASS n06_singleton_concat_signed_cast\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
 #[test]
 fn singleton_concat_retains_legacy_unsigned_assignment() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             "review_bundle",
             "n06_singleton_concat_legacy",
@@ -35,7 +35,7 @@ fn tagged_member_reads_preserve_runtime_signedness() {
         "PASS n01_tagged_signed_widen\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -50,7 +50,7 @@ fn abrupt_loop_exits_keep_a_stateful_static_result_process_evaluated() {
             "PERSISTENT_RESULT changes=1\n",
             "",
             &[],
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
         );
     }
 }
@@ -63,7 +63,7 @@ fn ordinary_static_state_and_proven_callback_results_remain_distinct() {
         "PASS n02_static_do_state_control\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_with_args(
         "review_bundle",
@@ -71,7 +71,7 @@ fn ordinary_static_state_and_proven_callback_results_remain_distinct() {
         "PASS n02_static_definite_event\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -83,7 +83,7 @@ fn fixed_ordering_captures_automatic_and_formal_receivers_once() {
         "PASS n07_selected_automatic_ordering\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_with_args(
         "review_bundle",
@@ -91,7 +91,7 @@ fn fixed_ordering_captures_automatic_and_formal_receivers_once() {
         "PASS n07_selected_formal_ordering\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_with_args(
         "review_bundle",
@@ -99,7 +99,7 @@ fn fixed_ordering_captures_automatic_and_formal_receivers_once() {
         "PASS n07_selected_record_and_row_ordering\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -110,7 +110,7 @@ fn fixed_ordering_does_not_make_a_const_ref_receiver_writable() {
             "review_bundle",
             "n07_const_ref_receiver",
             optimized,
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
             &[],
             &[],
         );

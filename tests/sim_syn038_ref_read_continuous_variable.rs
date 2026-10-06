@@ -249,7 +249,7 @@ fn assert_public_cli_output(optimized: bool) {
     if !optimized {
         command.arg("--no-opt");
     }
-    command.args(["--edition", "2009"]).arg(&source);
+    command.args(["--edition", "sv2009"]).arg(&source);
     let output = sim_harness::run_command(&mut command, Duration::from_secs(180))
         .unwrap_or_else(|error| panic!("optimized={optimized}: {error}"));
     assert!(

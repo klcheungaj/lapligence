@@ -405,13 +405,14 @@ fn lsp_stdio_accepts_driver_keys_and_rejects_unknown_ones_atomically() {
     wait_for_diagnostics(&mut client, &uri, |p| !has_lint_rule(p, "unused-signal"));
 
     let driver_keys = "[compile]\n\
-         edition = \"2001\"\n\
+         edition = \"v2001\"\n\
          system_tasks = [\"$task()\"]\n\
          [libraries]\n\
          order = [\"work\"]\n\
          [simulator]\n\
          stop_policy = \"exit\"\n\
-         max_export_mib = 64\n\
+         [waveform]\n\
+         file = \"dump.fst\"\n\
          [build]\n\
          cc = \"cc\"\n\
          jobs = 2\n\

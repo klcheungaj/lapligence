@@ -416,6 +416,30 @@ impl IrType {
     }
 }
 
+/// Waveform dumping the driver requested without `$dumpfile`/`$dumpvars`.
+///
+/// Startup opens `file` and selects `selection` at time zero; the design's own
+/// `$dumpfile` and `$dumpvars` calls are then ignored.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrWaveStart {
+    pub(in crate::sim) file: String,
+    pub(in crate::sim) selection: IrWaveDumpVars,
+}
+
+impl IrWaveStart {
+    pub fn new(file: String, selection: IrWaveDumpVars) -> Self {
+        Self { file, selection }
+    }
+
+    pub fn file(&self) -> &str {
+        &self.file
+    }
+
+    pub fn selection(&self) -> &IrWaveDumpVars {
+        &self.selection
+    }
+}
+
 /// Typed operation staging used while building an executable model.
 ///
 /// [`crate::sim::execution::ExecutionModel::lower`] moves process bodies into
@@ -426,8 +450,11 @@ pub struct IrModel {
     pub(in crate::sim) design_name: String,
     /// Design time precision in fs (scheduler tick unit).
     pub(in crate::sim) precision_fs: u64,
-    /// At least one waveform-control system task was lowered.
+    /// At least one waveform-control system task was lowered, or the driver
+    /// requested dumping.
     pub(in crate::sim) waveform: bool,
+    /// Driver-requested dumping that starts at time zero.
+    pub(in crate::sim) wave_start: Option<IrWaveStart>,
     pub(in crate::sim) signals: Vec<IrSignal>,
     pub(in crate::sim) net_groups: Vec<IrNetGroup>,
     pub(in crate::sim) arrays: Vec<IrArray>,
@@ -482,6 +509,7 @@ pub struct IrModel {
 #[derive(Clone, Debug, Default)]
 pub struct IrModelParts {
     pub waveform: bool,
+    pub wave_start: Option<IrWaveStart>,
     pub signals: Vec<IrSignal>,
     pub net_groups: Vec<IrNetGroup>,
     pub arrays: Vec<IrArray>,
@@ -523,7 +551,8 @@ impl IrModel {
         let model = Self {
             design_name,
             precision_fs,
-            waveform: parts.waveform,
+            waveform: parts.waveform || parts.wave_start.is_some(),
+            wave_start: parts.wave_start,
             signals: parts.signals,
             net_groups: parts.net_groups,
             arrays: parts.arrays,
@@ -559,6 +588,10 @@ impl IrModel {
     }
     pub fn waveform_enabled(&self) -> bool {
         self.waveform
+    }
+    /// Driver-requested dumping from time zero, if any.
+    pub fn wave_start(&self) -> Option<&IrWaveStart> {
+        self.wave_start.as_ref()
     }
     pub fn signals(&self) -> &[IrSignal] {
         &self.signals

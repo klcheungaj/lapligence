@@ -13,7 +13,7 @@ fn packed_pattern_public_cli() {
             EXPECTED,
             "",
             &[],
-            &["--edition", "2009", "--model-opt-level", level],
+            &["--edition", "sv2009", "--model-opt-level", level],
         );
     }
 }

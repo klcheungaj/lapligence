@@ -156,6 +156,7 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
         design_name: "t".to_string(),
         precision_fs: 1,
         waveform: false,
+        wave_start: None,
         signals,
         net_groups: Vec::new(),
         arrays: Vec::new(),

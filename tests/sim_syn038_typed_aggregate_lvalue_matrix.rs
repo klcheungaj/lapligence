@@ -10,6 +10,6 @@ fn typed_aggregate_lvalue_matrix_matches_exact_oracle_in_both_optimizer_modes() 
         "records=20,21,22,23 payload=70,71,61 enum=1,2\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

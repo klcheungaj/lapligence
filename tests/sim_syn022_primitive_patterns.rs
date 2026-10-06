@@ -9,7 +9,7 @@ fn primitive_patterns_keep_order_scope_and_four_state_equality() {
         "primitive_patterns=pass checks=10 calls=12\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -20,7 +20,7 @@ fn primitive_pattern_bindings_end_at_the_true_arm() {
             "syn022_primitive_patterns",
             fixture,
             "undeclared identifier",
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
         );
     }
 }
@@ -31,7 +31,7 @@ fn duplicate_bindings_in_one_pattern_are_rejected() {
         "syn022_primitive_patterns",
         "bad_duplicate_binding",
         "redefinition of 'same'",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -41,13 +41,13 @@ fn unsupported_whole_value_patterns_have_specific_diagnostics() {
         "syn022_primitive_patterns",
         "unsupported_dynamic_binding",
         "conditional whole-value pattern requires a supported fixed value",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "syn022_primitive_patterns",
         "unsupported_dynamic_wildcard",
         "conditional whole-value pattern requires a supported fixed value",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -59,7 +59,7 @@ fn real_and_string_whole_value_bindings_run() {
         "real binding=1.50 twice=3.00\nfilter rejected\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_with_args(
         "syn022_primitive_patterns",
@@ -67,7 +67,7 @@ fn real_and_string_whole_value_bindings_run() {
         "native binding=abc joined=abc!\nfilter rejected\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -79,12 +79,12 @@ fn primitive_patterns_are_rejected_in_verilog_2001() {
         "edition_pattern=pass\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "syn022_primitive_patterns",
         "edition_boundary",
         "undeclared identifier 'matches'",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }

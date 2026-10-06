@@ -10,6 +10,6 @@ fn interface_record_reduction_and_field_events_count_one_source_change() {
         "events=1,1\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

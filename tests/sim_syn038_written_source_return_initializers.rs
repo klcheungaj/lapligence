@@ -250,7 +250,7 @@ fn written_return_and_initializer_sources_match_in_both_cli_modes() {
         EXPECTED_STDOUT,
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

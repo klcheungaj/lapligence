@@ -36,7 +36,10 @@ fn assert_collapse_warnings(fixture: &str, expected: &str, warnings: &[&str]) {
                 };
                 actual.push(body);
             } else {
-                assert!(line.starts_with("Warning: "), "{label}: {stderr}");
+                assert!(
+                    crate::sim_harness::is_compile_report_line(line),
+                    "{label}: {stderr}"
+                );
             }
         }
         actual.sort_unstable();

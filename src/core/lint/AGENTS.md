@@ -3,8 +3,8 @@
 Rules consume owned `Db`/`DesignModel` through `LintCtx`: no native traversal,
 raw FFI, I/O, `unsafe` or LSP dependencies. The LSP runs lint in `analyze` and
 publishes `source: "llg-lint"`, severity mappings and rule ID as diagnostic code.
-`llg --lint` prints `file:line:col: [SEVERITY] rule: message` and exits 1 on errors
-before codegen; a `` `line``-mapped position appends `` (`line file:line)`` after
+Every `llg` run prints `file:line:col: [SEVERITY] rule: message` and exits 1 on
+errors before codegen (`-Werror` promotes warnings); a `` `line``-mapped position appends `` (`line file:line)`` after
 `col`, and the LSP adds it as related information.
 
 ## API and registry
@@ -52,12 +52,13 @@ severity = "warning"
 severity = "info"
 ```
 
-`llg --lint --lint-config <path>` rejects missing/malformed configuration with
-exit 1 despite the parser's best-effort behavior. `--lint-json [<path>]` implies
-report-only lint and wins over `--lint`: the next non-flag token is the output
-path, otherwise output goes to stdout. Exit 0 when clean, 1 on lint errors;
-never generate or simulate. LSP configuration instead comes from each root's
-`llg.toml` `[lint]` via `config.rs::translate_lint`.
+`parse_toml` (the standalone `llg-lint.toml` format) remains a library API; no
+driver option reads it. `llg` takes rule settings from the `--config` file's
+`[lint]` table (`config::resolve::translate_lint`), rejecting a missing or
+malformed file with exit 1. `--lint-json [<path>]` implies `--lint-only`: the
+next non-flag token is the output path, otherwise output goes to stdout. Exit 0
+when clean or warnings only, 1 on lint errors; never generate or simulate. LSP
+configuration comes from each root's `llg.toml` `[lint]` the same way.
 
 `unused-signal` retains its historical activity model; `undriven-signal` also
 accounts for primitive terminals and expression-valued port actuals. Shared

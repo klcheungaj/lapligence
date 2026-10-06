@@ -19,6 +19,9 @@ These file-backed designs cover the ordinary Verilog waveform tasks in IEEE
 - `wide_limit.sv` is built with `--define LIMIT=<bytes>` and checks that a
   `$dumplimit` boundary keeps or rejects a 65536-bit record as a whole.
 - `fst.sv` is the FST counterpart for the generated-model reader probe.
+- `cli_wave.sv` has no waveform tasks; `llg --wave` dumps it as VCD or FST,
+  with and without `--wave-depth`, and the same option overrides `depth.sv`'s
+  own `$dumpfile`/`$dumpvars`.
 - `output_redirect.sv` writes a waveform, a `$fopen` file and `$writememh`
   output and reads `$readmemh` input, so one built model can be rerun with
   `LLG_SIM_OUT_DIR`, `LLG_SIM_WAVE_FILE` and `LLG_SIM_LOG_FILE`.

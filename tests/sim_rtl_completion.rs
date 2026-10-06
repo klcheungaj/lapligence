@@ -98,7 +98,7 @@ fn unpacked_structure_conditionals_merge_immediate_members() {
         "record conditional passed\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -110,7 +110,7 @@ fn unpacked_structure_conditionals_merge_native_members() {
         "xx\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -129,7 +129,7 @@ fn whole_array_continuous_assignments_keep_sources_cells_and_rhs_snapshots() {
         ),
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -144,7 +144,7 @@ fn fixed_array_input_ports_capture_values_and_runtime_rows() {
         ),
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -242,7 +242,7 @@ fn fixed_arrays_of_structs_preserve_member_paths_and_formal_shapes() {
         "sum=16 data=5a,a5\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -276,7 +276,7 @@ fn fixed_block_locals_observe_automatic_and_static_lifetimes() {
         "local=26 saved=11\nlocal=26 saved=12\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -332,7 +332,7 @@ fn inout_arrays_nested_peers_and_selected_ports_share_resolution() {
         "lane=5a sibling=zz bus=z5a5\nlane=a5 sibling=zz bus=zzz5\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -432,7 +432,7 @@ fn array_conditional_values_preserve_element_semantics() {
         "array conditional values passed\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -444,7 +444,7 @@ fn array_conditional_nested_elements_use_uninitialized_defaults() {
         "array conditional nested defaults passed\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -456,7 +456,7 @@ fn array_conditional_wide_elements_preserve_state_domains() {
         "array conditional wide states passed\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -468,6 +468,6 @@ fn array_conditional_arms_are_captured_once_and_short_circuited() {
         "array conditional effects passed\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

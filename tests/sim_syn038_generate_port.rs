@@ -14,6 +14,6 @@ fn automatic_fixed_array_record_results_reach_generated_child_ports() {
         "generated=11\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

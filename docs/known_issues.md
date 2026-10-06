@@ -79,7 +79,7 @@ it; (4) range-aware alias driver mapping, `%v`, force, VPI and waveform views.
 ### Reproduce
 
 ```sh
-llg --gen-only --top tb --edition 2009 --out-dir <dir> \
+llg --gen-only --top tb --edition sv2009 --out-dir <dir> \
     tests/fixtures/sim/continuation_20_23/continuous_contexts.sv
 wc -lc <dir>/sim/*/model.c
 ```
@@ -168,16 +168,16 @@ Preserve checked C ABI ownership and the single owned DB import; consumers
 must not traverse native ASTs independently. Verify exact values, source
 identity and diagnostics as well as generated-model behavior.
 
-Use `--max-export-mib` to choose the simulator export budget and
-`LLG_MEMORY_LIMIT_MB` for the optional process-wide memory guard. Budget for
-the measured frontend peak, rather than the exported byte count.
+Simulator compiles have no export budget; use `LLG_MEMORY_LIMIT_MB` for the
+optional process-wide memory guard, budgeting for the measured frontend peak
+rather than the exported byte count.
 
 ### Reproduce
 
 Run:
 
 ```sh
-/usr/bin/time -v llg --gen-only --max-export-mib 4096 \
+/usr/bin/time -v llg --gen-only \
     --top many_processes_registers_config \
     --define LLG_CORPUS_N=40000 --define LLG_CORPUS_EDGES=2 \
     --out-dir <dir> perf/corpus/many_processes.sv
@@ -187,8 +187,8 @@ Read maximum resident set size from `time`. Use 5k/10k/20k/40k processes, at
 least three runs per point, release binaries and medians. The Linux runner
 `python3 perf/scripts/frontend_scale.py <release-binary> <evidence-dir>` records
 GNU time, stage markers, sampled RSS and generated-C hashes, running points
-serially. See [profiling](../perf/README.md#frontend-stage-scaling). The export
-budget counts captured data, not the bytes of generated `model.c`.
+serially. See [profiling](../perf/README.md#frontend-stage-scaling). Export
+bytes count captured data, not the bytes of generated `model.c`.
 
 ## High generation memory use during C emission
 
@@ -919,7 +919,7 @@ drivers. A 2001 constraint that is neither grammar nor one of those rules
 stays admitted unless the frontend rejects it, for example an `output real` module port. Navigation snapshots have no subroutine bodies, so the
 body rules do not run there. Directives in trivia are checked by
 token, not by the syntax profile. Reproduce: compile `module tb(output real r); initial r = 1.0; endmodule`
-with `--edition 2001`.
+with `--edition v2001`.
 
 ## Modport expression ports through virtual interfaces
 

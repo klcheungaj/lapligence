@@ -14,7 +14,7 @@ fn interface_record_field_inout_task_preserves_neighbor_field_in_both_modes() {
             "syn038_pairwise",
             "interface_record_inout",
             optimized,
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
             &[],
             &[],
         );
@@ -27,6 +27,10 @@ fn interface_record_field_inout_task_preserves_neighbor_field_in_both_modes() {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(output.stdout.as_slice(), b"22 45\n", "{label}");
-        assert_eq!(output.stderr.as_slice(), b"", "{label}");
+        assert_eq!(
+            crate::sim_harness::strip_lint_reports(&output.stderr),
+            "",
+            "{label}"
+        );
     }
 }

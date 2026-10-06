@@ -211,6 +211,7 @@ fn generated_runtime_backtrace_reports_the_resumed_wait_and_call_sites() {
                         poll_depth_max,
                         ..Default::default()
                     },
+                    ..Default::default()
                 },
             )
             .map_err(|error| error.to_string())?

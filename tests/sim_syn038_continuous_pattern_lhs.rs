@@ -10,6 +10,6 @@ fn continuous_pattern_lvalues_preserve_targets_and_rhs_sensitivity() {
         "rhs_eval\nrhs_eval\nnet=01 selected_net=01 pure_variable=01 counted_variable=01\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

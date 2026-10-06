@@ -10,6 +10,6 @@ fn call_actual_storage_and_routes_match_in_both_optimizer_modes() {
         "calls=12,43,13,44,25,2d,55 iface=11,41,13,2c,42,12 hier=33,6f\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

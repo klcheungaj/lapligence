@@ -15,7 +15,7 @@ fn required_capacity_lane_executes_large_value_copy() {
 
 #[test]
 fn storage_boundaries_and_multidimensional_minimum_in_both_editions() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             SUITE,
             "storage_capacity.v",
@@ -29,7 +29,7 @@ fn storage_boundaries_and_multidimensional_minimum_in_both_editions() {
 
 #[test]
 fn dimension_product_overflow_rejects_in_both_editions() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::reject_case_with_args(SUITE, "overflow.v", "overflows", &["--edition", edition]);
     }
 }
@@ -41,7 +41,7 @@ fn capacity_copy_survives_owned_source_destruction() {
 
 #[test]
 fn packed_capacity_remains_separate_in_both_editions() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             SUITE,
             "packed_at.v",
@@ -66,7 +66,7 @@ fn whole_memory_values_remain_systemverilog_only() {
         SUITE,
         "whole_memory_illegal.v",
         "whole unpacked array value",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 

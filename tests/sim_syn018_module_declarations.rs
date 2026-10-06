@@ -21,7 +21,7 @@ fn nested_and_extern_modules_execute_in_both_compilation_unit_modes() {
             EXPECTED,
             expected_stderr,
             &[],
-            &["--edition", "2009", "--compilation-units", policy],
+            &["--edition", "sv2009", "--compilation-units", policy],
         );
     }
 }
@@ -35,7 +35,7 @@ fn enclosing_instance_specializations_keep_nested_defaults_and_port_widths() {
             "specialized=4/6 widths=4/5\n",
             "llg: $finish at time 1000 at tb:28:5\n",
             &[],
-            &["--edition", "2009", "--compilation-units", policy],
+            &["--edition", "sv2009", "--compilation-units", policy],
         );
     }
 }
@@ -50,7 +50,7 @@ fn matching_extern_header_and_body_specialize_parameterized_ports() {
             "extern_specialized=7/8 widths=4/5\n",
             "llg: $finish at time 1000 at tb:14:5\n",
             &[],
-            &["--edition", "2009", "--compilation-units", policy],
+            &["--edition", "sv2009", "--compilation-units", policy],
         );
     }
 }
@@ -61,37 +61,37 @@ fn extern_module_signature_and_body_failures_remain_frontend_diagnostics() {
         SUITE,
         "extern_mismatch",
         "extern module 'syn018_bad' does not match implementation",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "extern_missing",
         "missing implementation for extern module 'syn018_missing'",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "extern_2001",
         "expected a declaration name",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "nested_out_of_scope",
         "unknown module 'leaf'",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "nested_declaration_in_generate",
         "member not allowed in generate block",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "nested_2001",
         "nested module",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 

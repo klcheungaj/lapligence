@@ -207,7 +207,7 @@ fn continuously_driven_wire_child_input_matches_both_cli_modes() {
         "port_source=5a/5a\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -239,7 +239,7 @@ fn continuously_driven_logic_child_input_matches_both_cli_modes() {
         "port_logic=5a/5a\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

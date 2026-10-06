@@ -224,7 +224,7 @@ fn blocking_written_task_input_matches_both_cli_modes() {
         "call_source=5a/5a\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -256,7 +256,7 @@ fn blocking_written_function_input_matches_both_cli_modes() {
         "call_function=5a/5a\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

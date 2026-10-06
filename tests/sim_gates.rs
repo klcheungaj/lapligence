@@ -594,7 +594,7 @@ fn gate_terminal_matrix_verilog_2001() {
         "CHECK: 0 1 0 1 0 0\nCHECK: 0 0 0 0 1 1\n",
         "",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 

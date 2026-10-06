@@ -779,7 +779,8 @@ def validate_manifest(manifest: dict, expected: list[dict]) -> Counter:
             if not row.get("editions") or row.get("edition_mode"):
                 raise ValueError(f"{evidence_id}: explicit edition metadata is inconsistent")
             for argument_list in edition_args:
-                if len(argument_list) != 2 or argument_list[0] != "--edition" or argument_list[1] not in row["editions"]:
+                cli_editions = {"v2001" if value == "2001" else "sv2009" for value in row["editions"]}
+                if len(argument_list) != 2 or argument_list[0] != "--edition" or argument_list[1] not in cli_editions:
                     raise ValueError(f"{evidence_id}: malformed explicit CLI edition arguments")
                 direct_args = all(f'"{argument}"' in invocation_source for argument in argument_list)
                 shared_args = ("EDITION" in owner_body and

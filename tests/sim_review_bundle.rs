@@ -13,7 +13,7 @@ fn stateful_static_return_mutations_are_process_evaluated_events() {
         "ACCEPTED_STATEFUL_CALLBACK changes=1\n",
         "llg: $finish at time 2000 at tb:14:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -25,7 +25,7 @@ fn read_modify_write_return_access_is_process_evaluated() {
         "ACCEPTED_READ_MODIFY_WRITE changes=1\n",
         "llg: $finish at time 2000 at tb:16:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -37,6 +37,6 @@ fn partially_assigned_static_returns_keep_their_persistent_result() {
         "ACCEPTED_PERSISTENT_RESULT changes=1\n",
         "llg: $finish at time 3000 at tb:15:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

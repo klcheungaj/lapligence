@@ -382,7 +382,7 @@ fn blocking_written_child_input_matches_both_cli_modes() {
         "blocking_port=5a/5a\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -414,7 +414,7 @@ fn nba_written_child_input_matches_both_cli_modes() {
         "nba_port=5a/5a\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -450,7 +450,7 @@ fn driven_sources_passed_to_function_inputs_match_both_cli_modes() {
         "function_inputs=5a/5a/5a\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

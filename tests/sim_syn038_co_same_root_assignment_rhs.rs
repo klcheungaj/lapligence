@@ -172,14 +172,18 @@ fn same_root_assignment_rhs_witnesses_match_in_both_optimizer_modes() {
             "syn038_pairwise",
             "co_same_root_assignment_rhs",
             optimized,
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
             &[],
             &[],
         );
         let label = format!("co_same_root_assignment_rhs, optimized={optimized}");
         assert!(output.status.success(), "{label}");
         assert_eq!(output.stdout.as_slice(), EXPECTED_STDOUT, "{label}");
-        assert_eq!(output.stderr.as_slice(), b"", "{label}");
+        assert_eq!(
+            crate::sim_harness::strip_lint_reports(&output.stderr),
+            "",
+            "{label}"
+        );
     }
 }
 

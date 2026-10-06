@@ -26,7 +26,7 @@ fn run_verilog_2001(source: &std::path::Path, expected: &str) {
         let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
         command
             .current_dir(directory.path())
-            .args(["--top", "tb", "--edition", "2001"]);
+            .args(["--top", "tb", "--edition", "v2001"]);
         if !optimized {
             command.arg("--no-opt");
         }
@@ -39,7 +39,7 @@ fn run_verilog_2001(source: &std::path::Path, expected: &str) {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+        assert_eq!(crate::sim_harness::strip_lint_reports(&output.stderr), "");
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
     }
 }
@@ -114,7 +114,7 @@ fn combinational_udp_truth_table_and_drivers() {
         EXPECTED,
         "",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -140,13 +140,13 @@ fn syn_031_combinational_udp_matrix_both_editions() {
         EXPECTED,
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
 #[test]
 fn syn_031_invalid_ports_and_table_width_reject_in_both_editions() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::reject_case_with_args(
             "syn031_combinational_udp",
             "invalid_port_list",
@@ -164,7 +164,7 @@ fn syn_031_invalid_ports_and_table_width_reject_in_both_editions() {
 
 #[test]
 fn sequential_udp_remains_rejected() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::reject_case_with_args(
             "partial_features",
             "udp_sequential_rejected",
@@ -176,7 +176,7 @@ fn sequential_udp_remains_rejected() {
 
 #[test]
 fn edge_sensitive_udp_row_remains_rejected() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::reject_case_with_args(
             "partial_features",
             "udp_edge_rejected",
@@ -192,7 +192,7 @@ fn combinational_udp_overlapping_masks_and_state_matrix() {
         "00 1\n01 1\n0x 1\n0z 1\n10 1\n11 1\n1x 1\n1z 1\n",
         "x0 0\nx1 x\nxx x\nxz x\nz0 0\nz1 x\nzx x\nzz x\narray 110x\n",
     );
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             "partial_features",
             "udp_masks",

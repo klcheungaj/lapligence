@@ -1,0 +1,9 @@
+# llg.toml for simulation fixtures that deliberately contain combinational
+# feedback (zero-delay loops, `always_comb` counters, bit-level self reads).
+# Their tests first check that the default lint run stops with
+# `combinational-loop` errors, then run with this file, which disables the
+# rule, and check the simulation.
+schema_version = 1
+
+[lint.rules.combinational-loop]
+enabled = false

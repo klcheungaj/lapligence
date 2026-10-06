@@ -9,7 +9,7 @@ fn positional_deconstruction_captures_sources_and_all_targets_before_writes() {
         "PATTERN_CAPTURE_PASS\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_with_args(
         "continuation_20_23",
@@ -17,7 +17,7 @@ fn positional_deconstruction_captures_sources_and_all_targets_before_writes() {
         "PATTERN_LAYOUTS_PASS\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -27,25 +27,25 @@ fn positional_deconstruction_retains_illegal_target_diagnostics() {
         "syn003_pattern_lvalues",
         "syn_003_keyed_lvalue",
         "expression is not assignable",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "syn003_pattern_lvalues",
         "syn_003_replicated_lvalue",
         "expression is not assignable",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "syn003_pattern_lvalues",
         "syn_003_width_mismatch",
         "assignment-pattern lvalue target",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "syn003_pattern_lvalues",
         "syn_003_automatic_nba",
         "automatic assignment-pattern target",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -84,26 +84,26 @@ fn fixed_layouts_preserve_nested_values_across_limb_boundaries() {
             &format!("LAYOUT_CONTEXTS_PASS W={width}\n"),
             "",
             &[],
-            &["--edition", "2009", "--define", &define],
+            &["--edition", "sv2009", "--define", &define],
         );
     }
     sim_cli::reject_case_with_args(
         "syn012_fixed_layout",
         "packed_union_width_rejected",
         "same width",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "syn012_fixed_layout",
         "nominal_record_mismatch_rejected",
         "no implicit conversion",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "syn012_fixed_layout",
         "unpacked_union_bitstream_rejected",
         "invalid casting type",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -140,7 +140,7 @@ fn finite_calls_keep_static_outputs_copyin_and_reference_identity_distinct() {
         "STATIC_OUTPUT_VALUES_PASS\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_with_args(
         "continuation_20_23",
@@ -148,15 +148,15 @@ fn finite_calls_keep_static_outputs_copyin_and_reference_identity_distinct() {
         "CALL_CONTEXTS_PASS\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "syn003_pattern_lvalues",
         "syn_003_ref_nba",
         "automatic assignment-pattern target",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             "syn013_zero_time_calls",
             "legacy_calls",
@@ -209,7 +209,7 @@ fn continuous_arrays_keep_values_dependencies_and_static_pattern_topology() {
         "CONTINUOUS_CONTEXTS_PASS\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_with_args(
         "continuation_20_23",
@@ -217,7 +217,7 @@ fn continuous_arrays_keep_values_dependencies_and_static_pattern_topology() {
         "CONTINUOUS_RHS_EVAL\nCONTINUOUS_RHS_EVAL\nCONTINUOUS_RHS_EVAL\nCONTINUOUS_RHS_ONCE_PASS\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_with_args(
         "continuation_20_23",
@@ -225,7 +225,7 @@ fn continuous_arrays_keep_values_dependencies_and_static_pattern_topology() {
         "CONTINUOUS_IDENTITY_PASS\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::run_case_with_args(
         "continuation_20_23",
@@ -233,7 +233,7 @@ fn continuous_arrays_keep_values_dependencies_and_static_pattern_topology() {
         "CONTINUOUS_FORCE_CONTROL_PASS\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -243,19 +243,19 @@ fn continuous_array_conflicts_remain_errors() {
         "rtl_completion",
         "syn_006_array_continuous_variable_conflict",
         "multiple continuous assignments to variable storage",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "continuation_20_23",
         "continuous_mixed_writer_error",
         "has both a continuous assignment",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "continuation_20_23",
         "continuous_initialized_writer_error",
         "has both a continuous assignment",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

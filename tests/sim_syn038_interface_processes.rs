@@ -22,7 +22,7 @@ fn interface_body_latch_and_ff_members_match_in_both_modes() {
             "syn038_pairwise",
             "interface_processes",
             optimized,
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
             &[],
             &[],
         );
@@ -39,6 +39,10 @@ fn interface_body_latch_and_ff_members_match_in_both_modes() {
             expected_stdout.as_bytes(),
             "{label}"
         );
-        assert_eq!(output.stderr.as_slice(), b"", "{label}");
+        assert_eq!(
+            crate::sim_harness::strip_lint_reports(&output.stderr),
+            "",
+            "{label}"
+        );
     }
 }

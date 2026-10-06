@@ -7,12 +7,23 @@
 //! self-loops (a signal read and written by the same comb process), are
 //! combinational loops.  Processes containing a delay or explicit edge
 //! control break combinationality and are excluded.
+//!
+//! A process's inputs are its *exposed* reads: a variable the process reads
+//! before it has definitely written it on every path. A value the process
+//! writes and then reads back (`q = a; o = q;`) is not an input, while
+//! `a = a ^ 1` still is. Branches define a variable only when every arm
+//! does; loop bodies and other statements define nothing after them.
+//! Variables declared inside a process (block locals, `for` loop variables)
+//! are process state, not signals, and never form edges. Every `llg` run
+//! stops on this rule's errors, so these exclusions keep ordinary
+//! combinational code from being reported.
 
 use std::collections::{HashMap, HashSet};
 
-use crate::core::db::{NodeId, NodeKind};
+use crate::core::db::{Db, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::{
     all_nodes, collect_reads, collect_writes, has_timing_control, is_comb_process,
+    process_local_vars,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -40,8 +51,24 @@ impl LintRule for CombinationalLoopRule {
             if !comb {
                 continue;
             }
-            let reads = collect_reads(db, id);
-            let writes = collect_writes(db, id);
+            let is_process = matches!(db.node_kind(id), NodeKind::Process { .. });
+            let mut writes = collect_writes(db, id);
+            let mut reads = if is_process {
+                let mut exposed = Vec::new();
+                let mut defined = HashSet::new();
+                for child in &db.node(id).children {
+                    exposed_reads(db, *child, &mut defined, &mut exposed);
+                }
+                exposed
+            } else {
+                collect_reads(db, id)
+            };
+            if is_process {
+                let local_vars = process_local_vars(db, id);
+                let local = |signal: &NodeId| local_vars.contains(signal);
+                writes.retain(|signal| !local(signal));
+                reads.retain(|signal| !local(signal));
+            }
             if reads.is_empty() || writes.is_empty() {
                 continue;
             }
@@ -90,6 +117,79 @@ impl LintRule for CombinationalLoopRule {
             });
         }
         out
+    }
+}
+
+/// Append to `out` the signals `node` reads before they are in `defined`
+/// (definitely written earlier on every path), then add the signals `node`
+/// definitely writes to `defined`.
+fn exposed_reads(db: &Db, node: NodeId, defined: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+    let expose = |root: NodeId, defined: &HashSet<NodeId>, out: &mut Vec<NodeId>| {
+        for signal in collect_reads(db, root) {
+            if !defined.contains(&signal) && !out.contains(&signal) {
+                out.push(signal);
+            }
+        }
+    };
+    let children = &db.node(node).children;
+    match db.node_kind(node) {
+        NodeKind::Stmt(StmtKind::Begin) => {
+            for child in children {
+                exposed_reads(db, *child, defined, out);
+            }
+        }
+        NodeKind::Stmt(StmtKind::EventControl {
+            implicit: true,
+            body: Some(body),
+            ..
+        }) => exposed_reads(db, *body, defined, out),
+        NodeKind::Stmt(StmtKind::Assign { .. }) => {
+            expose(node, defined, out);
+            defined.extend(collect_writes(db, node));
+        }
+        NodeKind::Stmt(StmtKind::IfElse {
+            if_true, if_false, ..
+        }) => {
+            for child in children {
+                if *child != *if_true && Some(*child) != *if_false {
+                    expose(*child, defined, out);
+                }
+            }
+            let mut taken = defined.clone();
+            exposed_reads(db, *if_true, &mut taken, out);
+            let mut other = defined.clone();
+            if let Some(if_false) = if_false {
+                exposed_reads(db, *if_false, &mut other, out);
+            }
+            *defined = taken.intersection(&other).copied().collect();
+        }
+        NodeKind::Stmt(StmtKind::Case { items, .. }) => {
+            let bodies: Vec<NodeId> = items.iter().filter_map(|item| item.body).collect();
+            for child in children {
+                if !bodies.contains(child) {
+                    expose(*child, defined, out);
+                }
+            }
+            // Without a default item no arm may run, keeping `defined` as is.
+            let mut merged: Option<HashSet<NodeId>> = items
+                .iter()
+                .all(|item| !item.exprs.is_empty())
+                .then(|| defined.clone());
+            for item in items {
+                let mut arm = defined.clone();
+                if let Some(body) = item.body {
+                    exposed_reads(db, body, &mut arm, out);
+                }
+                merged = Some(match merged {
+                    Some(previous) => previous.intersection(&arm).copied().collect(),
+                    None => arm,
+                });
+            }
+            if let Some(merged) = merged {
+                *defined = merged;
+            }
+        }
+        _ => expose(node, defined, out),
     }
 }
 
@@ -199,6 +299,41 @@ mod tests {
         let got = rule_diags(&diags, "combinational-loop");
         assert_eq!(got.len(), 1, "one self-loop finding: {:?}", diags);
         assert!(got[0].message.contains("a"));
+    }
+
+    /// Values written before they are read back, process locals and loop
+    /// variables are not feedback; reading before writing still is.
+    #[test]
+    fn written_before_read_values_and_locals_are_not_loops() {
+        let diags = lint_design(
+            "module wb;\n\
+             \x20 logic a, s;\n\
+             \x20 logic [3:0] q, o, p, r, t, u;\n\
+             \x20 logic [3:0] arr [4];\n\
+             \x20 always_comb begin q = {3'b0, a}; o = q; end\n\
+             \x20 always_comb begin if (s) p = 4'd1; else p = 4'd2; r = p; end\n\
+             \x20 always_comb begin case (s) 1'b0: t = 4'd1; default: t = 4'd2; endcase u = t; end\n\
+             \x20 always @* begin for (int k = 0; k < 4; k++) arr[k] = {3'b0, a}; end\n\
+             \x20 always_comb begin logic [3:0] tmp; tmp = q; tmp = tmp + 4'd1; end\n\
+             endmodule\n",
+            "wb",
+        );
+        let got = rule_diags(&diags, "combinational-loop");
+        assert!(got.is_empty(), "no loop: {got:?}");
+    }
+
+    /// A one-armed `if` does not define its target on every path, so a later
+    /// read of the previous value is real feedback.
+    #[test]
+    fn read_before_definite_write_is_still_a_loop() {
+        let diags = lint_design(
+            "module rb;\n  logic s;\n  logic [3:0] p, r;\n\
+             \x20 always_comb begin if (s) p = 4'd1; r = p; p = r + 4'd1; end\nendmodule\n",
+            "rb",
+        );
+        let got = rule_diags(&diags, "combinational-loop");
+        assert_eq!(got.len(), 1, "{diags:?}");
+        assert!(got[0].message.contains("`p`"), "{}", got[0].message);
     }
 
     #[test]

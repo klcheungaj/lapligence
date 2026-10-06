@@ -25,7 +25,7 @@ fn qualifier_counts_filtered_items_and_preserves_first_body() {
         "qualifiers=pass result=0 calls=1\n",
         "",
         &warnings.iter().map(String::as_str).collect::<Vec<_>>(),
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -37,7 +37,7 @@ fn ordinary_case_controls_keep_their_match_rules() {
         "ordinary_controls=pass\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -49,7 +49,7 @@ fn runtime_selectors_and_pattern_side_wildcards_follow_case_mode() {
         "runtime_modes=pass checks=21 calls=8\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -59,7 +59,7 @@ fn pattern_case_rejects_2001_edition() {
         "syn025_pattern_cases",
         "ordinary_controls",
         "undeclared identifier 'matches'",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -69,7 +69,7 @@ fn pattern_binding_cannot_escape_its_item() {
         "syn025_pattern_cases",
         "bad_binding_scope",
         "undeclared identifier 'local_value'",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -81,6 +81,6 @@ fn string_selector_binds_a_whole_value() {
         "hello 5\n1\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

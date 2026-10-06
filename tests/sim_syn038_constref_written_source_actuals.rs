@@ -423,7 +423,7 @@ fn prior_writes_reach_whole_const_ref_actuals_in_both_cli_modes() {
         EXPECTED_STDOUT,
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

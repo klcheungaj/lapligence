@@ -10,6 +10,6 @@ fn generated_scope_lvalues_write_the_selected_objects() {
         "generated_row=31,32 generated_concat=4142 generated_pattern=01\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

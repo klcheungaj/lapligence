@@ -168,6 +168,46 @@ pub(crate) fn frontend_diagnostics(
     Ok(out.snapshot.diagnostics)
 }
 
+/// Whether an `llg` stderr line is a non-fatal compile report: a frontend
+/// `Warning:`, a lint warning/info finding (`<loc>: [WARNING] rule: ...`), or
+/// the lint count line. Every `llg` run lints, so simulation expectations
+/// ignore these the way they ignore frontend warnings; lint errors still stop
+/// the run and fail the test.
+#[allow(dead_code)]
+pub(crate) fn is_compile_report_line(line: &str) -> bool {
+    if line.starts_with("Warning: ") {
+        return true;
+    }
+    if let Some(counts) = line.strip_prefix("lint: ") {
+        return counts.ends_with(" warning(s)") && counts.contains(" error(s), ");
+    }
+    ["[WARNING] ", "[INFO] "]
+        .iter()
+        .any(|tag| line.starts_with(tag) || line.contains(&format!(": {tag}")))
+}
+
+/// Whether an `llg` stderr line belongs to a non-blocking lint report: a
+/// warning/info finding or the lint count line.
+#[allow(dead_code)]
+pub(crate) fn is_lint_report_line(line: &str) -> bool {
+    if let Some(counts) = line.strip_prefix("lint: ") {
+        return counts.ends_with(" warning(s)") && counts.contains(" error(s), ");
+    }
+    ["[WARNING] ", "[INFO] "]
+        .iter()
+        .any(|tag| line.starts_with(tag) || line.contains(&format!(": {tag}")))
+}
+
+/// `llg` stderr without its lint report lines (see [`is_lint_report_line`]),
+/// for exact comparisons of what the model and the driver print otherwise.
+#[allow(dead_code)]
+pub(crate) fn strip_lint_reports(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(stderr)
+        .split_inclusive('\n')
+        .filter(|line| !is_lint_report_line(line.trim_end_matches(['\r', '\n'])))
+        .collect()
+}
+
 pub(crate) fn run_command(command: &mut Command, timeout: Duration) -> Result<Output, String> {
     #[cfg(unix)]
     {

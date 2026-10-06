@@ -773,7 +773,7 @@ fn dump_accepts_driver_only_config_keys() {
          directories = [\".\"]\n\
          files = [\"tb.sv\"]\n\
          [compile]\n\
-         edition = \"2009\"\n\
+         edition = \"sv2009\"\n\
          [simulator]\n\
          stop_policy = \"exit\"\n\
          [build]\n\

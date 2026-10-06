@@ -358,8 +358,21 @@ impl GeneratedModel {
     }
 }
 
+/// Waveform dumping requested by the driver (`llg --wave`), independent of
+/// `$dumpfile`/`$dumpvars` in the design.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WaveformOptions {
+    /// Output file; its `.vcd` or `.fst` extension selects the format. A
+    /// relative path resolves like a `$dumpfile` name, from the simulator's
+    /// working directory (under `LLG_SIM_OUT_DIR` when set), and
+    /// `LLG_SIM_WAVE_FILE` still replaces it at run time.
+    pub file: String,
+    /// Hierarchy levels dumped below each top instance; 0 dumps every level.
+    pub depth: u32,
+}
+
 /// End-to-end simulator generation options.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CodegenOptions {
     /// Optimization passes applied before C emission.
     pub optimization: crate::sim::opt::OptConfig,
@@ -367,6 +380,8 @@ pub struct CodegenOptions {
     pub execution: crate::sim::execution::ExecutionAnalysisOptions,
     /// Compile-time value descriptor and compact kernel selection.
     pub value_config: crate::sim::value_backend::ValueConfig,
+    /// Dump waveforms from time zero without design system tasks.
+    pub waveform: Option<WaveformOptions>,
 }
 
 /// Lower an owned Slang semantic database with default optimizations.
@@ -437,7 +452,7 @@ pub fn generate_from_owned_db_with_codegen_options(
     db: Db,
     options: &CodegenOptions,
 ) -> Result<GeneratedModel, CodegenError> {
-    let lowered = lower_model(&db).map_err(CodegenError::new)?;
+    let lowered = lower_model(&db, options.waveform.as_ref()).map_err(CodegenError::new)?;
     drop(db);
     finish_generation(lowered, options).map_err(CodegenError::new)
 }
@@ -446,7 +461,7 @@ fn generate_from_db_with_codegen_options_impl(
     db: &Db,
     options: &CodegenOptions,
 ) -> Result<GeneratedModel, String> {
-    finish_generation(lower_model(db)?, options)
+    finish_generation(lower_model(db, options.waveform.as_ref())?, options)
 }
 
 struct LoweredModel {
@@ -455,7 +470,7 @@ struct LoweredModel {
     warnings: Vec<String>,
 }
 
-fn lower_model(db: &Db) -> Result<LoweredModel, String> {
+fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredModel, String> {
     let semantic_stage = crate::profile::Stage::new("semantic");
     let semantic = crate::sim::semantic::SemanticModel::from_db(db);
     if let Err(issues) = semantic.validate_simulation() {
@@ -471,6 +486,20 @@ fn lower_model(db: &Db) -> Result<LoweredModel, String> {
     let tops = cg.collect_design()?;
     if tops.is_empty() {
         return Err("no top modules in the elaborated design".to_string());
+    }
+    if let Some(waveform) = waveform {
+        // A depth applies below each top instance, like `$dumpvars(depth, top)`;
+        // depth 0 with no scopes selects the complete design.
+        let scopes = if waveform.depth == 0 {
+            Vec::new()
+        } else {
+            tops.iter().map(|top| cg.waveform_name_for(*top)).collect()
+        };
+        cg.model.waveform = true;
+        cg.model.wave_start = Some(crate::sim::ir::IrWaveStart::new(
+            waveform.file.clone(),
+            crate::sim::ir::IrWaveDumpVars::new(waveform.depth, scopes),
+        ));
     }
     let compilation_units = cg.compilation_unit_scopes();
     // Collapse inout-port net groups (parent + child nets → one resolved

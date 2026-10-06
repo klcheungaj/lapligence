@@ -7,19 +7,17 @@ use std::path::{Path, PathBuf};
 use super::paths::{self, DiscoveryFilters};
 use super::schema::{
     RawAnalysis, RawBuild, RawCompile, RawConfig, RawLibraries, RawLint, RawOutput, RawSimulator,
-    RawSources,
+    RawSources, RawWaveform,
 };
 use super::{
     AnalysisConfig, BuildConfig, CompileConfig, ConfigError, LibrariesConfig, LintRunConfig,
-    LlgConfig, OutputConfig, SimulatorConfig, SourcesConfig, StopPolicy, DEFAULT_EXCLUDE_GLOBS,
-    DEFAULT_INCLUDE_GLOBS, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_TOTAL_INPUT_BYTES, SCHEMA_VERSION,
+    LlgConfig, OutputConfig, SimulatorConfig, SourcesConfig, StopPolicy, WaveformConfig,
+    DEFAULT_EXCLUDE_GLOBS, DEFAULT_INCLUDE_GLOBS, DEFAULT_MAX_FILE_BYTES,
+    DEFAULT_MAX_TOTAL_INPUT_BYTES, SCHEMA_VERSION,
 };
 use crate::core::compile::{CompilationUnitMode, LanguageEdition};
 use crate::core::lint::{LintConfig, LintSeverity, RuleConfig};
-use crate::ffi::slang::NATIVE_HARD_MAX_OUTPUT_BYTES;
 use crate::sim::build::ModelOptLevel;
-
-const MIB: u64 = 1024 * 1024;
 
 /// Resolve `raw` against `base_dir`. Returns the config and the non-fatal
 /// warnings (dropped entries).
@@ -40,6 +38,7 @@ pub(super) fn resolve(
     let lint = translate_lint(&raw.lint)?;
     let lint_run = resolve_lint_run(&base_dir, &raw.lint)?;
     let simulator = resolve_simulator(&raw.simulator)?;
+    let waveform = resolve_waveform(&base_dir, &raw.waveform)?;
     let build = resolve_build(&base_dir, &raw.build)?;
     let output = resolve_output(&base_dir, &raw.output)?;
     Ok((
@@ -53,6 +52,7 @@ pub(super) fn resolve(
             lint,
             lint_run,
             simulator,
+            waveform,
             build,
             output,
         },
@@ -125,6 +125,10 @@ fn resolve_compile(
 ) -> Result<(CompileConfig, Vec<ConfigError>), ConfigError> {
     let include_dirs = resolve_paths(base_dir, &raw.include_dirs, "compile.include_dirs")?;
     let top = non_empty("compile.top", raw.top.as_deref())?;
+    if let Some(top) = &top {
+        super::validate_top_name(top)
+            .map_err(|error| ConfigError::new(format!("compile.top: {error}")))?;
+    }
     let edition = raw
         .edition
         .as_deref()
@@ -228,7 +232,8 @@ fn resolve_lint_run(base_dir: &Path, raw: &RawLint) -> Result<LintRunConfig, Con
         .map(|entry| resolve_path(base_dir, entry, "lint.json_file"))
         .transpose()?;
     Ok(LintRunConfig {
-        run: raw.run,
+        only: raw.only,
+        warnings_as_errors: raw.warnings_as_errors,
         json: raw.json,
         json_file,
     })
@@ -243,20 +248,42 @@ fn resolve_simulator(raw: &RawSimulator) -> Result<SimulatorConfig, ConfigError>
                 .map_err(|error| ConfigError::new(format!("simulator.stop_policy: {error}")))
         })
         .transpose()?;
-    let ceiling = NATIVE_HARD_MAX_OUTPUT_BYTES / MIB;
-    if let Some(mib) = raw.max_export_mib {
-        if !(1..=ceiling).contains(&mib) {
-            return Err(ConfigError::new(format!(
-                "simulator.max_export_mib: {mib} is out of range (expected 1 to {ceiling})"
-            )));
-        }
-    }
     Ok(SimulatorConfig {
         stop_policy,
-        max_export_mib: raw.max_export_mib,
         optimize: raw.optimize,
         plusargs: raw.plusargs.clone(),
     })
+}
+
+fn resolve_waveform(base_dir: &Path, raw: &RawWaveform) -> Result<WaveformConfig, ConfigError> {
+    let file = raw
+        .file
+        .as_deref()
+        .map(|entry| resolve_path(base_dir, entry, "waveform.file"))
+        .transpose()?;
+    if let Some(file) = &file {
+        if !super::is_waveform_file(file) {
+            return Err(ConfigError::new(format!(
+                "waveform.file: `{}` must end in .vcd or .fst",
+                file.display()
+            )));
+        }
+    }
+    let depth = raw
+        .depth
+        .map(|depth| {
+            u32::try_from(depth).map_err(|_| {
+                ConfigError::new(format!(
+                    "waveform.depth: {depth} is out of range (expected 0 to {})",
+                    u32::MAX
+                ))
+            })
+        })
+        .transpose()?;
+    if depth.is_some() && file.is_none() {
+        return Err(ConfigError::new("waveform.depth requires waveform.file"));
+    }
+    Ok(WaveformConfig { file, depth })
 }
 
 fn resolve_build(base_dir: &Path, raw: &RawBuild) -> Result<BuildConfig, ConfigError> {

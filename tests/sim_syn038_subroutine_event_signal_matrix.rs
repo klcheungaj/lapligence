@@ -243,7 +243,7 @@ fn subroutine_event_sources_observe_transitions_in_both_cli_modes() {
         EXPECTED_STDOUT,
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

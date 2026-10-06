@@ -113,7 +113,7 @@ fn exhaustive_tables_cover_every_symbol_and_state_in_both_editions() {
         SUITE,
         "exhaustive_tables.v",
         &expected,
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[],
     );
     sim_cli::run_case_with_args(
@@ -122,7 +122,7 @@ fn exhaustive_tables_cover_every_symbol_and_state_in_both_editions() {
         &expected,
         "",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -142,7 +142,7 @@ fn instance_arrays_slice_every_connection_form_in_both_editions() {
         SUITE,
         "instance_arrays.v",
         expected,
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[],
     );
     sim_cli::run_case_with_args(
@@ -151,7 +151,7 @@ fn instance_arrays_slice_every_connection_form_in_both_editions() {
         expected,
         "",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -171,7 +171,7 @@ fn competing_drivers_strengths_and_delays_in_both_editions() {
         SUITE,
         "drivers_delays.v",
         expected,
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[],
     );
     sim_cli::run_case_with_args(
@@ -180,7 +180,7 @@ fn competing_drivers_strengths_and_delays_in_both_editions() {
         expected,
         "",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -206,7 +206,7 @@ fn neg_definition_and_instance_shape_boundaries_reject() {
         "neg_row_width",
         "incorrect number of input fields in table row; have 2 but expect 1",
     );
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_conflicting_rows.v",

@@ -344,7 +344,7 @@ fn fixed_array_reductions_observe_continuous_and_nba_writes_in_both_cli_modes() 
         EXPECTED_STDOUT,
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

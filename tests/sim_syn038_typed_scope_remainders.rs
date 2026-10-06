@@ -46,6 +46,6 @@ fn typed_values_keep_their_outer_type_in_interface_and_generate_scopes() {
         "tyhc=a,2b,c,5a,d\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

@@ -101,7 +101,7 @@ fn dpi_scalar_imports_roundtrip_in_both_optimizer_modes() {
 
     for no_opt in [true, false] {
         let output = run_llg(directory.path(), &source, Some(&library), no_opt);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = crate::sim_harness::strip_lint_reports(&output.stderr);
         assert!(output.status.success(), "no_opt={no_opt}: stderr: {stderr}");
         assert_eq!(String::from_utf8_lossy(&output.stdout), EXPECTED_ROUNDTRIP);
         assert!(
@@ -176,7 +176,7 @@ fn dpi_missing_symbol_fails_during_model_link() {
         Some(&library),
         true,
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = crate::sim_harness::strip_lint_reports(&output.stderr);
     assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
     assert!(output.stdout.is_empty(), "unexpected simulation output");
     assert!(stderr.contains("cmake build failed"), "stderr: {stderr}");
@@ -192,7 +192,7 @@ fn dpi_conflicting_aliases_fail_before_codegen() {
         None,
         false,
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = crate::sim_harness::strip_lint_reports(&output.stderr);
     assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
     assert!(output.stdout.is_empty());
     assert!(
@@ -210,7 +210,7 @@ fn dpi_packed_vector_is_rejected_at_the_scalar_boundary() {
         None,
         false,
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = crate::sim_harness::strip_lint_reports(&output.stderr);
     assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
     assert!(output.stdout.is_empty());
     assert!(
@@ -293,6 +293,9 @@ fn dpi_string_results_are_snapshotted_before_aliased_copyout() {
             String::from_utf8_lossy(&output.stdout),
             "echo=one/one\nswap=left/right/left\nvoid=left/right\nshare=source/replaced/Source/source\n"
         );
-        assert!(output.stderr.is_empty(), "no_opt={no_opt}: {output:?}");
+        assert!(
+            crate::sim_harness::strip_lint_reports(&output.stderr).is_empty(),
+            "no_opt={no_opt}: {output:?}"
+        );
     }
 }

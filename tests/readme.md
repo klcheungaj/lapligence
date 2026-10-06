@@ -211,7 +211,7 @@ RTL-019's source-mapping and edition-admission fixtures use
 binaries for shared source-map/edition changes. Mapped `__FILE__`/`__LINE__`
 values and runtime locations are counted by hand; the mapping and
 resumed-task fixtures run on every backend and after snapshot and Db destruction. Each `neg_2001_*.v` holds one
-later form that must reject under `--edition 2001` and compile under 2009.
+later form that must reject under `--edition v2001` and compile under 2009.
 
 RTL-106's mapped-diagnostic and strict-2001 fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_106::)'`, with
@@ -220,7 +220,7 @@ Each `neg_*.v` holds one later form (several built by macros) or variable
 driver, rejects under 2001 at an exact `file:line:col` and compiles under 2009;
 `legal_2001.v` executes on every backend in both
 editions. To re-audit the 2001 profile, run every `.v`/`.sv` fixture with
-`llg --edition 2001 --gen-only` and compare the strict-edition diagnostics with
+`llg --edition v2001 --gen-only` and compare the strict-edition diagnostics with
 the previous revision: no fixture accepted before may newly reject unless it is
 language-illegal.
 
@@ -288,7 +288,7 @@ compare the output printed before the diagnostic.
 SIM-002's time-reporting fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_002::)'`. Executed fixtures run in
 both optimizer modes on both backends;
-`.v` fixtures also run with `--edition 2001`, and the scope fixtures also run after
+`.v` fixtures also run with `--edition v2001`, and the scope fixtures also run after
 the native snapshot and Db are dropped.
 
 RTL-012's strength and `unconnected_drive` fixtures use

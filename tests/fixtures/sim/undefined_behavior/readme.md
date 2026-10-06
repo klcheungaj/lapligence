@@ -33,52 +33,52 @@ The following are the concrete invocations used to capture each golden.
 
 | Golden prefix | Exact invocation from this directory |
 | --- | --- |
-| `q02_bad_address.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 q02_bad_address.v` |
-| `q02_bad_address.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 --no-opt q02_bad_address.v` |
-| `q02_bad_address.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q02_bad_address.v` |
-| `q02_bad_address.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q02_bad_address.v` |
-| `q02_binary_narrow.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 q02_binary_narrow.v` |
-| `q02_binary_narrow.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 --no-opt q02_binary_narrow.v` |
-| `q02_binary_narrow.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q02_binary_narrow.v` |
-| `q02_binary_narrow.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q02_binary_narrow.v` |
-| `q02_binary_types.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q02_binary_types.sv` |
-| `q02_binary_types.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q02_binary_types.sv` |
-| `q02_enum_numeric.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q02_enum_numeric.sv` |
-| `q02_enum_numeric.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q02_enum_numeric.sv` |
-| `q02_enum_tokens.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q02_enum_tokens.sv` |
-| `q02_enum_tokens.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q02_enum_tokens.sv` |
-| `q02_long_file.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 q02_long_file.v` |
-| `q02_long_file.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 --no-opt q02_long_file.v` |
-| `q02_long_file.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q02_long_file.v` |
-| `q02_long_file.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q02_long_file.v` |
-| `q02_malformed.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 q02_malformed.v` |
-| `q02_malformed.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 --no-opt q02_malformed.v` |
-| `q02_malformed.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q02_malformed.v` |
-| `q02_malformed.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q02_malformed.v` |
-| `q02_narrow_signed.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 q02_narrow_signed.v` |
-| `q02_narrow_signed.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 --no-opt q02_narrow_signed.v` |
-| `q02_narrow_signed.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q02_narrow_signed.v` |
-| `q02_narrow_signed.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q02_narrow_signed.v` |
-| `q02_short_binary.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 q02_short_binary.v` |
-| `q02_short_binary.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 --no-opt q02_short_binary.v` |
-| `q02_short_binary.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q02_short_binary.v` |
-| `q02_short_binary.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q02_short_binary.v` |
-| `q02_short_file.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 q02_short_file.v` |
-| `q02_short_file.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 --no-opt q02_short_file.v` |
-| `q02_short_file.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q02_short_file.v` |
-| `q02_short_file.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q02_short_file.v` |
-| `q02_short_hex.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 q02_short_hex.v` |
-| `q02_short_hex.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 --no-opt q02_short_hex.v` |
-| `q02_short_hex.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q02_short_hex.v` |
-| `q02_short_hex.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q02_short_hex.v` |
-| `q02_types.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q02_types.sv` |
-| `q02_types.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q02_types.sv` |
-| `q02_views.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q02_views.sv` |
-| `q02_views.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q02_views.sv` |
-| `q02_wakeup.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 q02_wakeup.v` |
-| `q02_wakeup.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2001 --no-opt q02_wakeup.v` |
-| `q02_wakeup.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 q02_wakeup.v` |
-| `q02_wakeup.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition 2009 --no-opt q02_wakeup.v` |
+| `q02_bad_address.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 q02_bad_address.v` |
+| `q02_bad_address.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 --no-opt q02_bad_address.v` |
+| `q02_bad_address.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 q02_bad_address.v` |
+| `q02_bad_address.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 --no-opt q02_bad_address.v` |
+| `q02_binary_narrow.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 q02_binary_narrow.v` |
+| `q02_binary_narrow.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 --no-opt q02_binary_narrow.v` |
+| `q02_binary_narrow.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 q02_binary_narrow.v` |
+| `q02_binary_narrow.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 --no-opt q02_binary_narrow.v` |
+| `q02_binary_types.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 q02_binary_types.sv` |
+| `q02_binary_types.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 --no-opt q02_binary_types.sv` |
+| `q02_enum_numeric.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 q02_enum_numeric.sv` |
+| `q02_enum_numeric.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 --no-opt q02_enum_numeric.sv` |
+| `q02_enum_tokens.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 q02_enum_tokens.sv` |
+| `q02_enum_tokens.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 --no-opt q02_enum_tokens.sv` |
+| `q02_long_file.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 q02_long_file.v` |
+| `q02_long_file.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 --no-opt q02_long_file.v` |
+| `q02_long_file.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 q02_long_file.v` |
+| `q02_long_file.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 --no-opt q02_long_file.v` |
+| `q02_malformed.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 q02_malformed.v` |
+| `q02_malformed.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 --no-opt q02_malformed.v` |
+| `q02_malformed.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 q02_malformed.v` |
+| `q02_malformed.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 --no-opt q02_malformed.v` |
+| `q02_narrow_signed.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 q02_narrow_signed.v` |
+| `q02_narrow_signed.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 --no-opt q02_narrow_signed.v` |
+| `q02_narrow_signed.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 q02_narrow_signed.v` |
+| `q02_narrow_signed.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 --no-opt q02_narrow_signed.v` |
+| `q02_short_binary.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 q02_short_binary.v` |
+| `q02_short_binary.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 --no-opt q02_short_binary.v` |
+| `q02_short_binary.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 q02_short_binary.v` |
+| `q02_short_binary.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 --no-opt q02_short_binary.v` |
+| `q02_short_file.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 q02_short_file.v` |
+| `q02_short_file.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 --no-opt q02_short_file.v` |
+| `q02_short_file.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 q02_short_file.v` |
+| `q02_short_file.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 --no-opt q02_short_file.v` |
+| `q02_short_hex.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 q02_short_hex.v` |
+| `q02_short_hex.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 --no-opt q02_short_hex.v` |
+| `q02_short_hex.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 q02_short_hex.v` |
+| `q02_short_hex.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 --no-opt q02_short_hex.v` |
+| `q02_types.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 q02_types.sv` |
+| `q02_types.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 --no-opt q02_types.sv` |
+| `q02_views.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 q02_views.sv` |
+| `q02_views.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 --no-opt q02_views.sv` |
+| `q02_wakeup.2001.opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 q02_wakeup.v` |
+| `q02_wakeup.2001.no-opt.llg` | `../../../../target/debug/llg --top tb --edition v2001 --no-opt q02_wakeup.v` |
+| `q02_wakeup.2009.opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 q02_wakeup.v` |
+| `q02_wakeup.2009.no-opt.llg` | `../../../../target/debug/llg --top tb --edition sv2009 --no-opt q02_wakeup.v` |
 
 ## Run on another simulator
 

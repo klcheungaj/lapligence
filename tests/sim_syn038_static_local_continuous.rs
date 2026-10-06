@@ -10,7 +10,7 @@ fn static_function_local_accepts_continuous_variable_assignment() {
         "state=1\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -20,6 +20,6 @@ fn duplicate_static_local_continuous_drivers_are_rejected_by_codegen() {
         "syn038_pairwise",
         "static_local_continuous",
         "semantic error: multiple continuous assignments to variable storage",
-        &["--edition", "2009", "--define", "SYN038_DUPLICATE_DRIVER"],
+        &["--edition", "sv2009", "--define", "SYN038_DUPLICATE_DRIVER"],
     );
 }

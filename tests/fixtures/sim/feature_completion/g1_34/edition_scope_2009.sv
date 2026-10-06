@@ -1,7 +1,7 @@
 // llg-test-fixture: G1-34 rtl_composition_gate (IEEE 1800-2009 scope).
 // The 2009 counterpart of edition_scope_2001: same datapath and expected trace,
 // using SystemVerilog logic, always_comb/always_ff, an inline generate loop and
-// a typed automatic function. Run with `--edition 2009`.
+// a typed automatic function. Run with `--edition sv2009`.
 module tb;
     parameter int W = 8;
 

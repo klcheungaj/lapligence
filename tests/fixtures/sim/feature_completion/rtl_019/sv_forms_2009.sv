@@ -1,7 +1,7 @@
 // llg-test-fixture: tests/fixtures/sim/feature_completion/rtl_019/sv_forms_2009.sv
 // IEEE 1800-2009 forms that IEEE 1364-2001 lacks. Each one executes here and
 // has a single-form neg_2001_*.v companion; this whole file also rejects
-// under --edition 2001. Values in sv_forms_2009.out are derived by hand.
+// under --edition v2001. Values in sv_forms_2009.out are derived by hand.
 module leaf #(parameter int W = 4, localparam int D = W * 2)
              (input logic [W-1:0] a, output logic [D-1:0] y);
   assign y = {a, a};

@@ -266,13 +266,13 @@ fn arithmetic_matrix_2001_matches_independent_oracle() {
         &expected,
         "",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
     sim_cli::run_case_backend_parity(
         SUITE,
         "arith_matrix_2001.v",
         &expected,
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
         &[],
     );
 }
@@ -341,6 +341,6 @@ fn neg_compound_2001() {
         SUITE,
         "neg_compound_2001.v",
         "`+=` is not available in IEEE 2001",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }

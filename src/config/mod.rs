@@ -121,6 +121,7 @@ pub struct LlgConfig {
     pub lint: LintConfig,
     pub lint_run: LintRunConfig,
     pub simulator: SimulatorConfig,
+    pub waveform: WaveformConfig,
     pub build: BuildConfig,
     pub output: OutputConfig,
 }
@@ -193,11 +194,15 @@ impl Default for AnalysisConfig {
     }
 }
 
-/// Driver-side lint report selection (`[lint] run/json/json_file`). The rule
-/// settings themselves live in [`LlgConfig::lint`] and are shared.
+/// Driver-side lint run selection (`[lint] only/warnings_as_errors/json/json_file`).
+/// The rule settings themselves live in [`LlgConfig::lint`] and are shared.
+/// The driver always lints; these choose what follows and how findings gate.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct LintRunConfig {
-    pub run: Option<bool>,
+    /// Lint without emitting or running a model (`--lint-only`).
+    pub only: Option<bool>,
+    /// Treat lint warnings as errors (`-Werror`).
+    pub warnings_as_errors: Option<bool>,
     pub json: Option<bool>,
     /// Normalized absolute JSON report file.
     pub json_file: Option<PathBuf>,
@@ -207,11 +212,18 @@ pub struct LintRunConfig {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SimulatorConfig {
     pub stop_policy: Option<StopPolicy>,
-    /// Frontend export budget in MiB, already range-checked.
-    pub max_export_mib: Option<u64>,
     pub optimize: Option<bool>,
     /// Arguments passed to the generated simulator.
     pub plusargs: Option<Vec<String>>,
+}
+
+/// Waveform dumping requested without `$dumpfile`/`$dumpvars`. Driver only.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct WaveformConfig {
+    /// Normalized absolute `.vcd` or `.fst` output file.
+    pub file: Option<PathBuf>,
+    /// Hierarchy levels below each top instance; 0 dumps every level.
+    pub depth: Option<u32>,
 }
 
 /// Model build tooling. Driver only.
@@ -286,9 +298,34 @@ pub fn default_config(root: &Path) -> LlgConfig {
         lint: LintConfig::default(),
         lint_run: LintRunConfig::default(),
         simulator: SimulatorConfig::default(),
+        waveform: WaveformConfig::default(),
         build: BuildConfig::default(),
         output: OutputConfig::default(),
     }
+}
+
+/// Validate a `--top`/`compile.top` value: a module name only, without a
+/// `library.` prefix or a `:config` suffix.
+pub fn validate_top_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("the top module name must not be empty".to_owned());
+    }
+    if name.contains(['.', ':']) || name.chars().any(char::is_whitespace) {
+        return Err(format!(
+            "`{name}` is not a module name (give the module name only, without a library or `:config`)"
+        ));
+    }
+    Ok(())
+}
+
+/// Whether `path` names a waveform file `llg` can write (`.vcd` or `.fst`,
+/// any case), the formats `$dumpfile` accepts.
+pub fn is_waveform_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("vcd") || extension.eq_ignore_ascii_case("fst")
+        })
 }
 
 /// All include-search directories for a config: every source directory plus

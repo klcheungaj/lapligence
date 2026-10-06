@@ -10,6 +10,6 @@ fn selected_formal_local_and_return_lvalues_match_in_both_optimizer_modes() {
         "local=b6,b7 formal=b4 return=b5\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

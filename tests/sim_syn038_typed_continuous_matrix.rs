@@ -10,6 +10,6 @@ fn typed_continuous_assignments_match_with_and_without_optimization() {
         "operation=03,03,03,03,03,05,05\nlvalue=1234,1234,b2,b3,c6\ncont=01,01,01,1234,1234,a5c3,a5c3,56,78,11,44\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

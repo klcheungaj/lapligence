@@ -136,7 +136,7 @@ fn storage_and_process_contexts_keep_distinct_source_paths_observable() {
         EXPECTED_STDOUT,
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

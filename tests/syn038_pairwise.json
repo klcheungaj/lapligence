@@ -126,7 +126,7 @@
     "stderr": "",
     "pipeline_mode": ["cli_without_optimizer", "cli_with_optimizer"],
     "snapshot_drop": "not_part_of_this_witness",
-    "cli_edition_args": [["--edition", "2009"]],
+    "cli_edition_args": [["--edition", "sv2009"]],
     "oracle_mode": "literal_lines"
   },
   "evidence": [
@@ -234,7 +234,7 @@
       "stderr": "llg: $finish at time 0 at tb:15:9\n",
       "tokens": ["PASS declaration_init_edition\\n", "llg: $finish at time 0 at tb:15:9\\n", "2001", "2009", "--edition"],
       "runner": "tests/sim_edition.rs",
-      "cli_edition_args": [["--edition", "2001"], ["--edition", "2009"]]
+      "cli_edition_args": [["--edition", "v2001"], ["--edition", "sv2009"]]
     },
     {
       "id": "W11",
@@ -295,7 +295,7 @@
       "stderr": "llg: $finish at time 0 at tb:10:5\n",
       "tokens": ["MUX_POLICY result=x\\n", "llg: $finish at time 0 at tb:10:5\\n", "r10_packed_mux_policy", "2001", "2009", "--edition"],
       "runner": "tests/sim_conditional_policy.rs",
-      "cli_edition_args": [["--edition", "2001"], ["--edition", "2009"]]
+      "cli_edition_args": [["--edition", "v2001"], ["--edition", "sv2009"]]
     },
     {
       "id": "W17",

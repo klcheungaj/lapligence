@@ -15,6 +15,6 @@ fn all_formal_modes_execute_from_each_process_family() {
         ),
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

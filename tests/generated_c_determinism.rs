@@ -83,6 +83,7 @@ fn generated_sources_are_repeatable_across_processes() {
             let directory = sim_harness::TempDir::new("generated-c-determinism")
                 .expect("create deterministic-emission directory");
             let source = fixture_root.join(fixture);
+            let lint = crate::sim_cli::expected_lint(&source);
             let mut expected: Option<Vec<(PathBuf, Vec<u8>)>> = None;
             for run in 1..=RUNS {
                 let output_root = directory.path().join(format!("{mode}-{run}"));
@@ -92,6 +93,11 @@ fn generated_sources_are_repeatable_across_processes() {
                     .arg(&output_root);
                 if no_opt {
                     command.arg("--no-opt");
+                }
+                // A fixture that deliberately violates a lint rule runs with
+                // that rule disabled; `sim_cli` checks the default-lint errors.
+                if let Some(lint) = lint {
+                    command.args(lint.allow_args());
                 }
                 command.arg(&source);
                 let output = sim_harness::run_command(&mut command, Duration::from_secs(60))

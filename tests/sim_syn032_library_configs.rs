@@ -27,27 +27,22 @@ fn fixture(name: &str) -> String {
 
 #[test]
 fn macro_generated_maps_select_runtime_designs_in_both_editions() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         for (map_name, top, define, expected) in [
-            ("macro_root.map", "choose:config", None, "macro=11\n"),
-            ("macro_root.map", "whole:config", None, "macro=11\n"),
-            ("macro_paths.map", "choose:config", None, "macro=11\n"),
-            ("macro_conditional.map", "choose:config", None, "macro=11\n"),
+            ("macro_root.map", "choose", None, "macro=11\n"),
+            ("macro_root.map", "whole", None, "macro=11\n"),
+            ("macro_paths.map", "choose", None, "macro=11\n"),
+            ("macro_conditional.map", "choose", None, "macro=11\n"),
             (
                 "macro_conditional.map",
-                "choose:config",
+                "choose",
                 Some("PICK_GATE"),
                 "macro=22\n",
             ),
-            (
-                "macro_included_root.map",
-                "choose:config",
-                None,
-                "macro=22\n",
-            ),
-            ("macro_sv_only.map", "choose:config", None, "macro=11\n"),
+            ("macro_included_root.map", "choose", None, "macro=22\n"),
+            ("macro_sv_only.map", "choose", None, "macro=11\n"),
         ] {
-            if edition == "2001" && map_name == "macro_sv_only.map" {
+            if edition == "v2001" && map_name == "macro_sv_only.map" {
                 continue;
             }
             let map = fixture(map_name);
@@ -57,7 +52,7 @@ fn macro_generated_maps_select_runtime_designs_in_both_editions() {
             }
             sim_cli::run_case_with_args(SUITE, "macro_top", expected, EXPECTED_STDERR, &[], &args);
         }
-        if edition == "2001" {
+        if edition == "v2001" {
             let map = fixture("macro_sv_only.map");
             sim_cli::reject_case_with_args(
                 SUITE,
@@ -87,7 +82,7 @@ fn macro_generated_maps_select_runtime_designs_in_both_editions() {
 
 #[test]
 fn macro_generated_map_errors_are_located_and_rejected_in_both_editions() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         for (map_name, diagnostic) in [
             (
                 "macro_undefined.map",
@@ -365,7 +360,7 @@ fn explicitly_assigned_map_retains_macro_configuration_binding() {
 #[test]
 fn configured_libraries_execute_in_both_editions_and_optimizer_modes() {
     let map = fixture("root.map");
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_source_prefix(
             SUITE,
             "top",
@@ -377,7 +372,7 @@ fn configured_libraries_execute_in_both_editions_and_optimizer_modes() {
                 "--edition",
                 edition,
                 "--top",
-                "choose:config",
+                "choose",
                 "--libmap",
                 map.as_str(),
             ],
@@ -391,7 +386,7 @@ fn explicit_library_files_execute_in_both_editions_and_optimizer_modes() {
     let gate = fixture("gate.sv");
     let rtl_arg = format!("rtl={rtl}");
     let gate_arg = format!("gate={gate}");
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_source_prefix(
             SUITE,
             "top",
@@ -403,7 +398,7 @@ fn explicit_library_files_execute_in_both_editions_and_optimizer_modes() {
                 "--edition",
                 edition,
                 "--top",
-                "choose:config",
+                "choose",
                 "--libfile",
                 rtl_arg.as_str(),
                 "--libfile",
@@ -415,7 +410,7 @@ fn explicit_library_files_execute_in_both_editions_and_optimizer_modes() {
 
 #[test]
 fn filesystem_map_binding_changes_selected_composition() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         for (map_name, expected) in [
             ("choose_gate.map", EXPECTED),
             (
@@ -430,14 +425,7 @@ fn filesystem_map_binding_changes_selected_composition() {
                 expected,
                 EXPECTED_STDERR,
                 &[],
-                &[
-                    "--edition",
-                    edition,
-                    "--top",
-                    "choose:config",
-                    "--libmap",
-                    &map,
-                ],
+                &["--edition", edition, "--top", "choose", "--libmap", &map],
             );
         }
     }
@@ -846,7 +834,7 @@ fn missing_configured_cell_is_a_frontend_error_in_both_editions() {
 
 #[test]
 fn filesystem_map_binding_errors_are_reported_in_both_editions_and_modes() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         for (map_name, diagnostic) in [
             ("missing_library.map", "missing"),
             ("missing_cell.map", "absent_cell"),
@@ -858,14 +846,7 @@ fn filesystem_map_binding_errors_are_reported_in_both_editions_and_modes() {
                 SUITE,
                 "top",
                 diagnostic,
-                &[
-                    "--edition",
-                    edition,
-                    "--top",
-                    "choose:config",
-                    "--libmap",
-                    &map,
-                ],
+                &["--edition", edition, "--top", "choose", "--libmap", &map],
             );
         }
     }
@@ -874,21 +855,14 @@ fn filesystem_map_binding_errors_are_reported_in_both_editions_and_modes() {
 #[test]
 fn filesystem_config_cycle_is_diagnosed_in_both_editions_and_modes() {
     let rtl = format!("rtl={}", fixture("rtl.sv"));
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         for optimized in [false, true] {
             let output = sim_cli::invoke_with_source_prefix(
                 SUITE,
                 "cycle_top",
                 &["cycle_config"],
                 optimized,
-                &[
-                    "--edition",
-                    edition,
-                    "--top",
-                    "first:config",
-                    "--libfile",
-                    &rtl,
-                ],
+                &["--edition", edition, "--top", "first", "--libfile", &rtl],
             );
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert_eq!(output.status.code(), Some(1), "{stderr}");
@@ -1007,8 +981,8 @@ fn library_map_incdirs_select_scoped_headers_in_both_editions() {
         .to_string_lossy()
         .into_owned();
     for (edition, language_edition) in [
-        ("2001", compile::LanguageEdition::Verilog2001),
-        ("2009", compile::LanguageEdition::SystemVerilog2009),
+        ("v2001", compile::LanguageEdition::Verilog2001),
+        ("sv2009", compile::LanguageEdition::SystemVerilog2009),
     ] {
         for map in [&map_path, &wildcard_map] {
             for (global_dir, expected) in [(false, "incdir=17,23\n"), (true, "incdir=66,66\n")] {
@@ -1080,7 +1054,7 @@ fn library_incdir_failures_are_reported_in_both_editions_and_modes() {
     let missing_dir = fixture("incdir_missing_dir.map");
     let missing_header = fixture("incdir_missing_header.map");
     let _ = fixture("incdir_missing_header.sv");
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         for (map, diagnostic) in [
             (&no_leak, "value.vh"),
             (&missing_dir, "incdir_headers/absent"),
@@ -1250,7 +1224,7 @@ fn library_incdir_symlink_escape_is_rejected_before_compilation() {
     std::fs::copy(fixture("incdir_rtl.sv"), map_dir.path().join("rtl.sv")).expect("library source");
     symlink(outside.path(), map_dir.path().join("escape")).expect("escape link");
     let map = map.to_string_lossy().into_owned();
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::reject_case_with_args(
             SUITE,
             "incdir_top",
@@ -1272,7 +1246,7 @@ fn library_pattern_symlink_escape_is_rejected_before_compilation() {
     let map = map_dir.path().join("root.map");
     std::fs::write(&map, "library rtl escape/rtl.sv;\n").expect("map");
     let map = map.to_string_lossy().into_owned();
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::reject_case_with_args(
             SUITE,
             "incdir_top",

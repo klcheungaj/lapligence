@@ -10,6 +10,6 @@ fn typed_selected_lvalue_matrix_matches_in_both_optimizer_modes() {
         "enum=01/a0/a5 struct=0100/a000/b5c2 union=0100/a000/d3a4\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

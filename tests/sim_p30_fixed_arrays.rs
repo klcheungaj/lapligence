@@ -163,7 +163,7 @@ fn replicated_assignment_patterns_public_cli() {
         "PASS replicated_assignment_patterns\n",
         "llg: $finish at time 1000 at tb:83:9\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -181,7 +181,7 @@ fn replicated_assignment_pattern_rejects_wrong_extent() {
         "p30_fixed_arrays",
         "replicated_assignment_pattern_shape",
         "assignment pattern",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -191,6 +191,6 @@ fn replicated_assignment_pattern_rejects_zero_count() {
         "p30_fixed_arrays",
         "replicated_assignment_pattern_zero",
         "value must be positive",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

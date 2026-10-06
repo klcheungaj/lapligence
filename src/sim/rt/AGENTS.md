@@ -381,6 +381,10 @@ once-per-process forked tee (POSIX only; Windows reports an error) that survives
 simulator crashes, shares one pipe when stdout/stderr reach the same file, and is
 joined at exit. `llg_wave.c` reads `LLG_SIM_OUT_DIR`/`LLG_SIM_WAVE_FILE` itself in
 `llg_wave_model_init`, keeping the waveform unit scheduler-independent.
+`llg_wave_start` (generated for `llg --wave`) records its file as the override
+unless `LLG_SIM_WAVE_FILE` set one, opens it and selects at time zero after all
+registrations; afterwards `$dumpfile`/`$dumpvars` are ignored while the other
+dump controls still apply.
 
 Memory images preserve X/Z, comments, addresses, views and loaded prefixes on
 failure. Keep edition-specific default address order, explicit direction, short-word

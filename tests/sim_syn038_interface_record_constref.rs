@@ -10,6 +10,6 @@ fn interface_record_const_ref_function_returns_the_source_key() {
         "read=3c\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

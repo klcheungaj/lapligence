@@ -11,6 +11,6 @@ fn automatic_enum_pattern_function_and_clocked_nba_match_oracle() {
         "initial=00000101 state=00000111\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

@@ -10,6 +10,6 @@ fn packed_localparam_members_lower_as_constant_runtime_reads() {
         "struct=12\nunion=a5c3\noctet=a5\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

@@ -24,7 +24,7 @@ fn null_interface_check(stdout: &'static str, site: &'static str) -> impl Fn(&st
         assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{label}");
         let runtime = stderr
             .lines()
-            .filter(|line| !line.starts_with("Warning: "))
+            .filter(|line| !crate::sim_harness::is_compile_report_line(line))
             .map(|line| format!("{line}\n"))
             .collect::<String>();
         assert_eq!(

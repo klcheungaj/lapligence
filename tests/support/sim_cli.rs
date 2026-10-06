@@ -227,21 +227,23 @@ fn invoke_with_source_prefix_and_runtime_args(
         .map(|stem| fixture_path(suite, stem))
         .collect();
     let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
-    command.current_dir(directory.path()).args(["--top", "tb"]);
-    if !optimized {
-        command.arg("--no-opt");
-    }
-    command.args(args);
-    for path in prefix_paths {
-        command.arg(path);
-    }
-    command.arg(source);
-    if !runtime_args.is_empty() {
-        command.arg("--").args(runtime_args);
-    }
-    sim_harness::run_command(&mut command, Duration::from_secs(180))
-        .unwrap_or_else(|error| panic!("{suite}/{fixture}, optimized={optimized}: {error}"))
+    let label = format!("{suite}/{fixture}, optimized={optimized}");
+    run_fixture_command(&source, &label, |lint_args| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+        command.current_dir(directory.path()).args(["--top", "tb"]);
+        if !optimized {
+            command.arg("--no-opt");
+        }
+        command.args(args).args(lint_args);
+        for path in &prefix_paths {
+            command.arg(path);
+        }
+        command.arg(&source);
+        if !runtime_args.is_empty() {
+            command.arg("--").args(runtime_args);
+        }
+        command
+    })
 }
 
 /// Invoke one checked-in fixture after copying its independent memory-file
@@ -261,14 +263,16 @@ fn invoke_with_files(
         std::fs::write(directory.path().join(name), contents)
             .unwrap_or_else(|error| panic!("{suite}/{fixture}: write {name}: {error}"));
     }
-    let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
-    command.current_dir(directory.path()).args(["--top", "tb"]);
-    if !optimized {
-        command.arg("--no-opt");
-    }
-    command.args(args).arg(source);
-    sim_harness::run_command(&mut command, Duration::from_secs(180))
-        .unwrap_or_else(|error| panic!("{suite}/{fixture}, optimized={optimized}: {error}"))
+    let label = format!("{suite}/{fixture}, optimized={optimized}");
+    run_fixture_command(&source, &label, |lint_args| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+        command.current_dir(directory.path()).args(["--top", "tb"]);
+        if !optimized {
+            command.arg("--no-opt");
+        }
+        command.args(args).args(lint_args).arg(&source);
+        command
+    })
 }
 
 /// Invoke one checked-in simulator fixture with explicit child-process
@@ -285,19 +289,21 @@ pub(crate) fn invoke_with_env(
 ) -> Output {
     let source = fixture_path(suite, fixture);
     let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
-    command.current_dir(directory.path()).args(["--top", "tb"]);
-    if !optimized {
-        command.arg("--no-opt");
-    }
-    command.args(args);
-    command.arg(source);
-    command.envs(envs.iter().copied());
-    for variable in remove_env {
-        command.env_remove(variable);
-    }
-    sim_harness::run_command(&mut command, Duration::from_secs(180))
-        .unwrap_or_else(|error| panic!("{suite}/{fixture}, optimized={optimized}: {error}"))
+    let label = format!("{suite}/{fixture}, optimized={optimized}");
+    run_fixture_command(&source, &label, |lint_args| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+        command.current_dir(directory.path()).args(["--top", "tb"]);
+        if !optimized {
+            command.arg("--no-opt");
+        }
+        command.args(args).args(lint_args);
+        command.arg(&source);
+        command.envs(envs.iter().copied());
+        for variable in remove_env {
+            command.env_remove(variable);
+        }
+        command
+    })
 }
 
 fn invoke(suite: &str, fixture: &str, optimized: bool) -> Output {
@@ -313,14 +319,21 @@ fn invoke_with_runtime_args(
 ) -> Output {
     let source = fixture_path(suite, fixture);
     let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
-    command.current_dir(directory.path()).args(["--top", "tb"]);
-    if !optimized {
-        command.arg("--no-opt");
-    }
-    command.args(args).arg(source).arg("--").args(runtime_args);
-    sim_harness::run_command(&mut command, Duration::from_secs(180))
-        .unwrap_or_else(|error| panic!("{suite}/{fixture}, optimized={optimized}: {error}"))
+    let label = format!("{suite}/{fixture}, optimized={optimized}");
+    run_fixture_command(&source, &label, |lint_args| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+        command.current_dir(directory.path()).args(["--top", "tb"]);
+        if !optimized {
+            command.arg("--no-opt");
+        }
+        command
+            .args(args)
+            .args(lint_args)
+            .arg(&source)
+            .arg("--")
+            .args(runtime_args);
+        command
+    })
 }
 
 fn assert_case_output(
@@ -353,7 +366,7 @@ fn assert_case_output(
     for line in stderr.lines() {
         if let Some(warning) = line.strip_prefix("llg: warning: ") {
             warnings.push(warning);
-        } else if !line.starts_with("Warning: ") {
+        } else if !crate::sim_harness::is_compile_report_line(line) {
             // Legal conformance probes intentionally provoke frontend
             // width/sign/range warnings; lowering warnings remain exact.
             runtime_stderr.push_str(line);
@@ -633,5 +646,125 @@ pub(crate) fn reject_case_with_runtime_args(
         assert_eq!(output.status.code(), Some(1), "{fixture}: {stderr}");
         assert!(output.stdout.is_empty(), "{fixture}: {output:?}");
         assert!(stderr.contains(diagnostic), "{fixture}: {stderr}");
+    }
+}
+
+/// The default-lint errors a checked-in fixture deliberately triggers, from
+/// `tests/fixtures/sim/lint/expected_errors.tsv`, and the configuration that
+/// disables their rules.
+pub(crate) struct ExpectedLint {
+    /// `rule line:col`, sorted.
+    errors: Vec<String>,
+    /// `allow_*.toml` disabling exactly the listed rules.
+    config: String,
+}
+
+/// The manifest entry for `source`, if it is listed.
+pub(crate) fn expected_lint(source: &Path) -> Option<&'static ExpectedLint> {
+    static MANIFEST: std::sync::OnceLock<std::collections::HashMap<PathBuf, ExpectedLint>> =
+        std::sync::OnceLock::new();
+    let manifest = MANIFEST.get_or_init(|| {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sim");
+        let text = std::fs::read_to_string(root.join("lint/expected_errors.tsv"))
+            .expect("read lint/expected_errors.tsv");
+        let mut errors: std::collections::BTreeMap<PathBuf, Vec<(String, String)>> =
+            std::collections::BTreeMap::new();
+        for line in text.lines().filter(|line| !line.starts_with('#') && !line.is_empty()) {
+            let fields: Vec<&str> = line.split('\t').collect();
+            let [fixture, rule, position] = fields[..] else {
+                panic!("malformed lint/expected_errors.tsv line: {line:?}");
+            };
+            let path = root.join(fixture);
+            assert!(path.is_file(), "lint manifest names a missing fixture: {fixture}");
+            errors
+                .entry(path)
+                .or_default()
+                .push((rule.to_owned(), position.to_owned()));
+        }
+        errors
+            .into_iter()
+            .map(|(path, errors)| {
+                let has = |name: &str| errors.iter().any(|(rule, _)| rule == name);
+                let config = match (has("mixed-assignments"), has("combinational-loop")) {
+                    (true, true) => "allow_feedback_and_mixed.toml",
+                    (true, false) => "allow_mixed_assignments.toml",
+                    (false, true) => "allow_combinational_loop.toml",
+                    (false, false) => panic!("lint manifest rules must be mixed-assignments or combinational-loop: {errors:?}"),
+                };
+                let mut listed: Vec<String> = errors
+                    .iter()
+                    .map(|(rule, position)| format!("{rule} {position}"))
+                    .collect();
+                listed.sort();
+                let expected = ExpectedLint {
+                    errors: listed,
+                    config: root.join("lint").join(config).to_string_lossy().into_owned(),
+                };
+                (path, expected)
+            })
+            .collect()
+    });
+    manifest.get(source)
+}
+
+impl ExpectedLint {
+    /// `--config` arguments that disable the listed rules.
+    pub(crate) fn allow_args(&self) -> [&str; 2] {
+        ["--config", self.config.as_str()]
+    }
+
+    /// Require `output` (a default-lint run of `source`) to have stopped
+    /// before code generation with exactly the listed errors.
+    pub(crate) fn assert_stopped(&self, source: &Path, output: &Output, label: &str) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{label}: default lint must stop the run: {stderr}"
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "{label}: the model must not run: {stderr}"
+        );
+        let mut actual: Vec<String> = stderr
+            .lines()
+            .filter_map(|line| {
+                let (location, finding) = line.split_once(": [ERROR] ")?;
+                let rule = finding.split_once(": ")?.0;
+                let mut parts = location.rsplitn(3, ':');
+                let col = parts.next()?;
+                let line_number = parts.next()?;
+                let file = parts.next()?;
+                assert_eq!(
+                    Path::new(file).file_name(),
+                    source.file_name(),
+                    "{label}: lint error outside the fixture: {line}"
+                );
+                Some(format!("{rule} {line_number}:{col}"))
+            })
+            .collect();
+        actual.sort();
+        assert_eq!(
+            actual, self.errors,
+            "{label}: default lint errors: {stderr}"
+        );
+    }
+}
+
+/// Run the `llg` command `build(lint_args)` for the fixture `source`. A
+/// fixture listed in `lint/expected_errors.tsv` is first run with the default
+/// lint configuration, which must stop with exactly its listed errors; the
+/// returned run then disables those rules with `--config`.
+fn run_fixture_command(source: &Path, label: &str, build: impl Fn(&[&str]) -> Command) -> Output {
+    let run = |mut command: Command| {
+        sim_harness::run_command(&mut command, Duration::from_secs(180))
+            .unwrap_or_else(|error| panic!("{label}: {error}"))
+    };
+    match expected_lint(source) {
+        None => run(build(&[])),
+        Some(expected) => {
+            expected.assert_stopped(source, &run(build(&[])), label);
+            run(build(&expected.allow_args()))
+        }
     }
 }

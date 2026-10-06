@@ -377,14 +377,14 @@ fn assert_manual_cli_contract(
     );
     let mode_loop = optimized_mode_loop_body(owner_body);
     let invocation = format!(
-        "sim_cli::invoke_with_env(\n            \"{}\",\n            \"{}\",\n            optimized,\n            &[\"--edition\", \"2009\"],\n            &[],\n            &[],\n        );",
+        "sim_cli::invoke_with_env(\n            \"{}\",\n            \"{}\",\n            optimized,\n            &[\"--edition\", \"sv2009\"],\n            &[],\n            &[],\n        );",
         witness.suite, witness.fixture
     );
     for required in [
         invocation.as_str(),
         "output.status.success(),",
         witness.stdout_assertion,
-        "assert_eq!(output.stderr.as_slice(), b\"\", \"{label}\");",
+        "assert_eq!(\n            crate::sim_harness::strip_lint_reports(&output.stderr),\n            \"\",\n            \"{label}\"\n        );",
     ] {
         assert!(
             mode_loop.contains(required),
@@ -593,7 +593,8 @@ fn assert_op_consumer_source_bound_cli_contract(
         "sim_harness::run_command(&mut command, Duration::from_secs(180))",
         "assert_eq!(\n            output.status.code(),\n            Some(0),",
         "assert_eq!(output.stdout.as_slice(), EXPECTED_STDOUT, \"{label}\");",
-        "assert_eq!(output.stderr.as_slice(), EXPECTED_STDERR, \"{label}\");",
+        "assert_eq!(crate::sim_harness::strip_lint_reports(&output.stderr).as_bytes(),
+            EXPECTED_STDERR, \"{label}\");",
     ] {
         assert!(
             mode_loop.contains(required),
@@ -658,7 +659,8 @@ fn assert_operation_context_matrix_cli_contract(test_source: &str, owner_body: &
         "sim_harness::run_command(&mut command, Duration::from_secs(180))",
         "output.status.code(),\n            Some(0),",
         "assert_eq!(output.stdout.as_slice(), EXPECTED_STDOUT, \"{label}\");",
-        "assert_eq!(output.stderr.as_slice(), EXPECTED_STDERR, \"{label}\");",
+        "assert_eq!(crate::sim_harness::strip_lint_reports(&output.stderr).as_bytes(),
+            EXPECTED_STDERR, \"{label}\");",
         "for (filename, source, line, column, variable_actual, expression_actual) in\n            CONST_REF_NEGATIVES",
         "let negative_path = negative_root.join(filename);",
         "negative_command\n                .current_dir(negative_directory.path())\n                .args([\"--top\", \"tb\"]);",
@@ -818,7 +820,7 @@ fn assert_storage_write_remainders_cli_contract(root: &Path, owner_body: &str, o
     );
     let mode_loop = optimized_mode_loop_body(owner_body);
     for required in [
-        "sim_cli::invoke_with_env(\n            \"syn038_pairwise\",\n            \"storage_write_remainders\",\n            optimized,\n            &[\"--edition\", \"2009\"],\n            &[],\n            &[],\n        );",
+        "sim_cli::invoke_with_env(\n            \"syn038_pairwise\",\n            \"storage_write_remainders\",\n            optimized,\n            &[\"--edition\", \"sv2009\"],\n            &[],\n            &[],\n        );",
         "output.status.code(), Some(0),",
         "output.stdout.as_slice(), expected_stdout, \"{label}\"",
         "String::from_utf8_lossy(&output.stderr),\n            expected_stderr,",
@@ -874,7 +876,7 @@ fn assert_static_return_ref_actual_cli_contract(root: &Path, owner_body: &str, o
     );
     let mode_loop = optimized_mode_loop_body(owner_body);
     for required in [
-        "sim_cli::invoke_with_env(\n            \"syn038_pairwise\",\n            \"static_return_ref_actual\",\n            optimized,\n            &[\"--edition\", \"2009\"],\n            &[],\n            &[],\n        );",
+        "sim_cli::invoke_with_env(\n            \"syn038_pairwise\",\n            \"static_return_ref_actual\",\n            optimized,\n            &[\"--edition\", \"sv2009\"],\n            &[],\n            &[],\n        );",
         "assert_eq!(output.status.code(), Some(0), \"{label}\");",
         "output.stdout.as_slice(),\n            b\"static-return-ref=passed\\n\",",
         "String::from_utf8_lossy(&output.stderr),\n            expected_stderr,",
@@ -1896,7 +1898,7 @@ fn audited_evidence_map_names_real_fixtures_and_test_invocations() {
 
 #[test]
 fn escaped_identifier_grammar_fixture_executes_in_both_editions() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             "review_bundle",
             "r12_escaped_identifier",
@@ -1931,7 +1933,7 @@ fn runtime_arithmetic_widths_match_independent_signed_and_unsigned_oracle() {
     );
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/review_bundle/r12_runtime_arithmetic_widths.sv");
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         for optimized in [false, true] {
             let directory =
                 sim_harness::TempDir::new("runtime-arithmetic-widths").expect("CLI test directory");
@@ -1958,7 +1960,11 @@ fn runtime_arithmetic_widths_match_independent_signed_and_unsigned_oracle() {
                 EXPECTED,
                 "{edition}/{optimized}"
             );
-            assert_eq!(output.stderr, b"", "{edition}/{optimized}");
+            assert_eq!(
+                crate::sim_harness::strip_lint_reports(&output.stderr),
+                "",
+                "{edition}/{optimized}"
+            );
         }
     }
 }
@@ -1971,14 +1977,14 @@ fn const_module_and_local_variables_are_read_only() {
         "const=7,10\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     for optimized in [false, true] {
         let output = sim_cli::invoke_with_env(
             "review_bundle",
             "r12_const_variable",
             optimized,
-            &["--edition", "2009", "--define", "WRITE_CONST"],
+            &["--edition", "sv2009", "--define", "WRITE_CONST"],
             &[],
             &[],
         );
@@ -2000,13 +2006,13 @@ fn constant_time_literal_parameter_fixture_executes() {
         "param=2\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
 #[test]
 fn radix_literals_execute_in_both_editions() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             "review_bundle",
             "r12_radix_literals",
@@ -2026,7 +2032,7 @@ fn attribute_and_pragma_fixture_executes() {
         "attribute_pragma=1\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -2037,7 +2043,7 @@ fn record_conditional_two_state_nba_context_executes() {
         "r12_record_conditional_2state_nba",
         "record_nba=xx,0\n",
         "",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &["+seed=1"],
     );
 }
@@ -2049,7 +2055,7 @@ fn numeric_let_uses_runtime_actual_and_lexical_parameter_scope() {
         "r12_let_numeric",
         "let=7,7\n",
         "",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &["+seed=4"],
     );
 }
@@ -2060,13 +2066,13 @@ fn numeric_let_is_rejected_in_verilog_2001() {
         "review_bundle",
         "r12_let_numeric",
         "let",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
 #[test]
 fn genvar_function_calls_select_runtime_visible_lanes_in_both_editions() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_cli_and_runtime_args(
             "review_bundle",
             "r12_genvar_function_call",
@@ -2080,7 +2086,7 @@ fn genvar_function_calls_select_runtime_visible_lanes_in_both_editions() {
 
 #[test]
 fn pull_gate_instances_drive_undriven_nets_in_both_editions() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             "review_bundle",
             "r12_pull_gate_dual",
@@ -2100,7 +2106,7 @@ fn ansi_combinational_udp_uses_declared_scalar_ports() {
         "udp_ansi=0,1,0\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -2112,7 +2118,7 @@ fn fixed_record_grid_executes_across_three_unpack_dimensions() {
         "record_grid3d=7,56 flags=0,1\n",
         "llg: $finish at time 0 at tb:21:5\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -2124,7 +2130,7 @@ fn fixed_record_array_member_and_return_context_executes() {
         "source=2,9,2,3\nresult=f,1,5,3\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -2136,7 +2142,7 @@ fn hierarchical_task_and_function_calls_execute_per_instance() {
         "hier=6,2,12,6,25\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

@@ -197,7 +197,7 @@ fn selected_write_addresses_and_source_only_paths_have_independent_oracles() {
         EXPECTED_STDOUT,
         EXPECTED_STDERR,
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 

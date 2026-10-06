@@ -18,7 +18,7 @@ complement, -3, all X, and the pattern with Z in bit 0.
   mixed-sign division, both exponent signs, and `<< >> <<< >>>` with oversized,
   signed and X/Z counts. Shifting a partly unknown operand prints in binary.
 - `arith_matrix_2001.v` repeats the matrix in Verilog-2001 syntax under
-  `--edition 2001`.
+  `--edition v2001`.
 - `arith_wide.sv` uses 8,128 and 8,129 bits (127 versus 128 limbs). That is
   where the compact backend's GMP multiply switches to `mpn_mul_n`. Each result
   prints its low and high 64 bits and its count of one bits. Odd bases other

@@ -883,6 +883,31 @@ pub fn gate_terminal_drivers(db: &Db) -> HashSet<NodeId> {
     out
 }
 
+/// The variables local to `process`: block-local declarations and `for`
+/// loop variables declared by its statements, plus any variable whose
+/// declaration node lies under it. A declaration node may live in a scope
+/// outside the process, so the declaring statements identify it.
+pub fn process_local_vars(db: &Db, process: NodeId) -> HashSet<NodeId> {
+    fn walk(db: &Db, node: NodeId, out: &mut HashSet<NodeId>) {
+        match db.node_kind(node) {
+            NodeKind::Stmt(StmtKind::For { vars, .. }) => out.extend(vars.iter().copied()),
+            NodeKind::Stmt(StmtKind::VariableDecl { declaration }) => {
+                out.insert(*declaration);
+            }
+            NodeKind::Var { .. } | NodeKind::Array { .. } => {
+                out.insert(node);
+            }
+            _ => {}
+        }
+        for child in &db.node(node).children {
+            walk(db, *child, out);
+        }
+    }
+    let mut out = HashSet::new();
+    walk(db, process, &mut out);
+    out
+}
+
 /// True for `always_comb` / `always @*` processes (combinational).  Latches
 /// (`always_latch`) and explicit event controls are not combinational.
 pub fn is_comb_process(db: &Db, id: NodeId) -> bool {

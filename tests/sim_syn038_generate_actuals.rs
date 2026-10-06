@@ -10,6 +10,6 @@ fn generated_scope_actuals_reach_ports_and_subroutine_formals() {
         "pads=3c,a5 ref=12,24 const=55,c3\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

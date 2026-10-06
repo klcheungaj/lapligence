@@ -246,7 +246,7 @@ fn case_matching_tables_and_selector_z_work_in_both_editions() {
         "constant=1 frontend=1 generated=1\n",
         "wide=1\nwide=0\n",
     );
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             "review_bundle",
             "n11_casez_selector_z",

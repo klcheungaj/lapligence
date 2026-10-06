@@ -42,7 +42,7 @@ fn electrical_ranges_preserve_values_and_hierarchy_in_both_modes() {
         &expected,
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -54,7 +54,7 @@ fn wide_net_array_runtime_has_independent_expected_values() {
         "WIDE_NET_RUNTIME_PASS\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -64,6 +64,6 @@ fn electrical_partition_keeps_alias_width_legality() {
         "net_partition",
         "invalid_alias_width",
         "all aliased nets must have the same width",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

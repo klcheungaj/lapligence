@@ -10,6 +10,6 @@ fn process_values_match_across_optimizer_modes() {
         "process=12,abcd,55,a,b2,01 c3,01,12/34,11/22/33/44,a5,1,25 d4,01,01,55/66,1,25,a5 e,01,12/34,1\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

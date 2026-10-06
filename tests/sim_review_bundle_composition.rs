@@ -15,7 +15,7 @@ fn recursive_type_keys_cross_function_return_array_port_and_comb_logic() {
         "recursive pattern function/port passed: 34\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -27,6 +27,6 @@ fn record_deconstruction_captures_selected_nba_target_and_source() {
         "selected record NBA scatter passed: 12/34\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

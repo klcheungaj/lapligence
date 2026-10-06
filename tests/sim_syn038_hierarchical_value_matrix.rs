@@ -14,6 +14,6 @@ fn hierarchical_child_values_and_selected_writes_execute() {
         "hier=01,1,12,56,21,33,56,12,53 event=1\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }

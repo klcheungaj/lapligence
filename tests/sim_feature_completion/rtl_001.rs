@@ -100,7 +100,7 @@ fn illegal_verilog_whole_array_copy() {
         SUITE,
         "neg_whole_array_2001.v",
         "whole unpacked array value",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 
@@ -139,7 +139,7 @@ fn verilog_memory_elements_remain_legal() {
         include_str!("../fixtures/sim/feature_completion/rtl_001/memory_elements_2001.out"),
         "",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }
 

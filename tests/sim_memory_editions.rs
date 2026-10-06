@@ -11,9 +11,9 @@ use crate::sim_harness;
 fn signed_address_spellings_and_hex_boundaries_select_the_same_cells() {
     let words = "@-9 aa @-09 bb @-0009 cc @-7 17 @-8 18 @-f 1f @-80 80 @-81 81\n";
     let expected = "asc=17,18,cc,1f,80,81 desc=17,18,cc,1f,80,81\n";
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         let warning = "llg: memory file `signed.mem`: memory file contains too few words for the selected range\n";
-        let stderr = if edition == "2001" {
+        let stderr = if edition == "v2001" {
             format!("{warning}{warning}llg: simulation ended without $finish (no processes remain) at time 0\n")
         } else {
             "llg: simulation ended without $finish (no processes remain) at time 0\n".to_owned()
@@ -32,7 +32,7 @@ fn signed_address_spellings_and_hex_boundaries_select_the_same_cells() {
 
 #[test]
 fn signed_address_overflow_and_out_of_range_stop_before_writing() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         for (word, diagnostic) in [
             ("@-8000000000000001", "address jump is not a known index"),
             ("@8000000000000000", "address jump is not a known index"),
@@ -121,7 +121,7 @@ fn omitted_memory_range_keeps_the_selected_edition_order() {
         "m1=11 m0=22\n",
         "llg: simulation ended without $finish (no processes remain) at time 0\n",
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
         &[("words.mem", "11\n22\n")],
     );
     sim_cli::run_case_with_files(
@@ -130,7 +130,7 @@ fn omitted_memory_range_keeps_the_selected_edition_order() {
         "m1=22 m0=11\n",
         "llg: simulation ended without $finish (no processes remain) at time 0\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("words.mem", "11\n22\n")],
     );
 }
@@ -146,7 +146,7 @@ fn start_only_memory_range_uses_the_edition_default_finish() {
             "llg: simulation ended without $finish (no processes remain) at time 0\n",
         ),
         &[],
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
         &[("words.mem", "aa\nbb\n")],
     );
     sim_cli::run_case_with_files(
@@ -155,7 +155,7 @@ fn start_only_memory_range_uses_the_edition_default_finish() {
         "m3=bb m2=aa m1=00 m0=00\n",
         "llg: simulation ended without $finish (no processes remain) at time 0\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("words.mem", "aa\nbb\n")],
     );
 }
@@ -168,7 +168,7 @@ fn explicit_descending_range_and_address_jumps_preserve_source_direction() {
         "m0=00 m1=33 m2=22 m3=11\n",
         "llg: simulation ended without $finish (no processes remain) at time 0\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("words.mem", "11\n22\n33\n")],
     );
     sim_cli::run_case_with_files(
@@ -177,7 +177,7 @@ fn explicit_descending_range_and_address_jumps_preserve_source_direction() {
         "m0=c3 m1=b2 m2=d4 m3=a1\n",
         "llg: simulation ended without $finish (no processes remain) at time 0\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("jumps.mem", "@3\na1\n@1\nb2\nc3\n@2\nd4\n")],
     );
 }
@@ -193,7 +193,7 @@ fn truncated_data_and_two_state_conversion_keep_prior_values_and_diagnose() {
             "llg: simulation ended without $finish (no processes remain) at time 0\n",
         ),
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("short.mem", "7f\n")],
     );
     sim_cli::run_case_with_files(
@@ -205,7 +205,7 @@ fn truncated_data_and_two_state_conversion_keep_prior_values_and_diagnose() {
             "llg: simulation ended without $finish (no processes remain) at time 0\n",
         ),
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("unknown.mem", "1x0z\n1010\n")],
     );
 }
@@ -221,7 +221,7 @@ fn invalid_address_terminates_after_already_loaded_values() {
             "llg: simulation ended without $finish (no processes remain) at time 0\n",
         ),
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("bad.mem", "@1\naa\n@3\nbb\n")],
     );
 }
@@ -237,7 +237,7 @@ fn enum_memory_data_stops_at_the_first_non_member() {
             "llg: simulation ended without $finish (no processes remain) at time 0\n",
         ),
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("enum.mem", "00\n02\n")],
     );
 }
@@ -272,7 +272,7 @@ fn enum_memory_overflow_is_rejected_before_truncation() {
                 "llg: $finish at time 0 at tb:10:5\n",
             ),
             &[],
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
             &[("enum_overflow.hex", words.as_str())],
         );
     }
@@ -317,7 +317,7 @@ fn enum_memory_range_check_preserves_packed_truncation_and_signed_values() {
             "llg: $finish at time 0 at tb:17:5\n",
         ),
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[
             ("enum_overflow.hex", overflow.as_str()),
             ("signed_enum.hex", signed.as_str()),
@@ -366,7 +366,7 @@ fn memory_file_tasks_accept_multidimensional_arrays() {
         "",
         "llg: simulation ended without $finish (no processes remain) at time 0\n",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
         &[("bad.mem", "11\n22\n33\n44\n")],
     );
 }
@@ -377,6 +377,6 @@ fn multidimensional_memory_views_remain_a_systemverilog_feature() {
         "memory_editions",
         "multidim_2009",
         "multidimensional memory views require SystemVerilog-2009",
-        &["--edition", "2001"],
+        &["--edition", "v2001"],
     );
 }

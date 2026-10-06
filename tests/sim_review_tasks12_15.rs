@@ -11,7 +11,7 @@ fn map_fixture(name: &str) -> String {
 
 #[test]
 fn embedded_map_configurations_match_separate_sources_in_both_editions() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         for name in ["root.map", "included.map", "multiple.map"] {
             let map = map_fixture(name);
             sim_cli::run_case_with_args(
@@ -20,14 +20,7 @@ fn embedded_map_configurations_match_separate_sources_in_both_editions() {
                 "mapped=22 11\n",
                 "",
                 &[],
-                &[
-                    "--edition",
-                    edition,
-                    "--top",
-                    "choose:config",
-                    "--libmap",
-                    &map,
-                ],
+                &["--edition", edition, "--top", "choose", "--libmap", &map],
             );
         }
         let map = map_fixture("separate.map");
@@ -38,28 +31,14 @@ fn embedded_map_configurations_match_separate_sources_in_both_editions() {
             "mapped=22 11\n",
             "",
             &[],
-            &[
-                "--edition",
-                edition,
-                "--top",
-                "choose:config",
-                "--libmap",
-                &map,
-            ],
+            &["--edition", edition, "--top", "choose", "--libmap", &map],
         );
         let map = map_fixture("unterminated.map");
         sim_cli::reject_case_with_args(
             "review_library_configs",
             "top",
             "missing endconfig",
-            &[
-                "--edition",
-                edition,
-                "--top",
-                "choose:config",
-                "--libmap",
-                &map,
-            ],
+            &["--edition", edition, "--top", "choose", "--libmap", &map],
         );
     }
 }
@@ -147,7 +126,7 @@ fn map_configuration_frontend_diagnostics_keep_original_lines_and_name() {
 
 #[test]
 fn packed_policy_matrix_keeps_frontend_runtime_and_lazy_arm_semantics() {
-    for edition in ["2001", "2009"] {
+    for edition in ["v2001", "sv2009"] {
         sim_cli::run_case_with_args(
             "continuation_12_15",
             "packed_conditional_matrix",
@@ -198,7 +177,7 @@ fn structure_conditionals_keep_immediate_members_across_constant_runtime_and_nba
         "STRUCT_POLICY_PASS\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -254,26 +233,26 @@ fn type_keys_preserve_precedence_types_and_contexts_with_strict_negative_neighbo
         "TYPE_KEYS_PASS\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "continuation_12_15",
         "type_key_duplicate_index",
         "multiple keys for index",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(
         "continuation_12_15",
         "type_key_missing_coverage",
         "not all elements",
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
     for optimized in [false, true] {
         let output = sim_cli::invoke_with_env(
             "continuation_12_15",
             "type_key_incompatible_value",
             optimized,
-            &["--edition", "2009"],
+            &["--edition", "sv2009"],
             &[],
             &[],
         );
@@ -321,7 +300,7 @@ fn array_valued_pattern_items_fill_their_subarray_in_order() {
         "NESTED_ROW_PATTERNS_PASS\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
 
@@ -333,6 +312,6 @@ fn structure_parameters_and_mixed_equality_operands_are_values() {
         "RECORD_VALUE_CONTEXTS_PASS\n",
         "",
         &[],
-        &["--edition", "2009"],
+        &["--edition", "sv2009"],
     );
 }
