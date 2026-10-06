@@ -16,3 +16,12 @@ fn output_inout_and_ref_event_formals_use_the_typed_call_path() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_009/event_formals.out");
     sim_cli::run_case_backend_parity(SUITE, "event_formals", expected, &[], &[]);
 }
+
+#[test]
+fn expanded_tasks_with_native_formals_are_explicit() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_event_local_native",
+        "task `t` with native record or container formals needs caller-environment expansion, which is not supported in `tb`",
+    );
+}
