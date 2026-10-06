@@ -275,15 +275,15 @@ pub(super) fn module_graph_from_slang(
     }
     for node in &snapshot.semantic_nodes {
         if node.kind != SemanticKind::Instance
-            || node.is_top
-            || (database.is_some() && !node.is_uninstantiated)
+            || node.is_top()
+            || (database.is_some() && !node.is_uninstantiated())
             || node.name.is_empty()
             || node.definition_name.is_empty()
         {
             continue;
         }
         let mut owner = node
-            .parent_id
+            .parent_id()
             .and_then(|id| semantic_by_id.get(&id).copied());
         while owner.is_some_and(|parent| {
             !matches!(
@@ -292,7 +292,7 @@ pub(super) fn module_graph_from_slang(
             )
         }) {
             owner = owner
-                .and_then(|parent| parent.parent_id)
+                .and_then(|parent| parent.parent_id())
                 .and_then(|id| semantic_by_id.get(&id).copied());
         }
         let Some(owner) = owner else { continue };
@@ -305,7 +305,7 @@ pub(super) fn module_graph_from_slang(
         let owner_id = if owner.kind == SemanticKind::Definition {
             Some(owner.id)
         } else {
-            owner.target_id
+            owner.target_id()
         };
         let Some(owner_key) = owner_id.and_then(|id| definition_keys.get(&id)) else {
             continue;
@@ -332,7 +332,7 @@ pub(super) fn module_graph_from_slang(
             if let Some(existing) = definition.children.iter_mut().find(|existing| {
                 existing.name == child.name && existing.module_type == child.module_type
             }) {
-                if node.is_uninstantiated {
+                if node.is_uninstantiated() {
                     *existing = child.clone();
                 }
             } else {
@@ -372,19 +372,19 @@ pub(super) fn module_graph_from_slang(
             continue;
         }
         let mut ancestor = node
-            .parent_id
+            .parent_id()
             .and_then(|id| semantic_by_id.get(&id).copied());
         let owner_id = loop {
             let Some(parent) = ancestor else { break None };
             match parent.kind {
                 SemanticKind::Definition => break Some(parent.id),
                 SemanticKind::Instance if !parent.definition_name.is_empty() => {
-                    break parent.target_id;
+                    break parent.target_id();
                 }
                 SemanticKind::Subroutine => break None,
                 _ => {
                     ancestor = parent
-                        .parent_id
+                        .parent_id()
                         .and_then(|id| semantic_by_id.get(&id).copied());
                 }
             }
@@ -435,11 +435,11 @@ pub(super) fn module_graph_from_slang(
                     }) {
                         continue;
                     }
-                    let direction = if node.is_input {
+                    let direction = if node.is_input() {
                         Direction::Input
-                    } else if node.is_output {
+                    } else if node.is_output() {
                         Direction::Output
-                    } else if node.is_inout {
+                    } else if node.is_inout() {
                         Direction::Inout
                     } else {
                         Direction::None
@@ -463,7 +463,7 @@ pub(super) fn module_graph_from_slang(
                     definition.params.push(ModuleGraphParameter {
                         name: node.name.to_string(),
                         ty: source_type.clone(),
-                        local: node.is_local,
+                        local: node.is_local(),
                         detail: detail.clone(),
                         location: Some(location.clone()),
                         display_type: display_type.clone(),
@@ -511,7 +511,7 @@ pub(super) fn module_graph_from_slang(
             continue;
         }
         let mut ancestor = node
-            .parent_id
+            .parent_id()
             .and_then(|id| semantic_by_id.get(&id).copied());
         let mut instance_names = Vec::new();
         while let Some(parent) = ancestor {
@@ -519,7 +519,7 @@ pub(super) fn module_graph_from_slang(
                 instance_names.push(parent.name.as_str());
             }
             ancestor = parent
-                .parent_id
+                .parent_id()
                 .and_then(|id| semantic_by_id.get(&id).copied());
         }
         if instance_names.is_empty() {
@@ -527,7 +527,7 @@ pub(super) fn module_graph_from_slang(
         }
         instance_names.reverse();
         let packed_ranges = node
-            .type_id
+            .type_id()
             .map(|id| slang_packed_ranges(id, &types_by_id, &snapshot.type_ranges))
             .unwrap_or_default();
         if packed_ranges.is_empty() {

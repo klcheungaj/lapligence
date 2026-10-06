@@ -17,6 +17,8 @@ mod sources;
 use sources::{
     decode_edition_finding, decode_line_directive, decode_source_library, finish_line_directives,
 };
+mod node_flags;
+pub use node_flags::SemanticFlags;
 mod semantics;
 use semantics::{
     decode_semantic_edge, decode_semantic_node, decode_udp_row, decode_udp_table, PendingUdpRow,
@@ -1024,47 +1026,25 @@ impl fmt::Display for SemanticText {
 }
 
 /// One node in the bounded, owned elaborated semantic graph.
+///
+/// The capture holds one node per semantic construct, so the layout is
+/// compact: the boolean attributes are one [`SemanticFlags`] word read through
+/// named accessors, node and table references are `u32` with a sentinel for
+/// "absent" (every table is bounded well below `u32::MAX` records), and the
+/// attributes only a few nodes carry sit behind a box. Read the compact
+/// fields through the accessors of the same name, which return the logical
+/// `u64`/`Option` values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticNode {
     pub id: u64,
-    pub parent_id: Option<u64>,
+    parent_id: CompactId,
     pub kind: SemanticKind,
     /// Repository-owned subtype tag defined by the C ABI.
     pub subkind: u32,
     pub operation: SemanticOperation,
-    pub is_bad: bool,
-    pub is_uninstantiated: bool,
-    pub is_automatic: bool,
-    pub is_static: bool,
-    pub is_top: bool,
-    pub is_implicit: bool,
-    pub is_local: bool,
-    pub is_nonblocking: bool,
-    pub is_input: bool,
-    pub is_output: bool,
-    pub is_inout: bool,
-    pub is_ref: bool,
-    /// `const ref` qualification for a formal argument.
-    pub is_const_ref: bool,
-    /// `ref static` qualification for a formal argument.
-    pub is_ref_static: bool,
-    pub is_implicit_conversion: bool,
-    pub is_propagated_conversion: bool,
-    pub is_indexed_up: bool,
-    pub is_indexed_down: bool,
-    pub case_wildcard_x_or_z: bool,
-    pub case_wildcard_z: bool,
-    pub case_inside: bool,
-    pub is_posedge: bool,
-    pub is_negedge: bool,
-    pub is_both_edges: bool,
-    pub is_primitive_declaration: bool,
-    pub is_primitive_instance: bool,
-    pub is_primitive_port: bool,
-    pub is_task: bool,
-    pub port_connection_present: bool,
-    pub port_connection_open: bool,
-    pub method_with_clause: bool,
+    /// Boolean attributes; read them through the named accessors
+    /// (`is_bad()`, `is_top()`, ...).
+    pub flags: SemanticFlags,
     pub definition_kind: Option<SemanticDefinitionKind>,
     /// Symbol/expression name; a time literal carries its exact expanded token.
     pub name: SemanticText,
@@ -1072,22 +1052,153 @@ pub struct SemanticNode {
     pub detail: SemanticText,
     pub definition_name: SemanticText,
     pub range: Option<SourceRange>,
-    pub type_id: Option<u64>,
-    pub constant_id: Option<u64>,
-    pub target_id: Option<u64>,
-    pub edge_start: u64,
-    pub edge_count: u64,
-    pub time_scale: Option<SemanticTimeScale>,
+    type_id: CompactId,
+    constant_id: CompactId,
+    target_id: CompactId,
+    edge_start: u32,
+    edge_count: u32,
+    time_scale: Option<Box<SemanticTimeScale>>,
     pub strength0: SemanticDriveStrength,
     pub strength1: SemanticDriveStrength,
     /// Kind-specific scalar metadata. Streaming expressions store their exact
     /// Slang slice size; variables store their resolved lifetime tag;
     /// conditional/case statements store a `SEMANTIC_UNIQUE_PRIORITY_*` tag.
     pub auxiliary: u64,
-    /// Assertion sequence repetition/range metadata copied from Slang.
-    pub assertion_range_min: u32,
-    pub assertion_range_max: Option<u32>,
-    pub assertion_repetition_kind: u32,
+    assertion: Option<Box<AssertionMetadata>>,
+}
+
+/// Assertion sequence repetition/range metadata copied from Slang; only
+/// assertion nodes carry non-default values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AssertionMetadata {
+    range_min: u32,
+    range_max: Option<u32>,
+    repetition_kind: u32,
+}
+
+/// A `u32` table reference where `u32::MAX` means "absent".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CompactId(u32);
+
+impl CompactId {
+    const ABSENT: CompactId = CompactId(u32::MAX);
+
+    /// Pack a checked reference; `label` names it in the error.
+    fn pack(id: Option<u64>, label: &str) -> Result<CompactId, SlangError> {
+        match id {
+            None => Ok(Self::ABSENT),
+            Some(id) => u32::try_from(id)
+                .ok()
+                .filter(|id| *id != u32::MAX)
+                .map(CompactId)
+                .ok_or_else(|| {
+                    invalid_native(format!(
+                        "semantic node {label} exceeds the compact id range"
+                    ))
+                }),
+        }
+    }
+
+    fn saturating(id: Option<u64>) -> CompactId {
+        id.map_or(Self::ABSENT, |id| {
+            CompactId(u32::try_from(id).map_or(u32::MAX - 1, |id| id.min(u32::MAX - 1)))
+        })
+    }
+
+    #[inline]
+    fn get(self) -> Option<u64> {
+        (self != Self::ABSENT).then_some(u64::from(self.0))
+    }
+}
+
+impl SemanticNode {
+    /// The parent node's ID, absent for roots.
+    #[inline]
+    pub fn parent_id(&self) -> Option<u64> {
+        self.parent_id.get()
+    }
+
+    /// The node's type-table ID.
+    #[inline]
+    pub fn type_id(&self) -> Option<u64> {
+        self.type_id.get()
+    }
+
+    /// The node's constant-table ID.
+    #[inline]
+    pub fn constant_id(&self) -> Option<u64> {
+        self.constant_id.get()
+    }
+
+    /// The node this one resolves to (declaration, definition, primitive).
+    #[inline]
+    pub fn target_id(&self) -> Option<u64> {
+        self.target_id.get()
+    }
+
+    /// First position of this node's window in the edge table.
+    #[inline]
+    pub fn edge_start(&self) -> u64 {
+        u64::from(self.edge_start)
+    }
+
+    /// Length of this node's window in the edge table.
+    #[inline]
+    pub fn edge_count(&self) -> u64 {
+        u64::from(self.edge_count)
+    }
+
+    /// Replace the parent reference; see [`SemanticNode::set_target_id`].
+    #[doc(hidden)]
+    pub fn set_parent_id(&mut self, id: Option<u64>) {
+        self.parent_id = CompactId::saturating(id);
+    }
+
+    /// Replace the type reference; see [`SemanticNode::set_target_id`].
+    #[doc(hidden)]
+    pub fn set_type_id(&mut self, id: Option<u64>) {
+        self.type_id = CompactId::saturating(id);
+    }
+
+    /// Replace the constant reference; see [`SemanticNode::set_target_id`].
+    #[doc(hidden)]
+    pub fn set_constant_id(&mut self, id: Option<u64>) {
+        self.constant_id = CompactId::saturating(id);
+    }
+
+    /// Replace the target reference. Test support for corrupting a snapshot:
+    /// an ID beyond the compact range saturates to `u32::MAX - 1`, which no
+    /// bounded table contains, so it stays a reference to a missing record.
+    #[doc(hidden)]
+    pub fn set_target_id(&mut self, id: Option<u64>) {
+        self.target_id = CompactId::saturating(id);
+    }
+
+    /// Source time scale of a definition or instance.
+    #[inline]
+    pub fn time_scale(&self) -> Option<SemanticTimeScale> {
+        self.time_scale.as_deref().copied()
+    }
+
+    /// Minimum cycle count of an assertion sequence repetition or range.
+    #[inline]
+    pub fn assertion_range_min(&self) -> u32 {
+        self.assertion.as_ref().map_or(0, |meta| meta.range_min)
+    }
+
+    /// Maximum cycle count, `None` when unbounded or not applicable.
+    #[inline]
+    pub fn assertion_range_max(&self) -> Option<u32> {
+        self.assertion.as_ref().and_then(|meta| meta.range_max)
+    }
+
+    /// Repetition kind tag of an assertion sequence.
+    #[inline]
+    pub fn assertion_repetition_kind(&self) -> u32 {
+        self.assertion
+            .as_ref()
+            .map_or(0, |meta| meta.repetition_kind)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

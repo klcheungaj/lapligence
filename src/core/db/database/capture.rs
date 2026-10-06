@@ -73,11 +73,11 @@ impl Db {
                     ConditionalPatternInfo {
                         kind,
                         binding: semantic
-                            .target_id
+                            .target_id()
                             .and_then(|target| ids.get(&target))
                             .filter(|_| kind == ConditionalPatternKind::Binding),
                         tagged_member: semantic
-                            .target_id
+                            .target_id()
                             .and_then(|target| ids.get(&target))
                             .filter(|_| kind == ConditionalPatternKind::Tagged),
                         value_pattern: None,
@@ -186,9 +186,9 @@ impl Db {
             // A class takes the scale of the nearest enclosing module,
             // package or compilation unit (Slang's `Scope::getTimeScale`).
             let scale = if namespace(semantic) {
-                semantic.time_scale
+                semantic.time_scale()
             } else if semantic.kind == SemanticKind::Class {
-                let mut ancestor = semantic.parent_id;
+                let mut ancestor = semantic.parent_id();
                 let mut scale = None;
                 while let Some(parent) =
                     ancestor.and_then(|id| snapshot.semantic_nodes.get(id as usize))
@@ -199,10 +199,10 @@ impl Db {
                             SemanticKind::Instance | SemanticKind::Definition
                         )
                     {
-                        scale = parent.time_scale;
+                        scale = parent.time_scale();
                         break;
                     }
-                    ancestor = parent.parent_id;
+                    ancestor = parent.parent_id();
                 }
                 scale
             } else {
@@ -261,10 +261,10 @@ impl Db {
                     || (semantic.kind == SemanticKind::Variable
                         && semantic.subkind
                             == crate::ffi::slang::SEMANTIC_VARIABLE_ASSERTION_LOCAL))
-                    && (semantic.is_input
-                        || semantic.is_output
-                        || semantic.is_inout
-                        || semantic.is_ref)
+                    && (semantic.is_input()
+                        || semantic.is_output()
+                        || semantic.is_inout()
+                        || semantic.is_ref())
             })
             .map(|semantic| {
                 (
@@ -329,7 +329,7 @@ impl Db {
                     .ok_or_else(|| {
                         DbError::InvalidSnapshot("semantic child target is missing".into())
                     })?;
-                if child_semantic.is_uninstantiated
+                if child_semantic.is_uninstantiated()
                     || child_semantic.kind == SemanticKind::Definition
                 {
                     continue;
@@ -403,7 +403,7 @@ impl Db {
                                         .semantic_nodes
                                         .get(edge.target_id as usize)
                                         .is_some_and(|node| {
-                                            !node.is_uninstantiated
+                                            !node.is_uninstantiated()
                                                 && node.kind != SemanticKind::Definition
                                         })
                                 })
@@ -420,7 +420,7 @@ impl Db {
             }
             let mut seen_children = HashSet::new();
             children.retain(|child| seen_children.insert(*child));
-            let projection = match semantic.type_id {
+            let projection = match semantic.type_id() {
                 Some(type_id) => Some(match projections.get(&type_id) {
                     Some(projection) => std::rc::Rc::clone(projection),
                     None => {
@@ -441,15 +441,15 @@ impl Db {
             {
                 two_state_types.insert(id);
             }
-            if semantic.kind == SemanticKind::Net && semantic.is_implicit {
+            if semantic.kind == SemanticKind::Net && semantic.is_implicit() {
                 implicit_nets.insert(id);
             }
-            if semantic.is_implicit_conversion {
+            if semantic.is_implicit_conversion() {
                 implicit_conversions.insert(id);
             }
-            if semantic.kind == SemanticKind::MethodCall && semantic.method_with_clause {
+            if semantic.kind == SemanticKind::MethodCall && semantic.method_with_clause() {
                 method_calls_with_clause.insert(id);
-                if let Some(iterator) = semantic.target_id {
+                if let Some(iterator) = semantic.target_id() {
                     method_call_iterators.insert(id, semantic_id(&ids, iterator)?);
                 }
             }
@@ -505,10 +505,10 @@ impl Db {
                         DbError::InvalidSnapshot("clocking variable source is unresolved".into())
                     })?;
                 let parent_raw = semantic
-                    .parent_id
+                    .parent_id()
                     .and_then(|parent| snapshot.semantic_nodes.get(parent as usize));
                 let block = semantic
-                    .parent_id
+                    .parent_id()
                     .and_then(|parent| ids.get(&parent))
                     .filter(|_| {
                         parent_raw.is_some_and(|parent| {
@@ -561,9 +561,9 @@ impl Db {
                     }
                 };
                 var_lifetimes.insert(id, resolved_lifetime);
-                let lifetime = if semantic.is_automatic {
+                let lifetime = if semantic.is_automatic() {
                     VariableLifetimeQualifier::Automatic
-                } else if semantic.is_static {
+                } else if semantic.is_static() {
                     VariableLifetimeQualifier::Static
                 } else {
                     VariableLifetimeQualifier::None
@@ -648,7 +648,7 @@ impl Db {
                 );
             }
             if let Some(projection) = &projection {
-                if let Some(type_id) = semantic.type_id {
+                if let Some(type_id) = semantic.type_id() {
                     type_descriptors.assign(id, type_id, || projection.descriptor.clone())?;
                 }
                 if !projection.packed_dimensions.is_empty() {
@@ -663,9 +663,9 @@ impl Db {
             }
             if semantic.kind == SemanticKind::EnumConstant {
                 if let (Some(type_id), Some(Val::Bits(value)), Some(enum_type)) = (
-                    semantic.type_id,
+                    semantic.type_id(),
                     semantic
-                        .constant_id
+                        .constant_id()
                         .and_then(|constant_id| snapshot.constants.get(constant_id as usize))
                         .and_then(|constant| val_from_slang(&constant.value)),
                     projection.as_ref(),
@@ -692,7 +692,7 @@ impl Db {
                     }
                 }
             }
-            let mut parent = if semantic.is_top
+            let mut parent = if semantic.is_top()
                 || matches!(
                     semantic.kind,
                     SemanticKind::Definition | SemanticKind::Package | SemanticKind::Class
@@ -700,7 +700,7 @@ impl Db {
                 None
             } else {
                 semantic
-                    .parent_id
+                    .parent_id()
                     .map(|parent| semantic_id(&ids, parent))
                     .transpose()?
             };
@@ -708,14 +708,14 @@ impl Db {
                 let parent_semantic = &snapshot.semantic_nodes[parent_id.index()];
                 if parent_semantic.kind == SemanticKind::Scope && parent_semantic.subkind == 194 {
                     parent = parent_semantic
-                        .parent_id
+                        .parent_id()
                         .map(|id| semantic_id(&ids, id))
                         .transpose()?;
                 } else if parent_semantic.kind == SemanticKind::Instance
                     && parent_semantic.subkind == 193
                 {
                     parent = parent_semantic
-                        .parent_id
+                        .parent_id()
                         .map(|id| semantic_id(&ids, id))
                         .transpose()?;
                 }
@@ -730,7 +730,7 @@ impl Db {
                     ..
                 })
             ) {
-                if let Some(type_id) = semantic.type_id {
+                if let Some(type_id) = semantic.type_id() {
                     if let Some(element) = type_projector.packed_pattern_element(type_id)? {
                         packed_pattern_elements.insert(id, element);
                     }
@@ -883,7 +883,7 @@ impl Db {
             }
             let target_name = || {
                 semantic
-                    .target_id
+                    .target_id()
                     .and_then(|target| ids.get(&target))
                     .and_then(|target| snapshot.semantic_nodes.get(target.index()))
                     .map(|target| target.name.to_string())
@@ -985,7 +985,7 @@ impl Db {
         let mut elaborated_type_ranges = Vec::new();
         for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
             let id = NodeId::from_index(index);
-            let Some(type_id) = semantic.type_id else {
+            let Some(type_id) = semantic.type_id() else {
                 continue;
             };
             if semantic.name.is_empty()
@@ -997,7 +997,7 @@ impl Db {
             {
                 continue;
             }
-            let mut ancestor = semantic.parent_id;
+            let mut ancestor = semantic.parent_id();
             let mut has_runtime_instance = false;
             for _ in 0..snapshot.semantic_nodes.len() {
                 let Some(parent) = ancestor.and_then(|id| snapshot.semantic_nodes.get(id as usize))
@@ -1008,7 +1008,7 @@ impl Db {
                     has_runtime_instance = true;
                     break;
                 }
-                ancestor = parent.parent_id;
+                ancestor = parent.parent_id();
             }
             if !has_runtime_instance {
                 continue;
@@ -1027,7 +1027,7 @@ impl Db {
         let tops: Vec<NodeId> = snapshot
             .semantic_nodes
             .iter()
-            .filter(|node| node.kind == SemanticKind::Instance && node.is_top)
+            .filter(|node| node.kind == SemanticKind::Instance && node.is_top())
             .map(|node| NodeId::from_index(node.id as usize))
             .collect();
         let flat_modules: Vec<NodeId> = snapshot
@@ -1057,8 +1057,8 @@ impl Db {
                 Ok((
                     id,
                     ClassMetadata {
-                        type_id: node.type_id.map(TypeId),
-                        base: node.target_id.and_then(|target| ids.get(&target)),
+                        type_id: node.type_id().map(TypeId),
+                        base: node.target_id().and_then(|target| ids.get(&target)),
                         base_constructor: edge_target(
                             &ids,
                             semantic_edges(snapshot, node)?,
@@ -1162,7 +1162,7 @@ mod tests {
         for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
             let id = NodeId::from_index(index);
             assert_eq!(db.semantic_detail(id), Some(semantic.detail.as_str()));
-            let Some(type_id) = semantic.type_id else {
+            let Some(type_id) = semantic.type_id() else {
                 assert!(db.type_descriptor(id).is_none());
                 continue;
             };

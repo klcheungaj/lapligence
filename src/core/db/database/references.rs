@@ -15,7 +15,7 @@ impl SemanticIds {
         {
             let ids = Self { len: nodes.len() };
             for node in nodes {
-                for id in [node.parent_id, node.target_id].into_iter().flatten() {
+                for id in [node.parent_id(), node.target_id()].into_iter().flatten() {
                     semantic_id(&ids, id)?;
                 }
             }
@@ -44,9 +44,9 @@ pub(super) fn semantic_edges<'a>(
     snapshot: &'a SlangSnapshot,
     node: &SemanticNode,
 ) -> Result<&'a [crate::ffi::slang::SemanticEdge], DbError> {
-    let start = usize::try_from(node.edge_start)
+    let start = usize::try_from(node.edge_start())
         .map_err(|_| DbError::InvalidSnapshot("semantic edge start is too large".to_owned()))?;
-    let count = usize::try_from(node.edge_count)
+    let count = usize::try_from(node.edge_count())
         .map_err(|_| DbError::InvalidSnapshot("semantic edge count is too large".to_owned()))?;
     let end = start
         .checked_add(count)
@@ -78,7 +78,7 @@ pub(super) fn canonical_reference_target(
     }
     if semantic.kind == SemanticKind::Modport {
         if let Some(internal) = semantic
-            .target_id
+            .target_id()
             .map(|id| semantic_id(ids, id))
             .transpose()?
         {
@@ -166,7 +166,7 @@ pub(super) fn resolved_edge_target(
             })?)
             .ok_or_else(|| DbError::InvalidSnapshot("semantic edge target is missing".into()))?;
     semantic
-        .target_id
+        .target_id()
         .map(|id| semantic_id(ids, id))
         .transpose()?
         .map_or_else(
@@ -195,7 +195,7 @@ fn is_array_semantic(snapshot: &SlangSnapshot, id: NodeId) -> bool {
     let Some(type_id) = snapshot
         .semantic_nodes
         .get(id.index())
-        .and_then(|node| node.type_id)
+        .and_then(|node| node.type_id())
     else {
         return false;
     };
@@ -251,7 +251,7 @@ pub(super) fn array_select_from_slang(
         return Ok(Some((base, vec![index])));
     }
     let multidimensional_packed = base_semantic
-        .type_id
+        .type_id()
         .map(|type_id| type_projector.project(type_id))
         .transpose()?
         .is_some_and(|projection| projection.packed_dimensions.len() > 1);
@@ -269,7 +269,7 @@ fn packed_element_select_root(
     depth: usize,
 ) -> Result<Option<String>, DbError> {
     let element_is_aggregate = select
-        .type_id
+        .type_id()
         .map(|type_id| type_projector.project(type_id))
         .transpose()?
         .is_some_and(|projection| projection.aggregate_layout.is_some());
@@ -292,7 +292,7 @@ fn packed_element_select_root(
         current = &snapshot.semantic_nodes[base.index()];
     }
     let packed = current
-        .type_id
+        .type_id()
         .map(|type_id| type_projector.project(type_id))
         .transpose()?
         .is_some_and(|projection| !projection.packed_dimensions.is_empty());
@@ -388,7 +388,7 @@ pub(super) fn member_path_from_slang(
             return Ok(None);
         };
     let member = node
-        .target_id
+        .target_id()
         .map(|id| canonical_reference_target(snapshot, ids, id))
         .transpose()?;
     let member_name = member
@@ -409,7 +409,7 @@ pub(super) fn expression_reference_target(
     ids: &SemanticIds,
     node: &SemanticNode,
 ) -> Result<Option<NodeId>, DbError> {
-    if let Some(target) = node.target_id {
+    if let Some(target) = node.target_id() {
         return canonical_reference_target(snapshot, ids, target).map(Some);
     }
     let edges = semantic_edges(snapshot, node)?;

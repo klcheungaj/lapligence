@@ -16,6 +16,13 @@ against the header's announced counts and window ownership is checked when each
 table closes. Owned tables reserve the validated counts exactly, and each
 native table is released once delivered.
 
+`SemanticNode` is kept small because the staged snapshot holds one per
+semantic construct: its booleans are one `SemanticFlags` word read through
+named accessors (`node.is_bad()`; `slang/node_flags.rs`), node, type and
+constant references are `u32` with an absent sentinel, and time scale and
+assertion range metadata sit behind a box. Read those fields through the
+accessors of the same name; a unit test bounds `size_of::<SemanticNode>()`.
+
 Snapshot data includes source/lexical provenance, typed semantic edges, UDP tables,
 sequence metadata and aggregate defaults. No native pointer or borrowed buffer
 escapes the safe interface. See [wrapper](../wrapper/readme.md),

@@ -20,7 +20,7 @@ pub(super) fn peel_gate_terminal(
             return Ok(expression);
         }
         let edges = semantic_edges(snapshot, semantic)?;
-        if semantic.subkind == 72 && semantic.is_implicit_conversion {
+        if semantic.subkind == 72 && semantic.is_implicit_conversion() {
             expression = edge_target(ids, edges, SemanticEdgeRole::Operand)?.ok_or_else(|| {
                 DbError::InvalidSnapshot(
                     "implicit primitive terminal conversion has no operand".into(),
@@ -65,7 +65,7 @@ pub(super) fn connection_source_expression(
             })?;
             continue;
         }
-        if semantic.subkind == 72 && semantic.is_implicit_conversion {
+        if semantic.subkind == 72 && semantic.is_implicit_conversion() {
             expression = edge_target(ids, edges, SemanticEdgeRole::Operand)?.ok_or_else(|| {
                 DbError::InvalidSnapshot("implicit port conversion has no operand".into())
             })?;
@@ -79,13 +79,13 @@ pub(super) fn connection_source_expression(
 }
 
 pub(super) fn direction_from_slang(node: &SemanticNode) -> Direction {
-    if node.is_input {
+    if node.is_input() {
         Direction::Input
-    } else if node.is_output {
+    } else if node.is_output() {
         Direction::Output
-    } else if node.is_inout {
+    } else if node.is_inout() {
         Direction::Inout
-    } else if node.is_ref {
+    } else if node.is_ref() {
         Direction::Ref
     } else {
         Direction::None

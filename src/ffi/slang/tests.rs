@@ -466,7 +466,7 @@ fn current_statement_and_expression_subkinds_are_admitted() {
     method.flags = 1 << 31;
     let decoded =
         stream(&nodes(vec![method])).expect("method with-clause flag must decode on a method call");
-    assert!(decoded.semantic_nodes[0].method_with_clause);
+    assert!(decoded.semantic_nodes[0].method_with_clause());
 
     let mut qualified = raw_semantic_node(0);
     qualified.kind = 18;
@@ -1248,4 +1248,199 @@ fn node_text_is_interned_per_stream_and_compares_as_str() {
         delay.as_deref(),
         Some(&SemanticSequenceRange { min: 2, max: None })
     );
+}
+
+fn decoded_flags_node(raw_flags: u32, kind: u32, auxiliary: u64) -> SemanticNode {
+    let mut raw = raw_semantic_node(0);
+    raw.kind = kind;
+    raw.flags = raw_flags;
+    raw.auxiliary = auxiliary;
+    if kind == 21 {
+        raw.subkind = 76;
+    }
+    stream(&nodes(vec![raw]))
+        .expect("a single valid flag must decode")
+        .semantic_nodes
+        .remove(0)
+}
+
+#[test]
+fn every_raw_node_flag_sets_exactly_its_named_accessor() {
+    let derived = [SemanticFlags::IS_CONST_REF, SemanticFlags::IS_REF_STATIC];
+    let mut seen = 0u64;
+    for (name, flag, accessor) in SemanticFlags::ALL {
+        if derived.contains(flag) {
+            continue;
+        }
+        assert_eq!(flag.bits().count_ones(), 1, "{name}");
+        assert_eq!(seen & flag.bits(), 0, "{name} shares a bit");
+        seen |= flag.bits();
+        let bit = flag.bits().trailing_zeros();
+        // Open connections require a connection; with-clause needs a method call.
+        let raw = 1u32 << bit
+            | if *flag == SemanticFlags::PORT_CONNECTION_OPEN {
+                SemanticFlags::PORT_CONNECTION_PRESENT.bits() as u32
+            } else {
+                0
+            };
+        let kind = if *flag == SemanticFlags::METHOD_WITH_CLAUSE {
+            21
+        } else {
+            25
+        };
+        let node = decoded_flags_node(raw, kind, 0);
+        assert!(accessor(&node), "{name}");
+        for (other, other_flag, other_accessor) in SemanticFlags::ALL {
+            let expected = other_flag == flag
+                || (*flag == SemanticFlags::PORT_CONNECTION_OPEN
+                    && *other_flag == SemanticFlags::PORT_CONNECTION_PRESENT);
+            assert_eq!(other_accessor(&node), expected, "{name} vs {other}");
+        }
+    }
+    assert_eq!(
+        seen.count_ones() as usize,
+        SemanticFlags::ALL.len() - derived.len()
+    );
+    assert_eq!(SemanticFlags::default(), SemanticFlags::EMPTY);
+}
+
+#[test]
+fn definition_kind_bits_stay_out_of_the_boolean_flags() {
+    for (raw, expected) in [
+        (1u32 << 13, SemanticDefinitionKind::Module),
+        (1 << 14, SemanticDefinitionKind::Interface),
+        (1 << 15, SemanticDefinitionKind::Program),
+    ] {
+        let node = decoded_flags_node(raw, 24, 0);
+        assert_eq!(node.definition_kind, Some(expected));
+        assert_eq!(node.flags, SemanticFlags::EMPTY);
+    }
+}
+
+#[test]
+fn argument_qualifiers_come_from_auxiliary_for_arguments_only() {
+    let both = ARGUMENT_CONST_REF | ARGUMENT_REF_STATIC;
+    let argument = decoded_flags_node(0, 17, both);
+    assert!(argument.is_const_ref() && argument.is_ref_static());
+    let only_const = decoded_flags_node(0, 17, ARGUMENT_CONST_REF);
+    assert!(only_const.is_const_ref() && !only_const.is_ref_static());
+    // A parameter reuses auxiliary bit 0 for its override marker.
+    let parameter = decoded_flags_node(0, 12, ARGUMENT_CONST_REF);
+    assert!(!parameter.is_const_ref() && !parameter.is_ref_static());
+    assert_eq!(parameter.auxiliary, ARGUMENT_CONST_REF);
+}
+
+#[test]
+fn flags_debug_lists_the_set_accessors() {
+    let flags = SemanticFlags::IS_BAD | SemanticFlags::IS_TOP;
+    assert_eq!(format!("{flags:?}"), "{is_bad, is_top}");
+    assert_eq!(format!("{:?}", SemanticFlags::EMPTY), "{}");
+}
+
+#[test]
+fn semantic_node_stays_compact() {
+    // The capture holds one node per semantic construct (600k at 10k
+    // processes). Growing this bound needs a measured reason.
+    assert!(
+        std::mem::size_of::<SemanticNode>() <= 160,
+        "SemanticNode is {} bytes",
+        std::mem::size_of::<SemanticNode>()
+    );
+}
+
+#[test]
+fn compact_ids_round_trip_and_reject_the_absent_sentinel() {
+    assert_eq!(CompactId::pack(None, "x").unwrap().get(), None);
+    assert_eq!(CompactId::pack(Some(0), "x").unwrap().get(), Some(0));
+    let largest = u64::from(u32::MAX - 1);
+    assert_eq!(
+        CompactId::pack(Some(largest), "x").unwrap().get(),
+        Some(largest)
+    );
+    for too_large in [u64::from(u32::MAX), u64::from(u32::MAX) + 1, u64::MAX] {
+        let error = CompactId::pack(Some(too_large), "type").unwrap_err();
+        assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+        assert!(error.message().contains("type exceeds"), "{error}");
+    }
+    assert_eq!(CompactId::saturating(None).get(), None);
+    assert_eq!(CompactId::saturating(Some(7)).get(), Some(7));
+    assert_eq!(CompactId::saturating(Some(u64::MAX)).get(), Some(largest));
+    assert_eq!(
+        CompactId::saturating(Some(u64::from(u32::MAX))).get(),
+        Some(largest)
+    );
+}
+
+#[test]
+fn compact_node_fields_read_back_as_the_logical_values() {
+    let mut child = raw_semantic_node(1);
+    child.id = 1;
+    child.parent_id = 0;
+    child.target_id = 0;
+    child.edge_start = 0;
+    child.time_unit = 4;
+    child.time_unit_magnitude = 10;
+    child.time_precision_unit = 5;
+    child.time_precision_magnitude = 1;
+    let mut tables = nodes(vec![raw_semantic_node(0), child]);
+    tables.semantic_edges = vec![edge(1, 0, 0)];
+    let snapshot = stream(&tables).expect("a small node graph must decode");
+    let root = &snapshot.semantic_nodes[0];
+    let child = &snapshot.semantic_nodes[1];
+    assert_eq!(
+        (root.parent_id(), root.target_id(), root.type_id()),
+        (None, None, None)
+    );
+    assert_eq!(root.constant_id(), None);
+    assert_eq!((root.edge_start(), root.edge_count()), (0, 0));
+    assert_eq!(root.time_scale(), None);
+    assert_eq!((child.parent_id(), child.target_id()), (Some(0), Some(0)));
+    assert_eq!((child.edge_start(), child.edge_count()), (0, 1));
+    let scale = child.time_scale().expect("time scale must survive boxing");
+    assert_eq!((scale.magnitude, scale.precision_magnitude), (10, 1));
+}
+
+#[test]
+fn assertion_metadata_is_boxed_only_when_it_differs_from_the_defaults() {
+    let plain = decoded_flags_node(0, 25, 0);
+    assert!(plain.assertion.is_none());
+    assert_eq!(
+        (
+            plain.assertion_range_min(),
+            plain.assertion_range_max(),
+            plain.assertion_repetition_kind()
+        ),
+        (0, None, 0)
+    );
+
+    let mut raw = raw_semantic_node(0);
+    raw.kind = 28;
+    raw.subkind = SEMANTIC_ASSERTION_EXPR_SIMPLE;
+    raw.auxiliary = SEMANTIC_ASSERTION_REPETITION | SEMANTIC_ASSERTION_RANGE;
+    raw.assertion_range_min = 2;
+    raw.assertion_range_max = 5;
+    raw.assertion_repetition_kind = 1;
+    let ranged = stream(&nodes(vec![raw]))
+        .expect("a bounded repetition range must decode")
+        .semantic_nodes
+        .remove(0);
+    assert_eq!(
+        (
+            ranged.assertion_range_min(),
+            ranged.assertion_range_max(),
+            ranged.assertion_repetition_kind()
+        ),
+        (2, Some(5), 1)
+    );
+
+    let mut unbounded = raw_semantic_node(0);
+    unbounded.kind = 28;
+    unbounded.subkind = SEMANTIC_ASSERTION_EXPR_SIMPLE;
+    unbounded.assertion_range_max = SEMANTIC_ASSERTION_RANGE_UNBOUNDED;
+    let unbounded = stream(&nodes(vec![unbounded]))
+        .expect("an unbounded default must decode")
+        .semantic_nodes
+        .remove(0);
+    assert!(unbounded.assertion.is_none());
+    assert_eq!(unbounded.assertion_range_max(), None);
 }

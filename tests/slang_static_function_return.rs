@@ -36,8 +36,8 @@ fn edges_for<'a>(
     snapshot: &'a slang::Snapshot,
     node: &slang::SemanticNode,
 ) -> &'a [slang::SemanticEdge] {
-    let start = usize::try_from(node.edge_start).expect("semantic edge offset fits usize");
-    let count = usize::try_from(node.edge_count).expect("semantic edge count fits usize");
+    let start = usize::try_from(node.edge_start()).expect("semantic edge offset fits usize");
+    let count = usize::try_from(node.edge_count()).expect("semantic edge count fits usize");
     let end = start
         .checked_add(count)
         .expect("semantic edge range fits usize");
@@ -135,11 +135,11 @@ endmodule
         .find(|node| {
             node.kind == SemanticKind::Variable
                 && node.name == "f"
-                && node.parent_id == Some(function.id)
-                && node.is_implicit
+                && node.parent_id() == Some(function.id)
+                && node.is_implicit()
         })
         .expect("implicit function result variable is captured under its function");
-    assert!(!result.is_automatic);
+    assert!(!result.is_automatic());
     assert_eq!(result.auxiliary, 1, "repository lifetime tag: static");
     assert!(edges_for(&snapshot, result).iter().any(|edge| {
         edge.role == SemanticEdgeRole::ReturnOwner && edge.target_id == function.id
@@ -172,7 +172,7 @@ endmodule
         .iter()
         .find(|node| node.id == lhs_id)
         .expect("hierarchical LHS expression");
-    assert_eq!(lhs.target_id, Some(result.id));
+    assert_eq!(lhs.target_id(), Some(result.id));
 }
 
 #[test]

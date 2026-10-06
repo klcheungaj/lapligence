@@ -118,6 +118,15 @@ restored the 40k peak is 1.514 GiB. These are
 generation-process peaks, not generated-simulator runtime memory. Export size
 is approximately linear for this corpus; other shapes can differ.
 
+Packing the staged `SemanticNode` (booleans into one flag word, `u32`
+references, boxed rare attributes; 248 to 160 bytes) lowered the sampled
+stage peaks on 2026-10-05 (release, medians of three interleaved runs, before
+`a0ffc09e`): stream 347 to 297 MiB at 10k and 1,323 to 1,122 MiB at 40k, DB
+import 397 to 347 MiB at 10k and 1,550 to 1,348 MiB at 40k. The whole-run peak
+did not move (0.388 to 0.386 GiB at 10k, 1.513 GiB at 40k) because typed
+lowering (the DB plus typed IR; 395 MiB at 10k, 1,549 MiB at 40k) now sets it
+at the same level DB import used to.
+
 ### Cause
 
 The [C++ wrapper](../src/wrapper/slang_c_api.cpp) must finish capture while
@@ -132,7 +141,7 @@ table. The receiver interns node names and kind spellings.
 
 [`Db::from_slang`](../src/core/db/readme.md) needs random access to the whole
 node set (child flattening, array-select chains, full names), so the receiver
-stages the owned snapshot (272 bytes per semantic node) and the snapshot and DB
+stages the owned snapshot (160 bytes per semantic node) and the snapshot and DB
 overlap during import. The driver releases the snapshot after import and
 consuming generation releases the DB after typed lowering.
 
@@ -150,9 +159,11 @@ budget, a record-count ceiling or available process memory.
 
 ### Intended direction
 
-Shrink the staged node further (flag bits, sentinel IDs) or import nodes
-incrementally; and compact DB nodes further (side tables for rare kind
-payloads). Rendering memory is tracked in the C emission entry below.
+Lowering now sets the whole-run peak, so lower the DB plus typed IR it holds
+(compact DB nodes with side tables for rare kind payloads), or import nodes
+incrementally to shrink the staged snapshot further (the remaining 160 bytes
+are mostly the 32-byte `Option<SourceRange>` and three 16-byte interned
+texts). Rendering memory is tracked in the C emission entry below.
 Preserve checked C ABI ownership and the single owned DB import; consumers
 must not traverse native ASTs independently. Verify exact values, source
 identity and diagnostics as well as generated-model behavior.

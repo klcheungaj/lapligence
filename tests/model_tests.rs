@@ -437,7 +437,7 @@ fn instance_containers_normalize_gate_arrays_and_reject_cycles() {
         .iter()
         .find(|node| node.kind == llg::ffi::slang::SemanticKind::Instance && node.subkind == 193)
         .expect("primitive array container");
-    let edges = array.edge_start as usize..(array.edge_start + array.edge_count) as usize;
+    let edges = array.edge_start() as usize..(array.edge_start() + array.edge_count()) as usize;
     let child = snapshot.semantic_edges[edges]
         .iter_mut()
         .find(|edge| edge.role == llg::ffi::slang::SemanticEdgeRole::Child)
@@ -663,8 +663,8 @@ fn dense_owned_import_rejects_malformed_ids_and_keeps_source_identity() {
     for malformed in [0, 1, 2] {
         let mut invalid = snapshot.clone();
         match malformed {
-            0 => invalid.semantic_nodes[0].parent_id = Some(u64::MAX - 1),
-            1 => invalid.semantic_nodes[0].target_id = Some(u64::MAX - 1),
+            0 => invalid.semantic_nodes[0].set_parent_id(Some(u64::MAX - 1)),
+            1 => invalid.semantic_nodes[0].set_target_id(Some(u64::MAX - 1)),
             _ => invalid.semantic_edges[0].target_id = u64::MAX - 1,
         }
         assert!(db::Db::from_slang(&invalid).is_err());

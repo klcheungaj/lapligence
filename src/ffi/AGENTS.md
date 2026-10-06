@@ -47,6 +47,13 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   errors set the header's `has_errors`; argument/resource/setup/exception/
   bridge failures return `SlangError`. Expose no native pointer or
   native-storage lifetime.
+- `SemanticNode` is size-bounded (`semantic_node_stays_compact`). Add a boolean
+  as a `SemanticFlags` bit with a named accessor in `slang/node_flags.rs` (bits
+  0..=31 mirror the raw ABI flag word except the definition-kind bits 13..=15,
+  which the node keeps as an enum), not as a `bool` field. Node, type, constant
+  and edge-window references are stored as `u32` (`CompactId`, `u32::MAX` means
+  absent); decoding rejects an ID that does not fit, and readers use the
+  `u64`/`Option` accessors. Raise the size bound only with a measured reason.
 - Preserve paired value/unknown limbs, distinct real/shortreal widths and
   arbitrary-byte SystemVerilog strings; every other ABI string is UTF-8.
   Source ranges use admitted file IDs and zero-based half-open byte offsets;
