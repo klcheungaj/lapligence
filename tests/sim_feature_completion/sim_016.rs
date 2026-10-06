@@ -37,3 +37,10 @@ fn killed_waiters_never_consume_granted_keys() {
         include_str!("../fixtures/sim/feature_completion/sim_016/grant_cancellation.out");
     sim_cli::run_case_backend_parity(SUITE, "grant_cancellation", expected, &[], &[]);
 }
+
+#[test]
+fn task_handle_formals_are_shared_with_fork_branches() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_016/shared_handle_formals.out");
+    sim_cli::run_case_backend_parity(SUITE, "shared_handle_formals", expected, &[], &[]);
+}

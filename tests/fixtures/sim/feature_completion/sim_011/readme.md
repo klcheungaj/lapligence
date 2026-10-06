@@ -25,6 +25,7 @@ from llg. Times are printed with `%0d $time` in the default 1 ns unit.
 | `neg_local_access` | Nearest illegal form (§8.18): a `local` property accessed outside its class is a frontend error. |
 | `neg_protected_access` | Nearest illegal form (§8.18): a `protected` property accessed outside the class hierarchy is a frontend error. |
 | `neg_abstract_new` | Nearest illegal form (§8.21): constructing an abstract class is a frontend error. |
+| `method_forks` | §§8.11, 8.20, 9.3.2. `run`'s first branch calls `this.bump(1)`, which uses `worker::scale`: `n` = 10 at 1, then its nested branch increments `n` at 2 and the first branch ends, completing the `join_any`: `any 11 at 2`. The second branch prints at 5 and `wait fork` returns: `seen 11`, `all 11 at 5`. `detached` starts at 5; its branch sets `n` = 30 at 6 (`branch 3`) and the method reads it at 7: `detached 3 n 30`. In `joined` (from 7) one branch increments at 8 and the other's `bump(1)` adds 10 at 10: `joined 41 at 10`. |
 | `neg_const_assign` | Nearest illegal form (§8.19): assigning a `const` property in a method other than the constructor is a frontend error. |
 | `neg_record_container_property` | Legal by §§7.2, 8.4; a record property with a queue member would need per-object companion containers and is rejected explicitly. |
 | `neg_multidim_property` | Legal by §§7.4.2, 8.4; a multidimensional fixed-array property is rejected explicitly (one-dimensional ones are per-object containers). |

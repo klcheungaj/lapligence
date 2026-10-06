@@ -90,7 +90,17 @@ impl EmitCtx<'_, '_> {
             .iter()
             .map(|branch| self.cg.fork_capture_targets(*branch))
             .collect::<Vec<_>>();
-        let has_captures = capture_targets.iter().any(|targets| !targets.is_empty());
+        // A class method's branches read `this`; the receiver cannot be
+        // reassigned, so each branch copies the handle.
+        let this_receiver =
+            self.func
+                .as_ref()
+                .and_then(|function| match &function.class_receiver {
+                    Some(IrChandleExpr::LocalRead(name)) => Some(name.clone()),
+                    _ => None,
+                });
+        let has_captures =
+            this_receiver.is_some() || capture_targets.iter().any(|targets| !targets.is_empty());
         let enclosing_func = self.func.clone();
         let detached_function_branch = enclosing_func
             .as_ref()
@@ -200,6 +210,26 @@ impl EmitCtx<'_, '_> {
                     .capture_locals
                     .insert(*target, CaptureBinding { storage, local });
                 captures.push(IrCapture::new(storage, initial));
+            }
+            if let Some(receiver) = &this_receiver {
+                let storage = StorageRef::new(
+                    frame,
+                    captures.len() as u32,
+                    StorageLifetime::Automatic,
+                    StorageOwnership::Owned,
+                )
+                .with_kind(StorageKind::Opaque);
+                captures.push(IrCapture::new(
+                    storage,
+                    IrExpr::new(
+                        IrExprKind::ObjectQuery(Box::new(IrObjectQuery::HandleCapture(
+                            IrChandleExpr::LocalRead(receiver.clone()),
+                        ))),
+                        1,
+                        false,
+                        None,
+                    ),
+                ));
             }
 
             let saved_cg_func = self.cg.func.clone();

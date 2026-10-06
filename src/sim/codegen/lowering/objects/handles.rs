@@ -333,6 +333,18 @@ impl Codegen<'_> {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
             _ => Some(node),
         };
+        // `this` (a reserved word) names the frontend's implicit receiver
+        // variable of a non-static method: the activation's receiver.
+        if let Some(receiver) = target
+            .filter(|target| {
+                self.node(*target).name == "this"
+                    && matches!(self.kind(*target), NodeKind::Var { ty } if is_handle_kind(&ty.kind))
+            })
+            .and(self.func.as_ref())
+            .and_then(|function| function.class_receiver.clone())
+        {
+            return Ok(receiver);
+        }
         if let Some(captured) = self
             .capture_target(node)
             .or_else(|| target.filter(|target| self.capture_locals.contains_key(target)))

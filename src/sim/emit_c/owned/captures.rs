@@ -366,6 +366,15 @@ impl Frame<'_, '_> {
                 binding.address,
                 storage.slot()
             ));
+            // A copied handle local (such as a method's receiver) is also
+            // named as its source in the branch.
+            if let IrExprKind::ObjectQuery(query) = initial.kind() {
+                if let IrObjectQuery::HandleCapture(IrChandleExpr::LocalRead(local)) =
+                    query.as_ref()
+                {
+                    self.bind_native(local, binding.address.clone(), NativeKind::Chandle);
+                }
+            }
             return Ok(());
         }
         if (initial.width == 0) != (storage.kind() == StorageKind::Real) {

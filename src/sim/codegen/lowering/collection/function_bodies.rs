@@ -532,6 +532,21 @@ impl<'a> Codegen<'a> {
                     chandle_read.insert(*io, IrChandleExpr::FormalRead(idx));
                     continue;
                 }
+                if !is_ref && !*is_out && automatic && self.fork_shared(*io) {
+                    // Shared with a fork branch like a handle local (SV 9.3.2,
+                    // 13.3): copied into an opaque frame slot at entry.
+                    let name = format!("_llg_shared_formal_{idx}");
+                    self.shared_locals.insert(*io);
+                    static_input_copies.push(IrStmt::Object(Box::new(
+                        crate::sim::ir::IrObjectStmt::ChandleDeclareShared(
+                            name.clone(),
+                            Some(IrChandleExpr::FormalRead(idx)),
+                        ),
+                    )));
+                    chandle_read.insert(*io, IrChandleExpr::LocalRead(name.clone()));
+                    chandle_write.insert(*io, ChandleTarget::Local(name));
+                    continue;
+                }
                 if !is_ref && !*is_out {
                     if let Some(object) = (!automatic)
                         .then(|| self.static_chandle_formals.get(&(inst, *io)).copied())
