@@ -59,6 +59,18 @@ impl Validator<'_> {
             }
         }
         for (index, function) in self.model.funcs.iter().enumerate() {
+            for (position, formal_index) in function.bound_native_refs.iter().enumerate() {
+                if function
+                    .formals
+                    .get(*formal_index)
+                    .is_none_or(|formal| formal.native_value.is_none() || !formal.is_ref())
+                {
+                    return self.fail(
+                        format!("funcs[{index}].bound_native_refs[{position}]"),
+                        "statically bound formal must be a native ref formal",
+                    );
+                }
+            }
             for (formal_index, formal) in function.formals.iter().enumerate() {
                 let Some(value) = formal.native_value else {
                     continue;
@@ -98,12 +110,17 @@ impl Validator<'_> {
         let Some(value) = self.model.native_values.get(index) else {
             return self.fail(path, "native value reference is out of bounds");
         };
+        // A statically bound `ref` formal has no value at run time.
         if value.activation
             && !self.function.get().is_some_and(|function| {
                 function
                     .formals
                     .iter()
-                    .any(|formal| formal.native_value == Some(index))
+                    .enumerate()
+                    .any(|(position, formal)| {
+                        formal.native_value == Some(index)
+                            && !function.bound_native_refs.contains(&position)
+                    })
             })
             && !self
                 .native_activations

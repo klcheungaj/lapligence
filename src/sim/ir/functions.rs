@@ -240,6 +240,11 @@ pub struct IrFunc {
     /// Stable slot assigned to virtual methods in one inheritance family.
     pub(in crate::sim) virtual_slot: Option<usize>,
     pub(in crate::sim) formals: Vec<IrFormal>,
+    /// Indices of native record `ref` formals that this specialization binds
+    /// to declaration-owned record storage at lowering (SIM-008). Calls pass
+    /// [`super::IrCallArg::NativeRefBound`] for them and the body never uses
+    /// their native values.
+    pub(in crate::sim) bound_native_refs: Vec<usize>,
     /// Compiler-generated copies from static by-value input formals into
     /// their persistent storage. A read-only callback materializes these
     /// copies in its private formal bindings instead of publishing them to
@@ -288,6 +293,7 @@ impl IrFunc {
             receiver_class: None,
             virtual_slot: None,
             formals,
+            bound_native_refs: Vec::new(),
             callback_private_formal_copies: Vec::new(),
             callback_return_independent: false,
             locals,

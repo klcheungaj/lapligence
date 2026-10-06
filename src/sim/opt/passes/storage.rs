@@ -20,30 +20,32 @@ impl Rw {
 }
 
 fn mark_dependency_read(dependency: &IrDependency, model: &IrModel, rw: &mut Rw) {
+    if let Some(i) = dependency_signal(dependency, &model.signals) {
+        rw.read(i);
+    }
+}
+
+/// The signal a scalar, real or packed-range dependency names.
+fn dependency_signal(
+    dependency: &IrDependency,
+    signals: &[crate::sim::ir::IrSignal],
+) -> Option<usize> {
     if let IrDependency::PackedRange { storage, .. } = dependency {
-        mark_dependency_read(storage, model, rw);
-        return;
+        return dependency_signal(storage, signals);
     }
-    if let IrDependency::Scalar(name) | IrDependency::Real(name) = dependency {
-        let alias_index = name
-            .strip_prefix("llg_net_alias_")
-            .and_then(|name| name.strip_suffix(".visible"))
-            .and_then(|index| index.parse::<usize>().ok())
-            .filter(|index| {
-                model
-                    .signals
-                    .get(*index)
-                    .is_some_and(|signal| !signal.net_alias.is_empty())
-            });
-        if let Some(i) = alias_index.or_else(|| {
-            model
-                .signals
-                .iter()
-                .position(|signal| signal.c_name == *name)
-        }) {
-            rw.read(i);
-        }
-    }
+    let (IrDependency::Scalar(name) | IrDependency::Real(name)) = dependency else {
+        return None;
+    };
+    let alias_index = name
+        .strip_prefix("llg_net_alias_")
+        .and_then(|name| name.strip_suffix(".visible"))
+        .and_then(|index| index.parse::<usize>().ok())
+        .filter(|index| {
+            signals
+                .get(*index)
+                .is_some_and(|signal| !signal.net_alias.is_empty())
+        });
+    alias_index.or_else(|| signals.iter().position(|signal| signal.c_name == *name))
 }
 
 pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess]>) {
@@ -229,6 +231,15 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
     }
     for (sig, omit) in model.signals.iter_mut().zip(flags) {
         sig.omit = omit;
+    }
+    // A writer analysis may name leaves no statement touches (a record bound
+    // whole to a native `ref` formal whose callee writes only some members,
+    // SIM-008); omitted storage leaves the process write lists.
+    let signals = &model.signals;
+    for process in &mut model.processes {
+        process.writes.retain(|write| {
+            dependency_signal(write, signals).is_none_or(|index| !signals[index].omit)
+        });
     }
 }
 
@@ -852,6 +863,7 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
             | IrCallArg::FixedArray(_)
             | IrCallArg::RealArray(_)
             | IrCallArg::NativeValue(_)
+            | IrCallArg::NativeRefBound
             | IrCallArg::Container(_)
             | IrCallArg::EventVal(_)
             | IrCallArg::EventAddr(_)
@@ -1359,6 +1371,7 @@ fn collect_call_rw_readonly(function: usize, args: &[IrCallArg], model: &IrModel
             | IrCallArg::FixedArray(_)
             | IrCallArg::RealArray(_)
             | IrCallArg::NativeValue(_)
+            | IrCallArg::NativeRefBound
             | IrCallArg::Container(_)
             | IrCallArg::EventVal(_)
             | IrCallArg::EventAddr(_)

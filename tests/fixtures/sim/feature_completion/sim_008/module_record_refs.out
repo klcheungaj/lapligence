@@ -1,0 +1,14 @@
+init 4 seed taken
+pair 2 g+
+tmp 20 g+ 0
+g 200 tmp! 1.75 200 0 201 tmp!/200
+pair 7 sb
+swap g2+ 7 sb 6 0
+same 1
+pair 1 a+
+ab 1 a+ 1
+pair 2 a+
+ab 2 a+ 1
+pair 0 i
+o 4 i e+ z 1
+y 201 w 6

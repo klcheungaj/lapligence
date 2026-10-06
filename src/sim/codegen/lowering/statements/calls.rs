@@ -105,14 +105,42 @@ impl EmitCtx<'_, '_> {
         let shape = self.cg.call_shape(ft, callee_inst);
         let mut expand = shape.inline_only
             || (has_event_formal && (call_receiver.class.is_some() || virtual_call_info.is_some()));
+        // Module, static and block records bound to native record `ref`
+        // formals select a specialization (`record_refs`).
+        let records = self.cg.record_ref_bindings(&formals, &bound);
+        let method = call_receiver.class.is_some() || virtual_call_info.is_some();
+        self.cg
+            .reject_method_record_refs(&self.path, ft, &records, method)?;
         let mut specialized = None;
         if !expand && !shape.static_refs.is_empty() {
-            match self.static_ref_actuals(&formals, &bound, &shape.static_refs)? {
+            match self.static_ref_actuals(&formals, &bound, &shape.static_refs, &records)? {
                 Some(statics) => {
-                    specialized = Some(self.cg.task_specialization(ft, callee_inst, statics)?);
+                    specialized = Some(self.cg.task_specialization(
+                        ft,
+                        callee_inst,
+                        statics,
+                        records.clone(),
+                    )?);
                 }
                 None => expand = true,
             }
+        }
+        if !expand && specialized.is_none() && !records.is_empty() {
+            let template = self
+                .cg
+                .func_meta
+                .get(&ft)
+                .map(|meta| meta.ir)
+                .ok_or_else(|| format!("task `{name}` has no C name"))?;
+            specialized = Some(self.cg.record_ref_callee(
+                &self.path,
+                ft,
+                callee_inst,
+                &formals,
+                &bound,
+                template,
+                method,
+            )?);
         }
         if expand
             && formals.iter().any(|(formal, _)| {
@@ -162,17 +190,25 @@ impl EmitCtx<'_, '_> {
     /// The whole-signal actuals of the `ref` formals `needed` at one call, or
     /// `None` when any of them cannot be bound statically (a caller local, a
     /// select or an array element) or the call would not be accepted by the
-    /// expansion either, which then reports the precise error.
+    /// expansion either, which then reports the precise error. A native
+    /// record formal is bound by its entry in `records` instead.
     fn static_ref_actuals(
         &mut self,
         formals: &[(NodeId, bool)],
         bound: &[BoundArg],
         needed: &[usize],
+        records: &[RecordRefBinding],
     ) -> Result<Option<Vec<StaticRef>>, String> {
         let mut statics = Vec::with_capacity(needed.len());
         for &index in needed {
             let (formal, _) = formals[index];
             let actual = &bound[index];
+            if self.cg.is_native_declaration(formal) {
+                if records.iter().any(|binding| binding.formal == formal) {
+                    continue;
+                }
+                return Ok(None);
+            }
             let const_ref = match self.cg.kind(formal) {
                 NodeKind::FuncArg {
                     direction: DbDirection::Ref,

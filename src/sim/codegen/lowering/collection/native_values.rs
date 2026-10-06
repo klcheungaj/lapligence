@@ -17,6 +17,7 @@ use crate::sim::ir::{
 mod conditionals;
 mod elements;
 mod member_select;
+mod record_refs;
 mod tagged;
 pub(in crate::sim::codegen) use tagged::{
     is_native_tag_path, native_tagged_equality, NativeTaggedRoot,
@@ -1784,12 +1785,12 @@ impl Codegen<'_> {
             .map(Some)
     }
 
-    /// A native `ref` formal aliases the caller's value storage, which only
-    /// subroutine records have; module, static and process-block records keep
-    /// one storage cell per leaf (see docs/known_issues.md).
+    /// A native `ref` formal aliases a whole subroutine record, or binds a
+    /// module, static or process-block record or a constant selection of one
+    /// (`record_refs`); other actuals have no storage it can name.
     fn native_ref_actual_error(&self, path: &str, formal: NodeId) -> String {
         format!(
-            "ref actual of native record formal `{}` in `{path}` must be a subroutine record variable of the same type (SIM-008)",
+            "ref actual of native record formal `{}` in `{path}` must be a whole subroutine record, or a module, static or procedural-block record or a constant member/index selection of one, of the same type (SIM-008)",
             self.node(formal).name
         )
     }
@@ -1820,6 +1821,9 @@ impl Codegen<'_> {
             }
         }
         if direction == DbDirection::Ref {
+            if self.record_ref_binding(formal, actual).is_some() {
+                return Ok(IrCallArg::NativeRefBound);
+            }
             return Err(self.native_ref_actual_error(path, formal));
         }
         if direction == DbDirection::Input {
@@ -2459,6 +2463,9 @@ impl Codegen<'_> {
                     ..
                 }
             ) {
+                if self.record_ref_binding(formal, actual).is_some() {
+                    return Ok(IrCallArg::NativeRefBound);
+                }
                 return Err(self.native_ref_actual_error(path, formal));
             }
             if matches!(

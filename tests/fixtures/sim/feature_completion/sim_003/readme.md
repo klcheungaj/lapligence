@@ -19,6 +19,7 @@ registered as explicit native roots; see `src/sim/rt/value/ownership.md`.
 | `native_record_sensitivity` | §§9.2.2.2, 9.4.2, 10.3, 13.4. A continuous assignment and `always_comb` that pass the whole record by value re-evaluate when any member changes: n*10+len(s) gives 12, 22, 24; the real member adds 3 to the comb value only (27). The last whole assignment gives 0+1 and 1+int'(0.5)=2 (§6.12 rounds 0.5 away from zero). `@(r.n)` counts the three changes of `n`. |
 | `native_borrowed_chandle` + `.c` | §§6.14, 35.5.6: a chandle is an opaque foreign pointer that only the foreign code allocates and frees. Copies made by 1000 recursive calls share the pointee (41+1 each: 42000) and never free it, so one object stays live until the foreign release; a double free would raise the bad count. |
 | `native_record_call`, `native_equality`, `chandle_record_call` | Adopted FND-002 witnesses with quiet `$finish(0)`: a string/real record round-trips a function (`a 1.5`), equal native records compare 1, and a chandle record keeps null and 7. |
+| `native_ref_formal` | §13.5.2: a native record `ref` formal bound to a module record increments the record's own member, 0 + 1 = `1` (formerly the negative `neg_native_ref_formal`; [sim_008](../sim_008/readme.md) covers the binding). |
 
 ## Negatives
 
@@ -26,7 +27,6 @@ registered as explicit native roots; see `src/sim/rt/value/ownership.md`.
 | --- | --- |
 | `neg_chandle_packed` | §§6.14, 7.2.1: chandles are not integral, so no packed containment (Slang). The string case is `rtl_001/neg_packed_native`. |
 | `neg_chandle_arithmetic` | §6.14: chandles admit only equality, inequality and boolean tests (Slang). |
-| `neg_native_ref_formal` | Legal by §13.5.2; a module record actual of a native `ref` formal is rejected explicitly (subroutine records alias, [sim_008](../sim_008/readme.md)). |
 | `neg_native_fork_capture` | Legal by §9.3.2; capture of automatic native storage by a forked process is SIM-010 work. |
 
 Descriptor validation, recursion bounds, overflow and atomic allocation failure

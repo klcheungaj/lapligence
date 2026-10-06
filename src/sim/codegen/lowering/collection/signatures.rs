@@ -501,6 +501,7 @@ impl<'a> Codegen<'a> {
                     }),
                     virtual_slot: self.method_virtual_slots.get(c).copied(),
                     formals: formals_ir,
+                    bound_native_refs: Vec::new(),
                     callback_private_formal_copies: Vec::new(),
                     callback_return_independent: false,
                     locals: Vec::new(),

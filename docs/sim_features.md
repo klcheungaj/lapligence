@@ -471,16 +471,16 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 
 | Context | Storage / default | Copy | `==`/`!=`, `===` | Member select | Reference | Destruction |
 | --- | --- | --- | --- | --- | --- | --- |
-| Module/static variable | yes, member defaults applied; initializer from a pattern, copy, call result or conditional | yes | yes, including nested records and member arrays | constant, run-time index (at most 64 elements) and packed-member bit/part select: yes | SIM-008 | model close |
-| Automatic/static subroutine local | yes (root) | yes | yes | constant and run-time index (at most 64 elements): yes | SIM-008 | scope exit, cancel, close |
-| Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant and run-time index: yes; scalar members of a call result (`f().m`): yes | `ref`/`const ref` formal aliasing a subroutine record: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); module, static or block record actual: rejected | scope exit, cancel, close |
+| Module/static variable | yes, member defaults applied; initializer from a pattern, copy, call result or conditional | yes | yes, including nested records and member arrays | constant, run-time index (at most 64 elements) and packed-member bit/part select: yes | `ref`/`const ref` actual, whole or a constant member/index selection: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); run-time-indexed member: rejected | model close |
+| Automatic/static subroutine local | yes (root) | yes | yes | constant and run-time index (at most 64 elements): yes | `ref`/`const ref` actual, whole record: yes; member: rejected (SIM-008) | scope exit, cancel, close |
+| Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant and run-time index: yes; scalar members of a call result (`f().m`): yes | `ref`/`const ref` formal: a whole subroutine record passes by address, a module, static or block record (or a constant selection of one) binds a specialization of the callee: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); container or fixed-array element actual, class-method formal: rejected | scope exit, cancel, close |
 | NBA target or source | module record: yes (untimed and `#delay`); static subroutine root target: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)); automatic: illegal | yes, issue-time copy | n/a | constant: yes | n/a | commit or cancellation |
 | Fork-join_none capture | SIM-010 | SIM-010 | n/a | n/a | n/a | SIM-010 |
 | Unpacked array element, slice | one-dimensional fixed array: yes ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); multidimensional: rejected | yes, elements, constant/indexed slices, patterns, conditional merges, untimed NBAs | yes, element-wise | yes | SIM-008 | owner scope or model close |
 | Queue/dynamic/associative element | yes (missing: default), including queue and dynamic-array members ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); associative members: rejected | yes, whole element and push/insert/pop | yes, element-wise, including container members (whole associative arrays of records: rejected, [known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | constant and run-time element index: yes; container members in assignment, call and system-task statements | SIM-008 | delete, resize, container close |
 | Class property | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-018 |
 | DPI argument | SIM-040 | SIM-040 | n/a | n/a | n/a | n/a |
-| Process-block local (static or automatic) | yes, including container members, member defaults and call initializers ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); automatic record that a `join_any`/`join_none` fork running again can keep live: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | yes | yes, including nested records and member arrays | constant and run-time index (at most 64 elements): yes | SIM-008 | model close; automatic leaves reset at the next entry |
+| Process-block local (static or automatic) | yes, including container members, member defaults and call initializers ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); automatic record that a `join_any`/`join_none` fork running again can keep live: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | yes | yes, including nested records and member arrays | constant and run-time index (at most 64 elements): yes | `ref`/`const ref` actual, whole or a constant selection: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)) | model close; automatic leaves reset at the next entry |
 
 ## 3. Modules, ports, parameters, hierarchy
 
@@ -1221,8 +1221,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   typed defaults. Native records cross input/output/inout formals and results
   by value, including nested calls, recursion, suspension and cancellation
   (SIM-003). Resizable containers cross formals and results by value and live in
-  automatic or static subroutine locals (SIM-006). Container and native `ref`
-  formals and fixed arrays of native records remain restricted.
+  automatic or static subroutine locals (SIM-006). Native record `ref` formals
+  bind whole subroutine records and module, static and procedural-block
+  records, and container `ref` formals alias whole containers (SIM-008);
+  fixed arrays of native records remain restricted.
   V §§10.2–10.3; SV §§13.3–13.5 **[1995/2001/SV-2005]**.
 - 🟦 **Automatic/reentrant and finite zero-time calls** — Per-activation
   storage, finite recursion, local named-block exits, selected copy-out and
@@ -1241,8 +1243,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `delete`, whole assignment); the outdated element keeps its last value,
   shared by every reference to it. String/chandle references use native
   storage; real/shortreal references bind the actual's numeric cell (SIM-005).
-  Native record formals, non-packed container elements and reference-formal
-  NBAs remain restricted. Fixed packed scanner destinations retain checked selected
+  Native record `ref` formals take a whole subroutine record by address, and a
+  module, static or procedural-block record (or a constant member/index
+  selection of one) through a specialization of the callee per bound record
+  set that names the record's members directly, so writes publish and wake
+  `always_comb`, `@` and `wait` readers at once. Record actuals that are
+  container or fixed-array elements, run-time-indexed or subroutine-record
+  members, record actuals of class-method formals, non-packed container
+  elements and reference-formal NBAs remain restricted. Fixed packed scanner destinations retain checked selected
   views through ref formals. Subroutine actuals must be
   eligible variables, not function/reduction/conditional/cast/pattern temporaries;
   packed bit/part actuals rejected by the frontend are not legalized by internal
@@ -1275,10 +1283,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([sim_009](../tests/fixtures/sim/feature_completion/sim_009/readme.md)).
   Events declared in procedural blocks and subroutine bodies are their own
   objects, a new one per automatic activation. A `ref` formal read by an
-  event control binds a whole module-signal actual per specialized task copy,
-  and event expressions over by-value formals copy them when the control
-  arms; event controls reading subroutine locals or string/handle formals and
-  class-method event formals use inline task paths; event-formal virtual dispatch and process-handle formal ABI remain unsupported. Unresolved environments and broader
+  event control binds a whole module-signal actual (or, for a native record
+  formal, a module, static or block record) per specialized task copy, and
+  event expressions over by-value formals copy them when the control arms;
+  event controls reading string/handle formals and class-method event
+  formals use inline task paths; event-formal virtual dispatch and process-handle formal ABI remain unsupported. Unresolved environments and broader
   timing/native/aggregate combinations reject. V §12.4 **[1995]**.
 - 🟨 **Read-only helper calls** — Event, continuous, force and other read-only
   evaluators admit bounded numeric value/const-ref helpers with private locals,

@@ -1358,6 +1358,7 @@ fn collect_argument_effects(
         IrCallArg::FixedArray(_)
         | IrCallArg::RealArray(_)
         | IrCallArg::NativeValue(_)
+        | IrCallArg::NativeRefBound
         | IrCallArg::EventVal(_)
         | IrCallArg::EventAddr(_) => {}
         // Container outputs are copied back into caller storage after the

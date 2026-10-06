@@ -320,6 +320,19 @@ impl Frame<'_, '_> {
             let expression = match argument {
                 IrCallArg::Val(expression) => expression,
                 IrCallArg::RefAddr { read, .. } if formal.const_ref => read.as_ref(),
+                // The body reads the bound record's leaves itself and never
+                // this formal's (null) binding (SIM-008).
+                IrCallArg::NativeRefBound if formal.const_ref => {
+                    bindings[index] = Some(Binding {
+                        address: "NULL".to_owned(),
+                        width: 0,
+                        signed: false,
+                        two_state: false,
+                        shortreal: false,
+                        automatic: false,
+                    });
+                    continue;
+                }
                 _ => return Err(pending("writable address evaluator arguments")),
             };
             let value = self.expression(expression)?;

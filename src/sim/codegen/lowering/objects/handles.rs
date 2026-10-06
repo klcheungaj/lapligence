@@ -334,7 +334,7 @@ impl Codegen<'_> {
             _ => None,
         };
         if let Some(callee) = callable {
-            let (ft, _callee_inst) =
+            let (ft, callee_inst) =
                 self.resolve_callee_env(self.inst, &self.node(node).name, false, callee)?;
             let meta = self
                 .func_meta
@@ -349,6 +349,17 @@ impl Codegen<'_> {
             }
             let args = self.call_argument_nodes(node);
             let bound = self.bind_call_args(self.inst, &meta.formals, &args)?;
+            let method = matches!(self.kind(node), NodeKind::MethodCall { .. })
+                || self.model.funcs[meta.ir].receiver_class.is_some();
+            let function = self.record_ref_callee(
+                path,
+                ft,
+                callee_inst,
+                &meta.formals,
+                &bound,
+                meta.ir,
+                method,
+            )?;
             let mut out_args = Vec::new();
             let mut in_args = Vec::new();
             let mut arg_irs = vec![None; meta.formals.len()];
@@ -356,7 +367,8 @@ impl Codegen<'_> {
                 if self.is_subroutine_container(*formal) {
                     let argument =
                         self.container_call_argument(path, *formal, bound[idx].expr, None)?;
-                    if *is_out {
+                    // `ref` formals pass by address with the outputs.
+                    if *is_out || self.is_ref_formal(*formal) {
                         out_args.push(argument);
                     } else {
                         in_args.push(argument);
@@ -366,7 +378,7 @@ impl Codegen<'_> {
                 if self.is_native_declaration(*formal) {
                     let argument =
                         self.native_expression_argument(path, *formal, bound[idx].expr)?;
-                    if *is_out {
+                    if *is_out || self.is_ref_formal(*formal) {
                         out_args.push(argument);
                     } else {
                         in_args.push(argument);
@@ -414,7 +426,7 @@ impl Codegen<'_> {
             return Ok(IrChandleExpr::Call {
                 receiver: self.class_method_receiver(node)?.map(Box::new),
                 virtual_dispatch: self.class_method_virtual_dispatch(node),
-                function: meta.ir,
+                function,
                 args: out_args,
                 depth: parse_depth(&self.depth_arg),
             });
