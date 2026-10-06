@@ -82,6 +82,46 @@ int main(void) {
         llg_gmp_sv4_destroy(&b);
         llg_gmp_sv4_destroy(&d);
     }
+    /* Known equal-width bitwise results reuse a live destination, including exact
+     * aliases; X/Z operands and empty destinations keep the returning form. */
+    static void (*bitwise[])(g4_t*, g4_t, g4_t) = {llg_gmp_sv4_and_into, llg_gmp_sv4_or_into,
+                                                   llg_gmp_sv4_xor_into, llg_gmp_sv4_xnor_into};
+    for (size_t k = 0; k < sizeof(widths) / sizeof(widths[0]); ++k)
+        for (unsigned op = 0; op < 4; ++op)
+            for (unsigned alias = 0; alias < 4; ++alias) {
+                uint32_t w = widths[k];
+                g4_t a = llg_gmp_sv4_fill(1, w, 1), b = llg_gmp_sv4_from_u64(3, w, 0),
+                     d = llg_gmp_sv4_zero(w, 1);
+                g4_t* target = alias == 1 || alias == 3 ? &a : alias == 2 ? &b : &d;
+                uint64_t* payload = w > 64 ? target->data.wide.a : NULL;
+                size_t before = allocations, rb = reallocations;
+                bitwise[op](target, a, alias == 3 ? a : b);
+                CHECK(allocations == before && reallocations == rb);
+                if (w > 64)
+                    CHECK(target->data.wide.a == payload && !target->data.wide.b);
+                llg_gmp_sv4_destroy(&a);
+                llg_gmp_sv4_destroy(&b);
+                llg_gmp_sv4_destroy(&d);
+            }
+    for (unsigned op = 0; op < 4; ++op) {
+        g4_t a = llg_gmp_sv4_from_u64(3, 256, 1), b = llg_gmp_sv4_from_u64(5, 256, 1),
+             d = llg_gmp_sv4_x(256, 0), empty = LLG_GMP_SV4_EMPTY;
+        size_t before = allocations, rb = reallocations;
+        bitwise[op](&d, a, b);
+        CHECK(allocations == before && reallocations == rb + 1);
+        CHECK(!d.data.wide.b && d.is_signed);
+        bitwise[op](&empty, a, b);
+        CHECK(allocations == before + 1);
+        llg_gmp_sv4_destroy(&b);
+        b = llg_gmp_sv4_x(256, 1);
+        before = allocations;
+        bitwise[op](&d, a, b);
+        CHECK(allocations > before);
+        llg_gmp_sv4_destroy(&a);
+        llg_gmp_sv4_destroy(&b);
+        llg_gmp_sv4_destroy(&d);
+        llg_gmp_sv4_destroy(&empty);
+    }
     puts("destination storage reuse, alias scratch and B transitions passed");
     return 0;
 }

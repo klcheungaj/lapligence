@@ -540,6 +540,20 @@ static inline void llg_gmp_sv4_sub_into(g4_t* dst, g4_t a, g4_t b) {
 static inline void llg_gmp_sv4_mul_into(g4_t* dst, g4_t a, g4_t b) {
     g4_arithmetic_into(dst, a, b, 2);
 }
+void llg_gmp_sv4_bitwise_into_wide(g4_t* dst, g4_t a, g4_t b, unsigned op);
+/* Bitwise destinations: borrow operands; exact destination aliases are supported. */
+static inline void g4_bitwise_into(g4_t* dst, g4_t a, g4_t b, unsigned op) {
+    if (g4_maxw(a, b) <= 64)
+        llg_gmp_sv4_replace(dst, g4_binary(a, b, op));
+    else
+        llg_gmp_sv4_bitwise_into_wide(dst, a, b, op);
+}
+static inline void llg_gmp_sv4_and_into(g4_t* dst, g4_t a, g4_t b) { g4_bitwise_into(dst, a, b, 3); }
+static inline void llg_gmp_sv4_or_into(g4_t* dst, g4_t a, g4_t b) { g4_bitwise_into(dst, a, b, 4); }
+static inline void llg_gmp_sv4_xor_into(g4_t* dst, g4_t a, g4_t b) { g4_bitwise_into(dst, a, b, 5); }
+static inline void llg_gmp_sv4_xnor_into(g4_t* dst, g4_t a, g4_t b) {
+    g4_bitwise_into(dst, a, b, 6);
+}
 static inline g4_t llg_gmp_sv4_and(g4_t a, g4_t b) { return g4_binary(a, b, 3); }
 static inline g4_t llg_gmp_sv4_or(g4_t a, g4_t b) { return g4_binary(a, b, 4); }
 static inline g4_t llg_gmp_sv4_xor(g4_t a, g4_t b) { return g4_binary(a, b, 5); }
@@ -995,6 +1009,10 @@ static inline uint32_t llg_gmp_sv4_checked_width(g4_t value) {
 #define LLG_REF_TAGGED_VIEW LLG_GMP_REF_TAGGED_VIEW
 #define sv4_add llg_gmp_sv4_add
 #define sv4_add_into llg_gmp_sv4_add_into
+#define sv4_and_into llg_gmp_sv4_and_into
+#define sv4_or_into llg_gmp_sv4_or_into
+#define sv4_xor_into llg_gmp_sv4_xor_into
+#define sv4_xnor_into llg_gmp_sv4_xnor_into
 #define sv4_and llg_gmp_sv4_and
 #define sv4_assign llg_gmp_sv4_assign
 #define sv4_bitneg llg_gmp_sv4_bitneg

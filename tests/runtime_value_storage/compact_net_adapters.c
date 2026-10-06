@@ -145,6 +145,31 @@ static void udp_and_enum(void) {
         llg_gmp_sv4_destroy_array(v, 4); sv4_destroy_array(old, 4);
     }
 }
+/* Known low words with X/Z first appearing in a later word promote B lazily in
+ * the middle of resolution; results must still match legacy exactly. */
+static void late_unknown_nets(void) {
+    static const uint32_t widths[] = {65, 128, 129, 256, 1000};
+    for (size_t w = 0; w < sizeof(widths) / sizeof(widths[0]); ++w)
+        for (unsigned state = 2; state <= 3; ++state) {
+            uint32_t width = widths[w];
+            sv4_t old[2] = {sv4_fill(1, width, 0), sv4_zero(width, 0)};
+            g4_t v[2] = {llg_gmp_sv4_fill(1, width, 0), llg_gmp_sv4_zero(width, 0)};
+            llg_sv4_set_state(&old[0], width - 1, state);
+            llg_gmp_sv4_set_state(&v[0], width - 1, state);
+            const sv4_t* op[2] = {&old[0], &old[1]};
+            const g4_t* vp[2] = {&v[0], &v[1]};
+            uint8_t s0[2] = {6, 3}, s1[2] = {6, 3};
+            for (int mode = 0; mode < 7; ++mode)
+                for (int count = 1; count <= 2; ++count) {
+                    compare(sv4_resolve(op, count, width, 0, mode),
+                            llg_gmp_sv4_resolve(vp, count, width, 0, mode));
+                    compare(sv4_resolve_strengths(op, s0, s1, count, width, 0, mode),
+                            llg_gmp_sv4_resolve_strengths(vp, s0, s1, count, width, 0, mode));
+                }
+            sv4_destroy_array(old, 2);
+            llg_gmp_sv4_destroy_array(v, 2);
+        }
+}
 int main(int argc, char** argv) {
     if (argc > 1) {
         g4_t v = llg_gmp_sv4_zero(65, 0); const g4_t* drivers[] = {&v};
@@ -157,7 +182,7 @@ int main(int argc, char** argv) {
             v = llg_gmp_sv4_resolve_strengths_range(drivers, NULL, NULL, NULL, 1, 65, 66, 1, 0, 0);
         llg_gmp_sv4_destroy(&v); return 1;
     }
-    exhaustive_strengths(); wide_nets(); udp_and_enum();
+    exhaustive_strengths(); wide_nets(); late_unknown_nets(); udp_and_enum();
     printf("net/strength/UDP/enum: %zu checks passed\n", checks);
     return 0;
 }
