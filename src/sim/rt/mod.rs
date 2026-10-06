@@ -239,6 +239,7 @@ pub fn container_sources() -> (&'static str, &'static str) {
             include_str!("container/methods.c"),
             include_str!("container/queue_references.c"),
             include_str!("container/associative_arrays.c"),
+            include_str!("container/element_references.c"),
             include_str!("container/associative_values.c"),
             include_str!("container/associative_value_queries.c"),
             include_str!("container/value_elements.c"),

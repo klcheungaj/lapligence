@@ -367,7 +367,7 @@ enum {
     LLG_CONTAINER_METHOD_SHUFFLE = 13,
 };
 
-typedef struct {
+typedef struct llg_dyn_array_t {
     sv4_t* data;
     size_t size;
     uint32_t element_width;
@@ -376,6 +376,8 @@ typedef struct {
     sv4_t* contents_dependency;
     sv4_t* shape_dependency;
     llg_container_notify_fn notify;
+    // Borrowed list of retained `ref` element cells; holders own the cells.
+    struct llg_element_cell* references;
 } llg_dyn_array_t;
 
 int llg_dyn_value_set_nested_container_from_packed(
@@ -861,7 +863,7 @@ typedef struct {
     sv4_t value;
 } llg_assoc_entry_t;
 
-typedef struct {
+typedef struct llg_assoc_t {
     llg_assoc_entry_t* entries;
     size_t size;
     size_t capacity;
@@ -883,6 +885,8 @@ typedef struct {
     sv4_t* contents_dependency;
     sv4_t* shape_dependency;
     llg_container_notify_fn notify;
+    // Borrowed list of retained `ref` element cells; holders own the cells.
+    struct llg_element_cell* references;
 } llg_assoc_t;
 
 void llg_assoc_init_integral(llg_assoc_t* array, uint32_t element_width,
@@ -894,6 +898,19 @@ void llg_assoc_init_string(llg_assoc_t* array, uint32_t element_width,
 void llg_assoc_destroy(llg_assoc_t* array);
 void llg_assoc_delete(llg_assoc_t* array);
 void llg_assoc_copy(llg_assoc_t* dst, const llg_assoc_t* src);
+/* Retained cells for `ref` actuals that select a dynamic-array element or an
+ * associative entry (IEEE 1800-2009 13.5.2). A cell follows its element until
+ * an operation outdates it: new[], delete() or whole assignment of the dynamic
+ * array; delete of the entry, delete() or whole assignment of the associative
+ * array; or destruction. An outdated cell keeps the element's last value and
+ * stays shared by every reference to it. Acquire returns an owned count. */
+void* llg_dyn_ref_acquire(llg_dyn_array_t* array, sv4_t index);
+void* llg_assoc_ref_acquire_integral(llg_assoc_t* array, sv4_t key);
+void* llg_assoc_ref_acquire_string(llg_assoc_t* array, const void* key,
+                                   size_t key_length);
+void llg_element_ref_release(void* cell);
+sv4_t llg_element_cell_read(const void* cell);
+int llg_element_cell_write(void* cell, sv4_t value);
 size_t llg_assoc_count(const llg_assoc_t* array);
 sv4_t llg_assoc_value_at(const llg_assoc_t* array, size_t index);
 sv4_t llg_assoc_reduce(const llg_assoc_t* array, int operation);

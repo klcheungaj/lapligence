@@ -8,6 +8,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Outdate retained element references before storage they name is replaced
+ * or removed (container/element_references.c). `position` SIZE_MAX outdates
+ * every associative entry. */
+static void llg_dyn_outdate_references(llg_dyn_array_t* array);
+static void llg_assoc_outdate_references(llg_assoc_t* array, size_t position);
+
 static void llg_container_fatal(const char* message) {
     fprintf(stderr, "llg container fatal: %s\n", message);
     abort();
@@ -550,12 +556,14 @@ void llg_dyn_init(llg_dyn_array_t* array, uint32_t element_width,
 }
 
 void llg_dyn_destroy(llg_dyn_array_t* array) {
+    llg_dyn_outdate_references(array);
     sv4_destroy_array(array->data, array->size);
     free(array->data);
     memset(array, 0, sizeof(*array));
 }
 
 void llg_dyn_delete(llg_dyn_array_t* array) {
+    llg_dyn_outdate_references(array);
     int changed = array->size != 0;
     sv4_destroy_array(array->data, array->size);
     free(array->data);

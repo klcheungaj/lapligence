@@ -21,3 +21,9 @@ fn container_ref_formals_alias_the_caller_container() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_008/container_refs.out");
     sim_cli::run_case_backend_parity(SUITE, "container_refs", expected, &[], &[]);
 }
+
+#[test]
+fn element_refs_follow_elements_until_outdated() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_008/element_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "element_refs", expected, &[], &[]);
+}

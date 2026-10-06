@@ -1216,11 +1216,15 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **References** — `ref`/`const ref` alias matching packed variables, fixed
   integral arrays/records/unions, admitted unpacked members/elements (including
   members of unpacked-record array elements, with runtime indices bound once at
-  the call) and retained packed queue cells. Removal/reallocation preserves a queue reference's original
-  detached cell. String/chandle references use native storage; real/shortreal
-  references bind the actual's numeric cell (SIM-005). General native/
-  resizable aggregates, non-packed queue references and reference-formal NBAs
-  remain restricted. Fixed packed scanner destinations retain checked selected
+  the call), whole queue, dynamic and associative variables, and retained
+  packed cells for queue, dynamic-array and associative elements
+  ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)). A
+  cell follows its element until §13.5.2 outdates it (removal, `new[]`,
+  `delete`, whole assignment); the outdated element keeps its last value,
+  shared by every reference to it. String/chandle references use native
+  storage; real/shortreal references bind the actual's numeric cell (SIM-005).
+  Native record formals, non-packed container elements and reference-formal
+  NBAs remain restricted. Fixed packed scanner destinations retain checked selected
   views through ref formals. Subroutine actuals must be
   eligible variables, not function/reduction/conditional/cast/pattern temporaries;
   packed bit/part actuals rejected by the frontend are not legalized by internal

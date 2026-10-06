@@ -464,6 +464,83 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// A `ref` actual selecting a dynamic-array element or an associative
+    /// entry binds a retained element cell, like a queue element: the cell
+    /// follows the element until an operation outdates it (SV 13.5.2).
+    fn lower_keyed_element_ref(
+        &mut self,
+        scope_path: &str,
+        bound: &BoundArg,
+        const_ref: bool,
+    ) -> Result<Option<IrCallArg>, String> {
+        let container = match self.kind(bound.expr) {
+            NodeKind::Expr(ExprKind::BitSelect { base, .. }) => {
+                self.container_of_select(bound.expr, *base)
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {
+                self.container_of_select(bound.expr, *base)
+            }
+            _ => None,
+        };
+        let Some(container) = container.map(|container| container.ir).filter(|container| {
+            matches!(
+                self.model.containers[*container].kind,
+                IrContainerKind::Dynamic | IrContainerKind::Associative { .. }
+            )
+        }) else {
+            return Ok(None);
+        };
+        let IrContainerElement::Packed {
+            width,
+            signed,
+            two_state,
+        } = self.model.containers[container].element
+        else {
+            return Err(format!(
+                "ref actual element of `{}` in `{scope_path}` must have a packed integral type",
+                self.model.containers[container].c_name
+            ));
+        };
+        if (width, signed, two_state) != (bound.width, bound.signed, bound.two_state) {
+            return Err(format!(
+                "ref actual type does not exactly match formal in `{scope_path}`"
+            ));
+        }
+        let read = self.lower_expr(scope_path, bound.expr)?;
+        let IrExprKind::Container(operation) = read.kind() else {
+            return Err(format!(
+                "ref actual element in `{scope_path}` has no container element read"
+            ));
+        };
+        if !matches!(
+            operation.as_ref(),
+            IrContainerExpr::Get { container: read, .. }
+                | IrContainerExpr::GetString { container: read, .. } if *read == container
+        ) {
+            return Err(format!(
+                "ref actual element in `{scope_path}` has no container element read"
+            ));
+        }
+        let lhs = IrLhs::WholeRef {
+            // Dependency/type placeholder only; the read keeps the container
+            // and selector for retained-cell emission.
+            addr: format!("&{}", self.model.containers[container].c_name),
+            width,
+            signed,
+            two_state,
+            shortreal: false,
+        };
+        Ok(Some(IrCallArg::RefAddr {
+            addr: "typed_element_reference".to_owned(),
+            width,
+            signed,
+            two_state,
+            const_ref,
+            lhs: Box::new(lhs),
+            read: Box::new(read),
+        }))
+    }
+
     pub(in super::super) fn lower_ref_arg(
         &mut self,
         scope_path: &str,
@@ -537,6 +614,11 @@ impl<'a> Codegen<'a> {
                 .map(|container| (container.ir, indices[0])),
             _ => None,
         };
+        if queue_actual.is_none() {
+            if let Some(argument) = self.lower_keyed_element_ref(scope_path, bound, const_ref)? {
+                return Ok(argument);
+            }
+        }
         if let Some((container, index_node)) = queue_actual {
             let (width, signed, two_state) = match self.model.containers[container].element {
                 IrContainerElement::Packed {

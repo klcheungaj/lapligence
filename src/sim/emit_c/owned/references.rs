@@ -329,6 +329,33 @@ impl Frame<'_, '_> {
                     self.discard(index);
                     return Ok(pointer);
                 }
+                // Dynamic-array elements and integral-keyed entries bind a
+                // retained element cell (SV 13.5.2).
+                let binder = match container.kind {
+                    IrContainerKind::Dynamic => Some("llg_ref_dyn"),
+                    IrContainerKind::Associative { .. } => Some("llg_ref_assoc_integral"),
+                    IrContainerKind::Queue { .. } => None,
+                };
+                if let Some(binder) = binder.filter(|_| container.element.is_packed()) {
+                    let index = self.expression(index)?;
+                    let pointer = self.scalar(
+                        "llg_ref_t*",
+                        format!("{binder}(&{}, {})", container.c_name, index.code),
+                    );
+                    self.discard(index);
+                    return Ok(pointer);
+                }
+            }
+            if let IrContainerExpr::GetString { container, key } = expression.as_ref() {
+                let container_name = self.container_name(*container)?;
+                let key = self.string(key)?;
+                let code = key.code();
+                let pointer = self.scalar(
+                    "llg_ref_t*",
+                    format!("llg_ref_assoc_string(&{container_name}, ({code}).data, ({code}).len)"),
+                );
+                self.native_discard(key);
+                return Ok(pointer);
             }
         }
         if let IrLhs::Ref {
