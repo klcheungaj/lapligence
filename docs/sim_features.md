@@ -182,6 +182,16 @@ mode, merged per library rather than with work sources. Included buffers belong 
 including source. Repeated `--include-dir`/`-I` and `--define`/`-D` options are
 supported.
 
+Include directories also supply definitions, so passing only the top file is
+enough: when the given sources instantiate, import or `::`-reference a module,
+interface, program, package, primitive, checker or class that none of them
+declares, `llg` scans the `.v`/`.sv` files directly inside each include directory
+(not subdirectories), whatever their names, and adds each file that declares a
+missing definition as a library unit (it never becomes a top), repeating for
+what those files need. A definition declared in more than one such file stops
+the compile with an error naming every file; one declared nowhere keeps the
+frontend's unknown-module error.
+
 ## Resource limits
 
 | Resource | Limit or behavior |

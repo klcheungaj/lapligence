@@ -41,6 +41,13 @@ and the original next-child index, including gaps after role conversion. Avoid
 per-node index storage; many duplicate child positions can still make front
 removal linear in that target's duplicates.
 
+`llg_slang_parse_metadata` (ABI v16) parses cache-only like a compile, never
+elaborates, and reports per unit its outermost declarations (modules,
+interfaces, programs, packages, primitives, checkers, classes) and Slang
+`ParserMetadata` references not declared anywhere in the same tree (nested
+definitions are local; `std` is skipped). Merged mode reports one tree under its
+first unit. Each tree is released before the next parse.
+
 ## Capture
 
 - Consume only admitted cached buffers, never reopen paths or canonicalize through

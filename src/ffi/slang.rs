@@ -1,6 +1,6 @@
 //! Safe, owned Rust facade over the Slang C ABI.
 //!
-//! [`compile`] receives the finished capture through the ABI v15 record
+//! [`compile`] receives the finished capture through the ABI v16 record
 //! stream (see the `stream` module) and owns every decoded record. No Slang
 //! pointer or native allocation escapes it.
 
@@ -37,8 +37,11 @@ use values::{
 };
 mod stream;
 use stream::{sink_for, StreamBuilder};
+mod metadata;
+pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
+use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 15;
+const ABI_VERSION: u32 = 16;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1756,6 +1759,11 @@ unsafe extern "C" {
     fn llg_slang_compile(
         request: *const RawCompileRequest,
         sink: *const RawSink,
+        out_error: *mut *mut RawError,
+    ) -> u32;
+    fn llg_slang_parse_metadata(
+        request: *const RawMetadataRequest,
+        sink: *const RawMetadataSink,
         out_error: *mut *mut RawError,
     ) -> u32;
     fn llg_slang_error_view(error: *const RawError, out_view: *mut RawErrorView) -> u32;

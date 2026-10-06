@@ -962,3 +962,157 @@ fn high_fanout_operand_roles_and_repeated_pattern_ids_survive_index_mutation() {
         error.message()
     );
 }
+
+fn metadata_request<'a>(
+    sources: &'a [Source<'a>],
+    defines: &'a [slang::Define],
+    include_dirs: &'a [String],
+    mode: slang::CompilationUnitMode,
+) -> slang::MetadataRequest<'a> {
+    slang::MetadataRequest {
+        sources,
+        defines,
+        include_dirs,
+        edition: slang::LanguageEdition::SystemVerilog2009,
+        compilation_unit_mode: mode,
+        max_source_bytes: 1024 * 1024,
+    }
+}
+
+fn names(set: &std::collections::BTreeSet<String>) -> Vec<&str> {
+    set.iter().map(String::as_str).collect()
+}
+
+#[test]
+fn parse_metadata_reports_outermost_declarations_and_external_references() {
+    let top = r#"`include "defs.svh"
+module top;
+  import ext_pkg::*;
+  child u_child();
+  `INSTANCE_OF(macro_child) u_macro();
+  module nested; endmodule
+  nested u_nested();
+  local_udp u_udp(o, a);
+  initial begin ScopeClass::run(); void'(std::randomize()); end
+endmodule
+primitive local_udp(output o, input a); table 0 : 0; 1 : 1; endtable endprimitive
+interface bus_if; endinterface
+program prog(bus_if port); endprogram
+class LocalClass; endclass
+package own_pkg; class InPackage; endclass endpackage
+"#;
+    let sources = [
+        Source::compilation_unit("top.sv", top),
+        Source {
+            name: "inc/defs.svh",
+            text: "`define INSTANCE_OF(name) name\n",
+            is_compilation_unit: false,
+            is_library_map: false,
+        },
+        Source::compilation_unit("broken.sv", "module broken; missing_child m(\n"),
+    ];
+    let include_dirs = ["inc".to_owned()];
+    let units = slang::parse_metadata(&metadata_request(
+        &sources,
+        &[],
+        &include_dirs,
+        slang::CompilationUnitMode::Separate,
+    ))
+    .expect("metadata parse");
+    assert_eq!(units.len(), 3);
+    assert_eq!(
+        names(&units[0].declared),
+        [
+            "LocalClass",
+            "bus_if",
+            "local_udp",
+            "own_pkg",
+            "prog",
+            "top"
+        ]
+    );
+    // Nested modules, declared primitives and interfaces, and the built-in
+    // `std` package are not external; the macro-built instance resolves
+    // through the admitted include buffer.
+    assert_eq!(
+        names(&units[0].referenced),
+        ["ScopeClass", "child", "ext_pkg", "macro_child"]
+    );
+    assert_eq!(units[1], slang::DefinitionNames::default());
+    // Parse errors are discarded; recovered names are still reported.
+    assert_eq!(names(&units[2].declared), ["broken"]);
+    assert_eq!(names(&units[2].referenced), ["missing_child"]);
+}
+
+#[test]
+fn parse_metadata_applies_defines_and_merged_units() {
+    let sources = [
+        Source::compilation_unit(
+            "a.sv",
+            "`define CHILD_NAME merged_child\nmodule a; endmodule\n",
+        ),
+        Source::compilation_unit(
+            "b.sv",
+            "module b;\n`ifdef PICK\n  picked u();\n`else\n  `CHILD_NAME u();\n`endif\nendmodule\n",
+        ),
+    ];
+    let separate = slang::parse_metadata(&metadata_request(
+        &sources,
+        &[],
+        &[],
+        slang::CompilationUnitMode::Separate,
+    ))
+    .expect("separate metadata");
+    assert!(!separate[1].referenced.contains("merged_child"));
+    let merged = slang::parse_metadata(&metadata_request(
+        &sources,
+        &[],
+        &[],
+        slang::CompilationUnitMode::Merged,
+    ))
+    .expect("merged metadata");
+    assert_eq!(names(&merged[0].declared), ["a", "b"]);
+    assert_eq!(names(&merged[0].referenced), ["merged_child"]);
+    assert_eq!(merged[1], slang::DefinitionNames::default());
+    let defines = [slang::Define {
+        name: "PICK".to_owned(),
+        value: None,
+    }];
+    let defined = slang::parse_metadata(&metadata_request(
+        &sources,
+        &defines,
+        &[],
+        slang::CompilationUnitMode::Separate,
+    ))
+    .expect("defined metadata");
+    assert_eq!(names(&defined[1].referenced), ["picked"]);
+}
+
+#[test]
+fn parse_metadata_rejects_library_maps_and_budget_overruns() {
+    let map = [Source {
+        name: "lib.map",
+        text: "library work *.sv;\n",
+        is_compilation_unit: true,
+        is_library_map: true,
+    }];
+    let error = slang::parse_metadata(&metadata_request(
+        &map,
+        &[],
+        &[],
+        slang::CompilationUnitMode::Separate,
+    ))
+    .expect_err("library maps are not metadata units");
+    assert_eq!(error.kind(), SlangErrorKind::InvalidArgument);
+
+    let sources = [Source::compilation_unit(
+        "big.sv",
+        "module big; endmodule\n",
+    )];
+    let error = slang::parse_metadata(&slang::MetadataRequest {
+        max_source_bytes: 8,
+        ..metadata_request(&sources, &[], &[], slang::CompilationUnitMode::Separate)
+    })
+    .expect_err("source bytes are bounded");
+    assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
+}

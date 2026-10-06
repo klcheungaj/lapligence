@@ -18,6 +18,12 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   Library-unit recovery uses the same buffers/limits; reject unknown request flags.
   Cache keys are lexically normalized; include directories are lookup prefixes,
   not permission to read the filesystem.
+- ABI v16 `parse_metadata` (`slang/metadata.rs`) borrows the same kind of
+  units/include buffers, defines and include prefixes for one blocking
+  `llg_slang_parse_metadata` call and receives each distinct (source, role,
+  name) through a one-callback sink with the stream's panic/abort rules. It
+  rejects library maps, unknown sources/roles, empty or repeated names, and
+  bounds sources by `max_source_bytes`; parse diagnostics are discarded.
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;

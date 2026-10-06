@@ -1,7 +1,8 @@
 /*
  * Narrow C ABI for the vendored Slang frontend.
  *
- * The caller owns all input memory for the duration of llg_slang_compile().
+ * The caller owns all input memory for the duration of llg_slang_compile()
+ * and llg_slang_parse_metadata().
  * The captured design is delivered to the caller's LlgSlangSink during that
  * call (see "Capture stream" below); no native snapshot outlives it. A
  * returned error owner is released with llg_slang_error_destroy(), which
@@ -15,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 15u
+#define LLG_SLANG_ABI_VERSION 16u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1122,6 +1123,55 @@ typedef struct {
 uint32_t llg_slang_compile(const LlgSlangCompileRequest* request,
                            const LlgSlangSink* sink,
                            LlgSlangError** out_error);
+/* Parse-only definition metadata (ABI v16).
+ *
+ * llg_slang_parse_metadata() preprocesses and parses the compilation-unit
+ * buffers of a request with its edition and defines, without elaborating,
+ * and reports the definition names each declares and references. Buffers
+ * without LLG_SLANG_SOURCE_COMPILATION_UNIT are include-only and serve
+ * cache-only include lookups through include_dirs, exactly as in
+ * llg_slang_compile(); a missing include or any other parse diagnostic is
+ * discarded. Each compilation unit is its own syntax tree unless
+ * LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS is set, in which case all units
+ * share one tree whose names are reported under the first unit's index.
+ *
+ * Declared names are the outermost modules, interfaces, programs, packages,
+ * primitives, checkers and classes of the unit. Referenced names are Slang's
+ * referenced top-level symbols (instantiated definition types, `name::`
+ * scope prefixes, imported packages and interface port types) that the unit
+ * does not declare itself at any depth, excluding the built-in `std`.
+ *
+ * The sink receives each distinct (source_index, role, name) once, in
+ * ascending source index; the name view is borrowed for that call only. It
+ * returns LLG_SLANG_SINK_CONTINUE or LLG_SLANG_SINK_ABORT; abort stops
+ * parsing and returns LLG_SLANG_STATUS_SINK_ABORTED. All input memory is
+ * borrowed for the call and nothing native outlives it. */
+typedef struct {
+  uint32_t abi_version;
+  uint32_t flags; /* edition and merged-unit LLG_SLANG_COMPILE_* bits only */
+  const LlgSlangSource* sources; /* library-map flag not accepted */
+  uint64_t source_count;
+  const LlgSlangDefine* defines;
+  uint64_t define_count;
+  const LlgSlangString* include_dirs;
+  uint64_t include_dir_count;
+  uint64_t max_source_bytes; /* 0 selects the native default */
+} LlgSlangMetadataRequest;
+
+enum {
+  LLG_SLANG_METADATA_DECLARED = 1,
+  LLG_SLANG_METADATA_REFERENCED = 2
+};
+
+typedef struct {
+  void* context;
+  uint32_t (*name)(void* context, uint64_t source_index, uint32_t role,
+                   LlgSlangString name);
+} LlgSlangMetadataSink;
+
+uint32_t llg_slang_parse_metadata(const LlgSlangMetadataRequest* request,
+                                  const LlgSlangMetadataSink* sink,
+                                  LlgSlangError** out_error);
 uint32_t llg_slang_error_view(const LlgSlangError* error,
                               LlgSlangErrorView* out_view);
 void llg_slang_error_destroy(LlgSlangError* error);

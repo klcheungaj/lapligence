@@ -80,6 +80,21 @@ own preprocessor; merged shares one per library, in admission order, in Rust
 include preflight and in the wrapper alike. `Db::source_library` retains each
 instance's bound library (and each package's/unit's) for `%l`.
 
+Path-mode include directories are also definition search directories
+(`compile/definition_search.rs`). After given sources, library files and their
+includes are admitted, and only when an include directory holds candidates, the
+native parse-only metadata request names what the admitted units reference but
+none declares (instantiated definitions, imported or `::`-scoped
+packages/classes, interface port types). Every `.v`/`.sv` file directly inside
+each directory (non-recursive, not already admitted by canonical identity) is
+read with bounded handle-checked reads and scanned once, in one batch, without
+its own includes. A file declaring a missing name at its outermost level becomes
+a default-library unit (never an implicit top), its includes are admitted like a
+library source's, and its own missing names repeat the search. A missing name
+declared by several candidates is a startup error naming every file; one
+declared nowhere stays Slang's unknown-definition diagnostic. In-memory compiles
+never search.
+
 Edition checks use classified tokens and owned semantic edges shared by execution
 and navigation. The 2001 profile also gates keyword-free later grammar: type
 shapes (queue/dynamic/associative, multiple packed ranges), subroutine formals

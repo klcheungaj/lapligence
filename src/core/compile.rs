@@ -14,6 +14,7 @@ pub use crate::ffi::slang::{
     CompilationUnitMode, Diagnostic as SlangDiagnostic, DiagnosticProvider, DiagnosticSeverity,
     DiagnosticSubsystem, LanguageEdition, Snapshot, Source, SourceRange,
 };
+mod definition_search;
 mod editions;
 mod library_configs;
 mod library_mapping;
@@ -837,6 +838,26 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         if shared {
             merged_library_macros.insert(root.library.clone(), library_macros);
         }
+    }
+    // Include directories double as definition search directories for path
+    // sources: files there that declare missing definitions become library
+    // units (see `definition_search`).
+    if !opts.files.is_empty() && !include_dirs.is_empty() {
+        definition_search::admit_include_dir_definitions(
+            opts,
+            &include_dirs,
+            &library_include_dirs,
+            &mut definition_search::SearchState {
+                owned: &mut owned,
+                library_owned: &mut library_owned,
+                admitted_targets: &mut admitted_targets,
+                identities: &mut identities,
+                source_count: &mut source_count,
+                remaining: &mut remaining,
+                expansion_budget: &expansion_budget,
+                merged_library_macros: &mut merged_library_macros,
+            },
+        )?;
     }
     if owned.len().saturating_add(library_owned.len()) > effective_source_count_limit(opts.limits) {
         return Err(StartupError::new(

@@ -63,6 +63,7 @@ mod sim_group1_repairs;
 mod sim_h04_string_format;
 mod sim_hier;
 mod sim_imported_probes;
+mod sim_include_search;
 mod sim_inout;
 mod sim_instance_sharing;
 mod sim_interface;

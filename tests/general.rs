@@ -25,6 +25,7 @@ mod elab_resolve;
 mod emit_decoupling;
 mod generated_c_determinism;
 mod generated_c_frame_lint;
+mod include_dir_search;
 mod lint_config_cli;
 mod llg_config_cli;
 mod lsp_stdio;

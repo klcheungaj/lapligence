@@ -5716,6 +5716,216 @@ void streamCapture(CaptureOutput& output, const LlgSlangSink& sink) {
   checkSink(sink.end(sink.context));
 }
 
+// Definition names a compilation unit declares at its outermost level, the
+// scope whose definitions other units can instantiate, import or name.
+// Nested modules and classes inside other declarations are local.
+void unitDeclaredNames(const syntax::SyntaxNode& root,
+                       std::unordered_set<std::string_view>& names) {
+  if (root.kind != syntax::SyntaxKind::CompilationUnit)
+    return;
+  for (const syntax::MemberSyntax* member :
+       root.as<syntax::CompilationUnitSyntax>().members) {
+    parsing::Token name;
+    switch (member->kind) {
+      case syntax::SyntaxKind::ModuleDeclaration:
+      case syntax::SyntaxKind::InterfaceDeclaration:
+      case syntax::SyntaxKind::ProgramDeclaration:
+      case syntax::SyntaxKind::PackageDeclaration:
+        name = member->as<syntax::ModuleDeclarationSyntax>().header->name;
+        break;
+      case syntax::SyntaxKind::UdpDeclaration:
+        name = member->as<syntax::UdpDeclarationSyntax>().name;
+        break;
+      case syntax::SyntaxKind::CheckerDeclaration:
+        name = member->as<syntax::CheckerDeclarationSyntax>().name;
+        break;
+      case syntax::SyntaxKind::ClassDeclaration:
+        name = member->as<syntax::ClassDeclarationSyntax>().name;
+        break;
+      default:
+        continue;
+    }
+    if (!name.valueText().empty())
+      names.emplace(name.valueText());
+  }
+}
+
+// Report one parsed tree's declared and referenced definition names to the
+// sink under `sourceIndex`. Referenced names exclude every definition the
+// tree declares itself, including nested modules and classes (Slang's
+// ParserMetadata declared set), and the built-in `std` package.
+void reportTreeMetadata(const syntax::SyntaxTree& tree, uint64_t sourceIndex,
+                        const LlgSlangMetadataSink& sink) {
+  std::unordered_set<std::string_view> declared;
+  unitDeclaredNames(tree.root(), declared);
+  std::unordered_set<std::string_view> local = declared;
+  const parsing::ParserMetadata& metadata = tree.getMetadata();
+  metadata.visitDeclaredSymbols([&](std::string_view name) { local.emplace(name); });
+  std::vector<std::string_view> referenced;
+  std::unordered_set<std::string_view> seen;
+  metadata.visitReferencedSymbols([&](std::string_view name) {
+    if (!name.empty() && name != "std" && !local.contains(name) &&
+        seen.emplace(name).second)
+      referenced.push_back(name);
+  });
+  std::vector<std::string_view> declaredNames(declared.begin(), declared.end());
+  // Deterministic delivery order independent of hash iteration.
+  std::sort(declaredNames.begin(), declaredNames.end());
+  std::sort(referenced.begin(), referenced.end());
+  auto deliver = [&](uint32_t role, std::string_view name) {
+    checkSink(sink.name(sink.context, sourceIndex, role,
+                        LlgSlangString{reinterpret_cast<const uint8_t*>(name.data()),
+                                       static_cast<uint64_t>(name.size())}));
+  };
+  for (std::string_view name : declaredNames)
+    deliver(LLG_SLANG_METADATA_DECLARED, name);
+  for (std::string_view name : referenced)
+    deliver(LLG_SLANG_METADATA_REFERENCED, name);
+}
+
+// Parse-only metadata request: preprocess and parse each compilation-unit
+// buffer with the compile's edition and defines (cache-only include lookup,
+// diagnostics discarded) and stream its definition names. Nothing is
+// elaborated and no native state outlives the call.
+void metadataImpl(const LlgSlangMetadataRequest& request,
+                  const LlgSlangMetadataSink& sink) {
+  if (request.abi_version != LLG_SLANG_ABI_VERSION)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                        "unsupported Slang ABI version");
+  constexpr uint32_t knownFlags = LLG_SLANG_COMPILE_EDITION_VERILOG_2001 |
+                                  LLG_SLANG_COMPILE_EDITION_SYSTEMVERILOG_2009 |
+                                  LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS;
+  if ((request.flags & ~knownFlags) != 0)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                        "unknown metadata request flags");
+  const EditionPolicy edition = editionPolicy(request.flags);
+  if (request.source_count != 0 && request.sources == nullptr)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT, "sources has a null pointer");
+  if (request.define_count != 0 && request.defines == nullptr)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT, "defines has a null pointer");
+  if (request.include_dir_count != 0 && request.include_dirs == nullptr)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                        "include_dirs has a null pointer");
+  if (request.source_count > kHardMaxSources)
+    throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED, "source count limit exceeded");
+  if (request.define_count > kHardMaxDefines)
+    throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED, "define count limit exceeded");
+  if (request.include_dir_count > kHardMaxIncludeDirs)
+    throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                        "include directory count limit exceeded");
+  const uint64_t maxSourceBytes = effectiveLimit(
+      request.max_source_bytes, kDefaultMaxSourceBytes, kHardMaxSourceBytes);
+
+  uint64_t sourceBytes = 0;
+  uint64_t configBytes = 0;
+  std::vector<std::string> sourcePaths;
+  sourcePaths.reserve(static_cast<size_t>(request.source_count));
+  std::unordered_set<std::string> uniquePaths;
+  uniquePaths.reserve(static_cast<size_t>(request.source_count));
+  std::vector<std::string_view> sourceTexts;
+  sourceTexts.reserve(static_cast<size_t>(request.source_count));
+  for (uint64_t i = 0; i < request.source_count; i++) {
+    const auto& input = request.sources[i];
+    if ((input.flags & ~LLG_SLANG_SOURCE_COMPILATION_UNIT) != 0 || input.reserved != 0)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "unknown metadata source flags or nonzero reserved field");
+    const std::string_view name = checkedView(input.name, "source name");
+    const std::string_view text = checkedView(input.text, "source text");
+    if (name.empty() || name.find('\0') != std::string_view::npos)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "source names must be nonempty and contain no NUL bytes");
+    addChecked(sourceBytes, name.size(), maxSourceBytes, "source byte");
+    addChecked(sourceBytes, text.size(), maxSourceBytes, "source byte");
+    std::string normalized = std::filesystem::path(name).lexically_normal().generic_string();
+    if (!uniquePaths.emplace(normalized).second)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "source names must be unique after lexical normalization");
+    sourcePaths.push_back(std::move(normalized));
+    sourceTexts.push_back(text);
+  }
+
+  std::vector<std::string> predefines;
+  predefines.reserve(static_cast<size_t>(request.define_count));
+  for (uint64_t i = 0; i < request.define_count; i++) {
+    const auto& input = request.defines[i];
+    if (input.has_value > 1 || input.reserved != 0)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT, "invalid define flags");
+    const std::string_view name = checkedView(input.name, "define name");
+    const std::string_view value = checkedView(input.value, "define value");
+    if (name.empty() || name.find('\0') != std::string_view::npos ||
+        value.find('\0') != std::string_view::npos)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "define text is empty or contains a NUL byte");
+    addChecked(configBytes, name.size(), kHardMaxConfigBytes, "configuration byte");
+    addChecked(configBytes, value.size(), kHardMaxConfigBytes, "configuration byte");
+    predefines.emplace_back(name);
+    if (input.has_value) {
+      predefines.back().push_back('=');
+      predefines.back().append(value);
+    }
+  }
+  std::vector<std::filesystem::path> includeDirs;
+  includeDirs.reserve(static_cast<size_t>(request.include_dir_count));
+  for (uint64_t i = 0; i < request.include_dir_count; i++) {
+    const std::string_view name = checkedView(request.include_dirs[i], "include directory");
+    if (name.find('\0') != std::string_view::npos)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "include directories must contain no NUL bytes");
+    addChecked(configBytes, name.size(), kHardMaxConfigBytes, "configuration byte");
+    includeDirs.emplace_back(std::filesystem::path(name).lexically_normal());
+  }
+
+  SourceManager sourceManager;
+  sourceManager.setDisableProximatePaths(true);
+  sourceManager.setCacheOnlyReads(true);
+  std::vector<SourceBuffer> buffers;
+  buffers.reserve(static_cast<size_t>(request.source_count));
+  for (uint64_t i = 0; i < request.source_count; i++)
+    buffers.push_back(sourceManager.assignText(sourcePaths[static_cast<size_t>(i)],
+                                               sourceTexts[static_cast<size_t>(i)]));
+
+  parsing::PreprocessorOptions preprocessorOptions;
+  preprocessorOptions.languageVersion = edition.languageVersion;
+  preprocessorOptions.predefines = std::move(predefines);
+  preprocessorOptions.additionalIncludePaths = std::move(includeDirs);
+  preprocessorOptions.keywordMapping.reserve(sourcePaths.size());
+  for (const std::string& path : sourcePaths)
+    preprocessorOptions.keywordMapping.emplace_back(path, edition.keywordVersion);
+  parsing::LexerOptions lexerOptions;
+  lexerOptions.languageVersion = edition.languageVersion;
+  parsing::ParserOptions parserOptions;
+  parserOptions.languageVersion = edition.languageVersion;
+  Bag parseOptions;
+  parseOptions.set(std::move(preprocessorOptions));
+  parseOptions.set(std::move(lexerOptions));
+  parseOptions.set(std::move(parserOptions));
+
+  if ((request.flags & LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS) != 0) {
+    std::vector<SourceBuffer> unitBuffers;
+    uint64_t firstUnit = 0;
+    for (uint64_t i = 0; i < request.source_count; i++) {
+      if ((request.sources[i].flags & LLG_SLANG_SOURCE_COMPILATION_UNIT) == 0)
+        continue;
+      if (unitBuffers.empty())
+        firstUnit = i;
+      unitBuffers.push_back(buffers[static_cast<size_t>(i)]);
+    }
+    if (!unitBuffers.empty()) {
+      auto tree = syntax::SyntaxTree::fromBuffers(unitBuffers, sourceManager, parseOptions);
+      reportTreeMetadata(*tree, firstUnit, sink);
+    }
+    return;
+  }
+  for (uint64_t i = 0; i < request.source_count; i++) {
+    if ((request.sources[i].flags & LLG_SLANG_SOURCE_COMPILATION_UNIT) == 0)
+      continue;
+    // Each tree (and the names it borrows) is released before the next parse.
+    auto tree = syntax::SyntaxTree::fromBuffer(buffers[static_cast<size_t>(i)],
+                                               sourceManager, parseOptions);
+    reportTreeMetadata(*tree, i, sink);
+  }
+}
+
 } // namespace
 
 extern "C" uint32_t llg_slang_compile(const LlgSlangCompileRequest* request,
@@ -5742,6 +5952,40 @@ extern "C" uint32_t llg_slang_compile(const LlgSlangCompileRequest* request,
     // receiver allocated its copy between them; return the free pages
     // inside the heap before the caller's import allocates more.
     llg::wrapper::platform::releaseFreedHeapPages();
+    return LLG_SLANG_STATUS_OK;
+  }
+  catch (const SinkAborted& error) {
+    *out_error = makeError(LLG_SLANG_STATUS_SINK_ABORTED, error.what());
+    return LLG_SLANG_STATUS_SINK_ABORTED;
+  }
+  catch (const BridgeFailure& error) {
+    *out_error = makeError(error.status, error.what());
+    return error.status;
+  }
+  catch (const std::exception& error) {
+    *out_error = makeError(LLG_SLANG_STATUS_FRONTEND_ERROR, error.what());
+    return LLG_SLANG_STATUS_FRONTEND_ERROR;
+  }
+  catch (...) {
+    *out_error = makeError(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                           "unknown native frontend failure");
+    return LLG_SLANG_STATUS_INTERNAL_ERROR;
+  }
+}
+
+extern "C" uint32_t llg_slang_parse_metadata(const LlgSlangMetadataRequest* request,
+                                             const LlgSlangMetadataSink* sink,
+                                             LlgSlangError** out_error) {
+  if (out_error)
+    *out_error = nullptr;
+  if (!request || !sink || !sink->name || !out_error) {
+    if (out_error)
+      *out_error = makeError(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                             "request, sink callback and error output are required");
+    return LLG_SLANG_STATUS_INVALID_ARGUMENT;
+  }
+  try {
+    metadataImpl(*request, *sink);
     return LLG_SLANG_STATUS_OK;
   }
   catch (const SinkAborted& error) {
