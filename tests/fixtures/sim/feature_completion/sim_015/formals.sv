@@ -34,6 +34,7 @@ module tb;
   endfunction
 
   task remember(input process p);
+    #0;
     $display("static %s", p.status().name());
   endtask
 

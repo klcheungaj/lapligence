@@ -598,11 +598,17 @@ impl<'a> Codegen<'a> {
                     {
                         chandle_read.insert(*io, IrChandleExpr::Read(object));
                         chandle_write.insert(*io, ChandleTarget::Object(object));
+                        // A process formal's copy outlives the call in the
+                        // static object, so it holds a pinned identity.
+                        let value = if self.is_process_formal(*io) {
+                            IrChandleExpr::PinnedProcess(Box::new(
+                                crate::sim::ir::IrProcessExpr::FormalRead(idx),
+                            ))
+                        } else {
+                            IrChandleExpr::FormalRead(idx)
+                        };
                         static_input_copies.push(IrStmt::Object(Box::new(
-                            crate::sim::ir::IrObjectStmt::ChandleAssign(
-                                object,
-                                IrChandleExpr::FormalRead(idx),
-                            ),
+                            crate::sim::ir::IrObjectStmt::ChandleAssign(object, value),
                         )));
                         continue;
                     }
