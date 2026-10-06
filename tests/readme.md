@@ -810,9 +810,11 @@ scripts/prune-target.py --keep-days 0 # everything superseded, however recent
 ```
 
 A unit (one fingerprinted package/target-kind hash with its `deps/` and `build/`
-outputs, or an incremental session) is removed only when a newer unit of the same
-package and target kind exists in that profile and none of its files changed
-within the keep window, so the newest copy is always kept and configurations in
+outputs, or an incremental session) is removed only when none of its files changed
+within the keep window and either a newer unit of the same package and target kind
+exists in that profile, or it builds a workspace test, binary, example or benchmark
+that `cargo metadata` no longer lists (for example the former per-file test
+binaries). The newest copy of every live target is kept and configurations in
 active alternation (for example clippy `--all-features` and the test build) are
 not evicted. Cargo rebuilds anything it still needs. Checks:
 `python3 -m unittest scripts.test_prune_target`.

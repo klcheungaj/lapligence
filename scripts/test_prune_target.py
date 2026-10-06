@@ -47,8 +47,12 @@ class PruneTargetTests(unittest.TestCase):
         return paths
 
     def prune(self, *args):
-        with contextlib.redirect_stdout(io.StringIO()) as output:
-            status = prune_target.main(["--target-dir", str(self.target), *args])
+        with contextlib.redirect_stdout(io.StringIO()) as output, \
+                contextlib.redirect_stderr(io.StringIO()):
+            status = prune_target.main([
+                "--target-dir", str(self.target),
+                "--manifest-path", str(self.target / "missing" / "Cargo.toml"), *args,
+            ])
         self.assertEqual(status, 0)
         return output.getvalue()
 
@@ -108,6 +112,33 @@ class PruneTargetTests(unittest.TestCase):
                   ["deps/llg-{hash}"], age_days=0)
         self.prune()
         self.assertFalse(old[1].exists())
+
+    def test_units_of_removed_workspace_targets_are_orphans(self):
+        targets = {"llg": {("test", "general"), ("bin", "llg"), ("lib", "llg")}}
+        orphan = prune_target.is_orphan
+        self.assertTrue(orphan("llg", ("test-integration-test-sim_force",), targets))
+        self.assertFalse(orphan("llg", ("test-integration-test-general",), targets))
+        self.assertTrue(orphan("llg", ("bin-elab_check",), targets))
+        self.assertFalse(orphan("llg", ("test-bin-llg",), targets))
+        self.assertFalse(orphan("llg", ("lib-llg",), targets))
+        self.assertFalse(orphan("llg", ("run-build-script-build-script-build",), targets))
+        self.assertFalse(orphan("serde", ("lib-serde",), targets))
+        self.assertFalse(orphan("llg", ("test-integration-test-sim_force",), None))
+
+    def test_old_orphaned_units_are_removed_without_a_newer_copy(self):
+        targets = {"llg": {("test", "general")}}
+        old = self.unit("quick", "llg", "a" * 16, "test-integration-test-sim_force",
+                        ["deps/sim_force-{hash}"], age_days=3)
+        recent = self.unit("quick", "llg", "b" * 16, "test-integration-test-sim_wait",
+                           ["deps/sim_wait-{hash}"], age_days=0)
+        live = self.unit("quick", "llg", "c" * 16, "test-integration-test-general",
+                         ["deps/general-{hash}"], age_days=9)
+        original = prune_target.workspace_targets
+        prune_target.workspace_targets = lambda _manifest: targets
+        self.addCleanup(setattr, prune_target, "workspace_targets", original)
+        self.prune()
+        self.assertFalse(any(path.exists() for path in old))
+        self.assertTrue(all(path.exists() for path in recent + live))
 
 
 if __name__ == "__main__":
