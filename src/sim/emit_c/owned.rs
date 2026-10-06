@@ -975,7 +975,26 @@ impl<'a, 'm> Frame<'a, 'm> {
                 });
             }
         }
-        None
+        // The one-bit change marker of a string or handle object, which a
+        // whole-handle event control waits on (SIM-007).
+        let marker = name.strip_suffix("_llg_dep").is_some_and(|object| {
+            self.ctx.model.objects.iter().any(|candidate| {
+                candidate.c_name == object
+                    && matches!(
+                        candidate.ty,
+                        crate::sim::ir::IrObjectType::String
+                            | crate::sim::ir::IrObjectType::Chandle
+                    )
+            })
+        });
+        marker.then(|| Binding {
+            address: format!("&{name}"),
+            width: 1,
+            signed: false,
+            two_state: true,
+            shortreal: false,
+            automatic: false,
+        })
     }
     fn address(&mut self, address: &str) -> Result<Binding, String> {
         if let Some(binding) = self.sequence_addresses.get(address) {

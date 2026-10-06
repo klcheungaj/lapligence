@@ -64,6 +64,8 @@ typedef struct llg_nba {
         struct {
             void** target;
             void* value;
+            // Change marker of handle storage, or NULL.
+            sv4_t* dependency;
         } chandle;
         // Descriptor-backed array write: the whole array (`whole`) or the
         // payload's elements from the storage position held in `value`.

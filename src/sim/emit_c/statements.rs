@@ -381,8 +381,9 @@ fn render_stmt_scoped(
         IrStmt::DelayedChandleAssign { target, rhs, ticks } => {
             let delay = render_delay(ctx, ticks)?;
             format!(
-                "{{ llg_chandle_nba_after((void**)&{target}, {}, {delay}); }}\n",
-                super::objects::chandle(ctx, rhs)?
+                "{{ llg_chandle_nba_after((void**)&{target}, {}, {delay}, {}); }}\n",
+                super::objects::chandle(ctx, rhs)?,
+                super::objects::chandle_marker(ctx.model, target)
             )
         }
         IrStmt::DelayedAssign { lhs, rhs, ticks } => {

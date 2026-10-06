@@ -440,8 +440,8 @@ diagnostic rather than a dedicated one); `ref` formals of native record type; no
 to a static subroutine native record; fork-join_none capture of automatic
 native records; `f(...).member` selects on a native result; native outputs
 bound inside an expression (call them as a statement instead); record ports
-whose type has a class-handle member (handles publish no change marker, as
-for whole class-handle ports); and event controls on string members. Tagged unions with real, string, record or
+whose type has a built-in semaphore, mailbox or process member (those handles
+publish no change marker); and event controls on string members. Tagged unions with real, string, record or
 class-handle members execute only as module or static variables: in
 subroutine storage, arrays, ports, nonblocking writes and conditional
 operators they reject. String and real pattern variables bind in process

@@ -1490,17 +1490,28 @@ impl<'a> Codegen<'a> {
         } else {
             (actual, internal, parent_path)
         };
-        // A value link re-copies the record when a member changes; handle
-        // members publish no change marker, so a handle-only change would
-        // leave the destination stale (whole handle ports reject likewise).
-        if source.leaves.iter().any(|leaf| {
+        // A value link re-copies the record when a member changes, so every
+        // member needs a change marker: strings and class handles publish
+        // one (SIM-007). Chandles cannot cross ports (SV 6.14), and built-in
+        // semaphore, mailbox and process handles have no marker.
+        if let Some(leaf) = source.leaves.iter().find(|leaf| {
             leaf.object.is_some_and(|object| {
-                self.model.objects[self.reference_object(object)].ty != IrObjectType::String
+                match self.model.objects[self.reference_object(object)].ty {
+                    IrObjectType::String => false,
+                    IrObjectType::Chandle => !is_class_handle_descriptor(&leaf.member.descriptor),
+                    _ => true,
+                }
             })
         }) {
             return Err(format!(
-                "record port `{}` with a class handle member is not supported by value links in `{child_path}`",
-                self.display_name(port)
+                "record port `{}` with {} member `{}` is not supported by value links in `{child_path}`",
+                self.display_name(port),
+                if matches!(&leaf.member.descriptor.shape, TypeShape::Opaque { kind } if kind == "Chandle") {
+                    "a chandle"
+                } else {
+                    "a built-in class handle"
+                },
+                aggregate_path_suffix(&leaf.path)
             ));
         }
         let reads = self.aggregate_link_dependencies(&source);
@@ -1590,23 +1601,37 @@ impl<'a> Codegen<'a> {
         } else {
             (actual_object, child_object)
         };
-        if self.model.objects[target].ty != IrObjectType::String
-            || self.model.objects[source].ty != IrObjectType::String
-        {
-            return Err(format!(
-                "chandle port `{}` is not supported by value links in `{child_path}`",
-                self.display_name(port)
-            ));
-        }
+        let (target_ty, source_ty) = (self.model.objects[target].ty, self.model.objects[source].ty);
+        let assign = match (target_ty, source_ty) {
+            (IrObjectType::String, IrObjectType::String) => IrObjectStmt::StringAssign(
+                self.reference_object(target),
+                IrStringExpr::Read(self.reference_object(source)),
+            ),
+            // A class handle publishes a change marker (SIM-007); chandle
+            // ports are illegal (SV 6.14).
+            (IrObjectType::Chandle, IrObjectType::Chandle)
+                if self
+                    .query_descriptor(internal)
+                    .is_some_and(is_class_handle_descriptor) =>
+            {
+                IrObjectStmt::ChandleAssign(
+                    self.reference_object(target),
+                    IrChandleExpr::Read(self.reference_object(source)),
+                )
+            }
+            _ => {
+                return Err(format!(
+                    "chandle port `{}` is not supported by value links in `{child_path}`",
+                    self.display_name(port)
+                ))
+            }
+        };
         self.emit_link_process(
             parent_path,
             child_path,
             port,
             vec![IrDependency::Object(source)],
-            IrStmt::Object(Box::new(IrObjectStmt::StringAssign(
-                self.reference_object(target),
-                IrStringExpr::Read(self.reference_object(source)),
-            ))),
+            IrStmt::Object(Box::new(assign)),
         );
         Ok(true)
     }
@@ -2016,4 +2041,14 @@ fn unconnected_drive_expr(drive: UnconnectedDrive, width: u32) -> Result<IrExpr,
     let constant = IrConst::packed(bits, vec![], vec![], width, false, None)
         .map_err(|error| error.to_string())?;
     Ok(IrExpr::new(IrExprKind::Const(constant), width, false, None))
+}
+
+/// Whether `descriptor` is a user class handle, which publishes a change
+/// marker, rather than a chandle or a built-in semaphore, mailbox or process.
+fn is_class_handle_descriptor(descriptor: &TypeDescriptor) -> bool {
+    matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "Class")
+        && !matches!(
+            descriptor.name.as_str(),
+            "semaphore" | "mailbox" | "process"
+        )
 }

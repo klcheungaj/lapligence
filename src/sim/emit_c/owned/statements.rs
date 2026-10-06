@@ -207,8 +207,9 @@ impl Frame<'_, '_> {
                 }
                 let value = self.chandle(rhs)?;
                 let ticks = self.delay(ticks)?;
+                let marker = super::super::objects::chandle_marker(self.ctx.model, target);
                 self.line(format!(
-                    "llg_chandle_nba_after((void**)({}), {value}, {ticks});",
+                    "llg_chandle_nba_after((void**)({}), {value}, {ticks}, {marker});",
                     binding.address
                 ));
             }

@@ -944,7 +944,10 @@ fn render_model(
     super::owned::model::persistent_returns(model, &mut out);
     out.push_str(&super::owned::native_values::native_type_tables(model)?.0);
     for object in &model.objects {
-        if object.ty == crate::sim::ir::IrObjectType::String {
+        if matches!(
+            object.ty,
+            crate::sim::ir::IrObjectType::String | crate::sim::ir::IrObjectType::Chandle
+        ) {
             out.push_str(&format!(
                 "static sv4_t {}_llg_dep = SV4_EMPTY;\n",
                 object.c_name

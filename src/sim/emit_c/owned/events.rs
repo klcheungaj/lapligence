@@ -163,8 +163,8 @@ impl Frame<'_, '_> {
             ),
             IrDependency::Object(index) => {
                 let object = &self.ctx.model.objects[*index];
-                if object.ty != IrObjectType::String {
-                    return Err(pending("non-string object dependencies"));
+                if !matches!(object.ty, IrObjectType::String | IrObjectType::Chandle) {
+                    return Err(pending("semaphore or process object dependencies"));
                 }
                 format!("{{ .sig = &{}_llg_dep }}", object.c_name)
             }
