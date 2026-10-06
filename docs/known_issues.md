@@ -152,10 +152,11 @@ during rendering. Sampled stage RSS includes all live representations and
 allocator-retained pages; it is not an exclusive allocation total for that
 stage.
 
-`export byte limit exceeded` originates in llg's wrapper capture budget.
-Raising that budget admits larger exports but does not reduce their memory
-cost or bound total process RSS. A large design can still exhaust its export
-budget, a record-count ceiling or available process memory.
+The simulator's capture has no export byte budget: `Limits::simulator()`
+leaves export, source and value-bit bytes unlimited and record counts at their
+structural ceilings (32-bit record IDs), so only available process memory
+bounds a large design. Library and LSP callers keep their bounded
+`Limits::default()` budgets, where `export byte limit exceeded` can still occur.
 
 ### Intended direction
 
@@ -168,16 +169,15 @@ Preserve checked C ABI ownership and the single owned DB import; consumers
 must not traverse native ASTs independently. Verify exact values, source
 identity and diagnostics as well as generated-model behavior.
 
-Use `--max-export-mib` to choose the simulator export budget and
-`LLG_MEMORY_LIMIT_MB` for the optional process-wide memory guard. Budget for
-the measured frontend peak, rather than the exported byte count.
+Use `LLG_MEMORY_LIMIT_MB` for the optional process-wide memory guard.
+Budget for the measured frontend peak, rather than the exported byte count.
 
 ### Reproduce
 
 Run:
 
 ```sh
-/usr/bin/time -v llg --gen-only --max-export-mib 4096 \
+/usr/bin/time -v llg --gen-only \
     --top many_processes_registers_config \
     --define LLG_CORPUS_N=40000 --define LLG_CORPUS_EDGES=2 \
     --out-dir <dir> perf/corpus/many_processes.sv
@@ -187,8 +187,8 @@ Read maximum resident set size from `time`. Use 5k/10k/20k/40k processes, at
 least three runs per point, release binaries and medians. The Linux runner
 `python3 perf/scripts/frontend_scale.py <release-binary> <evidence-dir>` records
 GNU time, stage markers, sampled RSS and generated-C hashes, running points
-serially. See [profiling](../perf/README.md#frontend-stage-scaling). The export
-budget counts captured data, not the bytes of generated `model.c`.
+serially. See [profiling](../perf/README.md#frontend-stage-scaling). The logical
+export counts captured data, not the bytes of generated `model.c`.
 
 ## High generation memory use during C emission
 

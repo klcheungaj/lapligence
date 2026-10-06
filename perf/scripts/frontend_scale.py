@@ -30,7 +30,7 @@ for count in args.counts:
         out = root / f'{count}-{run}'
         out.mkdir(exist_ok=True)
         cmd = [str(args.time.resolve()), '-v', '-o', str(out / 'time.txt'), args.binary,
-               '--gen-only', '--max-export-mib', '4096', '--top', 'many_processes_registers_config',
+               '--gen-only', '--top', 'many_processes_registers_config',
                '--define', f'LLG_CORPUS_N={count}', '--define', 'LLG_CORPUS_EDGES=2',
                '--out-dir', str(out), 'perf/corpus/many_processes.sv']
         env = dict(os.environ, LLG_PROFILE_STAGES='1')
