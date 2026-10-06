@@ -81,3 +81,9 @@ fn recursive_tasks_with_string_qualifiers_take_the_typed_path() {
         include_str!("../fixtures/sim/feature_completion/sim_009/recursive_native_qualifiers.out");
     sim_cli::run_case_backend_parity(SUITE, "recursive_native_qualifiers", expected, &[], &[]);
 }
+
+#[test]
+fn level_waits_on_ref_formals_follow_bound_actuals() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_009/ref_level_waits.out");
+    sim_cli::run_case_backend_parity(SUITE, "ref_level_waits", expected, &[], &[]);
+}

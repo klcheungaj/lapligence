@@ -1109,7 +1109,11 @@ impl EmitCtx<'_, '_> {
                     ));
                 }
                 arg_ir.insert(*io, read_ir.clone());
-                arg_dependencies.insert(*io, self.cg.collect_read_signals(&self.path, b.expr)?);
+                // A fork-visible automatic actual has no signal; level waits
+                // in the body subscribe to its shared cell.
+                let mut dependencies = self.cg.collect_read_signals(&self.path, b.expr)?;
+                dependencies.extend(self.cg.shared_event_dependencies(b.expr));
+                arg_dependencies.insert(*io, dependencies);
                 arg_read.insert(
                     *io,
                     ArgMap {

@@ -18,3 +18,4 @@ cited clauses, not captured from llg.
 | `expanded_native_qualifiers` | §9.4.2. `level` rises at 1 and 3 and falls at 2. `gate("go")` resumes at 1 (`go 1`); `gate("stop")`'s qualifier is never true; `gate_null(none)` resumes on the fall at 2: `null 2`. |
 | `neg_string_event_control` | Legal by §9.4.2; `@` on a subroutine string has no change marker and is rejected explicitly. |
 | `recursive_native_qualifiers` | §§9.4.2, 13.5. `c` rises at 1, 3 and 5; each activation of `r` waits for the next rise, prints and recurses: `x 2 1`, `x 1 3`, `x 0 5`. |
+| `ref_level_waits` | §§9.4.3, 13.5.2, 9.3.2. The branch sets `loc` at 1, `flag` to 2 at 2 and 3 at 3, and `arr[1]` at 4; each `wait (r >= v)` resumes when its actual reaches `v`: `level 1 at 1` (expanded for the automatic), `level 2 at 2`, `level 3 at 3` (through `forward`), `level 4 at 4` (element). `own(0)` starts at 4; its branch sets the shared formal at 6: `own at 6`. |

@@ -714,6 +714,11 @@ impl<'a> Codegen<'a> {
                     self.note_static_reads(root, formals, shape);
                 }
             }
+            // A level wait re-evaluates its condition on the read signals'
+            // changes, which only a bound `ref` actual can name.
+            NodeKind::Stmt(StmtKind::Wait { cond }) => {
+                self.note_static_reads(*cond, formals, shape)
+            }
             NodeKind::FuncCall {
                 name,
                 is_task: true,
