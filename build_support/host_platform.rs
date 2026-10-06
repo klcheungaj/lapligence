@@ -128,8 +128,10 @@ pub fn named_staging_file_is_locked() -> bool {
 /// Why [`publish_anonymous_file`] did not link the file.
 pub enum PublishError {
     /// The destination name exists; it is never replaced.
+    #[cfg_attr(not(unix), allow(dead_code))]
     AlreadyExists,
     /// The link operation failed.
+    #[cfg_attr(not(unix), allow(dead_code))]
     Failed(io::Error),
     /// The host has no safe operation that links an open file.
     #[cfg_attr(unix, allow(dead_code))]

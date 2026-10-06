@@ -1,0 +1,30 @@
+name: Pin the MSVC linker for Cargo
+description: >-
+  After ilammy/msvc-dev-cmd, export CARGO_TARGET_<TRIPLE>_LINKER as the
+  absolute path of the MSVC link.exe on PATH. Steps that run under
+  `shell: bash` use Git Bash, whose /usr/bin precedes the MSVC directories and
+  provides coreutils `link.exe`; rustc would otherwise invoke that and fail
+  with "link: extra operand". Cargo also uses this setting for build scripts
+  because the host and target triples match on these runners.
+
+inputs:
+  target:
+    description: Rust target triple whose linker is pinned.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      env:
+        LLG_RUST_TARGET: ${{ inputs.target }}
+      run: |
+        $link = Get-Command link.exe -CommandType Application -All |
+          Where-Object { $_.Source -notmatch '\\Git\\' } |
+          Select-Object -First 1
+        if (-not $link) {
+          throw 'MSVC link.exe is not on PATH; run ilammy/msvc-dev-cmd first'
+        }
+        $name = 'CARGO_TARGET_' + ($env:LLG_RUST_TARGET.ToUpper() -replace '-', '_') + '_LINKER'
+        Write-Host "$name=$($link.Source)"
+        "$name=$($link.Source)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
