@@ -123,6 +123,14 @@ invalid key or of a nonexistent entry warn (SV 7.8.6) unless an explicit default
 is set; invalid-key writes warn and do nothing. Activation and class-property
 containers run without dependencies or notification.
 
+Recursive equality (SIM-007) `llg_value_equality` returns unequal, equal or
+unknown: a known packed mismatch dominates, strings compare bytes, handles
+identities and reals numerically; `llg_{dyn,queue}[_value]_equal` compare
+whole containers element-wise. `llg_dyn_value_copy_range` and
+`llg_dyn_value_merge` serve fixed-array views (slices, ambiguous
+conditionals). A descriptor-array NBA (`llg_dyn_value_nba`, `is_values`)
+owns a deep copy of its payload from issue to commit or cancellation.
+
 ## Scheduler, process and event invariants
 
 ### Frame-resident cells
