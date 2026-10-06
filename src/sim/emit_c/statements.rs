@@ -470,6 +470,9 @@ fn render_stmt_scoped(
                 None => format!("    llg_event_assign_null({});\n", target),
             }
         }
+        IrStmt::EventDeclare { name } => {
+            format!("    llg_event_t {name} = {{ .object = llg_event_object_new() }};\n")
+        }
         IrStmt::EventCapture { name, source } => {
             let source = event_ref_code(ctx, source)?;
             format!(
@@ -1326,7 +1329,7 @@ fn render_stmt_scoped(
                     IrCallArg::ChandleVal(value) => {
                         call_args.push(super::objects::chandle(ctx, value)?)
                     }
-                    IrCallArg::FixedValue(_) | IrCallArg::FixedArray(_) | IrCallArg::RealArray(_) | IrCallArg::RealArrayValues(_) | IrCallArg::NativeValue(_) | IrCallArg::Container(_) | IrCallArg::ContainerValues { .. } | IrCallArg::NativeLeaves { .. } | IrCallArg::NativeCall { .. } | IrCallArg::RealArrayCall { .. } | IrCallArg::EventVal(_) => {
+                    IrCallArg::FixedValue(_) | IrCallArg::FixedArray(_) | IrCallArg::RealArray(_) | IrCallArg::RealArrayValues(_) | IrCallArg::NativeValue(_) | IrCallArg::Container(_) | IrCallArg::ContainerValues { .. } | IrCallArg::NativeLeaves { .. } | IrCallArg::NativeCall { .. } | IrCallArg::RealArrayCall { .. } | IrCallArg::EventVal(_) | IrCallArg::EventAddr(_) => {
                         return Err("event argument requires the ownership emitter".to_string());
                     }
                     IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => {

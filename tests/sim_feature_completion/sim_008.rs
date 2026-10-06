@@ -62,3 +62,9 @@ fn input_system_functions_store_into_container_elements() {
         "real element of a queue, dynamic or associative array as an input destination in `tb` is not supported (SIM-008)",
     );
 }
+
+#[test]
+fn ref_formals_mix_with_inputs_and_recursive_forwarding() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_008/mixed_ref_formals.out");
+    sim_cli::run_case_backend_parity(SUITE, "mixed_ref_formals", expected, &[], &[]);
+}

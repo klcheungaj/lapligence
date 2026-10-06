@@ -167,16 +167,10 @@ impl Validator<'_> {
                 Ok(())
             }
             IrEventRef::Formal(index) => {
-                if formals
-                    .get(*index)
-                    .is_some_and(|formal| formal.event && !formal.is_address())
-                {
+                if formals.get(*index).is_some_and(|formal| formal.event) {
                     Ok(())
                 } else {
-                    self.fail(
-                        path,
-                        "event formal reference requires an input event formal",
-                    )
+                    self.fail(path, "event formal reference requires an event formal")
                 }
             }
         }

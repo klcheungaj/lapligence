@@ -180,7 +180,8 @@ impl CellEligibility {
                 }
                 IrCallArg::EventVal(
                     IrEventRef::Static(_) | IrEventRef::Null | IrEventRef::Formal(_),
-                ) => {}
+                )
+                | IrCallArg::EventAddr(IrEventRef::Static(_)) => {}
                 // The callee receives a fresh native value; no caller cell
                 // address crosses the call.
                 IrCallArg::NativeValue(_) => {}

@@ -196,7 +196,6 @@ impl Frame<'_, '_> {
         if model::inline_template(&function) {
             return Err("inline-expanded calls must be expanded before C emission".to_owned());
         }
-        model::check_function(&function)?;
         if self.read_only_callback {
             return Err(pending("native or impure calls in evaluator callbacks"));
         }
@@ -578,6 +577,7 @@ impl Frame<'_, '_> {
                         "(llg_event_t){{ {pointer} ? {pointer}->object : NULL }}"
                     ));
                 }
+                IrCallArg::EventAddr(event) => parameters.push(self.event_address(event)?),
                 IrCallArg::StringOutAddr(address)
                 | IrCallArg::StringRefAddr { addr: address, .. } => {
                     parameters.push(self.native_address(address, NativeKind::String)?.address);

@@ -266,6 +266,17 @@ impl Frame<'_, '_> {
                     .expect("event scope")
                     .insert(name.clone(), format!("&{local}"));
             }
+            IrStmt::EventDeclare { name } => {
+                let local = self.declare(
+                    "llg_event_t",
+                    "event_local",
+                    "{ llg_event_object_new() }".to_owned(),
+                );
+                self.event_bindings
+                    .last_mut()
+                    .expect("event scope")
+                    .insert(name.clone(), format!("&{local}"));
+            }
             IrStmt::DeclLocal {
                 name,
                 width,

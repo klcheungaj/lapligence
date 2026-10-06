@@ -60,6 +60,10 @@ static void* dynamic_event_new(void) {
     return &event->object;
 }
 
+llg_event_object_t* llg_event_object_new(void) {
+    return (llg_event_object_t*)dynamic_event_new();
+}
+
 static void free_dynamic_events(void) {
     while (g.dynamic_events) {
         llg_dynamic_event_t* event = g.dynamic_events;

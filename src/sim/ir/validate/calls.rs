@@ -136,12 +136,7 @@ impl Validator<'_> {
         let callee = self.model.funcs.get(function).ok_or_else(|| {
             IrValidationError::new(path, format!("function index {function} is out of bounds"))
         })?;
-        if (!allow_object_return && (callee.ret_chandle || callee.ret_string))
-            || callee
-                .formals
-                .iter()
-                .any(|formal| formal.event && formal.is_address())
-        {
+        if !allow_object_return && (callee.ret_chandle || callee.ret_string) {
             return self.fail(path, "non-integral subprogram requires its typed call path");
         }
         if args.len() != callee.formals.len() {
@@ -476,6 +471,18 @@ impl Validator<'_> {
                 IrCallArg::EventVal(event) => {
                     if !formal.event || formal.is_address() {
                         return self.fail(arg_path, "event value requires an input event formal");
+                    }
+                    self.validate_event_ref(event, formals, &arg_path)?;
+                }
+                IrCallArg::EventAddr(event) => {
+                    if !formal.event || !formal.is_address() {
+                        return self.fail(
+                            arg_path,
+                            "event address requires an output, inout or ref event formal",
+                        );
+                    }
+                    if matches!(event, IrEventRef::Null | IrEventRef::Handle(_)) {
+                        return self.fail(arg_path, "event address requires handle storage");
                     }
                     self.validate_event_ref(event, formals, &arg_path)?;
                 }

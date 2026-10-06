@@ -666,6 +666,42 @@ target of such a `->>`. Stores a `$monitor`/`$strobe` helper makes to its own
 static storage publish no event, so a hierarchical wait on that storage does
 not wake.
 
+## Event controls on subroutine storage in expanded tasks
+
+**Status:** open (SIM-009).
+
+### Symptom
+
+A task whose event control (`@(...)`) reads one of its own by-value formals,
+locals, or string or handle `ref` formals is expanded at each call site. These
+legal forms still reject: such a task that also has a native record or
+container formal ("needs caller-environment expansion, which is not
+supported"); a recursive such task; and `@(t)` on a string `ref` formal
+("cannot resolve signal reference"). `wait (cond)` over formals, event
+controls on module signals and on `ref` formals with module-signal actuals,
+and event formals of every direction take the typed call path.
+
+### Cause
+
+The typed body's evaluated event callbacks capture only process-block
+automatics; a shared task body has no private context for its own formals
+and locals, and no change marker for a string or handle `ref` actual, so
+call-site expansion supplies them. Expansion cannot carry native formals and
+cannot recurse.
+
+### Intended direction
+
+Capture the by-value formals and locals an event expression reads into the
+evaluator's private context in the typed body, as process blocks do, and bind
+string and handle `ref` actuals' change markers per specialization like
+packed `ref` formals.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_009/neg_event_local_native.sv`;
+`task automatic down(int n); logic l = 0; fork #1 l = 1; join_none @(posedge l); if (n > 0) down(n - 1); endtask`;
+`task automatic watch(ref string t); @(t); endtask`.
+
 ## Native stack frames grow with a statement's format-argument count
 
 **Status:** open; the host-stack bound is measured, not proven.

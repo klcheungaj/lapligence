@@ -94,6 +94,12 @@ pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
                 "llg_fixed_array_t*".to_owned(),
                 format!("{}{idx}", if form.is_ref() { "r" } else { "o" }),
             ));
+        } else if form.event && form.is_address() {
+            // The caller's handle storage (see `IrCallArg::EventAddr`).
+            params.push((
+                "llg_event_t*".to_owned(),
+                format!("{}{idx}", if form.is_ref() { "r" } else { "o" }),
+            ));
         } else if form.is_ref() {
             if form.string {
                 let qualifier = if form.is_const_ref() { "const " } else { "" };

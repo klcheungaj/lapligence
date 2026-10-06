@@ -447,14 +447,11 @@ impl<'a> Codegen<'a> {
                     self.func_names.get(c).cloned().ok_or_else(|| {
                         format!("function `{}` has no C name", self.node(*c).name)
                     })?;
-                // Only a by-value input event formal is a typed parameter; a
-                // class method's event formals stay with the receiver-aware
-                // expansion.
+                // Event formals of every direction are typed parameters
+                // (`IrCallArg::EventVal`/`EventAddr`); a class method's event
+                // formals stay with the receiver-aware expansion.
                 let inline_expanded = dpi.is_none()
                     && ((is_task_f && self.subroutine_requires_inline(*c, inst))
-                        || formals_ir
-                            .iter()
-                            .any(|formal| formal.event && formal.is_address())
                         || (self.class_nodes.contains_key(&inst)
                             && formals_ir.iter().any(|formal| formal.event)));
                 // Register the model entry (call-site lowering and the C

@@ -3,10 +3,51 @@
 use super::*;
 
 impl EmitCtx<'_, '_> {
+    /// A named event declared in a subroutine body. An automatic event gets
+    /// a fresh synchronization object at each declaration entry (SV 6.17,
+    /// 6.21); a static one is one object per declaration and instance.
+    fn lower_subroutine_event(&mut self, declaration: NodeId) -> Result<Vec<IrStmt>, String> {
+        let name = self.cg.node(declaration).name.clone();
+        if self.cg.db.event_array_meta(declaration).is_some()
+            || self.cg.db.var_initializer(declaration).is_some()
+        {
+            return Err(format!(
+                "subroutine event `{name}` in `{}` with unpacked dimensions or an initializer is not supported",
+                self.path
+            ));
+        }
+        match self.cg.db.variable_lifetime(declaration) {
+            VariableLifetime::Automatic => {
+                let handle = format!("_llg_event_{}", declaration.index());
+                self.cg
+                    .local_event_handles
+                    .insert(declaration, handle.clone());
+                Ok(vec![IrStmt::EventDeclare { name: handle }])
+            }
+            VariableLifetime::Static => {
+                if !self.cg.event_globals.contains_key(&declaration) {
+                    let scope = self.cg.block_storage_scope(&self.path, declaration);
+                    let info = self
+                        .cg
+                        .new_event_info(self.cg.event_global_name(&scope, &name));
+                    self.cg.event_globals.insert(declaration, info);
+                }
+                Ok(Vec::new())
+            }
+            VariableLifetime::Unavailable => Err(format!(
+                "resolved lifetime is unavailable for subroutine event `{name}` in `{}`",
+                self.path
+            )),
+        }
+    }
+
     pub(super) fn lower_variable_decl(
         &mut self,
         declaration: NodeId,
     ) -> Result<Vec<IrStmt>, String> {
+        if self.func.is_some() && matches!(self.cg.kind(declaration), NodeKind::NamedEvent) {
+            return self.lower_subroutine_event(declaration);
+        }
         if self.func.is_some() && self.cg.record_declaration(declaration) {
             return self.cg.lower_record_local(&self.path, declaration);
         }
@@ -22,6 +63,12 @@ impl EmitCtx<'_, '_> {
                 .lower_block_native_declaration(&self.path, declaration)?
             {
                 return Ok(statements);
+            }
+            // Block events own model storage and have no value to set.
+            if matches!(self.cg.kind(declaration), NodeKind::NamedEvent)
+                && self.cg.event_globals.contains_key(&declaration)
+            {
+                return Ok(Vec::new());
             }
         }
         if self.func.is_none()

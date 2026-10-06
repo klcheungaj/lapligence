@@ -1244,10 +1244,15 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Hierarchical calls and special formals** — Resolved module/interface/
   package/parent callees retain their owning instance, including fixed aggregate
   formals/results and per-instance static state. Input event formals are typed
-  by-value event-handle parameters; a `ref` formal read by an event control
-  binds a whole module-signal actual per specialized task copy; output/inout/ref
-  event formals, event controls reading other subroutine storage and
-  class-method event formals use inline task paths; event-formal virtual dispatch and process-handle formal ABI remain unsupported. Unresolved environments and broader
+  by-value event-handle parameters and output/inout/ref event formals typed
+  handle addresses (an output or inout assigns its handle back at return, a
+  `ref` rebinds the caller's handle at once), alongside native formals
+  ([sim_009](../tests/fixtures/sim/feature_completion/sim_009/readme.md)).
+  Events declared in procedural blocks and subroutine bodies are their own
+  objects, a new one per automatic activation. A `ref` formal read by an
+  event control binds a whole module-signal actual per specialized task copy;
+  event controls reading other subroutine storage and class-method event
+  formals use inline task paths; event-formal virtual dispatch and process-handle formal ABI remain unsupported. Unresolved environments and broader
   timing/native/aggregate combinations reject. V §12.4 **[1995]**.
 - 🟨 **Read-only helper calls** — Event, continuous, force and other read-only
   evaluators admit bounded numeric value/const-ref helpers with private locals,

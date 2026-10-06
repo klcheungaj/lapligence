@@ -381,6 +381,12 @@ pub enum IrStmt {
         name: String,
         source: IrEventRef,
     },
+    /// Declare an automatic named event: activation-owned handle storage
+    /// bound to a fresh synchronization object at each declaration entry,
+    /// referenced as [`IrEventRef::Captured`] by `name`.
+    EventDeclare {
+        name: String,
+    },
     /// Activate or replace one procedural continuous-assignment binding and
     /// immediately drive its target.
     PcaAssign {

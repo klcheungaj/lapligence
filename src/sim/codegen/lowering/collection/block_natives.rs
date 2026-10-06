@@ -93,6 +93,38 @@ impl Codegen<'_> {
         Ok(())
     }
 
+    /// A named event declared in a procedural block: one synchronization
+    /// object per declaration and instance, like a module-scope event. An
+    /// event holds no value, so automatic declarations need no reset at
+    /// entry; two live activations would share one object and reject.
+    pub(super) fn collect_block_event(
+        &mut self,
+        path: &str,
+        declaration: NodeId,
+        statement: NodeId,
+    ) -> Result<(), String> {
+        if self.event_globals.contains_key(&declaration) {
+            return Ok(());
+        }
+        let name = self.node(declaration).name.clone();
+        if self.db.var_initializer(declaration).is_some() {
+            return Err(format!(
+                "procedural-block event `{name}` in `{path}` with an initializer is not supported"
+            ));
+        }
+        if self.db.variable_lifetime(declaration) == VariableLifetime::Automatic
+            && self.concurrent_block_activation(statement, declaration)
+        {
+            return Err(format!(
+                "automatic event `{name}` in `{path}` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported"
+            ));
+        }
+        let scope = self.block_storage_scope(path, declaration);
+        let info = self.new_event_info(self.event_global_name(&scope, &name));
+        self.event_globals.insert(declaration, info);
+        Ok(())
+    }
+
     pub(in super::super) fn is_block_native(&self, declaration: NodeId) -> bool {
         self.block_natives.contains_key(&declaration)
     }

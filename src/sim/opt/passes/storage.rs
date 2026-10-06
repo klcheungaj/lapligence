@@ -848,6 +848,7 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
             | IrCallArg::NativeValue(_)
             | IrCallArg::Container(_)
             | IrCallArg::EventVal(_)
+            | IrCallArg::EventAddr(_)
             | IrCallArg::ChandleAddr(_)
             | IrCallArg::ChandleRefAddr(_) => {}
         }
@@ -1354,6 +1355,7 @@ fn collect_call_rw_readonly(function: usize, args: &[IrCallArg], model: &IrModel
             | IrCallArg::NativeValue(_)
             | IrCallArg::Container(_)
             | IrCallArg::EventVal(_)
+            | IrCallArg::EventAddr(_)
             | IrCallArg::ChandleAddr(_)
             | IrCallArg::ChandleRefAddr(_) => {}
         }
