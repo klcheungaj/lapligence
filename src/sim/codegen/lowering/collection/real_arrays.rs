@@ -120,7 +120,9 @@ impl Codegen<'_> {
             NodeKind::Array { .. } | NodeKind::Var { .. }
         ) && self.real_array_shape(node).is_some()
         {
-            output.push(node);
+            if self.is_body_local(node) {
+                output.push(node);
+            }
             return;
         }
         for child in &self.node(node).children {

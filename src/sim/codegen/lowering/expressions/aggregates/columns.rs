@@ -1717,7 +1717,11 @@ impl Codegen<'_> {
                     value: self.native_leaf_value(actual)?,
                 });
             }
-            arguments.push(IrCallArg::NativeLeaves { ty, leaves });
+            arguments.push(IrCallArg::NativeLeaves {
+                ty,
+                leaves,
+                containers: Vec::new(),
+            });
             return Ok(arguments);
         }
         let Some((before, after)) = prelude else {
@@ -1733,6 +1737,7 @@ impl Codegen<'_> {
                 c_name: format!("S_llg_native_{temporary}"),
                 ty,
                 activation: true,
+                companions: Vec::new(),
             });
         before.push(IrStmt::NativeValueDeclare(temporary));
         let inout = matches!(

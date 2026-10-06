@@ -75,6 +75,35 @@ impl Frame<'_, '_> {
         format!("(&{root}->value)")
     }
 
+    /// Declare fresh empty companion containers of activation value
+    /// `index` (SIM-007) in the current lexical value scope.
+    pub(super) fn declare_native_companions(&mut self, index: usize) -> Result<(), String> {
+        for container in self.ctx.model.native_values[index].companions.clone() {
+            if self.ctx.model.containers[container].activation {
+                let storage = self.new_container(container)?;
+                self.containers.insert(container, storage);
+            }
+        }
+        Ok(())
+    }
+
+    /// Copy every companion container of native value `src` into `dst`'s.
+    pub(super) fn copy_native_companions(&mut self, dst: usize, src: usize) -> Result<(), String> {
+        let pairs = self.ctx.model.native_values[dst]
+            .companions
+            .iter()
+            .copied()
+            .zip(self.ctx.model.native_values[src].companions.iter().copied())
+            .collect::<Vec<_>>();
+        for (target, source) in pairs {
+            let copy = super::containers::copy_function(&self.ctx.model.containers[target]);
+            let target = self.container_name(target)?;
+            let source = self.container_name(source)?;
+            self.line(format!("{copy}(&{target}, &{source});"));
+        }
+        Ok(())
+    }
+
     pub(super) fn native_value_address(&self, index: usize) -> Result<String, String> {
         let value = self
             .ctx

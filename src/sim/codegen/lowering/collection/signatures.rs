@@ -78,6 +78,7 @@ impl<'a> Codegen<'a> {
                                     mode,
                                     fixed_array: self.fixed_formal_array(*io),
                                     native_value: self.native_formal_storage(inst, *io),
+                                    native_companions: Vec::new(),
                                     real_array: self.real_formal_array(*io),
                                     container: self.container_formal_storage(inst, *io),
                                     fixed_shape: if self.fixed_formal_array(*io).is_some()
@@ -231,6 +232,14 @@ impl<'a> Codegen<'a> {
                     formal.width = 0;
                     formal.native_value = Some(value);
                     formals_ir.push(formal);
+                }
+                // Queue, dynamic and associative record members travel as
+                // companion containers of their native value (SIM-007).
+                for formal in &mut formals_ir {
+                    if let Some(value) = formal.native_value {
+                        formal.native_companions =
+                            self.model.native_values[value].companions.clone();
+                    }
                 }
                 let has_wait = *is_task && dpi.is_none() && self.task_has_wait(*c, inst);
                 if !automatic && dpi.is_none() {

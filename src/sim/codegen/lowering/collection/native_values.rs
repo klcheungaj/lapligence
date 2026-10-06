@@ -48,22 +48,31 @@ enum LeafValue {
     Real(IrExpr),
     String(IrStringExpr),
     Chandle(IrChandleExpr),
+    /// A queue, dynamic or associative member's own storage (SIM-007),
+    /// read in place: transfers copy it after every scalar leaf is captured.
+    Container(usize),
 }
 
+/// Diagnostic for a container member where only scalar leaves can travel.
+const CONTAINER_LEAF_UNSUPPORTED: &str =
+    "a record with a queue, dynamic or associative member is not supported in this context";
+
 impl LeafValue {
-    fn into_leaf_expr(self) -> IrNativeLeafExpr {
-        match self {
+    fn into_leaf_expr(self) -> Result<IrNativeLeafExpr, String> {
+        Ok(match self {
             LeafValue::Packed(value) => IrNativeLeafExpr::Packed(value),
             LeafValue::Real(value) => IrNativeLeafExpr::Real(value),
             LeafValue::String(value) => IrNativeLeafExpr::String(value),
             LeafValue::Chandle(value) => IrNativeLeafExpr::Chandle(value),
-        }
+            LeafValue::Container(_) => return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
+        })
     }
 }
 
 /// Evaluate `value` once into the local `name` and return its read.
 fn capture_leaf(value: LeafValue, name: String, captures: &mut Vec<IrStmt>) -> LeafValue {
     match value {
+        LeafValue::Container(container) => LeafValue::Container(container),
         LeafValue::String(value) => {
             captures.push(IrStmt::DeclString {
                 name: name.clone(),
@@ -120,13 +129,21 @@ pub(super) fn leaf_ty(element: &IrContainerElement) -> Result<IrClassFieldType, 
     }
 }
 
+/// Scalar leaves and container members of one native layout.
+#[derive(Default)]
+pub(super) struct NativeLeaves {
+    pub(super) scalars: Vec<NativeLeaf>,
+    pub(super) containers: Vec<NativeContainerLeaf>,
+}
+
 fn collect_native_leaves(
     descriptor: &TypeDescriptor,
     element: &IrContainerElement,
     path: &mut Vec<AggregatePathPart>,
     items: &mut Vec<u32>,
-    leaves: &mut Vec<NativeLeaf>,
+    output: &mut NativeLeaves,
 ) -> Result<(), String> {
+    let leaves = &mut output.scalars;
     match (element, &descriptor.shape) {
         (IrContainerElement::Aggregate { members, .. }, TypeShape::Aggregate(layout)) => {
             if members.len() != layout.members.len() {
@@ -141,7 +158,7 @@ fn collect_native_leaves(
                 }
                 path.push(AggregatePathPart::Member(member.name.clone()));
                 items.push(u32::try_from(index).map_err(|_| "native record is too wide")?);
-                collect_native_leaves(&member.descriptor, &item.element, path, items, leaves)?;
+                collect_native_leaves(&member.descriptor, &item.element, path, items, output)?;
                 items.pop();
                 path.pop();
             }
@@ -181,10 +198,32 @@ fn collect_native_leaves(
                 let depth = path.len();
                 path.extend(indices.into_iter().map(AggregatePathPart::Index));
                 items.push(u32::try_from(flat).map_err(|_| "native array is too large")?);
-                collect_native_leaves(item_descriptor, item, path, items, leaves)?;
+                collect_native_leaves(item_descriptor, item, path, items, output)?;
                 items.pop();
                 path.truncate(depth);
             }
+            Ok(())
+        }
+        (
+            IrContainerElement::Container { .. },
+            TypeShape::Container {
+                element: item,
+                array,
+                ..
+            },
+        ) => {
+            let name = path
+                .iter()
+                .map(|part| match part {
+                    AggregatePathPart::Member(name) => format!(".{name}"),
+                    AggregatePathPart::Index(index) => format!("[{index}]"),
+                })
+                .collect::<String>();
+            output.containers.push(NativeContainerLeaf {
+                path: path.clone(),
+                element: lower_container_element(item)?,
+                kind: super::aggregates::ir_container_kind(array, &name, &descriptor.name)?,
+            });
             Ok(())
         }
         (leaf, _) => {
@@ -267,7 +306,7 @@ impl Codegen<'_> {
             .query_descriptor(node)
             .cloned()
             .ok_or("native declaration has no type descriptor")?;
-        let mut leaves = Vec::new();
+        let mut leaves = NativeLeaves::default();
         collect_native_leaves(
             &descriptor,
             &element,
@@ -291,7 +330,8 @@ impl Codegen<'_> {
         let layout = NativeLayout {
             ty,
             descriptor,
-            leaves,
+            leaves: leaves.scalars,
+            containers: leaves.containers,
         };
         self.native_layouts.insert(node, layout.clone());
         Ok(Some(layout))
@@ -311,14 +351,55 @@ impl Codegen<'_> {
         let Some(layout) = self.native_layout(node)? else {
             return Ok(None);
         };
+        let companions = self.native_companions(&layout, automatic);
         let index = self.model.native_values.len();
         self.model.native_values.push(IrNativeValue {
             c_name: format!("S_llg_native_{index}"),
             ty: layout.ty,
             activation: automatic,
+            companions,
         });
         self.native_storage.insert((inst, node), index);
         Ok(Some(index))
+    }
+
+    /// One companion container per container member of `layout`, with the
+    /// value's lifetime: activation storage, or model storage for a static
+    /// subroutine value.
+    fn native_companions(&mut self, layout: &NativeLayout, activation: bool) -> Vec<usize> {
+        layout
+            .containers
+            .iter()
+            .map(|leaf| {
+                let ir = self.model.containers.len();
+                self.model.containers.push(crate::sim::ir::IrContainer {
+                    c_name: format!("S_llg_container_{ir}"),
+                    element: leaf.element.clone(),
+                    kind: leaf.kind.clone(),
+                    initial_size: None,
+                    activation,
+                    class_field: None,
+                });
+                ir
+            })
+            .collect()
+    }
+
+    /// The companion container of member `path` of native value `value`.
+    pub(in super::super) fn native_companion(
+        &self,
+        value: usize,
+        path: &[AggregatePathPart],
+    ) -> Option<usize> {
+        let layout = self.native_layout_of_value(value).ok()?;
+        let position = layout
+            .containers
+            .iter()
+            .position(|leaf| leaf.path == path)?;
+        self.model.native_values[value]
+            .companions
+            .get(position)
+            .copied()
     }
 
     /// A fresh lexical value of the same type as `node`, for caller-side
@@ -327,11 +408,13 @@ impl Codegen<'_> {
         let layout = self
             .native_layout(node)?
             .ok_or("native temporary requires a native record type")?;
+        let companions = self.native_companions(&layout, true);
         let index = self.model.native_values.len();
         self.model.native_values.push(IrNativeValue {
             c_name: format!("S_llg_native_{index}"),
             ty: layout.ty,
             activation: true,
+            companions,
         });
         self.native_value_layouts.insert(index, node);
         Ok(index)
@@ -402,6 +485,9 @@ impl Codegen<'_> {
     fn native_body_locals(&self, node: NodeId, output: &mut Vec<NodeId>) {
         if matches!(self.kind(node), NodeKind::Var { .. }) && self.native_value_type(node).is_some()
         {
+            if !self.is_body_local(node) {
+                return;
+            }
             output.push(node);
             return;
         }
@@ -529,6 +615,10 @@ impl Codegen<'_> {
                 let Some((value, mut path)) = rooted else {
                     return Ok(None);
                 };
+                // An element of a container member selects the container.
+                if self.native_companion(value, &path).is_some() {
+                    return Ok(None);
+                }
                 for index in indices {
                     let index = self
                         .eval_bound_i128(*index)
@@ -797,10 +887,10 @@ impl Codegen<'_> {
             let layout = self.native_layout_of_value(value)?;
             // Only selections above the leaves are record values; a packed
             // struct or packed array member is one scalar leaf.
-            if !layout
-                .leaves
-                .iter()
-                .any(|leaf| leaf.path.len() > prefix.len() && leaf.path.starts_with(&prefix))
+            let below =
+                |path: &[AggregatePathPart]| path.len() > prefix.len() && path.starts_with(&prefix);
+            if !layout.leaves.iter().any(|leaf| below(&leaf.path))
+                && !layout.containers.iter().any(|leaf| below(&leaf.path))
             {
                 return Ok(None);
             }
@@ -819,36 +909,68 @@ impl Codegen<'_> {
         endpoint: &NativeEndpoint,
     ) -> Result<Vec<(Vec<AggregatePathPart>, NativeEndpointLeaf)>, String> {
         match endpoint {
-            NativeEndpoint::Value { value, prefix } => Ok(self
-                .native_layout_of_value(*value)?
-                .leaves
-                .iter()
-                .filter(|leaf| leaf.path.starts_with(prefix))
-                .map(|leaf| {
-                    (
-                        leaf.path[prefix.len()..].to_vec(),
-                        NativeEndpointLeaf::Value(*value, leaf.clone()),
-                    )
-                })
-                .collect()),
-            NativeEndpoint::Module(selection) => Ok(selection
-                .storage
-                .leaves
-                .iter()
-                .filter(|leaf| leaf.path.starts_with(&selection.prefix))
-                .map(|leaf| {
-                    (
-                        leaf.path[selection.prefix.len()..].to_vec(),
-                        NativeEndpointLeaf::Module(Box::new(leaf.clone())),
-                    )
-                })
-                .collect()),
+            // Scalar leaves, then container members, each in declaration
+            // order, so both representations pair leaves alike.
+            NativeEndpoint::Value { value, prefix } => {
+                let layout = self.native_layout_of_value(*value)?;
+                let mut leaves = layout
+                    .leaves
+                    .iter()
+                    .filter(|leaf| leaf.path.starts_with(prefix))
+                    .map(|leaf| {
+                        (
+                            leaf.path[prefix.len()..].to_vec(),
+                            NativeEndpointLeaf::Value(*value, leaf.clone()),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                for (leaf, companion) in layout
+                    .containers
+                    .iter()
+                    .zip(&self.model.native_values[*value].companions)
+                {
+                    if leaf.path.starts_with(prefix) {
+                        leaves.push((
+                            leaf.path[prefix.len()..].to_vec(),
+                            NativeEndpointLeaf::Container(*companion),
+                        ));
+                    }
+                }
+                Ok(leaves)
+            }
+            NativeEndpoint::Module(selection) => {
+                let selected = selection
+                    .storage
+                    .leaves
+                    .iter()
+                    .filter(|leaf| leaf.path.starts_with(&selection.prefix));
+                let (containers, scalars): (Vec<_>, Vec<_>) =
+                    selected.partition(|leaf| leaf.container.is_some());
+                Ok(scalars
+                    .into_iter()
+                    .map(|leaf| {
+                        (
+                            leaf.path[selection.prefix.len()..].to_vec(),
+                            NativeEndpointLeaf::Module(Box::new(leaf.clone())),
+                        )
+                    })
+                    .chain(containers.into_iter().filter_map(|leaf| {
+                        leaf.container.as_ref().map(|container| {
+                            (
+                                leaf.path[selection.prefix.len()..].to_vec(),
+                                NativeEndpointLeaf::Container(container.ir),
+                            )
+                        })
+                    }))
+                    .collect())
+            }
         }
     }
 
     fn endpoint_leaf_read(&mut self, leaf: &NativeEndpointLeaf) -> Result<LeafValue, String> {
         match leaf {
             NativeEndpointLeaf::Value(value, leaf) => Ok(self.native_leaf_read(*value, leaf)),
+            NativeEndpointLeaf::Container(container) => Ok(LeafValue::Container(*container)),
             NativeEndpointLeaf::Module(leaf) => {
                 if let Some(object) = leaf.object {
                     let object = self.reference_object(object);
@@ -883,6 +1005,27 @@ impl Codegen<'_> {
         value: LeafValue,
         nba: bool,
     ) -> Result<IrStmt, String> {
+        if let LeafValue::Container(source) = value {
+            let NativeEndpointLeaf::Container(target) = leaf else {
+                return Err(format!(
+                    "native record transfer pairs a container member with a scalar leaf in `{path}`"
+                ));
+            };
+            if nba {
+                return Err(format!(
+                    "nonblocking assignment of a record with a queue, dynamic or associative member is not supported in `{path}`"
+                ));
+            }
+            return Ok(IrStmt::Container(Box::new(IrContainerStmt::Copy {
+                dst: *target,
+                src: source,
+            })));
+        }
+        if matches!(leaf, NativeEndpointLeaf::Container(_)) {
+            return Err(format!(
+                "native record transfer pairs a container member with a scalar leaf in `{path}`"
+            ));
+        }
         if nba {
             let NativeEndpointLeaf::Module(leaf) = leaf else {
                 return Err(format!(
@@ -890,6 +1033,7 @@ impl Codegen<'_> {
                 ));
             };
             return match value {
+                LeafValue::Container(_) => Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
                 LeafValue::String(value) => self.object_leaf_nba(
                     path,
                     self.reference_object(leaf.object.ok_or("string leaf has no storage")?),
@@ -911,6 +1055,9 @@ impl Codegen<'_> {
             };
         }
         match (leaf, value) {
+            (NativeEndpointLeaf::Container(_), _) | (_, LeafValue::Container(_)) => {
+                Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
+            }
             (NativeEndpointLeaf::Value(native, leaf), LeafValue::String(value)) => {
                 let name = self.native_leaf_symbol(*native, leaf);
                 Ok(IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
@@ -1061,9 +1208,27 @@ impl Codegen<'_> {
         let mut values = Vec::new();
         self.aggregate_descriptor_pattern_values(path, rhs, descriptor, prefix, &mut values)?;
         let leaves = self.native_layout_of_value(value)?.leaves.clone();
+        // Container members are written in place, after every scalar source
+        // is captured; a pattern must not read another container member it
+        // also writes (SV 10.9 reads every source before writing).
+        let written: Vec<usize> = values
+            .iter()
+            .filter_map(|(member_path, _)| self.native_companion(value, member_path))
+            .collect();
         let mut captures = Vec::new();
         let mut writes = Vec::new();
         for (position, (member_path, node)) in values.into_iter().enumerate() {
+            if let Some(container) = self.native_companion(value, &member_path) {
+                if let Some(source) = self.container_of(node) {
+                    if source.ir != container && written.contains(&source.ir) {
+                        return Err(format!(
+                            "assignment pattern in `{path}` reads container member storage it also writes"
+                        ));
+                    }
+                }
+                writes.push(self.lower_container_into(path, node, container, node)?);
+                continue;
+            }
             let Some(leaf) = leaves.iter().find(|leaf| leaf.path == member_path) else {
                 // A whole nested record or subarray value.
                 let (source, _) = self.native_endpoint(node)?.ok_or_else(|| {
@@ -1085,6 +1250,7 @@ impl Codegen<'_> {
                 self.native_copy_sequence
             );
             let captured = match source {
+                LeafValue::Container(_) => return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
                 LeafValue::String(source) => {
                     captures.push(IrStmt::DeclString {
                         name: name.clone(),
@@ -1387,10 +1553,11 @@ impl Codegen<'_> {
             if let Some(argument) = self.native_call_operand(path, &layout, actual)? {
                 return Ok(argument);
             }
-            if let Some(leaves) = self.native_input_leaves(path, &layout, actual)? {
+            if let Some((leaves, containers)) = self.native_input_leaves(path, &layout, actual)? {
                 return Ok(IrCallArg::NativeLeaves {
                     ty: layout.ty,
                     leaves,
+                    containers,
                 });
             }
         }
@@ -1435,10 +1602,15 @@ impl Codegen<'_> {
         path: &str,
         layout: &NativeLayout,
         actual: NodeId,
-    ) -> Result<Option<Vec<IrNativeLeafValue>>, String> {
+    ) -> Result<Option<(Vec<IrNativeLeafValue>, Vec<usize>)>, String> {
         let mut leaves = Vec::new();
+        let mut containers = Vec::new();
         let pattern = self.unwrap_assignment_pattern_cast(actual);
         if self.assignment_pattern_operands(path, pattern)?.is_some() {
+            // Pattern container members are built in a statement temporary.
+            if !layout.containers.is_empty() {
+                return Ok(None);
+            }
             let mut values = Vec::new();
             self.aggregate_descriptor_pattern_values(
                 path,
@@ -1452,16 +1624,23 @@ impl Codegen<'_> {
                     let value = self.native_leaf_source(path, leaf.ty, node)?;
                     leaves.push(IrNativeLeafValue {
                         items: leaf.items.clone(),
-                        value: value.into_leaf_expr(),
+                        value: value.into_leaf_expr()?,
                     });
                     continue;
                 }
                 let Some((source, _)) = self.native_endpoint(self.p30_unwrap_cast(node))? else {
                     return Ok(None);
                 };
-                self.native_endpoint_leaves(path, layout, &member_path, &source, &mut leaves)?;
+                self.native_endpoint_leaves(
+                    path,
+                    layout,
+                    &member_path,
+                    &source,
+                    &mut leaves,
+                    &mut containers,
+                )?;
             }
-            return Ok(Some(leaves));
+            return Ok(Some((leaves, containers)));
         }
         if self.native_call_node(actual) {
             return Ok(None);
@@ -1469,12 +1648,13 @@ impl Codegen<'_> {
         let Some((source, _)) = self.native_endpoint(self.p30_unwrap_cast(actual))? else {
             return Ok(None);
         };
-        self.native_endpoint_leaves(path, layout, &[], &source, &mut leaves)?;
-        Ok(Some(leaves))
+        self.native_endpoint_leaves(path, layout, &[], &source, &mut leaves, &mut containers)?;
+        Ok(Some((leaves, containers)))
     }
 
     /// Append reads of every leaf of `source` as values for the leaves of
-    /// `layout` below `prefix`, matched by relative member/index path.
+    /// `layout` below `prefix`, matched by relative member/index path, and
+    /// the source storage of its container members to `containers`.
     fn native_endpoint_leaves(
         &mut self,
         path: &str,
@@ -1482,17 +1662,31 @@ impl Codegen<'_> {
         prefix: &[AggregatePathPart],
         source: &NativeEndpoint,
         leaves: &mut Vec<IrNativeLeafValue>,
+        containers: &mut Vec<usize>,
     ) -> Result<(), String> {
-        let sources = self.endpoint_leaves(source)?;
+        let (source_containers, sources): (Vec<_>, Vec<_>) = self
+            .endpoint_leaves(source)?
+            .into_iter()
+            .partition(|(_, leaf)| matches!(leaf, NativeEndpointLeaf::Container(_)));
         let targets: Vec<_> = layout
             .leaves
             .iter()
             .filter(|leaf| leaf.path.starts_with(prefix))
             .collect();
+        let target_containers: Vec<_> = layout
+            .containers
+            .iter()
+            .filter(|leaf| leaf.path.starts_with(prefix))
+            .collect();
         if targets.len() != sources.len()
+            || target_containers.len() != source_containers.len()
             || targets
                 .iter()
                 .zip(&sources)
+                .any(|(target, (relative, _))| target.path[prefix.len()..] != relative[..])
+            || target_containers
+                .iter()
+                .zip(&source_containers)
                 .any(|(target, (relative, _))| target.path[prefix.len()..] != relative[..])
         {
             return Err(format!(
@@ -1503,9 +1697,17 @@ impl Codegen<'_> {
             let value = self.endpoint_leaf_read(&source)?;
             leaves.push(IrNativeLeafValue {
                 items: target.items.clone(),
-                value: value.into_leaf_expr(),
+                value: value.into_leaf_expr()?,
             });
         }
+        containers.extend(
+            source_containers
+                .into_iter()
+                .filter_map(|(_, leaf)| match leaf {
+                    NativeEndpointLeaf::Container(container) => Some(container),
+                    _ => None,
+                }),
+        );
         Ok(())
     }
 
@@ -1623,6 +1825,31 @@ impl Codegen<'_> {
         case: bool,
     ) -> Result<IrExpr, String> {
         Ok(match (left, right) {
+            (LeafValue::Container(a), LeafValue::Container(b)) => {
+                if matches!(
+                    self.model.containers[a].kind,
+                    crate::sim::ir::IrContainerKind::Associative { .. }
+                ) {
+                    return Err(format!(
+                        "equality of records with an associative array member is not supported in `{path}` (associative array equality is not supported)"
+                    ));
+                }
+                // SV 7.2.2, 7.10: members compare element-wise.
+                IrExpr::new(
+                    IrExprKind::Container(Box::new(IrContainerExpr::Equal {
+                        left: a,
+                        right: b,
+                        case,
+                        negate: false,
+                    })),
+                    1,
+                    false,
+                    None,
+                )
+            }
+            (LeafValue::Container(_), _) | (_, LeafValue::Container(_)) => return Err(format!(
+                "native record comparison in `{path}` pairs a container member with a scalar leaf"
+            )),
             (LeafValue::String(a), LeafValue::String(b)) => {
                 let compare = IrExpr::new(
                     IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringCompare(a, b, false))),
@@ -1674,7 +1901,7 @@ impl Codegen<'_> {
         &mut self,
         leaf: &NativeEndpointLeaf,
     ) -> Result<IrNativeLeafExpr, String> {
-        Ok(self.endpoint_leaf_read(leaf)?.into_leaf_expr())
+        self.endpoint_leaf_read(leaf)?.into_leaf_expr()
     }
 
     /// Copy one scalar record leaf into another.
@@ -1736,6 +1963,7 @@ impl Codegen<'_> {
     fn endpoint_leaf_type(&self, leaf: &NativeEndpointLeaf) -> Result<IrClassFieldType, String> {
         match leaf {
             NativeEndpointLeaf::Value(_, leaf) => Ok(leaf.ty),
+            NativeEndpointLeaf::Container(_) => Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
             NativeEndpointLeaf::Module(leaf) => {
                 if let Some(object) = leaf.object {
                     return match self.model.objects[self.reference_object(object)].ty {
@@ -1790,10 +2018,13 @@ impl Codegen<'_> {
                 if let Some(argument) = self.native_call_operand(path, &layout, actual)? {
                     return Ok(argument);
                 }
-                if let Some(leaves) = self.native_input_leaves(path, &layout, actual)? {
+                if let Some((leaves, containers)) =
+                    self.native_input_leaves(path, &layout, actual)?
+                {
                     return Ok(IrCallArg::NativeLeaves {
                         ty: layout.ty,
                         leaves,
+                        containers,
                     });
                 }
             }
@@ -1813,4 +2044,7 @@ impl Codegen<'_> {
 pub(in super::super) enum NativeEndpointLeaf {
     Value(usize, NativeLeaf),
     Module(Box<AggregateMemberInfo>),
+    /// A container member's storage: a native value's companion or a
+    /// module record member's own container (SIM-007).
+    Container(usize),
 }

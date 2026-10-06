@@ -1397,6 +1397,18 @@ impl<'a> Codegen<'a> {
                 }
                 continue;
             }
+            // A queue, dynamic or associative member (SIM-007).
+            if let Some(container) = &leaf.container {
+                for dependency in [
+                    IrDependency::ContainerContents(container.ir),
+                    IrDependency::ContainerShape(container.ir),
+                ] {
+                    if !reads.contains(&dependency) {
+                        reads.push(dependency);
+                    }
+                }
+                continue;
+            }
             if let Some(object) = leaf.object {
                 let dependency = IrDependency::Object(self.reference_object(object));
                 if !reads.contains(&dependency) {

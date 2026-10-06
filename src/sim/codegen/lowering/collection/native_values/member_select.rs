@@ -156,6 +156,9 @@ impl Codegen<'_> {
                 )
             }
             Some(NativeEndpointLeaf::Module(leaf)) => leaf.member.two_state,
+            Some(NativeEndpointLeaf::Container(_)) => {
+                return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned())
+            }
             None => false,
         };
         let mut values = Vec::with_capacity(tests.len());
@@ -163,6 +166,7 @@ impl Codegen<'_> {
             values.push((test, self.endpoint_leaf_read(&leaf)?));
         }
         let mut result = match values.first().map(|(_, value)| value) {
+            Some(LeafValue::Container(_)) => return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
             Some(LeafValue::String(_)) => LeafValue::String(IrStringExpr::Literal(Vec::new())),
             Some(LeafValue::Chandle(_)) => LeafValue::Chandle(IrChandleExpr::Null),
             Some(LeafValue::Real(_)) => LeafValue::Real(real_literal_expr(0.0)),
@@ -220,7 +224,7 @@ impl Codegen<'_> {
                 }
             };
         }
-        Ok(result.into_leaf_expr())
+        result.into_leaf_expr()
     }
 
     /// Store `rhs` into the selected element; an unmatched index writes
@@ -236,6 +240,7 @@ impl Codegen<'_> {
             .first()
             .ok_or("member array selection has no elements")?;
         let ty = match first {
+            NativeEndpointLeaf::Container(_) => return Err(CONTAINER_LEAF_UNSUPPORTED.to_owned()),
             NativeEndpointLeaf::Value(_, leaf) => leaf.ty,
             NativeEndpointLeaf::Module(leaf) => match leaf.object {
                 Some(object) => match self.model.objects[self.reference_object(object)].ty {

@@ -49,11 +49,13 @@ fn native_model() -> IrModel {
         c_name: "S_llg_native_0".into(),
         ty: 0,
         activation: false,
+        companions: Vec::new(),
     });
     model.native_values.push(IrNativeValue {
         c_name: "S_llg_native_1".into(),
         ty: 0,
         activation: true,
+        companions: Vec::new(),
     });
     model
 }
@@ -164,6 +166,7 @@ fn native_value_identities_and_leaf_paths_must_resolve() {
         c_name: String::new(),
         ty: 0,
         activation: true,
+        companions: Vec::new(),
     };
     model.validate().unwrap();
 
@@ -276,6 +279,7 @@ fn native_call_operands_match_their_formals() {
                     leaf(vec![3, 0], IrNativeLeafExpr::Packed(packed_const(5, 8))),
                     leaf(vec![1], IrNativeLeafExpr::Packed(packed_const(2, 8))),
                 ],
+                containers: Vec::new(),
             }],
             true,
         ),
@@ -284,6 +288,7 @@ fn native_call_operands_match_their_formals() {
             vec![IrCallArg::NativeLeaves {
                 ty: 0,
                 leaves: vec![leaf(vec![0], IrNativeLeafExpr::Packed(packed_const(1, 8)))],
+                containers: Vec::new(),
             }],
             false,
         ),
@@ -291,6 +296,7 @@ fn native_call_operands_match_their_formals() {
             vec![IrCallArg::NativeLeaves {
                 ty: 0,
                 leaves: vec![leaf(vec![0], string("a")), leaf(vec![0], string("b"))],
+                containers: Vec::new(),
             }],
             false,
         ),
@@ -298,6 +304,7 @@ fn native_call_operands_match_their_formals() {
             vec![IrCallArg::NativeLeaves {
                 ty: 0,
                 leaves: vec![leaf(vec![7], string("a"))],
+                containers: Vec::new(),
             }],
             false,
         ),
@@ -305,6 +312,7 @@ fn native_call_operands_match_their_formals() {
             vec![IrCallArg::NativeLeaves {
                 ty: 3,
                 leaves: vec![],
+                containers: Vec::new(),
             }],
             false,
         ),

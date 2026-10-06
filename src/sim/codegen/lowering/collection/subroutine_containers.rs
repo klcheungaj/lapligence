@@ -91,11 +91,25 @@ impl Codegen<'_> {
         }
     }
 
+    /// Whether a declaration reached by walking a subroutine body is one of
+    /// its locals. Member declarations reached through selects are detached
+    /// (no parent), and a keyed assignment pattern (`'{m: v}`) holds the
+    /// record member's declaration under the pattern expression; neither is
+    /// a local.
+    pub(super) fn is_body_local(&self, node: NodeId) -> bool {
+        self.node(node)
+            .parent
+            .is_some_and(|parent| !matches!(self.kind(parent), NodeKind::Expr(_)))
+    }
+
     fn subroutine_container_locals(&self, node: NodeId, output: &mut Vec<NodeId>) {
         if matches!(
             self.kind(node),
             NodeKind::Var { .. } | NodeKind::Array { .. } | NodeKind::NamedEvent
         ) {
+            if !self.is_body_local(node) {
+                return;
+            }
             output.push(node);
             return;
         }

@@ -276,9 +276,15 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// A queue, dynamic or associative member of a module or static record
-    /// (SIM-007), which owns its own container storage.
+    /// A queue, dynamic or associative member of a record (SIM-007), which
+    /// owns its own container storage: a member of a module or static
+    /// record, or a companion container of a native subroutine value.
     fn record_member_container(&self, node: NodeId) -> Option<ContainerInfo> {
+        if let Ok(Some((value, path))) = self.native_path_of(node) {
+            return self
+                .native_companion(value, &path)
+                .map(|ir| ContainerInfo { ir });
+        }
         self.unpacked_member_info(node)
             .and_then(|(_, _, member)| member.container)
     }
@@ -295,6 +301,16 @@ impl<'a> Codegen<'a> {
             return Some(container);
         }
         let (owner, members) = self.db.array_select_path(select)?;
+        if let Some(value) = self.native_roots.get(&owner) {
+            let path = members
+                .iter()
+                .cloned()
+                .map(AggregatePathPart::Member)
+                .collect::<Vec<_>>();
+            return self
+                .native_companion(*value, &path)
+                .map(|ir| ContainerInfo { ir });
+        }
         self.unpacked_aggregates
             .get(&owner)?
             .leaves

@@ -960,12 +960,25 @@ struct NativeLeaf {
     ty: crate::sim::ir::IrClassFieldType,
 }
 
+/// A queue, dynamic or associative member of a native record (SIM-007).
+/// The value's descriptor keeps a null slot for it; each native value owns
+/// one companion container of this type instead.
+#[derive(Clone)]
+struct NativeContainerLeaf {
+    path: Vec<AggregatePathPart>,
+    element: crate::sim::ir::IrContainerElement,
+    kind: crate::sim::ir::IrContainerKind,
+}
+
 /// Interned native record type and its declaration-order leaves.
 #[derive(Clone)]
 struct NativeLayout {
     ty: usize,
     descriptor: TypeDescriptor,
     leaves: Vec<NativeLeaf>,
+    /// Container members in declaration order, matching
+    /// [`crate::sim::ir::IrNativeValue::companions`] of every value.
+    containers: Vec<NativeContainerLeaf>,
 }
 
 #[derive(Clone)]

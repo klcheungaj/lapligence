@@ -25,6 +25,13 @@ pub struct IrNativeValue {
     /// Lexical activation storage created by [`super::IrStmt::NativeValueDeclare`]
     /// or bound to a subroutine formal; otherwise model-lifetime storage.
     pub(in crate::sim) activation: bool,
+    /// Companion containers of the queue, dynamic and associative members,
+    /// in declaration order (SIM-007). Indices into
+    /// [`super::IrModel::containers`] with this value's lifetime: the
+    /// descriptor keeps a null container slot for each such member, and
+    /// declarations, formals, calls and whole-value copies carry these
+    /// containers with the value.
+    pub(in crate::sim) companions: Vec<usize>,
 }
 
 impl IrNativeValue {
@@ -210,8 +217,10 @@ fn validate_native_level(
             }
             validate_native_level(item, &format!("{path}.element"), depth + 1)
         }
+        // A queue, dynamic or associative member is a null slot; its
+        // storage is a companion container of each value (SIM-007).
+        IrContainerElement::Container { .. } => Ok(()),
         IrContainerElement::Union { .. }
-        | IrContainerElement::Container { .. }
         | IrContainerElement::Event
         | IrContainerElement::Opaque { .. } => Err(IrValidationError::new(
             path,
