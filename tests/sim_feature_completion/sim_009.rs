@@ -39,3 +39,10 @@ fn static_tasks_share_storage_and_automatic_tasks_do_not() {
         include_str!("../fixtures/sim/feature_completion/sim_009/static_and_automatic_tasks.out");
     sim_cli::run_case_backend_parity(SUITE, "static_and_automatic_tasks", expected, &[], &[]);
 }
+
+#[test]
+fn event_expressions_on_formals_use_the_typed_call_path() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/formal_event_expressions.out");
+    sim_cli::run_case_backend_parity(SUITE, "formal_event_expressions", expected, &[], &[]);
+}

@@ -756,8 +756,10 @@ impl<'a> Codegen<'a> {
 
     /// Classify an event control's reads of subroutine-scoped storage. A `ref`
     /// formal of the task itself is bound statically by a specialization;
-    /// input event formals are typed parameters; any other formal or local
-    /// forces the call-site expansion, whose evaluator context captures it.
+    /// event formals are typed parameters; packed and real by-value formals
+    /// are copied into the evaluator's private context at arm time. String
+    /// and handle formals, whose change markers the evaluator cannot name in
+    /// a shared body, and locals force the call-site expansion.
     fn note_static_reads(&self, node: NodeId, formals: &[(NodeId, bool)], shape: &mut CallShape) {
         let mut visit_target = |target: NodeId| {
             if let Some(index) = formals.iter().position(|(formal, _)| *formal == target) {
@@ -769,14 +771,21 @@ impl<'a> Codegen<'a> {
                     } if ty.kind != "string" && !is_handle_kind(&ty.kind) => {
                         shape.static_refs.push(index);
                     }
+                    NodeKind::FuncArg { ty, .. } if ty.kind == "event" => {}
                     NodeKind::FuncArg {
-                        direction: DbDirection::Input,
-                        ty,
+                        direction: DbDirection::Ref,
                         ..
-                    } if ty.kind == "event" => {}
-                    _ => shape.inline_only = true,
+                    } => shape.inline_only = true,
+                    NodeKind::FuncArg { ty, .. }
+                        if ty.kind == "string" || is_handle_kind(&ty.kind) =>
+                    {
+                        shape.inline_only = true
+                    }
+                    _ => {}
                 }
             } else if self.is_subroutine_scoped(target) {
+                // Only a fork branch could change a local the waiting
+                // activation reads; branches share it through the expansion.
                 shape.inline_only = true;
             }
         };

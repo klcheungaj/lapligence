@@ -103,7 +103,8 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
     }
 }
 
-fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
+/// Visit every expression of `e` in post-order, `e` last.
+pub(in crate::sim) fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
     match &mut e.kind {
         IrExprKind::FixedValueCompare { left, right, .. } => {
             left.expressions_mut(&mut |child| walk_expr_mut(child, f));

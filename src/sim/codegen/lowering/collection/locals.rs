@@ -786,6 +786,11 @@ impl<'a> Codegen<'a> {
             .find_map(|child| self.nested_proc_local_ref(*child))
     }
 
+    /// Evaluator-context local of a captured by-value formal.
+    pub(in super::super) fn event_formal_local(index: usize) -> String {
+        format!("_llg_event_formal_{index}")
+    }
+
     /// Collect automatic values referenced by one evaluated event expression
     /// and place them in a private, copied activation frame. The callback may
     /// run after the issuing process suspends or is re-entered, so it must
@@ -843,12 +848,17 @@ impl<'a> Codegen<'a> {
                 // stable dependency and must not manufacture a frame whose
                 // initializer would be rendered outside the caller's formal
                 // context. Only lexical C locals need a copied evaluator slot.
-                let IrExprKind::LocalRead(local) = source.initial.kind() else {
-                    return None;
+                // A by-value formal of the enclosing subroutine is copied
+                // into the context too; its evaluator reads the slot under
+                // the name `event_formal_local` gives it.
+                let local = match source.initial.kind() {
+                    IrExprKind::LocalRead(local) => local.clone(),
+                    IrExprKind::FormalRead(index) => Self::event_formal_local(*index),
+                    _ => return None,
                 };
                 Some((
                     self.declaration_identity(target),
-                    local.clone(),
+                    local,
                     source.lifetime,
                     super::super::storage_kind(source.info.width),
                     source.initial,

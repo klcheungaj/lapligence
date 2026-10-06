@@ -672,29 +672,30 @@ not wake.
 
 ### Symptom
 
-A task whose event control (`@(...)`) reads one of its own by-value formals,
-locals, or string or handle `ref` formals is expanded at each call site. These
-legal forms still reject: such a task that also has a native record or
-container formal ("needs caller-environment expansion, which is not
-supported"); a recursive such task; and `@(t)` on a string `ref` formal
-("cannot resolve signal reference"). `wait (cond)` over formals, event
-controls on module signals and on `ref` formals with module-signal actuals,
-and event formals of every direction take the typed call path.
+A task whose event control (`@(...)`) reads one of its own locals, or a
+string or handle formal, is expanded at each call site. These legal forms
+still reject: such a task that also has a native record or container formal
+("needs caller-environment expansion, which is not supported"); a recursive
+such task; and `@(t)` on a string `ref` formal ("cannot resolve signal
+reference"). Event expressions over by-value packed and real formals,
+`wait (cond)`, event controls on module signals and on `ref` formals with
+module-signal actuals, and event formals of every direction take the typed
+call path.
 
 ### Cause
 
-The typed body's evaluated event callbacks capture only process-block
-automatics; a shared task body has no private context for its own formals
-and locals, and no change marker for a string or handle `ref` actual, so
-call-site expansion supplies them. Expansion cannot carry native formals and
-cannot recurse.
+The typed body's evaluated event callbacks copy process-block automatics
+and by-value formals when the control arms. A local can change during the
+wait only through a fork branch, and branches share the activation's
+automatics only in an expansion (SIM-010); a string or handle `ref` actual's
+change marker is not known to a shared body. Expansion cannot carry native
+formals and cannot recurse.
 
 ### Intended direction
 
-Capture the by-value formals and locals an event expression reads into the
-evaluator's private context in the typed body, as process blocks do, and bind
-string and handle `ref` actuals' change markers per specialization like
-packed `ref` formals.
+Read activation locals through fork-shared storage once SIM-010 pins
+automatics, and bind string and handle `ref` actuals' change markers per
+specialization like packed `ref` formals.
 
 ### Reproduce
 

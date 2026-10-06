@@ -666,8 +666,27 @@ impl EmitCtx<'_, '_> {
     fn event_evaluator(&mut self, expression: NodeId) -> Result<(String, bool), String> {
         self.cg
             .check_event_expression_effects(expression, &self.path)?;
-        let value = self.cg.lower_expr(&self.path, expression)?;
+        let mut value = self.cg.lower_expr(&self.path, expression)?;
         let context = self.cg.event_context(expression)?;
+        // The evaluator reads captured formals from its context slots.
+        if context.as_ref().is_some_and(|context| {
+            context
+                .captures()
+                .iter()
+                .any(|capture| matches!(capture.initial().kind(), IrExprKind::FormalRead(_)))
+        }) {
+            crate::sim::opt::walk_expr_mut(&mut value, &mut |expression| {
+                if let IrExprKind::FormalRead(index) = expression.kind() {
+                    let local = Codegen::event_formal_local(*index);
+                    *expression = IrExpr::new(
+                        IrExprKind::LocalRead(local),
+                        expression.width,
+                        expression.signed,
+                        None,
+                    );
+                }
+            });
+        }
         let name = self.cg.new_fn_name(&self.path, "event_eval");
         let real = value.is_real();
         if real {
