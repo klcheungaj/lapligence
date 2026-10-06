@@ -570,16 +570,17 @@ impl Codegen<'_> {
                 _ => Vec::new(),
             };
             for target in targets {
-                let activation = self
+                let activation = (self
                     .native_roots
                     .get(&target)
                     .is_some_and(|value| self.model.native_values[*value].activation)
                     || self
                         .container_globals
                         .get(&target)
-                        .is_some_and(|container| self.model.containers[container.ir].activation)
-                        // Shared activation containers live in a fork frame.
-                        && !self.shared_locals.contains(&target);
+                        .is_some_and(|container| self.model.containers[container.ir].activation))
+                    // Shared activation records and containers live in a
+                    // fork frame.
+                    && !self.shared_locals.contains(&target);
                 if activation && !self.node_is_within(target, branch) {
                     return Some(self.node(target).name.clone());
                 }

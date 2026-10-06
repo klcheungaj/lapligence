@@ -455,8 +455,7 @@ module, static or block record passed to a class method (whole subroutine
 records and module, static and block records or constant selections of
 them bind); an event control on a member of such a formal when the actual is
 a subroutine record (a generic lowering diagnostic); nonblocking writes
-to a static subroutine native record; fork-join_none capture of automatic
-native records; sub-record, member-array or handle selects of a native call
+to a static subroutine native record; sub-record, member-array or handle selects of a native call
 result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles
@@ -510,7 +509,7 @@ of statement staging); retained element cells (SIM-008 container element
 references) passed as one reference per leaf for element actuals of native
 `ref` formals, which specialization cannot bind; a root-plus-item-path pending record for static native roots
 (a queued leaf pointer would dangle because a root replaces its leaves on
-assignment); fork capture pins (SIM-010); a commit-time tag guard on queued
+assignment); a commit-time tag guard on queued
 native writes for tagged-union member NBAs; and per-activation native
 roots for forked automatic block records, strings and handles.
 

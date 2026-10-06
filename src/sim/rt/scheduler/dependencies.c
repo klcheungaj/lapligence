@@ -92,6 +92,11 @@ void llg_dependency_bind_real(double* target, sv4_t* dependency) {
     dependency_bind(NULL, target, dependency, "real dependency binding");
 }
 
+sv4_t* llg_dependency_or_never(sv4_t* dependency) {
+    static sv4_t never = SV4_EMPTY;
+    return dependency ? dependency : &never;
+}
+
 void llg_dependency_changed(sv4_t* dependency) {
     if (!dependency) return;
     uint64_t bit = llg_sv4_word(*dependency, 0, LLG_SV4_BITS) & 1u;

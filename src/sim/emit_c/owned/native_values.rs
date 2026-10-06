@@ -75,6 +75,87 @@ impl Frame<'_, '_> {
         format!("(&{root}->value)")
     }
 
+    /// Declare activation value `index` in slot 0 of a new shared frame owned
+    /// by the lexical value scope, with each companion container and its two
+    /// change markers in the following slots, so fork branches can alias it
+    /// (SIM-010).
+    pub(super) fn shared_native_value(&mut self, index: usize) -> Result<(), String> {
+        let value = self.ctx.model.native_values[index].clone();
+        let owner = self.scalar(
+            "llg_frame_t**",
+            "(llg_frame_t**)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_frame_t*), llg_owned_frame_drop))"
+                .to_owned(),
+        );
+        self.line(format!(
+            "*{owner} = llg_frame_new({}ULL);",
+            1 + 3 * value.companions.len()
+        ));
+        let root = self.scalar(
+            "llg_native_root_t*",
+            format!(
+                "(llg_native_root_t*)llg_frame_capture_object(*{owner}, 0u, sizeof(llg_native_root_t), llg_native_root_destroy)"
+            ),
+        );
+        self.line(format!(
+            "llg_native_root_init({root}, &{});",
+            native_type_descriptor(value.ty)
+        ));
+        self.native_values
+            .insert(index, format!("(&{root}->value)"));
+        let frame = format!("*{owner}");
+        for (offset, container) in value.companions.iter().copied().enumerate() {
+            let storage =
+                self.new_container_in(container, Some((&frame, 1 + 3 * offset as u32)))?;
+            self.containers.insert(container, storage);
+        }
+        self.shared_cells.insert(
+            crate::sim::ir::shared_native_capture_name(index),
+            (format!("(*{owner})"), 0),
+        );
+        Ok(())
+    }
+
+    /// Bind shared activation value `index` aliased by slot `slot` of the
+    /// branch frame `source`, and its companion containers.
+    pub(super) fn bind_shared_native_value(
+        &mut self,
+        index: usize,
+        source: &str,
+        slot: u32,
+    ) -> Result<(), String> {
+        let companions = self.ctx.model.native_values[index].companions.clone();
+        let root = self.declare(
+            "llg_native_root_t*",
+            "capture_native",
+            format!("(llg_native_root_t*)llg_frame_object_address({source}, {slot}u)"),
+        );
+        self.native_values
+            .insert(index, format!("(&{root}->value)"));
+        if !companions.is_empty() {
+            let frame = self.declare(
+                "llg_frame_t*",
+                "capture_environment",
+                format!("llg_frame_slot_frame({source}, {slot}u)"),
+            );
+            for (offset, container) in companions.into_iter().enumerate() {
+                let (ty, _, _) = super::super::containers::activation_storage(
+                    &self.ctx.model.containers[container],
+                    "",
+                )?;
+                let pointer = self.declare(
+                    &format!("{ty}*"),
+                    "capture_container",
+                    format!(
+                        "({ty}*)llg_frame_object_address({frame}, {}u)",
+                        1 + 3 * offset
+                    ),
+                );
+                self.containers.insert(container, format!("(*{pointer})"));
+            }
+        }
+        Ok(())
+    }
+
     /// Declare fresh empty companion containers of activation value
     /// `index` (SIM-007) in the current lexical value scope.
     pub(super) fn declare_native_companions(&mut self, index: usize) -> Result<(), String> {
