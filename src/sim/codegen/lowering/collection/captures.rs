@@ -119,9 +119,17 @@ impl<'a> Codegen<'a> {
         let function = self.func.as_ref()?;
         // An automatic string local of the subroutine is captured by value
         // (or shared, see `fork_shared`) under its own local name.
-        if matches!(self.kind(target), NodeKind::Var { ty } if ty.kind == "string")
-            && self.db.variable_lifetime(target) == VariableLifetime::Automatic
-        {
+        let string_local = match self.kind(target) {
+            NodeKind::Var { ty } => {
+                ty.kind == "string"
+                    && self.db.variable_lifetime(target) == VariableLifetime::Automatic
+            }
+            NodeKind::FuncArg { ty, .. } => {
+                ty.kind == "string" && self.shared_locals.contains(&target)
+            }
+            _ => false,
+        };
+        if string_local {
             if let Some((c_name, ..)) = function.locals.get(&target) {
                 return Some(CaptureSource {
                     info: ProcLocalInfo {
@@ -341,11 +349,20 @@ impl<'a> Codegen<'a> {
                             target: Some(target),
                         }) = self.kind(current)
                         {
-                            if matches!(
+                            // A by-value formal is marked whatever the
+                            // subroutine's lifetime; only an automatic
+                            // activation's body consumes the mark.
+                            let by_value_formal = matches!(
                                 self.kind(*target),
-                                NodeKind::Var { .. } | NodeKind::Array { .. }
-                            ) && !self.node_is_within(*target, *branch)
-                                && self.db.variable_lifetime(*target) == VariableLifetime::Automatic
+                                NodeKind::FuncArg { direction, .. } if *direction != DbDirection::Ref
+                            );
+                            if (by_value_formal
+                                || matches!(
+                                    self.kind(*target),
+                                    NodeKind::Var { .. } | NodeKind::Array { .. }
+                                ) && self.db.variable_lifetime(*target)
+                                    == VariableLifetime::Automatic)
+                                && !self.node_is_within(*target, *branch)
                             {
                                 visible.insert(*target);
                                 if detached

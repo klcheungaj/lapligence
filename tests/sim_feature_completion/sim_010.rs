@@ -39,3 +39,9 @@ fn event_controls_wake_on_writes_by_other_fork_processes() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_010/fork_wakeups.out");
     sim_cli::run_case_backend_parity(SUITE, "fork_wakeups", expected, &[], &[]);
 }
+
+#[test]
+fn detached_branches_share_input_formals() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_010/shared_formals.out");
+    sim_cli::run_case_backend_parity(SUITE, "shared_formals", expected, &[], &[]);
+}
