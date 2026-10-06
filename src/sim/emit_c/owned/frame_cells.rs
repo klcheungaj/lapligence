@@ -59,7 +59,9 @@ impl CellEligibility {
 
     fn dependency(&mut self, dependency: &IrDependency) {
         match dependency {
-            IrDependency::Scalar(name) | IrDependency::Real(name) => {
+            IrDependency::Scalar(name)
+            | IrDependency::Real(name)
+            | IrDependency::SharedCell { local: name, .. } => {
                 self.retained.insert(name.clone());
             }
             IrDependency::PackedRange { storage, .. } => self.dependency(storage),

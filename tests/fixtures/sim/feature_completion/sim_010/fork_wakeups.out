@@ -1,0 +1,7 @@
+bare 2
+edge 4
+real 2.5 5
+wait 2 7
+branch 8
+sibling 10
+changed y=3 12

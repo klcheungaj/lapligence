@@ -497,6 +497,8 @@ fn is_emitted_trigger_storage(ir: &IrModel, dependency: &IrDependency) -> bool {
                 crate::sim::ir::IrObjectType::String | crate::sim::ir::IrObjectType::Chandle
             )
         }),
+        // A process-local cell is no static trigger storage.
+        IrDependency::SharedCell { .. } => false,
     }
 }
 

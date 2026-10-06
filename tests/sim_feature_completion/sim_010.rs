@@ -33,3 +33,9 @@ fn joined_branches_share_automatic_strings() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_010/joined_strings.out");
     sim_cli::run_case_backend_parity(SUITE, "joined_strings", expected, &[], &[]);
 }
+
+#[test]
+fn event_controls_wake_on_writes_by_other_fork_processes() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_010/fork_wakeups.out");
+    sim_cli::run_case_backend_parity(SUITE, "fork_wakeups", expected, &[], &[]);
+}

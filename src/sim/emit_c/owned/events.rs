@@ -95,7 +95,9 @@ impl Frame<'_, '_> {
 
     pub(super) fn dependency(&mut self, dependency: &IrDependency) -> Result<String, String> {
         Ok(match dependency {
-            IrDependency::Scalar(name) | IrDependency::Real(name) => {
+            IrDependency::Scalar(name)
+            | IrDependency::Real(name)
+            | IrDependency::SharedCell { local: name, .. } => {
                 let binding = self.resolve_lookup(name)?;
                 format!(
                     "{{ .{} = {} }}",

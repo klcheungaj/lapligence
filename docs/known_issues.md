@@ -688,64 +688,40 @@ not wake.
 
 ### Symptom
 
-A task whose event control (`@(...)`) reads one of its own locals, or a
-string or handle formal, is expanded at each call site. These legal forms
-still reject: such a task that also has a native record or container formal
-("needs caller-environment expansion, which is not supported"); a recursive
-such task; and `@(t)` on a string `ref` formal ("cannot resolve signal
-reference"). Event expressions over by-value packed and real formals,
-`wait (cond)`, event controls on module signals and on `ref` formals with
-module-signal actuals, and event formals of every direction take the typed
-call path.
+A task whose event control reads a string or handle formal, or whose `ref`
+formal with an event control is bound to a block or subroutine automatic or
+to an array element, is expanded at each call site. These legal forms fail:
+`@(tag)` on a string formal ("cannot resolve signal reference"); an `iff`
+qualifier reading a string or handle formal ("ownership emission is not yet
+implemented for unresolved native storage"); an event control on a `ref`
+formal bound to an automatic that a fork branch writes (never wakes) or to a
+fixed-array element ("unresolved local read"); and such a task that also has a
+native record or container formal or recurses. Event controls on the task's
+own locals, by-value packed and real formals, `wait (cond)`, module signals,
+`ref` formals with module-signal actuals and event formals of every direction
+take the typed call path.
 
 ### Cause
 
-The typed body's evaluated event callbacks copy process-block automatics
-and by-value formals when the control arms. A local can change during the
-wait only through a fork branch, and branches share the activation's
-automatics only in an expansion (SIM-010); a string or handle `ref` actual's
-change marker is not known to a shared body. Expansion cannot carry native
-formals and cannot recurse.
+The typed body's evaluated event callbacks cannot name a string or handle
+actual's change marker, so such reads expand the task; the expansion's
+evaluator context copies a `ref` formal's automatic actual instead of aliasing
+its cell, binds no array-element reference, and cannot carry native formals or
+recurse.
 
 ### Intended direction
 
-Read activation locals through fork-shared storage once SIM-010 pins
-automatics, and bind string and handle `ref` actuals' change markers per
-specialization like packed `ref` formals.
+Bind string and handle `ref` actuals' change markers per specialization like
+packed `ref` formals, copy by-value string and handle formals into the typed
+evaluator context (only the waiting activation can write them), and alias
+automatic `ref` actuals' cells (with their subscriptions) in expansions.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_009/neg_event_local_native.sv`;
-`task automatic down(int n); logic l = 0; fork #1 l = 1; join_none @(posedge l); if (n > 0) down(n - 1); endtask`;
-`task automatic watch(ref string t); @(t); endtask`.
-
-## Event controls on automatics written by fork branches never wake
-
-**Status:** open (SIM-010).
-
-### Symptom
-
-An event control or `wait` in a process block or task on an automatic
-variable that only a `join_none`/`join_any` branch writes never resumes; the
-run ends with "simulation deadlock". `@(l)` on a bare task local instead
-rejects with "cannot resolve signal reference".
-
-### Cause
-
-Automatic variables have no change marker. A shared automatic's cell is in
-an activation frame that every sharing process writes directly, so a write
-does not notify the waiters of an evaluated event control.
-
-### Intended direction
-
-Give each fork-shared automatic that an event control or `wait` reads a
-change marker in its frame slot; writes through the shared cell publish it
-and the waiting process's evaluated control suspends on it.
-
-### Reproduce
-
-`initial begin automatic logic b = 0; fork #3 b = 1; join_none @(b); end`;
-`task automatic t(); logic l = 0; fork #2 l = 1; join_none @(posedge (l & 1'b1)); endtask`.
+`task automatic w(input string tag); @(tag); endtask`;
+`task automatic w(input string tag); @(posedge c iff tag != ""); endtask`;
+`task automatic w(ref logic s); @(posedge s); endtask` called as `w(local)`
+with `fork #2 local = 1; join_none`, or as `w(mem[1])` on `logic mem [2]`.
 
 ## Native stack frames grow with a statement's format-argument count
 

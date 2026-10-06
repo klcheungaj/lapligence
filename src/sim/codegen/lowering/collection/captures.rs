@@ -293,14 +293,24 @@ impl<'a> Codegen<'a> {
         false
     }
 
-    /// Find automatic declarations referenced by a fork branch. Declarations
-    /// inside the branch are owned by that branch and are not captures.
     /// Whether automatic variable `declaration` is shared with a `join_none`
     /// or `join_any` branch that names it outside the branch's own scope.
     /// Such a variable lives in a shared activation frame (SV 6.21, 9.3.2).
     pub(in super::super) fn fork_shared(&mut self, declaration: NodeId) -> bool {
-        if self.fork_shared.is_none() {
+        self.fork_sets().0.contains(&declaration)
+    }
+
+    /// Whether a branch of any fork names automatic variable `declaration`
+    /// outside the branch's own scope, so another process can write it.
+    pub(in super::super) fn fork_visible(&mut self, declaration: NodeId) -> bool {
+        self.fork_sets().1.contains(&declaration)
+    }
+
+    /// The fork-shared and fork-visible automatic variables of the design.
+    fn fork_sets(&mut self) -> &(HashSet<NodeId>, HashSet<NodeId>) {
+        if self.fork_sets.is_none() {
             let mut shared = HashSet::new();
+            let mut visible = HashSet::new();
             for node in self.db.node_ids() {
                 let NodeKind::Stmt(StmtKind::Fork {
                     join_kind,
@@ -336,11 +346,14 @@ impl<'a> Codegen<'a> {
                                 NodeKind::Var { .. } | NodeKind::Array { .. }
                             ) && !self.node_is_within(*target, *branch)
                                 && self.db.variable_lifetime(*target) == VariableLifetime::Automatic
-                                && (detached
-                                    || matches!(self.kind(*target), NodeKind::Var { ty } if ty.kind == "string")
-                                    || self.subroutine_container_meta(*target).is_some())
                             {
-                                shared.insert(*target);
+                                visible.insert(*target);
+                                if detached
+                                    || matches!(self.kind(*target), NodeKind::Var { ty } if ty.kind == "string")
+                                    || self.subroutine_container_meta(*target).is_some()
+                                {
+                                    shared.insert(*target);
+                                }
                             }
                         }
                         pending.extend(self.node(current).children.iter().copied());
@@ -350,13 +363,13 @@ impl<'a> Codegen<'a> {
                     }
                 }
             }
-            self.fork_shared = Some(shared);
+            self.fork_sets = Some((shared, visible));
         }
-        self.fork_shared
-            .as_ref()
-            .is_some_and(|shared| shared.contains(&declaration))
+        self.fork_sets.get_or_insert_with(Default::default)
     }
 
+    /// Find automatic declarations referenced by a fork branch. Declarations
+    /// inside the branch are owned by that branch and are not captures.
     pub(in super::super) fn fork_capture_targets(&self, branch: NodeId) -> Vec<NodeId> {
         fn visit(
             cg: &Codegen<'_>,

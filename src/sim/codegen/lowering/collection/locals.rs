@@ -786,6 +786,63 @@ impl<'a> Codegen<'a> {
             .find_map(|child| self.nested_proc_local_ref(*child))
     }
 
+    /// How an event evaluator reads the packed or real automatic `target`
+    /// that a fork branch names: through its shared frame cell, or through
+    /// the cell a joined branch borrows. `None` reads a copy.
+    fn event_cell_ownership(
+        &mut self,
+        target: NodeId,
+        source: &CaptureSource,
+    ) -> Option<StorageOwnership> {
+        if !matches!(source.kind, StorageKind::Packed | StorageKind::Real)
+            || !matches!(source.initial.kind(), IrExprKind::LocalRead(_))
+        {
+            return None;
+        }
+        if self.shared_locals.contains(&target) {
+            Some(StorageOwnership::Shared)
+        } else if self.fork_visible(target) {
+            Some(StorageOwnership::Borrowed)
+        } else {
+            None
+        }
+    }
+
+    /// Cells of the fork-visible automatics an event control reads. Other
+    /// processes write them through publishing stores, so the waiting
+    /// process subscribes to each cell (SV 9.4.2).
+    pub(in super::super) fn shared_event_dependencies(
+        &mut self,
+        expression: NodeId,
+    ) -> Vec<IrDependency> {
+        let mut dependencies = Vec::new();
+        let mut pending = vec![expression];
+        while let Some(node) = pending.pop() {
+            pending.extend(self.node(node).children.iter().copied());
+            let NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) = self.kind(node)
+            else {
+                continue;
+            };
+            let target = *target;
+            let Some(source) = self.capture_source(target) else {
+                continue;
+            };
+            if self.event_cell_ownership(target, &source).is_none() {
+                continue;
+            }
+            let dependency = IrDependency::SharedCell {
+                real: source.kind == StorageKind::Real,
+                local: source.info.c_name,
+            };
+            if !dependencies.contains(&dependency) {
+                dependencies.push(dependency);
+            }
+        }
+        dependencies
+    }
+
     /// Evaluator-context local of a captured by-value formal.
     pub(in super::super) fn event_formal_local(index: usize) -> String {
         format!("_llg_event_formal_{index}")
@@ -856,29 +913,37 @@ impl<'a> Codegen<'a> {
                     IrExprKind::FormalRead(index) => Self::event_formal_local(*index),
                     _ => return None,
                 };
+                // Another process can change a fork-visible automatic while
+                // the control waits, so the evaluator aliases its cell.
+                let ownership = self
+                    .event_cell_ownership(target, &source)
+                    .unwrap_or(StorageOwnership::Owned);
                 Some((
                     self.declaration_identity(target),
                     local,
                     source.lifetime,
                     super::super::storage_kind(source.info.width),
+                    ownership,
                     source.initial,
                 ))
             })
             .enumerate()
-            .map(|(slot, (declaration, local, lifetime, kind, initial))| {
-                Ok(IrEventCapture::new(
-                    StorageRef::for_declaration(
-                        frame,
-                        slot as u32,
-                        declaration?,
-                        lifetime,
-                        StorageOwnership::Owned,
-                    )
-                    .with_kind(kind),
-                    local,
-                    initial,
-                ))
-            })
+            .map(
+                |(slot, (declaration, local, lifetime, kind, ownership, initial))| {
+                    Ok(IrEventCapture::new(
+                        StorageRef::for_declaration(
+                            frame,
+                            slot as u32,
+                            declaration?,
+                            lifetime,
+                            ownership,
+                        )
+                        .with_kind(kind),
+                        local,
+                        initial,
+                    ))
+                },
+            )
             .collect::<Result<Vec<_>, String>>()?;
         if captures.is_empty() {
             return Ok(None);

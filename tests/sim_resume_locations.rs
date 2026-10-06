@@ -104,17 +104,15 @@ endmodule\n",
 
 #[test]
 fn pruning_and_inline_event_tasks_keep_definition_site_locations() {
-    // The local in the event qualifier keeps the task expanded at its call
-    // sites (an event formal alone takes the typed call path).
     let database = database(&[OwnedSource::compilation_unit(
         "inline.sv",
         "module tb;\n\
-event ready;\n\
-task automatic await_event(inout event e); logic armed = 1;\n\
-    @(e iff armed);\n\
+// A block-local ref actual expands the task at each call site.\n\
+task automatic await_event(ref logic e);\n\
+    @(e);\n\
     #2;\n\
 endtask\n\
-initial begin\n\
+initial begin automatic logic ready;\n\
     if (1) begin\n\
         #3;\n\
         await_event(ready);\n\

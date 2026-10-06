@@ -757,9 +757,10 @@ impl<'a> Codegen<'a> {
     /// Classify an event control's reads of subroutine-scoped storage. A `ref`
     /// formal of the task itself is bound statically by a specialization;
     /// event formals are typed parameters; packed and real by-value formals
-    /// are copied into the evaluator's private context at arm time. String
-    /// and handle formals, whose change markers the evaluator cannot name in
-    /// a shared body, and locals force the call-site expansion.
+    /// are copied into the evaluator's private context at arm time; locals
+    /// that a fork branch can write are read through their shared cells.
+    /// String and handle formals, whose change markers the evaluator cannot
+    /// name in a shared body, force the call-site expansion.
     fn note_static_reads(&self, node: NodeId, formals: &[(NodeId, bool)], shape: &mut CallShape) {
         let mut visit_target = |target: NodeId| {
             if let Some(index) = formals.iter().position(|(formal, _)| *formal == target) {
@@ -783,10 +784,6 @@ impl<'a> Codegen<'a> {
                     }
                     _ => {}
                 }
-            } else if self.is_subroutine_scoped(target) {
-                // Only a fork branch could change a local the waiting
-                // activation reads; branches share it through the expansion.
-                shape.inline_only = true;
             }
         };
         match self.kind(node) {

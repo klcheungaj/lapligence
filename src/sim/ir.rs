@@ -322,6 +322,10 @@ pub enum IrDependency {
     /// A persistent native string object. The generated model gives each
     /// string object a stable packed change marker used by link processes.
     Object(usize),
+    /// The fork-shared activation cell bound to the waiting process's local
+    /// `local` (packed, or real when `real`). Sharing processes write it
+    /// through publishing stores, so its address is a wait source.
+    SharedCell { local: String, real: bool },
 }
 
 impl IrDependency {

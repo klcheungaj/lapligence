@@ -83,6 +83,9 @@ fn dependency_pointer(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
         IrDependency::Object(object) => {
             format!("&{}_llg_dep", ctx.model.objects[*object].c_name)
         }
+        IrDependency::SharedCell { .. } => {
+            unreachable!("shared cells exist only in the owned emitter")
+        }
     }
 }
 
@@ -144,6 +147,9 @@ fn dependency_entry(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
                 "{{ .sig = &{}_llg_dep }}",
                 ctx.model.objects[*object].c_name
             )
+        }
+        IrDependency::SharedCell { .. } => {
+            unreachable!("shared cells exist only in the owned emitter")
         }
     }
 }
