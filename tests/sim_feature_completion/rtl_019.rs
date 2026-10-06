@@ -27,16 +27,16 @@ fn fixture(name: &str) -> String {
 fn backend_lanes(gmp: &str) -> Vec<Vec<(&'static str, String)>> {
     vec![
         vec![
-            ("LLG_VALUE_BACKEND", "legacy".to_owned()),
-            ("LLG_COMPACT_KERNELS", "portable".to_owned()),
+            ("LLG_DEV_VALUE_BACKEND", "legacy".to_owned()),
+            ("LLG_DEV_COMPACT_KERNELS", "portable".to_owned()),
         ],
         vec![
-            ("LLG_VALUE_BACKEND", "compact".to_owned()),
-            ("LLG_COMPACT_KERNELS", "portable".to_owned()),
+            ("LLG_DEV_VALUE_BACKEND", "compact".to_owned()),
+            ("LLG_DEV_COMPACT_KERNELS", "portable".to_owned()),
         ],
         vec![
-            ("LLG_VALUE_BACKEND", "compact".to_owned()),
-            ("LLG_COMPACT_KERNELS", "gmp".to_owned()),
+            ("LLG_DEV_VALUE_BACKEND", "compact".to_owned()),
+            ("LLG_DEV_COMPACT_KERNELS", "gmp".to_owned()),
             ("GMP_ROOT", gmp.to_owned()),
         ],
     ]

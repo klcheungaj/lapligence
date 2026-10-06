@@ -25,15 +25,6 @@ on:
   release:
     types: [published]
   workflow_dispatch:
-    inputs:
-      gmp-scope:
-        description: >-
-          GMP qualification suite: 'focused' runs the compact/GMP value,
-          ownership and runtime binaries; 'full' runs every test with
-          compact/GMP as the default value backend.
-        type: choice
-        options: [focused, full]
-        default: focused
   schedule:
     # Re-check the lockfile when the RustSec advisory database changes even
     # if the repository has had no dependency commit that week.
@@ -45,11 +36,6 @@ permissions:
 env:
   # Run one nextest test per available logical CPU (.config/nextest.toml).
   NEXTEST_PROFILE: ci
-  # GMP qualification lanes (gmp-test, gmp-linux-test). The focused set holds
-  # the backend parity matrix, dependency/ABI/cache negatives, relocated
-  # exports, native runtime probes and the ownership/scheduler suites.
-  GMP_SUITE_FILTER: >-
-    ${{ inputs.gmp-scope == 'full' && 'all()' || 'test(/^(sim_value_backends|runtime_value_storage|sim_stack_bounds|sim_dynamic_ownership|sim_coroutine_semantics|sim_fork_lifecycle|sim_mailboxes|sim_container_selects|sim_container_sort|sim_net_interval|sim_sampled_values|sim_unknown_digits|sim_waveform|sim_vpi|generated_c_frame_lint)::/)' }}
 
 jobs:
   lint:
@@ -626,91 +612,6 @@ jobs:
           cache-hit: ${{ steps.ccache.outputs.cache-hit }}
           python: python
 
-  # GMP qualification (V09) on Windows and macOS: the build job's release
-  # test archive runs with compact values and GMP kernels as the default value
-  # configuration. Generated runtimes compile the bundled vendor/gmp subset
-  # (src/sim/rt/gmp) with the target's own compiler, so no GMP is installed.
-  gmp-test:
-    if: github.event_name != 'schedule'
-    name: ${{ matrix.name }} GMP qualification (${{ matrix.target }})
-    needs: build
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 300
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Windows x86_64
-            runner: windows-2025
-            platform: windows
-            python_arch: x64
-            msvc_arch: amd64
-            target: x86_64-pc-windows-msvc
-          - name: Windows arm64
-            runner: windows-11-vs2026-arm
-            platform: windows
-            python_arch: arm64
-            msvc_arch: amd64_arm64
-            target: aarch64-pc-windows-msvc
-          - name: macOS arm64
-            runner: macos-15
-            platform: macos
-            python_arch: arm64
-            target: aarch64-apple-darwin
-
-    env:
-      CMAKE_GENERATOR: Ninja
-
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: recursive
-
-      - name: Download release test archive
-        uses: actions/download-artifact@v4
-        with:
-          name: nextest-archive-${{ matrix.target }}
-          path: ${{ runner.temp }}/nextest-archive
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-          architecture: ${{ matrix.python_arch }}
-
-      - uses: taiki-e/install-action@nextest
-
-      - name: Select MSVC target tools
-        if: matrix.platform == 'windows'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: ${{ matrix.msvc_arch }}
-
-      - name: Pin the MSVC linker for Git Bash steps
-        if: matrix.platform == 'windows'
-        uses: ./.github/actions/msvc-linker
-        with:
-          target: ${{ matrix.target }}
-
-      - name: Record host and toolchain
-        shell: bash
-        run: |
-          uname -a
-          cmake --version
-          if [ "${{ matrix.platform }}" = windows ]; then (cl 2>&1 || true) | head -n 1; else cc --version; sw_vers; fi
-
-      - name: Apply the libfst patch
-        shell: bash
-        run: git apply --whitespace=nowarn --directory=vendor/libfst patches/libfst/libfst-local-changes.patch
-
-      - name: Compact/GMP qualification suite
-        shell: bash
-        run: |
-          export LLG_VALUE_BACKEND=compact LLG_COMPACT_KERNELS=gmp
-          cargo nextest run --no-fail-fast \
-            --archive-file "$RUNNER_TEMP/nextest-archive/nextest-archive.tar.zst" \
-            --workspace-remap "$GITHUB_WORKSPACE" --extract-to "$GITHUB_WORKSPACE" \
-            -E "$GMP_SUITE_FILTER"
-
   linux-build:
     if: github.event_name != 'schedule'
     name: Linux ${{ matrix.arch }} build (${{ matrix.target }})
@@ -1006,88 +907,6 @@ jobs:
           key: ${{ steps.ccache.outputs.key }}
           cache-hit: ${{ steps.ccache.outputs.cache-hit }}
           stats: "false"
-
-  # GMP qualification (V09) on Linux: the static musl test archive runs in
-  # the same glibc distributions as linux-test with compact values and GMP
-  # kernels; each container's own compiler builds the bundled vendor/gmp
-  # subset into the generated runtimes.
-  gmp-linux-test:
-    if: github.event_name != 'schedule'
-    name: Linux ${{ matrix.arch }} GMP qualification on ${{ matrix.distro }}
-    needs: linux-build
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x86_64, arm64]
-        distro: [ubuntu-24.04, rocky-9]
-        include:
-          - arch: x86_64
-            runner: ubuntu-24.04
-            target: x86_64-unknown-linux-musl
-            nextest_platform: linux-musl
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
-            nextest_platform: linux-arm-musl
-          - distro: ubuntu-24.04
-            image: ubuntu:24.04
-            install: >-
-              export DEBIAN_FRONTEND=noninteractive &&
-              apt-get update &&
-              apt-get install -y --no-install-recommends
-              build-essential clang cmake git procps python3
-          - distro: rocky-9
-            image: rockylinux/rockylinux:9
-            install: >-
-              dnf install -y --setopt=install_weak_deps=False
-              clang cmake gcc gcc-c++ git make procps-ng python3 util-linux
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: recursive
-
-      - name: Download release test archive
-        uses: actions/download-artifact@v4
-        with:
-          name: nextest-archive-${{ matrix.target }}
-          path: ${{ runner.temp }}/nextest-archive
-
-      - name: Install nextest
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/nextest-bin"
-          curl -LsSf "https://get.nexte.st/latest/${{ matrix.nextest_platform }}" \
-            | tar -xzf - -C "$RUNNER_TEMP/nextest-bin"
-
-      - name: Apply the libfst patch
-        shell: bash
-        run: git apply --whitespace=nowarn --directory=vendor/libfst patches/libfst/libfst-local-changes.patch
-
-      - name: Compact/GMP qualification suite
-        shell: bash
-        run: |
-          docker run --rm \
-            --volume "$GITHUB_WORKSPACE:/workspace" \
-            --volume "$RUNNER_TEMP/nextest-archive:/nextest-archive:ro" \
-            --volume "$RUNNER_TEMP/nextest-bin:/nextest-bin:ro" \
-            --workdir /workspace \
-            --env NEXTEST_PROFILE \
-            --env GMP_SUITE_FILTER \
-            --env LLG_INSTALL="${{ matrix.install }}" \
-            "${{ matrix.image }}" sh -euxc '
-              eval "$LLG_INSTALL"
-              uname -a
-              cat /etc/os-release
-              cc --version
-              cmake --version
-              export LLG_VALUE_BACKEND=compact LLG_COMPACT_KERNELS=gmp
-              /nextest-bin/cargo-nextest nextest run --no-fail-fast \
-                --archive-file /nextest-archive/nextest-archive.tar.zst \
-                --workspace-remap /workspace --extract-to /workspace \
-                -E "$GMP_SUITE_FILTER"
-            '
 
   release:
     name: Attach packages to GitHub release

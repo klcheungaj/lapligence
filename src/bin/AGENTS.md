@@ -24,11 +24,12 @@ Keep reusable processing in the library. Bins import `llg::config`, `llg::core`,
   `--build-jobs <N>` (positive) > `$CMAKE_BUILD_PARALLEL_LEVEL` > available CPUs
   sets `cmake --build --parallel`. Tool invocation options are ignored with a
   warning under `--gen-only`. Never derive defaults from compile-time paths.
-- Experimental model selection uses `LLG_VALUE_BACKEND=legacy|compact` and
-  `LLG_COMPACT_KERNELS=portable|gmp`; defaults legacy/portable. GMP kernels
-  build the bundled `vendor/gmp` subset; `GMP_ROOT` optionally names an
-  installation. The emitter and builder receive the same configuration.
-  Compact selection remains experimental; do not claim production support before V12.
+- Models always use compact values with GMP kernels, built from the bundled
+  `vendor/gmp` subset; `GMP_ROOT` optionally names an installation. There is no
+  user-facing value selector and no fallback. Development-only
+  `LLG_DEV_VALUE_BACKEND=legacy|compact` and `LLG_DEV_COMPACT_KERNELS=portable|gmp`
+  select the references for parity tests; never document them for users. The
+  emitter and builder receive the same configuration.
 - Repeated `--dpi-lib <path>` validates explicit DPI-C libraries before CMake and
   retains them in source-only output. `--no-opt` disables normally enabled IR
   passes; conformance fixtures exercise both modes.

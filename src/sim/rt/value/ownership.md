@@ -2,7 +2,8 @@
 
 The [facade contract](facade.md) defines backend selection, neutral access,
 width/sign semantics and boundary encodings. The representation below describes
-the selectable legacy backend; feature code must use the facade's neutral API.
+the legacy development reference backend; feature code must use the facade's
+neutral API.
 
 The standalone compact backend in `../value_gmp/` reserves value ABI 5. Widths
 through 64 use inline A/B words and allocate nothing. Wider values own one exact

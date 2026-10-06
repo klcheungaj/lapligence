@@ -18,9 +18,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 VALUES_DIR = SCRIPT_DIR.parent / "values"
 
 BACKENDS = {
-    "legacy": {"LLG_VALUE_BACKEND": "legacy", "LLG_COMPACT_KERNELS": "portable"},
-    "compact-portable": {"LLG_VALUE_BACKEND": "compact", "LLG_COMPACT_KERNELS": "portable"},
-    "compact-gmp": {"LLG_VALUE_BACKEND": "compact", "LLG_COMPACT_KERNELS": "gmp"},
+    "legacy": {"LLG_DEV_VALUE_BACKEND": "legacy", "LLG_DEV_COMPACT_KERNELS": "portable"},
+    "compact-portable": {"LLG_DEV_VALUE_BACKEND": "compact", "LLG_DEV_COMPACT_KERNELS": "portable"},
+    "compact-gmp": {"LLG_DEV_VALUE_BACKEND": "compact", "LLG_DEV_COMPACT_KERNELS": "gmp"},
 }
 
 WORKLOADS = {

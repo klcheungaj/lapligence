@@ -1,7 +1,7 @@
 # Embedded C11 simulation runtime
 
 Generated models compile this runtime separately from Rust. Exact-width values use
-unique ownership (legacy ABI 4, experimental compact ABI 5); registered scopes and retained destinations support
+unique ownership (compact ABI 5; the legacy development reference uses ABI 4); registered scopes and retained destinations support
 suspension, cancellation and queued publication. See
 [value ownership](value/ownership.md) for the allocation contract.
 Contiguous packed copies use masked limb transfers across value/X/Z planes;
@@ -180,10 +180,10 @@ sharing the existing allocation. The 128-byte wait and 240-byte resume block
 remain unchanged. These private layouts leave process ABI 3 and llg_co ABI 1
 unchanged; runtime-content hashing rebuilds cached archives.
 
-The experimental [compact value backend](value_gmp/readme.md) uses ABI 5 and
-provides inline small values, canonical optional B storage and optional GMP wide
-mul/div/mod/pow kernels. Generated sources and runtime archives can select it with
-`LLG_VALUE_BACKEND=compact` and `LLG_COMPACT_KERNELS=portable|gmp`; GMP uses the
-bundled subset in [`gmp.rs`](gmp.rs) (written under `gmp/` and built by
+The [compact value backend](value_gmp/readme.md) uses ABI 5 and provides
+inline small values, canonical optional B storage and GMP wide mul/div/mod/pow
+kernels. Every generated model and runtime archive uses it (development builds
+can select the legacy reference or portable kernels with
+`LLG_DEV_VALUE_BACKEND`/`LLG_DEV_COMPACT_KERNELS`); GMP uses the bundled subset in [`gmp.rs`](gmp.rs) (written under `gmp/` and built by
 `gmp/llg_gmp.cmake`; tables from `scripts/gmp_tables.py`) unless `GMP_ROOT`
 names an installation. Selected compact builds include S1–S9 and native V06 consumer helpers.

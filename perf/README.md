@@ -96,7 +96,8 @@ so both see similar load.
 ## Value-backend workloads (Linux)
 
 `perf/values/` holds generated-model workloads for comparing the packed-value
-backends (`LLG_VALUE_BACKEND`/`LLG_COMPACT_KERNELS`): `rtl-narrow` (8–64-bit
+backends (production compact/GMP against the development references selected
+with `LLG_DEV_VALUE_BACKEND`/`LLG_DEV_COMPACT_KERNELS`): `rtl-narrow` (8–64-bit
 clocked datapaths), `rtl-wide` (128–1024-bit lanes, including wide multiply),
 `scheduler` (edge/delay/level/event waits, NBAs and `fork`/`join_none`),
 `containers` (queues, dynamic and associative arrays, sort, mailbox),

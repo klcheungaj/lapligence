@@ -1739,9 +1739,13 @@ mod tests {
     #[test]
     fn model_metadata_requires_current_ownership_abi() {
         assert!(validate_model_abi(&[]).is_ok());
+        let config = super::super::value_backend::ValueConfig::default();
         let source = format!(
-            "#define LLG_MODEL_VALUE_ABI {}\n#define LLG_MODEL_PROCESS_ABI 3\n",
-            super::super::emit_c::VALUE_ABI_VERSION
+            "#define LLG_MODEL_VALUE_ABI {}\n#define LLG_MODEL_PROCESS_ABI 3\n\
+             #define LLG_MODEL_VALUE_BACKEND {}\n#define LLG_MODEL_COMPACT_KERNELS {}\n",
+            config.backend.abi(),
+            config.backend.selector(),
+            config.kernel.selector()
         );
         assert!(validate_model_abi(&[("model.c", &source)]).is_ok());
         for invalid in [
@@ -1835,13 +1839,13 @@ mod tests {
         assert!(
             key.starts_with(&format!(
                 "owned-v{}-wave0-",
-                super::super::emit_c::VALUE_ABI_VERSION
+                defaults.value_config.backend.abi()
             )),
             "runtime cache key must carry the ownership ABI: {key}"
         );
         // Generated models declaring any other ABI are rejected, so an ABI
         // bump cannot silently reuse an incompatible cached archive.
-        let abi = super::super::emit_c::VALUE_ABI_VERSION;
+        let abi = defaults.value_config.backend.abi();
         for version in [abi.wrapping_sub(1), abi + 1] {
             let stale = format!("#define LLG_MODEL_VALUE_ABI {version}\n");
             assert!(matches!(

@@ -160,8 +160,8 @@ fn net_storage_restarts_with_empty_cells_indexes_and_alias_lists() {
         .net_groups
         .push(IrNetGroup::new("g_pull".to_owned(), 129, true, IrNetKind::Tri1, 1).unwrap());
     let mut source = render(model).replacen(
-        "#define LLG_MODEL_VALUE_ABI 4",
-        "#define LLG_MODEL_VALUE_ABI 4\n#define LLG_MODEL_NO_MAIN 1",
+        "#define LLG_MODEL_VALUE_ABI 5",
+        "#define LLG_MODEL_VALUE_ABI 5\n#define LLG_MODEL_NO_MAIN 1",
         1,
     );
     source.push_str(

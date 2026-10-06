@@ -53,8 +53,8 @@ before adding a conditional anywhere else.
 
 ## Values and native owners
 
-The default legacy `LLG_VALUE_ABI_VERSION` is 4, independent of model width.
-Compact uses ABI 5. The legacy `sv4_t` stores
+Generated models use the compact backend, ABI 5. The legacy development
+reference's `LLG_VALUE_ABI_VERSION` is 4, independent of model width. The legacy `sv4_t` stores
 `uint32_t width`, `int8_t is_signed` and bits/x/z pointers into one allocation of
 three `uint64_t` limb planes, each ceil(width/64). Width zero allocates nothing;
 packed widths stay below exclusive `LLG_SUPPORTED_WIDTH_LIMIT` (`1 << 20`). Initialize with `SV4_EMPTY`, use

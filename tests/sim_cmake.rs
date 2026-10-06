@@ -69,7 +69,7 @@ const GENERATOR: &str = "Unix Makefiles";
 
 /// Minimal stand-in model source; only used where cmake must fail *before*
 /// compiling anything.
-const STUB_MODEL_C: &str = "#define LLG_MODEL_VALUE_ABI 4\nint main(void) { return 0; }\n";
+const STUB_MODEL_C: &str = "#define LLG_MODEL_VALUE_ABI 5\n#define LLG_MODEL_VALUE_BACKEND 1\n#define LLG_MODEL_COMPACT_KERNELS 1\nint main(void) { return 0; }\n";
 
 fn fresh_dir(tag: &str) -> sim_harness::TempDir {
     sim_harness::TempDir::new(&format!("sim-cmake-{tag}")).expect("create temp dir")
@@ -173,7 +173,8 @@ fn generated_sources_keep_value_runtime_as_a_separate_translation_unit() {
     }
     sim::build::generate_model_sources(dir.path(), &extra).expect("regenerate model sources");
 
-    let (header, source) = sim::rt::value_sources();
+    let (header, source) =
+        sim::rt::value_sources_for(sim::value_backend::ValueConfig::default().backend);
     assert_eq!(
         std::fs::read_to_string(dir.path().join("llg_value.h")).unwrap(),
         header
@@ -247,7 +248,9 @@ fn mixed_process_and_coroutine_abis_fail_to_build_or_link() {
         return;
     }
     let dir = fresh_dir("mixed-abi");
-    let stale_model = r#"#define LLG_MODEL_VALUE_ABI 4
+    let stale_model = r#"#define LLG_MODEL_VALUE_ABI 5
+#define LLG_MODEL_VALUE_BACKEND 1
+#define LLG_MODEL_COMPACT_KERNELS 1
 #define LLG_MODEL_PROCESS_ABI 1
 #include "llg_rt.h"
 int main(void) { return 0; }

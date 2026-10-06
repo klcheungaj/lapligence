@@ -17,7 +17,9 @@ mod statements;
 /// Exclusive packed-width safeguard of the C runtime, not an IR restriction.
 /// Keep aligned with `LLG_SUPPORTED_WIDTH_LIMIT` in `rt/llg_value.h`.
 pub const LLG_WIDTH_LIMIT: u32 = 1 << 20;
-/// Generated model/runtime ownership ABI. Keep aligned with llg_value.h.
+/// Ownership ABI of the legacy development backend
+/// ([`crate::sim::value_backend::ValueBackend::abi`]). Keep aligned with
+/// llg_value.h.
 pub const VALUE_ABI_VERSION: u32 = 4;
 /// Largest width supported by this C backend.
 pub const LLG_MAX_WIDTH: u32 = LLG_WIDTH_LIMIT - 1;

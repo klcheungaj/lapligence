@@ -8,8 +8,8 @@ concatenation, replication, streaming, array conditional merge,
 net/strength/UDP/enum, real/time and formatting/scalar/index adapters.
 V06 consumer primitives are implemented on native A/B words in
 `consumer_bridge.c`, with inline small scanner mutations in `consumer_inline.h`.
-Generated sources can select this backend experimentally; legacy remains the
-default.
+Every generated model uses this backend with GMP kernels; the legacy backend
+and portable kernels remain development references.
 
 `backend.h` supplies inline operations for widths through 64 and a static
 `LLG_GMP_SV4_LITERAL(bits,x,z,width,sign)` initializer for those widths. Define
@@ -121,9 +121,9 @@ The complete standalone build target is `compact_checks`; its consumer probes
 include independent state/arithmetic oracles, differential checks and allocation
 counters.
 
-Generated builds select `LLG_VALUE_BACKEND=compact` and
-`LLG_COMPACT_KERNELS=portable|gmp`; GMP mode builds the bundled subset (below)
-unless `GMP_ROOT` names an installation. Exported CMake projects propagate both
+Generated builds use compact values with GMP kernels (development builds may
+select portable kernels with `LLG_DEV_COMPACT_KERNELS=portable`); GMP builds the
+bundled subset (below) unless `GMP_ROOT` names an installation. Exported CMake projects propagate both
 literal definitions to every model/runtime unit; with an installation they also
 verify matching GMP headers/library and 64-bit nail-free compatible limbs. The
 facade selects native compact consumer and reference implementations;
@@ -177,17 +177,17 @@ Headers, library, compiler ABI and limb configuration must match the model
 compiler; CMake checks version agreement and 64-bit nail-free limbs, and the
 content hash keeps runtime archives of different installations apart. A
 host-tuned build (for example `-march=native`) is valid only on matching CPUs.
-CI's `gmp-test` and `gmp-linux-test` lanes qualify the bundled build with each
-target's compiler (MSVC x64/arm64, macOS arm64 and Linux glibc distributions);
-installation tests run when `LLG_TEST_GMP_ROOT` is set.
+Every CI test lane builds the bundled GMP with its target's compiler (MSVC
+x64/arm64, macOS arm64, Linux musl and glibc distributions); installation tests
+run when `LLG_TEST_GMP_ROOT` is set.
 
 Licensing (review, not legal advice): GMP is dual-licensed LGPLv3-or-later /
 GPLv2-or-later. Lapligence carries the GMP subset as source text: the `llg` and
-`llg_ls` executables never link it, and only a model the user builds with GMP
-kernels compiles and links it. Such a model also contains the GPLv2 Lapligence
+`llg_ls` executables never link it, but every generated model compiles and
+links it. Such a model also contains the GPLv2 Lapligence
 runtime, so whoever distributes it relies on GMP's GPLv2 option (LGPLv3 alone is
 not GPLv2-compatible) and must ship GMP's licence texts and corresponding source;
 generated projects carry both under `gmp/`. Under LGPLv3 alone (a differently
 licensed runtime), static linking would additionally require relinkable object
-files. The legacy backend and portable compact kernels never use GMP, so
-GMP-free builds are unaffected. See `THIRD_PARTY_NOTICES.md`.
+files. Only the legacy and portable development references build without GMP.
+See `THIRD_PARTY_NOTICES.md`.

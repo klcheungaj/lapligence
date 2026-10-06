@@ -159,11 +159,14 @@ Library optimizer comparisons reuse one DB through `generate_from_db_with_opts`;
 CLI comparisons independently run checked-in HDL in both modes. Follow
 [tests](../../tests/AGENTS.md) and [data semantics](../../docs/sim_data_semantics.md).
 
-## Experimental value selection
+## Value selection
 
-The driver reads `LLG_VALUE_BACKEND=legacy|compact` and
-`LLG_COMPACT_KERNELS=portable|gmp`, default legacy/portable. `CodegenOptions` and
-`CmakeBuildOpts` share `value_config`; mismatching generated guards fail before
+Compact values with GMP kernels (`ValueConfig::default()`, `COMPACT_GMP`) are the
+only user configuration; never fall back to legacy or portable. Those are
+development references (`ValueConfig::LEGACY`, `COMPACT_PORTABLE`) that the
+driver selects only through `LLG_DEV_VALUE_BACKEND=legacy|compact` and
+`LLG_DEV_COMPACT_KERNELS=portable|gmp`; keep them out of user documentation.
+`CodegenOptions` and `CmakeBuildOpts` share `value_config`; mismatching generated guards fail before
 export. Compact GMP kernels compile the bundled `vendor/gmp` subset
 (`rt/gmp.rs`, `rt/gmp/llg_gmp.cmake`) into the runtime archive, keyed by its
 content hash. `gmp_root` overrides `GMP_ROOT`; either names an installation

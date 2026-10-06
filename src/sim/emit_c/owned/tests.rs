@@ -212,7 +212,7 @@ fn conditional_fill_arms_are_owned_and_context_sized() {
 fn model_has_dynamic_start_close_and_no_width_abi() {
     let execution = ExecutionModel::lower(numeric_model()).unwrap();
     let source = super::super::model::render(&execution).unwrap();
-    assert!(source.contains("#define LLG_MODEL_VALUE_ABI 4"));
+    assert!(source.contains("#define LLG_MODEL_VALUE_ABI 5"));
     assert!(source.contains("sv4_t G_value = SV4_EMPTY;"));
     assert!(source.contains("sv4_copy(_llg_result, "));
     assert!(source.contains("int llg_model_start("));
@@ -321,8 +321,8 @@ fn structured_owned_model_reinitializes_with_host() {
     );
     let execution = ExecutionModel::lower(model).unwrap();
     let source = super::super::model::render(&execution).unwrap().replacen(
-        "#define LLG_MODEL_VALUE_ABI 4",
-        "#define LLG_MODEL_VALUE_ABI 4\n#define LLG_MODEL_NO_MAIN 1",
+        "#define LLG_MODEL_VALUE_ABI 5",
+        "#define LLG_MODEL_VALUE_ABI 5\n#define LLG_MODEL_NO_MAIN 1",
         1,
     );
     let host = r#"

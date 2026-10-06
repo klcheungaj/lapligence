@@ -378,8 +378,8 @@ pub(crate) fn run_case_backend_parity(
     for optimized in [false, true] {
         let mut controls = envs.to_vec();
         controls.extend([
-            ("LLG_VALUE_BACKEND", "legacy"),
-            ("LLG_COMPACT_KERNELS", "portable"),
+            ("LLG_DEV_VALUE_BACKEND", "legacy"),
+            ("LLG_DEV_COMPACT_KERNELS", "portable"),
         ]);
         let legacy = invoke_with_env(suite, fixture, optimized, args, &controls, &["GMP_ROOT"]);
         let stdout = legacy.stdout.clone();
@@ -397,8 +397,8 @@ pub(crate) fn run_case_backend_parity(
         for kernel in ["portable", "gmp"] {
             let mut controls = envs.to_vec();
             controls.extend([
-                ("LLG_VALUE_BACKEND", "compact"),
-                ("LLG_COMPACT_KERNELS", kernel),
+                ("LLG_DEV_VALUE_BACKEND", "compact"),
+                ("LLG_DEV_COMPACT_KERNELS", kernel),
                 ("GMP_ROOT", gmp.as_str()),
             ]);
             let compact = invoke_with_env(suite, fixture, optimized, args, &controls, &[]);
@@ -442,8 +442,8 @@ pub(crate) fn run_case_checked_matrix(
             ("compact", "gmp"),
         ] {
             let controls = [
-                ("LLG_VALUE_BACKEND", backend),
-                ("LLG_COMPACT_KERNELS", kernel),
+                ("LLG_DEV_VALUE_BACKEND", backend),
+                ("LLG_DEV_COMPACT_KERNELS", kernel),
                 ("GMP_ROOT", gmp.as_str()),
             ];
             let output = invoke_with_env(suite, fixture, optimized, args, &controls, &[]);

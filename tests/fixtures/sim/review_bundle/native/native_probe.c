@@ -6,9 +6,10 @@
 
 int main(int argc, char **argv) {
     if (argc != 2) return 2;
-    sv4_t selector = sv4_x(1,0), z = sv4_zero(1,0); z.z[0] = 1;
+    sv4_t selector = sv4_x(1,0), z = sv4_zero(1,0); llg_sv4_range_fill(&z, 0, 1, 3);
     sv4_t mux = sv4_mux(selector,z,z);
-    printf("mux_x_z_z: x=%llu z=%llu\n", (unsigned long long)mux.x[0], (unsigned long long)mux.z[0]);
+    printf("mux_x_z_z: x=%llu z=%llu\n", (unsigned long long)llg_sv4_word(mux, 0, LLG_SV4_X),
+           (unsigned long long)llg_sv4_word(mux, 0, LLG_SV4_Z));
     sv4_destroy(&mux); sv4_destroy(&selector); sv4_destroy(&z);
     sv4_t memory[2] = {sv4_from_u64(1,2,0), sv4_from_u64(0,2,0)};
     sv4_t legal[2] = {sv4_from_u64(0,2,0), sv4_from_u64(1,2,0)};

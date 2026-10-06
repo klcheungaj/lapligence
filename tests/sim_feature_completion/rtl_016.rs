@@ -26,8 +26,8 @@ fn assert_runtime_errors(fixture: &str, template: &str) {
             ("compact", "gmp"),
         ] {
             let controls = [
-                ("LLG_VALUE_BACKEND", backend),
-                ("LLG_COMPACT_KERNELS", kernel),
+                ("LLG_DEV_VALUE_BACKEND", backend),
+                ("LLG_DEV_COMPACT_KERNELS", kernel),
                 ("GMP_ROOT", gmp.as_str()),
             ];
             let output = sim_cli::invoke_with_env(SUITE, fixture, optimized, &[], &controls, &[]);

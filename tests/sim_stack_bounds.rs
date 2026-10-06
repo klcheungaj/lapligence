@@ -89,6 +89,19 @@ fn frame_sizes(compiler: &str, level: &str, model: &str, scratch: &Path) -> Vec<
             "-c",
         ])
         .arg(format!("-I{}", root.join("src/sim/rt").display()))
+        // Generated with the default value configuration (compact/GMP).
+        .arg(format!(
+            "-DLLG_SV4_USE_GMP={}",
+            llg::sim::value_backend::ValueConfig::default()
+                .backend
+                .selector()
+        ))
+        .arg(format!(
+            "-DLLG_SV4_GMP_KERNELS={}",
+            llg::sim::value_backend::ValueConfig::default()
+                .kernel
+                .selector()
+        ))
         .arg(format!(
             "-I{}",
             root.join("vendor/slang/external/ieee1800").display()

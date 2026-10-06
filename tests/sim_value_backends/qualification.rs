@@ -123,7 +123,7 @@ fn component_gmp_limb_type_adapter_matches_portable_and_legacy() {
     let reference = run_probe(
         &dir.path().join("legacy"),
         WIDE_PROBE,
-        &options(ValueConfig::default(), &cache),
+        &options(ValueConfig::LEGACY, &cache),
     );
     let text = String::from_utf8(reference.clone()).unwrap();
     assert_eq!(text.lines().count(), 6, "{text}");

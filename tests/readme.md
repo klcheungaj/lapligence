@@ -1028,7 +1028,7 @@ They cover core values and the S2/S3 shifts, reductions, case/wildcard and range
 families with portable and optional GMP limb kernels, independently of generated
 model selection and do not replace later HDL/model integration acceptance.
 
-### Experimental value backend builds
+### Value backend builds
 
 `sim_value_backends` checks selected runtime archives, clean source-only builds,
 both wrong-backend and wrong-kernel links, exact C selectors, missing GMP and
@@ -1041,10 +1041,14 @@ an installation instead and enables the installation-only tests below. Native `s
 CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_value_backends --test-threads 6
 ```
 
-`CodegenOptions.value_config` and `CmakeBuildOpts.value_config` must agree. Driver
-selection uses `LLG_VALUE_BACKEND` and `LLG_COMPACT_KERNELS`; default legacy/portable.
-GMP mode builds the bundled subset unless `GMP_ROOT` names an installation (no
-system fallback). Compact frame checks use a
+`CodegenOptions.value_config` and `CmakeBuildOpts.value_config` must agree; both
+default to compact/GMP, the only user configuration. The legacy backend and
+portable kernels are development references: the driver selects them only
+through `LLG_DEV_VALUE_BACKEND=legacy|compact` and
+`LLG_DEV_COMPACT_KERNELS=portable|gmp` (the former `LLG_VALUE_BACKEND` and
+`LLG_COMPACT_KERNELS` are ignored), and library tests name
+`ValueConfig::LEGACY`/`COMPACT_PORTABLE`. GMP builds the bundled subset unless
+`GMP_ROOT` names an installation (no system fallback). Compact frame checks use a
 24-byte descriptor instead of legacy's 32-byte descriptor on 64-bit hosts;
 `compact_selected_frame_lint` covers suspended values, shared instances and
 structural nets with both kernels and optimizer modes.
@@ -1060,13 +1064,8 @@ library), the same probe runs against it and, on Linux/macOS hosts, against a
 copy whose header selects the other 64-bit limb spelling (`_LONG_LONG_LIMB`),
 which drives the macOS limb-copy path; byte-identical installation copies share
 one runtime archive and edited ones do not; and header/library mismatches fail
-configure. Without it those installation tests print SKIP. Local full
-qualification (compact/GMP as the default backend for every model):
-
-```sh
-LLG_VALUE_BACKEND=compact LLG_COMPACT_KERNELS=gmp \
-  scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test-threads 8
-```
+configure. Without it those installation tests print SKIP. The default suite
+already runs every model with compact/GMP.
 
 After moving the `vendor/gmp` submodule, run `python3 scripts/gmp_tables.py` to
 regenerate the bundled tables (`--check` compares; CI's lint job runs it).
@@ -1088,13 +1087,14 @@ The source-size case compares 65,537 and 16,777,216 cells. Native
 queued snapshot cleanup and zero remaining value owners.
 
 The public CLI, shared `support/sim.rs` execution helpers, owned-DB lifetime helper,
-VPI and waveform execution harnesses honor `LLG_VALUE_BACKEND` and
-`LLG_COMPACT_KERNELS`. Direct library/component tests retain explicit or default
-configurations; this environment does not change the library's legacy defaults.
-Run the whole suite with compact portable using:
+VPI and waveform execution harnesses honor `LLG_DEV_VALUE_BACKEND` and
+`LLG_DEV_COMPACT_KERNELS`. Direct library/component tests retain explicit or
+default (compact/GMP) configurations; this environment does not change library
+defaults. Run the whole suite against a development reference, for example
+compact portable, using:
 
 ```sh
-LLG_VALUE_BACKEND=compact LLG_COMPACT_KERNELS=portable CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test-threads 6 --no-fail-fast
+LLG_DEV_VALUE_BACKEND=compact LLG_DEV_COMPACT_KERNELS=portable CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test-threads 6 --no-fail-fast
 ```
 
 Run the cross-backend parity matrix alone with:

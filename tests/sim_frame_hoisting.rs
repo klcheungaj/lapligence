@@ -375,6 +375,19 @@ fn generated_coroutines_pass_gcc_jump_initialization_check() {
             "-",
         ])
         .arg(format!("-I{}", root.join("src/sim/rt").display()))
+        // Generated with the default value configuration (compact/GMP).
+        .arg(format!(
+            "-DLLG_SV4_USE_GMP={}",
+            llg::sim::value_backend::ValueConfig::default()
+                .backend
+                .selector()
+        ))
+        .arg(format!(
+            "-DLLG_SV4_GMP_KERNELS={}",
+            llg::sim::value_backend::ValueConfig::default()
+                .kernel
+                .selector()
+        ))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -580,6 +593,19 @@ fn assert_strict_c11(model: &str) {
             "-",
         ])
         .arg(format!("-I{}", root.join("src/sim/rt").display()))
+        // Generated with the default value configuration (compact/GMP).
+        .arg(format!(
+            "-DLLG_SV4_USE_GMP={}",
+            llg::sim::value_backend::ValueConfig::default()
+                .backend
+                .selector()
+        ))
+        .arg(format!(
+            "-DLLG_SV4_GMP_KERNELS={}",
+            llg::sim::value_backend::ValueConfig::default()
+                .kernel
+                .selector()
+        ))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

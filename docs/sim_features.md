@@ -17,10 +17,11 @@ were inspected alongside those paths. Parser acceptance, an IR variant, a
 legacy C-rendering helper or a test name alone does not establish execution
 support. Simulator status is not an LSP or synthesis-support guarantee.
 
-Generated sources have experimental compile-time packed-value selection
-(legacy ABI 4 by default, compact ABI 5 with portable or optional GMP kernels).
-Compact selection remains experimental; representative HDL parity is tested,
-while production qualification remains a separate gate. See [the facade contract](../src/sim/rt/value/facade.md).
+Generated models store packed values in the compact descriptor (value ABI 5)
+with GMP kernels for wide multiplication, division, modulo and power, built from
+the bundled `vendor/gmp` sources. There is no user-facing value selection. The
+legacy descriptor (ABI 4) and portable kernels are development references for
+parity tests only. See [the facade contract](../src/sim/rt/value/facade.md).
 
 | Marker | Meaning |
 | --- | --- |

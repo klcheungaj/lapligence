@@ -36,14 +36,18 @@ fn syntax_check(compiler: &str, model: &str, fixture: &Path, mode: &str) {
     if c_compiler::is_gnu_gcc(compiler) {
         command.arg("-Werror=jump-misses-init");
     }
-    if mode.contains("compact") {
-        command.arg("-DLLG_SV4_USE_GMP=1");
-        command.arg(if mode.contains("gmp") {
-            "-DLLG_SV4_GMP_KERNELS=1"
-        } else {
-            "-DLLG_SV4_GMP_KERNELS=0"
-        });
-    }
+    // Explicit compact lanes name their kernels; every other mode generated
+    // with the default value configuration (compact/GMP).
+    let config = if mode == "compact-portable" {
+        sim::value_backend::ValueConfig::COMPACT_PORTABLE
+    } else {
+        sim::value_backend::ValueConfig::default()
+    };
+    command.arg(format!("-DLLG_SV4_USE_GMP={}", config.backend.selector()));
+    command.arg(format!(
+        "-DLLG_SV4_GMP_KERNELS={}",
+        config.kernel.selector()
+    ));
     if mode.contains("debug") {
         command.arg("-DLLG_CO_DEBUG");
     }

@@ -32,15 +32,9 @@ int main(void) {
 
 fn configs() -> Vec<ValueConfig> {
     vec![
-        ValueConfig::default(),
-        ValueConfig {
-            backend: ValueBackend::Compact,
-            kernel: CompactKernel::Portable,
-        },
-        ValueConfig {
-            backend: ValueBackend::Compact,
-            kernel: CompactKernel::Gmp,
-        },
+        ValueConfig::LEGACY,
+        ValueConfig::COMPACT_PORTABLE,
+        ValueConfig::COMPACT_GMP,
     ]
 }
 
@@ -209,8 +203,17 @@ fn component_selected_exports_build_and_wrong_backend_archives_fail() {
     )
     .unwrap();
     assert!(!project.join("value/backend.h").exists());
+    build::generate_model_sources_with_opts(
+        project,
+        &[("probe.c", PROBE)],
+        &options(ValueConfig::LEGACY, &cache),
+    )
+    .unwrap();
+    assert!(!project.join("value_gmp").exists() && !project.join("gmp").exists());
+    // Without a development selection, sources are compact with bundled GMP.
     build::generate_model_sources(project, &[("probe.c", PROBE)]).unwrap();
-    assert!(!project.join("value_gmp").exists());
+    assert!(project.join("value_gmp").is_dir() && project.join("gmp/llg_gmp.cmake").is_file());
+    assert!(!project.join("value/backend.h").exists());
 }
 
 #[test]
@@ -247,6 +250,7 @@ fn component_invalid_c_selectors_and_missing_gmp_are_rejected() {
         &legacy,
         &[],
         &build::CmakeBuildOpts {
+            value_config: ValueConfig::LEGACY,
             gmp_root: Some(dir.path().join("absent")),
             ..Default::default()
         },
@@ -277,11 +281,41 @@ fn component_invalid_driver_selector_is_rejected() {
         "implemented",
         true,
         &["--gen-only"],
-        &[("LLG_VALUE_BACKEND", "invalid")],
+        &[("LLG_DEV_VALUE_BACKEND", "invalid")],
         &[],
     );
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid LLG_VALUE_BACKEND"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid LLG_DEV_VALUE_BACKEND"));
+}
+
+/// The former user-facing selectors no longer exist: they cannot select the
+/// legacy or portable development references, so the driver still emits
+/// compact values with the bundled GMP.
+#[test]
+fn component_former_user_selectors_cannot_select_references() {
+    let dir = sim_harness::TempDir::new("value-former-selectors").unwrap();
+    let out = dir.path().to_string_lossy().into_owned();
+    let output = sim_cli::invoke_with_env(
+        "value_backends",
+        "implemented",
+        true,
+        &["--gen-only", "--out-dir", &out],
+        &[
+            ("LLG_VALUE_BACKEND", "legacy"),
+            ("LLG_COMPACT_KERNELS", "portable"),
+        ],
+        &["LLG_DEV_VALUE_BACKEND", "LLG_DEV_COMPACT_KERNELS"],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let project = PathBuf::from(stdout.lines().last().expect("generated directory"));
+    assert!(project.join("gmp/llg_gmp.cmake").is_file());
+    let model = std::fs::read_to_string(project.join("model.c")).unwrap();
+    assert!(
+        model.contains("#define LLG_MODEL_VALUE_BACKEND 1"),
+        "{model}"
+    );
+    assert!(model.contains("#define LLG_MODEL_COMPACT_KERNELS 1"));
 }
 
 #[test]

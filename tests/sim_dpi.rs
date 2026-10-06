@@ -232,7 +232,7 @@ fn dpi_library_options_are_explicit_and_prevalidated() {
         directory.path(),
         &[(
             "model.c",
-            "#define LLG_MODEL_VALUE_ABI 4\nint main(void) { return 0; }\n",
+            "#define LLG_MODEL_VALUE_ABI 5\n#define LLG_MODEL_VALUE_BACKEND 1\n#define LLG_MODEL_COMPACT_KERNELS 1\nint main(void) { return 0; }\n",
         )],
         &opts,
     )
@@ -256,7 +256,7 @@ fn dpi_library_options_are_explicit_and_prevalidated() {
         directory.path(),
         &[(
             "model.c",
-            "#define LLG_MODEL_VALUE_ABI 4\nint main(void) { return 0; }\n",
+            "#define LLG_MODEL_VALUE_ABI 5\n#define LLG_MODEL_VALUE_BACKEND 1\n#define LLG_MODEL_COMPACT_KERNELS 1\nint main(void) { return 0; }\n",
         )],
         &bad_opts,
     )

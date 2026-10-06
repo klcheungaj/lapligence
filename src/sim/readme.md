@@ -31,11 +31,11 @@ See [feature status](../../docs/sim_features.md),
 [build and CLI usage](../../readme.md), [tests](../../tests/readme.md) and
 [source layout](../../docs/source_layout.md).
 
-Experimental packed-value selection uses `LLG_VALUE_BACKEND=compact` and
-`LLG_COMPACT_KERNELS=portable|gmp`; defaults are legacy/portable. GMP mode
-compiles the bundled `vendor/gmp` subset ([`rt/gmp.rs`](rt/gmp.rs)) into the
-runtime unless `GMP_ROOT` names a compatible installation. Portable needs no GMP;
-legacy never inspects or links it. Library callers pass the same `ValueConfig`
+Packed values use the compact descriptor with GMP kernels. The bundled
+`vendor/gmp` subset ([`rt/gmp.rs`](rt/gmp.rs)) is compiled into the runtime
+unless `GMP_ROOT` names a compatible installation. The legacy descriptor and
+portable kernels remain as development references, selected only by
+`LLG_DEV_VALUE_BACKEND`/`LLG_DEV_COMPACT_KERNELS` or by library callers. Library callers pass the same `ValueConfig`
 in `CodegenOptions` and `CmakeBuildOpts`. Source export retains the selection,
 ABI guards and dependency fingerprint. Compact selected models include S1–S9
 and native consumer primitives.
