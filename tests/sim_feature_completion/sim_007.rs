@@ -226,7 +226,7 @@ fn record_container_member_boundaries_are_rejected_explicitly() {
     sim_cli::reject_case(
         SUITE,
         "bad_record_container_element",
-        "with a queue, dynamic or associative member is not supported here",
+        "record elements of a queue, dynamic, associative or fixed array with associative array member `a` are not supported: the element value has no nested associative form",
     );
     sim_cli::reject_case(
         SUITE,
@@ -373,5 +373,108 @@ fn nested_records_and_member_arrays_compare_member_wise() {
         SUITE,
         "bad_record_view_equality",
         "equality of records with associative array member `sub__k` is not supported",
+    );
+}
+
+#[test]
+fn arrays_of_native_tagged_unions_check_each_element() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_tagged_arrays.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_tagged_arrays", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "native_tagged_arrays", expected);
+}
+
+#[test]
+fn inactive_members_of_native_tagged_elements_report() {
+    let expected = source_stderr(
+        "native_tagged_array_inactive",
+        "llg: runtime error: access to inactive tagged-union member S at {source}:13:28\n\
+         llg: runtime error: access to inactive tagged-union member S at {source}:14:9\n\
+         llg: runtime error: access to inactive tagged-union member S at {source}:15:48\n\
+         llg: runtime error: access to inactive tagged-union member F at {source}:15:58\n\
+         llg: runtime error: access to inactive tagged-union member I at {source}:17:9\n\
+         llg: runtime error: access to inactive tagged-union member I at {source}:19:38\n",
+    );
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "native_tagged_array_inactive",
+        &[],
+        &|label, output| {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                "1 []\n2 5 [] 0.0\n3 x x\n",
+                "{label}"
+            );
+            assert_eq!(stderr, expected, "{label}");
+        },
+    );
+}
+
+#[test]
+fn native_tagged_element_boundaries_are_rejected_explicitly() {
+    sim_cli::reject_case(
+        SUITE,
+        "bad_tagged_element_side_effect",
+        "a tagged union element accessed in `tb` must be selected without side effects",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_tagged_nested_member",
+        "tagged union member `r.u` with string, real or handle members nested in a record or array in `tb` is not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_tagged_nested_element",
+        "tagged union member `u` with string, real or handle members nested in a record or array is not supported",
+    );
+}
+
+#[test]
+fn container_elements_hold_records_with_container_members() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_container_elements.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_container_elements", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "record_container_elements", expected);
+    sim_cli::reject_case(
+        SUITE,
+        "bad_record_element_member_context",
+        "queue or dynamic-array member `q` of a container record element is only supported in assignment, call and system-task statements and whole-element copies",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_record_element_member_nba",
+        "nonblocking assignment to a queue or dynamic-array member of a container record element in `tb` is not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_record_element_member_ref",
+        "a queue or dynamic-array member of a container record element as the ref actual of `q` in `tb` is not supported",
+    );
+}
+
+#[test]
+fn whole_native_tagged_unions_take_nonblocking_writes() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_007/native_tagged_nba.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_tagged_nba", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "native_tagged_nba", expected);
+    sim_cli::reject_case(
+        SUITE,
+        "bad_tagged_member_nba",
+        "nonblocking assignment to a member of a tagged union with string, real or handle members in `tb` is not supported: the write needs a commit-time tag check",
+    );
+}
+
+#[test]
+fn string_cases_nested_member_arrays_and_call_result_members() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_record_selects.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_record_selects", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "native_record_selects", expected);
+    sim_cli::reject_case(
+        SUITE,
+        "bad_native_record_class_property",
+        "class property `holder_c.m` of an unpacked record or union type with string, real, handle or container members is not supported",
     );
 }

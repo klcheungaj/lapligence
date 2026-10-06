@@ -787,6 +787,9 @@ impl<'a> Codegen<'a> {
         if let Some(value) = self.lower_record_call_select(scope_path, h)? {
             return Ok(value);
         }
+        if let Some(value) = self.lower_native_call_select(scope_path, h)? {
+            return Ok(value);
+        }
         if self.packed_element_member_select(h).is_some() {
             if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
                 return Ok(value);
@@ -1651,9 +1654,9 @@ impl<'a> Codegen<'a> {
                     self.kind(h)
                 ))
             }
-            other => Err(format!(
-                "unsupported expression in `{scope_path}` (node kind {other:?})"
-            )),
+            other => Err(self.unstaged_element_member(h).unwrap_or_else(|| {
+                format!("unsupported expression in `{scope_path}` (node kind {other:?})")
+            })),
         }
     }
 

@@ -109,14 +109,16 @@ fn neg_column_record_follow_up_limits() {
     );
     sim_cli::reject_case(
         SUITE,
-        "neg_call_string_member",
-        "a string member of a function result in `tb` must be read from a record variable holding the result",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "neg_continuous_whole_binding",
         "a whole-value pattern binding beyond packed capacity in `tb` must be part of a procedural statement",
     );
+}
+
+#[test]
+fn column_record_call_results_select_string_members() {
+    // `f(r, "!").n` is z! (one call); `f(r, "?").k` is the second call's
+    // count, 2; both calls ran before `calls` is read.
+    sim_cli::run_case_backend_parity(SUITE, "call_string_member", "z! 2 2\n", &[], &[]);
 }
 
 #[test]

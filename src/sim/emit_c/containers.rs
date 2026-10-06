@@ -337,6 +337,8 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
     Ok(match operation {
         IrContainerStmt::SetValue { .. }
         | IrContainerStmt::GetValue { .. }
+        | IrContainerStmt::ValueItemToContainer { .. }
+        | IrContainerStmt::ContainerToValueItem { .. }
         | IrContainerStmt::CopyRange { .. }
         | IrContainerStmt::Merge { .. }
         | IrContainerStmt::Nonblocking { .. }

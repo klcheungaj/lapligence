@@ -171,6 +171,17 @@ impl<'a> Codegen<'a> {
                         self.collect_native_tagged_union(path, node, &layout, &descriptor)?;
                         return Ok(true);
                     }
+                    // Resizable and fixed arrays of such unions are container
+                    // storage whose elements own their tag and members.
+                    if matches!(self.kind(node), NodeKind::Array { .. })
+                        && (self
+                            .db
+                            .array_meta(node)
+                            .is_some_and(|meta| !matches!(meta.kind(), ArrayKind::Static))
+                            || self.is_fixed_handle_array(node))
+                    {
+                        return Ok(false);
+                    }
                     // A variable port's storage is its variable, as for
                     // records; port links copy the tag and member leaves.
                     if matches!(
@@ -731,8 +742,16 @@ impl<'a> Codegen<'a> {
                         | AggregateKind::TaggedUnion
                 ) =>
             {
-                let width =
-                    Self::fixed_descriptor_width(descriptor).ok_or("packed member has no width")?;
+                let width = Self::fixed_descriptor_width(descriptor).ok_or_else(|| {
+                    if layout.kind == AggregateKind::TaggedUnion {
+                        format!(
+                            "tagged union member `{object_name}.{}` with string, real or handle members nested in a record or array in `{path}` is not supported",
+                            aggregate_path_suffix(member_path)
+                        )
+                    } else {
+                        "packed member has no width".to_owned()
+                    }
+                })?;
                 let signal = match shared {
                     Some(signal) => signal.clone(),
                     None => self.collect_aggregate_member_signal(
@@ -1092,7 +1111,9 @@ impl<'a> Codegen<'a> {
             TypeShape::Aggregate(layout) => {
                 matches!(
                     layout.kind,
-                    AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion
+                    AggregateKind::UnpackedStruct
+                        | AggregateKind::UnpackedUnion
+                        | AggregateKind::TaggedUnion
                 ) && Self::fixed_descriptor_width_bits(element).is_none()
             }
             _ => false,

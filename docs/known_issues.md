@@ -352,8 +352,8 @@ automatic declaration initializers, uniform member initializers, `real`,
 `string` and `chandle` members (a SIM-003 native value per subroutine record)
 and tag checks on whole member copies. Column records still reject: a member
 initializer that gives a column's cells different values (a column keeps one
-element default); selecting a whole member array, a sub-record, or a `string`
-or `chandle` member of a call result inside an expression, and comparing a
+element default); selecting a whole member array, a sub-record, or a
+`chandle` member of a call result inside an expression, and comparing a
 record pattern, conditional or tagged expression operand (only storage and
 calls compare); an output or inout record argument with `real`, `string` or
 `chandle` members of a function called inside an expression (statement calls
@@ -426,13 +426,21 @@ Queue, dynamic and associative members of records
 static records and travel as companion containers of subroutine record values
 (formals, results, automatic and static locals): methods, selects, `foreach`,
 whole-record copies, ports, conditionals, equality (except associative
-members) and assignment patterns work. These legal forms still reject with
+members) and assignment patterns work. As elements of queues, dynamic,
+associative and fixed arrays such records keep queue and dynamic-array
+members inside each element value: whole-element copies, calls and
+equality work, and assignment, call and system-task statements that name an
+element's member (`list[i].q.push_back(x)`, `x = list[i].q[j]`) copy that
+member out of the element and back, which costs time proportional to the
+member's size per statement. These legal forms still reject with
 explicit diagnostics: multidimensional fixed arrays of strings, handles or
-native records; records with queue, dynamic or associative members as
-container or fixed-array elements and in nonblocking assignments; class
+native records; associative members of container or fixed-array record
+elements; an element's container member named in a condition, loop header,
+`foreach`, declaration initializer or timing-controlled assignment, or as a
+nonblocking target or `ref` actual; records with container members in nonblocking
+assignments; class
 properties of any unpacked record type with string, real, handle or container
-members (these currently fail with a generic `has no resolved packed width`
-diagnostic); equality of records with an associative member (and conditionals
+members; equality of records with an associative member (and conditionals
 with an ambiguous predicate on such records);
 compound or nonblocking writes to a record element of a resizable container;
 delayed (`#d`) nonblocking writes to a fixed array of native elements; a
@@ -443,7 +451,8 @@ diagnostic rather than a dedicated one); a module, static or process-block
 record as the actual of a native record `ref` formal (subroutine records
 alias); nonblocking writes
 to a static subroutine native record; fork-join_none capture of automatic
-native records; `f(...).member` selects on a native result; native outputs
+native records; sub-record, member-array or handle selects of a native call
+result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles
 publish no change marker); an automatic record, string, chandle or class
@@ -452,11 +461,15 @@ can keep live while the block is entered again (declared in such a fork that
 runs again, such as the `for (...) fork automatic string s = ...; join_none`
 idiom, or in a block that runs again and starts such a fork reading it); a
 member default whose value is itself a record with native members (its
-frontend constant is not captured); a pattern item that is a nested native
-record taken from a call result. Tagged unions with real, string, record or
+frontend constant is not captured). Tagged unions with real, string, record or
 class-handle members execute as module, static and subroutine values
-(formals, results, locals, variable ports, conditional operators); as array
-elements and in nonblocking writes they reject. String and real pattern variables bind
+(formals, results, locals, variable ports, conditional operators) and as
+elements of one-dimensional fixed, queue, dynamic and associative arrays; a
+checked member access of an element whose index has side effects, unions
+nested in a record or a multidimensional array, nonblocking writes to one
+member (SV 11.9 checks them against the tag at commit, and queued native
+writes carry no such check) and nonblocking writes to subroutine storage
+reject; whole module and static variables take nonblocking writes. String and real pattern variables bind
 in process and subroutine bodies; handle bindings and structure patterns over
 native records reject. A missing associative record element
 compared with `==` reports the SV 7.8.6 warning once per member.
@@ -470,9 +483,10 @@ representations go leaf by leaf, and a run-time member index is a bounded
 comparison chain over the declared leaves. Fixed arrays of native elements
 are fixed-size views of the container runtime, so per-element delayed update
 records and nested views are not modeled. A record member that is itself a
-resizable container would need a companion container per record instance;
-the native type descriptor has no queue bound or associative key to build
-one from. A record, string or handle declared in a procedural block reuses
+resizable container is a companion container of a native value, but a nested
+dynamic array inside a container element's value: no container operation
+addresses that nested slot in place, so a statement stages a copy, and the
+runtime has no nested associative form. A record, string or handle declared in a procedural block reuses
 module storage, one copy per declaration and instance: an automatic one is
 reset at each block entry, so a second live activation has no storage of its
 own. The Db captures member defaults as constants, and an unpacked record
@@ -481,14 +495,14 @@ constant has no captured value. A native `ref` formal is the caller's
 
 ### Intended direction
 
-Companion containers for container-valued record members; a native `ref`
+An addressed-container operand for container members of elements (in place
+of statement staging); a native `ref`
 formal passed as one reference per leaf (packed, string, real, handle and
 container references already exist), so module-like and subroutine records
 bind the same callee ABI (SIM-008); a root-plus-item-path pending record for static native roots
 (a queued leaf pointer would dangle because a root replaces its leaves on
-assignment); fork capture pins (SIM-010); Db capture of member access on
-call results for `f().m`; native tagged unions in subroutine storage
-through the same descriptors and root registry; and per-activation native
+assignment); fork capture pins (SIM-010); a commit-time tag guard on queued
+native writes for tagged-union member NBAs; and per-activation native
 roots for forked automatic block records, strings and handles.
 
 ### Reproduce
@@ -497,7 +511,9 @@ roots for forked automatic block records, strings and handles.
 `sim_004/neg_static_native_record_nba.sv`,
 `sim_008/neg_module_record_ref.sv`,
 `sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
-`sim_007/bad_block_native_*.sv` and `sim_007/bad_record_member_default.sv`.
+`sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
+`sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
+`sim_007/bad_native_record_class_property.sv` and `sim_007/bad_tagged_*.sv`.
 
 ## Resizable containers at subroutine, object and nesting boundaries
 

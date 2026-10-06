@@ -1473,6 +1473,13 @@ fn sequence_statement(statement: &IrStmt) -> bool {
                 | IrObjectStmt::StringAssignLocal(..)
                 | IrObjectStmt::ChandleAssignLocal(..)
         ),
+        // Whole-element copies into lexical temporaries (SIM-007).
+        IrStmt::Container(operation) => matches!(
+            operation.as_ref(),
+            IrContainerStmt::Declare(_)
+                | IrContainerStmt::GetValue { .. }
+                | IrContainerStmt::ValueItemToContainer { .. }
+        ),
         IrStmt::Block(statements) => statements.iter().all(sequence_statement),
         _ => false,
     }

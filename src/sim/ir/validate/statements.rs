@@ -288,7 +288,15 @@ impl Validator<'_> {
             IrStmt::Container(operation) => {
                 operation.validate(self.model, self.string_return.get())?;
                 if let IrContainerStmt::SetValue { value, .. }
-                | IrContainerStmt::GetValue { value, .. } = operation.as_ref()
+                | IrContainerStmt::GetValue { value, .. }
+                | IrContainerStmt::ValueItemToContainer {
+                    root: IrValueItemRoot::Value(value),
+                    ..
+                }
+                | IrContainerStmt::ContainerToValueItem {
+                    root: IrValueItemRoot::Value(value),
+                    ..
+                } = operation.as_ref()
                 {
                     self.validate_native_value_use(*value, path)?;
                 }

@@ -40,5 +40,8 @@ captured from `llg`.
   9); a `t` member matches only `default` (`-1`).
 - Negative cases: a member initializer giving cells different values, a `ref`
   formal or an expression-call output of a record with a string member, a
-  whole member array or a string member of a call result, and a whole-value
-  binding in a continuous assignment are rejected with explicit diagnostics.
+  whole member array of a call result, and a whole-value binding in a
+  continuous assignment are rejected with explicit diagnostics.
+- `call_string_member` (SIM-007): scalar members of a call result read inside
+  one `$display`: `f(r, "!").n` is `z!` after one call, `f(r, "?").k` is the
+  second call's count 2, and `calls` is 2 once both ran: `z! 2 2`.
