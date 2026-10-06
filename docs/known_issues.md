@@ -437,7 +437,7 @@ explicit diagnostics: multidimensional fixed arrays of strings, handles or
 native records; associative members of container or fixed-array record
 elements; an element's container member named in a condition, loop header,
 `foreach`, declaration initializer or timing-controlled assignment, or as a
-nonblocking target; records with container members in nonblocking
+nonblocking target or `ref` actual; records with container members in nonblocking
 assignments; class
 properties of any unpacked record type with string, real, handle or container
 members; equality of records with an associative member (and conditionals
