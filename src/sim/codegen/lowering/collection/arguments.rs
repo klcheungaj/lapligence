@@ -916,6 +916,11 @@ impl<'a> Codegen<'a> {
             let plan = self.freeze_stream_targets(plan, tag, &mut sequence, &mut captures)?;
             return Ok((CallWriteback::Stream(plan), None, captures));
         }
+        if let Some((writeback, read)) =
+            self.container_element_writeback(path, actual, tag, read_actual)?
+        {
+            return Ok((writeback, read, Vec::new()));
+        }
         let (lhs, read, captures) = self.lower_call_actual(path, actual, tag, read_actual)?;
         Ok((CallWriteback::Lhs(lhs), read, captures))
     }
@@ -1412,18 +1417,76 @@ pub(in super::super) enum CallWriteback {
     Lhs(IrLhs),
     /// A checked streaming unpack whose selectors are already frozen.
     Stream(super::super::containers::StreamTargetPlan),
+    /// One whole packed or real element of a resizable container; `prelude`
+    /// freezes its keys before the call (SIM-008).
+    Container {
+        container: usize,
+        keys: super::super::containers::ElementKeys,
+        element: IrContainerElement,
+        prelude: Vec<IrStmt>,
+    },
 }
 
 impl CallWriteback {
-    /// The copy-out statement writing `value` (the formal's storage) back.
-    pub(in super::super) fn store(self, model: &IrModel, value: IrExpr) -> IrStmt {
+    /// Statements that run before the call, such as frozen element keys.
+    pub(in super::super) fn take_prelude(&mut self) -> Vec<IrStmt> {
         match self {
+            Self::Container { prelude, .. } => std::mem::take(prelude),
+            Self::Lhs(_) | Self::Stream(_) => Vec::new(),
+        }
+    }
+
+    /// The copy-out statement writing `value` (the formal's storage) back.
+    pub(in super::super) fn store(self, model: &IrModel, value: IrExpr) -> Result<IrStmt, String> {
+        use super::super::containers::ElementKeys;
+        Ok(match self {
             Self::Lhs(lhs) => IrStmt::Assign {
                 rhs: apply_lhs_assignment_context(model, &lhs, value),
                 lhs,
                 nba: false,
             },
             Self::Stream(plan) => plan.assign(value, false),
-        }
+            Self::Container {
+                container,
+                keys,
+                element,
+                ..
+            } => {
+                let real = matches!(element, IrContainerElement::Real { .. });
+                let value = if real {
+                    super::super::ir_to_storage(value, 0, false, false)?
+                } else {
+                    super::super::ir_to_storage(
+                        value,
+                        element.width(),
+                        element.signed(),
+                        element.two_state(),
+                    )?
+                };
+                let statement = match (keys, real) {
+                    (ElementKeys::String(key), false) => IrContainerStmt::SetString {
+                        container,
+                        key,
+                        value,
+                    },
+                    (ElementKeys::String(key), true) => IrContainerStmt::SetStringReal {
+                        container,
+                        key,
+                        value,
+                    },
+                    (ElementKeys::Integral(mut indices), false) => IrContainerStmt::Set {
+                        container,
+                        index: indices.remove(0),
+                        value,
+                    },
+                    (ElementKeys::Integral(mut indices), true) => IrContainerStmt::SetReal {
+                        container,
+                        index: indices.remove(0),
+                        value,
+                    },
+                };
+                IrStmt::Container(Box::new(statement))
+            }
+        })
     }
 }
