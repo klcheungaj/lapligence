@@ -38,6 +38,39 @@ fn source_stderr(fixture: &str, template: &str) -> String {
 }
 
 #[test]
+fn native_tagged_unions_cross_subroutine_storage() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_tagged_calls.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_tagged_calls", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "native_tagged_calls", expected);
+}
+
+#[test]
+fn inactive_native_tagged_members_of_subroutine_values_report() {
+    let expected = source_stderr(
+        "native_tagged_inactive_calls",
+        "llg: runtime error: access to inactive tagged-union member S at {source}:10:9\n\
+         llg: runtime error: access to inactive tagged-union member S at {source}:11:16\n\
+         llg: runtime error: access to inactive tagged-union member S at {source}:27:26\n",
+    );
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "native_tagged_inactive_calls",
+        &[],
+        &|label, output| {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                "[]\n[b] [-]\n[]\n",
+                "{label}"
+            );
+            assert_eq!(stderr, expected, "{label}");
+        },
+    );
+}
+
+#[test]
 fn inactive_native_tagged_members_report_and_store_nothing() {
     let expected = source_stderr(
         "native_tagged_inactive",

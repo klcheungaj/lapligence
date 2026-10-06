@@ -442,11 +442,11 @@ native records; `f(...).member` selects on a native result; native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles
 publish no change marker); and event controls on string members. Tagged unions with real, string, record or
-class-handle members execute only as module or static variables: in
-subroutine storage, arrays, ports, nonblocking writes and conditional
-operators they reject. String and real pattern variables bind in process
-bodies but not in subroutine bodies, and handle bindings and structure
-patterns over native records reject. A missing associative record element
+class-handle members execute as module, static and subroutine values
+(formals, results, locals, conditional operators); as array elements, ports
+and in nonblocking writes they reject. String and real pattern variables bind
+in process and subroutine bodies; handle bindings and structure patterns over
+native records reject. A missing associative record element
 compared with `==` reports the SV 7.8.6 warning once per member.
 
 ### Cause

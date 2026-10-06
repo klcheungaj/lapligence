@@ -1366,7 +1366,7 @@ impl Codegen<'_> {
     fn lower_native_tagged_pattern(
         &mut self,
         scope_path: &str,
-        root: NodeId,
+        root: super::super::collection::native_values::NativeTaggedRoot,
         info: &crate::core::db::ConditionalPatternInfo,
         match_kind: IrPatternMatchKind,
     ) -> Result<IrExpr, String> {

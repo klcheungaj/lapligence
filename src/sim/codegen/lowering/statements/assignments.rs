@@ -73,9 +73,14 @@ impl EmitCtx<'_, '_> {
                     self.path
                 ));
             }
-            if self.cg.native_tagged_root(rhs).is_none() {
+            if self.cg.native_tagged_root(rhs).is_none()
+                && !self.cg.native_call_node(rhs)
+                && !self
+                    .cg
+                    .native_record_conditional(self.cg.p30_unwrap_cast(rhs))
+            {
                 return Err(format!(
-                    "a tagged union with string, real or handle members in `{}` can only be assigned a tagged expression or another such union variable",
+                    "a tagged union with string, real or handle members in `{}` can only be assigned a tagged expression, another such union variable, a function result or a conditional",
                     self.path
                 ));
             }

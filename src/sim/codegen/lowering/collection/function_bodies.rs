@@ -176,7 +176,17 @@ impl<'a> Codegen<'a> {
         // for the ordinary local walk. Give automatic `.name` bindings the
         // same per-activation storage as source-declared integral locals.
         let pattern_targets = self.conditional_pattern_targets(body);
+        // String pattern variables are activation string locals written when
+        // their pattern matches, as in processes (SIM-007).
+        let mut string_pattern_targets = Vec::new();
         for target in &pattern_targets {
+            // A case item's pattern variable is also a declaration of the
+            // ordinary local walk; a string one is still a string local.
+            if matches!(self.kind(*target), NodeKind::Var { ty } if ty.kind == "string") {
+                locals.remove(target);
+                string_pattern_targets.push(*target);
+                continue;
+            }
             if locals.contains_key(target) {
                 continue;
             }
@@ -195,9 +205,15 @@ impl<'a> Codegen<'a> {
                     ));
                 }
             };
-            if is_real_kind(&ty.kind) || is_handle_kind(&ty.kind) || ty.kind == "string" {
+            if is_real_kind(&ty.kind) {
+                let name = format!("{local_prefix}_l{local_seq}");
+                local_seq += 1;
+                locals.insert(*target, (name, 0, false, false, ty.kind == "shortreal"));
+                continue;
+            }
+            if is_handle_kind(&ty.kind) {
                 return Err(format!(
-                    "conditional pattern binding `{}` requires an integral type",
+                    "conditional pattern binding `{}` of a handle type in a subroutine is not supported",
                     self.node(*target).name
                 ));
             }
@@ -802,10 +818,18 @@ impl<'a> Codegen<'a> {
                     width: *width,
                     signed: *signed,
                     two_state: *two_state,
-                    init: None,
+                    // A real pattern variable (width 0) starts at 0.0.
+                    init: (*width == 0).then(|| Box::new(real_literal_expr(0.0))),
                 },
             )
             .collect::<Vec<_>>();
+        let mut pattern_decls = pattern_decls;
+        for target in string_pattern_targets {
+            pattern_decls.push(IrStmt::DeclString {
+                name: self.pattern_string_local(target),
+                init: None,
+            });
+        }
         let (mut body_stmts, mut pre_fns) = {
             let mut ctx = EmitCtx::new(
                 self,
