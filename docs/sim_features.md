@@ -1274,8 +1274,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   formals are shared like locals (outputs are copied out at return), and so
   are string outputs, native records with their companion containers and
   container formals, with branches of every fork kind and nested forks.
-  Handle variables are still copied into detached branches (SIM-010), and
-  ref-formal captures reject. Static-local
+  Semaphore, mailbox and chandle variables are shared through an opaque
+  frame slot; task-local class handles await SIM-011, and ref-formal captures
+  reject. Static-local
   task NBAs are represented, including arrays; NBAs targeting automatic locals
   or automatic formals reject. V §§9.8.2, 10.2; SV §§9.3.2, 10.4.2, 13.3.2
   **[1995/SV-2005]**.

@@ -22,6 +22,7 @@ fn check_capture(storage: StorageRef) -> Result<(), String> {
                     | StorageKind::String
                     | StorageKind::Container
                     | StorageKind::Native
+                    | StorageKind::Opaque
             ))
     {
         return Err("shared fork capture requires automatic numeric or string storage".to_owned());
@@ -277,6 +278,25 @@ impl Frame<'_, '_> {
                 .insert(local.clone(), (source.to_owned(), storage.slot()));
             self.bind_native(local, address.clone(), NativeKind::String);
             self.bind_native(name, address, NativeKind::String);
+            return Ok(());
+        }
+        if storage.kind() == StorageKind::Opaque && storage.ownership() == StorageOwnership::Shared
+        {
+            // A shared handle keeps its source local's name, so the branch's
+            // handle reads and writes resolve unchanged.
+            let IrExprKind::LocalRead(local) = initial.kind() else {
+                return Err("shared handle capture requires a local source".to_owned());
+            };
+            let pointer = self.declare(
+                "void**",
+                "capture_handle",
+                format!("llg_frame_opaque_address({source}, {}u)", storage.slot()),
+            );
+            // Branch code may also name it by its capture local.
+            self.bind_native(name, pointer.clone(), NativeKind::Chandle);
+            self.bind_native(local, pointer, NativeKind::Chandle);
+            self.shared_cells
+                .insert(local.clone(), (source.to_owned(), storage.slot()));
             return Ok(());
         }
         if storage.kind() == StorageKind::Event {

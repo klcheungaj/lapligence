@@ -148,6 +148,26 @@ impl<'a> Codegen<'a> {
             });
         }
         let function = self.func.as_ref()?;
+        // A shared handle local of the subroutine (chandle, class, semaphore
+        // or mailbox handle) is aliased under its own local name.
+        if matches!(self.kind(target), NodeKind::Var { ty } if is_handle_kind(&ty.kind))
+            && self.shared_locals.contains(&target)
+        {
+            if let Some(IrChandleExpr::LocalRead(name)) = function.chandle_read.get(&target) {
+                return Some(CaptureSource {
+                    info: ProcLocalInfo {
+                        c_name: name.clone(),
+                        width: 0,
+                        signed: false,
+                        two_state: true,
+                        static_signal: None,
+                    },
+                    initial: IrExpr::new(IrExprKind::LocalRead(name.clone()), 0, false, None),
+                    lifetime: StorageLifetime::Automatic,
+                    kind: StorageKind::Opaque,
+                });
+            }
+        }
         // An automatic string local of the subroutine is captured by value
         // (or shared, see `fork_shared`) under its own local name.
         let string_local = match self.kind(target) {
@@ -401,6 +421,7 @@ impl<'a> Codegen<'a> {
                                     || matches!(self.kind(*target), NodeKind::Var { ty } if ty.kind == "string")
                                     || self.subroutine_container_meta(*target).is_some()
                                     || self.native_value_type(*target).is_some()
+                                    || matches!(self.kind(*target), NodeKind::Var { ty } if is_handle_kind(&ty.kind))
                                 {
                                     shared.insert(*target);
                                 }

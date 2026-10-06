@@ -817,6 +817,9 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrObjectStmt) -> Result<Stri
             "    llg_string_realtoa(&{target}, {});\n",
             render_expr_impl(ctx, value)?.code
         ),
+        IrObjectStmt::ChandleDeclareShared(..) => {
+            return Err("shared handle locals require owned emission".to_owned())
+        }
         IrObjectStmt::ChandleDeclareLocal(name, value) => format!(
             "    void *{name} = {};\n",
             value

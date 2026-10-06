@@ -179,6 +179,7 @@ impl EmitCtx<'_, '_> {
                                 | StorageKind::String
                                 | StorageKind::Container
                                 | StorageKind::Native
+                                | StorageKind::Opaque
                         )
                     {
                         // A detached branch shares the declaring frame's cell.

@@ -362,6 +362,24 @@ impl Frame<'_, '_> {
                 let address = self.native_lookup(name, NativeKind::String)?.address;
                 self.string_number(&address, value, None)?;
             }
+            ChandleDeclareShared(name, initializer) => {
+                let owner = self.scalar(
+                    "llg_frame_t**",
+                    "(llg_frame_t**)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_frame_t*), llg_owned_frame_drop))"
+                        .to_owned(),
+                );
+                self.line(format!("*{owner} = llg_frame_new(1ULL);"));
+                self.line(format!("llg_frame_capture_opaque(*{owner}, 0u, NULL);"));
+                let address =
+                    self.scalar("void**", format!("llg_frame_opaque_address(*{owner}, 0u)"));
+                self.shared_cells
+                    .insert(name.clone(), (format!("(*{owner})"), 0));
+                self.bind_native(name, address.clone(), NativeKind::Chandle);
+                if let Some(initializer) = initializer {
+                    let value = self.chandle(initializer)?;
+                    self.line(format!("*({address}) = {value};"));
+                }
+            }
             ChandleDeclareLocal(name, initializer) => {
                 let binding = self.native_local(name, NativeKind::Chandle);
                 if let Some(initializer) = initializer {

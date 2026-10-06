@@ -690,11 +690,31 @@ target of such a `->>`. Stores a `$monitor`/`$strobe` helper makes to its own
 static storage publish no event, so a hierarchical wait on that storage does
 not wake.
 
-## Fork branches copy subroutine handles
+## Task-local class handles in fork branches
 
-**Status:** open (SIM-010).
+**Status:** open (SIM-010, SIM-011).
 
 ### Symptom
+
+Member access through a class handle declared in a task does not lower yet
+(SIM-011), so neither the task nor its fork branches can use such a handle.
+Semaphore, mailbox and chandle variables of a task, and every other
+automatic and formal, are shared with fork branches (SV 9.3.2).
+
+### Cause
+
+Task-local class handles resolve no receiver for property access.
+
+### Intended direction
+
+Resolve receivers of task-local class handles (SIM-011); they then share the
+opaque frame slot that other handle locals use.
+
+### Reproduce
+
+`task automatic t(); pkt p = new(1); fork #2 $display(p.id); join_none p = new(2); #3; endtask`.
+
+## Symptom
 
 A `join_none`/`join_any` branch reads its own copy of a class handle or
 chandle variable of the enclosing task, taken when it starts: a later

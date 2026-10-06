@@ -716,6 +716,17 @@ void* llg_frame_object_address(llg_frame_t* frame, size_t slot) {
     return entry->value.object.data;
 }
 
+void** llg_frame_opaque_address(llg_frame_t* frame, size_t slot) {
+    llg_frame_slot_t* entry = frame_slot(frame, slot);
+    if (entry->alias_kind == LLG_FRAME_ALIAS_SLOT) {
+        return llg_frame_opaque_address(entry->alias.slot.frame, entry->alias.slot.slot);
+    }
+    if (entry->kind != LLG_FRAME_OPAQUE) {
+        frame_kind_error(LLG_FRAME_OPAQUE, entry->kind);
+    }
+    return &entry->value.opaque;
+}
+
 llg_frame_t* llg_frame_slot_frame(llg_frame_t* frame, size_t slot) {
     llg_frame_slot_t* entry = frame_slot(frame, slot);
     if (entry->alias_kind == LLG_FRAME_ALIAS_SLOT) {

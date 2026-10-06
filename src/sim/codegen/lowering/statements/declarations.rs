@@ -289,7 +289,7 @@ impl EmitCtx<'_, '_> {
                             })
                             .transpose()?;
                         let mut statements = vec![IrStmt::Object(Box::new(
-                            IrObjectStmt::ChandleDeclareLocal(name.clone(), None),
+                            self.handle_declaration(declaration, name.clone(), None),
                         ))];
                         if let Some(init) = init {
                             statements.push(IrStmt::Object(Box::new(
@@ -320,9 +320,11 @@ impl EmitCtx<'_, '_> {
                             .var_initializer(declaration)
                             .map(|initializer| self.cg.lower_chandle(&self.path, initializer))
                             .transpose()?;
-                        return Ok(vec![IrStmt::Object(Box::new(
-                            IrObjectStmt::ChandleDeclareLocal(name, init),
-                        ))]);
+                        return Ok(vec![IrStmt::Object(Box::new(self.handle_declaration(
+                            declaration,
+                            name,
+                            init,
+                        )))]);
                     }
                     if matches!(self.cg.kind(declaration), NodeKind::Var { ty } if ty.kind == "string")
                     {
@@ -534,6 +536,22 @@ impl EmitCtx<'_, '_> {
             info.two_state,
             init,
         )])
+    }
+
+    /// The declaration of an automatic handle local: a shared frame slot
+    /// when a fork branch also uses it.
+    fn handle_declaration(
+        &mut self,
+        declaration: NodeId,
+        name: String,
+        init: Option<IrChandleExpr>,
+    ) -> IrObjectStmt {
+        if self.cg.fork_shared(declaration) {
+            self.cg.shared_locals.insert(declaration);
+            IrObjectStmt::ChandleDeclareShared(name, init)
+        } else {
+            IrObjectStmt::ChandleDeclareLocal(name, init)
+        }
     }
 
     /// The declaration of an automatic packed or real variable: a shared

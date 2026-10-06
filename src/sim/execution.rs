@@ -1916,7 +1916,8 @@ fn collect_object_statement_effects(
         | IrObjectStmt::StringAssignLocal(_, value) => {
             collect_string_effects(ir, value, effects, visited_calls)
         }
-        IrObjectStmt::ChandleDeclareLocal(_, value) => {
+        IrObjectStmt::ChandleDeclareLocal(_, value)
+        | IrObjectStmt::ChandleDeclareShared(_, value) => {
             if let Some(value) = value {
                 collect_chandle_effects(ir, value, effects, visited_calls);
             }
