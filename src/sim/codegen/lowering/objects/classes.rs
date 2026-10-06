@@ -11,19 +11,27 @@ impl Codegen<'_> {
                     || self.class_static_objects.contains_key(target)
             }),
             // The last property on the path decides; a native record
-            // property (`n.next.rec.s`) is not packed or object storage.
-            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
-                .iter()
-                .rev()
-                .flatten()
-                .copied()
-                .find(|target| {
-                    self.class_fields.contains_key(target)
-                        || self.class_static_signals.contains_key(target)
-                        || self.class_static_objects.contains_key(target)
-                        || self.class_native_fields.contains_key(target)
-                })
-                .filter(|target| !self.class_native_fields.contains_key(target)),
+            // property (`n.next.rec.s`) is not packed or object storage, and
+            // a virtual-interface property followed by an interface member
+            // (`h.vif.x`) only names the receiver.
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                let last = refs.iter().rev().flatten().next().copied();
+                refs.iter()
+                    .rev()
+                    .flatten()
+                    .copied()
+                    .find(|target| {
+                        self.class_fields.contains_key(target)
+                            || self.class_static_signals.contains_key(target)
+                            || self.class_static_objects.contains_key(target)
+                            || self.class_native_fields.contains_key(target)
+                    })
+                    .filter(|target| !self.class_native_fields.contains_key(target))
+                    .filter(|target| {
+                        Some(*target) == last
+                            || !matches!(self.kind(*target), NodeKind::Var { ty } if ty.kind == "virtual_interface")
+                    })
+            }
             NodeKind::Var { .. } if self.class_fields.contains_key(&node) => Some(node),
             _ => None,
         }
@@ -146,6 +154,17 @@ impl Codegen<'_> {
             .ok_or_else(|| "class method call has no receiver".to_owned())
     }
 
+    /// `what` addressed to `node`'s scope, line and column for a run-time
+    /// error report.
+    pub(in super::super) fn source_site(&self, what: &str, path: &str, node: NodeId) -> String {
+        let source = self.node(node);
+        if source.line == 0 {
+            format!("{what} at {path}")
+        } else {
+            format!("{what} at {path}:{}:{}", source.line, source.col)
+        }
+    }
+
     /// `handle` checked against null where `node` uses it (SV 8.4), with
     /// the run-time error addressed to the use's scope, line and column.
     /// The implicit `this` of a method body is checked at method entry.
@@ -164,15 +183,9 @@ impl Codegen<'_> {
         ) {
             return handle;
         }
-        let source = self.node(node);
-        let site = if source.line == 0 {
-            format!("{what} at {path}")
-        } else {
-            format!("{what} at {path}:{}:{}", source.line, source.col)
-        };
         IrChandleExpr::Required {
             handle: Box::new(handle),
-            site,
+            site: self.source_site(what, path, node),
         }
     }
 

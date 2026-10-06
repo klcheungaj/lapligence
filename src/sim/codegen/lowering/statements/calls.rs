@@ -35,12 +35,6 @@ impl EmitCtx<'_, '_> {
         }
         let virtual_call_info = self.cg.virtual_interface_method_info(h)?;
         let (ft, callee_inst) = if let Some((_, _, ft, callee_inst, _)) = virtual_call_info {
-            if is_task && self.cg.task_has_wait(ft, callee_inst) {
-                return Err(format!(
-                    "timing-bearing virtual-interface task `{name}` is not supported in `{}`",
-                    self.path
-                ));
-            }
             (ft, callee_inst)
         } else {
             self.cg
@@ -82,6 +76,9 @@ impl EmitCtx<'_, '_> {
                 interface: descriptor,
                 method,
                 receiver: self.cg.lower_chandle(&self.path, receiver)?,
+                site: self
+                    .cg
+                    .source_site("virtual interface method call", &self.path, h),
             })
         } else {
             None
@@ -98,8 +95,7 @@ impl EmitCtx<'_, '_> {
         // formals of class-method and virtual-interface calls, whose
         // receivers the typed event ABI does not carry.
         let shape = self.cg.call_shape(ft, callee_inst);
-        let mut expand = shape.inline_only
-            || (has_event_formal && (call_receiver.class.is_some() || virtual_call_info.is_some()));
+        let mut expand = shape.inline_only || (has_event_formal && call_receiver.class.is_some());
         // Module, static and block records bound to native record `ref`
         // formals select a specialization (`record_refs`).
         let records = self.cg.record_ref_bindings(&formals, &bound);

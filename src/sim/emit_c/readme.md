@@ -56,7 +56,11 @@ C ABI and finals remain plain `void` calls. A recursive synchronous subprogram
 unchanged ABI that runs it on an `llg_co_sync` driver; calls into its own
 component are arena calls with a `_llg_result` destination, and virtual or
 virtual-interface calls enter through `llg_class_co_enter_<slot>` /
-`llg_vif_co_enter_<i>_<m>` helpers. Every suspension is an exact numbered
+`llg_vif_co_enter_<i>_<m>` helpers. Class virtual and virtual-interface calls
+whose selected implementation may suspend (timed tasks) use the same helpers
+from any coroutine; the plain dispatchers fail for such implementations, and a
+virtual-interface call checks its receiver at the call site
+(`llg_vif_require`). Every suspension is an exact numbered
 `LLG_CO_AWAIT` or `LLG_CO_CALL*` site, and descriptors carry the real entry.
 Identical frame layouts (every instance of one process or task) share a single
 `llg_shared_frame_<k>_t` typedef instead of one struct per coroutine.

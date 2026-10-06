@@ -33,18 +33,6 @@ pub(in crate::sim::emit_c) fn inline_template(function: &IrFunc) -> bool {
     function.is_inline_expanded()
 }
 
-pub(in crate::sim::emit_c) fn check_model(model: &IrModel) -> Result<(), String> {
-    for interface in &model.virtual_interfaces {
-        for method in &interface.methods {
-            let function = model.func(method.function);
-            if function.formals.iter().any(|formal| formal.event) {
-                return Err(pending("event-formal virtual-interface dispatch"));
-            }
-        }
-    }
-    Ok(())
-}
-
 pub(in crate::sim::emit_c) fn persistent_returns(model: &IrModel, out: &mut String) {
     for (index, function) in model.funcs.iter().enumerate() {
         if !function.automatic {
