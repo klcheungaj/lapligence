@@ -196,6 +196,11 @@ static void cancel_proc_nbas(llg_proc_t* proc) {
     }
 }
 
+// Keep the queued NBAs but end their cancellable link to `proc`.
+static void nba_owner_release_all(llg_proc_t* proc) {
+    while (proc && proc->nba_head) nba_owner_remove(proc->nba_head);
+}
+
 static void free_all_nbas(void) {
     for (int region = 0; region < LLG_REGION_COUNT; ++region) {
         llg_nba_queue_t* queue = &g.nba_queues[region];

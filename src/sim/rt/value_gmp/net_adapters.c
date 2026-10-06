@@ -11,12 +11,22 @@ static uint64_t extract(const uint64_t* plane, uint32_t width, uint32_t offset) 
     return result & g4_mask(width - offset);
 }
 
+static void store_word(g4_t* out, size_t i, uint64_t a, uint64_t b) {
+    if (b && out->width > 64)
+        llg_gmp_sv4_promote(out);
+    g4_mut_a(out)[i] = a;
+    uint64_t* plane = g4_mut_b(out);
+    if (plane)
+        plane[i] = b;
+}
 static g4_t resolve(const g4_t* const* drivers, const uint8_t* strength0,
                      const uint8_t* strength1, const int* indices, int count,
                      uint32_t offset, uint32_t width, int8_t sign, int mode) {
     int strengths = strength0 && strength1;
-    g4_t out = llg_gmp_sv4_new(width, sign, 1);
-    uint64_t *a = g4_mut_a(&out), *b = g4_mut_b(&out);
+    /* Most resolved nets are known: start with the A plane only and promote B
+     * once, at the first word that carries X/Z, instead of allocating both
+     * planes and shrinking the canonical result afterwards. */
+    g4_t out = llg_gmp_sv4_new(width, sign, 0);
     size_t n = llg_gmp_sv4_words(out);
     for (size_t i = 0; i < n; ++i) {
         uint64_t mask = i + 1u == n ? g4_topmask(width) : UINT64_MAX;
@@ -24,8 +34,7 @@ static g4_t resolve(const g4_t* const* drivers, const uint8_t* strength0,
         uint64_t known0[8] = {0}, known1[8] = {0}, possible0[8] = {0}, possible1[8] = {0};
         uint64_t any0 = 0, any1 = 0, anyx = 0;
         if (!strengths && (mode == LLG_GMP_RESOLVE_SUPPLY0 || mode == LLG_GMP_RESOLVE_SUPPLY1)) {
-            a[i] = mode == LLG_GMP_RESOLVE_SUPPLY1 ? mask : 0;
-            b[i] = 0;
+            store_word(&out, i, mode == LLG_GMP_RESOLVE_SUPPLY1 ? mask : 0, 0);
             continue;
         }
         if (strengths && mode >= LLG_GMP_RESOLVE_TRI0 && mode <= LLG_GMP_RESOLVE_SUPPLY1) {
@@ -100,8 +109,7 @@ static g4_t resolve(const g4_t* const* drivers, const uint8_t* strength0,
             absent = ~(stronger0 | stronger1) & mask;
             unknown = ~(zeros | ones | absent) & mask;
         }
-        a[i] = (ones | unknown) & mask;
-        b[i] = (unknown | absent) & mask;
+        store_word(&out, i, (ones | unknown) & mask, (unknown | absent) & mask);
     }
     llg_gmp_sv4_finish(&out);
     return out;

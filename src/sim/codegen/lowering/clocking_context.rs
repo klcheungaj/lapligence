@@ -333,11 +333,16 @@ impl<'a> Codegen<'a> {
                     &block_info.default_input
                 };
                 let mode = self.clocking_sample_mode(skew, &path)?;
+                let source = self
+                    .signal_of(storage.source)
+                    .ok_or_else(|| "clocking source storage disappeared".to_owned())?
+                    .ir;
+                if let IrClockingSampleMode::History(ticks) = mode {
+                    let deepest = self.clocking_history_ticks.entry(source).or_default();
+                    *deepest = (*deepest).max(ticks);
+                }
                 body.push(IrStmt::ClockingSample {
-                    source: self
-                        .signal_of(storage.source)
-                        .ok_or_else(|| "clocking source storage disappeared".to_owned())?
-                        .ir,
+                    source,
                     sample: storage.sample.ir,
                     mode,
                 });

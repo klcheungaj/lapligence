@@ -1070,6 +1070,12 @@ void sv4_mul_into(sv4_t* dst, sv4_t a, sv4_t b) {
     sv4_arithmetic_planes(dst, unknown, sign);
 }
 
+/* The legacy reference keeps fresh bitwise results; reuse is a backend detail. */
+void sv4_and_into(sv4_t* dst, sv4_t a, sv4_t b) { sv4_replace(dst, sv4_and(a, b)); }
+void sv4_or_into(sv4_t* dst, sv4_t a, sv4_t b) { sv4_replace(dst, sv4_or(a, b)); }
+void sv4_xor_into(sv4_t* dst, sv4_t a, sv4_t b) { sv4_replace(dst, sv4_xor(a, b)); }
+void sv4_xnor_into(sv4_t* dst, sv4_t a, sv4_t b) { sv4_replace(dst, sv4_xnor(a, b)); }
+
 static int sv4_raw_nlimbs(const sv4_t* v) {
     int limbs = sv4_nlimbs(v->width);
     while (limbs > 0 && v->bits[limbs - 1] == 0) limbs--;

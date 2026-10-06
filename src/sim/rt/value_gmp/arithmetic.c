@@ -44,6 +44,27 @@ void llg_gmp_sv4_arithmetic_into_wide(g4_t* dst, g4_t a, g4_t b, unsigned op) {
     llg_gmp_sv4_finish(dst);
 }
 
+/* Known equal-width bitwise results overwrite a live destination of that width
+ * in place: word i reads both inputs before it is written, so exact aliases are
+ * safe. Unknown operands, other widths and empty destinations take the
+ * returning form, whose X/Z planes and extension rules stay authoritative. */
+void llg_gmp_sv4_bitwise_into_wide(g4_t* dst, g4_t a, g4_t b, unsigned op) {
+    uint32_t w = g4_maxw(a, b);
+    if (dst->width != w || a.width != w || b.width != w || a.data.wide.b || b.data.wide.b) {
+        llg_gmp_sv4_replace(dst, g4_binary(a, b, op));
+        return;
+    }
+    size_t n = llg_gmp_sv4_words(*dst);
+    const uint64_t *x = a.data.wide.a, *y = b.data.wide.a;
+    uint64_t* r = dst->data.wide.a;
+    for (size_t i = 0; i < n; ++i)
+        r[i] = op == 3 ? x[i] & y[i] : op == 4 ? x[i] | y[i] : op == 5 ? x[i] ^ y[i] : ~(x[i] ^ y[i]);
+    if (dst->data.wide.b)
+        memset(dst->data.wide.b, 0, n * sizeof(uint64_t));
+    dst->is_signed = a.is_signed && b.is_signed;
+    llg_gmp_sv4_finish(dst);
+}
+
 static g4_t multiply(g4_t a, g4_t b) {
     uint32_t w = g4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;

@@ -13,10 +13,13 @@ pub(super) fn signal_name(model: &IrModel, index: usize) -> String {
 pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> {
     let mut out = String::from("static int llg_model_assertions_init(void) {\n");
     if !model.assertions.is_empty() || !model.sampled_domains.is_empty() {
+        // Assertions read only Preponed snapshots. Per-slot history belongs to
+        // clocking skews, which register their sources separately; keeping it
+        // here would grow with simulated time.
         for (index, signal) in model.signals.iter().enumerate() {
             if (!signal.omit || !signal.net_alias.is_empty()) && signal.ty.width() != 0 {
                 out.push_str(&format!(
-                    "    llg_sampled_register(&{});\n",
+                    "    llg_sampled_register_value(&{});\n",
                     signal_name(model, index)
                 ));
             } else if !signal.omit && matches!(signal.ty, IrType::Real { .. }) {
@@ -40,12 +43,13 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
             "NULL".to_owned()
         };
         out.push_str(&format!(
-            "    if (!llg_sampled_domain_register({}ULL, &{}, {}, {}, {}, NULL)) return 0;\n",
+            "    if (!llg_sampled_domain_register({}ULL, &{}, {}, {}, {}, NULL, {}ULL)) return 0;\n",
             index,
             clock,
             edge,
             sampled_domain_callback_name(index, "value"),
             gate,
+            domain.history_ticks,
         ));
     }
     for (index, assertion) in model.assertions().iter().enumerate() {

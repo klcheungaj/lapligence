@@ -162,6 +162,29 @@ processes or clock edges, at the cost of a few bytes per object.
   task root frame grows from 1,640 to 2,760 B). Designs without eligible
   locals are unchanged.
 
+### Bounded retention of finished work
+
+- **Trade-off:** keeping completed process records and every sampled slot until
+  teardown needs no lifetime tracking, but memory then grows with simulated
+  time. Releasing them costs a few checks at completion and 8–16 B per sampled
+  history node or value-only sampled item for list links and depth.
+- **Decision:** completed top-level processes (assertion actions, detached
+  spawns) are freed at the next reap boundary; assertion reads register
+  signals value-only; clocking sources and `$past`/`$rose` domains keep only
+  the depth their readers declare (largest input skew, largest `$past` ticks).
+- **Evidence:** `perf/values/assertions.sv` (32 lanes), median of 3 wall
+  times and heaptrack requested peak heap, identical output:
+
+  | Backend | Cycles | Peak heap before → after | Wall s before → after |
+  | --- | ---: | --- | --- |
+  | legacy | 200 / 1500 / 6000 | 25.8 M / 189 M / 756 M → 533 K / 538 K / 536 K | 0.42 / 3.32 / 15.33 → 0.28 / 2.08 / 8.33 |
+  | compact portable | 200 / 1500 / 6000 | 19.9 M / 146 M / 584 M → 487 K / 490 K / 487 K | 0.32 / 2.67 / 10.93 → 0.22 / 1.85 / 6.73 |
+  | compact GMP | 200 / 1500 / 6000 | 19.9 M / 146 M / 584 M → 487 K / 487 K / 487 K | 0.32 / 2.71 / 10.43 → 0.22 / 1.71 / 6.80 |
+
+  Peak RSS at 6000 cycles fell from 851 / 630 / 630 MiB to about 3 MiB. The
+  time gain was not profiled; the removed work is a history node per signal
+  per slot, and a search of the 324-entry history list on every signal write.
+
 ## Rejected or deferred
 
 | Option | Effect | Decision |

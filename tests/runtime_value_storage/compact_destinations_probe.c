@@ -11,9 +11,25 @@
             abort();                                                                               \
         }                                                                                          \
     } while (0)
-static void (*old_ops[])(sv4_t*, sv4_t, sv4_t) = {sv4_add_into, sv4_sub_into, sv4_mul_into};
-static void (*new_ops[])(g4_t*, g4_t, g4_t) = {llg_gmp_sv4_add_into, llg_gmp_sv4_sub_into,
-                                               llg_gmp_sv4_mul_into};
+/* Arithmetic (0..2) and bitwise (3..6) destination families. */
+enum { OP_COUNT = 7 };
+static void (*old_ops[OP_COUNT])(sv4_t*, sv4_t, sv4_t) = {
+    sv4_add_into, sv4_sub_into, sv4_mul_into, sv4_and_into,
+    sv4_or_into,  sv4_xor_into, sv4_xnor_into};
+static void (*new_ops[OP_COUNT])(g4_t*, g4_t, g4_t) = {
+    llg_gmp_sv4_add_into, llg_gmp_sv4_sub_into, llg_gmp_sv4_mul_into, llg_gmp_sv4_and_into,
+    llg_gmp_sv4_or_into,  llg_gmp_sv4_xor_into, llg_gmp_sv4_xnor_into};
+static sv4_t returning(unsigned op, sv4_t a, sv4_t b) {
+    switch (op) {
+    case 0: return sv4_add(a, b);
+    case 1: return sv4_sub(a, b);
+    case 2: return sv4_mul(a, b);
+    case 3: return sv4_and(a, b);
+    case 4: return sv4_or(a, b);
+    case 5: return sv4_xor(a, b);
+    default: return sv4_xnor(a, b);
+    }
+}
 static uint64_t rng = UINT64_C(0x39d7a631028dc52b);
 static uint64_t random_word(void) {
     rng ^= rng << 13;
@@ -43,7 +59,35 @@ static uint64_t extend_small(sv4_t v, uint32_t width, int sign) {
         result |= UINT64_MAX << v.width;
     return result & (width ? (UINT64_C(1) << width) - 1 : 0);
 }
+/* State of an operand bit after extension to the operation width: 0, 1, or 2 for X/Z. */
+static unsigned extended_state(sv4_t v, uint32_t bit, int sign) {
+    if (bit >= v.width) {
+        if (!sign || !v.width)
+            return 0;
+        bit = v.width - 1;
+    }
+    unsigned state = llg_sv4_state(v, bit);
+    return state >= 2 ? 2u : state;
+}
+static void bitwise_oracle(sv4_t a, sv4_t b, unsigned op, g4_t result) {
+    uint32_t width = a.width > b.width ? a.width : b.width;
+    int sign = a.is_signed && b.is_signed;
+    for (uint32_t bit = 0; bit < width; ++bit) {
+        unsigned x = extended_state(a, bit, sign), y = extended_state(b, bit, sign), expected;
+        if (op == 3)
+            expected = x == 0 || y == 0 ? 0u : x == 1 && y == 1 ? 1u : 2u;
+        else if (op == 4)
+            expected = x == 1 || y == 1 ? 1u : x == 0 && y == 0 ? 0u : 2u;
+        else
+            expected = x == 2 || y == 2 ? 2u : (unsigned)((x ^ y) ^ (op == 6));
+        CHECK(llg_gmp_sv4_state(result, bit) == expected);
+    }
+}
 static void small_oracle(sv4_t a, sv4_t b, unsigned op, g4_t result) {
+    if (op >= 3) {
+        bitwise_oracle(a, b, op, result);
+        return;
+    }
     uint32_t width = a.width > b.width ? a.width : b.width;
     int sign = a.is_signed && b.is_signed;
     int unknown = sv4_is_unknown(a) || sv4_is_unknown(b);
@@ -76,9 +120,7 @@ static void exercise(sv4_t a, sv4_t b, g4_t x, g4_t y, unsigned op, int small) {
         }
         sv4_t input_b = mode == 5 || mode == 6 ? left : right;
         g4_t input_y = mode == 5 || mode == 6 ? lhs : rhs;
-        sv4_t expected = op == 0   ? sv4_add(left, input_b)
-                         : op == 1 ? sv4_sub(left, input_b)
-                                   : sv4_mul(left, input_b);
+        sv4_t expected = returning(op, left, input_b);
         old_ops[op](target, left, input_b);
         new_ops[op](compact, lhs, input_y);
         same(expected, *compact);
@@ -122,7 +164,7 @@ static void exhaustive(void) {
                     for (unsigned signs = 0; signs < 4; ++signs) {
                         sv4_t a = pattern(ac, aw, signs & 1), b = pattern(bc, bw, signs >> 1);
                         g4_t x = import(a), y = import(b);
-                        for (unsigned op = 0; op < 3; ++op)
+                        for (unsigned op = 0; op < OP_COUNT; ++op)
                             exercise(a, b, x, y, op, 1);
                         sv4_destroy(&a);
                         sv4_destroy(&b);
@@ -153,8 +195,11 @@ static void wide(void) {
                             llg_sv4_set_state(&b, 0, 2);
                     }
                     g4_t x = import(a), y = import(b);
-                    for (unsigned op = 0; op < 3; ++op)
-                        if (op != 2 || aw < 1048575 || sv4_is_unknown(a))
+                    for (unsigned op = 0; op < OP_COUNT; ++op)
+                        /* At the width limit the legacy multiply and per-bit bitwise
+                         * references are too slow for sanitizer lanes; 8193 bits
+                         * already crosses every word boundary case. */
+                        if (aw < 1048575 || (op < 2) || (op == 2 && sv4_is_unknown(a)))
                             exercise(a, b, x, y, op, 0);
                     sv4_destroy(&a);
                     sv4_destroy(&b);
@@ -170,6 +215,6 @@ int main(int argc, char** argv) {
         wide();
     else
         return 1;
-    puts("arithmetic destinations: oracle, differential, aliases and ownership passed");
+    puts("arithmetic and bitwise destinations: oracle, differential, aliases and ownership passed");
     return 0;
 }

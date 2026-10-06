@@ -93,6 +93,104 @@ relative to the first binary, and `passes/` the top compiler passes per TU.
 Compare binaries on an idle host; the harness runs them alternately per design
 so both see similar load.
 
+## Value-backend workloads (Linux)
+
+`perf/values/` holds generated-model workloads for comparing the packed-value
+backends (`LLG_VALUE_BACKEND`/`LLG_COMPACT_KERNELS`): `rtl-narrow` (8–64-bit
+clocked datapaths), `rtl-wide` (128–1024-bit lanes, including wide multiply),
+`scheduler` (edge/delay/level/event waits, NBAs and `fork`/`join_none`),
+`containers` (queues, dynamic and associative arrays, sort, mailbox),
+`assertions` (concurrent assertions/covers with sampled-value functions) and
+`mul65`, the GMP prototype's fresh-owner 65-bit multiplication witness. Each
+prints a deterministic summary; the runner fails when any backend's stdout
+differs from legacy.
+
+```sh
+python3 perf/scripts/value_backends.py \
+  --sim-bin target/release/llg --gmp-root /path/to/gmp \
+  --runs 7 --jobs 8 \
+  --heaptrack /path/to/heaptrack --tool-library-path /path/to/heaptrack/libs \
+  --scratch-dir /build/my-value-backends --output-dir /path/to/results
+```
+
+Both directories must be new. `--backend` and `--workload` repeat to select a
+subset, `--list-workloads` prints the catalog and `--size smoke` runs tiny
+sizes for harness checks. Every model is generated with `--gen-only` and built
+by its own self-contained CMake project (Release, the default O3), so all
+three backends share flags. After one unmeasured warm-up, each measured round
+runs every backend once; the order rotates and reverses between rounds so each
+backend sees each position. Executions go through `perf_measure.c` (wall time,
+kernel high-water RSS of the model itself) and `wait4` (user+system CPU time);
+`--cpu N` pins them. Each run records the one-minute load average.
+
+Outputs: `runs.tsv` (every measured execution), `summary.tsv` (median, range
+and compact/legacy ratio of wall, CPU and peak RSS, plus the median of
+per-round paired CPU ratios), `budget.tsv` (each ratio against
+`perf/values/budgets.json`), `metadata.json` (host, toolchain, load, stdout
+hashes, selected descriptor layout and per-model static data) and
+`commands.txt`. With `--heaptrack`, one extra unmeasured execution per model
+records allocation calls, temporary allocations, requested peak heap and leaks
+(`heaptrack/*.txt` keeps the top allocation sites). `value_ops_bench.c` is
+compiled against each backend's generated runtime: `layout` prints
+`sizeof`/`_Alignof(sv4_t)` and the requested payload bytes of known and X
+owners per width, and `timing` measures add/mul/xor at 32–4096 bits in three
+ownership modes (`fresh` returned owner, `to_new` empty destination as in
+generated statements, `to_live` live destination) into `bench_summary.tsv`.
+
+Memory columns are distinct quantities: descriptor bytes and payload bytes are
+the layout cost; heaptrack peak heap is requested live bytes (no allocator
+metadata); peak RSS is whole-process pages, including code, libc and allocator
+retention. Do not derive one from another, and do not assume one descriptor
+size across ABIs; the probe reports the measured target's value.
+
+Shared-host results need at least five rounds; compare CPU time first and treat
+overlapping ranges as inconclusive. Heaptrack runs are profiling runs, never
+timing samples.
+
+### Proposed value-backend budgets (proposed — awaiting user review)
+
+`perf/values/budgets.json` states maximum compact/legacy ratios of medians,
+applied equally to compact/portable and compact/GMP. They were written before
+any comparison was made and are not yet an accepted gate.
+
+| Workload class | CPU | Wall | Peak RSS | Peak heap | Allocation calls |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `rtl-narrow`, `rtl-wide`, `mul65-witness` | ≤ 1.00 | ≤ 1.05 | ≤ 1.02 | ≤ 1.00 | ≤ 1.00 |
+| `scheduler`, `containers`, `assertions` | ≤ 1.05 | ≤ 1.10 | ≤ 1.02 | ≤ 1.00 | ≤ 1.00 |
+
+Rationale: packed-value work dominates the RTL classes and the witness, so
+compact must not be slower there and the 65-bit fresh-owner regression measured
+by the prototype must not recur. Scheduler, container and assertion workloads
+spend most time in backend-independent runtime code, so a 5% CPU allowance
+covers measurement noise rather than a tolerated regression. Compact payloads
+are never larger than legacy payloads, so heap and allocation counts must not
+grow, and RSS gets only 2% for page-granularity noise. Wall-time limits are
+looser because the host is shared.
+
+### Recorded value-backend results (Linux x86-64, 2026-10-05)
+
+Ryzen 9 7950X/WSL2, GCC 14.2, GMP 6.3.0, generated models at O3; seven
+interleaved rounds per workload on a shared host (one-minute load 5–50 during
+the run). Ratios are compact/legacy medians; CPU ranges are per-round paired
+ratios. Heap and allocation columns come from one heaptrack run per model.
+
+| Workload | CPU portable | CPU GMP | Peak RSS KiB legacy → compact | Peak heap legacy → compact | Allocation calls legacy → compact |
+| --- | ---: | ---: | --- | --- | --- |
+| `rtl-narrow` | 0.54 [0.49, 0.61] | 0.55 [0.49, 0.58] | 3,584 → 3,584 / 3,328 | 826 K → 765 K | 64.1 M → 32.6 M |
+| `rtl-wide` | 0.21 [0.20, 0.22] | 0.21 [0.20, 0.23] | 3,584 → 3,840 | 937 K → 818 K | 19.1 M → 12.7 M |
+| `scheduler` | 0.58 [0.52, 0.63] | 0.58 [0.51, 0.65] | 4,352 → 4,096 / 4,352 | 1.88 M → 1.67 M | 34.6 M → 12.6 M |
+| `containers` | 0.44 [0.41, 0.48] | 0.43 [0.41, 0.50] | 2,304 → 2,304 / 2,560 | 251 K → 176 K | 49.6 M → 18.6 M |
+| `assertions` | 0.73 [0.67, 0.77] | 0.71 [0.67, 0.77] | 219,856 → 163,344 / 163,468 | 189 M → 146 M | 14.2 M → 7.4 M |
+| `mul65` | 0.41 [0.34, 0.48] | 0.41 [0.32, 0.56] | 2,048 → 2,304 | 82 K → 82 K | 40.0 M → 25.0 M |
+
+Every CPU, wall, peak-heap and allocation budget is met. The only ratios
+outside budget are peak RSS of the 2–4 MiB workloads (`rtl-wide`, `mul65`,
+`containers`: one or two 256 KiB steps of the reported high-water mark). They
+follow code size, not values: compact executables are 120–320 KB larger
+(inline ≤64-bit operations at each site plus the compact units, and GMP when
+selected), while requested heap is equal or lower. Whether that fixed cost is
+an accepted trade-off or needs an absolute RSS allowance awaits review.
+
 ## SIGPROF sampling
 
 Build the preload library, run a generated simulator directly, then symbolize:

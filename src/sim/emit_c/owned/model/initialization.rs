@@ -655,6 +655,12 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
                 frame.canonical_signal(*index)
             ));
         }
+        IrInitStep::RegisterSampledHistory { sig, ticks } => {
+            frame.line(format!(
+                "llg_sampled_register_history({}, {ticks}ULL);",
+                frame.canonical_signal(*sig)
+            ));
+        }
         IrInitStep::RegisterSampledValue(index) => {
             frame.line(format!(
                 "llg_sampled_register_value({});",

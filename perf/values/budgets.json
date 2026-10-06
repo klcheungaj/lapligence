@@ -1,0 +1,56 @@
+{
+  "status": "proposed - awaiting user review",
+  "baseline": "legacy",
+  "meaning": "Maximum compact/legacy ratio of medians for each workload class; applies to compact-portable and compact-gmp alike. Ratios above the limit are reported as outside budget.",
+  "default": {
+    "cpu_ratio_max": 1.05,
+    "wall_ratio_max": 1.10,
+    "rss_ratio_max": 1.02,
+    "peak_heap_ratio_max": 1.0,
+    "alloc_calls_ratio_max": 1.0
+  },
+  "classes": {
+    "rtl-narrow": {
+      "cpu_ratio_max": 1.0,
+      "wall_ratio_max": 1.05,
+      "rss_ratio_max": 1.02,
+      "peak_heap_ratio_max": 1.0,
+      "alloc_calls_ratio_max": 1.0
+    },
+    "rtl-wide": {
+      "cpu_ratio_max": 1.0,
+      "wall_ratio_max": 1.05,
+      "rss_ratio_max": 1.02,
+      "peak_heap_ratio_max": 1.0,
+      "alloc_calls_ratio_max": 1.0
+    },
+    "scheduler": {
+      "cpu_ratio_max": 1.05,
+      "wall_ratio_max": 1.10,
+      "rss_ratio_max": 1.02,
+      "peak_heap_ratio_max": 1.0,
+      "alloc_calls_ratio_max": 1.0
+    },
+    "containers": {
+      "cpu_ratio_max": 1.05,
+      "wall_ratio_max": 1.10,
+      "rss_ratio_max": 1.02,
+      "peak_heap_ratio_max": 1.0,
+      "alloc_calls_ratio_max": 1.0
+    },
+    "assertions": {
+      "cpu_ratio_max": 1.05,
+      "wall_ratio_max": 1.10,
+      "rss_ratio_max": 1.02,
+      "peak_heap_ratio_max": 1.0,
+      "alloc_calls_ratio_max": 1.0
+    },
+    "mul65-witness": {
+      "cpu_ratio_max": 1.0,
+      "wall_ratio_max": 1.05,
+      "rss_ratio_max": 1.02,
+      "peak_heap_ratio_max": 1.0,
+      "alloc_calls_ratio_max": 1.0
+    }
+  }
+}

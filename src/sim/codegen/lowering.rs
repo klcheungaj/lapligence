@@ -1186,6 +1186,8 @@ struct Codegen<'a> {
     sig_global_by_ir: HashMap<usize, BTreeMap<usize, NodeId>>,
     /// Clocking block variable → synthesized sampled storage and source.
     clocking_samples: HashMap<NodeId, ClockingSampleInfo>,
+    /// Clocking source signal → largest input skew read from its history.
+    clocking_history_ticks: HashMap<usize, u64>,
     /// Canonical lvalues for module `ref` port storage.  A target may be a
     /// whole signal, a packed selection, or one fixed-array element; keeping
     /// the typed lvalue here makes nested ref ports compose without creating
@@ -1574,6 +1576,7 @@ impl<'a> Codegen<'a> {
             sig_globals: HashMap::new(),
             sig_global_by_ir: HashMap::new(),
             clocking_samples: HashMap::new(),
+            clocking_history_ticks: HashMap::new(),
             reference_signals: HashMap::new(),
             reference_arrays: HashMap::new(),
             reference_objects: HashMap::new(),

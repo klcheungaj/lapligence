@@ -38,7 +38,7 @@ Never destroy a borrow, or retain its interior pointers across mutation/yield.
 | `sv4_move` | Destroy initialized destination, transfer source allocation, reset source. Self-move does nothing. |
 | `sv4_replace` | Consume one fresh returned owner. Use `move` for named owners so the source is reset. |
 | `sv4_destroy`, `sv4_destroy_array` | Destroy live owners and reset descriptors. Destruction of an empty value is safe. |
-| `sv4_add_into`, `sv4_sub_into`, `sv4_mul_into` | Borrow operands, replace an initialized destination; exact destination/operand aliases supported. No publication; see the EMIT-1 family in [facade](facade.md). |
+| `sv4_add_into`, `sv4_sub_into`, `sv4_mul_into`, `sv4_and_into`, `sv4_or_into`, `sv4_xor_into`, `sv4_xnor_into` | Borrow operands, replace an initialized destination; exact destination/operand aliases supported. No publication; see the EMIT-1 family in [facade](facade.md). |
 | `*_to` destination forms (`value/destinations.h`, runtime/container/string/VPI headers) | Replace the initialized owner at `dst` with exactly the result of the returning form; packed operands are borrowed by address and may alias `dst`; string operands are consumed through their address and left empty. String-returning forms replace an expression owner without a change callback. |
 | `sv4_*_set` | Mutate an initialized destination, borrow RHS. Selected-write implementations snapshot aliased RHS before mutation. |
 | `llg_ref_read`, packed container getters/reductions/pops | Return an independent owner; neither a retained alias nor a borrowed element. |

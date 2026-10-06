@@ -9,6 +9,7 @@ static void fork_group_unlink(llg_fork_group_t* grp) {
     if (parent->pending_fork_groups == grp)
         parent->pending_fork_groups = grp->next_g;
     grp->prev_g = NULL;
+    if (!parent->fork_groups) proc_retire_completed(parent);
 }
 
 // One child of `grp` finished. Decrement the live count,

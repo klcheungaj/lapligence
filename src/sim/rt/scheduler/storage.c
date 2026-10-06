@@ -476,6 +476,7 @@ static llg_nba_t* new_nba(uint64_t ticks);
 static llg_nba_t* new_clocking_nba(uint64_t ticks);
 static void enqueue_nba(llg_nba_t* n);
 static void cancel_proc_nbas(llg_proc_t* proc);
+static void nba_owner_release_all(llg_proc_t* proc);
 static void free_all_nbas(void);
 static void promote_delayed_nbas(void);
 static void deferred_trigger_source_change(sv4_t* sig, double* real);

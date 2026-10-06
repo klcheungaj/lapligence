@@ -10,6 +10,17 @@ fn clocking_input_skews_sample_preponed_observed_and_history_values() {
 }
 
 #[test]
+fn clocking_input_skews_share_one_bounded_source_history() {
+    // data equals t at integer times, so an input skew #d at event t reads t - d;
+    // the #7 block first fires at t=101, after the #3 block pruned old slots.
+    run_case_with_stderr(
+        "clocking_history_depth",
+        "t=101 slow=94 fast=98\nt=151 slow=144 fast=148\nt=201 slow=194 fast=198\nt=251 slow=244 fast=248\n",
+        "llg: $finish at time 2600 at tb:36:16\n",
+    );
+}
+
+#[test]
 fn clocking_inputs_resolve_defaults_and_aliases_through_interfaces() {
     run_case_with_stderr(
         "clocking_h13_interface",
