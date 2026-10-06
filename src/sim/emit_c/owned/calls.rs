@@ -656,6 +656,11 @@ impl Frame<'_, '_> {
                 | IrCallArg::StringRefAddr { addr: address, .. } => {
                     parameters.push(self.native_address(address, NativeKind::String)?.address);
                 }
+                IrCallArg::ChandleRefAddr(address) if self.is_process_slot(address) => {
+                    // A `ref` process formal aliases counted process storage.
+                    let slot = self.native_address(address, NativeKind::Process)?.address;
+                    parameters.push(format!("(void**){slot}"));
+                }
                 IrCallArg::ChandleAddr(address) | IrCallArg::ChandleRefAddr(address) => {
                     let address = self.native_address(address, NativeKind::Chandle)?.address;
                     if let Some(object) = self.ctx.model.objects.iter().find(|object| {

@@ -1,0 +1,7 @@
+self-kill KILLED KILLED marks=0
+finished FINISHED
+await terminal ok 2
+suspend twice SUSPENDED
+resumed WAITING
+kill twice KILLED
+marks=0

@@ -326,7 +326,9 @@ impl Codegen<'_> {
             } => {
                 (matches!(name.as_str(), "toupper" | "tolower" | "substr")
                     && self.is_string_expr(path, *receiver))
-                    || (name == "get_randstate" && self.is_process_rng_receiver(*receiver))
+                    || (name == "get_randstate"
+                        && (self.is_process_rng_receiver(*receiver)
+                            || self.is_process_value(path, *receiver)))
                     || (name == "name"
                         && self
                             .enum_metadata_for_expr(*receiver)
@@ -534,6 +536,9 @@ impl Codegen<'_> {
     /// handle. Process values are intentionally kept out of packed lowering;
     /// callers must route them through [`lower_process`].
     pub(in super::super) fn is_process_expr(&self, path: &str, node: NodeId) -> bool {
+        if self.is_plain_process_storage(node) {
+            return false;
+        }
         if self.is_container_process_expr(node) {
             return true;
         }

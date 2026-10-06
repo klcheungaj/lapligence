@@ -44,7 +44,7 @@ pub use objects::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr, IrClass,
     IrClassField, IrClassFieldType, IrDisplayArg, IrMailboxElement, IrMailboxExpr, IrMailboxTarget,
     IrMailboxValue, IrObject, IrObjectQuery, IrObjectStmt, IrObjectType, IrProcessControl,
-    IrProcessExpr, IrStringExpr, IrStringInsideItem, IrVirtualInterface,
+    IrProcessExpr, IrProcessRandom, IrStringExpr, IrStringInsideItem, IrVirtualInterface,
     IrVirtualInterfaceInstance, IrVirtualInterfaceMember, IrVirtualInterfaceMethod,
 };
 

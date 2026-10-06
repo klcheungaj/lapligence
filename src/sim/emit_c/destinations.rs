@@ -280,6 +280,11 @@ const STRING_OPERATIONS: &[(&str, &str, &[Param])] = &[
         &[],
     ),
     (
+        "llg_process_handle_get_randstate",
+        "llg_process_handle_get_randstate_to",
+        &[S],
+    ),
+    (
         "llg_string_format_typed",
         "llg_string_format_typed_to",
         &[T, S, S, S],

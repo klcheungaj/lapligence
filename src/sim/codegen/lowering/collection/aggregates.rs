@@ -844,13 +844,13 @@ impl<'a> Codegen<'a> {
             }
             // Class and virtual-interface handles are identity leaves stored
             // like chandles, and a semaphore member is a semaphore object
-            // (SIM-016); the built-in mailbox and process classes keep their
-            // own object kinds and are not record leaves.
+            // (SIM-016); the built-in mailbox class keeps its own object
+            // kind and is not a record leaf. A process member is a plain
+            // handle leaf holding pinned identities (SIM-015).
             TypeShape::Opaque { kind }
                 if kind == "Chandle"
                     || kind == "VirtualInterface"
-                    || (kind == "Class"
-                        && !matches!(descriptor.name.as_str(), "mailbox" | "process")) =>
+                    || (kind == "Class" && descriptor.name.as_str() != "mailbox") =>
             {
                 if shared.is_some() {
                     return Err(format!(

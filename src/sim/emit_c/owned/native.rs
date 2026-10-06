@@ -207,6 +207,12 @@ impl Frame<'_, '_> {
         }
         Err(pending(&format!("unresolved native storage {name}")))
     }
+    /// Whether `address` (`&name` or a ref-formal slot) names counted
+    /// process-handle storage rather than a plain handle slot.
+    pub(super) fn is_process_slot(&mut self, address: &str) -> bool {
+        self.native_address(address, NativeKind::Process).is_ok()
+    }
+
     pub(super) fn native_address(
         &mut self,
         address: &str,
@@ -217,6 +223,19 @@ impl Frame<'_, '_> {
         }
         if let Some(function) = self.ctx.func {
             for (index, formal) in function.formals.iter().enumerate() {
+                // A `ref` process formal is a chandle slot bound to the
+                // caller's counted process-handle storage.
+                if formal.chandle
+                    && kind == NativeKind::Process
+                    && formal.is_ref()
+                    && address == format!("r{index}")
+                {
+                    return Ok(NativeBinding {
+                        address: format!("((llg_process_handle_t**){address})"),
+                        kind,
+                        automatic: true,
+                    });
+                }
                 let expected = if formal.string {
                     NativeKind::String
                 } else {

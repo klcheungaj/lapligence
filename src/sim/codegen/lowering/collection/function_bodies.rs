@@ -466,6 +466,13 @@ impl<'a> Codegen<'a> {
         }
         for local in process_local_ids {
             let name = &process_locals[&local];
+            if self.fork_shared(local) {
+                // Fork branches share it through an opaque frame slot
+                // (`ChandleDeclareShared`), which holds pinned identities.
+                chandle_read.insert(local, IrChandleExpr::LocalRead(name.clone()));
+                chandle_write.insert(local, ChandleTarget::Local(name.clone()));
+                continue;
+            }
             process_read.insert(
                 local,
                 crate::sim::ir::IrProcessExpr::LocalRead(name.clone()),
@@ -525,11 +532,48 @@ impl<'a> Codegen<'a> {
                         ..
                     }
                 );
+                if !is_ref
+                    && !*is_out
+                    && automatic
+                    && self.is_process_formal(*io)
+                    && self.fork_shared(*io)
+                {
+                    // Shared with fork branches through an opaque frame slot,
+                    // which holds a pinned identity (plain handle storage).
+                    let name = format!("_llg_shared_formal_{idx}");
+                    self.shared_locals.insert(*io);
+                    static_input_copies.push(IrStmt::Object(Box::new(
+                        crate::sim::ir::IrObjectStmt::ChandleDeclareShared(
+                            name.clone(),
+                            Some(IrChandleExpr::PinnedProcess(Box::new(
+                                crate::sim::ir::IrProcessExpr::FormalRead(idx),
+                            ))),
+                        ),
+                    )));
+                    chandle_read.insert(*io, IrChandleExpr::LocalRead(name.clone()));
+                    chandle_write.insert(*io, ChandleTarget::Local(name));
+                    continue;
+                }
                 if !is_ref && !*is_out && automatic && self.is_process_formal(*io) {
                     // A by-value process formal borrows the caller's counted
                     // handle for the activation; reads retain their copies.
                     process_read.insert(*io, crate::sim::ir::IrProcessExpr::FormalRead(idx));
                     chandle_read.insert(*io, IrChandleExpr::FormalRead(idx));
+                    continue;
+                }
+                if is_ref && self.is_process_formal(*io) {
+                    // A `ref` process formal aliases the caller's counted
+                    // slot (see `process_formal_binding`): writes retain.
+                    process_read.insert(
+                        *io,
+                        crate::sim::ir::IrProcessExpr::Handle(Box::new(IrChandleExpr::FormalRead(
+                            idx,
+                        ))),
+                    );
+                    chandle_read.insert(*io, IrChandleExpr::FormalRead(idx));
+                    if !const_ref {
+                        process_write.insert(*io, ProcessTarget::Local(format!("*r{idx}")));
+                    }
                     continue;
                 }
                 if !is_ref && !*is_out && automatic && self.fork_shared(*io) {
@@ -1292,23 +1336,22 @@ impl<'a> Codegen<'a> {
                 return Ok(());
             }
             self.explicit_local_lifetime(node)?;
-            if is_handle_kind(&ty.kind) {
-                chandle_locals.entry(node).or_insert_with(|| {
-                    let cname = format!("{prefix}_l{seq}");
+            // An automatic process handle is a counted local; a static one
+            // is plain handle storage holding pinned identities.
+            if ty.kind == "class"
+                && ty.type_name.as_deref() == Some("process")
+                && self.db.variable_lifetime(node) == VariableLifetime::Automatic
+            {
+                process_locals.entry(node).or_insert_with(|| {
+                    let cname = format!("{prefix}_p{seq}");
                     *seq += 1;
                     cname
                 });
                 return Ok(());
             }
-            if ty.kind == "class" && ty.type_name.as_deref() == Some("process") {
-                if self.db.variable_lifetime(node) != VariableLifetime::Automatic {
-                    return Err(format!(
-                        "static process handle `{}` in subprogram is not supported",
-                        self.node(node).name
-                    ));
-                }
-                process_locals.entry(node).or_insert_with(|| {
-                    let cname = format!("{prefix}_p{seq}");
+            if is_handle_kind(&ty.kind) {
+                chandle_locals.entry(node).or_insert_with(|| {
+                    let cname = format!("{prefix}_l{seq}");
                     *seq += 1;
                     cname
                 });

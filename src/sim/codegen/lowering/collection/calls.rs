@@ -265,6 +265,17 @@ impl<'a> Codegen<'a> {
                     }
                 );
                 if is_ref || *is_out {
+                    if self.is_process_formal(*io) {
+                        if let Some(argument) = self.process_formal_expression_binding(
+                            scope_path,
+                            *io,
+                            bound[idx].expr,
+                            is_ref,
+                        )? {
+                            out_args.push(argument);
+                            continue;
+                        }
+                    }
                     let (target, _) = self.lower_chandle_lvalue(scope_path, bound[idx].expr)?;
                     let address = self.chandle_target_address(&target);
                     if is_ref {
