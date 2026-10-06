@@ -7,6 +7,7 @@
 //! cross between the two representations leaf by leaf, never through packed
 //! vectors or `IrFixedValue`.
 use super::super::expressions::AggregateSelection;
+use super::aggregates::NATIVE_TAG_MEMBER;
 use super::*;
 use crate::sim::ir::{
     is_class_handle_kind, native_item_count, validate_native_type, IrNativeAccessKind,
@@ -17,6 +18,7 @@ mod conditionals;
 mod elements;
 mod member_select;
 mod tagged;
+pub(in crate::sim::codegen) use tagged::NativeTaggedRoot;
 
 /// Largest number of leaves of one native record. Leaf-wise transfers to and
 /// from flattened module storage emit one operation per leaf, so larger
@@ -245,6 +247,107 @@ fn collect_native_leaves(
     }
 }
 
+/// The native value type of a tagged union with string, real, handle or
+/// container members: a record of its tag (four-state, so an unassigned
+/// union has no active member) and each non-void member's own storage, the
+/// same leaves as module storage (`collect_native_tagged_union`).
+fn native_tagged_element(
+    descriptor: &TypeDescriptor,
+    layout: &AggregateLayout,
+) -> Result<IrContainerElement, String> {
+    let tag_bits = layout.tag_bits().ok_or("tagged union has no members")?;
+    let mut members = Vec::new();
+    if tag_bits > 0 {
+        members.push(IrContainerMember {
+            name: NATIVE_TAG_MEMBER.to_owned(),
+            element: Box::new(IrContainerElement::Packed {
+                width: tag_bits,
+                signed: false,
+                two_state: false,
+            }),
+        });
+    }
+    for member in layout
+        .members
+        .iter()
+        .filter(|member| !is_void_member(member))
+    {
+        members.push(IrContainerMember {
+            name: member.name.clone(),
+            element: Box::new(lower_container_element(&member.descriptor)?),
+        });
+    }
+    Ok(IrContainerElement::Aggregate {
+        type_id: descriptor.id.0,
+        members,
+    })
+}
+
+fn is_void_member(member: &AggregateMember) -> bool {
+    matches!(&member.descriptor.shape, TypeShape::Opaque { kind } if kind == "Void")
+}
+
+/// Leaves of a whole native value: a tagged union's tag and members by name
+/// (void members have no storage), or a record's members recursively.
+fn collect_native_root_leaves(
+    descriptor: &TypeDescriptor,
+    element: &IrContainerElement,
+    output: &mut NativeLeaves,
+) -> Result<(), String> {
+    let (TypeShape::Aggregate(layout), IrContainerElement::Aggregate { members, .. }) =
+        (&descriptor.shape, element)
+    else {
+        return collect_native_leaves(
+            descriptor,
+            element,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            output,
+        );
+    };
+    if layout.kind != AggregateKind::TaggedUnion {
+        return collect_native_leaves(
+            descriptor,
+            element,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            output,
+        );
+    }
+    let tag_bits = layout.tag_bits().ok_or("tagged union has no members")?;
+    let mut items = members.iter();
+    let mut position = 0u32;
+    if tag_bits > 0 {
+        items.next();
+        output.scalars.push(NativeLeaf {
+            path: vec![AggregatePathPart::Member(NATIVE_TAG_MEMBER.to_owned())],
+            items: vec![0],
+            ty: IrClassFieldType::Packed {
+                width: tag_bits,
+                signed: false,
+                two_state: false,
+            },
+        });
+        position = 1;
+    }
+    for (member, item) in layout
+        .members
+        .iter()
+        .filter(|member| !is_void_member(member))
+        .zip(items)
+    {
+        collect_native_leaves(
+            &member.descriptor,
+            &item.element,
+            &mut vec![AggregatePathPart::Member(member.name.clone())],
+            &mut vec![position],
+            output,
+        )?;
+        position += 1;
+    }
+    Ok(())
+}
+
 /// Whether a record reaches a built-in semaphore, mailbox or process handle,
 /// which keep their own object kinds rather than plain identity leaves.
 fn has_builtin_class_leaf(descriptor: &TypeDescriptor) -> bool {
@@ -275,6 +378,18 @@ impl Codegen<'_> {
         let TypeShape::Aggregate(layout) = &descriptor.shape else {
             return None;
         };
+        // A tagged union without a packed payload (SIM-007); wider fixed
+        // unions use column layout.
+        if layout.kind == AggregateKind::TaggedUnion {
+            if Self::fixed_descriptor_width_bits(descriptor).is_some()
+                || has_builtin_class_leaf(descriptor)
+            {
+                return None;
+            }
+            let element = native_tagged_element(descriptor, layout).ok()?;
+            validate_native_type(&element, "native").ok()?;
+            return Some(element);
+        }
         // Records whose leaves are all integral are fixed values; beyond
         // packed capacity they use column layout (RTL-101), not native
         // storage. So do records with a member array above the dense
@@ -310,14 +425,8 @@ impl Codegen<'_> {
             .cloned()
             .ok_or("native declaration has no type descriptor")?;
         let mut leaves = NativeLeaves::default();
-        collect_native_leaves(
-            &descriptor,
-            &element,
-            &mut Vec::new(),
-            &mut Vec::new(),
-            &mut leaves,
-        )
-        .map_err(|error| format!("{error} (`{}`)", self.node(node).name))?;
+        collect_native_root_leaves(&descriptor, &element, &mut leaves)
+            .map_err(|error| format!("{error} (`{}`)", self.node(node).name))?;
         let ty = match self
             .model
             .native_types
@@ -1443,6 +1552,21 @@ impl Codegen<'_> {
         if let Some(statement) = self.native_call_into(path, rhs, target, nba)? {
             return Ok(statement);
         }
+        // `tagged m value` into a whole tagged union value (SIM-007).
+        let root = match target {
+            NativeEndpoint::Value { value, prefix } if prefix.is_empty() => {
+                Some(NativeTaggedRoot::Value(*value))
+            }
+            NativeEndpoint::Module(selection) if selection.prefix.is_empty() => {
+                Some(NativeTaggedRoot::Module(selection.root))
+            }
+            _ => None,
+        };
+        if let Some(root) = root {
+            if let Some(statement) = self.lower_native_tagged_construct(path, root, rhs, nba)? {
+                return Ok(statement);
+            }
+        }
         if let (false, NativeEndpoint::Value { value, prefix }) = (nba, target) {
             if let Some(statement) =
                 self.native_pattern_into(path, *value, prefix, descriptor, rhs)?
@@ -1466,7 +1590,7 @@ impl Codegen<'_> {
     }
 
     /// Whether `node` is a call whose result is a native record.
-    fn native_call_node(&self, node: NodeId) -> bool {
+    pub(in super::super) fn native_call_node(&self, node: NodeId) -> bool {
         let call = self.p30_unwrap_cast(node);
         match self.kind(call) {
             NodeKind::FuncCall { name, callee, .. } => self
@@ -1608,6 +1732,12 @@ impl Codegen<'_> {
     ) -> Result<Option<NativeInputLeaves>, String> {
         let mut leaves = Vec::new();
         let mut containers = Vec::new();
+        if let NodeKind::Expr(ExprKind::TaggedUnion { member, value }) =
+            self.kind(self.p30_unwrap_cast(actual))
+        {
+            let (member, value) = (member.clone(), *value);
+            return self.native_tagged_input_leaves(path, layout, &member, value);
+        }
         let pattern = self.unwrap_assignment_pattern_cast(actual);
         if self.assignment_pattern_operands(path, pattern)?.is_some() {
             // Pattern container members are built in a statement temporary.
@@ -1622,26 +1752,14 @@ impl Codegen<'_> {
                 &[],
                 &mut values,
             )?;
-            for (member_path, node) in values {
-                if let Some(leaf) = layout.leaves.iter().find(|leaf| leaf.path == member_path) {
-                    let value = self.native_leaf_source(path, leaf.ty, node)?;
-                    leaves.push(IrNativeLeafValue {
-                        items: leaf.items.clone(),
-                        value: value.into_leaf_expr()?,
-                    });
-                    continue;
-                }
-                let Some((source, _)) = self.native_endpoint(self.p30_unwrap_cast(node))? else {
-                    return Ok(None);
-                };
-                self.native_endpoint_leaves(
-                    path,
-                    layout,
-                    &member_path,
-                    &source,
-                    &mut leaves,
-                    &mut containers,
-                )?;
+            if !self.native_pattern_leaf_values(
+                path,
+                layout,
+                values,
+                &mut leaves,
+                &mut containers,
+            )? {
+                return Ok(None);
             }
             return Ok(Some((leaves, containers)));
         }
@@ -1652,6 +1770,116 @@ impl Codegen<'_> {
             return Ok(None);
         };
         self.native_endpoint_leaves(path, layout, &[], &source, &mut leaves, &mut containers)?;
+        Ok(Some((leaves, containers)))
+    }
+
+    /// Leaf values for `(member path, source node)` pairs of a pattern or a
+    /// tagged construction; `false` when a source needs a statement
+    /// temporary.
+    fn native_pattern_leaf_values(
+        &mut self,
+        path: &str,
+        layout: &NativeLayout,
+        values: Vec<(Vec<AggregatePathPart>, NodeId)>,
+        leaves: &mut Vec<IrNativeLeafValue>,
+        containers: &mut Vec<usize>,
+    ) -> Result<bool, String> {
+        for (member_path, node) in values {
+            if let Some(leaf) = layout.leaves.iter().find(|leaf| leaf.path == member_path) {
+                let value = self.native_leaf_source(path, leaf.ty, node)?;
+                leaves.push(IrNativeLeafValue {
+                    items: leaf.items.clone(),
+                    value: value.into_leaf_expr()?,
+                });
+                continue;
+            }
+            let Some((source, _)) = self.native_endpoint(self.p30_unwrap_cast(node))? else {
+                return Ok(false);
+            };
+            self.native_endpoint_leaves(path, layout, &member_path, &source, leaves, containers)?;
+        }
+        Ok(true)
+    }
+
+    /// Leaf values of `tagged member value` for a tagged union formal: the
+    /// tag names `member` and the member's leaves take the value.
+    fn native_tagged_input_leaves(
+        &mut self,
+        path: &str,
+        layout: &NativeLayout,
+        member: &str,
+        value: Option<NodeId>,
+    ) -> Result<Option<NativeInputLeaves>, String> {
+        let TypeShape::Aggregate(union) = &layout.descriptor.shape else {
+            return Ok(None);
+        };
+        if union.kind != AggregateKind::TaggedUnion {
+            return Ok(None);
+        }
+        let index = union
+            .members
+            .iter()
+            .position(|candidate| candidate.name == member)
+            .ok_or_else(|| format!("tagged union has no member `{member}` in `{path}`"))?;
+        let descriptor = union.members[index].descriptor.clone();
+        let tag_bits = union
+            .tag_bits()
+            .ok_or_else(|| format!("tagged union in `{path}` has no tag"))?;
+        let mut leaves = Vec::new();
+        let mut containers = Vec::new();
+        if let Some(tag) = layout
+            .leaves
+            .iter()
+            .find(|leaf| leaf.path == [AggregatePathPart::Member(NATIVE_TAG_MEMBER.to_owned())])
+        {
+            let constant = IrConst::packed(
+                vec![u64::try_from(index).map_err(|_| "tagged member index overflows")?],
+                vec![0],
+                vec![0],
+                tag_bits,
+                false,
+                None,
+            )
+            .map_err(|error| error.to_string())?;
+            leaves.push(IrNativeLeafValue {
+                items: tag.items.clone(),
+                value: IrNativeLeafExpr::Packed(IrExpr::new(
+                    IrExprKind::Const(constant),
+                    tag_bits,
+                    false,
+                    None,
+                )),
+            });
+        }
+        if let Some(value) = value {
+            let prefix = vec![AggregatePathPart::Member(member.to_owned())];
+            let mut values = Vec::new();
+            let pattern = self.unwrap_assignment_pattern_cast(value);
+            if layout.leaves.iter().any(|leaf| leaf.path == prefix)
+                || self.assignment_pattern_operands(path, pattern)?.is_none()
+            {
+                values.push((prefix, value));
+            } else if layout.containers.is_empty() {
+                self.aggregate_descriptor_pattern_values(
+                    path,
+                    value,
+                    &descriptor,
+                    &prefix,
+                    &mut values,
+                )?;
+            } else {
+                return Ok(None);
+            }
+            if !self.native_pattern_leaf_values(
+                path,
+                layout,
+                values,
+                &mut leaves,
+                &mut containers,
+            )? {
+                return Ok(None);
+            }
+        }
         Ok(Some((leaves, containers)))
     }
 

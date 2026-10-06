@@ -10,7 +10,7 @@ use super::*;
 
 impl Codegen<'_> {
     /// Whether `node` is a conditional operator producing a native record.
-    pub(in super::super) fn native_record_conditional(&self, node: NodeId) -> bool {
+    pub(in crate::sim::codegen) fn native_record_conditional(&self, node: NodeId) -> bool {
         matches!(
             self.kind(node),
             NodeKind::Expr(
@@ -247,6 +247,22 @@ impl Codegen<'_> {
         descriptor: &TypeDescriptor,
         leaf_path: &[AggregatePathPart],
     ) -> Result<LeafValue, String> {
+        // A tagged union's tag defaults to X: no member is active.
+        if let (TypeShape::Aggregate(layout), [AggregatePathPart::Member(name)]) =
+            (&descriptor.shape, leaf_path)
+        {
+            if name == NATIVE_TAG_MEMBER {
+                let width = layout
+                    .tag_bits()
+                    .ok_or_else(|| format!("tagged union in `{path}` has no tag"))?;
+                return Ok(LeafValue::Packed(IrExpr::new(
+                    IrExprKind::Const(IrConst::integral_default(width, false)),
+                    width,
+                    false,
+                    None,
+                )));
+            }
+        }
         let leaf = Self::descriptor_at_path(descriptor, leaf_path)
             .ok_or_else(|| format!("native record leaf in `{path}` has no type"))?;
         Ok(match &leaf.shape {
