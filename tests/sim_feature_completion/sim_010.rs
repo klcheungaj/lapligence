@@ -15,3 +15,9 @@ fn detached_branches_share_enclosing_automatics() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_010/shared_automatics.out");
     sim_cli::run_case_backend_parity(SUITE, "shared_automatics", expected, &[], &[]);
 }
+
+#[test]
+fn detached_branches_share_enclosing_automatic_strings() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_010/shared_strings.out");
+    sim_cli::run_case_backend_parity(SUITE, "shared_strings", expected, &[], &[]);
+}

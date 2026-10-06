@@ -597,7 +597,7 @@ impl Validator<'_> {
                     self.validate_expr(init, formals, &format!("{path}.init"))?;
                 }
             }
-            IrStmt::DeclString { name, init } => {
+            IrStmt::DeclString { name, init } | IrStmt::SharedString { name, init } => {
                 if name.is_empty() {
                     return self.fail(path, "string local name must not be empty");
                 }

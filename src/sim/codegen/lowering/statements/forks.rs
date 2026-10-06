@@ -154,7 +154,7 @@ impl EmitCtx<'_, '_> {
                     source.lifetime,
                     if join == IrJoinKind::Join
                         && source.lifetime == StorageLifetime::Automatic
-                        && source.kind != StorageKind::Opaque
+                        && !matches!(source.kind, StorageKind::Opaque | StorageKind::String)
                         && !matches!(
                             self.cg.kind(*target),
                             NodeKind::FuncArg {
@@ -166,7 +166,10 @@ impl EmitCtx<'_, '_> {
                         StorageOwnership::Borrowed
                     } else if self.cg.shared_locals.contains(target)
                         && source.lifetime == StorageLifetime::Automatic
-                        && matches!(source.kind, StorageKind::Packed | StorageKind::Real)
+                        && matches!(
+                            source.kind,
+                            StorageKind::Packed | StorageKind::Real | StorageKind::String
+                        )
                     {
                         // A detached branch shares the declaring frame's cell.
                         StorageOwnership::Shared

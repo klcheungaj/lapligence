@@ -206,6 +206,8 @@ pub enum StorageKind {
     Opaque,
     /// A named-event handle: a borrowed parent handle or copied object identity.
     Event,
+    /// An owned string value (`llg_string_t`), or a shared frame's string.
+    String,
 }
 
 /// A typed reference to one slot in an activation frame.

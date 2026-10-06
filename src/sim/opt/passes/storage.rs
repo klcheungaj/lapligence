@@ -728,6 +728,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         }
         IrStmt::DeclString {
             init: Some(init), ..
+        }
+        | IrStmt::SharedString {
+            init: Some(init), ..
         } => init.expressions(&mut |child| collect_expr_reads(child, model, rw)),
         // Captures are evaluated at the fork site in the parent process, before
         // any detached branch runs; their initializers are ordinary reads.

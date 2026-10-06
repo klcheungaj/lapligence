@@ -110,6 +110,20 @@ impl Frame<'_, '_> {
             .insert(name.to_owned(), binding.clone());
         binding
     }
+    /// Bind `name` to existing native storage at `address`.
+    pub(super) fn bind_native(&mut self, name: &str, address: String, kind: NativeKind) {
+        self.native_bindings
+            .last_mut()
+            .expect("native scope")
+            .insert(
+                name.to_owned(),
+                NativeBinding {
+                    address,
+                    kind,
+                    automatic: true,
+                },
+            );
+    }
     pub(super) fn native_lookup(
         &mut self,
         name: &str,

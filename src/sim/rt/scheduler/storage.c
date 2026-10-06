@@ -337,6 +337,7 @@ typedef struct {
         sv4_t packed;
         double real;
         void* opaque;
+        llg_string_t string;
     } value;
     union {
         sv4_t* packed;
@@ -529,6 +530,8 @@ static void frame_clear_alias(llg_frame_slot_t* entry) {
     }
     if (entry->alias_kind == LLG_FRAME_ALIAS_NONE && entry->kind == LLG_FRAME_PACKED)
         sv4_destroy(&entry->value.packed);
+    if (entry->alias_kind == LLG_FRAME_ALIAS_NONE && entry->kind == LLG_FRAME_STRING)
+        llg_string_destroy(&entry->value.string);
     memset(&entry->value, 0, sizeof(entry->value));
     entry->alias_kind = LLG_FRAME_ALIAS_NONE;
     entry->alias.packed = NULL;
@@ -661,6 +664,26 @@ sv4_t* llg_frame_value_address(llg_frame_t* frame, size_t slot) {
     return entry->alias_kind == LLG_FRAME_ALIAS_PACKED
                ? entry->alias.packed
                : &entry->value.packed;
+}
+
+void llg_frame_capture_string(llg_frame_t* frame, size_t slot,
+                              const llg_string_t* value) {
+    llg_frame_slot_t* entry = frame_slot(frame, slot);
+    llg_string_t copy = llg_string_clone(value);
+    frame_clear_alias(entry);
+    entry->kind = LLG_FRAME_STRING;
+    entry->value.string = copy;
+}
+
+llg_string_t* llg_frame_string_address(llg_frame_t* frame, size_t slot) {
+    llg_frame_slot_t* entry = frame_slot(frame, slot);
+    if (entry->alias_kind == LLG_FRAME_ALIAS_SLOT) {
+        return llg_frame_string_address(entry->alias.slot.frame, entry->alias.slot.slot);
+    }
+    if (entry->kind != LLG_FRAME_STRING) {
+        frame_kind_error(LLG_FRAME_STRING, entry->kind);
+    }
+    return &entry->value.string;
 }
 
 double* llg_frame_real_address(llg_frame_t* frame, size_t slot) {

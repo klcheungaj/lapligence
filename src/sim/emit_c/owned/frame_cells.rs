@@ -354,7 +354,7 @@ impl CellEligibility {
                     self.expression(ctx, init);
                 }
             }
-            IrStmt::DeclString { init, .. } => {
+            IrStmt::DeclString { init, .. } | IrStmt::SharedString { init, .. } => {
                 if let Some(init) = init {
                     self.string(ctx, init);
                 }

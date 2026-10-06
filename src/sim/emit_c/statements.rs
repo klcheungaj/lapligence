@@ -364,7 +364,7 @@ fn render_stmt_scoped(
             let ty = if *width == 0 { "double" } else { "sv4_t" };
             format!("    {ty} {name} = {init};\n")
         }
-        IrStmt::SharedLocal { .. } => {
+        IrStmt::SharedLocal { .. } | IrStmt::SharedString { .. } => {
             return Err("shared fork locals require the ownership emitter".to_owned());
         }
         IrStmt::DeclString { name, init } => {

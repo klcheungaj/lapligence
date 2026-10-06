@@ -90,6 +90,26 @@ impl<'a> Codegen<'a> {
             });
         }
         let function = self.func.as_ref()?;
+        // An automatic string local of the subroutine is captured by value
+        // (or shared, see `fork_shared`) under its own local name.
+        if matches!(self.kind(target), NodeKind::Var { ty } if ty.kind == "string")
+            && self.db.variable_lifetime(target) == VariableLifetime::Automatic
+        {
+            if let Some((c_name, ..)) = function.locals.get(&target) {
+                return Some(CaptureSource {
+                    info: ProcLocalInfo {
+                        c_name: c_name.clone(),
+                        width: 0,
+                        signed: false,
+                        two_state: true,
+                        static_signal: None,
+                    },
+                    initial: IrExpr::new(IrExprKind::LocalRead(c_name.clone()), 0, false, None),
+                    lifetime: StorageLifetime::Automatic,
+                    kind: StorageKind::String,
+                });
+            }
+        }
         if let Some(event) = function.event_args.get(&target) {
             return Some(CaptureSource {
                 info: ProcLocalInfo {

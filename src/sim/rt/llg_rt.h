@@ -1301,6 +1301,8 @@ typedef enum {
     LLG_FRAME_PACKED = 0,
     LLG_FRAME_REAL = 1,
     LLG_FRAME_OPAQUE = 2,
+    // An owned string value, destroyed when the frame is released.
+    LLG_FRAME_STRING = 3,
 } llg_frame_slot_kind_t;
 llg_frame_t* llg_frame_new(size_t slots);
 void llg_frame_retain(llg_frame_t* frame);
@@ -1311,6 +1313,12 @@ void llg_frame_capture_real(llg_frame_t* frame, size_t slot, double value);
 // teardown. A joined child may instead borrow a parent coroutine's event handle
 // address; the parent must outlive the child, including cancellation cleanup.
 void llg_frame_capture_opaque(llg_frame_t* frame, size_t slot, void* value);
+// Copy `value` into a string slot owned by the frame.
+void llg_frame_capture_string(llg_frame_t* frame, size_t slot,
+                              const llg_string_t* value);
+// The string cell of a slot (following frame-to-frame aliases); stable for
+// the life of the frame.
+llg_string_t* llg_frame_string_address(llg_frame_t* frame, size_t slot);
 void llg_frame_alias_value(llg_frame_t* frame, size_t slot, sv4_t* target);
 void llg_frame_alias_real(llg_frame_t* frame, size_t slot, double* target);
 void llg_frame_alias_slot(llg_frame_t* frame, size_t slot,

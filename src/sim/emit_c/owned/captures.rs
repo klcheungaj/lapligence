@@ -8,14 +8,22 @@ pub(super) enum CapturedValue {
     Borrowed(String),
     /// A slot of a shared activation frame: (frame expression, slot).
     Shared(String, u32),
+    /// The address of a string copied into the frame.
+    String(String),
 }
 
 fn check_capture(storage: StorageRef) -> Result<(), String> {
     if storage.ownership() == StorageOwnership::Shared
         && (storage.lifetime() != StorageLifetime::Automatic
-            || !matches!(storage.kind(), StorageKind::Packed | StorageKind::Real))
+            || !matches!(
+                storage.kind(),
+                StorageKind::Packed | StorageKind::Real | StorageKind::String
+            ))
     {
-        return Err("shared fork capture requires automatic numeric storage".to_owned());
+        return Err("shared fork capture requires automatic numeric or string storage".to_owned());
+    }
+    if storage.kind() == StorageKind::String && storage.ownership() == StorageOwnership::Borrowed {
+        return Err("string fork captures are copied or shared".to_owned());
     }
     if storage.ownership() == StorageOwnership::Borrowed
         && (storage.lifetime() != StorageLifetime::Automatic
@@ -57,6 +65,16 @@ impl Frame<'_, '_> {
                     )
                 };
                 values.push((storage, CapturedValue::Handle(handle)));
+                continue;
+            }
+            if storage.kind() == StorageKind::String
+                && storage.ownership() == StorageOwnership::Owned
+            {
+                let IrExprKind::LocalRead(name) = initial.kind() else {
+                    return Err("string fork capture requires a local source".to_owned());
+                };
+                let binding = self.native_lookup(name, NativeKind::String)?;
+                values.push((storage, CapturedValue::String(binding.address)));
                 continue;
             }
             if storage.ownership() == StorageOwnership::Shared {
@@ -169,6 +187,10 @@ impl Frame<'_, '_> {
                     "llg_frame_alias_slot({access}, {}u, {frame}, {slot}u);",
                     storage.slot()
                 )),
+                CapturedValue::String(address) => self.line(format!(
+                    "llg_frame_capture_string({access}, {}u, {address});",
+                    storage.slot()
+                )),
                 CapturedValue::Numeric(value) => {
                     let operation = if storage.kind() == StorageKind::Real {
                         "real"
@@ -195,6 +217,23 @@ impl Frame<'_, '_> {
         source: &str,
     ) -> Result<(), String> {
         check_capture(storage)?;
+        if storage.kind() == StorageKind::String {
+            // A captured string keeps its source local's name, so the
+            // branch's string reads and writes resolve unchanged.
+            let IrExprKind::LocalRead(local) = initial.kind() else {
+                return Err("string fork capture requires a local source".to_owned());
+            };
+            let address = self.declare(
+                "llg_string_t*",
+                "capture_string",
+                format!("llg_frame_string_address({source}, {}u)", storage.slot()),
+            );
+            self.shared_cells
+                .insert(local.clone(), (source.to_owned(), storage.slot()));
+            self.bind_native(local, address.clone(), NativeKind::String);
+            self.bind_native(name, address, NativeKind::String);
+            return Ok(());
+        }
         if storage.kind() == StorageKind::Event {
             let address = if storage.ownership() == StorageOwnership::Borrowed {
                 self.declare(

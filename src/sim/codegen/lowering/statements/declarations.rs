@@ -331,6 +331,10 @@ impl EmitCtx<'_, '_> {
                             .var_initializer(declaration)
                             .map(|initializer| self.cg.lower_string(&self.path, initializer))
                             .transpose()?;
+                        if self.cg.fork_shared(declaration) {
+                            self.cg.shared_locals.insert(declaration);
+                            return Ok(vec![IrStmt::SharedString { name, init }]);
+                        }
                         return Ok(vec![IrStmt::DeclString { name, init }]);
                     }
                     let (_, width, signed, two_state, shortreal) = self

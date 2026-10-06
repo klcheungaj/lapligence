@@ -346,6 +346,13 @@ pub enum IrStmt {
         name: String,
         init: Option<IrStringExpr>,
     },
+    /// An automatic string shared with `join_none`/`join_any` branches: its
+    /// value lives in a reference-counted activation frame, like
+    /// [`IrStmt::SharedLocal`].
+    SharedString {
+        name: String,
+        init: Option<IrStringExpr>,
+    },
     /// Capture an owned string value now and commit it to persistent storage
     /// in the NBA region `ticks` from now. Untimed `s <= v` uses zero ticks,
     /// so both forms share one pending-value record.
