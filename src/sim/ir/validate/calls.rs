@@ -349,7 +349,6 @@ impl Validator<'_> {
                         .and_then(|value| self.model.native_values.get(value));
                     if expected
                         .is_none_or(|expected| expected.ty != self.model.native_values[*value].ty)
-                        || formal.is_ref()
                     {
                         return self.fail(&arg_path, "native argument type mismatch");
                     }

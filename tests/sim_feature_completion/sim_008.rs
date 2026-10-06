@@ -27,3 +27,14 @@ fn element_refs_follow_elements_until_outdated() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_008/element_refs.out");
     sim_cli::run_case_backend_parity(SUITE, "element_refs", expected, &[], &[]);
 }
+
+#[test]
+fn native_record_ref_formals_alias_subroutine_records() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_008/record_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_refs", expected, &[], &[]);
+    sim_cli::reject_case(
+        SUITE,
+        "neg_module_record_ref",
+        "ref actual of native record formal `r` in `tb` must be a subroutine record variable of the same type (SIM-008)",
+    );
+}

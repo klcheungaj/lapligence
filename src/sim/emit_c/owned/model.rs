@@ -320,7 +320,7 @@ fn render_function(
             continue;
         }
         if let Some(value) = formal.native_value {
-            let parameter = format!("{}{index}", if formal.is_out { "o" } else { "a" });
+            let parameter = format!("{}{index}", if formal.is_address() { "o" } else { "a" });
             // Companion containers bind like container formals (SIM-007).
             for (position, container) in formal.native_companions.iter().enumerate() {
                 let storage = &ctx.model.containers[*container];

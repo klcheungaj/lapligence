@@ -439,7 +439,9 @@ delayed (`#d`) nonblocking writes to a fixed array of native elements; a
 run-time index into a native member array of more than 64 elements or with a
 side-effecting index; a run-time index into an array of records nested in a
 native record (`r.e[k].s`, which currently fails with a generic lowering
-diagnostic rather than a dedicated one); `ref` formals of native record type; nonblocking writes
+diagnostic rather than a dedicated one); a module, static or process-block
+record as the actual of a native record `ref` formal (subroutine records
+alias); nonblocking writes
 to a static subroutine native record; fork-join_none capture of automatic
 native records; `f(...).member` selects on a native result; native outputs
 bound inside an expression (call them as a statement instead); record ports
@@ -474,12 +476,15 @@ one from. A record, string or handle declared in a procedural block reuses
 module storage, one copy per declaration and instance: an automatic one is
 reset at each block entry, so a second live activation has no storage of its
 own. The Db captures member defaults as constants, and an unpacked record
-constant has no captured value.
+constant has no captured value. A native `ref` formal is the caller's
+`llg_value_t` and companion containers, which module-like records do not have.
 
 ### Intended direction
 
-Companion containers for container-valued record members; native ref aliases
-(SIM-008); a root-plus-item-path pending record for static native roots
+Companion containers for container-valued record members; a native `ref`
+formal passed as one reference per leaf (packed, string, real, handle and
+container references already exist), so module-like and subroutine records
+bind the same callee ABI (SIM-008); a root-plus-item-path pending record for static native roots
 (a queued leaf pointer would dangle because a root replaces its leaves on
 assignment); fork capture pins (SIM-010); Db capture of member access on
 call results for `f().m`; native tagged unions in subroutine storage
@@ -490,6 +495,7 @@ roots for forked automatic block records, strings and handles.
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
 `sim_004/neg_static_native_record_nba.sv`,
+`sim_008/neg_module_record_ref.sv`,
 `sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv` and `sim_007/bad_record_member_default.sv`.
 

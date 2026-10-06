@@ -320,6 +320,15 @@ impl Frame<'_, '_> {
                 }
                 IrCallArg::NativeValue(value) => {
                     let actual = self.native_value_address(*value)?;
+                    // A `ref` formal aliases the caller's value and its
+                    // companion containers (SIM-008).
+                    if formal.is_ref() {
+                        parameters.push(actual);
+                        for container in self.ctx.model.native_values[*value].companions.clone() {
+                            parameters.push(format!("(void*)&{}", self.container_name(container)?));
+                        }
+                        continue;
+                    }
                     // A function cannot suspend or be disabled by another
                     // process, and an activation value is private to its
                     // frame: an output or result written in place is then
