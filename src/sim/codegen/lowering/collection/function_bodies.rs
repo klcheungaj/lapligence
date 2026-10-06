@@ -481,6 +481,18 @@ impl<'a> Codegen<'a> {
             }
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            // A container formal that a fork branch names is copied into a
+            // shared frame at entry (SV 9.3.2, 13.3); see
+            // `IrFormal::shared_local`.
+            if automatic && self.is_subroutine_container(*io) && self.fork_shared(*io) {
+                if let Some(container) = self.container_globals.get(io).map(|info| info.ir) {
+                    self.shared_locals.insert(*io);
+                    shared_outputs.push((
+                        idx,
+                        crate::sim::ir::shared_container_capture_name(container),
+                    ));
+                }
+            }
             if self.fixed_formal_array(*io).is_some()
                 || self.is_native_declaration(*io)
                 || self.is_subroutine_container(*io)

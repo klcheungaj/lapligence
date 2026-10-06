@@ -65,7 +65,10 @@ pub struct IrFormal {
     /// For a packed or real output/inout formal that a detached fork branch
     /// shares: the local naming the shared frame cell that holds its value
     /// during the activation. The callee creates the cell from `o{idx}` at
-    /// entry, outside the body's scopes, and copies it back at return.
+    /// entry, outside the body's scopes, and copies it back at return. For a
+    /// container formal that any fork branch names: its shared capture name;
+    /// the callee copies the caller's container into a shared frame the same
+    /// way.
     pub(in crate::sim) shared_local: Option<String>,
 }
 

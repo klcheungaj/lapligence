@@ -532,7 +532,7 @@ handle elements and nested containers.
 ### Symptom
 
 These legal forms reject with explicit diagnostics: a `ref` container formal
-whose actual is not a container variable of the formal's type; a fork branch reading a container formal of the enclosing activation; an
+whose actual is not a container variable of the formal's type; an
 instance container property selected through a handle (`h.q`) rather than
 inside the class's own methods, and an initializer on such a property; a
 container-result call used other than as a whole assignment source or a

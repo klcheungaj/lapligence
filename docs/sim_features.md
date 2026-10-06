@@ -444,8 +444,7 @@ Macros, includes and their edition-specific behavior are counted in §11.
   Automatic containers that fork branches use are shared with them, and
   event controls and `wait` on them wake on another process's change
   ([sim_010](../tests/fixtures/sim/feature_completion/sim_010/readme.md)).
-  Fork capture of container formals (SIM-010), handle-qualified class
-  container properties (SIM-011), mutating methods of nested elements,
+  Handle-qualified class container properties (SIM-011), mutating methods of nested elements,
   record-element equality (SIM-007) and string-key index-result queues remain
   restricted ([known issue](known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
   Methods are in §7. SV §§7.5, 7.8, 7.10, 7.12 **[SV-2005]**.
@@ -1273,10 +1272,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   locals takes the typed call path (native formals, recursion). By-value
   packed, real and string input formals and packed and real output and inout
   formals are shared like locals (outputs are copied out at return), and so
-  are native records with their companion containers, with branches of every
-  fork kind and nested forks. String outputs and handles are still copied
-  into detached branches, container formals reject (SIM-010), and
-  ref-formal captures reject. Static-local
+  are native records with their companion containers and container formals,
+  with branches of every fork kind and nested forks. String outputs and
+  handles are still copied into detached branches (SIM-010), and ref-formal
+  captures reject. Static-local
   task NBAs are represented, including arrays; NBAs targeting automatic locals
   or automatic formals reject. V §§9.8.2, 10.2; SV §§9.3.2, 10.4.2, 13.3.2
   **[1995/SV-2005]**.

@@ -184,11 +184,6 @@ fn wildcard_index_traversal_is_rejected_by_the_frontend() {
 fn unsupported_container_boundaries_are_explicit() {
     sim_cli::reject_case(
         SUITE,
-        "neg_container_fork_capture",
-        "references native record or container `q` of the enclosing activation",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "neg_class_container_outside",
         "class container property `q` in `tb` is accessible only inside its class's methods (SIM-011)",
     );

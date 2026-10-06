@@ -69,3 +69,9 @@ fn disabled_branches_never_resume_from_any_suspension() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_010/kill_suspensions.out");
     sim_cli::run_case_backend_parity(SUITE, "kill_suspensions", expected, &[], &[]);
 }
+
+#[test]
+fn fork_branches_share_container_formals() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_010/container_formals.out");
+    sim_cli::run_case_backend_parity(SUITE, "container_formals", expected, &[], &[]);
+}
