@@ -329,6 +329,26 @@ impl EmitCtx<'_, '_> {
                 continue;
             }
 
+            // Output, inout and ref event formals bind the caller's handle.
+            if bound[idx].is_event && (*is_out || self.cg.is_ref_formal(*io)) {
+                let target = self.cg.event_target_of(bound[idx].expr).ok_or_else(|| {
+                    format!(
+                        "event actual for formal `{}` in `{}` is not a named event handle",
+                        self.cg.node(*io).name,
+                        self.path
+                    )
+                })?;
+                let event = self.cg.event_ref_of(&target, &self.path)?;
+                if matches!(event, IrEventRef::Null | IrEventRef::Handle(_)) {
+                    return Err(format!(
+                        "event actual for output, inout or ref formal `{}` in `{}` must be an event variable",
+                        self.cg.node(*io).name,
+                        self.path
+                    ));
+                }
+                out_args.push(IrCallArg::EventAddr(event));
+                continue;
+            }
             if matches!(
                 self.cg.kind(*io),
                 NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind)

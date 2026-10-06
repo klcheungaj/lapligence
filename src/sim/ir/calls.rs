@@ -72,6 +72,11 @@ pub enum IrCallArg {
     /// caller's handle storage, so a later rebinding of the actual cannot
     /// move the callee's waits.
     EventVal(IrEventRef),
+    /// Output, inout or `ref` named-event formal bound to the caller's
+    /// handle storage (`llg_event_t*`). A `ref` callee rebinds that handle
+    /// directly; outputs and inouts work on their own handle and assign it
+    /// back when the callee returns.
+    EventAddr(IrEventRef),
     /// Output/inout chandle formal bound to a caller-owned `void **`.
     ChandleAddr(String),
     /// Chandle `ref` formal bound to a caller-owned pointer slot.

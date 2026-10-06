@@ -96,7 +96,8 @@ pub(super) fn render_call_expr(
             | IrCallArg::NativeLeaves { .. }
             | IrCallArg::NativeCall { .. }
             | IrCallArg::RealArrayCall { .. }
-            | IrCallArg::EventVal(_) => {
+            | IrCallArg::EventVal(_)
+            | IrCallArg::EventAddr(_) => {
                 return Err("event argument requires the ownership emitter".to_owned());
             }
             IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => {

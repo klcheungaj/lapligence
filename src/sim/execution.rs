@@ -1352,7 +1352,8 @@ fn collect_argument_effects(
         IrCallArg::FixedArray(_)
         | IrCallArg::RealArray(_)
         | IrCallArg::NativeValue(_)
-        | IrCallArg::EventVal(_) => {}
+        | IrCallArg::EventVal(_)
+        | IrCallArg::EventAddr(_) => {}
         // Container outputs are copied back into caller storage after the
         // callee returns, independent of the callee's own statements.
         IrCallArg::Container(_) => effects.push(ExecutionEffect::ImmediateStore),

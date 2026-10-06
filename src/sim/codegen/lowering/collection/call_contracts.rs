@@ -679,15 +679,6 @@ impl<'a> Codegen<'a> {
             return shape;
         }
         let formals = self.func_formals(ft);
-        if formals.iter().any(|(formal, _)| {
-            matches!(
-                self.kind(*formal),
-                NodeKind::FuncArg { ty, direction, .. }
-                    if ty.kind == "event" && *direction != DbDirection::Input
-            )
-        }) {
-            shape.inline_only = true;
-        }
         if let Some(body) = self.func_body(ft) {
             stack.push(ft);
             self.call_shape_walk(body, inst, &formals, stack, &mut shape);

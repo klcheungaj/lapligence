@@ -300,7 +300,7 @@ endmodule
 }
 
 #[test]
-fn only_subroutine_scoped_event_reads_and_non_input_event_formals_force_expansion() {
+fn only_subroutine_scoped_event_reads_force_expansion() {
     let source = r#"
 module tb;
     event ev;
@@ -348,7 +348,8 @@ endmodule
         ("input_event_or", false),
         ("delay_disable", false),
         ("calls_typed", false),
-        ("output_event", true),
+        // Event formals of every direction take the typed call path.
+        ("output_event", false),
         ("formal_expression", true),
         ("ref_edge", true),
         ("local_expression", true),

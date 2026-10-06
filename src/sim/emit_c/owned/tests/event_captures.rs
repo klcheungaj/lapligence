@@ -178,7 +178,7 @@ fn event_capture_validation_keeps_formals_in_the_initializer_only() {
         .validate_pre_fn(&branch, Some(&function))
         .unwrap_err()
         .to_string()
-        .contains("requires an input event formal"));
+        .contains("requires an event formal"));
     let branch = make_branch(
         storage,
         number(1, 1),

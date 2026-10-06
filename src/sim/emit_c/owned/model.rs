@@ -26,30 +26,14 @@ mod lifecycle;
 pub(in crate::sim::emit_c) use initialization::storage_lifecycle;
 pub(in crate::sim::emit_c) use lifecycle::main;
 
-/// A retained definition that lowering expands into each caller. Only
-/// by-value input event formals have a typed C parameter (`llg_event_t`);
-/// output, inout and ref event formals stay inline-only.
+/// A retained definition that lowering expands into each caller. Input event
+/// formals are typed `llg_event_t` parameters and output, inout and ref event
+/// formals `llg_event_t*` handle addresses.
 pub(in crate::sim::emit_c) fn inline_template(function: &IrFunc) -> bool {
     function.is_inline_expanded()
 }
 
-pub(in crate::sim::emit_c) fn check_function(function: &IrFunc) -> Result<(), String> {
-    if function
-        .formals
-        .iter()
-        .any(|formal| formal.event && formal.is_address())
-    {
-        return Err(pending("native-object and ref formal/local owners"));
-    }
-    Ok(())
-}
-
 pub(in crate::sim::emit_c) fn check_model(model: &IrModel) -> Result<(), String> {
-    for function in &model.funcs {
-        if !inline_template(function) {
-            check_function(function)?;
-        }
-    }
     for interface in &model.virtual_interfaces {
         for method in &interface.methods {
             let function = model.func(method.function);
@@ -201,7 +185,6 @@ fn render_function(
     ),
     String,
 > {
-    check_function(function)?;
     // A recursive subprogram's coroutine returns its result through the
     // caller's `_llg_result` destination (see `recursive_function`).
     let synchronous = coroutine && frame.synchronous;
@@ -394,6 +377,28 @@ fn render_function(
             continue;
         }
 
+        if formal.event && formal.is_address() {
+            // A `ref` event formal is the caller's handle; an output or inout
+            // works on its own handle, assigned back at return.
+            let handle = if formal.is_ref() {
+                format!("r{index}")
+            } else {
+                let initial = if formal.mode == IrFormalMode::Inout {
+                    format!("o{index} ? o{index}->object : NULL")
+                } else {
+                    "NULL".to_owned()
+                };
+                let local =
+                    frame.declare("llg_event_t", "event_formal", format!("{{ {initial} }}"));
+                format!("&{local}")
+            };
+            frame
+                .event_bindings
+                .first_mut()
+                .expect("event scope")
+                .insert(super::events::event_formal_binding(index), handle);
+            continue;
+        }
         if formal.is_address() {
             frame.line(format!(
                 "(void){}{index};",
@@ -461,6 +466,17 @@ fn render_function(
     frame.line("goto _llg_return;");
     frame.line("_llg_return: ;");
     for (index, formal) in function.formals.iter().enumerate() {
+        if formal.event && formal.is_out {
+            let handle = frame
+                .event_bindings
+                .first()
+                .and_then(|scope| scope.get(&super::events::event_formal_binding(index)))
+                .cloned()
+                .ok_or("event output formal has no handle")?;
+            frame.line(format!(
+                "if (o{index}) llg_event_assign(o{index}, {handle});"
+            ));
+        }
         if let Some(container) = formal
             .container
             .filter(|container| !ctx.model.containers[*container].activation && formal.is_out)

@@ -241,7 +241,9 @@ fn input_event_formals_pass_the_object_identity_by_value() {
     assert!(model::check_model(&model).is_ok());
     model.funcs[0].formals[0].mode = IrFormalMode::Output;
     model.funcs[0].formals[0].is_out = true;
-    assert!(model::check_model(&model).is_err());
+    assert!(model::check_model(&model).is_ok());
+    let fields = crate::sim::emit_c::model::owned_func_param_fields(&model.funcs[0]);
+    assert_eq!(fields[0], ("llg_event_t*".to_owned(), "o0".to_owned()));
     model.funcs[0].formals[0].mode = IrFormalMode::Input;
     model.funcs[0].formals[0].is_out = false;
     let fields = crate::sim::emit_c::model::owned_func_param_fields(&model.funcs[0]);

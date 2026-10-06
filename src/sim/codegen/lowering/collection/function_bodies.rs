@@ -465,20 +465,10 @@ impl<'a> Codegen<'a> {
             }
             if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "event") {
                 // A by-value input event formal is the activation's own
-                // handle to the object the caller named. Other directions are
-                // inline-only: their retained C body is kept for deterministic
-                // model shape but has no formal storage.
-                if !*is_out
-                    && matches!(
-                        self.kind(*io),
-                        NodeKind::FuncArg {
-                            direction: DbDirection::Input,
-                            ..
-                        }
-                    )
-                {
-                    event_args.insert(*io, IrEventRef::Formal(idx));
-                }
+                // handle to the object the caller named; output, inout and
+                // ref formals bind the caller's handle storage
+                // (`IrCallArg::EventAddr`).
+                event_args.insert(*io, IrEventRef::Formal(idx));
                 continue;
             }
             if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind)) {
