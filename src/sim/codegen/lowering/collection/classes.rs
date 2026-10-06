@@ -139,6 +139,18 @@ impl<'a> Codegen<'a> {
             return Ok(IrClassFieldType::Chandle);
         }
         let width = ty.width.ok_or_else(|| {
+            // A record or tagged union with string, real, handle or
+            // container leaves has no packed payload, and class fields hold
+            // only scalar leaves.
+            if self.query_descriptor(field).is_some_and(|descriptor| {
+                matches!(&descriptor.shape, TypeShape::Aggregate(layout)
+                    if !matches!(layout.kind, AggregateKind::PackedStruct | AggregateKind::PackedUnion))
+            }) {
+                return format!(
+                    "class property `{}` of an unpacked record or union type with string, real, handle or container members is not supported",
+                    self.node(field).full_name
+                );
+            }
             format!(
                 "class property `{}` has no resolved packed width",
                 self.node(field).full_name

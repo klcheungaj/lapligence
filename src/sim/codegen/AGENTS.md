@@ -417,6 +417,11 @@ Native records (string/real/chandle leaves, no packed width) in subroutine
 formals, results and locals use `collection/native_values.rs`: one
 `IrNativeValue` root per storage, leaf accesses by constant item path, and
 endpoint transfers that capture every source leaf before the first write.
+A scalar member of a native-result call (`f(x).s`) or a nested record
+pattern item from a call runs the call into a lexical temporary first
+(`native_value_of`); in an expression that setup is an `IrExprKind::Sequence`
+(a string member reads through a `Conditional` whose predicate is the
+sequence).
 Module-level native records keep per-member lowering: NBAs, continuous
 assignments and conditional merges go leaf by leaf, capturing every source
 leaf first (`objects/assignments.rs`, `statements/native_delays.rs`,

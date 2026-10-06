@@ -1441,6 +1441,131 @@ impl Codegen<'_> {
             .then_some((call, name, callee, function)))
     }
 
+    /// A lexical temporary that statements fill with the record value of
+    /// `node` when it is not record storage: a native-result call, a
+    /// conditional or a container element; `None` for other operands.
+    pub(in super::super) fn native_value_of(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<(usize, Vec<IrStmt>)>, String> {
+        let temporary = match self.native_result_callee(node)? {
+            Some((_, _, _, function)) => self.native_temporary(function)?,
+            None => match self.native_temporary(node) {
+                Ok(temporary) => temporary,
+                Err(_) => return Ok(None),
+            },
+        };
+        let descriptor = self.native_layout_of_value(temporary)?.descriptor.clone();
+        let target = NativeEndpoint::Value {
+            value: temporary,
+            prefix: Vec::new(),
+        };
+        let fill = self.native_assign_into(path, &target, &descriptor, node, false)?;
+        Ok(Some((
+            temporary,
+            vec![IrStmt::NativeValueDeclare(temporary), fill],
+        )))
+    }
+
+    /// A member of a call returning a native record (`f(x).m`, `f(x).s.m`):
+    /// the statements that run the call once into a lexical temporary, and
+    /// the selected scalar leaf read from it; `None` for other operands.
+    fn native_call_select(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<(Vec<IrStmt>, LeafValue)>, String> {
+        let mut members = Vec::new();
+        let mut current = node;
+        while let NodeKind::Expr(ExprKind::MemberSelect { base, member }) = self.kind(current) {
+            members.push(AggregatePathPart::Member(member.clone()));
+            current = *base;
+        }
+        if members.is_empty() || !self.native_call_node(current) {
+            return Ok(None);
+        }
+        members.reverse();
+        let Some((temporary, statements)) = self.native_value_of(path, current)? else {
+            return Ok(None);
+        };
+        let leaf = self
+            .native_layout_of_value(temporary)?
+            .leaves
+            .iter()
+            .find(|leaf| leaf.path == members)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "selection `{}` of a native record call result in `{path}` must name a scalar member",
+                    aggregate_path_suffix(&members)
+                )
+            })?;
+        let value = self.endpoint_leaf_read(&NativeEndpointLeaf::Value(temporary, leaf))?;
+        Ok(Some((statements, value)))
+    }
+
+    /// A packed or real member of a native-record call result (`f(x).n`):
+    /// the call runs once into a temporary owned by the expression's value
+    /// scope.
+    pub(in super::super) fn lower_native_call_select(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let Some((statements, value)) = self.native_call_select(path, node)? else {
+            return Ok(None);
+        };
+        let value = match value {
+            LeafValue::Packed(value) | LeafValue::Real(value) => value,
+            _ => {
+                return Err(format!(
+                    "string or handle member of a native record call result in `{path}` is not a packed or real value"
+                ))
+            }
+        };
+        let (width, signed) = (value.width, value.signed);
+        Ok(Some(IrExpr::new(
+            IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                statements,
+                value,
+            })),
+            width,
+            signed,
+            None,
+        )))
+    }
+
+    /// A string member of a native-record call result (`f(x).s`): a known
+    /// predicate whose setup runs the call selects the member read.
+    pub(in super::super) fn lower_native_call_string_select(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrStringExpr>, String> {
+        let Some((statements, value)) = self.native_call_select(path, node)? else {
+            return Ok(None);
+        };
+        let LeafValue::String(value) = value else {
+            return Err(format!(
+                "member of a native record call result in `{path}` is not a string"
+            ));
+        };
+        Ok(Some(IrStringExpr::Conditional {
+            predicate: Box::new(IrExpr::new(
+                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                    statements,
+                    value: const_bits_expr(1, true),
+                })),
+                1,
+                false,
+                None,
+            )),
+            then: Box::new(value),
+            otherwise: Box::new(IrStringExpr::Literal(Vec::new())),
+        }))
+    }
+
     /// The typed statement call of a native-result function writing its
     /// result into `result` through the trailing output operand.
     fn native_result_call(

@@ -544,6 +544,25 @@ impl<'a> Codegen<'a> {
             }
             NodeKind::Array { .. } => self.unpacked_array_base_path(node),
             NodeKind::Expr(ExprKind::HierPath { parts, refs }) => {
+                // A member path whose first reference is an element select
+                // (`m.fa[1].a`) continues from that select's storage path.
+                if let Some(Some(first)) = refs.first() {
+                    if matches!(
+                        self.kind(*first),
+                        NodeKind::Expr(ExprKind::ArraySelect { .. })
+                    ) {
+                        let (target, mut path) = self.unpacked_path_for_expr(*first)?;
+                        path.extend(
+                            parts
+                                .iter()
+                                .skip(1)
+                                .filter(|part| !part.is_empty())
+                                .cloned()
+                                .map(AggregatePathPart::Member),
+                        );
+                        return Some((target, path));
+                    }
+                }
                 let (target, base_index) = if let Some((index, target)) =
                     refs.iter().enumerate().find_map(|(index, target)| {
                         target

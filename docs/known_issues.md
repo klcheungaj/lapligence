@@ -440,8 +440,7 @@ elements; an element's container member named in a condition, loop header,
 nonblocking target; records with container members in nonblocking
 assignments; class
 properties of any unpacked record type with string, real, handle or container
-members (these currently fail with a generic `has no resolved packed width`
-diagnostic); equality of records with an associative member (and conditionals
+members; equality of records with an associative member (and conditionals
 with an ambiguous predicate on such records);
 compound or nonblocking writes to a record element of a resizable container;
 delayed (`#d`) nonblocking writes to a fixed array of native elements; a
@@ -450,7 +449,8 @@ side-effecting index; a run-time index into an array of records nested in a
 native record (`r.e[k].s`, which currently fails with a generic lowering
 diagnostic rather than a dedicated one); `ref` formals of native record type; nonblocking writes
 to a static subroutine native record; fork-join_none capture of automatic
-native records; `f(...).member` selects on a native result; native outputs
+native records; sub-record, member-array or handle selects of a native call
+result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles
 publish no change marker); an automatic record, string, chandle or class
@@ -459,14 +459,15 @@ can keep live while the block is entered again (declared in such a fork that
 runs again, such as the `for (...) fork automatic string s = ...; join_none`
 idiom, or in a block that runs again and starts such a fork reading it); a
 member default whose value is itself a record with native members (its
-frontend constant is not captured); a pattern item that is a nested native
-record taken from a call result. Tagged unions with real, string, record or
+frontend constant is not captured). Tagged unions with real, string, record or
 class-handle members execute as module, static and subroutine values
 (formals, results, locals, variable ports, conditional operators) and as
 elements of one-dimensional fixed, queue, dynamic and associative arrays; a
 checked member access of an element whose index has side effects, unions
-nested in a record or a multidimensional array, and nonblocking writes
-reject. String and real pattern variables bind
+nested in a record or a multidimensional array, nonblocking writes to one
+member (SV 11.9 checks them against the tag at commit, and queued native
+writes carry no such check) and nonblocking writes to subroutine storage
+reject; whole module and static variables take nonblocking writes. String and real pattern variables bind
 in process and subroutine bodies; handle bindings and structure patterns over
 native records reject. A missing associative record element
 compared with `==` reports the SV 7.8.6 warning once per member.
@@ -495,9 +496,8 @@ An addressed-container operand for container members of elements (in place
 of statement staging); native ref aliases
 (SIM-008); a root-plus-item-path pending record for static native roots
 (a queued leaf pointer would dangle because a root replaces its leaves on
-assignment); fork capture pins (SIM-010); Db capture of member access on
-call results for `f().m`; native tagged unions in subroutine storage
-through the same descriptors and root registry; and per-activation native
+assignment); fork capture pins (SIM-010); a commit-time tag guard on queued
+native writes for tagged-union member NBAs; and per-activation native
 roots for forked automatic block records, strings and handles.
 
 ### Reproduce
@@ -506,8 +506,8 @@ roots for forked automatic block records, strings and handles.
 `sim_004/neg_static_native_record_nba.sv`,
 `sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
-`sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`
-and `sim_007/bad_tagged_*.sv`.
+`sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
+`sim_007/bad_native_record_class_property.sv` and `sim_007/bad_tagged_*.sv`.
 
 ## Resizable containers at subroutine, object and nesting boundaries
 

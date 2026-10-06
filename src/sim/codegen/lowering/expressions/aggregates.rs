@@ -3,7 +3,7 @@
 use super::super::containers::PatternAssignmentKind;
 use super::*;
 use crate::sim::codegen::lowering::collection::native_values::{
-    is_native_tag_path, native_tagged_equality,
+    is_native_tag_path, native_tagged_equality, NativeEndpoint,
 };
 
 mod columns;
@@ -738,11 +738,36 @@ impl<'a> Codegen<'a> {
                 let descriptor = self
                     .query_descriptor(target)
                     .and_then(|root| Self::descriptor_at_path(root, &member_path));
-                let (Some(source), Some(descriptor)) = (source, descriptor) else {
+                let Some(descriptor) = descriptor else {
                     return Err(format!(
                         "aggregate pattern path `{}` has no destination in `{path}`",
                         aggregate_path_suffix(&member_path)
                     ));
+                };
+                let Some(source) = source else {
+                    // A record taken from a call, conditional or container
+                    // element is built into a temporary with the captures,
+                    // then copied leaf by leaf with the writes.
+                    let destination =
+                        NativeEndpoint::Module(Box::new(copies::AggregateSelection {
+                            root: target,
+                            prefix: member_path.clone(),
+                            descriptor: descriptor.clone(),
+                            storage: aggregate.clone(),
+                        }));
+                    let Some((temporary, fill)) = self.native_value_of(path, value_node)? else {
+                        return Err(format!(
+                            "aggregate pattern path `{}` has no destination in `{path}`",
+                            aggregate_path_suffix(&member_path)
+                        ));
+                    };
+                    let source = NativeEndpoint::Value {
+                        value: temporary,
+                        prefix: Vec::new(),
+                    };
+                    captures.extend(fill);
+                    assignments.push(self.native_transfer(path, &destination, &source, nba)?);
+                    continue;
                 };
                 let destination = copies::AggregateSelection {
                     root: target,

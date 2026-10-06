@@ -460,3 +460,16 @@ fn whole_native_tagged_unions_take_nonblocking_writes() {
         "nonblocking assignment to a member of a tagged union with string, real or handle members in `tb` is not supported: the write needs a commit-time tag check",
     );
 }
+
+#[test]
+fn string_cases_nested_member_arrays_and_call_result_members() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_record_selects.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_record_selects", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "native_record_selects", expected);
+    sim_cli::reject_case(
+        SUITE,
+        "bad_native_record_class_property",
+        "class property `holder_c.m` of an unpacked record or union type with string, real, handle or container members is not supported",
+    );
+}
