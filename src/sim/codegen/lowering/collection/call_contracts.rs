@@ -14,12 +14,19 @@ mod tests;
 /// formal read by an event control (directly or through a callee it is
 /// forwarded to) is `static_refs`: its evaluator's dependencies are those of
 /// the actual, which a shared body cannot know, so each distinct static
-/// actual gets its own specialization of the task.
+/// actual gets its own specialization of the task. When every such read is a
+/// level `wait` or a plain `@(r)`/edge control on the whole formal, the typed
+/// body also follows the variable a whole-variable descriptor names
+/// (`IrDependency::RefFormal`), so calls with automatic actuals take it
+/// instead of expanding; `bound_refs` lists the formals with other reads.
 #[derive(Clone, Debug, Default)]
 pub(in super::super) struct CallShape {
     pub(in super::super) inline_only: bool,
     /// Formal indices that a specialization binds to a whole module signal.
     pub(in super::super) static_refs: Vec<usize>,
+    /// Members of `static_refs` that only a static binding or an expansion
+    /// can follow.
+    pub(in super::super) bound_refs: Vec<usize>,
 }
 
 /// Where an evaluated event expression is computed.
@@ -664,7 +671,7 @@ impl<'a> Codegen<'a> {
     /// of it that binds its static `ref` formals (see [`CallShape`]).
     pub(in super::super) fn subroutine_requires_inline(&self, ft: NodeId, inst: NodeId) -> bool {
         let shape = self.call_shape(ft, inst);
-        shape.inline_only || !shape.static_refs.is_empty()
+        shape.inline_only || !shape.bound_refs.is_empty()
     }
 
     /// How calls to a subroutine reach its body.
@@ -686,6 +693,8 @@ impl<'a> Codegen<'a> {
         }
         shape.static_refs.sort_unstable();
         shape.static_refs.dedup();
+        shape.bound_refs.sort_unstable();
+        shape.bound_refs.dedup();
         shape
     }
 
@@ -705,19 +714,29 @@ impl<'a> Codegen<'a> {
             }) => {
                 let mut roots = Vec::new();
                 for spec in specs {
-                    self.event_spec_expressions(spec, &mut roots);
+                    // A plain or edge control on a whole formal waits on the
+                    // variable its descriptor names; other expressions are
+                    // evaluated with the actual's dependencies.
+                    match spec {
+                        EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. }
+                            if matches!(self.kind(*sig), NodeKind::Expr(ExprKind::Ref { .. })) =>
+                        {
+                            self.note_static_reads(*sig, formals, shape, true)
+                        }
+                        _ => self.event_spec_expressions(spec, &mut roots),
+                    }
                 }
                 if *implicit {
                     roots.extend(body);
                 }
                 for root in roots {
-                    self.note_static_reads(root, formals, shape);
+                    self.note_static_reads(root, formals, shape, false);
                 }
             }
-            // A level wait re-evaluates its condition on the read signals'
-            // changes, which only a bound `ref` actual can name.
+            // A level wait re-evaluates its condition in the waiting process
+            // on the changes of the variables it reads.
             NodeKind::Stmt(StmtKind::Wait { cond }) => {
-                self.note_static_reads(*cond, formals, shape)
+                self.note_static_reads(*cond, formals, shape, true)
             }
             NodeKind::FuncCall {
                 name,
@@ -731,9 +750,13 @@ impl<'a> Codegen<'a> {
                     let arguments = self.call_argument_nodes(node);
                     for index in inner.static_refs {
                         // The callee's clone binds this actual, so it must be a
-                        // formal of this task or a module-level name.
+                        // formal of this task or a module-level name, unless
+                        // the callee follows it through its descriptor.
+                        let followed = !inner.bound_refs.contains(&index);
                         if let Some(actual) = arguments.get(index) {
-                            if !self.note_forwarded_ref(*actual, formals, shape) {
+                            if !self.note_forwarded_ref(*actual, formals, shape, followed)
+                                && !(followed && self.whole_variable_actual(*actual))
+                            {
                                 shape.inline_only = true;
                             }
                         }
@@ -794,7 +817,15 @@ impl<'a> Codegen<'a> {
         out
     }
 
-    fn note_static_reads(&self, node: NodeId, formals: &[(NodeId, bool)], shape: &mut CallShape) {
+    /// Record the `ref` formals that `node` reads; `followed` when the read
+    /// can follow a whole-variable descriptor (see [`CallShape`]).
+    fn note_static_reads(
+        &self,
+        node: NodeId,
+        formals: &[(NodeId, bool)],
+        shape: &mut CallShape,
+        followed: bool,
+    ) {
         let mut visit_target = |target: NodeId| {
             if let Some(index) = formals.iter().position(|(formal, _)| *formal == target) {
                 match self.kind(target) {
@@ -804,6 +835,9 @@ impl<'a> Codegen<'a> {
                         ..
                     } if ty.kind != "string" && !is_handle_kind(&ty.kind) => {
                         shape.static_refs.push(index);
+                        if !followed || !self.whole_value_declaration(target) {
+                            shape.bound_refs.push(index);
+                        }
                     }
                     NodeKind::FuncArg { ty, .. } if ty.kind == "event" => {}
                     NodeKind::FuncArg {
@@ -826,7 +860,7 @@ impl<'a> Codegen<'a> {
             _ => {}
         }
         for child in &self.node(node).children {
-            self.note_static_reads(*child, formals, shape);
+            self.note_static_reads(*child, formals, shape, followed);
         }
     }
 
@@ -837,6 +871,7 @@ impl<'a> Codegen<'a> {
         actual: NodeId,
         formals: &[(NodeId, bool)],
         shape: &mut CallShape,
+        followed: bool,
     ) -> bool {
         let NodeKind::Expr(ExprKind::Ref {
             target: Some(target),
@@ -853,11 +888,46 @@ impl<'a> Codegen<'a> {
                 }
             ) {
                 shape.static_refs.push(index);
+                if !followed {
+                    shape.bound_refs.push(index);
+                }
                 return true;
             }
             return false;
         }
         !self.is_subroutine_scoped(*target)
+    }
+
+    /// Whether a `ref` actual names a whole packed or real variable, whose
+    /// descriptor a typed body can follow, or forwards a `ref` formal.
+    pub(in super::super) fn whole_variable_actual(&self, actual: NodeId) -> bool {
+        let NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) = self.kind(actual)
+        else {
+            return false;
+        };
+        matches!(
+            self.kind(*target),
+            NodeKind::FuncArg {
+                direction: DbDirection::Ref,
+                ..
+            } | NodeKind::Var { .. }
+        ) && self.whole_value_declaration(*target)
+    }
+
+    /// Whether a declaration holds one packed or real value, which a whole
+    /// `ref` descriptor (or a real cell address) names directly.
+    fn whole_value_declaration(&self, declaration: NodeId) -> bool {
+        self.query_descriptor(declaration)
+            .is_some_and(|descriptor| match &descriptor.shape {
+                TypeShape::PackedAtom { .. } | TypeShape::Real { .. } => true,
+                TypeShape::Aggregate(layout) => matches!(
+                    layout.kind,
+                    AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                ),
+                _ => false,
+            })
     }
 
     /// Whether a declaration lives in a subroutine activation (a formal or a

@@ -784,6 +784,32 @@ impl EmitCtx<'_, '_> {
         let selected_aggregate_member = self.cg.packed_member_info(expression).is_some()
             || self.cg.unpacked_member_info(expression).is_some()
             || self.cg.packed_element_member_select(expression).is_some();
+        // A `ref` formal of a typed body that no specialization or expansion
+        // bound waits on the whole variable its descriptor names.
+        if condition.is_none() {
+            if let NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) = self.cg.kind(expression)
+            {
+                let unbound = self
+                    .func
+                    .as_ref()
+                    .is_some_and(|func| !func.arg_dependencies.contains_key(target));
+                if let Some(IrDependency::RefFormal { index, real }) = unbound
+                    .then(|| self.cg.ref_formal_dependency(*target))
+                    .flatten()
+                {
+                    if real && edge != IrEdge::Any {
+                        return Err(format!(
+                            "edge control on real-valued `ref` formal `{}` is not supported in `{}`",
+                            self.cg.node(*target).name,
+                            self.cg.source_path(&self.path)
+                        ));
+                    }
+                    return Ok((IrWaitSrc::RefFormal { index, real }, edge));
+                }
+            }
+        }
         // Formals and automatic locals of the subroutine have no signal; they
         // wait through the evaluated path.
         let mapped_formal = matches!(

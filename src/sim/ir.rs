@@ -330,6 +330,11 @@ pub enum IrDependency {
     /// `local` (packed, or real when `real`). Sharing processes write it
     /// through publishing stores, so its address is a wait source.
     SharedCell { local: String, real: bool },
+    /// The storage behind `ref` formal `index` of the enclosing typed
+    /// subroutine, named at run time through its descriptor (a real `ref`
+    /// formal is the cell address itself). Calls bind such formals only to
+    /// whole variables.
+    RefFormal { index: usize, real: bool },
 }
 
 impl IrDependency {

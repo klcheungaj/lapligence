@@ -726,72 +726,38 @@ not wake.
 ### Symptom
 
 A task whose event control reads a string or handle `ref` formal, or whose
-`ref` formal with an event control is bound to a block or subroutine
-automatic or to an array element, is expanded at each call site, so such a
-task cannot recurse or have a native record or container formal ("needs
-caller-environment expansion, which is not supported"). `@(s)` on a
-subroutine string or handle rejects explicitly; an `iff` qualifier reads a
-string or handle copied when the control arms. Event controls on the task's
-own locals, by-value formals of every type, `wait (cond)`, module signals,
-`ref` formals with module-signal actuals and event formals of every direction
-take the typed call path; an expansion's `ref` formal follows its automatic
-actual's shared cell and an element actual's frozen index.
+`ref` formal is read by an evaluated event expression (a select, an operator,
+an `iff` qualifier) or waited on directly but bound to an array element, is
+expanded at each call site with such actuals. These calls cannot recurse or
+pass a native record or container formal ("needs caller-environment
+expansion, which is not supported"; "recursive delay-bearing task"). `@(s)` on a subroutine string or handle
+rejects explicitly; an `iff` qualifier reads a string or handle copied when
+the control arms. Event controls on the task's own locals, by-value formals
+of every type, module signals, event formals of every direction, `ref`
+formals with module-signal actuals, and `wait (cond)` or `@(r)`/edge
+controls on a whole `ref` formal bound to any whole variable take the typed
+call path.
 
 ### Cause
 
-The typed body's evaluated event callbacks cannot name a string or handle
-actual's change marker, and subroutine strings and handles have none.
-Expansion cannot carry native formals and cannot recurse.
+The typed body's evaluated event callbacks cannot name a `ref` actual's
+dependencies, and a typed body follows only whole-variable descriptors (an
+element's change marker is not the element's storage). Subroutine strings and
+handles have no change markers. Expansion cannot carry native formals and
+cannot recurse.
 
 ### Intended direction
 
-Bind string and handle `ref` actuals' change markers per specialization like
-packed `ref` formals, subscribe typed bodies to automatic and element `ref`
-actuals through their descriptors, and give shared subroutine strings change
-markers.
+Carry the dependency of a selected or element `ref` actual in its descriptor
+and capture descriptors in evaluator contexts; bind string and handle `ref`
+actuals' change markers per specialization like packed `ref` formals; give
+shared subroutine strings change markers.
 
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_009/neg_string_event_control.sv`;
-`task automatic r(ref logic s, int n); @(posedge s); if (n) r(s, n - 1); endtask` called with a local.
-
-## Symptom
-
-A task whose event control reads a string or handle formal, or whose `ref`
-formal with an event control is bound to a block or subroutine automatic or
-to an array element, is expanded at each call site. These legal forms fail:
-`@(tag)` on a string formal ("cannot resolve signal reference"); an `iff`
-qualifier reading a string or handle formal ("ownership emission is not yet
-implemented for unresolved native storage"); an event control on a `ref`
-formal bound to an automatic that a fork branch writes (never wakes) or to a
-fixed-array element ("unresolved local read"); and such a task that also has a
-native record or container formal or recurses. Event controls on the task's
-own locals, by-value packed and real formals, `wait (cond)`, module signals,
-`ref` formals with module-signal actuals (including members of a native record
-`ref` formal bound to a module, static or block record) and event formals of
-every direction take the typed call path.
-
-### Cause
-
-The typed body's evaluated event callbacks cannot name a string or handle
-actual's change marker, so such reads expand the task; the expansion's
-evaluator context copies a `ref` formal's automatic actual instead of aliasing
-its cell, binds no array-element reference, and cannot carry native formals or
-recurse.
-
-### Intended direction
-
-Bind string and handle `ref` actuals' change markers per specialization like
-packed `ref` formals, copy by-value string and handle formals into the typed
-evaluator context (only the waiting activation can write them), and alias
-automatic `ref` actuals' cells (with their subscriptions) in expansions.
-
-### Reproduce
-
-`task automatic w(input string tag); @(tag); endtask`;
-`task automatic w(input string tag); @(posedge c iff tag != ""); endtask`;
-`task automatic w(ref logic s); @(posedge s); endtask` called as `w(local)`
-with `fork #2 local = 1; join_none`, or as `w(mem[1])` on `logic mem [2]`.
+`task automatic r(ref logic [1:0] s, int n); @(posedge s[0]); if (n) r(s, n - 1); endtask`
+called with a local.
 
 ## Native stack frames grow with a statement's format-argument count
 

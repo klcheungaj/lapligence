@@ -230,6 +230,7 @@ impl<'a> Codegen<'a> {
                 }
             }
             IrDependency::SharedCell { .. } => "fork-shared automatic storage".to_owned(),
+            IrDependency::RefFormal { .. } => "`ref` formal storage".to_owned(),
             IrDependency::Object(object) => self
                 .aggregate_storage_label(|leaf| leaf.object == Some(*object))
                 .or_else(|| {

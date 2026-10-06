@@ -498,7 +498,7 @@ fn is_emitted_trigger_storage(ir: &IrModel, dependency: &IrDependency) -> bool {
             )
         }),
         // A process-local cell is no static trigger storage.
-        IrDependency::SharedCell { .. } => false,
+        IrDependency::SharedCell { .. } | IrDependency::RefFormal { .. } => false,
     }
 }
 

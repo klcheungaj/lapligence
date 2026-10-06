@@ -320,6 +320,9 @@ module tb;
     task automatic forwards_ref(ref logic r); ref_edge(r); endtask
     task automatic forwards_local(); automatic logic l = 0; ref_edge(l); endtask
     task automatic forwards_module(); ref_edge(clk); endtask
+    task automatic ref_select(ref logic [3:0] r); @(posedge r[0]); endtask
+    task automatic ref_level(ref logic [3:0] r); wait (r[1] == 1'b1); endtask
+    task automatic forwards_select(); automatic logic [3:0] l = 0; ref_select(l); endtask
     initial begin end
 endmodule
 "#;
@@ -351,13 +354,20 @@ endmodule
         // Event formals of every direction take the typed call path.
         ("output_event", false),
         ("formal_expression", false),
-        ("ref_edge", true),
+        // A whole `ref` formal waited on directly (edge, any change or a
+        // level wait) is followed through its descriptor by the typed body.
+        ("ref_edge", false),
+        ("ref_level", false),
         // Locals are read through their (fork-shared) cells.
         ("local_expression", false),
         ("calls_expanded", false),
-        ("forwards_ref", true),
-        ("forwards_local", true),
+        ("forwards_ref", false),
+        ("forwards_local", false),
         ("forwards_module", false),
+        // An evaluated expression over a `ref` formal needs its actual's
+        // dependencies: a specialization or the call-site expansion.
+        ("ref_select", true),
+        ("forwards_select", true),
     ] {
         let task = database
             .node_ids()
@@ -371,16 +381,21 @@ endmodule
             "task `{name}`"
         );
     }
-    // A `ref` formal read by an event control is bound by a specialization,
-    // not expanded, when it (or a task it is forwarded to) has a whole-signal
-    // actual; a caller local forces the expansion.
-    for (name, inline_only, static_refs) in [
-        ("ref_edge", false, vec![0]),
-        ("forwards_ref", false, vec![0]),
-        ("forwards_module", false, vec![]),
-        ("forwards_local", true, vec![]),
-        ("formal_expression", false, vec![]),
-        ("input_event", false, vec![]),
+    // A `ref` formal read by an event control is bound by a specialization
+    // when it (or a task it is forwarded to) has a whole-signal actual. A
+    // caller local is followed through its descriptor when every read of the
+    // formal is a direct wait (`bound_refs` empty), and forces the expansion
+    // otherwise.
+    for (name, inline_only, static_refs, bound_refs) in [
+        ("ref_edge", false, vec![0], vec![]),
+        ("ref_level", false, vec![0], vec![]),
+        ("ref_select", false, vec![0], vec![0]),
+        ("forwards_ref", false, vec![0], vec![]),
+        ("forwards_module", false, vec![], vec![]),
+        ("forwards_local", false, vec![], vec![]),
+        ("forwards_select", true, vec![], vec![]),
+        ("formal_expression", false, vec![], vec![]),
+        ("input_event", false, vec![], vec![]),
     ] {
         let task = database
             .node_ids()
@@ -391,5 +406,6 @@ endmodule
         let shape = cg.call_shape(task, top);
         assert_eq!(shape.inline_only, inline_only, "task `{name}`");
         assert_eq!(shape.static_refs, static_refs, "task `{name}`");
+        assert_eq!(shape.bound_refs, bound_refs, "task `{name}`");
     }
 }

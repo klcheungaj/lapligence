@@ -91,11 +91,12 @@ impl EmitCtx<'_, '_> {
             virtual_interface: virtual_call,
         };
         let has_event_formal = bound.iter().any(|argument| argument.is_event);
-        // Remaining expansions (see `CallShape`): output, inout and ref event
-        // formals, event controls reading subroutine storage, `ref` formals
-        // read by an event control whose actual is not a whole module signal,
-        // and event formals of class-method and virtual-interface calls,
-        // whose receivers the typed event ABI does not carry.
+        // Remaining expansions (see `CallShape`): event controls reading
+        // string or handle `ref` formals, `ref` formals read by an evaluated
+        // event expression whose actual is not a whole module signal, `ref`
+        // formals waited on whose actual is not a whole variable, and event
+        // formals of class-method and virtual-interface calls, whose
+        // receivers the typed event ABI does not carry.
         let shape = self.cg.call_shape(ft, callee_inst);
         let mut expand = shape.inline_only
             || (has_event_formal && (call_receiver.class.is_some() || virtual_call_info.is_some()));
@@ -116,6 +117,13 @@ impl EmitCtx<'_, '_> {
                         records.clone(),
                     )?);
                 }
+                // Whole-variable actuals are followed through their
+                // descriptors by the typed body (see `CallShape`).
+                None if shape.bound_refs.is_empty()
+                    && shape
+                        .static_refs
+                        .iter()
+                        .all(|index| self.cg.whole_variable_actual(bound[*index].expr)) => {}
                 None => expand = true,
             }
         }

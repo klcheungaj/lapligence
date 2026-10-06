@@ -95,6 +95,10 @@ impl Frame<'_, '_> {
 
     pub(super) fn dependency(&mut self, dependency: &IrDependency) -> Result<String, String> {
         Ok(match dependency {
+            IrDependency::RefFormal { index, real: true } => format!("{{ .real = r{index} }}"),
+            IrDependency::RefFormal { index, real: false } => {
+                format!("{{ .sig = llg_ref_dependency(r{index}) }}")
+            }
             IrDependency::Scalar(name)
             | IrDependency::Real(name)
             | IrDependency::SharedCell { local: name, .. } => {
