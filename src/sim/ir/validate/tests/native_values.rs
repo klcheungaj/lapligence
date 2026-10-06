@@ -332,3 +332,93 @@ fn native_call_operands_match_their_formals() {
     model.funcs[0].formals[0].native_value = Some(9);
     assert!(model.validate().is_err(), "formal storage out of bounds");
 }
+
+#[test]
+fn native_companion_containers_follow_their_values() {
+    let queue = |activation: bool, name: &str| IrContainer {
+        c_name: name.into(),
+        element: packed(32),
+        kind: IrContainerKind::Queue {
+            maximum_elements: None,
+        },
+        initial_size: None,
+        activation,
+        class_field: None,
+    };
+    let mut model = valid_model();
+    // struct { string s; int q[$]; }: the queue is a null descriptor slot.
+    model.native_types.push(IrContainerElement::Aggregate {
+        type_id: 5,
+        members: vec![
+            member("s", IrContainerElement::String),
+            member(
+                "q",
+                IrContainerElement::Container {
+                    type_id: 6,
+                    kind: "Queue".into(),
+                    element: Box::new(packed(32)),
+                },
+            ),
+        ],
+    });
+    // 0: a static value's companion, 1: the callee formal's companion.
+    model.containers.push(queue(false, "S_llg_container_0"));
+    model.containers.push(queue(true, "S_llg_container_1"));
+    model.native_values.push(IrNativeValue {
+        c_name: "S_llg_native_0".into(),
+        ty: 0,
+        activation: false,
+        companions: vec![0],
+    });
+    model.native_values.push(IrNativeValue {
+        c_name: "S_llg_native_1".into(),
+        ty: 0,
+        activation: true,
+        companions: vec![1],
+    });
+    let mut formal = native_formal(1, false);
+    formal.native_companions = vec![1];
+    model.funcs.push(function(vec![], vec![formal]));
+    let call = |args| {
+        IrStmt::Call(Box::new(IrCall::new(
+            0,
+            args,
+            IrDepth::PROC,
+            Vec::new(),
+            Vec::new(),
+        )))
+    };
+    model.processes.push(IrProcess::new(
+        "p0".into(),
+        "top.p".into(),
+        IrShape::RunOnce,
+        vec![],
+        vec![call(vec![IrCallArg::NativeValue(0)])],
+    ));
+    model.spawns.push("p0".into());
+    model.validate().unwrap();
+
+    // Leaf operands copy one source container per companion.
+    for (containers, valid) in [(vec![0], true), (vec![], false), (vec![7], false)] {
+        model.processes[0].body = vec![call(vec![IrCallArg::NativeLeaves {
+            ty: 0,
+            leaves: vec![],
+            containers,
+        }])];
+        assert_eq!(model.validate().is_ok(), valid, "leaf operand containers");
+    }
+    model.processes[0].body = vec![call(vec![IrCallArg::NativeValue(0)])];
+
+    // A formal lists exactly its value's companions.
+    model.funcs[0].formals[0].native_companions = Vec::new();
+    assert!(model.validate().is_err(), "formal companions");
+    model.funcs[0].formals[0].native_companions = vec![1];
+
+    // Companions share their value's lifetime and exist.
+    model.native_values[0].companions = vec![1];
+    assert!(model.validate().is_err(), "companion lifetime");
+    model.native_values[0].companions = vec![9];
+    assert!(model.validate().is_err(), "companion bounds");
+    model.native_values[0].companions = vec![];
+    assert!(model.validate().is_err(), "argument companion count");
+}

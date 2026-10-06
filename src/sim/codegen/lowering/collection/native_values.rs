@@ -1847,9 +1847,11 @@ impl Codegen<'_> {
                     None,
                 )
             }
-            (LeafValue::Container(_), _) | (_, LeafValue::Container(_)) => return Err(format!(
+            (LeafValue::Container(_), _) | (_, LeafValue::Container(_)) => {
+                return Err(format!(
                 "native record comparison in `{path}` pairs a container member with a scalar leaf"
-            )),
+            ))
+            }
             (LeafValue::String(a), LeafValue::String(b)) => {
                 let compare = IrExpr::new(
                     IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringCompare(a, b, false))),
