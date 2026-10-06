@@ -46,6 +46,13 @@ impl Frame<'_, '_> {
                 return Ok(handle);
             }
             IrChandleExpr::Construct(index) => return self.construct_class(*index),
+            IrChandleExpr::CopyClass { class, source } => {
+                if self.read_only_callback {
+                    return Err(pending("class copy in read-only callbacks"));
+                }
+                let source = self.chandle(source)?;
+                return Ok(self.scalar("void*", format!("llg_class_copy_{class}({source})")));
+            }
             IrChandleExpr::Required { handle, site } => {
                 let handle = self.chandle(handle)?;
                 return Ok(self.scalar(

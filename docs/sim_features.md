@@ -1603,8 +1603,11 @@ These are bounded implementations, not full verification-infrastructure support.
   object; resizable-container and one-dimensional fixed-array properties are
   per-object containers with per-object initializers. Properties are reached
   through `this`, handle variables, subroutine handle locals and formals, and
-  handle-property chains (`n.next.val`). A null receiver or property access is
-  a run-time error at its source position
+  handle-property chains (`n.next.val`). A shallow copy `new h` or `new this`
+  (SV 8.11) allocates the source expression's class type without running
+  constructors or initializers and copies every property; handle properties
+  keep naming the same objects. A null receiver, property access or copy
+  source is a run-time error at its source position
   ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)).
   Objects, including unreachable cycles, remain until model close; there is
   no garbage collector (SIM-018). Static record properties with string, real

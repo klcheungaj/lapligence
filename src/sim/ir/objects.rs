@@ -274,6 +274,14 @@ pub enum IrChandleExpr {
     SemaphoreNew(Box<IrExpr>),
     /// Model-owned allocation recipe. No C text or frontend pointers are stored.
     Construct(usize),
+    /// Shallow copy `new h` (SV 8.11): a new object of class layout `class`
+    /// whose fields are copied from the object `source` names (an object of
+    /// `class` or a class derived from it). Constructors and property
+    /// initializers do not run.
+    CopyClass {
+        class: usize,
+        source: Box<IrChandleExpr>,
+    },
     /// Address of a validated, concrete virtual-interface instance.
     InterfaceInstance {
         interface: usize,
@@ -1800,6 +1808,15 @@ impl IrChandleExpr {
             }
             Self::Null => Ok(()),
             Self::Required { handle, .. } => handle.validate(model, formals, chandle_return),
+            Self::CopyClass { class, source } => {
+                if *class >= model.classes.len() {
+                    return Err(super::IrValidationError::new(
+                        "class copy",
+                        "class index is out of bounds",
+                    ));
+                }
+                source.validate(model, formals, chandle_return)
+            }
             Self::Mailbox(mailbox) => mailbox.validate(model, formals, chandle_return),
             Self::Process(process) => process.validate(model, formals),
             Self::ContainerElement {
@@ -2060,7 +2077,9 @@ impl IrChandleExpr {
                 }
             }
             Self::EventObject(event) => event.expressions(visit),
-            Self::Required { handle, .. } => handle.expressions(visit),
+            Self::Required { handle, .. } | Self::CopyClass { source: handle, .. } => {
+                handle.expressions(visit)
+            }
             Self::Mailbox(mailbox) => mailbox.expressions(visit),
             Self::Process(process) => process.expressions(visit),
             Self::ContainerElement { indices, key, .. } => {
@@ -2096,7 +2115,9 @@ impl IrChandleExpr {
                 }
             }
             Self::EventObject(event) => event.expressions_mut(visit),
-            Self::Required { handle, .. } => handle.expressions_mut(visit),
+            Self::Required { handle, .. } | Self::CopyClass { source: handle, .. } => {
+                handle.expressions_mut(visit)
+            }
             Self::Mailbox(mailbox) => mailbox.expressions_mut(visit),
             Self::Process(process) => process.expressions_mut(visit),
             Self::ContainerElement { indices, key, .. } => {

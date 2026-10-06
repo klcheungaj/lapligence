@@ -1,4 +1,4 @@
-//! Receivers for the ABI v14 capture stream.
+//! Receivers for the ABI v15 capture stream.
 //!
 //! # Design
 //!

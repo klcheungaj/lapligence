@@ -1,6 +1,6 @@
 //! Safe, owned Rust facade over the Slang C ABI.
 //!
-//! [`compile`] receives the finished capture through the ABI v14 record
+//! [`compile`] receives the finished capture through the ABI v15 record
 //! stream (see the `stream` module) and owns every decoded record. No Slang
 //! pointer or native allocation escapes it.
 
@@ -38,7 +38,7 @@ use values::{
 mod stream;
 use stream::{sink_for, StreamBuilder};
 
-const ABI_VERSION: u32 = 14;
+const ABI_VERSION: u32 = 15;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -734,6 +734,9 @@ pub const SEMANTIC_EXPR_TAGGED_UNION: u32 = 92;
 /// Expression tag for the current target value read by an overloaded update
 /// ([`SemanticOperation::OverloadUpdate`]); it has no edges.
 pub const SEMANTIC_EXPR_UPDATE_CURRENT: u32 = 93;
+/// Expression tag for a shallow class copy `new h`; its operand edge is the
+/// source handle.
+pub const SEMANTIC_EXPR_COPY_CLASS: u32 = 94;
 
 /// Immediate assertion metadata carried in [`SemanticNode::auxiliary`].
 pub const SEMANTIC_ASSERTION_DEFERRED: u64 = 1 << 0;
