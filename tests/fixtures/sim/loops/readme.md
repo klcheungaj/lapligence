@@ -33,8 +33,8 @@ Run the R02 cases on a configured host:
 
 ```sh
 cargo test --locked --lib foreach_mixed
-cargo test --locked --test slang_semantics foreach_mixed -- --test-threads=1
-cargo test --locked --test sim_loops foreach_mixed -- --test-threads=1
+cargo test --locked --test general slang_semantics::foreach_mixed -- --test-threads=1
+cargo test --locked --test sim_a_m sim_loops::foreach_mixed -- --test-threads=1
 ```
 
 Use the full `sim_loops` suite to check the existing resizable-container and

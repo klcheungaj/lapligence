@@ -1,7 +1,6 @@
 //! Regression coverage for shared integration-test lifecycle helpers.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 #[test]
 fn test_build_directory_configuration() {
@@ -28,7 +27,7 @@ fn test_build_directory_configuration() {
     ] {
         let mut command = Command::new(std::env::current_exe().expect("test executable"));
         command
-            .args(["--exact", "test_build_directory_child", "--nocapture"])
+            .args(["--exact", &child_test_name(), "--nocapture"])
             .current_dir(directory.path())
             .env("LLG_TEST_BUILD_PROBE_ROOT", expected)
             .env("LLG_TEST_BUILD_PROBE_ERROR", error)
@@ -46,6 +45,15 @@ fn test_build_directory_configuration() {
     );
     assert!(custom_root.is_dir(), "configured root must survive cleanup");
     assert_eq!(std::fs::read_dir(custom_root).unwrap().count(), 0);
+}
+
+/// Harness name of `test_build_directory_child`: the module path without the
+/// crate, because this suite is a module of a grouped test binary.
+fn child_test_name() -> String {
+    match module_path!().split_once("::") {
+        Some((_crate, module)) => format!("{module}::test_build_directory_child"),
+        None => "test_build_directory_child".to_owned(),
+    }
 }
 
 #[test]

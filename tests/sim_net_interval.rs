@@ -1,9 +1,6 @@
 //! Undriven net-array cells: hand-computed values on every value backend and
 //! generated-code bounds that do not grow with the cell count.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 use llg::core::{compile, db::Db};
 use llg::sim::{self, opt::OptConfig};

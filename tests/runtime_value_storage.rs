@@ -1,7 +1,6 @@
 //! Native storage/ownership checks without compiling a generated HDL model.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use std::path::Path;
 use std::process::Command;

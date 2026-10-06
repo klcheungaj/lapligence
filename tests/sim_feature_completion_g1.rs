@@ -2,10 +2,7 @@
 //! expression sequencing, and fixed bit-stream forms. Fixtures run through the
 //! public simulator in both optimizer modes with independent stdout oracles.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn nested_array_member_select() {

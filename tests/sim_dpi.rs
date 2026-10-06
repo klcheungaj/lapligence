@@ -11,8 +11,7 @@ use std::process::{Command, Output};
 use llg::core::{compile, db::Db, model::DesignModel};
 use llg::sim;
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -21,7 +21,7 @@
 //! `module_inst.v` regression fixture (parent `top` and child `adder`
 //! declaring IDENTICAL port names clk/din/dout) the same way in
 //! `expected.module_inst.json`.  Regenerate either with
-//! `LLG_DUMP_BLESS=1 cargo test --test dump_tokens`; see the `_comment`
+//! `LLG_DUMP_BLESS=1 cargo test --test general dump_tokens::`; see the `_comment`
 //! key inside each golden for the exact field conventions.
 #![cfg(feature = "lsp")]
 
@@ -410,7 +410,7 @@ fn golden_document(dump: &Dump, root: &Path, fixture: &str, comment: &str) -> Va
 fn golden_comment(golden_test: &str) -> String {
     format!(
         "Golden for tests/dump_tokens.rs::{golden_test} \
-(schema llg.tokenDump/v1); regenerate with LLG_DUMP_BLESS=1 cargo test --test dump_tokens. \
+(schema llg.tokenDump/v1); regenerate with LLG_DUMP_BLESS=1 cargo test --test general dump_tokens::. \
 Conventions: coordinates are the SAME 0-based values the --dump-tokens text prints; one source \
 occurrence appears once as a typed Slang lexical record; entries are in \
 text-dump emission order (sorted by file, line0, col0); \"module\" is the innermost module or \

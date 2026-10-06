@@ -1,9 +1,6 @@
 //! SYN-038 hierarchical continuous writes to static function locals.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn static_function_local_accepts_continuous_variable_assignment() {

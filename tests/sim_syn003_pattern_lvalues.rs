@@ -6,10 +6,7 @@
 //! modes. Negative fixtures keep keyed/default, replicated, malformed-shape,
 //! constant-target, and per-element width failures independent.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn positional_pattern_lvalues_run_in_both_optimizer_modes() {

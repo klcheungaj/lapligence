@@ -1,9 +1,6 @@
 //! SYN-038 process, call-actual, and port-actual lvalue paths.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn selected_lvalue_contexts_keep_actual_storage_and_process_paths_distinct() {

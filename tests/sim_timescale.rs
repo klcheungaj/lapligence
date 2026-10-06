@@ -10,8 +10,7 @@
 //! default to 1ns/1ps (TIMESCALEMOD behavior). `%t` defaults to the finest
 //! design precision, as specified by `$timeformat`.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 use std::sync::Mutex;
 
 use llg::core::compile;

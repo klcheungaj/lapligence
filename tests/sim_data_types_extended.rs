@@ -1,8 +1,7 @@
 //! Independent end-to-end datatype conformance cases. HDL oracles are
 //! checked-in and reference-checked without using llg's value implementation.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use llg::core::{compile, db::Db};
 use llg::sim::{self, opt::OptConfig};

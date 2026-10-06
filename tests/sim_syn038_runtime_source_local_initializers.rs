@@ -1,9 +1,6 @@
 //! Runtime module values consumed by static and automatic local initializers.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn runtime_sources_initialize_static_and_automatic_locals() {

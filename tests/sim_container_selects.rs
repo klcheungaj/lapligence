@@ -4,10 +4,7 @@
 //! both optimizer modes. Expected values were derived by hand from the bit
 //! patterns each fixture writes.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 fn parity(fixture: &str, expected: &str) {
     sim_cli::run_case_backend_parity("container_selects", fixture, expected, &[], &[]);

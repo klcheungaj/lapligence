@@ -1,9 +1,6 @@
 //! SYN-038 public-CLI matrix for subroutine formal modes across process families.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn all_formal_modes_execute_from_each_process_family() {

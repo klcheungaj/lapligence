@@ -1,9 +1,6 @@
 //! Checked-in replacement evidence for SYN-038 legacy OP/write pairings.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 use llg::core::{
     compile::{self, CompileOpts, LanguageEdition},

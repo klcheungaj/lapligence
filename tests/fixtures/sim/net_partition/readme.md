@@ -27,7 +27,7 @@ Run the HDL cases and focused frame/C11 checks with:
 CARGO_BUILD_JOBS=8 CMAKE_BUILD_PARALLEL_LEVEL=8 scripts/run-tests.sh \
     --test-work-dir /build --cargo-profile quick --test-threads 8 \
     --test sim_net_partition --test generated_c_frame_lint \
-    -E 'binary(sim_net_partition) | test(electrical_net_partition_fixtures)'
+    -E 'test(/^sim_net_partition::/) | test(electrical_net_partition_fixtures)'
 ```
 
 Lowering unit tests prove group counts and driver-range/force boundaries; emitter

@@ -1,9 +1,6 @@
 //! SYN-027 public CLI qualification of fixed-array reverse.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn fixed_lengths_bounds_and_local_reverse_run_through_cli() {

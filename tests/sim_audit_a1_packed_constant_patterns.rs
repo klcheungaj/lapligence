@@ -1,8 +1,5 @@
 //! Packed integral constant patterns across the public SV2009 simulator path.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn whole_packed_struct_and_union_constants_match_runtime_values() {

@@ -3,10 +3,8 @@
 use std::process::Command;
 use std::time::Duration;
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 #[test]
 fn multidimensional_read_walks_rows_and_honors_outer_address_jumps() {

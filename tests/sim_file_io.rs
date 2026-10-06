@@ -1,7 +1,6 @@
 //! End-to-end file descriptor, multichannel output, and file-control coverage.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use std::fs;
 

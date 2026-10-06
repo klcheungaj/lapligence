@@ -18,8 +18,7 @@ use llg::sim;
 
 static CWD_LOCK: Mutex<()> = Mutex::new(());
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 /// Compile, codegen, build and run `sv` (top module `top`); returns stdout.
 /// Asserts the codegen emitted no "interface body process skipped" warning.

@@ -1,9 +1,8 @@
+#[allow(clippy::module_inception)]
 #[path = "../build_support/compiler_cache.rs"]
 mod compiler_cache;
 // Only the executable helpers are used by compiler_cache.rs.
-#[allow(dead_code)]
-#[path = "../build_support/host_platform.rs"]
-mod host_platform;
+use crate::host_platform;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

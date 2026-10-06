@@ -3,10 +3,7 @@
 //! The fixture checks an unoverridden child localparam, separate elaborated
 //! values in two overridden sibling instances, and a procedural-read control.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn child_parameter_initializers_keep_instance_identity_in_both_modes() {

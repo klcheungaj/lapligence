@@ -3,8 +3,7 @@
 use std::process::Command;
 use std::time::Duration;
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 const RANDOM_PROBE: &str = r#"
 #include "llg_rng.h"

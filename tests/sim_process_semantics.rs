@@ -4,10 +4,7 @@
 //! leaves lint disabled for the rejection cases, proving these are simulator
 //! semantic diagnostics rather than optional lint findings.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn always_comb_time_zero_and_written_local_exclusion() {

@@ -1,9 +1,6 @@
 //! SYN-038 mutable interface-member source read through a function result.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 use llg::core::{
     compile::{self, CompileOpts, LanguageEdition},

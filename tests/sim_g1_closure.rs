@@ -6,11 +6,7 @@
 //! expected traces are built here from independent LRM-derived oracles; no
 //! expected value is captured from the simulator.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
-
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
+use crate::sim_cli;
 
 mod g1_10 {
     use super::sim_cli;

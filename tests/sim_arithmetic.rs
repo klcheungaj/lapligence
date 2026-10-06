@@ -4,8 +4,7 @@
 //! Each test runs Slang compile + elaborate, codegen, CMake model build,
 //! and executable simulation, asserting the exact stdout.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 use std::sync::Mutex;
 
 use llg::sim;

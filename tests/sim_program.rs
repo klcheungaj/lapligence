@@ -5,10 +5,7 @@
 //! and without optimizer passes; the negative case keeps one prohibited
 //! program member as its only fault.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn program_reactive_nba_and_zero_delay_ordering_match_module_active() {

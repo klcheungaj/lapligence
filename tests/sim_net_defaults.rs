@@ -1,7 +1,6 @@
 //! Standalone pull-default and supply-net resolution with optimizer parity.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use llg::core::{compile, db::Db};
 use llg::sim::{self, opt::OptConfig};

@@ -13,10 +13,8 @@
 //! Each test uses a fresh temp directory and the process-wide mutex serializes
 //! process-CWD changes with the other simulator integration tests.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 use std::sync::Mutex;
 
 use llg::core::compile;

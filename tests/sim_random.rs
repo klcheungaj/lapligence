@@ -1,9 +1,6 @@
 //! End-to-end tests for Verilog-2001 §17.9 / SystemVerilog §20.15.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 const EXPECTED: &str = "implicit=303379748,-1064739199\n\
 random=-2147414528,-1671855048,1129920902 seed=-1017563188\n\

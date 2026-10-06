@@ -1,12 +1,13 @@
 # Default cargo-nextest configuration, consumed locally and in CI.
 #
 # nextest executes every test case in its OWN process (unlike `cargo test`,
-# which runs one process per integration-test binary), so test binaries run
-# concurrently by default.  This is safe for this repository: every suite
-# that mutates process-global state (std::env::set_current_dir) serializes
-# internally through a mutex within its own binary, and temp directories are
-# keyed by std::process::id() — distinct under both models, because nextest
-# gives every test a fresh pid and plain cargo test gives every binary one.
+# which runs one process per test binary), so test binaries run concurrently
+# by default.  Integration suites are grouped into a few binaries
+# (tests/readme.md#test-binaries); suites that mutate process-global state
+# either go through the shared harness lock compiled once per group or stay
+# standalone binaries, and temp directories are keyed by std::process::id() —
+# distinct under both models, because nextest gives every test a fresh pid and
+# plain cargo test gives every binary one.
 
 [profile.default]
 # Eight concurrent test processes is the safe default for ordinary developer
@@ -46,5 +47,5 @@ frontend-heavy = { max-threads = "num-cpus" }
 # Route the heavyweight suites into the capped group.  Everything else
 # (emit_decoupling, property_elab, …) uses the default full-width pool.
 [[profile.default.overrides]]
-filter = "binary(/^sim_/) or binary(model_tests) or binary(elab_resolve) or binary(region_conformance) or binary(config_effect) or binary(lsp_stdio) or binary(shadowing) or binary(dump_tokens) or binary(parse_only) or binary(probe_bindings) or binary(lint_config_cli)"
+filter = "binary(/^sim_/) or test(/^(model_tests|elab_resolve|region_conformance|config_effect|lsp_stdio|shadowing|dump_tokens|parse_only|probe_bindings|lint_config_cli)::/)"
 test-group = "frontend-heavy"

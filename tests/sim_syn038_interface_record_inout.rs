@@ -1,9 +1,6 @@
 //! SYN-038 interface record field actual passed to an inout task formal.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn interface_record_field_inout_task_preserves_neighbor_field_in_both_modes() {

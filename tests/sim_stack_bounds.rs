@@ -21,10 +21,8 @@ use llg::core::compile::{self, CompileOpts};
 use llg::core::db::Db;
 use llg::sim;
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 const SUITE: &str = "stack_bounds";
 

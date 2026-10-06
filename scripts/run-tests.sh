@@ -3,13 +3,15 @@
 #
 # Usage:
 #   scripts/run-tests.sh                          # run the whole suite
-#   scripts/run-tests.sh --test sim_counter       # subset; args pass through
+#   scripts/run-tests.sh --test sim_counter       # one suite of a grouped binary
 #   scripts/run-tests.sh --test model_tests --test elab_resolve
 #   scripts/run-tests.sh --test-work-dir /build --test sim_counter
 #   scripts/run-tests.sh --cargo-profile quick --test sim_counter
 #
-# Uses cargo-nextest: every test runs in its own process and the many
+# Uses cargo-nextest: every test runs in its own process and the grouped
 # integration-test binaries execute concurrently (see .config/nextest.toml).
+# `--test <suite>` for a suite compiled into a group binary becomes that binary
+# plus a `test(/^<suite>::/)` filterset (tests/readme.md#test-binaries).
 #
 # Install nextest with: cargo install cargo-nextest --locked
 set -euo pipefail
@@ -63,6 +65,8 @@ Without --test-work-dir, existing environment settings and storage defaults appl
 Test builds use the optimized Cargo test profile by default. Pass --cargo-profile
 quick for shorter edit-test rebuilds (artifacts in target/quick/). Nextest's
 --profile selects runner settings, independently of the Cargo build profile.
+--test SUITE selects one tests/SUITE.rs even though it is a module of a grouped
+binary; other nextest options pass through, and -E filtersets narrow the selection.
 Nextest concurrency is unchanged (8 tests by default). Use cargo nextest run --help
 for nextest help. See tests/readme.md#parallel-worktrees for layout and cleanup rules.
 EOF
@@ -78,6 +82,93 @@ EOF
             ;;
     esac
 done
+
+# Integration tests are grouped into a few binaries (tests/readme.md#test-binaries).
+# Translate `--test <suite>` for a suite that is a module of a group into the
+# group binary plus a test-name filterset, so per-suite selection keeps working.
+# Binaries named directly (and --lib/--bins/--bin selections) stay selected
+# whole; user filtersets still apply on top of the selection.
+translate_suite_args() {
+    local -a original=("${nextest_args[@]}") out=() user_filters=() selected=()
+    local -A groups=()
+    local translated=0 arg name group
+    while ((${#nextest_args[@]} > 0)); do
+        arg=${nextest_args[0]}
+        nextest_args=("${nextest_args[@]:1}")
+        case $arg in
+            --)
+                out+=("$arg" "${nextest_args[@]}")
+                nextest_args=()
+                break
+                ;;
+            -E|--filterset|--filter-expr)
+                user_filters+=("${nextest_args[0]}")
+                nextest_args=("${nextest_args[@]:1}")
+                continue
+                ;;
+            -E=*|--filterset=*|--filter-expr=*)
+                user_filters+=("${arg#*=}")
+                continue
+                ;;
+            --lib)
+                selected+=("kind(lib)")
+                ;;
+            --bins)
+                selected+=("kind(bin)")
+                ;;
+            --bin)
+                selected+=("binary(=${nextest_args[0]})")
+                out+=("$arg" "${nextest_args[0]}")
+                nextest_args=("${nextest_args[@]:1}")
+                continue
+                ;;
+            --tests|--all-targets)
+                selected+=("all()")
+                ;;
+            --test|--test=*)
+                if [[ $arg == --test ]]; then
+                    name=${nextest_args[0]}
+                    nextest_args=("${nextest_args[@]:1}")
+                else
+                    name=${arg#--test=}
+                fi
+                # The suite's own file may declare a same-named inner module.
+                group=$(grep -lx "mod $name;" "$repo_root"/tests/*.rs 2>/dev/null \
+                    | grep -vx "$repo_root/tests/$name.rs" | head -n 1 || true)
+                if [[ -n $group ]]; then
+                    group=$(basename "$group" .rs)
+                    translated=1
+                    selected+=("test(/^$name::/)")
+                else
+                    group=$name
+                    selected+=("binary(=$name)")
+                fi
+                if [[ -z ${groups[$group]:-} ]]; then
+                    groups[$group]=1
+                    out+=(--test "$group")
+                fi
+                continue
+                ;;
+        esac
+        out+=("$arg")
+    done
+    if ((!translated)); then
+        nextest_args=("${original[@]}")
+        return
+    fi
+    local expr users
+    expr=$(printf '%s | ' "${selected[@]}")
+    expr=${expr% | }
+    if ((${#user_filters[@]} == 1)); then
+        expr="($expr) & (${user_filters[0]})"
+    elif ((${#user_filters[@]} > 1)); then
+        users=$(printf '(%s) | ' "${user_filters[@]}")
+        expr="($expr) & (${users% | })"
+    fi
+    nextest_args=(-E "$expr" "${out[@]}")
+}
+
+translate_suite_args
 
 if [[ -n $test_work_root ]]; then
     if [[ ! -d $test_work_root ]]; then

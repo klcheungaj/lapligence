@@ -4,11 +4,8 @@
 //! that rule to time literals. Statement and intra-assignment forms are run
 //! with optimization enabled and disabled against one owned frontend model.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
-mod support;
+use crate::sim_cli;
+use crate::sim_harness;
 
 use llg::core::compile;
 use llg::sim;

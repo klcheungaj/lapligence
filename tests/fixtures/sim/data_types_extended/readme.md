@@ -12,5 +12,5 @@ Coverage: wide arithmetic, signed operations, packed layouts, net resolution,
 Run serially:
 
 ```sh
-cargo nextest run --locked --test sim_data_types_extended
+cargo nextest run -E 'test(/^sim_data_types_extended::/)' --locked
 ```

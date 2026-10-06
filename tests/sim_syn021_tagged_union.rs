@@ -1,10 +1,8 @@
 //! SYN-021 finite packed tagged-union contexts through the public CLI.
 use std::path::Path;
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 #[test]
 fn struct_payload_construction_ref_and_nba_work_in_both_modes() {

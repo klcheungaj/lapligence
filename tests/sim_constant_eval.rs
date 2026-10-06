@@ -5,10 +5,7 @@
 //! elaboration; a constant context that reads runtime state is rejected before
 //! a model is built.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn let_scope_shadowing_resolves_free_names_in_declaration_scope() {

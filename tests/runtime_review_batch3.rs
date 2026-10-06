@@ -1,6 +1,5 @@
 //! Direct runtime regression source for callsite-specific VPI sizing.
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 use llg::sim;
 use std::process::Command;
 use std::time::Duration;

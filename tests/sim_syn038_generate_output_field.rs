@@ -1,9 +1,6 @@
 //! SYN-038 generated child output actuals to packed-struct fields.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn generated_child_output_propagates_to_a_packed_struct_field() {

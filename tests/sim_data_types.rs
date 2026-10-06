@@ -2,8 +2,7 @@
 //! are independent of llg's value implementation; both optimizer modes must
 //! match, including bits above the first machine word.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use llg::core::{compile, db::Db};
 use llg::sim::{self, opt::OptConfig};

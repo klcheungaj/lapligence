@@ -4,10 +4,7 @@
 //! This checked-in IEEE 1800-2009 witness runs through the public CLI in both
 //! optimizer modes.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn automatic_fixed_array_record_results_reach_generated_child_ports() {

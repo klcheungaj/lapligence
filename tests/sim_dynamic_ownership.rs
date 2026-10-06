@@ -1,10 +1,7 @@
 //! P07 acceptance through the public HDL frontend and both optimizer modes.
 //! Migration rejections are failures here, not expected or silently skipped cases.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 fn run(fixture: &str, expected: &str) {
     sim_cli::run_case("dynamic_ownership", fixture, expected, "", &[]);

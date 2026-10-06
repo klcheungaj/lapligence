@@ -1,7 +1,6 @@
 //! Packed bit-vector query results, widths, and optimizer read dependencies.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use llg::core::{compile, db::Db};
 use llg::ffi::slang::DiagnosticSeverity;

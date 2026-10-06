@@ -96,6 +96,36 @@ class RunTestsTests(unittest.TestCase):
         self.assertIsNone(report["CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER"])
         self.assertEqual(list(self.storage.iterdir()), [])
 
+    def test_grouped_suite_selects_group_binary_and_name_prefix(self):
+        worktree = self.worktree("grouped")
+        (worktree / "tests").mkdir()
+        (worktree / "tests/sim_n_z.rs").write_text("mod sim_counter;\nmod sim_force;\n", encoding="utf-8")
+        # A suite file may declare an inner module of its own name.
+        (worktree / "tests/sim_counter.rs").write_text("mod sim_counter;\n", encoding="utf-8")
+        args = ["--test", "sim_counter", "--test=sim_force", "--test", "sim_feature_completion",
+                "--lib", "-E", "test(a)", "--test-threads", "8", "--", "--exact"]
+        result, report = self.invoke(worktree, "grouped", args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(report["args"], [
+            "nextest", "run", "--locked", "-E",
+            "(test(/^sim_counter::/) | test(/^sim_force::/) | binary(=sim_feature_completion)"
+            " | kind(lib)) & (test(a))",
+            "--test", "sim_n_z", "--test", "sim_feature_completion", "--lib",
+            "--test-threads", "8", "--", "--exact",
+        ])
+
+    def test_grouped_suites_intersect_every_user_filterset(self):
+        worktree = self.worktree("filtersets")
+        (worktree / "tests").mkdir()
+        (worktree / "tests/general.rs").write_text("mod lsp_stdio;\n", encoding="utf-8")
+        args = ["-E", "test(a)", "--test", "lsp_stdio", "--filterset=test(b)"]
+        result, report = self.invoke(worktree, "filtersets", args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(report["args"], [
+            "nextest", "run", "--locked", "-E",
+            "(test(/^lsp_stdio::/)) & ((test(a)) | (test(b)))", "--test", "general",
+        ])
+
     def test_accelerators_set_tools_and_consume_only_runner_flags(self):
         worktree = self.worktree("accelerators")
         for name, body in {

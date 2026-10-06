@@ -1,10 +1,8 @@
 //! Independent next-phase SystemVerilog datatype conformance fixtures.
 //! Every checked-in fixture runs with optimization disabled and enabled.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 use std::path::Path;
 

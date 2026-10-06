@@ -2,10 +2,8 @@
 //! execute (or fail with a specific resource diagnostic), never abort on a
 //! silent fixed table. Each case runs in both optimizer modes.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 use llg::core::{compile, db::Db};
 use llg::sim::{self, opt::OptConfig};

@@ -4,10 +4,7 @@
 //! fixtures intentionally exercise the runtime's FIFO value/handle ownership
 //! and coroutine waiter paths instead of depending on host-side mocks.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn typed_and_untyped_mailboxes_preserve_fifo_values_and_handle_identity() {

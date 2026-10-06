@@ -5,10 +5,8 @@ use llg::core::compile::{self, CompileOpts};
 use llg::core::db::Db;
 use llg::sim;
 
-#[path = "support/c_compiler.rs"]
-mod c_compiler;
-#[path = "support/generated_c_lint.rs"]
-mod generated_c_lint;
+use crate::c_compiler;
+use crate::generated_c_lint;
 
 const SHARDS: usize = 6;
 

@@ -1,9 +1,6 @@
 //! SYN-038 generated-scope inout, ref, and const-ref actual paths.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn generated_scope_actuals_reach_ports_and_subroutine_formals() {

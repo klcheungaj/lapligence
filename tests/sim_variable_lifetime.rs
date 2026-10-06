@@ -1,7 +1,6 @@
 //! Procedural variable lifetime regressions over the Slang-owned database.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use llg::core::{
     compile::{self, LanguageEdition},

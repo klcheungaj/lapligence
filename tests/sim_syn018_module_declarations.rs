@@ -5,10 +5,7 @@ use std::path::Path;
 use llg::core::{compile, db, model};
 use llg::sim::{codegen, opt, semantic};
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 const SUITE: &str = "syn018_module_declarations";
 const EXPECTED: &str = "extern=7 nested=13/8\n";

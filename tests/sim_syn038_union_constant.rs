@@ -1,9 +1,6 @@
 //! Packed-union constant elaboration and direct member projection through the public CLI.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn packed_union_projection_drives_constant_dimension_and_runtime_reads() {

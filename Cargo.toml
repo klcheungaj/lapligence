@@ -3,6 +3,9 @@ name = "llg"
 version = "0.1.0"
 edition = "2021"
 description = "Lapligence (llg): Verilog/SystemVerilog simulation and language tooling based on Slang"
+# Integration tests are grouped into the [[test]] binaries below; see
+# tests/readme.md#test-binaries.
+autotests = false
 
 [lib]
 name = "llg"
@@ -29,9 +32,48 @@ name = "llg_ls"
 path = "src/bin/llg_ls/main.rs"
 required-features = ["lsp"]
 
+# Each group root registers many `tests/*.rs` suites as modules, so the library,
+# Slang and the wrapper are linked once per group instead of once per file. The
+# `test_layout` suite (in `general`) rejects unregistered suite files.
+[[test]]
+name = "general"
+path = "tests/general.rs"
+
+[[test]]
+name = "runtime"
+path = "tests/runtime.rs"
+
+[[test]]
+name = "sim_a_m"
+path = "tests/sim_a_m.rs"
+
+[[test]]
+name = "sim_n_z"
+path = "tests/sim_n_z.rs"
+
+[[test]]
+name = "sim_syn"
+path = "tests/sim_syn.rs"
+
 [[test]]
 name = "sim_feature_completion"
 path = "tests/sim_feature_completion.rs"
+
+# Small standalone harness: the release linkage audit in CI relies on it not
+# pulling in the larger frontend suites (see .github/workflows/ci.yml).
+[[test]]
+name = "cli_info"
+path = "tests/cli_info.rs"
+
+# Standalone: these change the process environment or CWD outside the shared
+# harness lock, which plain `cargo test` would share across a whole group.
+[[test]]
+name = "sim_cmake"
+path = "tests/sim_cmake.rs"
+
+[[test]]
+name = "wide_elab"
+path = "tests/wide_elab.rs"
 
 [dependencies]
 # `llg_ls` and `helloworld` select MiMalloc as their Rust global allocator.

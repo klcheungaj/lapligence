@@ -1,9 +1,6 @@
 //! End-to-end IEEE 1800-2009 §21.6 command-line plusarg tests.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn plusargs_match_and_convert_with_optimizer_parity() {

@@ -1,9 +1,6 @@
 //! SYN-038 process/value coverage for always, always_comb, always_latch, and always_ff.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn process_values_match_across_optimizer_modes() {

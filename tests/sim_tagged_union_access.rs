@@ -2,10 +2,8 @@
 //! packed tagged unions.
 use std::path::Path;
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 fn run(fixture: &str, optimized: bool) -> std::process::Output {
     sim_cli::invoke_with_env(

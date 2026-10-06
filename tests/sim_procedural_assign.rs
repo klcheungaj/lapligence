@@ -1,10 +1,7 @@
 //! File-based simulator acceptance tests for procedural continuous assignment
 //! priority, replacement, dependency propagation, and force layering.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn procedural_assign_batches_preserve_selections_loop_owners_and_real_force_layers() {

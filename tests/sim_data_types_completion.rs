@@ -2,8 +2,7 @@
 //! local IEEE 1800-2009 specification. Every positive fixture must execute
 //! successfully with optimization disabled and enabled.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use std::path::Path;
 

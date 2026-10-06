@@ -12,5 +12,5 @@ Coverage: wide four-state values, arithmetic, casts, equality, and two-state
 Run serially:
 
 ```sh
-cargo nextest run --locked --test sim_data_types
+cargo nextest run -E 'test(/^sim_data_types::/)' --locked
 ```

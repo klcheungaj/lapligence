@@ -5,10 +5,8 @@
 //! Each test
 //! runs with the CWD pointed at a fresh temp dir (serialized through a mutex).
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 use std::sync::Mutex;
 
 static CWD_LOCK: Mutex<()> = Mutex::new(());

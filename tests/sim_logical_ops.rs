@@ -5,10 +5,7 @@
 //! evaluation. The shared CLI harness runs each oracle with and without the
 //! optimizer.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn implication_and_equivalence_match_four_state_oracles() {

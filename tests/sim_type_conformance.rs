@@ -8,13 +8,10 @@
 mod integral;
 #[path = "sim_type_conformance/nets.rs"]
 mod nets;
-#[path = "support/sim.rs"]
-mod sim_harness;
 #[path = "sim_type_conformance/storage.rs"]
 mod storage;
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
+use crate::sim_cli;
 
 fn run_case(fixture: &str, expected: &str) {
     run_case_with_warnings(fixture, expected, &[]);

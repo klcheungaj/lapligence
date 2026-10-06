@@ -1,8 +1,7 @@
 //! Supplementary HDL datatype edge cases with checked-in, self-checking
 //! fixtures. Each case executes with optimization disabled and enabled.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use llg::core::{compile, db::Db};
 use llg::sim::{self, opt::OptConfig};

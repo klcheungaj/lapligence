@@ -1,7 +1,6 @@
 //! End-to-end IEEE 1800-2009 §20.5 real/integer conversion tests.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use llg::core::{compile, db::Db};
 use llg::ffi::slang::DiagnosticSeverity;

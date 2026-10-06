@@ -1,10 +1,7 @@
 //! P19 fork lifecycle coverage. Each fixture is run in optimized and
 //! unoptimized modes by the shared simulator CLI harness.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn join_variants_start_and_complete_at_their_boundaries() {

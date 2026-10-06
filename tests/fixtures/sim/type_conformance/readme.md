@@ -16,7 +16,7 @@ oracles in [the conformance suite](../../../sim_type_conformance.rs).
 From the repository root:
 
 ```sh
-cargo nextest run --locked --test sim_type_conformance
+cargo nextest run -E 'test(/^sim_type_conformance::/)' --locked
 cargo run --bin llg -- --top tb tests/fixtures/sim/type_conformance/uwire.sv
 cargo run --bin llg -- --no-opt --top tb tests/fixtures/sim/type_conformance/uwire.sv
 ```

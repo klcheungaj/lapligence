@@ -1,9 +1,6 @@
 //! SYN-035 exclusion checkpoint: a selected PLA target has not been defined.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn unselected_pla_task_reports_an_explicit_diagnostic_in_both_editions() {

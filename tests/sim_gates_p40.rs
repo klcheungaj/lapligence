@@ -3,10 +3,7 @@
 //! IEEE 1364-2001 7.1.5-7.4 and IEEE 1800-2009 28.3-28.6 cover primitive
 //! instance arrays, terminal ordering, buffer outputs, and four-state values.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn gate_terminal_forms_match_with_and_without_optimization() {

@@ -31,8 +31,7 @@
 
 use std::sync::Mutex;
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 static CWD_LOCK: Mutex<()> = Mutex::new(());
 

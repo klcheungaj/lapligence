@@ -1,9 +1,6 @@
 //! SYN-015 public-pipeline evidence for fixed bit-stream casts and streams.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn stream_width_matrix_keeps_order_alignment_and_state_in_both_modes() {

@@ -1,9 +1,6 @@
 //! SYN-038 remaining operation/write and process/write paths through the public simulator CLI.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 const FIXTURE_SOURCE: &str =
     include_str!("fixtures/sim/syn038_pairwise/process_write_remainders.sv");

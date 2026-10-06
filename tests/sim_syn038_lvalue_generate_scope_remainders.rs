@@ -1,9 +1,6 @@
 //! Procedural row-slice, concatenation, and positional-pattern writes in generate scope.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn generated_scope_lvalues_write_the_selected_objects() {

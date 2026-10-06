@@ -34,8 +34,6 @@ mod regions;
 mod select_ranges;
 #[path = "sim_partial_features/severity.rs"]
 mod severity;
-#[path = "support/sim.rs"]
-mod sim_harness;
 #[path = "sim_partial_features/stop.rs"]
 mod stop;
 #[path = "sim_partial_features/system.rs"]
@@ -47,8 +45,7 @@ mod timeformat;
 #[path = "sim_partial_features/timing.rs"]
 mod timing;
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
+use crate::sim_cli;
 
 fn run_case(fixture: &str, expected: &str) {
     run_case_with_stderr(fixture, expected, "");

@@ -1,10 +1,7 @@
 //! SYN-038 automatic enum initialization, explicit function return, and
 //! separate clocked enum NBA destination through the public CLI.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn automatic_enum_pattern_function_and_clocked_nba_match_oracle() {

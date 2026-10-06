@@ -5,8 +5,7 @@ use std::time::Duration;
 
 use llg::sim;
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 #[test]
 fn scheduler_time_overflow_fails_with_a_diagnostic() {

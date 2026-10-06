@@ -4,8 +4,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 fn characterize(stem: &str, extension: &str) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sim/undefined_behavior");

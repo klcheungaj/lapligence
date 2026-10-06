@@ -14,8 +14,7 @@
 use llg::core::compile;
 use llg::sim;
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 /// Compile + codegen + C-compile + run `sv` (top module `top`), returning the
 /// simulator's exact stdout, the codegen warnings and the generated C model.

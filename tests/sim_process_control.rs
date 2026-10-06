@@ -4,10 +4,7 @@
 //! suspended event waits, terminal await behavior, recursive cancellation,
 //! and ownership of delayed nonblocking assignments.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn process_handles_preserve_waits_identity_and_terminal_status() {

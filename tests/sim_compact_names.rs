@@ -1,7 +1,4 @@
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn compact_c_names_preserve_distinct_source_scopes_and_values() {

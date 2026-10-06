@@ -1,8 +1,5 @@
 //! Continuation coverage for replicated values, membership, memory and wired nets.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn replicated_patterns_preserve_order_state_and_value_contexts() {

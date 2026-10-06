@@ -9,8 +9,7 @@ use llg::core::compile;
 use llg::sim;
 use llg::sim::opt::OptConfig;
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 /// Compile and run one `tb` design through the shared simulator harness.
 fn run_sim(sv: &str, tag: &str) -> Result<String, String> {

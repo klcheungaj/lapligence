@@ -11,7 +11,7 @@
 use std::fs;
 #[path = "lsp_stdio/genvar.rs"]
 mod genvar;
-mod support;
+use crate::support;
 
 use std::io;
 use std::path::{Component, Path, PathBuf};

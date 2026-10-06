@@ -1,9 +1,6 @@
 //! Public CLI probes for the packed conditional tables in both supplied editions.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn packed_conditional_policy_uses_published_z_z_cell_in_both_editions() {

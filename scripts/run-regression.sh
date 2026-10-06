@@ -40,7 +40,7 @@ Cargo.lock/manifests hashes, tool versions, and every phase status. It runs:
   cargo metadata --locked
   cargo test --locked --all-features -- --list
   cargo test --locked --jobs 2 --all-features -- --test-threads=1
-  cargo test --locked --jobs 2 --test sim_opt_differential -- --test-threads=1
+  cargo test --locked --jobs 2 --test sim_n_z -- sim_opt_differential:: --test-threads=1
   the CI generated-runtime GCC ASan/UBSan matrix
   source-location diagnostic tests (compile_errors, slang_frontend, model_tests)
 
@@ -303,7 +303,7 @@ run_phase test-inventory \
 run_phase full-suite \
     cargo test --locked --jobs 2 --all-features -- --test-threads=1
 run_phase optimizer-differential \
-    cargo test --locked --jobs 2 --test sim_opt_differential -- --test-threads=1
+    cargo test --locked --jobs 2 --test sim_n_z -- sim_opt_differential:: --test-threads=1
 run_phase generated-runtime-sanitizers \
     env \
     LLG_CC=gcc \
@@ -311,25 +311,10 @@ run_phase generated-runtime-sanitizers \
     ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1:log_path=/tmp/llg-asan-regression-model' \
     UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=1' \
     cargo test --locked --jobs 2 --all-features \
-    --test runtime_values \
-    --test runtime_boundaries \
-    --test sim_counter \
-    --test sim_data_types \
-    --test sim_data_types_next \
-    --test sim_data_types_completion \
-    --test sim_type_conformance \
-    --test sim_partial_features \
-    --test sim_net_resolution \
-    --test sim_net_defaults \
-    --test sim_function \
-    --test sim_loops \
-    --test sim_procedural_assign \
-    --test sim_tagged_union_access \
-    --test sim_review_next4 \
-    --test sim_review_tasks08_11 \
-    --test sim_fixed_ordering_review \
-    --test sim_casez \
-    -- --test-threads=1
+    --test runtime \
+    --test sim_a_m \
+    --test sim_n_z \
+    -- runtime_values:: runtime_boundaries:: sim_counter:: sim_data_types:: sim_data_types_next:: sim_data_types_completion:: sim_type_conformance:: sim_partial_features:: sim_net_resolution:: sim_net_defaults:: sim_function:: sim_loops:: sim_procedural_assign:: sim_tagged_union_access:: sim_review_next4:: sim_review_tasks08_11:: sim_fixed_ordering_review:: sim_casez:: --test-threads=1
 run_phase generated-tagged-guard-sanitizers \
     env \
     LLG_CC=gcc \
@@ -340,10 +325,8 @@ run_phase generated-tagged-guard-sanitizers \
     sim::emit_c::owned::tests::tagged_guards -- --test-threads=1
 run_phase source-location-diagnostics \
     cargo test --locked --jobs 2 \
-    --test compile_errors \
-    --test slang_frontend \
-    --test model_tests \
-    -- --test-threads=1
+    --test general \
+    -- compile_errors:: slang_frontend:: model_tests:: --test-threads=1
 
 record run.finished_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 record run.status "$overall_status"

@@ -1,9 +1,6 @@
 //! SYN-038 interface-member actuals connected to nested child-interface ports.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 use llg::core::{
     compile::{self, CompileOpts, LanguageEdition},

@@ -1,9 +1,6 @@
 //! SYN-038 runtime packed-array indexing over packed localparam members.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn localparam_packed_member_runtime_indices_preserve_four_state_selection() {

@@ -4,8 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 const RUNS: usize = 3;
 const FIXTURES: [&str; 3] = [

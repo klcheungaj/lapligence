@@ -1,9 +1,6 @@
 //! Selected typed values consumed from interface and generate lexical scopes.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 const FIXTURE_SOURCE: &str = include_str!("fixtures/sim/syn038_pairwise/typed_scope_remainders.sv");
 const FOCAL_SOURCE_ANCHORS: &[&str] = &[

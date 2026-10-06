@@ -1,9 +1,6 @@
 //! SYN-017: selected directive and lexical effects through the public simulator.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 use std::path::Path;
 

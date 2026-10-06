@@ -13,8 +13,7 @@
 //! tests run with the CWD pointed at a fresh temp dir (serialized through a
 //! mutex, to avoid process-wide CWD races).
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use std::sync::Mutex;
 

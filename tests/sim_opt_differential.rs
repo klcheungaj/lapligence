@@ -10,8 +10,7 @@
 //! already pinned by the per-feature suites, which run the default
 //! configuration.)
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 use std::sync::Mutex;
 
 use llg::core::compile;

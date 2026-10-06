@@ -11,8 +11,7 @@
 //! Each
 //! test uses a fresh temp directory and the process-wide mutex serializes
 //! compile/codegen runs with the other simulator integration tests.
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use std::sync::Mutex;
 

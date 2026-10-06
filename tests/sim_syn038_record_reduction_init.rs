@@ -1,9 +1,6 @@
 //! SYN-038 fixed-record reduction in an automatic local initializer.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn fixed_record_reduction_initializes_automatic_local() {

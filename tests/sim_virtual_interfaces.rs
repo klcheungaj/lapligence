@@ -5,10 +5,7 @@
 //! arrays, null-handle diagnostics, and nominal specialization errors. Every
 //! executable case runs with and without optimizer passes.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn virtual_interface_rebinding_and_views_match_across_optimizer_modes() {

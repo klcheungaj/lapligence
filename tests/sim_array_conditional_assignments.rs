@@ -1,8 +1,5 @@
 //! R04: module-procedural fixed-array expressions in both public CLI modes.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn array_conditional_assignment_comb() {

@@ -4,10 +4,8 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 #[test]
 fn signed_address_spellings_and_hex_boundaries_select_the_same_cells() {

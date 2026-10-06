@@ -1,7 +1,4 @@
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn generated_instances_collect_timed_and_plain_subroutines() {

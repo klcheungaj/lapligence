@@ -1,8 +1,5 @@
 //! SYN-022: primitive conditional patterns through the public simulator.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn primitive_patterns_keep_order_scope_and_four_state_equality() {

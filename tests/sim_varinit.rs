@@ -8,10 +8,8 @@
 //! test runs with the CWD pointed at a fresh temp dir (serialized through a
 //! mutex, to avoid process-wide CWD races).
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 /// Compile and run one `tb` design through the shared simulator harness.
 fn run_sim(sv: &str, tag: &str) -> Result<String, String> {

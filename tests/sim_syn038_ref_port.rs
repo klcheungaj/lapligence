@@ -1,9 +1,6 @@
 //! SYN-038 whole-variable module `ref` port aliasing through the public CLI.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn module_ref_port_tracks_parent_and_child_updates_in_both_modes() {

@@ -2,10 +2,8 @@
 //! The checked-in fixtures exercise femtosecond scheduling, the complete
 //! standard unit range, checked overflow, and waveform tick/header fidelity.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 use std::path::Path;
 use std::process::{Command, Output};

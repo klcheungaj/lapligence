@@ -4,10 +4,8 @@ use std::path::Path;
 
 use llg::core::{compile, db, model};
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 const SUITE: &str = "syn032_library_configs";
 const EXPECTED: &str = "cell=22 value=3\ncell=11 value=4\ndefault=11\n";

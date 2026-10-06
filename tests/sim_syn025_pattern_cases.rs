@@ -1,8 +1,6 @@
 //! IEEE 1800-2009 12.6.1 pattern cases and 12.5.3 qualifier diagnostics.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 #[test]
 fn qualifier_counts_filtered_items_and_preserves_first_body() {

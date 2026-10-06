@@ -1,8 +1,7 @@
 //! Direct runtime checks for descriptor masks, ordinary-file ownership, and
 //! invalid/closed descriptor status.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use std::fs;
 

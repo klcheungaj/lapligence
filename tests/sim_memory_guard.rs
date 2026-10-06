@@ -3,8 +3,7 @@
 use std::process::Command;
 use std::time::Duration;
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 fn command() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
