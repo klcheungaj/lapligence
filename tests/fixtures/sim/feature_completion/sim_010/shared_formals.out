@@ -6,4 +6,6 @@ n=105
 go 6
 outs r=5 io=4
 a=5 b=4
-outlive hi! 2.5 12
+sout in b
+sout b
+outlive hi! 2.5 14

@@ -596,6 +596,16 @@ impl<'a> Codegen<'a> {
                             IrObjectStmt::StringAssign(object, IrStringExpr::FormalRead(idx)),
                         )));
                     }
+                } else if automatic && *is_out && self.fork_shared(*io) {
+                    // A shared string output: the emitter creates the cell
+                    // from `*o{idx}` and copies it back at return.
+                    let name = format!("_llg_shared_formal_{idx}");
+                    locals.insert(*io, (name.clone(), 0, false, true, false));
+                    self.shared_locals.insert(*io);
+                    string_read.insert(*io, IrStringExpr::LocalRead(name.clone()));
+                    string_write.insert(*io, name.clone());
+                    string_addr.insert(*io, name.clone());
+                    shared_outputs.push((idx, name));
                 } else if automatic && !*is_out && self.fork_shared(*io) {
                     // Shared with a detached fork branch like a packed input
                     // formal (SV 9.3.2, 13.3).

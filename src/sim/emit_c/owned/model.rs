@@ -485,6 +485,13 @@ fn render_function(
     // the body's scopes until the copy-back below.
     let mut shared_outputs = HashMap::new();
     for (index, formal) in function.formals.iter().enumerate() {
+        if let Some(local) = formal.shared_local.as_ref().filter(|_| formal.string) {
+            frame.statement(&IrStmt::SharedString {
+                name: local.clone(),
+                init: Some(IrStringExpr::FormalRead(index)),
+            })?;
+            continue;
+        }
         if let Some(local) = formal
             .shared_local
             .as_ref()
@@ -521,6 +528,12 @@ fn render_function(
                 "{}(({ty}*)o{index}, &{target});",
                 super::containers::copy_function(storage)
             ));
+        }
+        if let Some(local) = formal.shared_local.as_ref().filter(|_| formal.string) {
+            frame.string_assign(
+                &format!("o{index}"),
+                &IrStringExpr::LocalRead(local.clone()),
+            )?;
         }
         if let Some(cell) = shared_outputs.get(&index) {
             frame.line(if formal.real {

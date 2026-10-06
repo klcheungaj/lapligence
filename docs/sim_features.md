@@ -1272,10 +1272,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   locals takes the typed call path (native formals, recursion). By-value
   packed, real and string input formals and packed and real output and inout
   formals are shared like locals (outputs are copied out at return), and so
-  are native records with their companion containers and container formals,
-  with branches of every fork kind and nested forks. String outputs and
-  handles are still copied into detached branches (SIM-010), and ref-formal
-  captures reject. Static-local
+  are string outputs, native records with their companion containers and
+  container formals, with branches of every fork kind and nested forks.
+  Handle variables are still copied into detached branches (SIM-010), and
+  ref-formal captures reject. Static-local
   task NBAs are represented, including arrays; NBAs targeting automatic locals
   or automatic formals reject. V §§9.8.2, 10.2; SV §§9.3.2, 10.4.2, 13.3.2
   **[1995/SV-2005]**.
