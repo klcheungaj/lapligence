@@ -6,10 +6,13 @@ features, flags or toolchain), so `target/<profile>/` keeps every old copy of
 the library and test binaries. A unit is one fingerprinted `<package>-<hash>` with its `deps/` and `build/`
 outputs; incremental sessions are `incremental/<crate>-<id>`.
 
-A unit is removed only when BOTH hold:
+A unit is removed when none of its files changed within --keep-days
+(default 1) AND either:
   * a newer unit of the same package and target kind exists in the same
-    profile directory, and
-  * none of its files changed within --keep-days (default 1).
+    profile directory, or
+  * it builds a workspace target (integration test, binary, example or
+    benchmark) that `cargo metadata` no longer lists, e.g. after suites were
+    regrouped or a binary was renamed.
 So artifacts that alternate between configurations (for example `clippy
 --all-features` and the default test build) survive while in use, and the
 newest copy of every crate is always kept. Removing a unit never breaks a
@@ -19,9 +22,11 @@ Usage: scripts/prune-target.py [--target-dir DIR] [--keep-days N] [--dry-run]
 """
 
 import argparse
+import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -113,14 +118,56 @@ def collect_units(profile):
     return units
 
 
-def stale_paths(profile, keep_seconds, now):
-    for (crate, _kind), by_hash in sorted(collect_units(profile).items()):
-        if len(by_hash) < 2:
+# Fingerprint kind-file prefixes for targets that `cargo metadata` lists by kind.
+TARGET_KIND_PREFIXES = (
+    ("test-integration-test-", "test"),
+    ("test-bin-", "bin"),
+    ("bin-", "bin"),
+    ("example-", "example"),
+    ("bench-", "bench"),
+)
+
+
+def workspace_targets(manifest_path):
+    """{package: {(kind, target name)}} for workspace members, or None."""
+    try:
+        output = subprocess.run(
+            ["cargo", "metadata", "--format-version", "1", "--no-deps", "--offline",
+             "--manifest-path", str(manifest_path)],
+            check=True, capture_output=True, text=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    targets = {}
+    for package in json.loads(output)["packages"]:
+        names = targets.setdefault(package["name"], set())
+        for target in package["targets"]:
+            for kind in target["kind"]:
+                names.add((kind, target["name"]))
+    return targets
+
+
+def is_orphan(package, kinds, targets):
+    """Whether a fingerprinted unit builds a workspace target that no longer exists."""
+    if targets is None or package not in targets:
+        return False
+    for kind_file in kinds:
+        for prefix, kind in TARGET_KIND_PREFIXES:
+            if kind_file.startswith(prefix):
+                return (kind, kind_file[len(prefix):]) not in targets[package]
+    return False
+
+
+def stale_paths(profile, keep_seconds, now, targets=None):
+    for (crate, kinds), by_hash in sorted(collect_units(profile).items()):
+        orphan = is_orphan(crate, kinds, targets)
+        if len(by_hash) < 2 and not orphan:
             continue
         ages = {h: max(newest_mtime(p) for p in paths) for h, paths in by_hash.items()}
         newest = max(ages.values())
         for unit_hash, paths in sorted(by_hash.items()):
-            if ages[unit_hash] < newest and now - ages[unit_hash] > keep_seconds:
+            superseded = orphan or ages[unit_hash] < newest
+            if superseded and now - ages[unit_hash] > keep_seconds:
                 yield crate, unit_hash, paths
 
 
@@ -130,18 +177,24 @@ def main(argv=None):
                         default=Path(os.environ.get("CARGO_TARGET_DIR", "target")))
     parser.add_argument("--keep-days", type=float, default=1.0)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--manifest-path", type=Path,
+                        default=Path(__file__).resolve().parent.parent / "Cargo.toml",
+                        help="workspace whose current targets decide orphaned units")
     args = parser.parse_args(argv)
 
     target = args.target_dir
     if not target.is_dir():
         print(f"error: target directory not found: {target}", file=sys.stderr)
         return 2
+    targets = workspace_targets(args.manifest_path)
+    if targets is None:
+        print("note: cargo metadata failed; only superseded units are pruned", file=sys.stderr)
     now = time.time()
     keep_seconds = args.keep_days * 86400
     removed_units = 0
     removed_bytes = 0
     for profile in profile_dirs(target):
-        for crate, unit_hash, paths in stale_paths(profile, keep_seconds, now):
+        for crate, unit_hash, paths in stale_paths(profile, keep_seconds, now, targets):
             removed_units += 1
             for path in paths:
                 removed_bytes += size_of(path)
