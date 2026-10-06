@@ -361,16 +361,13 @@ pub(super) fn collect_native_root_leaves(
     Ok(())
 }
 
-/// Whether a record reaches a built-in semaphore, mailbox or process handle,
-/// which keep their own object kinds rather than plain identity leaves.
+/// Whether a record reaches a built-in mailbox or process handle, which keep
+/// their own object kinds rather than plain identity leaves. A semaphore
+/// handle is an identity leaf (SIM-016).
 fn has_builtin_class_leaf(descriptor: &TypeDescriptor) -> bool {
     match &descriptor.shape {
         TypeShape::Opaque { kind } => {
-            kind == "Class"
-                && matches!(
-                    descriptor.name.as_str(),
-                    "semaphore" | "mailbox" | "process"
-                )
+            kind == "Class" && matches!(descriptor.name.as_str(), "mailbox" | "process")
         }
         TypeShape::Aggregate(layout) => layout
             .members

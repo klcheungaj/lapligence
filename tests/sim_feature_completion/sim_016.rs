@@ -50,3 +50,9 @@ fn blocked_requests_are_served_in_arrival_order() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_016/fifo_contention.out");
     sim_cli::run_case_backend_parity(SUITE, "fifo_contention", expected, &[], &[]);
 }
+
+#[test]
+fn record_semaphore_members_share_their_key_pools() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_016/record_members.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_members", expected, &[], &[]);
+}
