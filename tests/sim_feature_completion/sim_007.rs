@@ -47,6 +47,13 @@ fn native_tagged_unions_cross_subroutine_storage() {
 }
 
 #[test]
+fn native_tagged_unions_cross_ports() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_tagged_ports.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_tagged_ports", expected, &[], &[]);
+}
+
+#[test]
 fn inactive_native_tagged_members_of_subroutine_values_report() {
     let expected = source_stderr(
         "native_tagged_inactive_calls",

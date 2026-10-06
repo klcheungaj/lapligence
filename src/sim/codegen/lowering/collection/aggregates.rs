@@ -171,13 +171,21 @@ impl<'a> Codegen<'a> {
                         self.collect_native_tagged_union(path, node, &layout, &descriptor)?;
                         return Ok(true);
                     }
+                    // A variable port's storage is its variable, as for
+                    // records; port links copy the tag and member leaves.
                     if matches!(
                         self.kind(node),
-                        NodeKind::Net { .. }
-                            | NodeKind::Array { .. }
-                            | NodeKind::Port { .. }
-                            | NodeKind::IoDecl { .. }
-                            | NodeKind::FuncArg { .. }
+                        NodeKind::IoDecl { .. }
+                            | NodeKind::Port {
+                                direction: DbDirection::Input | DbDirection::Output,
+                                ..
+                            }
+                    ) {
+                        return Ok(false);
+                    }
+                    if matches!(
+                        self.kind(node),
+                        NodeKind::Net { .. } | NodeKind::Array { .. } | NodeKind::FuncArg { .. }
                     ) {
                         return Err(format!(
                             "tagged union `{}` in `{path}` with string, real or handle members must be a variable",
