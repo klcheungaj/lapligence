@@ -326,6 +326,16 @@ impl Val {
             Val::Bits(_) | Val::Real(_) => None,
         }
     }
+
+    /// The string value of exact SystemVerilog string bytes, or `None` for
+    /// non-UTF-8 bytes. `Val::Str` holds source-spelled text whose escapes
+    /// consumers decode, so backslashes are escaped to decode back to
+    /// themselves.
+    pub fn from_string_bytes(bytes: &[u8]) -> Option<Val> {
+        std::str::from_utf8(bytes)
+            .ok()
+            .map(|text| Val::Str(text.replace('\\', "\\\\")))
+    }
 }
 
 // ── Pure value math (IEEE 1364 / 1800 semantics) ─────────────────────────────
@@ -1270,9 +1280,8 @@ pub fn decode_value_data(value: &ValueData, size: i32) -> Result<Val, ElabError>
             Ok(Val::Bits(Value::from_u64(*val, width, false)))
         }
         ValueData::Str(s) => Ok(Val::Str(s.clone())),
-        ValueData::Bytes(bytes) => String::from_utf8(bytes.clone())
-            .map(Val::Str)
-            .map_err(|_| ElabError::Unsupported("non-UTF-8 string value".to_string())),
+        ValueData::Bytes(bytes) => Val::from_string_bytes(bytes)
+            .ok_or_else(|| ElabError::Unsupported("non-UTF-8 string value".to_string())),
         ValueData::Real(v) => Ok(Val::Real(*v)),
         ValueData::None => Err(ElabError::NoValue("object has no stored value".to_string())),
         ValueData::Vector {

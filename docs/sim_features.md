@@ -192,6 +192,18 @@ what those files need. A definition declared in more than one such file stops
 the compile with an error naming every file; one declared nowhere keeps the
 frontend's unknown-module error.
 
+`-G`/`--param-override NAME=VALUE` (and `llg.toml` `compile.param_overrides`)
+sets a top-level parameter with its declared type. VALUE is an expression
+converted as in an assignment, so sized/based literals, X/Z digits, negative
+values, reals and assignment patterns work; an unsized decimal of any size keeps
+its value (an untyped parameter gets the value's bits plus a sign bit). A
+`string` parameter takes VALUE as its exact text unless the whole VALUE is a
+double-quoted string literal, whose escapes then apply. An enum parameter
+accepts a member name even when the member is not visible in the top. A type
+parameter takes a data type (`-G T=logic [7:0]`), also when it has no default.
+Overriding a `localparam`, an unknown name, an unparsable value or one that does
+not convert is an error naming the override.
+
 ## Resource limits
 
 | Resource | Limit or behavior |

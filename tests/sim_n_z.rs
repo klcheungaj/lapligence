@@ -21,6 +21,7 @@ mod sim_operator_semantics;
 mod sim_opt_differential;
 mod sim_p30_fixed_arrays;
 mod sim_packed_strings;
+mod sim_param_override;
 mod sim_partial_features;
 mod sim_physical_time;
 mod sim_plusargs;

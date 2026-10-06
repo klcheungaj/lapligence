@@ -48,6 +48,20 @@ interfaces, programs, packages, primitives, checkers, classes) and Slang
 definitions are local; `std` is skipped). Merged mode reports one tree under its
 first unit. Each tree is released before the next parse.
 
+Top-level parameter overrides are planned before the elaborating compilation
+exists: trees are parsed first, and when overrides are present a throwaway
+compilation sharing them creates default instances of the tops (requested, or
+uninstantiated outermost default-library modules/programs) to classify each
+target. String parameters take bare VALUE text as exact bytes unless the whole
+value is a quoted literal; an enum member name that does not resolve in the top
+becomes a cast of its value to the declared named type; type parameters get
+`type(VALUE)` (the tracked Slang patch applies it); unsized decimals of 2^31 or
+more get an explicit signed width (value bits plus one); local parameters are
+rejected (`LocalParameterOverride`) and dropped. Classification uses default
+types, so a type that depends on another override is not re-derived.
+Diagnostics show the given spelling: invalid-option messages and messages in an
+override value's `<command-line>` buffer map rewritten text back.
+
 ## Capture
 
 - Consume only admitted cached buffers, never reopen paths or canonicalize through

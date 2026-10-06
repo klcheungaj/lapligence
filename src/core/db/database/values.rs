@@ -50,7 +50,7 @@ pub(super) fn val_from_slang(value: &SlangConstantValue) -> Option<Val> {
         }
         SlangConstantValue::Real(value) => Some(Val::Real(*value)),
         SlangConstantValue::ShortReal(value) => Some(Val::Real(f64::from(*value))),
-        SlangConstantValue::String(value) => String::from_utf8(value.clone()).ok().map(Val::Str),
+        SlangConstantValue::String(value) => Val::from_string_bytes(value),
         SlangConstantValue::None | SlangConstantValue::Other(_) => None,
     }
 }

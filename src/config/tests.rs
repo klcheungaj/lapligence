@@ -315,7 +315,54 @@ fn wrong_override_value_type_rejects_the_config() {
     assert!(load
         .errors
         .iter()
-        .any(|e| e.message.contains("DEPTH") && e.message.contains("string or integer")));
+        .any(|e| e.message.contains("DEPTH")
+            && e.message.contains("string, integer, float or boolean")));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn param_overrides_spell_floats_and_booleans_as_literals() {
+    let root = std::env::temp_dir().join(format!("llg_cfg_povlit_{}", std::process::id()));
+    let load = write_and_load(
+        &root,
+        "schema_version = 1\n\
+         [compile.param_overrides]\n\
+         RATE = 1.5\n\
+         WHOLE = 2.0\n\
+         HUGE = 1e300\n\
+         TINY = -2.5e-7\n\
+         ON = true\n\
+         OFF = false\n\
+         TEXT = \"hello world\"\n",
+    );
+    let config = load.config.expect("valid config");
+    assert_eq!(
+        config.compile.param_overrides,
+        BTreeMap::from([
+            ("HUGE".to_owned(), "1e300".to_owned()),
+            ("OFF".to_owned(), "1'b0".to_owned()),
+            ("ON".to_owned(), "1'b1".to_owned()),
+            ("RATE".to_owned(), "1.5".to_owned()),
+            ("TEXT".to_owned(), "hello world".to_owned()),
+            ("TINY".to_owned(), "-2.5e-7".to_owned()),
+            ("WHOLE".to_owned(), "2.0".to_owned()),
+        ])
+    );
+    assert!(load.warnings.is_empty());
+    for value in ["nan", "inf", "-inf"] {
+        let load = write_and_load(
+            &root,
+            &format!("schema_version = 1\n[compile.param_overrides]\nX = {value}\n"),
+        );
+        assert!(
+            load.config.is_none(),
+            "{value} has no SystemVerilog literal"
+        );
+        assert!(load
+            .errors
+            .iter()
+            .any(|e| e.message.contains("no SystemVerilog real literal")));
+    }
     let _ = std::fs::remove_dir_all(root);
 }
 

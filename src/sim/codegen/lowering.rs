@@ -3419,6 +3419,23 @@ mod semantic_string_tests {
     }
 
     #[test]
+    fn exact_string_values_keep_backslashes_through_value_decoding() {
+        // A string parameter's exact bytes (for example an override such as
+        // `-G MSG=a\b"c`) must not be escape-decoded a second time.
+        let exact = b"a\\b\"c\\n\\101".to_vec();
+        let Val::Str(text) = elab::decode_value_data(&ValueData::Bytes(exact.clone()), -1)
+            .expect("UTF-8 string bytes")
+        else {
+            panic!("string bytes decode to a string value");
+        };
+        assert_eq!(decode_verilog_string(&text).unwrap(), exact);
+        let Some(Val::Str(text)) = Val::from_string_bytes(&exact) else {
+            panic!("string bytes decode to a string value");
+        };
+        assert_eq!(decode_verilog_string(&text).unwrap(), exact);
+    }
+
+    #[test]
     fn display_format_accepts_native_string_bytes() {
         assert_eq!(
             decoded_string_text(&ValueData::Bytes(b"count=%0d".to_vec()), "$display format")

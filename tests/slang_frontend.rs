@@ -1116,3 +1116,145 @@ fn parse_metadata_rejects_library_maps_and_budget_overruns() {
     .expect_err("source bytes are bounded");
     assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
 }
+
+const TYPED_OVERRIDE_DESIGN: &str = r#"package ov_pkg;
+  typedef enum logic [1:0] {RED, GREEN, BLUE} color_t;
+endpackage
+module ov_top #(
+  parameter string TEXT = "default",
+  parameter ov_pkg::color_t COLOR = ov_pkg::RED,
+  parameter type ELEM = int,
+  parameter WIDE = 0,
+  parameter logic signed [7:0] SMALL = 0
+);
+  localparam int FIXED = 1;
+  ELEM elem;
+  ov_child child();
+endmodule
+module ov_child #(parameter string TEXT = "child");
+endmodule
+"#;
+
+fn override_options(overrides: &[(&str, &str)]) -> CompileOptions {
+    CompileOptions {
+        // No explicit top: the inferred top's parameters are classified.
+        parameter_overrides: overrides
+            .iter()
+            .map(|(name, value)| slang::ParameterOverride {
+                name: (*name).to_owned(),
+                value: (*value).to_owned(),
+            })
+            .collect(),
+        ..CompileOptions::default()
+    }
+}
+
+fn top_parameter<'a>(snapshot: &'a slang::Snapshot, name: &str) -> &'a slang::Parameter {
+    let top = snapshot
+        .instances
+        .iter()
+        .find(|instance| instance.parent_id.is_none())
+        .expect("one top instance");
+    snapshot
+        .parameters
+        .iter()
+        .find(|parameter| parameter.owner_instance_id == top.id && parameter.name == name)
+        .unwrap_or_else(|| panic!("top parameter {name}"))
+}
+
+#[test]
+fn parameter_overrides_convert_to_each_top_parameter_type() {
+    let sources = [Source::compilation_unit("ov.sv", TYPED_OVERRIDE_DESIGN)];
+    let options = override_options(&[
+        ("TEXT", "a\\b \"c\"\t"),
+        ("COLOR", "BLUE"),
+        ("ELEM", "logic [4:0]"),
+        ("WIDE", "-36893488147419103232"),
+        ("SMALL", "-3"),
+    ]);
+    let snapshot = compile_valid(&request(&sources, &options)).expect("typed overrides");
+
+    let text = top_parameter(&snapshot, "TEXT");
+    let constant = &snapshot.constants[text.constant_id.expect("string value") as usize];
+    assert_eq!(
+        constant.value,
+        ConstantValue::String(b"a\\b \"c\"\t".to_vec()),
+        "bare text is the string's exact bytes"
+    );
+    let color = top_parameter(&snapshot, "COLOR");
+    assert_eq!(
+        integer_value(&snapshot, color.constant_id.unwrap()),
+        Some(2)
+    );
+    let elem = top_parameter(&snapshot, "ELEM");
+    let elem_type = &snapshot.types[elem.type_id.expect("overridden type") as usize];
+    assert_eq!(elem_type.bit_width, 5);
+    // -2^65 as a signed 67-bit value (66 value bits plus the sign bit):
+    // 2^67 - 2^65 sets bits 65 and 66.
+    let wide = top_parameter(&snapshot, "WIDE");
+    let ConstantValue::Integer {
+        is_signed,
+        bit_width,
+        value_words,
+        unknown_words,
+    } = &snapshot.constants[wide.constant_id.unwrap() as usize].value
+    else {
+        panic!("integer value");
+    };
+    assert!(*is_signed);
+    assert_eq!(*bit_width, 67);
+    assert_eq!(value_words, &[0, 0b110]);
+    assert!(unknown_words.iter().all(|word| *word == 0));
+    let small = top_parameter(&snapshot, "SMALL");
+    assert_eq!(
+        integer_value(&snapshot, small.constant_id.unwrap()),
+        Some(0xFD)
+    );
+
+    // The child's same-named parameter is untouched.
+    let child = snapshot
+        .instances
+        .iter()
+        .find(|instance| instance.name == "child")
+        .expect("child instance");
+    let child_text = snapshot
+        .parameters
+        .iter()
+        .find(|parameter| parameter.owner_instance_id == child.id && parameter.name == "TEXT")
+        .expect("child parameter");
+    assert_eq!(
+        snapshot.constants[child_text.constant_id.unwrap() as usize].value,
+        ConstantValue::String(b"child".to_vec())
+    );
+}
+
+#[test]
+fn parameter_override_rejections_name_the_override() {
+    let sources = [Source::compilation_unit("ov.sv", TYPED_OVERRIDE_DESIGN)];
+    for (overrides, expected) in [
+        (
+            vec![("FIXED", "2")],
+            "parameter override 'FIXED' targets local parameter 'FIXED' of 'ov_top', which cannot be overridden",
+        ),
+        (
+            vec![("COLOR", "1")],
+            "parameter override value `1`: no implicit conversion from 'int' to 'color_t'",
+        ),
+        (
+            vec![("ELEM", "[1:0]")],
+            "'ELEM=[1:0]' is not a valid form of parameter override",
+        ),
+    ] {
+        let options = override_options(&overrides);
+        let snapshot = slang::compile(&request(&sources, &options)).expect("frontend runs");
+        assert!(snapshot.has_errors(), "{overrides:?}");
+        assert!(
+            snapshot
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains(expected)),
+            "{overrides:?}: {:?}",
+            snapshot.diagnostics
+        );
+    }
+}
