@@ -447,7 +447,9 @@ delayed (`#d`) nonblocking writes to a fixed array of native elements; a
 run-time index into a native member array of more than 64 elements or with a
 side-effecting index; a run-time index into an array of records nested in a
 native record (`r.e[k].s`, which currently fails with a generic lowering
-diagnostic rather than a dedicated one); `ref` formals of native record type; nonblocking writes
+diagnostic rather than a dedicated one); a module, static or process-block
+record as the actual of a native record `ref` formal (subroutine records
+alias); nonblocking writes
 to a static subroutine native record; fork-join_none capture of automatic
 native records; sub-record, member-array or handle selects of a native call
 result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
@@ -488,13 +490,16 @@ runtime has no nested associative form. A record, string or handle declared in a
 module storage, one copy per declaration and instance: an automatic one is
 reset at each block entry, so a second live activation has no storage of its
 own. The Db captures member defaults as constants, and an unpacked record
-constant has no captured value.
+constant has no captured value. A native `ref` formal is the caller's
+`llg_value_t` and companion containers, which module-like records do not have.
 
 ### Intended direction
 
 An addressed-container operand for container members of elements (in place
-of statement staging); native ref aliases
-(SIM-008); a root-plus-item-path pending record for static native roots
+of statement staging); a native `ref`
+formal passed as one reference per leaf (packed, string, real, handle and
+container references already exist), so module-like and subroutine records
+bind the same callee ABI (SIM-008); a root-plus-item-path pending record for static native roots
 (a queued leaf pointer would dangle because a root replaces its leaves on
 assignment); fork capture pins (SIM-010); a commit-time tag guard on queued
 native writes for tagged-union member NBAs; and per-activation native
@@ -504,6 +509,7 @@ roots for forked automatic block records, strings and handles.
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
 `sim_004/neg_static_native_record_nba.sv`,
+`sim_008/neg_module_record_ref.sv`,
 `sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
 `sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
@@ -517,8 +523,8 @@ handle elements and nested containers.
 
 ### Symptom
 
-These legal forms reject with explicit diagnostics: `ref` container formals;
-a fork branch reading an automatic container of the enclosing activation; an
+These legal forms reject with explicit diagnostics: a `ref` container formal
+whose actual is not a container variable of the formal's type; a fork branch reading an automatic container of the enclosing activation; an
 instance container property selected through a handle (`h.q`) rather than
 inside the class's own methods, and an initializer on such a property; a
 container-result call used other than as a whole assignment source or a
@@ -545,7 +551,7 @@ array forms of every queue mutation.
 
 An addressed-container operand (receiver or parent container plus index
 path) for container statements and queries, receiver-qualified class
-properties (SIM-011), retained cells for `ref` (SIM-008), fork capture pins
+properties (SIM-011), retained element cells for `ref` (SIM-008), fork capture pins
 (SIM-010).
 
 ### Reproduce

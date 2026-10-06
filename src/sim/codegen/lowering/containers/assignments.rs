@@ -412,6 +412,9 @@ impl<'a> Codegen<'a> {
                 })));
             }
         }
+        if let Some(statement) = self.lower_container_concat_into(path, dst.ir, rhs)? {
+            return Ok(statement);
+        }
         let src = self.container_of(rhs).ok_or_else(|| {
             format!(
                 "resizable container assignment in `{path}` requires a compatible array (got {:?})",
@@ -422,6 +425,134 @@ impl<'a> Codegen<'a> {
             dst: dst.ir,
             src: src.ir,
         })))
+    }
+
+    /// Items of an unpacked array concatenation in order, nested
+    /// concatenations flattened (SV 10.10).
+    fn concat_items(&self, node: NodeId, items: &mut Vec<NodeId>) -> bool {
+        let NodeKind::Expr(ExprKind::Operation {
+            op: Operation::Concat,
+            operands,
+            reordered,
+            ..
+        }) = self.kind(self.p30_unwrap_cast(node))
+        else {
+            return false;
+        };
+        let mut nested = Vec::new();
+        for operand in operands {
+            if !self.concat_items(*operand, &mut nested) {
+                nested.push(*operand);
+            }
+        }
+        if *reordered {
+            nested.reverse();
+        }
+        items.extend(nested);
+        true
+    }
+
+    /// `{a, q, b}` (SV 10.10): an unpacked array concatenation of element
+    /// values, and for a queue target also of queues and queue slices, into
+    /// a queue or dynamic array. Element values are evaluated before the
+    /// target changes; each run of them fills a temporary queue source.
+    fn lower_container_concat_into(
+        &mut self,
+        path: &str,
+        dst: usize,
+        rhs: NodeId,
+    ) -> Result<Option<IrStmt>, String> {
+        let mut items = Vec::new();
+        if !self.concat_items(rhs, &mut items) || items.is_empty() {
+            return Ok(None);
+        }
+        if matches!(
+            self.model.containers[dst].kind,
+            IrContainerKind::Associative { .. }
+        ) {
+            return Ok(None);
+        }
+        let mut array_items = Vec::with_capacity(items.len());
+        for item in &items {
+            let array = self.container_of(self.p30_unwrap_cast(*item)).is_some()
+                || matches!(
+                    self.kind(self.p30_unwrap_cast(*item)),
+                    NodeKind::Expr(ExprKind::PartSelect { .. })
+                ) && self.lower_queue_sources(path, *item)?.is_some();
+            array_items.push(array);
+        }
+        if !array_items.iter().any(|array| *array) {
+            return self
+                .lower_container_source_values(path, dst, items)
+                .map(Some);
+        }
+        if !matches!(
+            self.model.containers[dst].kind,
+            IrContainerKind::Queue { .. }
+        ) {
+            return Err(format!(
+                "unpacked array concatenation of arrays into a dynamic array in `{path}` is not supported; assign it to a queue"
+            ));
+        }
+        let mut statements = Vec::new();
+        let mut sources = Vec::new();
+        let mut run = Vec::new();
+        for (item, array) in items.into_iter().zip(array_items) {
+            if !array {
+                run.push(item);
+                continue;
+            }
+            if !run.is_empty() {
+                sources.push(self.concat_run_source(
+                    path,
+                    dst,
+                    std::mem::take(&mut run),
+                    &mut statements,
+                )?);
+            }
+            let Some(mut queue_sources) = self.lower_queue_sources(path, item)? else {
+                return Err(format!(
+                    "unpacked array concatenation item in `{path}` must be an element value, a queue or a queue slice"
+                ));
+            };
+            sources.append(&mut queue_sources);
+        }
+        if !run.is_empty() {
+            sources.push(self.concat_run_source(path, dst, run, &mut statements)?);
+        }
+        statements.push(IrStmt::Container(Box::new(IrContainerStmt::QueueAssign {
+            container: dst,
+            sources,
+        })));
+        Ok(Some(IrStmt::Block(statements)))
+    }
+
+    /// A temporary queue holding one run of concatenation element values.
+    fn concat_run_source(
+        &mut self,
+        path: &str,
+        dst: usize,
+        values: Vec<NodeId>,
+        statements: &mut Vec<IrStmt>,
+    ) -> Result<IrQueueSource, String> {
+        let temporary = self.model.containers.len();
+        self.model.containers.push(IrContainer {
+            c_name: format!("S_llg_container_{temporary}"),
+            element: self.model.containers[dst].element.clone(),
+            kind: IrContainerKind::Queue {
+                maximum_elements: None,
+            },
+            initial_size: None,
+            activation: true,
+            class_field: None,
+        });
+        // Record elements take their descriptor from the target's type.
+        self.container_types_like.insert(temporary, dst);
+        statements.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+            temporary,
+        ))));
+        statements.push(self.lower_container_source_values(path, temporary, values)?);
+        Ok(IrQueueSource::Whole(temporary))
     }
 
     /// `dst = c ? a : b` for descriptor-backed dynamic arrays (including

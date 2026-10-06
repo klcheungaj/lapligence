@@ -464,6 +464,83 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// A `ref` actual selecting a dynamic-array element or an associative
+    /// entry binds a retained element cell, like a queue element: the cell
+    /// follows the element until an operation outdates it (SV 13.5.2).
+    fn lower_keyed_element_ref(
+        &mut self,
+        scope_path: &str,
+        bound: &BoundArg,
+        const_ref: bool,
+    ) -> Result<Option<IrCallArg>, String> {
+        let container = match self.kind(bound.expr) {
+            NodeKind::Expr(ExprKind::BitSelect { base, .. }) => {
+                self.container_of_select(bound.expr, *base)
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {
+                self.container_of_select(bound.expr, *base)
+            }
+            _ => None,
+        };
+        let Some(container) = container.map(|container| container.ir).filter(|container| {
+            matches!(
+                self.model.containers[*container].kind,
+                IrContainerKind::Dynamic | IrContainerKind::Associative { .. }
+            )
+        }) else {
+            return Ok(None);
+        };
+        let IrContainerElement::Packed {
+            width,
+            signed,
+            two_state,
+        } = self.model.containers[container].element
+        else {
+            return Err(format!(
+                "ref actual element of `{}` in `{scope_path}` must have a packed integral type",
+                self.model.containers[container].c_name
+            ));
+        };
+        if (width, signed, two_state) != (bound.width, bound.signed, bound.two_state) {
+            return Err(format!(
+                "ref actual type does not exactly match formal in `{scope_path}`"
+            ));
+        }
+        let read = self.lower_expr(scope_path, bound.expr)?;
+        let IrExprKind::Container(operation) = read.kind() else {
+            return Err(format!(
+                "ref actual element in `{scope_path}` has no container element read"
+            ));
+        };
+        if !matches!(
+            operation.as_ref(),
+            IrContainerExpr::Get { container: read, .. }
+                | IrContainerExpr::GetString { container: read, .. } if *read == container
+        ) {
+            return Err(format!(
+                "ref actual element in `{scope_path}` has no container element read"
+            ));
+        }
+        let lhs = IrLhs::WholeRef {
+            // Dependency/type placeholder only; the read keeps the container
+            // and selector for retained-cell emission.
+            addr: format!("&{}", self.model.containers[container].c_name),
+            width,
+            signed,
+            two_state,
+            shortreal: false,
+        };
+        Ok(Some(IrCallArg::RefAddr {
+            addr: "typed_element_reference".to_owned(),
+            width,
+            signed,
+            two_state,
+            const_ref,
+            lhs: Box::new(lhs),
+            read: Box::new(read),
+        }))
+    }
+
     pub(in super::super) fn lower_ref_arg(
         &mut self,
         scope_path: &str,
@@ -537,6 +614,11 @@ impl<'a> Codegen<'a> {
                 .map(|container| (container.ir, indices[0])),
             _ => None,
         };
+        if queue_actual.is_none() {
+            if let Some(argument) = self.lower_keyed_element_ref(scope_path, bound, const_ref)? {
+                return Ok(argument);
+            }
+        }
         if let Some((container, index_node)) = queue_actual {
             let (width, signed, two_state) = match self.model.containers[container].element {
                 IrContainerElement::Packed {
@@ -874,6 +956,10 @@ impl<'a> Codegen<'a> {
         });
         if writable || self.lexical_proc_string_local(actual).is_some() {
             Ok(())
+        } else if self.container_of_ref_actual(actual) {
+            Err(format!(
+                "string element of a queue, dynamic or associative array as a ref actual or input destination in `{path}` is not supported (SIM-008)"
+            ))
         } else {
             Err(format!(
                 "string output/ref actual in `{path}` is a const-ref or non-writable lvalue"
@@ -915,6 +1001,11 @@ impl<'a> Codegen<'a> {
             let mut sequence = 0usize;
             let plan = self.freeze_stream_targets(plan, tag, &mut sequence, &mut captures)?;
             return Ok((CallWriteback::Stream(plan), None, captures));
+        }
+        if let Some((writeback, read)) =
+            self.container_element_writeback(path, actual, tag, read_actual)?
+        {
+            return Ok((writeback, read, Vec::new()));
         }
         let (lhs, read, captures) = self.lower_call_actual(path, actual, tag, read_actual)?;
         Ok((CallWriteback::Lhs(lhs), read, captures))
@@ -1412,18 +1503,76 @@ pub(in super::super) enum CallWriteback {
     Lhs(IrLhs),
     /// A checked streaming unpack whose selectors are already frozen.
     Stream(super::super::containers::StreamTargetPlan),
+    /// One whole packed or real element of a resizable container; `prelude`
+    /// freezes its keys before the call (SIM-008).
+    Container {
+        container: usize,
+        keys: super::super::containers::ElementKeys,
+        element: IrContainerElement,
+        prelude: Vec<IrStmt>,
+    },
 }
 
 impl CallWriteback {
-    /// The copy-out statement writing `value` (the formal's storage) back.
-    pub(in super::super) fn store(self, model: &IrModel, value: IrExpr) -> IrStmt {
+    /// Statements that run before the call, such as frozen element keys.
+    pub(in super::super) fn take_prelude(&mut self) -> Vec<IrStmt> {
         match self {
+            Self::Container { prelude, .. } => std::mem::take(prelude),
+            Self::Lhs(_) | Self::Stream(_) => Vec::new(),
+        }
+    }
+
+    /// The copy-out statement writing `value` (the formal's storage) back.
+    pub(in super::super) fn store(self, model: &IrModel, value: IrExpr) -> Result<IrStmt, String> {
+        use super::super::containers::ElementKeys;
+        Ok(match self {
             Self::Lhs(lhs) => IrStmt::Assign {
                 rhs: apply_lhs_assignment_context(model, &lhs, value),
                 lhs,
                 nba: false,
             },
             Self::Stream(plan) => plan.assign(value, false),
-        }
+            Self::Container {
+                container,
+                keys,
+                element,
+                ..
+            } => {
+                let real = matches!(element, IrContainerElement::Real { .. });
+                let value = if real {
+                    super::super::ir_to_storage(value, 0, false, false)?
+                } else {
+                    super::super::ir_to_storage(
+                        value,
+                        element.width(),
+                        element.signed(),
+                        element.two_state(),
+                    )?
+                };
+                let statement = match (keys, real) {
+                    (ElementKeys::String(key), false) => IrContainerStmt::SetString {
+                        container,
+                        key,
+                        value,
+                    },
+                    (ElementKeys::String(key), true) => IrContainerStmt::SetStringReal {
+                        container,
+                        key,
+                        value,
+                    },
+                    (ElementKeys::Integral(mut indices), false) => IrContainerStmt::Set {
+                        container,
+                        index: indices.remove(0),
+                        value,
+                    },
+                    (ElementKeys::Integral(mut indices), true) => IrContainerStmt::SetReal {
+                        container,
+                        index: indices.remove(0),
+                        value,
+                    },
+                };
+                IrStmt::Container(Box::new(statement))
+            }
+        })
     }
 }

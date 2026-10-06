@@ -1,5 +1,6 @@
-// SIM-003 boundary: ref formals of native record type belong to SIM-008.
-// IEEE 1800-2009 13.5.2 makes them legal; llg rejects them explicitly.
+// SIM-008 boundary: a native record `ref` formal aliases subroutine records;
+// a module record actual is legal by IEEE 1800-2009 13.5.2 and rejected
+// explicitly.
 module tb;
   typedef struct {string s; int n;} T;
   T v;

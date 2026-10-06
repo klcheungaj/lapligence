@@ -56,6 +56,7 @@ static void activation_detach(llg_activation_t* activation) {
 
 typedef struct llg_ref_binding {
     llg_ref_t descriptor;
+    void (*release)(void*);
     struct llg_ref_binding* next;
 } llg_ref_binding_t;
 
@@ -85,7 +86,7 @@ void llg_ref_scope_end(llg_ref_scope_t* scope) {
     while (scope->bindings) {
         llg_ref_binding_t* binding = scope->bindings;
         scope->bindings = binding->next;
-        llg_queue_ref_release(binding->descriptor.retained);
+        binding->release(binding->descriptor.retained);
         free(binding);
     }
     free(scope);
@@ -102,21 +103,60 @@ void llg_ref_scope_begin_owned(void) {
     *(llg_ref_scope_t**)llg_value_scope_object(owner) = llg_ref_scope_begin();
 }
 
-llg_ref_t* llg_ref_queue(llg_queue_t* queue, uint64_t index) {
+// Bind one retained element cell in the innermost call scope, which releases
+// it when the call completes or is unwound.
+static llg_ref_t* reference_cell(uint32_t width, int8_t is_signed, uint8_t two_state,
+                                 void* cell, sv4_t (*read)(const void*),
+                                 int (*write)(void*, sv4_t), void (*release)(void*)) {
     llg_proc_t* proc = llg_current();
     llg_ref_scope_t* scope = proc ? proc->reference_top : root_reference_top;
-    if (!scope || !queue) { fprintf(stderr, "llg: queue reference without call scope\n"); abort(); }
-    llg_ref_binding_t* binding = llg_checked_calloc(1, sizeof(*binding), "queue reference");
-    binding->descriptor.width = queue->element_width;
-    binding->descriptor.is_signed = queue->element_signed;
-    binding->descriptor.two_state = queue->element_two_state;
+    if (!scope) {
+        release(cell);
+        fprintf(stderr, "llg: element reference without call scope\n");
+        abort();
+    }
+    llg_ref_binding_t* binding = llg_checked_calloc(1, sizeof(*binding), "element reference");
+    binding->descriptor.width = width;
+    binding->descriptor.is_signed = is_signed;
+    binding->descriptor.two_state = two_state;
     binding->descriptor.kind = LLG_REF_QUEUE;
-    binding->descriptor.retained = llg_queue_ref_acquire(queue, index);
-    binding->descriptor.retained_read = llg_queue_cell_read;
-    binding->descriptor.retained_write = llg_queue_cell_write;
+    binding->descriptor.retained = cell;
+    binding->descriptor.retained_read = read;
+    binding->descriptor.retained_write = write;
+    binding->release = release;
     binding->next = scope->bindings;
     scope->bindings = binding;
     return &binding->descriptor;
+}
+
+llg_ref_t* llg_ref_queue(llg_queue_t* queue, uint64_t index) {
+    if (!queue) { fprintf(stderr, "llg: queue reference without call scope\n"); abort(); }
+    return reference_cell(queue->element_width, queue->element_signed,
+                          queue->element_two_state, llg_queue_ref_acquire(queue, index),
+                          llg_queue_cell_read, llg_queue_cell_write, llg_queue_ref_release);
+}
+
+llg_ref_t* llg_ref_dyn(llg_dyn_array_t* array, sv4_t index) {
+    return reference_cell(array->element_width, array->element_signed,
+                          array->element_two_state, llg_dyn_ref_acquire(array, index),
+                          llg_element_cell_read, llg_element_cell_write,
+                          llg_element_ref_release);
+}
+
+llg_ref_t* llg_ref_assoc_integral(llg_assoc_t* array, sv4_t key) {
+    return reference_cell(array->element_width, array->element_signed,
+                          array->element_two_state,
+                          llg_assoc_ref_acquire_integral(array, key),
+                          llg_element_cell_read, llg_element_cell_write,
+                          llg_element_ref_release);
+}
+
+llg_ref_t* llg_ref_assoc_string(llg_assoc_t* array, const void* key, size_t key_length) {
+    return reference_cell(array->element_width, array->element_signed,
+                          array->element_two_state,
+                          llg_assoc_ref_acquire_string(array, key, key_length),
+                          llg_element_cell_read, llg_element_cell_write,
+                          llg_element_ref_release);
 }
 
 static void activation_unwind_proc(llg_proc_t* proc) {

@@ -1159,6 +1159,9 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                         collect_lhs_rw(lhs, model, rw)
                     }
                     crate::sim::ir::IrPlusArgTarget::String { .. } => {}
+                    crate::sim::ir::IrPlusArgTarget::Element { read, .. } => {
+                        collect_expr_reads(read, model, rw)
+                    }
                 }
             }
             IrSysFunc::System(Some(command)) => {
@@ -1239,7 +1242,8 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                                 | crate::sim::ir::IrFileInputTarget::Real { lhs, .. } => {
                                     collect_lhs_rw(lhs, model, rw)
                                 }
-                                crate::sim::ir::IrFileInputTarget::String { .. } => {}
+                                crate::sim::ir::IrFileInputTarget::String { .. }
+                                | crate::sim::ir::IrFileInputTarget::Element { .. } => {}
                             }
                         }
                     }
@@ -1253,7 +1257,8 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                         | crate::sim::ir::IrFileInputTarget::Real { lhs, .. } => {
                             collect_lhs_rw(lhs, model, rw);
                         }
-                        crate::sim::ir::IrFileInputTarget::String { .. } => {}
+                        crate::sim::ir::IrFileInputTarget::String { .. }
+                        | crate::sim::ir::IrFileInputTarget::Element { .. } => {}
                     },
                     crate::sim::ir::IrFileInput::Getc { .. }
                     | crate::sim::ir::IrFileInput::Ungetc { .. } => {}

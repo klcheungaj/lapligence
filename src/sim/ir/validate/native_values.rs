@@ -67,8 +67,12 @@ impl Validator<'_> {
                 if value >= self.model.native_values.len() {
                     return self.fail(path, "native formal storage is out of bounds");
                 }
-                if formal.is_ref()
-                    || formal.fixed_array.is_some()
+                // A `ref` native formal aliases the caller's value, so it
+                // must name activation storage (SIM-008).
+                if formal.is_ref() && !self.model.native_values[value].activation {
+                    return self.fail(path, "ref native formal must bind activation storage");
+                }
+                if formal.fixed_array.is_some()
                     || formal.string
                     || formal.chandle
                     || formal.real

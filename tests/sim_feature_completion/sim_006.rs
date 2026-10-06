@@ -184,11 +184,6 @@ fn wildcard_index_traversal_is_rejected_by_the_frontend() {
 fn unsupported_container_boundaries_are_explicit() {
     sim_cli::reject_case(
         SUITE,
-        "neg_container_ref_formal",
-        "ref formal `q` of resizable container type is not supported (SIM-008)",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "neg_container_fork_capture",
         "references native record or container `q` of the enclosing activation",
     );
@@ -207,4 +202,23 @@ fn unsupported_container_boundaries_are_explicit() {
         "neg_container_result_select",
         "container result of `make` in `tb` must be assigned whole to a container variable",
     );
+}
+
+#[test]
+fn unpacked_array_concatenations_assign_queues_and_dynamic_arrays() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/queue_concatenation.out");
+    sim_cli::run_case_backend_parity(SUITE, "queue_concatenation", expected, &[], &[]);
+    sim_cli::reject_case(
+        SUITE,
+        "neg_dynamic_array_concat",
+        "unpacked array concatenation of arrays into a dynamic array",
+    );
+}
+
+#[test]
+fn container_declarations_accept_any_whole_container_initializer() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/container_initializers.out");
+    sim_cli::run_case_backend_parity(SUITE, "container_initializers", expected, &[], &[]);
 }

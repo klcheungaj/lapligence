@@ -189,6 +189,10 @@ fn render_file_input_target_with_prefix(
             String::new(),
             format!("{{ .kind = LLG_FILE_INPUT_STRING, .string = {address} }}"),
         )),
+        // Container elements bind retained cells in owned frames only.
+        IrFileInputTarget::Element { .. } => {
+            Err("file input into a container element outside an owned frame".to_owned())
+        }
     }
 }
 
@@ -266,6 +270,11 @@ pub(super) fn render_file_input(
                 }
                 IrFileInputTarget::Real { .. } => {
                     return Err("file line input target cannot be real storage".to_owned());
+                }
+                IrFileInputTarget::Element { .. } => {
+                    return Err(
+                        "file input into a container element outside an owned frame".to_owned()
+                    );
                 }
             }
         }
@@ -435,6 +444,9 @@ pub(super) fn render_value_plusargs(
             code.push_str(&format!(
                 "if (llg_value_plusargs_string({format}, &_llg_plusarg_value)) {{ llg_string_move({address}, _llg_plusarg_value); _llg_plusarg_ok = 1; }} else {{ llg_string_destroy(&_llg_plusarg_value); }}"
             ));
+        }
+        crate::sim::ir::IrPlusArgTarget::Element { .. } => {
+            return Err("plusarg into a container element outside an owned frame".to_owned());
         }
     }
     code.push_str(&cleanup);

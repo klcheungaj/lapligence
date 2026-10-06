@@ -13,6 +13,8 @@ slpp_all
 /core.*
 build-cache/
 /build/
+# Default output of `llg` run inside a fixture directory.
+tests/fixtures/**/build/
 
 docs/*
 !docs/AGENTS.md

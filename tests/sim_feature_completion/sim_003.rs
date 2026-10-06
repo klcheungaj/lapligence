@@ -110,7 +110,7 @@ fn unsupported_native_record_boundaries_are_explicit() {
     sim_cli::reject_case(
         SUITE,
         "neg_native_ref_formal",
-        "ref formal `x` of native record type is not supported",
+        "ref actual of native record formal `x` in `tb` must be a subroutine record variable of the same type (SIM-008)",
     );
     sim_cli::reject_case(
         SUITE,

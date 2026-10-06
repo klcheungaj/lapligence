@@ -38,6 +38,7 @@ void llg_assoc_init_string(llg_assoc_t* array, uint32_t element_width,
 }
 
 void llg_assoc_delete(llg_assoc_t* array) {
+    llg_assoc_outdate_references(array, SIZE_MAX);
     int changed = array->size != 0;
     for (size_t i = 0; i < array->size; ++i) {
         sv4_destroy(&array->entries[i].integral_key);
@@ -259,6 +260,7 @@ int llg_assoc_delete_integral(llg_assoc_t* array, sv4_t key) {
     size_t position = llg_assoc_integral_position(array, normalized, &found);
     sv4_destroy(&normalized);
     if (!found) return 0;
+    llg_assoc_outdate_references(array, position);
     sv4_destroy(&array->entries[position].integral_key);
     sv4_destroy(&array->entries[position].value);
     if (position + 1 < array->size)
@@ -430,6 +432,7 @@ int llg_assoc_delete_string(llg_assoc_t* array, const void* key,
     int found;
     size_t position = llg_assoc_string_position(array, key, key_length, &found);
     if (!found) return 0;
+    llg_assoc_outdate_references(array, position);
     sv4_destroy(&array->entries[position].value);
     free(array->entries[position].string_key);
     if (position + 1 < array->size)

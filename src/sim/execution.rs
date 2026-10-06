@@ -1668,6 +1668,11 @@ fn collect_expression_effects(
                         effects.push(ExecutionEffect::ImmediateStore);
                         effects.push(ExecutionEffect::RuntimeService);
                     }
+                    crate::sim::ir::IrPlusArgTarget::Element { read, .. } => {
+                        effects.push(ExecutionEffect::ImmediateStore);
+                        effects.push(ExecutionEffect::RuntimeService);
+                        collect_expression_effects(ir, read, effects, visited_calls);
+                    }
                 }
             }
             IrSysFunc::System(command) => {
@@ -1783,6 +1788,9 @@ fn collect_expression_effects(
                                 collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
                             }
                             crate::sim::ir::IrFileInputTarget::String { .. } => {}
+                            crate::sim::ir::IrFileInputTarget::Element { read, .. } => {
+                                collect_expression_effects(ir, read, effects, visited_calls);
+                            }
                         }
                     }
                     crate::sim::ir::IrFileInput::ScanFile {
@@ -1802,6 +1810,9 @@ fn collect_expression_effects(
                                     collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
                                 }
                                 crate::sim::ir::IrFileInputTarget::String { .. } => {}
+                                crate::sim::ir::IrFileInputTarget::Element { read, .. } => {
+                                    collect_expression_effects(ir, read, effects, visited_calls);
+                                }
                             }
                         }
                     }
@@ -1822,6 +1833,9 @@ fn collect_expression_effects(
                                     collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
                                 }
                                 crate::sim::ir::IrFileInputTarget::String { .. } => {}
+                                crate::sim::ir::IrFileInputTarget::Element { read, .. } => {
+                                    collect_expression_effects(ir, read, effects, visited_calls);
+                                }
                             }
                         }
                     }

@@ -423,7 +423,14 @@ Macros, includes and their edition-specific behavior are counted in §11.
   formals, results and locals (automatic per activation, static per
   declaration), procedural-block locals and class properties (instance
   containers inside their class's methods, static ones anywhere); calls copy
-  them in and out and pattern actuals build at the call. Elements may be
+  them in and out and pattern actuals build at the call. Unpacked array
+  concatenations (§10.10) assign element values to queues and dynamic
+  arrays, and queues also combine queues and queue slices
+  (`q = {q[1:$], x}`); array items assigned to a dynamic array reject.
+  Declaration initializers accept any whole-container source (`new[n]`,
+  `new[n](src)`, copies, concatenations); static ones run in the declaration
+  initialization schedule after what they read.
+  Elements may be
   records (whole and member access, push/insert/pop), nested containers
   (written from dynamic arrays, patterns or concatenations; nested `size()`)
   and identity handles. Associative reads through an X/Z key or of a missing
@@ -431,7 +438,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   invalid-key writes warn and do nothing; one element accepts compound
   assignment and `++`/`--`
   ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md)).
-  `ref` container formals (SIM-008), fork capture of automatic containers
+  `ref` formals of queue, dynamic and associative type alias the caller's
+  container variable, including from timed tasks and fork branches
+  ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
+  Fork capture of automatic containers
   (SIM-010), handle-qualified class container properties (SIM-011), mutating
   methods of nested elements, record-element equality (SIM-007), string-key
   index-result queues and event controls on subroutine containers remain
@@ -463,7 +473,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 | --- | --- | --- | --- | --- | --- | --- |
 | Module/static variable | yes, member defaults applied; initializer from a pattern, copy, call result or conditional | yes | yes, including nested records and member arrays | constant, run-time index (at most 64 elements) and packed-member bit/part select: yes | SIM-008 | model close |
 | Automatic/static subroutine local | yes (root) | yes | yes | constant and run-time index (at most 64 elements): yes | SIM-008 | scope exit, cancel, close |
-| Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant and run-time index: yes; scalar members of a call result (`f().m`): yes | `ref` formal SIM-008 | scope exit, cancel, close |
+| Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant and run-time index: yes; scalar members of a call result (`f().m`): yes | `ref`/`const ref` formal aliasing a subroutine record: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); module, static or block record actual: rejected | scope exit, cancel, close |
 | NBA target or source | module record: yes (untimed and `#delay`); static subroutine root target: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)); automatic: illegal | yes, issue-time copy | n/a | constant: yes | n/a | commit or cancellation |
 | Fork-join_none capture | SIM-010 | SIM-010 | n/a | n/a | n/a | SIM-010 |
 | Unpacked array element, slice | one-dimensional fixed array: yes ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); multidimensional: rejected | yes, elements, constant/indexed slices, patterns, conditional merges, untimed NBAs | yes, element-wise | yes | SIM-008 | owner scope or model close |
@@ -1224,11 +1234,15 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **References** — `ref`/`const ref` alias matching packed variables, fixed
   integral arrays/records/unions, admitted unpacked members/elements (including
   members of unpacked-record array elements, with runtime indices bound once at
-  the call) and retained packed queue cells. Removal/reallocation preserves a queue reference's original
-  detached cell. String/chandle references use native storage; real/shortreal
-  references bind the actual's numeric cell (SIM-005). General native/
-  resizable aggregates, non-packed queue references and reference-formal NBAs
-  remain restricted. Fixed packed scanner destinations retain checked selected
+  the call), whole queue, dynamic and associative variables, and retained
+  packed cells for queue, dynamic-array and associative elements
+  ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)). A
+  cell follows its element until §13.5.2 outdates it (removal, `new[]`,
+  `delete`, whole assignment); the outdated element keeps its last value,
+  shared by every reference to it. String/chandle references use native
+  storage; real/shortreal references bind the actual's numeric cell (SIM-005).
+  Native record formals, non-packed container elements and reference-formal
+  NBAs remain restricted. Fixed packed scanner destinations retain checked selected
   views through ref formals. Subroutine actuals must be
   eligible variables, not function/reduction/conditional/cast/pattern temporaries;
   packed bit/part actuals rejected by the frontend are not legalized by internal
@@ -1312,7 +1326,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Scanning/character/line input** — `$fscanf/$sscanf/$fgets/$fgetc/$ungetc`
   retain input/format values, admitted packed/selected/string/real destinations,
   EOF, byte and X/Z behavior. Fixed packed scanner sub-accesses through ref
-  formals preserve checked selection plans; general aggregate targets reject. V §17.2.4; SV §21.3.4 **[2001/SV-2005]**.
+  formals preserve checked selection plans. Packed queue, dynamic and
+  associative elements are destinations through retained element cells,
+  written only for converted items; string and real container elements and
+  general aggregate targets reject
+  ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
+  V §17.2.4; SV §21.3.4 **[2001/SV-2005]**.
 - 🟨 **Binary input** — `$fread` supports admitted packed/memory targets with
   bounded start/count. Rank-one memories advance from lowest to highest HDL
   address in either declaration direction. Packed reads accept and ignore
@@ -1450,7 +1469,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟦 **Plusargs** — Arguments after `--` reach `$test$plusargs/$value$plusargs`.
   Leading-`+` prefix matching, first repeated match, literal `%%`,
   `%d/%h/%x/%o/%b/%f/%e/%g/%s`, wide four-state values and unchanged destinations
-  on failure are represented. V §17.10; SV §21.6 **[1995/SV-2005]**.
+  on failure are represented, including packed container-element
+  destinations. `$cast` into a container element still rejects (SIM-008). V §17.10; SV §21.6 **[1995/SV-2005]**.
 - 🟦 **Host commands** — `$system` evaluates one optional string once and
   requires generated-process `LLG_ALLOW_SYSTEM=1` (also `true/yes/on`). Denial
   diagnoses, returns signed 32-bit -1 and fails without shell execution.

@@ -26,7 +26,7 @@ registered as explicit native roots; see `src/sim/rt/value/ownership.md`.
 | --- | --- |
 | `neg_chandle_packed` | §§6.14, 7.2.1: chandles are not integral, so no packed containment (Slang). The string case is `rtl_001/neg_packed_native`. |
 | `neg_chandle_arithmetic` | §6.14: chandles admit only equality, inequality and boolean tests (Slang). |
-| `neg_native_ref_formal` | Legal by §13.5.2; native ref formals are SIM-008 work and rejected explicitly. |
+| `neg_native_ref_formal` | Legal by §13.5.2; a module record actual of a native `ref` formal is rejected explicitly (subroutine records alias, [sim_008](../sim_008/readme.md)). |
 | `neg_native_fork_capture` | Legal by §9.3.2; capture of automatic native storage by a forked process is SIM-010 work. |
 
 Descriptor validation, recursion bounds, overflow and atomic allocation failure

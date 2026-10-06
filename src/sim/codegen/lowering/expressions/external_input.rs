@@ -92,6 +92,9 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         node: NodeId,
     ) -> Result<IrPlusArgTarget, String> {
+        if let Some(target) = self.container_element_input_target(scope_path, node)? {
+            return Ok(target);
+        }
         if self.is_string_expr(scope_path, node) {
             self.ensure_string_actual_writable(scope_path, node)?;
             return Ok(IrPlusArgTarget::String {
@@ -166,12 +169,76 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    /// A packed element of a queue, dynamic array or associative array as
+    /// a scan destination: the scan writes through a retained element cell
+    /// bound when the call starts (SIM-008).
+    fn container_element_input_target(
+        &mut self,
+        scope_path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrPlusArgTarget>, String> {
+        let container = match self.kind(node) {
+            NodeKind::Expr(ExprKind::BitSelect { base, .. }) => {
+                self.container_of_select(node, *base)
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {
+                self.container_of_select(node, *base)
+            }
+            _ => None,
+        };
+        let Some(container) = container.map(|container| container.ir) else {
+            return Ok(None);
+        };
+        if self.model.containers[container].element.is_real() {
+            return Err(format!(
+                "real element of a queue, dynamic or associative array as an input destination in `{scope_path}` is not supported (SIM-008)"
+            ));
+        }
+        // Other element types keep their own destination diagnostics.
+        let crate::sim::ir::IrContainerElement::Packed {
+            width,
+            signed,
+            two_state,
+        } = self.model.containers[container].element
+        else {
+            return Ok(None);
+        };
+        let read = self.lower_expr(scope_path, node)?;
+        let IrExprKind::Container(operation) = read.kind() else {
+            return Ok(None);
+        };
+        if !matches!(
+            operation.as_ref(),
+            IrContainerExpr::Get { container: read, .. }
+                | IrContainerExpr::GetString { container: read, .. } if *read == container
+        ) {
+            return Ok(None);
+        }
+        Ok(Some(IrPlusArgTarget::Element {
+            read: Box::new(read),
+            width,
+            signed,
+            two_state,
+        }))
+    }
+
     pub(super) fn lower_file_input_target(
         &mut self,
         scope_path: &str,
         node: NodeId,
     ) -> Result<IrFileInputTarget, String> {
         match self.lower_plusarg_target(scope_path, node)? {
+            IrPlusArgTarget::Element {
+                read,
+                width,
+                signed,
+                two_state,
+            } => Ok(IrFileInputTarget::Element {
+                read,
+                width,
+                signed,
+                two_state,
+            }),
             IrPlusArgTarget::Packed {
                 lhs,
                 width,
@@ -216,8 +283,10 @@ impl<'a> Codegen<'a> {
                 signed,
                 two_state,
             }),
-            IrPlusArgTarget::Real { .. } | IrPlusArgTarget::String { .. } => Err(format!(
-                "$fread destination must be a packed value or unpacked array in `{scope_path}`"
+            IrPlusArgTarget::Real { .. }
+            | IrPlusArgTarget::String { .. }
+            | IrPlusArgTarget::Element { .. } => Err(format!(
+                "$fread destination must be a packed variable or unpacked array in `{scope_path}`"
             )),
         }
     }

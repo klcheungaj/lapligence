@@ -28,6 +28,7 @@ static void llg_dyn_new_count(llg_dyn_array_t* dst, size_t size,
     llg_container_notify_fn notify = dst->notify;
     sv4_t* contents_dependency = dst->contents_dependency;
     sv4_t* shape_dependency = dst->shape_dependency;
+    llg_dyn_outdate_references(dst);
     sv4_destroy_array(dst->data, dst->size);
     free(dst->data);
     dst->data = data;
@@ -197,6 +198,7 @@ void llg_dyn_assign_values(llg_dyn_array_t* dst, const sv4_t* values,
     llg_container_notify_fn notify = dst->notify;
     sv4_t* contents_dependency = dst->contents_dependency;
     sv4_t* shape_dependency = dst->shape_dependency;
+    llg_dyn_outdate_references(dst);
     sv4_destroy_array(dst->data, dst->size);
     free(dst->data);
     dst->data = data;

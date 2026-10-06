@@ -1,0 +1,10 @@
+dyn live 5 5
+dyn write 6 6
+dyn outdated 9 6 5
+assoc live 7
+assoc write 8
+assoc outdated 11 0
+string 1 4
+pair 3 0
+queue 2 99
+invalid 0 0

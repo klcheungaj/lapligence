@@ -1734,6 +1734,13 @@ void llg_ref_scope_end(llg_ref_scope_t* scope);
 // Call-local queue cells released by normal and nonlocal value-scope cleanup.
 void llg_ref_scope_begin_owned(void);
 llg_ref_t* llg_ref_queue(llg_queue_t* queue, uint64_t index);
+// Retained dynamic-array element and associative entry references (13.5.2).
+struct llg_dyn_array_t;
+struct llg_assoc_t;
+llg_ref_t* llg_ref_dyn(struct llg_dyn_array_t* array, sv4_t index);
+llg_ref_t* llg_ref_assoc_integral(struct llg_assoc_t* array, sv4_t key);
+llg_ref_t* llg_ref_assoc_string(struct llg_assoc_t* array, const void* key,
+                                size_t key_length);
 void llg_ref_write(llg_ref_t* ref, sv4_t value);
 // Runtime-facing read reports checked tagged-union reference-view failures.
 sv4_t llg_rt_ref_read(const llg_ref_t* ref);
