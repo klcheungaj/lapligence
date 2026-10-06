@@ -713,6 +713,7 @@ fn collect_effects(
             | IrStmt::Assign { nba: false, .. }
             | IrStmt::EventAssign { .. }
             | IrStmt::EventCapture { .. }
+            | IrStmt::EventDeclare { .. }
             | IrStmt::PcaAssign { .. }
             | IrStmt::PcaDrive { .. }
             | IrStmt::PcaDeassign { .. }
@@ -1144,6 +1145,7 @@ fn collect_statement_expression_effects(
         }
         IrStmt::EventAssign { .. }
         | IrStmt::EventCapture { .. }
+        | IrStmt::EventDeclare { .. }
         | IrStmt::ClockingSample { .. } => {}
         IrStmt::PcaAssign { value, .. } | IrStmt::PcaDrive { value, .. } => {
             collect_expression_effects(ir, value, effects, visited_calls);

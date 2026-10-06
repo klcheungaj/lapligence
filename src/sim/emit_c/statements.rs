@@ -470,6 +470,9 @@ fn render_stmt_scoped(
                 None => format!("    llg_event_assign_null({});\n", target),
             }
         }
+        IrStmt::EventDeclare { name } => {
+            format!("    llg_event_t {name} = {{ .object = llg_event_object_new() }};\n")
+        }
         IrStmt::EventCapture { name, source } => {
             let source = event_ref_code(ctx, source)?;
             format!(

@@ -299,6 +299,15 @@ impl<'a> Codegen<'a> {
                 )));
             }
         }
+        if let Some(name) = self.local_event_handles.get(&target.declaration) {
+            if !target.indices.is_empty() {
+                return Err(format!(
+                    "automatic event `{}` cannot be indexed in `{scope_path}`",
+                    self.node(target.declaration).name
+                ));
+            }
+            return Ok(IrEventRef::Captured(name.clone()));
+        }
         if let Some(event) = self
             .func
             .as_ref()

@@ -67,6 +67,28 @@ impl<'a> Codegen<'a> {
             }
             return None;
         }
+        // An automatic subroutine event is captured by object identity.
+        if let Some(name) = self.local_event_handles.get(&target) {
+            return Some(CaptureSource {
+                info: ProcLocalInfo {
+                    c_name: String::new(),
+                    width: 1,
+                    signed: false,
+                    two_state: true,
+                    static_signal: None,
+                },
+                initial: IrExpr::new(
+                    IrExprKind::ObjectQuery(Box::new(IrObjectQuery::EventCapture(
+                        IrEventRef::Captured(name.clone()),
+                    ))),
+                    1,
+                    false,
+                    None,
+                ),
+                lifetime: StorageLifetime::Automatic,
+                kind: StorageKind::Event,
+            });
+        }
         let function = self.func.as_ref()?;
         if let Some(event) = function.event_args.get(&target) {
             return Some(CaptureSource {
@@ -227,7 +249,16 @@ impl<'a> Codegen<'a> {
     /// Find automatic declarations referenced by a fork branch. Declarations
     /// inside the branch are owned by that branch and are not captures.
     pub(in super::super) fn fork_capture_targets(&self, branch: NodeId) -> Vec<NodeId> {
-        fn visit(cg: &Codegen<'_>, node: NodeId, branch: NodeId, out: &mut HashSet<NodeId>) {
+        fn visit(
+            cg: &Codegen<'_>,
+            node: NodeId,
+            branch: NodeId,
+            visited: &mut HashSet<NodeId>,
+            out: &mut HashSet<NodeId>,
+        ) {
+            if !visited.insert(node) {
+                return;
+            }
             let target = match cg.kind(node) {
                 NodeKind::Expr(ExprKind::Ref {
                     target: Some(target),
@@ -248,12 +279,21 @@ impl<'a> Codegen<'a> {
                 }
             }
             for child in &cg.node(node).children {
-                visit(cg, *child, branch, out);
+                visit(cg, *child, branch, visited, out);
+            }
+            // Timing-control operands (`#n`, `@(e)`, `wait (c)`) are statement
+            // fields rather than structural children.
+            if let NodeKind::Stmt(statement) = cg.kind(node) {
+                let mut operands = Vec::new();
+                statement.referenced_nodes(&mut operands);
+                for operand in operands {
+                    visit(cg, operand, branch, visited, out);
+                }
             }
         }
 
         let mut targets = HashSet::new();
-        visit(self, branch, branch, &mut targets);
+        visit(self, branch, branch, &mut HashSet::new(), &mut targets);
         let mut targets = targets.into_iter().collect::<Vec<_>>();
         targets.sort_by_key(|node| node.index());
         targets

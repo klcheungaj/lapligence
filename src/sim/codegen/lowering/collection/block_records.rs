@@ -36,6 +36,11 @@ impl Codegen<'_> {
                 self.collect_block_native(path, declaration, statement)?;
             }
         }
+        for declaration in found.events {
+            if let Some(statement) = found.statements.get(&declaration).copied() {
+                self.collect_block_event(path, declaration, statement)?;
+            }
+        }
         Ok(())
     }
 
@@ -65,6 +70,13 @@ impl Codegen<'_> {
                     {
                         found.natives.push(*child);
                     }
+                }
+                NodeKind::NamedEvent
+                    if matches!(self.kind(node), NodeKind::Stmt(StmtKind::Begin))
+                        && !found.events.contains(child)
+                        && self.db.event_array_meta(*child).is_none() =>
+                {
+                    found.events.push(*child);
                 }
                 // Subroutine bodies keep their own storage; nested scopes
                 // are collected with their own instance.
@@ -162,7 +174,11 @@ impl Codegen<'_> {
     /// declaration identity: no source identifier is empty, so the names
     /// cannot collide with a scope member or another block's declaration.
     /// The key itself contains U+001F, which no source path does.
-    pub(super) fn block_storage_scope(&mut self, path: &str, declaration: NodeId) -> String {
+    pub(in super::super) fn block_storage_scope(
+        &mut self,
+        path: &str,
+        declaration: NodeId,
+    ) -> String {
         let key = format!("{path}\u{1f}{}", declaration.index());
         let mut components = self
             .c_paths
@@ -466,5 +482,7 @@ struct BlockDeclarations {
     records: Vec<NodeId>,
     /// String, chandle and class-handle declarations.
     natives: Vec<NodeId>,
+    /// Scalar named events.
+    events: Vec<NodeId>,
     statements: HashMap<NodeId, NodeId>,
 }

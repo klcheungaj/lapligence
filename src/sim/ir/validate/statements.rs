@@ -747,6 +747,11 @@ impl Validator<'_> {
                 }
                 self.validate_event_ref(source, formals, &format!("{path}.source"))?;
             }
+            IrStmt::EventDeclare { name } => {
+                if name.is_empty() {
+                    return self.fail(path, "declared event handle name must not be empty");
+                }
+            }
             IrStmt::PcaAssign {
                 sig, enable, value, ..
             }

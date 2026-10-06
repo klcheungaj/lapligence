@@ -1430,6 +1430,10 @@ typedef struct {
 // Release any grown waiter tables and clear the event state. Safe on a
 // zero-initialized object and idempotent.
 void llg_event_object_reset(llg_event_object_t* ev);
+// A fresh synchronization object for an automatic event declaration. Like
+// new event elements of resizable containers it is owned by the scheduler
+// until model close, so handles copied out of the activation stay valid.
+llg_event_object_t* llg_event_object_new(void);
 
 typedef struct {
     llg_event_object_t* object;

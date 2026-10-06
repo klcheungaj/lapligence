@@ -1375,6 +1375,9 @@ struct Codegen<'a> {
     events: Vec<EventInfo>,
     /// NamedEvent arena node → lowered event info.
     event_globals: HashMap<NodeId, EventInfo>,
+    /// Automatic named events declared in subroutine bodies: the binding
+    /// name of their activation-owned handle (`IrStmt::EventDeclare`).
+    local_event_handles: HashMap<NodeId, String>,
     /// Event-array declaration and linear element index → lowered event info.
     event_elements: HashMap<(NodeId, u64), EventInfo>,
     /// Named-event array declaration → descriptor index in the IR event table.
@@ -1661,6 +1664,7 @@ impl<'a> Codegen<'a> {
             block_native_initializers: Vec::new(),
             events: Vec::new(),
             event_globals: HashMap::new(),
+            local_event_handles: HashMap::new(),
             event_elements: HashMap::new(),
             event_arrays: HashMap::new(),
             scalar_inits: Vec::new(),

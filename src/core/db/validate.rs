@@ -664,6 +664,15 @@ fn driver_delay_refs(delay: Option<DriverDelay>, refs: &mut Vec<NodeId>) {
     }
 }
 
+impl StmtKind {
+    /// Push every node this statement names through its fields (operands,
+    /// timing controls, bodies, declarations), whether or not the node is
+    /// also one of its structural children.
+    pub fn referenced_nodes(&self, refs: &mut Vec<NodeId>) {
+        statement_refs(self, refs);
+    }
+}
+
 fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
     match statement {
         StmtKind::ImmediateAssertion {
