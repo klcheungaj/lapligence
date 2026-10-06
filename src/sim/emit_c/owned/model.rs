@@ -321,6 +321,24 @@ fn render_function(
         }
         if let Some(value) = formal.native_value {
             let parameter = format!("{}{index}", if formal.is_out { "o" } else { "a" });
+            // Companion containers bind like container formals (SIM-007).
+            for (position, container) in formal.native_companions.iter().enumerate() {
+                let storage = &ctx.model.containers[*container];
+                let (ty, _, _) = super::super::containers::activation_storage(storage, "")?;
+                let bound = format!(
+                    "(*({ty}*){})",
+                    super::super::model::native_companion_param(&parameter, position)
+                );
+                if storage.activation {
+                    frame.containers.insert(*container, bound);
+                } else if matches!(formal.mode, IrFormalMode::Input | IrFormalMode::Inout) {
+                    frame.line(format!(
+                        "{}(&{}, &{bound});",
+                        super::containers::copy_function(storage),
+                        storage.c_name
+                    ));
+                }
+            }
             if ctx.model.native_values[value].activation {
                 frame.native_values.insert(value, parameter);
             } else if matches!(formal.mode, IrFormalMode::Input | IrFormalMode::Inout) {
@@ -461,6 +479,16 @@ fn render_function(
         {
             let address = frame.native_value_address(value)?;
             frame.line(format!("llg_native_value_copy(o{index}, {address});"));
+            for (position, container) in formal.native_companions.iter().enumerate() {
+                let storage = &ctx.model.containers[*container];
+                let (ty, _, _) = super::super::containers::activation_storage(storage, "")?;
+                frame.line(format!(
+                    "{}(({ty}*){}, &{});",
+                    super::containers::copy_function(storage),
+                    super::super::model::native_companion_param(&format!("o{index}"), position),
+                    storage.c_name
+                ));
+            }
         }
         if let Some(array) = formal
             .real_array

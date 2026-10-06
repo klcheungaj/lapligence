@@ -841,6 +841,7 @@ impl Codegen<'_> {
                 c_name: format!("S_llg_native_{index}"),
                 ty,
                 activation,
+                companions: Vec::new(),
             });
         Ok(Some(index))
     }
@@ -1153,9 +1154,9 @@ impl Codegen<'_> {
     fn record_locals(&self, node: NodeId, out: &mut Vec<(NodeId, bool)>) {
         match self.kind(node) {
             NodeKind::Var { .. } => {
-                // Detached member declarations reached through selects have
-                // no parent scope and are not locals.
-                if self.node(node).parent.is_some()
+                // Member declarations reached through selects or keyed
+                // patterns are not locals.
+                if self.is_body_local(node)
                     && self
                         .query_descriptor(node)
                         .is_some_and(record_column_layout)

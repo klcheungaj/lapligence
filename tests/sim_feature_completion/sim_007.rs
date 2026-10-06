@@ -161,6 +161,21 @@ fn record_container_members_wake_their_readers() {
 }
 
 #[test]
+fn record_container_members_cross_subroutine_storage() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_container_calls.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_container_calls", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "record_container_calls", expected);
+}
+
+#[test]
+fn record_container_members_cross_ports_and_wake_whole_record_readers() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_container_ports.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_container_ports", expected, &[], &[]);
+}
+
+#[test]
 fn discarded_queue_pops_remove_one_element() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_007/discarded_pops.out");
     sim_cli::run_case_backend_parity(SUITE, "discarded_pops", expected, &[], &[]);
@@ -170,8 +185,8 @@ fn discarded_queue_pops_remove_one_element() {
 fn record_container_member_boundaries_are_rejected_explicitly() {
     sim_cli::reject_case(
         SUITE,
-        "bad_record_queue_formal",
-        "with a queue, dynamic or associative array member is not supported",
+        "bad_record_container_element",
+        "with a queue, dynamic or associative member is not supported here",
     );
     sim_cli::reject_case(
         SUITE,

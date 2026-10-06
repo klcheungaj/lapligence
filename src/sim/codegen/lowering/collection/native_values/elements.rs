@@ -128,7 +128,7 @@ impl Codegen<'_> {
                 descriptor.name
             )
         })?;
-        let mut leaves = Vec::new();
+        let mut leaves = NativeLeaves::default();
         collect_native_leaves(
             &descriptor,
             &element,
@@ -137,7 +137,15 @@ impl Codegen<'_> {
             &mut leaves,
         )
         .map_err(|error| format!("{error} (container element `{}`)", descriptor.name))?;
-        Ok((element, descriptor, leaves))
+        // A container element owns its nested containers inside the value
+        // itself, unlike a native record's companion containers.
+        if !leaves.containers.is_empty() {
+            return Err(format!(
+                "whole record element of container `{}` with a queue, dynamic or associative member is not supported here",
+                descriptor.name
+            ));
+        }
+        Ok((element, descriptor, leaves.scalars))
     }
 
     /// A lexical native value of a container's element type for one
@@ -169,6 +177,7 @@ impl Codegen<'_> {
                 ty,
                 descriptor,
                 leaves,
+                containers: Vec::new(),
             },
         );
         let index = self.model.native_values.len();
@@ -176,6 +185,7 @@ impl Codegen<'_> {
             c_name: format!("S_llg_native_{index}"),
             ty,
             activation: true,
+            companions: Vec::new(),
         });
         self.native_value_layouts.insert(index, site);
         Ok(index)

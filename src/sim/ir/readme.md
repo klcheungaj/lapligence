@@ -130,14 +130,21 @@ Native records live next to, not inside, the fixed-value contract.
 `IrModel::native_types` holds bounded `IrContainerElement` record/fixed-array
 shapes whose leaves are packed, real, string or chandle
 (`native_values::validate_native_type`: depth and per-level item limits,
-nonzero nominal ids, no unions, events, classes or containers).
+nonzero nominal ids, no unions, events or classes). A queue, dynamic or
+associative member is a null container slot in the descriptor; its storage
+is a companion `IrContainer` of each root (`IrNativeValue::companions`, same
+lifetime as the root, SIM-007).
 `IrModel::native_values` names each storage root: persistent roots carry a
 unique C name; activation roots are declared lexically by
 `IrStmt::NativeValueDeclare` or bound by an `IrFormal::native_value`, and the
 validator rejects uses outside that scope. `NativeValueCopy` copies between
 roots of one type. Calls pass `IrCallArg::NativeValue` (a root),
-`NativeLeaves` (a fresh root built from leaf expressions) or `NativeCall`
-(a fresh root filled by a nested native-result call). Leaves are read and
+`NativeLeaves` (a fresh root built from leaf expressions, with one source
+container per companion) or `NativeCall` (a fresh root filled by a nested
+native-result call). Declarations, copies and every native operand carry the
+companions too: a native formal lists them in `IrFormal::native_companions`,
+each an extra `void*` C parameter after the value's own, passed with the
+container-formal copy-in/copy-out protocol. Leaves are read and
 written through `IrNativeAccessKind::ValueItem` accesses with a constant
 `item_path` and the existing local/string/chandle statement forms, so effects,
 optimization and stack sizing see ordinary named reads and writes.

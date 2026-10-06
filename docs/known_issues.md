@@ -411,22 +411,27 @@ queues, dynamic and associative arrays; SIM-007 adds one-dimensional fixed
 arrays of strings, handles and native records, run-time indices into native
 member arrays, packed-member selects, record-element equality and tagged
 unions with native members in module/static variables, container members
-of module records, and native records declared in procedural blocks.
+of module records and of subroutine record values, and native records
+declared in procedural blocks.
 
 ### Symptom
 
 Unpacked records with string, real, chandle or class-handle leaves copy,
 compare and cross input/output/inout formals and results as runtime values,
 are elements of resizable containers and of one-dimensional fixed arrays.
-Queue, dynamic and associative members of module and static records
-(`struct { string s; int q[$]; }`) are their own containers: methods, selects,
-`foreach`, whole-record copies, equality (except associative members) and
-assignment patterns work. These legal forms still reject with explicit
-diagnostics: multidimensional fixed arrays of strings, handles or native
-records; records with queue, dynamic or associative members in subroutine
-storage (formals, results, automatic and static locals), as container or
-fixed-array elements, as class properties and in nonblocking assignments;
-equality of records with an associative member;
+Queue, dynamic and associative members of records
+(`struct { string s; int q[$]; }`) are their own containers in module and
+static records and travel as companion containers of subroutine record values
+(formals, results, automatic and static locals): methods, selects, `foreach`,
+whole-record copies, ports, conditionals, equality (except associative
+members) and assignment patterns work. These legal forms still reject with
+explicit diagnostics: multidimensional fixed arrays of strings, handles or
+native records; records with queue, dynamic or associative members as
+container or fixed-array elements and in nonblocking assignments; class
+properties of any unpacked record type with string, real, handle or container
+members (these currently fail with a generic `has no resolved packed width`
+diagnostic); equality of records with an associative member (and conditionals
+with an ambiguous predicate on such records);
 compound or nonblocking writes to a record element of a resizable container;
 delayed (`#d`) nonblocking writes to a fixed array of native elements; a
 run-time index into a native member array of more than 64 elements or with a

@@ -163,27 +163,39 @@ impl Codegen<'_> {
             }
         }
         let (left_values, right_values) = captured.split_at(lefts.len());
-        let mut start = 0;
-        while start < targets.len() {
-            let member = targets[start].0.first().cloned();
-            let end = targets[start..]
-                .iter()
-                .position(|(leaf_path, _)| leaf_path.first().cloned() != member)
-                .map_or(targets.len(), |offset| start + offset);
+        // Leaves of one immediate member, in member order; container members
+        // follow the scalar leaves, so a member's leaves need not be adjacent.
+        let mut members: Vec<(Option<AggregatePathPart>, Vec<usize>)> = Vec::new();
+        for (position, (leaf_path, _)) in targets.iter().enumerate() {
+            let member = leaf_path.first().cloned();
+            match members.iter_mut().find(|(existing, _)| *existing == member) {
+                Some((_, positions)) => positions.push(position),
+                None => members.push((member, vec![position])),
+            }
+        }
+        for (_, positions) in members {
             let mut matched: Option<IrExpr> = None;
-            let mut keep = Vec::with_capacity(end - start);
-            let mut reset = Vec::with_capacity(end - start);
-            for position in start..end {
+            let mut keep = Vec::with_capacity(positions.len());
+            let mut reset = Vec::with_capacity(positions.len());
+            for position in positions {
                 let (leaf_path, leaf) = &targets[position];
                 let (left, right) = (&left_values[position], &right_values[position]);
-                let equal = known_leaf_match(path, left.clone(), right.clone())?;
+                let equal = self.known_member_match(path, left.clone(), right.clone())?;
                 matched = Some(match matched {
                     Some(previous) => cmp_expr_ir(IrBinOp::LogAnd, previous, equal),
                     None => equal,
                 });
                 keep.push(self.endpoint_leaf_write(path, leaf, left.clone(), nba)?);
-                let default = self.native_leaf_default(path, descriptor, leaf_path)?;
-                reset.push(self.endpoint_leaf_write(path, leaf, default, nba)?);
+                reset.push(match leaf {
+                    // An unmatched container member is empty (SV Table 6-7).
+                    NativeEndpointLeaf::Container(container) => {
+                        IrStmt::Container(Box::new(IrContainerStmt::Delete(*container)))
+                    }
+                    _ => {
+                        let default = self.native_leaf_default(path, descriptor, leaf_path)?;
+                        self.endpoint_leaf_write(path, leaf, default, nba)?
+                    }
+                });
             }
             statements.push(IrStmt::If {
                 cond: matched.ok_or("native record member has no leaves")?,
@@ -191,9 +203,40 @@ impl Codegen<'_> {
                 els: Some(reset),
                 check: IrUniquePriorityCheck::None,
             });
-            start = end;
         }
         Ok(IrStmt::Block(statements))
+    }
+
+    /// A known test that two captured leaves match; container members
+    /// match when their elements do (SV 7.2.2, 7.10).
+    fn known_member_match(
+        &self,
+        path: &str,
+        left: LeafValue,
+        right: LeafValue,
+    ) -> Result<IrExpr, String> {
+        let (LeafValue::Container(left), LeafValue::Container(right)) = (&left, &right) else {
+            return known_leaf_match(path, left, right);
+        };
+        if matches!(
+            self.model.containers[*left].kind,
+            crate::sim::ir::IrContainerKind::Associative { .. }
+        ) {
+            return Err(format!(
+                "conditional operator with an ambiguous predicate on records with an associative array member is not supported in `{path}` (associative array equality is not supported)"
+            ));
+        }
+        Ok(IrExpr::new(
+            IrExprKind::Container(Box::new(IrContainerExpr::Equal {
+                left: *left,
+                right: *right,
+                case: true,
+                negate: false,
+            })),
+            1,
+            false,
+            None,
+        ))
     }
 
     /// The default-uninitialized value of the leaf at `leaf_path` below a
