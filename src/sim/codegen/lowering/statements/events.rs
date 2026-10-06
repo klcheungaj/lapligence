@@ -157,6 +157,7 @@ impl EmitCtx<'_, '_> {
         Ok(if implicit || spec_pairs.is_empty() {
             // @* / always_comb without explicit sensitivity, or a condition
             // that produced no specs: wait on the body's read set.
+            self.cg.reject_process_status_wait(&self.path, body)?;
             let reads = if implicit && self.process_kind == Some(AlwaysKind::Always) {
                 self.cg.collect_at_star_signals(&self.path, body)?
             } else {
@@ -845,15 +846,15 @@ impl EmitCtx<'_, '_> {
         ) && persistent_subroutine_signal.is_none()
             && self.cg.resolve_signal_id(&self.path, expression).is_err()
             && self.cg.unpacked_path_for_expr(expression).is_some();
-        // A whole string or class handle waits on its change marker
-        // (SIM-007), which toggles on every changed store; neither has edges.
+        // A whole string, class or process handle waits on its change marker
+        // (SIM-007, SIM-015), which toggles on every changed store; none has
+        // edges.
         if simple && condition.is_none() && !mapped_formal {
-            if let Some(object) = self.cg.object_of(&self.path, expression).filter(|object| {
-                matches!(
-                    self.cg.model.objects[*object].ty,
-                    crate::sim::ir::IrObjectType::Chandle | crate::sim::ir::IrObjectType::String
-                )
-            }) {
+            if let Some(object) = self
+                .cg
+                .object_of(&self.path, expression)
+                .filter(|object| self.cg.model.objects[*object].ty.has_change_marker())
+            {
                 if edge != IrEdge::Any {
                     return Err(format!(
                         "edge control on a string or class handle is not supported in `{}`",
@@ -927,6 +928,7 @@ impl EmitCtx<'_, '_> {
                 edge,
             ));
         }
+        self.cg.reject_process_status_wait(&self.path, expression)?;
         let mut reads = self.cg.collect_read_signals(&self.path, expression)?;
         reads.extend(self.cg.shared_event_dependencies(expression));
         let (eval, real) = self.event_evaluator(expression)?;

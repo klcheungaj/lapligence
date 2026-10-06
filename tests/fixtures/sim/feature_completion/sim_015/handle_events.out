@@ -1,0 +1,7 @@
+job 1 done 10
+do_n_way KILLED KILLED 10
+quiet until 60
+seen at 63
+mailbox 1 1 0
+p changed at 68 null=1
+rebound at 71 1

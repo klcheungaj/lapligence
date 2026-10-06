@@ -97,6 +97,15 @@ pub enum IrClassFieldType {
     Chandle,
 }
 
+impl IrObjectType {
+    /// Whether whole-object stores publish a one-bit change marker
+    /// (`<name>_llg_dep`) that event controls and waits can depend on.
+    /// Semaphore objects publish none.
+    pub(crate) fn has_change_marker(self) -> bool {
+        matches!(self, Self::String | Self::Chandle | Self::Process)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 /// Persistent object storage. Strings default empty; chandles default null.
 pub struct IrObject {

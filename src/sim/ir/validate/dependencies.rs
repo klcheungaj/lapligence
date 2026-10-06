@@ -101,12 +101,11 @@ impl Validator<'_> {
             | IrDependency::ContainerShape(container) => *container < self.model.containers.len(),
             IrDependency::SharedCell { local, .. } => !local.is_empty(),
             IrDependency::RefFormal { .. } => true,
-            IrDependency::Object(object) => self.model.objects.get(*object).is_some_and(|object| {
-                matches!(
-                    object.ty,
-                    crate::sim::ir::IrObjectType::String | crate::sim::ir::IrObjectType::Chandle
-                )
-            }),
+            IrDependency::Object(object) => self
+                .model
+                .objects
+                .get(*object)
+                .is_some_and(|object| object.ty.has_change_marker()),
         }
     }
 

@@ -851,8 +851,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   copies, mutations or resizing; a changed handle store (blocking, nonblocking,
   task output or ref formal, published when the callee returns) toggles the
   handle's change marker, which also drives whole-handle ports and `@(h)`
-  (SIM-007). Mutating an object through a handle (`h.v = 1`) and built-in
-  semaphore/mailbox/process handles publish nothing (SIM-013); these are
+  (SIM-007). Module process handles publish the same marker (SIM-015).
+  Mutating an object through a handle (`h.v = 1`) and built-in
+  semaphore/mailbox handles publish nothing (SIM-013); these are
   dependency-collection limits, not full implicit-sensitivity support.
   V §9.7.5 **[2001]**.
 - 🟨 **Evaluated events** — Packed/scalar-real any-change expressions, packed LSB
@@ -1679,13 +1680,15 @@ These are bounded implementations, not full verification-infrastructure support.
   `status()` is a `process::state` value with its enum methods. Handles live
   in process variables, fixed and resizable arrays, class properties, record
   members, input/output/inout/`ref`/`const ref` formals, function results and
-  fork-shared task variables and formals; `srandom`, `get_randstate` and
-  `set_randstate` act on the named process's stream
+  fork-shared task variables and formals and mailbox messages (`get`/`peek`);
+  module handles wake `wait (p != null)` and `@(p)`; `srandom`,
+  `get_randstate` and `set_randstate` act on the named process's stream
   ([sim_015](../tests/fixtures/sim/feature_completion/sim_015/readme.md)).
   Methods through a null handle and `await` on the current process end the
   simulation with an error. Handles in plain storage stay allocated until
   teardown, an event that fires while its waiter is suspended is delivered on
-  resume, and `ref` formals bound to plain storage reject
+  resume, and `status()` in wait or sensitivity expressions, `ref` formals
+  bound to plain storage and `try_get` into process variables reject
   ([known issues](known_issues.md#process-handles-in-plain-handle-storage-stay-allocated-until-teardown)).
   SV §9.7 **[SV-2005]**.
 - 🟨 **Semaphores** — `new/get/put/try_get`, zero-key operations, FIFO blocking,

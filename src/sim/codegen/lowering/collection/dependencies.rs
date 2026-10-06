@@ -78,10 +78,7 @@ impl<'a> Codegen<'a> {
                 // String and handle members publish their own change marker;
                 // other native members have none (see `walk_read_signals_bound`).
                 if let Some(object) = leaf.object.map(|object| self.reference_object(object)) {
-                    if matches!(
-                        self.model.objects[object].ty,
-                        IrObjectType::String | IrObjectType::Chandle
-                    ) {
+                    if self.model.objects[object].ty.has_change_marker() {
                         dependencies.push(IrDependency::Object(object));
                     }
                 }
@@ -998,10 +995,10 @@ impl<'a> Codegen<'a> {
         // wait on, so it is both a writer identity and a combinational read
         // exclusion.
         if let Some(object) = self.object_of("", lhs).filter(|object| {
-            matches!(
-                self.model.objects.get(*object).map(|o| o.ty),
-                Some(IrObjectType::String | IrObjectType::Chandle)
-            )
+            self.model
+                .objects
+                .get(*object)
+                .is_some_and(|o| o.ty.has_change_marker())
         }) {
             writes.insert(IrDependency::Object(object));
             return;
@@ -1346,14 +1343,16 @@ impl<'a> Codegen<'a> {
             // Native strings and handles publish a change marker on every
             // changed store, including record members with their own owner.
             // Other native objects have no change marker.
-            if matches!(
-                self.model.objects.get(object).map(|object| object.ty),
-                Some(IrObjectType::String | IrObjectType::Chandle)
-            ) {
+            if self
+                .model
+                .objects
+                .get(object)
+                .is_some_and(|object| object.ty.has_change_marker())
+            {
                 self.add_dependency(IrDependency::Object(object), seen, out);
                 return Ok(());
             }
-            return Err(format!("semaphore, mailbox or process handle changes cannot yet be used in sensitivity or wait expressions in `{scope_path}`"));
+            return Err(format!("semaphore or mailbox handle changes cannot yet be used in sensitivity or wait expressions in `{scope_path}`"));
         }
         if matches!(
             self.kind(node),

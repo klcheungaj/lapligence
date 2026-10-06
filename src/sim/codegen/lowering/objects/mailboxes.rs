@@ -218,6 +218,12 @@ impl Codegen<'_> {
                 addr: self.lower_string_actual_address(path, node)?,
             });
         }
+        if self.is_counted_process_source(path, node) && self.is_process_typed(node) {
+            return Err(format!(
+                "mailbox try_get or try_peek into a process variable in `{}` is not supported; use get or peek (SIM-015)",
+                self.source_path(path)
+            ));
+        }
         if self.is_chandle_expr(path, node) {
             let (target, _) = self.lower_chandle_lvalue(path, node)?;
             return Ok(IrMailboxTarget::Handle {
@@ -236,7 +242,8 @@ impl Codegen<'_> {
         if self.is_string_expr(path, node) {
             return Ok(IrMailboxValue::String(self.lower_string(path, node)?));
         }
-        if self.is_chandle_expr(path, node) {
+        // A process handle travels as a pinned identity (SIM-015).
+        if self.is_chandle_expr(path, node) || self.is_process_value(path, node) {
             return Ok(IrMailboxValue::Handle(self.lower_chandle(path, node)?));
         }
         let value = self.lower_expr(path, node)?;
@@ -319,9 +326,32 @@ impl Codegen<'_> {
                 ),
             },
             ("get" | "peek", [target]) => {
-                let target = self.lower_mailbox_target(path, *target)?;
+                // A process variable receives through a handle temporary and
+                // a counted assignment once the message is delivered.
+                let process_target = (self.is_counted_process_source(path, *target)
+                    && self.is_process_typed(*target))
+                .then(|| self.lower_process_lvalue(path, *target))
+                .transpose()?
+                .map(|(target, _)| target);
+                let temporary = format!("_llg_mailbox_process_{}", node.0);
+                let target = match process_target {
+                    Some(_) => {
+                        let nominal = self.mailbox_nominal_type(*target)?;
+                        let storage = IrMailboxTarget::Handle {
+                            addr: format!("&{temporary}"),
+                        };
+                        match nominal {
+                            Some(type_id) => IrMailboxTarget::Typed {
+                                type_id,
+                                target: Box::new(storage),
+                            },
+                            None => storage,
+                        }
+                    }
+                    None => self.lower_mailbox_target(path, *target)?,
+                };
                 let peek = name == "peek";
-                match index {
+                let get = match index {
                     Some(index) => IrObjectStmt::MailboxGet(index, mailbox, target, peek),
                     None => IrObjectStmt::MailboxGetLocal(
                         local.expect("local mailbox name"),
@@ -329,7 +359,24 @@ impl Codegen<'_> {
                         target,
                         peek,
                     ),
+                };
+                if let Some(process_target) = process_target {
+                    let value = IrProcessExpr::Handle(Box::new(IrChandleExpr::LocalRead(
+                        temporary.clone(),
+                    )));
+                    let store = match process_target {
+                        ProcessTarget::Object(index) => IrObjectStmt::ProcessAssign(index, value),
+                        ProcessTarget::Local(name) => IrObjectStmt::ProcessAssignLocal(name, value),
+                    };
+                    return Ok(IrStmt::Block(vec![
+                        IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                            temporary, None,
+                        ))),
+                        IrStmt::Object(Box::new(get)),
+                        IrStmt::Object(Box::new(store)),
+                    ]));
                 }
+                get
             }
             ("try_get" | "try_peek", [target]) => {
                 let target = self.lower_mailbox_target(path, *target)?;

@@ -98,6 +98,17 @@ fn retained_handles_survive_model_teardown() {
 }
 
 #[test]
+fn handles_are_wait_sources_and_mailbox_messages() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "handle_events",
+        include_str!("../fixtures/sim/feature_completion/sim_015/handle_events.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn adopted_randstate_witness() {
     sim_cli::run_case_backend_parity(SUITE, "process_randstate", "1\n", &[], &[]);
 }
@@ -190,5 +201,23 @@ fn output_formal_in_an_expression_call_is_explicit() {
         SUITE,
         "neg_expression_output",
         "output or inout process formal `p` bound to a process variable in a call inside an expression in `tb` is not supported; call the subroutine as a statement (SIM-015)",
+    );
+}
+
+#[test]
+fn status_in_a_wait_condition_is_explicit() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_status_wait",
+        "process status() in a wait, event or sensitivity expression in `tb` is not supported; status changes are not change events (use await()) (SIM-015)",
+    );
+}
+
+#[test]
+fn mailbox_try_get_into_a_process_variable_is_explicit() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_mailbox_try_get",
+        "mailbox try_get or try_peek into a process variable in `tb` is not supported; use get or peek (SIM-015)",
     );
 }

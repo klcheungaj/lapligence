@@ -252,6 +252,34 @@ impl Codegen<'_> {
         }
     }
 
+    /// Reject a process `status()` read in a wait, event or implicit
+    /// sensitivity expression: status changes publish no change marker, so
+    /// such a wait would never wake. `await()` waits for termination.
+    pub(in super::super) fn reject_process_status_wait(
+        &self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<(), String> {
+        let mut pending = vec![node];
+        while let Some(current) = pending.pop() {
+            if let NodeKind::MethodCall {
+                name,
+                receiver: Some(receiver),
+                ..
+            } = self.kind(current)
+            {
+                if name == "status" && self.is_process_value(path, *receiver) {
+                    return Err(format!(
+                        "process status() in a wait, event or sensitivity expression in `{}` is not supported; status changes are not change events (use await()) (SIM-015)",
+                        self.source_path(path)
+                    ));
+                }
+            }
+            pending.extend(self.node(current).children.iter().copied());
+        }
+        Ok(())
+    }
+
     /// Whether `node` is any process-handle expression: counted storage,
     /// `self()`, `null` in a process context, or plain handle storage of
     /// process type.
