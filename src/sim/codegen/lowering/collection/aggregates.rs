@@ -855,7 +855,7 @@ impl<'a> Codegen<'a> {
                 let display = format!("{object_name}.{suffix}");
                 let ir = self.model.containers.len();
                 self.model.containers.push(crate::sim::ir::IrContainer {
-                    c_name: self.c_name("C", path, &[object_name, &suffix]),
+                    c_name: self.c_name("G", path, &[object_name, &suffix]),
                     element: lower_container_element(element)?,
                     kind: ir_container_kind(array, &display, path)?,
                     initial_size: None,
