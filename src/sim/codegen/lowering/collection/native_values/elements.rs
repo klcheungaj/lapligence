@@ -463,6 +463,7 @@ impl Codegen<'_> {
         path: &str,
         target: &NativeEndpoint,
         source: NodeId,
+        nba: bool,
     ) -> Result<Option<IrStmt>, String> {
         let Some((temporary, mut statements)) = self.element_copy(path, source)? else {
             return Ok(None);
@@ -471,7 +472,7 @@ impl Codegen<'_> {
             value: temporary,
             prefix: Vec::new(),
         };
-        statements.push(self.native_transfer(path, target, &endpoint, false)?);
+        statements.push(self.native_transfer(path, target, &endpoint, nba)?);
         Ok(Some(IrStmt::Block(statements)))
     }
 

@@ -1590,10 +1590,10 @@ impl Codegen<'_> {
         if self.native_record_conditional(source) {
             return self.native_conditional_into(path, target, descriptor, source, nba);
         }
-        if !nba {
-            if let Some(statement) = self.container_record_into(path, target, source)? {
-                return Ok(statement);
-            }
+        // An element source is copied at issue; a nonblocking target then
+        // queues every leaf (SV 10.4.2).
+        if let Some(statement) = self.container_record_into(path, target, source, nba)? {
+            return Ok(statement);
         }
         let (source, _) = self
             .native_endpoint(source)?

@@ -74,9 +74,9 @@ impl EmitCtx<'_, '_> {
                 }
                 return Ok(statement);
             }
-            if !blocking {
+            if !blocking && !matches!(root, NativeTaggedRoot::Module(_)) {
                 return Err(format!(
-                    "nonblocking assignment to a tagged union with string, real or handle members in `{}` is not supported",
+                    "nonblocking assignment to a tagged union with string, real or handle members in subroutine storage in `{}` is not supported",
                     self.path
                 ));
             }
@@ -103,9 +103,12 @@ impl EmitCtx<'_, '_> {
             return self.cg.native_member_select_write(&self.path, &select, rhs);
         }
         if self.cg.native_tagged_access(lhs).is_some() {
+            // SV 11.9 checks a member write against the tag current when it
+            // is performed; for a nonblocking write that is the commit, and
+            // queued native writes carry no commit-time tag check.
             if !blocking {
                 return Err(format!(
-                    "nonblocking assignment to a member of a tagged union with string, real or handle members in `{}` is not supported",
+                    "nonblocking assignment to a member of a tagged union with string, real or handle members in `{}` is not supported: the write needs a commit-time tag check",
                     self.path
                 ));
             }

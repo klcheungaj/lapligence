@@ -389,9 +389,13 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let (member_name, value) = (member.clone(), *value);
-        if nba {
+        // A nonblocking construction (SV 10.4.2) evaluates the value at
+        // issue and queues the member, reset and tag writes in that order,
+        // so they commit together; only persistent module storage is a
+        // legal target here.
+        if nba && !matches!(root, NativeTaggedRoot::Module(_)) {
             return Err(format!(
-                "nonblocking assignment to a tagged union with string, real or handle members in `{path}` is not supported"
+                "nonblocking assignment to a tagged union with string, real or handle members in subroutine storage in `{path}` is not supported"
             ));
         }
         let layout = self
@@ -422,7 +426,7 @@ impl Codegen<'_> {
                         format!("tagged member `{member_name}` in `{path}` has no scalar type")
                     })?;
                     let source = self.native_leaf_source(path, ty, value)?;
-                    statements.push(self.endpoint_leaf_write(path, &leaf, source, false)?);
+                    statements.push(self.endpoint_leaf_write(path, &leaf, source, nba)?);
                 }
                 _ => {
                     // Any record source (pattern, call, variable) is built in
@@ -440,7 +444,7 @@ impl Codegen<'_> {
                         value,
                         false,
                     )?);
-                    statements.push(self.native_transfer(path, &target, &source, false)?);
+                    statements.push(self.native_transfer(path, &target, &source, nba)?);
                 }
             }
         }
@@ -460,6 +464,11 @@ impl Codegen<'_> {
                 .ok_or_else(|| format!("tagged union in `{path}` has no storage"))?;
             for (_, leaf) in self.endpoint_leaves(&target)? {
                 match leaf {
+                    NativeEndpointLeaf::Container(_) if nba => {
+                        return Err(format!(
+                            "nonblocking assignment of a tagged union with a queue, dynamic or associative member in `{path}` is not supported"
+                        ));
+                    }
                     NativeEndpointLeaf::Container(container) => {
                         statements.push(IrStmt::Container(Box::new(IrContainerStmt::Delete(
                             container,
@@ -473,7 +482,7 @@ impl Codegen<'_> {
                             )));
                         }
                     }
-                    leaf => statements.push(self.native_leaf_reset(path, &leaf, false)?),
+                    leaf => statements.push(self.native_leaf_reset(path, &leaf, nba)?),
                 }
             }
         }
@@ -500,7 +509,7 @@ impl Codegen<'_> {
             statements.push(IrStmt::Assign {
                 lhs,
                 rhs: IrExpr::new(IrExprKind::Const(expected), tag_bits, false, None),
-                nba: false,
+                nba,
             });
         }
         Ok(Some(IrStmt::Block(statements)))

@@ -448,3 +448,15 @@ fn container_elements_hold_records_with_container_members() {
         "nonblocking assignment to a queue or dynamic-array member of a container record element in `tb` is not supported",
     );
 }
+
+#[test]
+fn whole_native_tagged_unions_take_nonblocking_writes() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_007/native_tagged_nba.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_tagged_nba", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "native_tagged_nba", expected);
+    sim_cli::reject_case(
+        SUITE,
+        "bad_tagged_member_nba",
+        "nonblocking assignment to a member of a tagged union with string, real or handle members in `tb` is not supported: the write needs a commit-time tag check",
+    );
+}
