@@ -258,6 +258,13 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
             }) => self.container_declaration(*target),
+            NodeKind::Expr(ExprKind::HierPath { .. })
+                if self.receiver_containers.contains_key(&node) =>
+            {
+                Some(ContainerInfo {
+                    ir: self.receiver_containers[&node],
+                })
+            }
             NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
                 .first()
                 .copied()
@@ -301,6 +308,19 @@ impl<'a> Codegen<'a> {
         select: NodeId,
         base: NodeId,
     ) -> Option<ContainerInfo> {
+        // An element of a class container property selected through an
+        // explicit handle: the select's base names only the declaration,
+        // its path expression child names the receiver (SIM-011).
+        if !self.receiver_containers.is_empty() {
+            if let Some(ir) = self
+                .node(select)
+                .children
+                .iter()
+                .find_map(|child| self.receiver_containers.get(child))
+            {
+                return Some(ContainerInfo { ir: *ir });
+            }
+        }
         if let Some(container) = self.container_of(base) {
             return Some(container);
         }

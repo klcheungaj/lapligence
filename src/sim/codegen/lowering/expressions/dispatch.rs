@@ -853,7 +853,7 @@ impl<'a> Codegen<'a> {
                 NodeKind::MethodCall { name, callee, .. } => (name.clone(), *callee),
                 _ => return Err("malformed class method call".to_owned()),
             };
-            let receiver = self.class_method_receiver(h)?;
+            let receiver = self.class_method_receiver(scope_path, h)?;
             let mut value = self.lower_func_call_expr(scope_path, h, &name, callee)?;
             if let IrExprKind::CallFn(call) = &mut value.kind {
                 call.receiver = receiver;
@@ -1112,7 +1112,7 @@ impl<'a> Codegen<'a> {
                 }
                 if let Some(property) = self.foreign_class_container(*base) {
                     return Err(format!(
-                        "class container property `{property}` in `{scope_path}` is accessible only inside its class's methods (SIM-011)"
+                        "class container property `{property}` in `{scope_path}` selected through a handle is supported only in procedural statements (SIM-011)"
                     ));
                 }
                 let ai = self

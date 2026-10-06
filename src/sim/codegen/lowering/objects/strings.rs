@@ -231,7 +231,7 @@ impl Codegen<'_> {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 return Ok(IrStringExpr::Call {
-                    receiver: self.class_method_receiver(node)?.map(Box::new),
+                    receiver: self.class_method_receiver(path, node)?.map(Box::new),
                     virtual_dispatch: self.class_method_virtual_dispatch(node),
                     function,
                     args,
@@ -239,7 +239,7 @@ impl Codegen<'_> {
                 });
             }
             return Ok(IrStringExpr::TypedCall {
-                receiver: self.class_method_receiver(node)?.map(Box::new),
+                receiver: self.class_method_receiver(path, node)?.map(Box::new),
                 virtual_dispatch: self.class_method_virtual_dispatch(node),
                 function,
                 args: out_args,

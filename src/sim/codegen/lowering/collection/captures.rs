@@ -275,6 +275,38 @@ impl<'a> Codegen<'a> {
                 kind: super::super::storage_kind(ret.width),
             });
         }
+        // A class-handle local or formal of an automatic subroutine is
+        // captured by handle identity for a `join` branch, during which the
+        // suspended parent cannot rebind it (SIM-011). A handle a detached
+        // branch names needs a shared cell, which handles do not have yet.
+        let detached = self
+            .fork_sets
+            .as_ref()
+            .is_none_or(|(shared, _)| shared.contains(&target));
+        if let Some(handle) = function
+            .chandle_read
+            .get(&target)
+            .filter(|handle| !matches!(handle, IrChandleExpr::Read(_)))
+            .filter(|_| self.function_is_automatic(function) && !detached)
+        {
+            return Some(CaptureSource {
+                info: ProcLocalInfo {
+                    c_name: String::new(),
+                    width: 1,
+                    signed: false,
+                    two_state: true,
+                    static_signal: None,
+                },
+                initial: IrExpr::new(
+                    IrExprKind::ObjectQuery(Box::new(IrObjectQuery::HandleCapture(handle.clone()))),
+                    1,
+                    false,
+                    None,
+                ),
+                lifetime: StorageLifetime::Automatic,
+                kind: StorageKind::Opaque,
+            });
+        }
         None
     }
 

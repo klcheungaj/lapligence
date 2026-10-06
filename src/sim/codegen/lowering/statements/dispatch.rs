@@ -8,6 +8,7 @@ impl EmitCtx<'_, '_> {
     /// the pre-IR emitter decision-for-decision: same errors, warnings,
     /// sensitivity sets and wait tracking.
     pub(in super::super) fn lower_stmt(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
+        self.cg.qualify_class_containers(&self.path, h)?;
         // Container operands that cannot be built inside an expression are
         // built just before a statement that evaluates its operands once;
         // nested statements never inherit that prelude. Whole-value pattern

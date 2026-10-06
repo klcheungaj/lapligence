@@ -73,6 +73,10 @@ default. Arena call sites store by-value packed descriptors, `depth + 1` and a
 destination that survives the resume (temporary slot, reserved native object or
 frame scalar). Dynamic calls use per-slot/method helpers returning an anchor for
 a recursive implementation and NULL after a plain call or dispatch failure.
+Class virtual slots with a suspending implementation
+(`ExecutionAnalysis::suspendable_dispatch_slots`, SIM-011) use the same
+helper from any coroutine at an arena call site; their plain dispatchers
+fail instead of entering a coroutine with plain arguments.
 Compute conservative LP64 upper
 bounds with every embedded call charged its 16-byte anchor prefix and sibling
 blocks contributing their maximum rather than their sum; the named
@@ -332,7 +336,10 @@ Name containers only through `Frame::container_name`: a model-global
 container is its C variable, an activation container is the frame binding made
 by `Declare`, a container formal or a call operand (`(*ptr)` into a value-scope
 object created by `new_container`), and a class property container is
-`llg_class_field(_this, ...)` storage, valid only inside that class's methods.
+`llg_class_field(_this, ...)` storage inside that class's methods, or
+`llg_class_field(<receiver>, ...)` for a receiver-qualified alias
+(`IrContainer::receiver`, a plain handle read rendered without statements).
+Fixed-array properties allocate their elements when the object is created.
 Activation and per-object containers have no change dependencies, so waits and
 monitors on them reject. Calls give every container formal fresh storage and
 copy back outputs after the cancellation check, like native values.

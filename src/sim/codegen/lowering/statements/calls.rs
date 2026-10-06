@@ -75,7 +75,7 @@ impl EmitCtx<'_, '_> {
         let receiver = if virtual_call_info.is_some() {
             None
         } else {
-            self.cg.class_method_receiver(h)?
+            self.cg.class_method_receiver(&self.path, h)?
         };
         let virtual_call = if let Some((descriptor, method, _, _, receiver)) = virtual_call_info {
             Some(crate::sim::ir::IrVirtualCall {
@@ -91,12 +91,6 @@ impl EmitCtx<'_, '_> {
             virtual_interface: virtual_call,
         };
         let has_event_formal = bound.iter().any(|argument| argument.is_event);
-        if is_task && self.cg.is_class_method_call(h) && self.cg.task_has_wait(ft, callee_inst) {
-            return Err(format!(
-                "timing-bearing class task `{name}` is not supported in `{}`",
-                self.path
-            ));
-        }
         // Remaining expansions (see `CallShape`): output, inout and ref event
         // formals, event controls reading subroutine storage, `ref` formals
         // read by an event control whose actual is not a whole module signal,

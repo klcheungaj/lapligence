@@ -138,6 +138,31 @@ impl<'a> Codegen<'a> {
         if is_handle_kind(&ty.kind) {
             return Ok(IrClassFieldType::Chandle);
         }
+        // An unpacked record or union of integral leaves is one fixed-width
+        // image; member selections project into it (SIM-011).
+        if let Some(descriptor) = self.query_descriptor(field).filter(|descriptor| {
+            matches!(&descriptor.shape, TypeShape::Aggregate(layout)
+                if matches!(layout.kind, AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion))
+        }) {
+            let width = super::fixed_values::fixed_width(descriptor).ok_or_else(|| {
+                if Self::fixed_descriptor_width_bits(descriptor).is_none() {
+                    format!(
+                        "class property `{}` of an unpacked record or union type with string, real, handle or container members is not supported (SIM-011)",
+                        self.node(field).full_name
+                    )
+                } else {
+                    format!(
+                        "class property `{}` of an unpacked record or union type wider than packed capacity is not supported (SIM-011)",
+                        self.node(field).full_name
+                    )
+                }
+            })?;
+            return Ok(IrClassFieldType::Packed {
+                width,
+                signed: false,
+                two_state: super::fixed_values::two_state(descriptor),
+            });
+        }
         let width = ty.width.ok_or_else(|| {
             // A record or tagged union with string, real, handle or
             // container leaves has no packed payload, and class fields hold
@@ -184,18 +209,22 @@ impl<'a> Codegen<'a> {
             let class_index = self.class_nodes[&class];
             let mut fields = Vec::new();
             for child in self.node(class).children.clone() {
-                if let Some(meta) = self
-                    .db
-                    .array_meta(child)
-                    .filter(|meta| !matches!(meta.kind(), ArrayKind::Static))
-                    .cloned()
-                {
+                // Resizable containers and fixed unpacked arrays (fixed-size
+                // views of the container runtime, SIM-011) are per-object
+                // container storage.
+                if let Some(meta) = self.db.array_meta(child).cloned() {
                     self.collect_class_container(class_index, child, &meta, &mut fields)?;
                     continue;
                 }
                 let NodeKind::Var { ty } = self.kind(child) else {
                     continue;
                 };
+                // A record with string, real or handle leaves is one native
+                // value per object (SIM-011).
+                if self.native_value_type(child).is_some() {
+                    self.collect_class_native(class_index, child, &mut fields)?;
+                    continue;
+                }
                 let field_ty = self.class_field_type(child, ty)?;
                 if self.db.variable_lifetime(child) == VariableLifetime::Static {
                     match field_ty {
@@ -335,6 +364,7 @@ impl<'a> Codegen<'a> {
                     ),
                     ty: field_ty,
                     container: None,
+                    native_value: None,
                 });
                 self.class_fields.insert(child, (class_index, field_index));
             }
@@ -381,6 +411,13 @@ impl<'a> Codegen<'a> {
                         }
                     }
                 }
+                for value in &mut self.model.native_values {
+                    if let Some((owner, index)) = value.class_field.as_mut() {
+                        if *owner == class_index {
+                            *index += inherited.len();
+                        }
+                    }
+                }
                 let mut fields = inherited;
                 fields.extend(
                     self.model.classes[class_index].fields[..own_len]
@@ -395,6 +432,55 @@ impl<'a> Codegen<'a> {
                 return Err("class inheritance layout contains a cycle".to_owned());
             }
         }
+        Ok(())
+    }
+
+    /// A record class property with string, real or handle leaves (SIM-011):
+    /// one descriptor-backed native value per object, created with the
+    /// object and addressed through `this` or an explicit handle.
+    fn collect_class_native(
+        &mut self,
+        class_index: usize,
+        child: NodeId,
+        fields: &mut Vec<IrClassField>,
+    ) -> Result<(), String> {
+        let name = self.node(child).full_name.clone();
+        if self.db.variable_lifetime(child) == VariableLifetime::Static {
+            return Err(format!(
+                "static class property `{name}` of an unpacked record or union type with string, real, handle or container members is not supported (SIM-011)"
+            ));
+        }
+        let layout = self
+            .native_layout(child)?
+            .ok_or_else(|| format!("class property `{name}` has no native record layout"))?;
+        if !layout.containers.is_empty() {
+            return Err(format!(
+                "class property `{name}` of a record type with queue, dynamic or associative members is not supported (SIM-011)"
+            ));
+        }
+        let field_index = fields.len();
+        let value = self.model.native_values.len();
+        self.model
+            .native_values
+            .push(crate::sim::ir::IrNativeValue {
+                c_name: format!("S_llg_class_native_{class_index}_{field_index}"),
+                ty: layout.ty,
+                activation: false,
+                companions: Vec::new(),
+                class_field: Some((class_index, field_index)),
+                receiver: None,
+            });
+        self.native_value_layouts.insert(value, child);
+        self.class_native_fields.insert(child, value);
+        fields.push(IrClassField {
+            c_name: format!(
+                "f_{class_index}_{field_index}_{}",
+                ident(&self.node(child).name)
+            ),
+            ty: IrClassFieldType::Chandle,
+            container: None,
+            native_value: Some(value),
+        });
         Ok(())
     }
 
@@ -413,19 +499,35 @@ impl<'a> Codegen<'a> {
         let descriptor = self
             .query_descriptor(child)
             .ok_or_else(|| format!("class property `{name}` has no recursive type descriptor"))?;
-        let TypeShape::Container { element, .. } = &descriptor.shape else {
-            return Err(format!(
-                "class property `{name}` has a non-container type descriptor"
-            ));
+        let element = match &descriptor.shape {
+            TypeShape::Container { element, .. } => element,
+            TypeShape::FixedArray {
+                dimensions,
+                element,
+            } => {
+                if dimensions.len() != 1 {
+                    return Err(format!(
+                        "multidimensional fixed array class property `{}` is not supported (SIM-011)",
+                        self.node(child).full_name
+                    ));
+                }
+                element
+            }
+            _ => {
+                return Err(format!(
+                    "class property `{name}` has a non-container type descriptor"
+                ))
+            }
         };
         let element = lower_container_element(element)?;
         let path = format!("llg_class{class_index}");
         let info = self.container_from_meta(&path, &name, child, meta, element)?;
         if self.db.variable_lifetime(child) != VariableLifetime::Static {
+            // The container initializer list is for model storage; an
+            // instance property initializes per object at construction.
             if meta.initializer().is_some() {
-                return Err(format!(
-                    "initializer of class container property `{name}` is not supported"
-                ));
+                self.container_initializers
+                    .retain(|(owner, _)| *owner != child);
             }
             let field_index = fields.len();
             self.model.containers[info.ir].class_field = Some((class_index, field_index));
@@ -435,6 +537,7 @@ impl<'a> Codegen<'a> {
                 c_name: format!("f_{class_index}_{field_index}_{}", ident(&name)),
                 ty: IrClassFieldType::Chandle,
                 container: Some(info.ir),
+                native_value: None,
             });
         }
         self.container_globals.insert(child, info);

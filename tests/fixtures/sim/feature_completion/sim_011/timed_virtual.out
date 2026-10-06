@@ -1,0 +1,5 @@
+A t=5 o=45 r=107 count=4 tag=dx scale=3.00
+B t=5 o=-3 r=214 tag=q
+C t=6 o=2 r=215 tag=base
+drive t=12 n=1 lo=16 r=315
+D t=12 count=1 tag=dx scale=3.00

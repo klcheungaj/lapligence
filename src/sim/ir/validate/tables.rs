@@ -132,6 +132,42 @@ impl Validator<'_> {
             {
                 self.validate_width(width, &format!("containers[{idx}].key"))?;
             }
+            if let Some((class, field)) = container.class_field {
+                if self
+                    .model
+                    .classes
+                    .get(class)
+                    .and_then(|layout| layout.fields.get(field))
+                    .is_none()
+                {
+                    return self.fail(
+                        format!("containers[{idx}].class_field"),
+                        "class property is out of bounds",
+                    );
+                }
+            }
+            if let Some(receiver) = &container.receiver {
+                if container.class_field.is_none() || !receiver.is_plain_receiver() {
+                    return self.fail(
+                        format!("containers[{idx}].receiver"),
+                        "a receiver qualifies only a class property container and must be a plain handle read",
+                    );
+                }
+                let mut plain = receiver;
+                while let IrChandleExpr::Required { handle, .. } = plain {
+                    plain = handle;
+                }
+                if let IrChandleExpr::Read(object) = plain {
+                    if self.model.objects.get(*object).map(|object| &object.ty)
+                        != Some(&IrObjectType::Chandle)
+                    {
+                        return self.fail(
+                            format!("containers[{idx}].receiver"),
+                            "receiver object is not a handle",
+                        );
+                    }
+                }
+            }
             if let Some(size) = container.initial_size {
                 if size == 0 {
                     return self.fail(

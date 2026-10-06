@@ -1,0 +1,6 @@
+body id=1
+delay id=2 p 2 t=1
+fork id=2 t=2
+joined id=3
+formal id=5 t=3
+f=8 nm=q t=4

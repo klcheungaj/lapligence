@@ -1738,6 +1738,8 @@ impl Codegen<'_> {
                 ty,
                 activation: true,
                 companions: Vec::new(),
+                class_field: None,
+                receiver: None,
             });
         before.push(IrStmt::NativeValueDeclare(temporary));
         let inout = matches!(

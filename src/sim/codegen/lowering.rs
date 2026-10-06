@@ -1351,6 +1351,16 @@ struct Codegen<'a> {
     /// functions and processes exist, so nonconstant elements use the same
     /// expression/capture machinery as procedural assignments.
     container_initializers: Vec<(NodeId, usize)>,
+    /// Class container properties selected through an explicit handle
+    /// (`h.q`), keyed by the selecting path expression: receiver-qualified
+    /// aliases of the property's container (SIM-011).
+    receiver_containers: HashMap<NodeId, usize>,
+    /// Native record class properties by declaration: their per-object
+    /// value (SIM-011).
+    class_native_fields: HashMap<NodeId, usize>,
+    /// Native record class properties selected through an explicit handle,
+    /// keyed by the selecting path expression: receiver-qualified aliases.
+    receiver_native_values: HashMap<NodeId, usize>,
     /// Implicit iterator binding while lowering an array-method `with`
     /// expression: declaration identity plus the packed source element and
     /// index types.
@@ -1677,6 +1687,9 @@ impl<'a> Codegen<'a> {
             container_globals: HashMap::new(),
             fixed_view_ranges: HashMap::new(),
             container_initializers: Vec::new(),
+            receiver_containers: HashMap::new(),
+            class_native_fields: HashMap::new(),
+            receiver_native_values: HashMap::new(),
             container_iterator: None,
             sampled_real_signals: std::collections::BTreeSet::new(),
             sampled_value_signals: std::collections::BTreeSet::new(),

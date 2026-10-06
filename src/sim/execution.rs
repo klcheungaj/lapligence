@@ -2245,6 +2245,12 @@ fn collect_chandle_effects(
             collect_string_effects(ir, key, effects, visited_calls)
         }
         IrChandleExpr::QueuePop { .. } => effects.push(ExecutionEffect::ImmediateStore),
+        IrChandleExpr::Required { handle, .. } => {
+            // A null handle is a fatal run-time error: the process stops
+            // after the statement instead of running on.
+            effects.push(ExecutionEffect::Terminate);
+            collect_chandle_effects(ir, handle, effects, visited_calls);
+        }
         IrChandleExpr::Mailbox(mailbox) => {
             collect_mailbox_expr_effects(ir, mailbox, effects, visited_calls)
         }

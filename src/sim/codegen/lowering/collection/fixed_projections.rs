@@ -843,6 +843,21 @@ impl Codegen<'_> {
         if let Some(root) = self.fixed_root(path, node)? {
             return Ok(Some(root));
         }
+        // A packed class property, through `this` or a handle (SIM-011).
+        if let Some((read, target, descriptor, members)) = self.class_field_cell(path, node)? {
+            let mut projection = Projection {
+                root: FixedRoot::Cell { read, target },
+                signed: descriptor.info.signed,
+                descriptor,
+                steps: Vec::new(),
+                element_states: Vec::new(),
+                ref_legal: false,
+            };
+            for member in &members {
+                Self::fixed_member(&mut projection, member)?;
+            }
+            return Ok(Some(projection));
+        }
         let kind = self.kind(node);
         match kind {
             NodeKind::Expr(ExprKind::HierPath { parts, refs }) => {
@@ -894,10 +909,46 @@ impl Codegen<'_> {
                 let base = *base;
                 let indices = indices.clone();
                 let projection = if let Some((root, members)) = self.db.array_select_path(node) {
-                    let members = members.to_vec();
-                    let root_projection = match self.fixed_projection(path, root)? {
+                    let mut members = members.to_vec();
+                    // A member array of a packed class property: the select's
+                    // path child names the receiver and the members (SIM-011).
+                    let path_child = self.node(node).children.iter().copied().find(|child| {
+                        matches!(self.kind(*child), NodeKind::Expr(ExprKind::HierPath { .. }))
+                            && self
+                                .class_field_target(*child)
+                                .is_some_and(|field| self.class_fields.contains_key(&field))
+                    });
+                    let cell = if let Some(child) = path_child {
+                        // The path child names the handle and the members.
+                        let cell = self.class_field_cell(path, child)?;
+                        if cell.is_some() {
+                            members.clear();
+                        }
+                        cell
+                    } else if self.class_fields.contains_key(&root) {
+                        self.class_field_cell(path, root)?
+                    } else {
+                        None
+                    };
+                    let class_root = cell.map(|(read, target, descriptor, path_members)| {
+                        if path_child.is_some() {
+                            members.extend(path_members);
+                        }
+                        Projection {
+                            root: FixedRoot::Cell { read, target },
+                            signed: descriptor.info.signed,
+                            descriptor,
+                            steps: Vec::new(),
+                            element_states: Vec::new(),
+                            ref_legal: false,
+                        }
+                    });
+                    let root_projection = match class_root {
                         Some(projection) => Some(projection),
-                        None => self.tagged_signal_root(root)?,
+                        None => match self.fixed_projection(path, root)? {
+                            Some(projection) => Some(projection),
+                            None => self.tagged_signal_root(root)?,
+                        },
                     };
                     if let Some(mut projection) = root_projection {
                         for member in members {

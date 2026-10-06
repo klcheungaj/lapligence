@@ -513,6 +513,11 @@ fn render_function(
             shared_outputs.insert(index, address);
         }
     }
+    if function.receiver_class.is_some() {
+        // A method entered with a null receiver (reported above) returns at
+        // once, like a `return`, rather than run on a null object.
+        frame.line("if (!_this) goto _llg_return;");
+    }
     frame.block(&function.body)?;
     frame.line("goto _llg_return;");
     frame.line("_llg_return: ;");

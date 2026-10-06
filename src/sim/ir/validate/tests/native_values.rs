@@ -50,12 +50,16 @@ fn native_model() -> IrModel {
         ty: 0,
         activation: false,
         companions: Vec::new(),
+        class_field: None,
+        receiver: None,
     });
     model.native_values.push(IrNativeValue {
         c_name: "S_llg_native_1".into(),
         ty: 0,
         activation: true,
         companions: Vec::new(),
+        class_field: None,
+        receiver: None,
     });
     model
 }
@@ -167,6 +171,8 @@ fn native_value_identities_and_leaf_paths_must_resolve() {
         ty: 0,
         activation: true,
         companions: Vec::new(),
+        class_field: None,
+        receiver: None,
     };
     model.validate().unwrap();
 
@@ -344,6 +350,7 @@ fn native_companion_containers_follow_their_values() {
         initial_size: None,
         activation,
         class_field: None,
+        receiver: None,
     };
     let mut model = valid_model();
     // struct { string s; int q[$]; }: the queue is a null descriptor slot.
@@ -369,12 +376,16 @@ fn native_companion_containers_follow_their_values() {
         ty: 0,
         activation: false,
         companions: vec![0],
+        class_field: None,
+        receiver: None,
     });
     model.native_values.push(IrNativeValue {
         c_name: "S_llg_native_1".into(),
         ty: 0,
         activation: true,
         companions: vec![1],
+        class_field: None,
+        receiver: None,
     });
     let mut formal = native_formal(1, false);
     formal.native_companions = vec![1];

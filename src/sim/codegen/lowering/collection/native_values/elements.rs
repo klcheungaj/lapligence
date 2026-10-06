@@ -278,6 +278,8 @@ impl Codegen<'_> {
             ty,
             activation: true,
             companions,
+            class_field: None,
+            receiver: None,
         });
         self.native_value_layouts.insert(index, site);
         Ok(index)
@@ -947,6 +949,7 @@ impl Codegen<'_> {
                 initial_size: None,
                 activation: true,
                 class_field: None,
+                receiver: None,
             });
             self.staged_element_members
                 .insert((member.element, aggregate_path_suffix(&member.path)), ir);

@@ -422,7 +422,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   Contents/shape changes notify readers. Containers are values in subroutine
   formals, results and locals (automatic per activation, static per
   declaration), procedural-block locals and class properties (instance
-  containers inside their class's methods, static ones anywhere); calls copy
+  containers through `this`, handle variables, handle formals and handle
+  property chains, with per-object initializers; static ones anywhere); calls copy
   them in and out and pattern actuals build at the call. Unpacked array
   concatenations (§10.10) assign element values to queues and dynamic
   arrays, and queues also combine queues and queue slices
@@ -444,8 +445,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   Automatic containers that fork branches use are shared with them, and
   event controls and `wait` on them wake on another process's change
   ([sim_010](../tests/fixtures/sim/feature_completion/sim_010/readme.md)).
-  Handle-qualified class container properties (SIM-011), mutating methods of nested elements,
-  record-element equality (SIM-007) and string-key index-result queues remain
+  Class container properties selected through other handle expressions
+  (`a[i].q`) or outside procedural statements (SIM-011), mutating methods of
+  nested elements, record-element equality (SIM-007) and string-key
+  index-result queues remain
   restricted ([known issue](known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
   Methods are in §7. SV §§7.5, 7.8, 7.10, 7.12 **[SV-2005]**.
 - 🟨 **Chandle** — Typed native-pointer null/copy/identity/Boolean operations,
@@ -479,7 +482,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 | Fork-join_none capture | SIM-010 | SIM-010 | n/a | n/a | n/a | SIM-010 |
 | Unpacked array element, slice | one-dimensional fixed array: yes ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); multidimensional: rejected | yes, elements, constant/indexed slices, patterns, conditional merges, untimed NBAs | yes, element-wise | yes | SIM-008 | owner scope or model close |
 | Queue/dynamic/associative element | yes (missing: default), including queue and dynamic-array members ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); associative members: rejected | yes, whole element and push/insert/pop | yes, element-wise, including container members (whole associative arrays of records: rejected, [known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | constant and run-time element index: yes; container members in assignment, call and system-task statements | SIM-008 | delete, resize, container close |
-| Class property | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-018 |
+| Class property | instance property: yes, one value per object with member defaults and a per-object initializer, through `this`, handles and handle chains ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)); static, or with container members: rejected | yes | yes | constant: yes | SIM-011 | SIM-018 |
 | DPI argument | SIM-040 | SIM-040 | n/a | n/a | n/a | n/a |
 | Process-block local (static or automatic) | yes, including container members, member defaults and call initializers ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); automatic record that a `join_any`/`join_none` fork running again can keep live: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | yes | yes, including nested records and member arrays | constant and run-time index (at most 64 elements): yes | `ref`/`const ref` actual, whole or a constant selection: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)) | model close; automatic leaves reset at the next entry |
 
@@ -1317,8 +1320,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   inline-only event/ref environments remain rejected. Typed recursive
   delay-bearing tasks use independent SCC/arena activations; direct and mutual
   recursion have witnesses in [the function/task suite](../tests/sim_function.rs).
-  Timing-bearing class/virtual-interface tasks and jumps into other lexical
-  scopes/backward unstructured jumps remain rejected. Direct task calls and
+  Timing-bearing virtual-interface tasks (SIM-012) and jumps into other lexical
+  scopes/backward unstructured jumps remain rejected; timing-bearing class
+  tasks execute (SIM-011). Direct task calls and
   blocking `#/@/wait` inside functions are illegal; timing in an admitted detached
   join_none branch is separate. Disabling a task leaves output/inout results
   unspecified, unlike local block-disable followed by normal task return.
@@ -1583,11 +1587,27 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 These are bounded implementations, not full verification-infrastructure support.
 
 - 🟨 **Classes** — Nominal construction, constructor chaining, inherited/static/
-  virtual/super dispatch, parameterized layouts, forward/const/access metadata
-  and null checks are represented. Packed/real/string/chandle/class-handle fields
-  have explicit storage. Objects, including unreachable cycles, remain until
-  model close; there is no garbage collector. Timing-bearing tasks, unsupported
-  field/capture layouts and constrained randomization remain restricted.
+  virtual/super dispatch, parameterized layouts and forward/const/access
+  metadata are represented. Timing-bearing tasks are stackless coroutines:
+  virtual, `super`, static and hierarchical task calls suspend, return through
+  output and `ref` formals, keep independent automatic locals per activation,
+  and virtual dispatch to a suspending override enters it with the receiver
+  fixed at the call, so rebinding the handle during a wait changes only later
+  calls. Packed, unpacked-record (integral leaves; member, bit and part
+  selections), real, string, chandle and class-handle properties have explicit
+  storage, and records with string, real or handle members are one value per
+  object; resizable-container and one-dimensional fixed-array properties are
+  per-object containers with per-object initializers. Properties are reached
+  through `this`, handle variables, subroutine handle locals and formals, and
+  handle-property chains (`n.next.val`). A null receiver or property access is
+  a run-time error at its source position
+  ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)).
+  Objects, including unreachable cycles, remain until model close; there is
+  no garbage collector (SIM-018). Static record properties with string, real
+  or handle members, record properties with container members,
+  multidimensional fixed-array properties, container
+  properties selected through other handle expressions or outside procedural
+  statements, and constrained randomization remain restricted.
   SV ch.8 **[SV-2005]**.
 - 🟨 **Virtual interfaces** — Typed instance/modport identity survives rebinding,
   class/formal storage, fixed arrays (any range) and dynamic, queue and

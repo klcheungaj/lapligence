@@ -439,9 +439,11 @@ native records; associative members of container or fixed-array record
 elements; an element's container member named in a condition, loop header,
 `foreach`, declaration initializer or timing-controlled assignment, or as a
 nonblocking target or `ref` actual; records with container members in nonblocking
-assignments; class
-properties of any unpacked record type with string, real, handle or container
-members; equality of records with an associative member (and conditionals
+assignments; static class
+properties of a record type with string, real or handle members and class
+properties of a record type with container members (instance properties of
+records with string, real or handle members are one value per object and
+records of integral leaves are fixed-width properties, SIM-011); equality of records with an associative member (and conditionals
 with an ambiguous predicate on such records);
 compound or nonblocking writes to a record element of a resizable container;
 delayed (`#d`) nonblocking writes to a fixed array of native elements; a
@@ -521,7 +523,7 @@ roots for forked automatic block records, strings and handles.
 `sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
 `sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
-`sim_007/bad_native_record_class_property.sv` and `sim_007/bad_tagged_*.sv`.
+`sim_011/neg_{record_container,static_record}_property.sv` and `sim_007/bad_tagged_*.sv`.
 
 ## Resizable containers at subroutine, object and nesting boundaries
 
@@ -533,8 +535,9 @@ handle elements and nested containers.
 
 These legal forms reject with explicit diagnostics: a `ref` container formal
 whose actual is not a container variable of the formal's type; an
-instance container property selected through a handle (`h.q`) rather than
-inside the class's own methods, and an initializer on such a property; a
+instance container property selected through a handle that is not a
+variable, formal or handle property (`list[i].q`, `f().q`), or outside a
+procedural statement (a continuous assignment, for instance); a
 container-result call used other than as a whole assignment source or a
 statement (`f()[i]`, `f().size()`); a container argument in expression
 position that is neither a variable of the formal's type nor a packed/real
@@ -548,8 +551,10 @@ warning.
 ### Cause
 
 Container operations name their storage by a container index: model storage
-by a global, activation and object storage by a frame binding. A
-handle-qualified property, a nested element and a call result have no binding
+by a global, activation and object storage by a frame binding. A property
+selected through a plain handle read is an alias of the object's storage
+that re-reads the handle at each use (SIM-011); a handle computed by an
+element select or a call, a nested element and a call result have no binding
 the operation can name without an addressed-container operand; references
 need retained element cells and fork branches need capture pins. Nested
 storage is a dynamic-array value, so queue methods on it would need dynamic
@@ -558,13 +563,47 @@ array forms of every queue mutation.
 ### Intended direction
 
 An addressed-container operand (receiver or parent container plus index
-path) for container statements and queries, receiver-qualified class
-properties (SIM-011), retained element cells for `ref` (SIM-008), fork capture pins
-(SIM-010).
+path) for container statements and queries, which would also carry
+receivers computed by element selects or calls, retained element cells for
+`ref` (SIM-008), fork capture pins (SIM-010).
 
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`.
+
+## Fork branches using `this` and shallow class copies
+
+**Status:** open (SIM-011 follow-up; the fork part belongs to the fork
+capture work of SIM-010).
+
+### Symptom
+
+Two legal class forms fail with generic errors instead of executing: a
+`fork` branch inside a class method that reads or writes a property or calls
+a method of `this` (explicitly or implicitly) fails with "ownership emission
+is not yet implemented for unresolved native storage _this", whatever the
+join kind; and a shallow copy `b = new a;` or `new this` (SV 8.12) fails with
+"unsupported executable node `CopyClass`".
+
+### Cause
+
+A method's receiver is an implicit formal (`_this`) of the activation, not a
+declared variable, so fork capture planning, which captures declared
+automatics, gives the branch no binding for it. The frontend import records
+the copy as a `CopyClass` node that lowering has no IR form for.
+
+### Intended direction
+
+Capture the receiver into each fork branch by value (it cannot be reassigned,
+so a copy is exact for every join kind), and lower `CopyClass` to an object
+allocation that copies each property slot (packed bits, reals, string and
+handle values, native record values and container contents, per the SV 8.12
+shallow-copy rules).
+
+### Reproduce
+
+`class W; int x; task run(); fork #1 x = 5; join endtask endclass` called as
+`w.run()`; `P b = new a;` for any class `P`.
 
 ## Real references and real-array expressions outside stable storage
 
