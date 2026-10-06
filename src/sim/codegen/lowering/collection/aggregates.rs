@@ -426,6 +426,8 @@ impl<'a> Codegen<'a> {
                     };
                     self.model.signals[signal.ir].fixed_default = Some(value);
                 }
+            } else if !is_union {
+                self.apply_record_member_defaults(path, node, &descriptor, &leaves)?;
             }
         }
         let mut members = Vec::with_capacity(layout.members.len());

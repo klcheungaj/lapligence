@@ -62,6 +62,9 @@ impl<'a> Codegen<'a> {
         if let Some(value) = self.lower_native_comparison(scope_path, otype, operands)? {
             return Ok(value);
         }
+        if let Some(value) = self.lower_record_view_equality(scope_path, otype, operands)? {
+            return Ok(value);
+        }
         if let Some(value) = self.lower_real_array_equality(scope_path, otype, operands)? {
             return Ok(value);
         }

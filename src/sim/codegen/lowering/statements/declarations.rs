@@ -17,6 +17,12 @@ impl EmitCtx<'_, '_> {
             {
                 return Ok(statements);
             }
+            if let Some(statements) = self
+                .cg
+                .lower_block_native_declaration(&self.path, declaration)?
+            {
+                return Ok(statements);
+            }
         }
         if self.func.is_none()
             && self.cg.db.variable_lifetime(declaration) == VariableLifetime::Automatic

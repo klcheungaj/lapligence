@@ -411,8 +411,10 @@ queues, dynamic and associative arrays; SIM-007 adds one-dimensional fixed
 arrays of strings, handles and native records, run-time indices into native
 member arrays, packed-member selects, record-element equality and tagged
 unions with native members in module/static variables, container members
-of module records and of subroutine record values, and native records
-declared in procedural blocks.
+of module records and of subroutine record values, native records, strings
+and handles declared in procedural blocks, member defaults and any record
+source as a module-record initializer, and member-wise equality of nested
+records and member arrays.
 
 ### Symptom
 
@@ -442,12 +444,14 @@ to a static subroutine native record; fork-join_none capture of automatic
 native records; `f(...).member` selects on a native result; native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles
-publish no change marker); event controls on string members; an
-automatic record declared in a procedural block that a `join_any` or
-`join_none` fork can keep live while the block is entered again (declared
-in such a fork's branch or block, or in a block that starts one); and member
-defaults of a record type with native members declared in a procedural
-block. Tagged unions with real, string, record or
+publish no change marker); an automatic record, string, chandle or class
+handle declared in a procedural block that a `join_any` or `join_none` fork
+can keep live while the block is entered again (declared in such a fork that
+runs again, such as the `for (...) fork automatic string s = ...; join_none`
+idiom, or in a block that runs again and starts such a fork reading it); a
+member default whose value is itself a record with native members (its
+frontend constant is not captured); a pattern item that is a nested native
+record taken from a call result. Tagged unions with real, string, record or
 class-handle members execute as module, static and subroutine values
 (formals, results, locals, variable ports, conditional operators); as array
 elements and in nonblocking writes they reject. String and real pattern variables bind
@@ -466,10 +470,11 @@ are fixed-size views of the container runtime, so per-element delayed update
 records and nested views are not modeled. A record member that is itself a
 resizable container would need a companion container per record instance;
 the native type descriptor has no queue bound or associative key to build
-one from. A record declared in a procedural block reuses module-record leaf
-storage, one copy per declaration and instance: an automatic record is reset
-at each block entry, so a second live activation has no storage of its own,
-and member defaults are not applied to native leaf storage.
+one from. A record, string or handle declared in a procedural block reuses
+module storage, one copy per declaration and instance: an automatic one is
+reset at each block entry, so a second live activation has no storage of its
+own. The Db captures member defaults as constants, and an unpacked record
+constant has no captured value.
 
 ### Intended direction
 
@@ -479,13 +484,14 @@ Companion containers for container-valued record members; native ref aliases
 assignment); fork capture pins (SIM-010); Db capture of member access on
 call results for `f().m`; native tagged unions in subroutine storage
 through the same descriptors and root registry; and per-activation native
-roots for forked automatic block records.
+roots for forked automatic block records, strings and handles.
 
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
 `sim_004/neg_static_native_record_nba.sv`,
-`sim_007/bad_member_select_limit.sv` and `sim_007/bad_block_record_*.sv`.
+`sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
+`sim_007/bad_block_native_*.sv` and `sim_007/bad_record_member_default.sv`.
 
 ## Resizable containers at subroutine, object and nesting boundaries
 
