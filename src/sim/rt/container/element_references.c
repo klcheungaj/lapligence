@@ -19,9 +19,9 @@ struct llg_element_cell {
     unsigned char* string_key;
     size_t string_length;
     sv4_t value;
-    uint32_t width;
-    int8_t is_signed;
-    uint8_t two_state;
+    uint32_t element_width;
+    int8_t element_signed;
+    uint8_t element_two_state;
     uint8_t kind;
     uint8_t valid;
 };
@@ -34,9 +34,9 @@ static struct llg_element_cell* llg_element_cell_new(
     cell->refs = 1;
     cell->owner = owner;
     cell->kind = kind;
-    cell->width = width;
-    cell->is_signed = is_signed;
-    cell->two_state = two_state;
+    cell->element_width = width;
+    cell->element_signed = is_signed;
+    cell->element_two_state = two_state;
     cell->valid = 1;
     cell->value = llg_element_default(width, is_signed, two_state);
     return cell;
@@ -193,8 +193,8 @@ int llg_element_cell_write(void* ptr, sv4_t value) {
     if (!cell) llg_container_fatal("null retained element reference");
     if (!cell->valid) return 0;
     if (!cell->owner) {
-        sv4_replace(&cell->value, llg_element_assign(value, cell->width, cell->is_signed,
-                                                     cell->two_state));
+        sv4_replace(&cell->value, llg_element_assign(value, cell->element_width, cell->element_signed,
+                                                     cell->element_two_state));
         return 1;
     }
     switch (cell->kind) {
