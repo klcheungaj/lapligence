@@ -36,6 +36,10 @@ pub struct IrClassField {
     /// [`super::IrModel::containers`]). The field slot holds the owned
     /// container storage, so `ty` is the opaque [`IrClassFieldType::Chandle`].
     pub(in crate::sim) container: Option<usize>,
+    /// Native record value held by this instance property (index into
+    /// [`super::IrModel::native_values`], SIM-011); `ty` is then the opaque
+    /// [`IrClassFieldType::Chandle`] slot owning the value.
+    pub(in crate::sim) native_value: Option<usize>,
 }
 
 /// One packed member exposed by a virtual-interface view. The member index is
@@ -340,6 +344,12 @@ pub enum IrChandleExpr {
     /// storage such as a mailbox array element. Construction allocates a
     /// runtime mailbox; reads share the existing one.
     Mailbox(Box<IrMailboxExpr>),
+    /// A class handle used as a method-call receiver or to select a
+    /// property (SV 8.4): null is a run-time error reported at `site`.
+    Required {
+        handle: Box<IrChandleExpr>,
+        site: String,
+    },
 }
 
 /// A process-class handle expression. Process identities are deliberately
@@ -1712,6 +1722,16 @@ impl IrObjectStmt {
 }
 
 impl IrChandleExpr {
+    /// A side-effect-free read of handle storage, possibly null-checked:
+    /// a receiver that may be evaluated again at every use.
+    pub(in crate::sim) fn is_plain_receiver(&self) -> bool {
+        match self {
+            Self::Read(_) | Self::LocalRead(_) | Self::FormalRead(_) => true,
+            Self::Required { handle, .. } => handle.is_plain_receiver(),
+            _ => false,
+        }
+    }
+
     pub(in crate::sim) fn validate(
         &self,
         model: &super::IrModel,
@@ -1771,6 +1791,7 @@ impl IrChandleExpr {
                 otherwise.validate(model, formals, chandle_return)
             }
             Self::Null => Ok(()),
+            Self::Required { handle, .. } => handle.validate(model, formals, chandle_return),
             Self::Mailbox(mailbox) => mailbox.validate(model, formals, chandle_return),
             Self::Process(process) => process.validate(model, formals),
             Self::ContainerElement {
@@ -2031,6 +2052,7 @@ impl IrChandleExpr {
                 }
             }
             Self::EventObject(event) => event.expressions(visit),
+            Self::Required { handle, .. } => handle.expressions(visit),
             Self::Mailbox(mailbox) => mailbox.expressions(visit),
             Self::Process(process) => process.expressions(visit),
             Self::ContainerElement { indices, key, .. } => {
@@ -2066,6 +2088,7 @@ impl IrChandleExpr {
                 }
             }
             Self::EventObject(event) => event.expressions_mut(visit),
+            Self::Required { handle, .. } => handle.expressions_mut(visit),
             Self::Mailbox(mailbox) => mailbox.expressions_mut(visit),
             Self::Process(process) => process.expressions_mut(visit),
             Self::ContainerElement { indices, key, .. } => {

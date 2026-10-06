@@ -21,6 +21,15 @@ impl Frame<'_, '_> {
             .get(index)
             .ok_or("container reference is out of bounds")?;
         if let Some((class, field)) = container.class_field {
+            if let Some(receiver) = &container.receiver {
+                // The property selected through an explicit handle (SIM-011),
+                // re-read at each use.
+                let receiver = self.plain_handle_code(receiver, 0)?;
+                let (ty, _, _) = super::super::containers::activation_storage(container, "")?;
+                return Ok(format!(
+                    "(*({ty}*)llg_class_field({receiver}, {class}, {field}, 3)->value.handle)"
+                ));
+            }
             // Per-object storage of an instance property, reached through
             // the receiver of the enclosing method.
             if self
@@ -32,7 +41,7 @@ impl Frame<'_, '_> {
             }
             let (ty, _, _) = super::super::containers::activation_storage(container, "")?;
             return Ok(format!(
-                "(*({ty}*)llg_class_field(_this, {class}, {field})->value.handle)"
+                "(*({ty}*)llg_class_field(_this, {class}, {field}, 3)->value.handle)"
             ));
         }
         if !container.activation {
@@ -42,6 +51,80 @@ impl Frame<'_, '_> {
             .get(&index)
             .cloned()
             .ok_or_else(|| "container used before its lexical declaration".to_owned())
+    }
+
+    /// C expression of a plain handle read (`IrChandleExpr::is_plain_receiver`)
+    /// that emits no statements, so container names can embed it.
+    pub(super) fn plain_handle_code(
+        &self,
+        value: &IrChandleExpr,
+        depth: usize,
+    ) -> Result<String, String> {
+        if depth > 256 {
+            return Err("cyclic or excessively deep class property receiver".to_owned());
+        }
+        let local = |name: &str| {
+            self.native_bindings
+                .iter()
+                .rev()
+                .find_map(|scope| scope.get(name))
+                .filter(|binding| binding.kind == NativeKind::Chandle)
+                .map(|binding| format!("*({})", binding.address))
+                .ok_or_else(|| format!("class property receiver `{name}` has no handle storage"))
+        };
+        match value {
+            IrChandleExpr::Read(index) => Ok(self.ctx.model.objects[*index].c_name.clone()),
+            IrChandleExpr::Required { handle, site } => Ok(format!(
+                "llg_class_require({}, {})",
+                self.plain_handle_code(handle, depth + 1)?,
+                c_string_literal(site)
+            )),
+            IrChandleExpr::LocalRead(name)
+                if name == "_this" && self.ctx.func.is_some_and(|f| f.receiver_class.is_some()) =>
+            {
+                Ok("_this".to_owned())
+            }
+            IrChandleExpr::LocalRead(name) => {
+                let Some(access) = self
+                    .ctx
+                    .model
+                    .native_accesses
+                    .iter()
+                    .find(|access| &access.name == name)
+                else {
+                    return local(name);
+                };
+                match access.kind {
+                    IrNativeAccessKind::ClassField { class, field }
+                        if self.ctx.model.classes[class].fields[field].ty
+                            == IrClassFieldType::Chandle =>
+                    {
+                        Ok(format!(
+                            "llg_class_field({}, {class}, {field}, 3)->value.handle",
+                            self.plain_handle_code(&access.receiver, depth + 1)?
+                        ))
+                    }
+                    _ => Err(format!(
+                        "class property receiver `{name}` is not a handle property"
+                    )),
+                }
+            }
+            IrChandleExpr::FormalRead(index) => {
+                let formal = self
+                    .ctx
+                    .func
+                    .and_then(|function| function.formals.get(*index))
+                    .ok_or_else(|| "handle formal outside a function".to_owned())?;
+                if formal.is_ref() {
+                    Ok(format!("*r{index}"))
+                } else if formal.is_out {
+                    Ok(format!("*o{index}"))
+                } else {
+                    local(&format!("a{index}"))
+                }
+            }
+            _ => Err("class property receiver is not a plain handle read".to_owned()),
+        }
     }
 
     /// Create an empty container with the storage type of `index`, owned by

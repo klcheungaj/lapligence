@@ -58,14 +58,16 @@ impl Frame<'_, '_> {
         let (address, ty) = match access.kind {
             IrNativeAccessKind::ClassField { class, field } => {
                 let ty = self.ctx.model.classes[class].fields[field].ty;
-                let member = match ty {
-                    IrClassFieldType::Packed { .. } => "packed",
-                    IrClassFieldType::Real { .. } => "real",
-                    IrClassFieldType::String => "string",
-                    IrClassFieldType::Chandle => "handle",
+                let (member, kind) = match ty {
+                    IrClassFieldType::Packed { .. } => ("packed", 0),
+                    IrClassFieldType::Real { .. } => ("real", 1),
+                    IrClassFieldType::String => ("string", 2),
+                    IrClassFieldType::Chandle => ("handle", 3),
                 };
                 (
-                    format!("&llg_class_field({receiver}, {class}, {field})->value.{member}"),
+                    format!(
+                        "&llg_class_field({receiver}, {class}, {field}, {kind})->value.{member}"
+                    ),
                     ty,
                 )
             }

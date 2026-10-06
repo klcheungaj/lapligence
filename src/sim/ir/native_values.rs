@@ -32,6 +32,13 @@ pub struct IrNativeValue {
     /// declarations, formals, calls and whole-value copies carry these
     /// containers with the value.
     pub(in crate::sim) companions: Vec<usize>,
+    /// Instance property storage of class `.0`, field `.1` (SIM-011): one
+    /// value per object, reached through the enclosing method's `this` or
+    /// through `receiver`.
+    pub(in crate::sim) class_field: Option<(usize, usize)>,
+    /// The property selected through an explicit handle, re-read at each use
+    /// (a plain handle read, as for [`super::IrContainer::receiver`]).
+    pub(in crate::sim) receiver: Option<IrChandleExpr>,
 }
 
 impl IrNativeValue {

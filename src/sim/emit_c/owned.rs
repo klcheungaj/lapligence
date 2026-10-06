@@ -201,6 +201,9 @@ pub(super) struct Frame<'a, 'm> {
     /// Calls of a recursive subprogram's coroutine that enter the chain
     /// arena (see `execution::recursion`); empty for every other frame.
     recursive_targets: BTreeSet<crate::sim::execution::CallTarget>,
+    /// Class virtual slots with a suspending implementation; dispatch through
+    /// them is an arena call site (SIM-011).
+    suspendable_slots: BTreeSet<usize>,
     /// A recursive subprogram's coroutine, run by a synchronous driver: it
     /// keeps plain-function exit semantics and numbers its resume points
     /// (all arena calls) during emission.
@@ -229,6 +232,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         frame.coroutine_functions = (0..ctx.model.funcs.len())
             .filter(|function| analysis.is_coroutine_function(*function))
             .collect();
+        frame.suspendable_slots = analysis.suspendable_dispatch_slots().clone();
         let mut sites = analysis
             .sites(owner)
             .into_iter()
@@ -259,6 +263,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         frame.coroutine_functions = (0..ctx.model.funcs.len())
             .filter(|function| analysis.is_coroutine_function(*function))
             .collect();
+        frame.suspendable_slots = analysis.suspendable_dispatch_slots().clone();
         frame.recursive_targets =
             crate::sim::execution::direct_call_targets(ctx.model, &ctx.model.func(function).body)
                 .into_iter()
@@ -355,6 +360,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             cell_eligibility: frame_cells::CellEligibility::default(),
             stack_cells: String::new(),
             recursive_targets: BTreeSet::new(),
+            suspendable_slots: BTreeSet::new(),
             synchronous: false,
             scope_fields: false,
         }

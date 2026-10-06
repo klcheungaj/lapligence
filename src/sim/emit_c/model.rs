@@ -926,7 +926,10 @@ fn render_model(
     let mut activation_descriptors = Vec::new();
     for container in &model.containers {
         let declaration = super::containers::declaration_and_init(container)?.0;
-        if container.activation && container.class_field.is_none() {
+        // A receiver-qualified class property alias (SIM-011) names the
+        // object's existing storage; its tables matter only if referenced.
+        if (container.activation && container.class_field.is_none()) || container.receiver.is_some()
+        {
             if !declaration.is_empty() {
                 activation_descriptors
                     .push((format!("{}_llg_value_", container.c_name), declaration));
@@ -935,6 +938,9 @@ fn render_model(
             out.push_str(&declaration);
         }
     }
+    // Native type descriptors precede the class constructors, which create
+    // record properties from them (SIM-011).
+    out.push_str(&super::owned::native_values::native_type_tables(model)?.0);
     render_class_decls(model, &mut out);
     super::owned::udp::tables(model, &mut out);
     render_signal_decls(model, &mut out);
@@ -942,7 +948,6 @@ fn render_model(
     render_vpi_compile_calls(model, &mut out);
     render_static_local_decls(model, &mut out);
     super::owned::model::persistent_returns(model, &mut out);
-    out.push_str(&super::owned::native_values::native_type_tables(model)?.0);
     for object in &model.objects {
         if matches!(
             object.ty,
@@ -1052,8 +1057,17 @@ fn render_model(
     out.push_str(&coroutine_metadata);
     render_virtual_dispatch_prototypes(model, &mut out);
     render_virtual_interface_call_prototypes(model, &mut out);
-    render_virtual_dispatch_bodies(model, &mut out);
-    recursion::render_arena_dispatch(execution, &recursive_functions, &mut out);
+    render_virtual_dispatch_bodies(
+        model,
+        |function| execution.analysis().is_coroutine_function(function),
+        &mut out,
+    );
+    recursion::render_arena_dispatch(
+        execution,
+        &recursive_functions,
+        &coroutine_functions,
+        &mut out,
+    );
     let ctx = RCtx {
         value_backend: config.backend,
         model,

@@ -74,6 +74,47 @@ impl Frame<'_, '_> {
         Ok(())
     }
 
+    /// Suspendable class virtual call (SIM-011): the slot's arena-dispatch
+    /// helper selects the implementation from the receiver evaluated at the
+    /// call, so a later rebinding of the receiver variable cannot change the
+    /// running activation's `this`. A suspending implementation gets an
+    /// arena frame entered here; any other ran as a plain call and the helper
+    /// returned NULL.
+    fn dispatch_coroutine_call(
+        &mut self,
+        function_index: usize,
+        function: &IrFunc,
+        parameters: &[String],
+    ) -> Result<(), String> {
+        if function.ret.is_some() || function.ret_string || function.ret_chandle {
+            return Err("a suspendable subprogram cannot return a value".to_owned());
+        }
+        let virtual_slot = function
+            .virtual_slot
+            .ok_or_else(|| "virtual call has no slot".to_owned())?;
+        let slot = self.take_call_slot(function_index, "llg_co_anchor_t")?;
+        if slot.mechanism != crate::sim::execution::CallMechanism::Arena {
+            return Err(format!(
+                "suspendable virtual call site {} is not an arena call",
+                slot.resume
+            ));
+        }
+        let storage = self.declare("llg_co_anchor_t*", "arena_call", "NULL".to_owned());
+        let mut arguments = vec!["ch".to_owned()];
+        arguments.extend(parameters.iter().cloned());
+        self.line(format!(
+            "{storage} = llg_class_co_enter_{virtual_slot}({});",
+            arguments.join(", ")
+        ));
+        self.line(format!("if ({storage}) {{"));
+        self.line(format!(
+            "LLG_CO_CALL_ARENA(co, ch, {}, {storage}->desc, {storage});",
+            slot.resume
+        ));
+        self.line("}");
+        Ok(())
+    }
+
     /// Arena call from a recursive subprogram's coroutine into its own
     /// component. `parameters` are the callee's plain parameters in order,
     /// with packed inputs as by-value descriptors for a static callee frame.
@@ -241,14 +282,23 @@ impl Frame<'_, '_> {
         }
         // Coroutine frames hold argument descriptors; plain functions borrow
         // packed inputs by address (see `model::functions::func_param_fields`).
-        let coroutine = self.coroutine_functions.contains(&f);
+        // Class virtual dispatch to a slot with a suspending implementation
+        // enters the selected implementation through its arena-dispatch
+        // helper with the plain parameters (SIM-011).
+        let dispatch_coroutine = virtual_dispatch
+            && virtual_call.is_none()
+            && function
+                .virtual_slot
+                .is_some_and(|slot| self.suspendable_slots.contains(&slot));
+        let coroutine = !dispatch_coroutine && self.coroutine_functions.contains(&f);
         // A recursive coroutine enters its own component through the chain
         // arena (see `execution::recursion`): statically with the callee's
         // frame, dynamically through an arena-dispatch helper taking the
         // plain parameters.
         let recursive_target =
             crate::sim::execution::CallTarget::of_call(f, virtual_dispatch, virtual_call);
-        let recursive = !coroutine && self.recursive_targets.contains(&recursive_target);
+        let recursive =
+            !coroutine && !dispatch_coroutine && self.recursive_targets.contains(&recursive_target);
         let by_value_inputs = coroutine
             || (recursive
                 && matches!(
@@ -715,6 +765,9 @@ impl Frame<'_, '_> {
         let result = if coroutine {
             self.coroutine_call(f, &function, &parameters)?;
             None
+        } else if dispatch_coroutine {
+            self.dispatch_coroutine_call(f, &function, &parameters)?;
+            None
         } else if recursive {
             self.recursive_call(&function, recursive_target, parameters, native_result)?
         } else {
@@ -746,7 +799,7 @@ impl Frame<'_, '_> {
         // callee, or any override behind dynamic dispatch, may disable an
         // activation of this process; copy-out must then be skipped.
         let dynamic = virtual_dispatch || virtual_call.is_some();
-        if !coroutine && (dynamic || self.callee_may_disable(f)) {
+        if !coroutine && !dispatch_coroutine && (dynamic || self.callee_may_disable(f)) {
             self.cancellation_point();
         }
         self.cancellation_check_covering(call_mark)?;

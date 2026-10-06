@@ -189,6 +189,32 @@ impl<'a> Codegen<'a> {
                 kind: super::super::storage_kind(ret.width),
             });
         }
+        // A class-handle local or formal of an automatic subroutine is
+        // captured by handle identity, like an automatic semaphore (SIM-011).
+        if let Some(handle) = function
+            .chandle_read
+            .get(&target)
+            .filter(|handle| !matches!(handle, IrChandleExpr::Read(_)))
+            .filter(|_| self.function_is_automatic(function))
+        {
+            return Some(CaptureSource {
+                info: ProcLocalInfo {
+                    c_name: String::new(),
+                    width: 1,
+                    signed: false,
+                    two_state: true,
+                    static_signal: None,
+                },
+                initial: IrExpr::new(
+                    IrExprKind::ObjectQuery(Box::new(IrObjectQuery::HandleCapture(handle.clone()))),
+                    1,
+                    false,
+                    None,
+                ),
+                lifetime: StorageLifetime::Automatic,
+                kind: StorageKind::Opaque,
+            });
+        }
         None
     }
 

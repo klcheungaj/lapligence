@@ -6,7 +6,7 @@
 use super::*;
 
 /// Name of the root `llg_value_desc_t` of native type `ty`.
-pub(super) fn native_type_descriptor(ty: usize) -> String {
+pub(in crate::sim::emit_c) fn native_type_descriptor(ty: usize) -> String {
     format!("llg_native_type_{ty}_desc_0")
 }
 
@@ -28,7 +28,11 @@ pub(in crate::sim::emit_c) fn native_type_tables(
             "    llg_value_desc_check(&{root}, \"native type {index}\");\n"
         ));
     }
-    for value in model.native_values.iter().filter(|value| !value.activation) {
+    for value in model
+        .native_values
+        .iter()
+        .filter(|value| is_model_storage(value))
+    {
         declarations.push_str(&format!("static llg_native_root_t {};\n", value.c_name));
         checks.push_str(&format!(
             "    llg_native_root_init(&{}, &{});\n",
@@ -44,9 +48,15 @@ pub(in crate::sim::emit_c) fn native_value_teardown(model: &IrModel) -> String {
     model
         .native_values
         .iter()
-        .filter(|value| !value.activation)
+        .filter(|value| is_model_storage(value))
         .map(|value| format!("    llg_native_root_destroy(&{});\n", value.c_name))
         .collect()
+}
+
+/// A model-global native value: neither activation nor per-object storage
+/// of a class property (SIM-011), which its object creates and releases.
+fn is_model_storage(value: &crate::sim::ir::IrNativeValue) -> bool {
+    !value.activation && value.class_field.is_none()
 }
 
 /// C member of `llg_value_t.value` holding a leaf of this type.
@@ -111,6 +121,26 @@ impl Frame<'_, '_> {
             .native_values
             .get(index)
             .ok_or("native value reference is out of bounds")?;
+        if let Some((class, field)) = value.class_field {
+            // A record class property (SIM-011): the object's value through
+            // the explicit handle, or through the enclosing method's `this`.
+            let receiver = match &value.receiver {
+                Some(receiver) => self.plain_handle_code(receiver, 0)?,
+                None if self
+                    .ctx
+                    .func
+                    .is_some_and(|function| function.receiver_class.is_some()) =>
+                {
+                    "_this".to_owned()
+                }
+                None => {
+                    return Err("class record property used outside its class methods".to_owned())
+                }
+            };
+            return Ok(format!(
+                "(&((llg_native_root_t*)llg_class_field({receiver}, {class}, {field}, 3)->value.handle)->value)"
+            ));
+        }
         if value.activation {
             self.native_values
                 .get(&index)

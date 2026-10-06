@@ -482,8 +482,14 @@ contexts reject explicitly. A read-modify-write of one
 element (`c[k] op= v`, `c[k]++`) needs an index free of side effects; an
 implicit conversion around a container index is stripped so X/Z bits reach the
 runtime's invalid-index check. Reject `ref` container formals (SIM-008), fork
-capture of activation containers (SIM-010) and handle-qualified class container
-properties (SIM-011) explicitly.
+capture of activation containers (SIM-010) explicitly. A class container
+property selected through an explicit handle (`h.q`, `n.next.q`) gets a
+receiver-qualified alias container before its statement lowers
+(`qualify_class_containers`, keyed by the path expression; element selects
+find it through their path child); only plain handle reads qualify, other
+receivers reject. Packed and integral-record class properties are
+fixed-value cells (`class_field_cell`) for member, bit and part projections.
+Explicit class receivers are `IrChandleExpr::Required` with their source site.
 
 An invalid index reads the element type's uninitialized default (SV 7.4.6), not
 an all-X payload: mixed-state aggregate elements keep two-state leaves at zero

@@ -545,6 +545,7 @@ impl<'a> Codegen<'a> {
             initial_size: None,
             activation: true,
             class_field: None,
+            receiver: None,
         });
         // Record elements take their descriptor from the target's type.
         self.container_types_like.insert(temporary, dst);

@@ -1,0 +1,6 @@
+t=3 r1=101 r2=102 r3=203 calls=3
+fact=120
+level 1 t=6 sum=1
+level 2 t=6 sum=3
+level 3 t=6 sum=6
+t=6 sum=6
