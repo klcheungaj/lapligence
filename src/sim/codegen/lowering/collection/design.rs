@@ -325,6 +325,7 @@ impl<'a> Codegen<'a> {
                 _ => {}
             }
         }
+        self.collect_scope_block_records(path, inst)?;
         // Parent declaration initializers may read elaborated child parameters
         // through bound hierarchical references. Populate only parameter values
         // here so descendant runtime initializers retain their normal order.
@@ -378,6 +379,17 @@ impl<'a> Codegen<'a> {
                 }
                 let child_path = format!("{path}.{}", display_ident(&cname));
                 self.collect_instance(*c, &child_path)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Procedural-block records of the processes directly in `scope`,
+    /// collected after the scope's own declarations.
+    fn collect_scope_block_records(&mut self, path: &str, scope: NodeId) -> Result<(), String> {
+        for child in &self.node(scope).children {
+            if matches!(self.kind(*child), NodeKind::Process { .. }) {
+                self.collect_block_records(path, *child)?;
             }
         }
         Ok(())
@@ -666,6 +678,7 @@ impl<'a> Codegen<'a> {
                 _ => {}
             }
         }
+        self.collect_scope_block_records(&gs_path, gs)?;
         // Variable declaration initializers, folded after the scope's own
         // parameters are collected (see `collect_var_inits`).
         self.collect_var_inits(&gs_path, gs)?;

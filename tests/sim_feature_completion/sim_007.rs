@@ -1,6 +1,7 @@
 //! SIM-007: native aggregates, tagged values and pattern expressions. Fixed
 //! arrays of strings, records with string/real/handle leaves and their
-//! patterns, slices, conditionals, equality, calls and nonblocking writes.
+//! patterns, slices, conditionals, equality, calls and nonblocking writes,
+//! in module storage and in procedural blocks.
 //! Oracles are derived by hand in the fixture readme.
 use super::sim_cli;
 
@@ -193,5 +194,56 @@ fn nested_native_records_cross_calls_ports_and_selects() {
         SUITE,
         "bad_handle_record_port",
         "record port `tb.u.i` with a class handle member is not supported by value links",
+    );
+}
+
+#[test]
+fn procedural_block_records_own_their_members() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_007/block_records.out");
+    sim_cli::run_case_backend_parity(SUITE, "block_records", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "block_records", expected);
+}
+
+#[test]
+fn procedural_block_records_keep_static_and_automatic_lifetimes() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/block_record_lifetimes.out");
+    sim_cli::run_case_backend_parity(SUITE, "block_record_lifetimes", expected, &[], &[]);
+    // The emptied associative member warns on each read of a missing key
+    // (SV 7.8.6): its default does not survive into the next entry.
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim")
+        .join(SUITE)
+        .join("block_record_lifetimes.sv");
+    sim_cli::run_compile_opts_after_db_drop(
+        SUITE,
+        "block_record_lifetimes",
+        llg::core::compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        },
+        expected,
+        "llg container warning: associative-array read of a nonexistent entry returns the default\n\
+         llg container warning: associative-array read of a nonexistent entry returns the default\n",
+    );
+}
+
+#[test]
+fn procedural_block_record_boundaries_are_rejected_explicitly() {
+    sim_cli::reject_case(
+        SUITE,
+        "bad_block_record_fork",
+        "automatic record `r` in `tb` declared in or around a fork with `join_any` or `join_none` is not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_block_record_member_default",
+        "member default of `s` in procedural-block record `r` in `tb` is not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_block_record_automatic_nba",
+        "nonblocking assignment to automatic variable 'r' is not allowed",
     );
 }

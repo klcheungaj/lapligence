@@ -562,7 +562,10 @@ impl<'a> Codegen<'a> {
                         found = sorted_node_ids(&self.unpacked_aggregates)
                             .into_iter()
                             .find_map(|target| {
-                                (self.node(target).name == parts[base_index]
+                                // A scope path never names a procedural block's
+                                // declaration.
+                                (!self.block_records.contains_key(&target)
+                                    && self.node(target).name == parts[base_index]
                                     && self.instance_path_of(target) == scope)
                                     .then_some((target, base_index))
                             });
