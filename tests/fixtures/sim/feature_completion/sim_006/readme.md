@@ -29,6 +29,7 @@ handle only, never the designated object.
 
 | Fixture | Boundary |
 | --- | --- |
+| `container_initializers` | §§6.21, 7.5.1, 10.5. `d` is `new[n]` after `n` = 3; `q2` copies `q1` ('{4, 5}): `q2[1]` = 5; `e` = `new[4](d2)` keeps 7, 8 then defaults: size 4, `e[1]` = 8; `c` = {4, 5, 6}: `c[2]` = 6; `k` reads both containers after their initializers: 3 + 2 = 5; `f(2)`: `t` has 2 elements and `u[2]` = 2: 4. |
 | `neg_wildcard_foreach`, `neg_wildcard_first`, `neg_wildcard_find` | §7.8.1: a wildcard-index associative array cannot be traversed by `foreach` or used with methods that return an index (frontend diagnostics). |
 | `queue_concatenation` | §§7.10.4, 10.10. `{1, 2, 3}` then `{q[1:$], 0}` gives 2 3 0; `{q[0] + 10, q}` reads `q[0]` before the write: 12 2 3 0; strings `{s, "b", s}` give a b a; reals append 2.5; record elements copy by value (`rq[1].k` = 5, the appended copy keeps 1, name x); the bounded queue `[$:2]` keeps 3 of 4 elements (with the runtime warning on stderr); the automatic local `t` doubles to 4 5 4 5 (4 + 5 = 9); a dynamic array takes element values (3 elements, last 9). |
 | `neg_dynamic_array_concat` | Legal by §10.10; an array item in a concatenation assigned to a dynamic array is rejected explicitly (queue targets combine array items). |

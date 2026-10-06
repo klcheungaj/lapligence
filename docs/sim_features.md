@@ -412,6 +412,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   concatenations (§10.10) assign element values to queues and dynamic
   arrays, and queues also combine queues and queue slices
   (`q = {q[1:$], x}`); array items assigned to a dynamic array reject.
+  Declaration initializers accept any whole-container source (`new[n]`,
+  `new[n](src)`, copies, concatenations); static ones run in the declaration
+  initialization schedule after what they read.
   Elements may be
   records (whole and member access, push/insert/pop), nested containers
   (written from dynamic arrays, patterns or concatenations; nested `size()`)

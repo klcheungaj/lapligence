@@ -215,3 +215,10 @@ fn unpacked_array_concatenations_assign_queues_and_dynamic_arrays() {
         "unpacked array concatenation of arrays into a dynamic array",
     );
 }
+
+#[test]
+fn container_declarations_accept_any_whole_container_initializer() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/container_initializers.out");
+    sim_cli::run_case_backend_parity(SUITE, "container_initializers", expected, &[], &[]);
+}
