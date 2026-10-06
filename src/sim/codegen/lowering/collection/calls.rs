@@ -131,6 +131,17 @@ impl<'a> Codegen<'a> {
         }
         let formals = meta.formals.clone();
         let bound = self.bind_call_args(self.inst, &formals, args)?;
+        let method =
+            virtual_call_info.is_some() || self.model.funcs[meta.ir].receiver_class.is_some();
+        let function = self.record_ref_callee(
+            scope_path,
+            ft,
+            callee_inst,
+            &formals,
+            &bound,
+            meta.ir,
+            method,
+        )?;
         for (idx, (io, _is_out)) in formals.iter().enumerate() {
             if bound[idx].is_event {
                 return Err(format!(
@@ -499,7 +510,7 @@ impl<'a> Codegen<'a> {
         let depth = parse_depth(&self.depth_arg);
         Ok(IrExpr::new(
             IrExprKind::CallFn(Box::new(IrCallExpr {
-                f: meta.ir,
+                f: function,
                 args: out_args,
                 depth,
                 receiver,

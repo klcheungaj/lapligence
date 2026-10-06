@@ -422,3 +422,58 @@ fn native_companion_containers_follow_their_values() {
     model.native_values[0].companions = vec![];
     assert!(model.validate().is_err(), "argument companion count");
 }
+
+#[test]
+fn statically_bound_record_refs_take_the_bound_operand_only() {
+    let mut model = native_model();
+    let mut formal = native_formal(1, false);
+    formal.mode = IrFormalMode::Ref;
+    // Function 0 is the template; function 1 binds its formal statically.
+    model.funcs.push(function(vec![], vec![formal.clone()]));
+    let mut bound = function(vec![], vec![formal]);
+    bound.bound_native_refs = vec![0];
+    model.funcs.push(bound);
+    let call = |function, args| {
+        IrStmt::Call(Box::new(IrCall::new(
+            function,
+            args,
+            IrDepth::PROC,
+            Vec::new(),
+            Vec::new(),
+        )))
+    };
+    model.processes.push(IrProcess::new(
+        "p0".into(),
+        "top.p".into(),
+        IrShape::RunOnce,
+        vec![],
+        vec![
+            call(0, vec![IrCallArg::NativeValue(0)]),
+            call(1, vec![IrCallArg::NativeRefBound]),
+        ],
+    ));
+    model.spawns.push("p0".into());
+    model.validate().unwrap();
+
+    // The bound marker and value operands never stand in for each other.
+    for (function, argument) in [
+        (0, IrCallArg::NativeRefBound),
+        (1, IrCallArg::NativeValue(0)),
+    ] {
+        model.processes[0].body = vec![call(function, vec![argument])];
+        assert!(model.validate().is_err(), "operand for function {function}");
+    }
+    model.processes[0].body = vec![call(1, vec![IrCallArg::NativeRefBound])];
+
+    // The bound body has no value for that formal.
+    model.funcs[1].body = vec![IrStmt::NativeValueCopy { dst: 0, src: 1 }];
+    assert!(model.validate().is_err(), "bound formal value used");
+    model.funcs[1].body = Vec::new();
+
+    // Only native `ref` formals bind statically.
+    model.funcs[1].formals[0].mode = IrFormalMode::Input;
+    assert!(model.validate().is_err(), "bound input formal");
+    model.funcs[1].formals[0].mode = IrFormalMode::Ref;
+    model.funcs[1].bound_native_refs = vec![1];
+    assert!(model.validate().is_err(), "bound formal out of bounds");
+}

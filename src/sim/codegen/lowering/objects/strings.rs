@@ -93,7 +93,7 @@ impl Codegen<'_> {
             _ => None,
         };
         if let Some(callee) = callable {
-            let (ft, _) =
+            let (ft, callee_inst) =
                 self.resolve_callee_env(self.inst, &self.node(node).name, false, callee)?;
             let meta = self
                 .func_meta
@@ -109,6 +109,10 @@ impl Codegen<'_> {
             let formals = meta.formals.clone();
             let actuals = self.call_argument_nodes(node);
             let bound = self.bind_call_args(self.inst, &formals, &actuals)?;
+            let method = matches!(self.kind(node), NodeKind::MethodCall { .. })
+                || self.model.funcs[meta.ir].receiver_class.is_some();
+            let function =
+                self.record_ref_callee(path, ft, callee_inst, &formals, &bound, meta.ir, method)?;
             let mut arg_irs = vec![None; formals.len()];
             let mut out_args = Vec::new();
             let mut in_args = Vec::new();
@@ -116,7 +120,8 @@ impl Codegen<'_> {
                 if self.is_subroutine_container(*io) {
                     let argument =
                         self.container_call_argument(path, *io, bound[idx].expr, None)?;
-                    if *is_out {
+                    // `ref` formals pass by address with the outputs.
+                    if *is_out || self.is_ref_formal(*io) {
                         out_args.push(argument);
                     } else {
                         in_args.push(argument);
@@ -125,7 +130,7 @@ impl Codegen<'_> {
                 }
                 if self.is_native_declaration(*io) {
                     let argument = self.native_expression_argument(path, *io, bound[idx].expr)?;
-                    if *is_out {
+                    if *is_out || self.is_ref_formal(*io) {
                         out_args.push(argument);
                     } else {
                         in_args.push(argument);
@@ -211,6 +216,7 @@ impl Codegen<'_> {
                         | IrCallArg::StringRefAddr { .. }
                         | IrCallArg::StringOutTemp { .. }
                         | IrCallArg::NativeValue(_)
+                        | IrCallArg::NativeRefBound
                         | IrCallArg::NativeCall { .. }
                         | IrCallArg::Container(_)
                         | IrCallArg::NativeLeaves { .. }
@@ -227,7 +233,7 @@ impl Codegen<'_> {
                 return Ok(IrStringExpr::Call {
                     receiver: self.class_method_receiver(node)?.map(Box::new),
                     virtual_dispatch: self.class_method_virtual_dispatch(node),
-                    function: meta.ir,
+                    function,
                     args,
                     depth: parse_depth(&self.depth_arg),
                 });
@@ -235,7 +241,7 @@ impl Codegen<'_> {
             return Ok(IrStringExpr::TypedCall {
                 receiver: self.class_method_receiver(node)?.map(Box::new),
                 virtual_dispatch: self.class_method_virtual_dispatch(node),
-                function: meta.ir,
+                function,
                 args: out_args,
                 depth: parse_depth(&self.depth_arg),
             });

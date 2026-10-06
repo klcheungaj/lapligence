@@ -414,7 +414,8 @@ unions with native members in module/static variables, container members
 of module records and of subroutine record values, native records, strings
 and handles declared in procedural blocks, member defaults and any record
 source as a module-record initializer, and member-wise equality of nested
-records and member arrays.
+records and member arrays; SIM-008 binds native record `ref` formals to whole
+subroutine records and to module, static and procedural-block records.
 
 ### Symptom
 
@@ -447,9 +448,13 @@ delayed (`#d`) nonblocking writes to a fixed array of native elements; a
 run-time index into a native member array of more than 64 elements or with a
 side-effecting index; a run-time index into an array of records nested in a
 native record (`r.e[k].s`, which currently fails with a generic lowering
-diagnostic rather than a dedicated one); a module, static or process-block
-record as the actual of a native record `ref` formal (subroutine records
-alias); nonblocking writes
+diagnostic rather than a dedicated one); as the actual of a native record
+`ref` formal, an element of a queue, dynamic, associative or fixed array of
+records, a run-time-indexed member, a member of a subroutine record, or any
+module, static or block record passed to a class method (whole subroutine
+records and module, static and block records or constant selections of
+them bind); an event control on a member of such a formal when the actual is
+a subroutine record (a generic lowering diagnostic); nonblocking writes
 to a static subroutine native record; fork-join_none capture of automatic
 native records; sub-record, member-array or handle selects of a native call
 result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
@@ -491,15 +496,19 @@ module storage, one copy per declaration and instance: an automatic one is
 reset at each block entry, so a second live activation has no storage of its
 own. The Db captures member defaults as constants, and an unpacked record
 constant has no captured value. A native `ref` formal is the caller's
-`llg_value_t` and companion containers, which module-like records do not have.
+`llg_value_t` and companion containers when the actual is a whole subroutine
+record; a module-like record has no such value, so a call binding one runs a
+specialization of the subroutine that names the record's leaves directly,
+which needs the record statically: an element selected at run time or held
+in a container has neither, and a method's receiver dispatch does not reach
+specializations.
 
 ### Intended direction
 
 An addressed-container operand for container members of elements (in place
-of statement staging); a native `ref`
-formal passed as one reference per leaf (packed, string, real, handle and
-container references already exist), so module-like and subroutine records
-bind the same callee ABI (SIM-008); a root-plus-item-path pending record for static native roots
+of statement staging); retained element cells (SIM-008 container element
+references) passed as one reference per leaf for element actuals of native
+`ref` formals, which specialization cannot bind; a root-plus-item-path pending record for static native roots
 (a queued leaf pointer would dangle because a root replaces its leaves on
 assignment); fork capture pins (SIM-010); a commit-time tag guard on queued
 native writes for tagged-union member NBAs; and per-activation native
@@ -509,7 +518,7 @@ roots for forked automatic block records, strings and handles.
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
 `sim_004/neg_static_native_record_nba.sv`,
-`sim_008/neg_module_record_ref.sv`,
+`sim_008/neg_record_ref_{element,member,method}.sv`,
 `sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
 `sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
@@ -694,8 +703,10 @@ legal forms still reject: such a task that also has a native record or
 container formal ("needs caller-environment expansion, which is not
 supported"); a recursive such task; and `@(t)` on a string `ref` formal
 ("cannot resolve signal reference"). `wait (cond)` over formals, event
-controls on module signals and on `ref` formals with module-signal actuals,
-and event formals of every direction take the typed call path.
+controls on module signals and on `ref` formals with module-signal actuals
+(including members of a native record `ref` formal bound to a module, static
+or block record), and event formals of every direction take the typed call
+path.
 
 ### Cause
 

@@ -141,7 +141,11 @@ validator rejects uses outside that scope. `NativeValueCopy` copies between
 roots of one type. Calls pass `IrCallArg::NativeValue` (a root),
 `NativeLeaves` (a fresh root built from leaf expressions, with one source
 container per companion) or `NativeCall` (a fresh root filled by a nested
-native-result call). Declarations, copies and every native operand carry the
+native-result call). A `ref` native formal aliases the caller's root; a
+specialization that binds the formal to a module, static or procedural-block
+record instead lists it in `IrFunc::bound_native_refs`, its callers pass
+`NativeRefBound` (null parameters) and its body never uses that formal's root
+(SIM-008). Declarations, copies and every native operand carry the
 companions too: a native formal lists them in `IrFormal::native_companions`,
 each an extra `void*` C parameter after the value's own, passed with the
 container-formal copy-in/copy-out protocol. Leaves are read and
