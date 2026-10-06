@@ -190,14 +190,15 @@ fn inline_expanded_task_storage_is_hoisted_into_its_host_frame() {
         "inline_event_frame.sv",
         r#"
 module tb;
-    // A block-local ref actual expands the task at its call site.
-    task automatic await_edge(ref logic source);
+    // A block-local ref actual of a formal read by an evaluated event
+    // expression expands the task at its call site.
+    task automatic await_edge(ref logic [1:0] source);
         integer local_value;
-        @(posedge source);
+        @(posedge source[0]);
         local_value = 1;
     endtask
     initial begin
-        automatic logic level;
+        automatic logic [1:0] level;
         await_edge(level);
     end
 endmodule
