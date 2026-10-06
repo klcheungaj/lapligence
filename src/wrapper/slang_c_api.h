@@ -79,7 +79,9 @@ typedef struct {
   uint64_t max_related_diagnostics;
   uint64_t max_output_bytes;
   uint64_t max_semantic_nodes;
-  /* The native hard ceiling for this field is 16,000,000. */
+  /* Requests above the native ceiling (UINT32_MAX, the compact record-ID
+   * width) are rejected rather than clamped. Other record counts are clamped
+   * to that ceiling; byte and value-bit budgets have no native ceiling. */
   uint64_t max_semantic_edges;
   uint64_t max_lexical_tokens;
   uint64_t max_type_ranges;

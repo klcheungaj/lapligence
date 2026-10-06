@@ -30,9 +30,10 @@ escapes the safe interface. See [wrapper](../wrapper/readme.md),
 [patch preparation](../../patches/README.md).
 
 `Limits::default()` preserves the interactive/library capture budgets.
-`Limits::simulator(bytes)` admits batch designs using larger native record
-ceilings and the caller's explicit export byte budget. Export accounting covers
-captured records and strings; it is separate from the process-memory guard.
+`Limits::simulator()` admits whole batch designs bounded only by memory: no
+byte or value-bit budget, and record counts and source buffers at their
+structural native ceilings. Export accounting covers captured records and
+strings; the process-memory guard is the resource bound.
 
 The source map flag asks Slang to parse an admitted original map buffer with
 its preprocessor. It requires compilation-unit admission and preserves macro

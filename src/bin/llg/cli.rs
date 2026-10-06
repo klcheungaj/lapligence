@@ -8,7 +8,10 @@ use std::path::PathBuf;
 
 use llg::config::StopPolicy;
 use llg::core::compile;
-use llg::ffi::slang::{NATIVE_HARD_MAX_OUTPUT_BYTES, SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES};
+// Retired export-budget values: `Limits::simulator()` no longer bounds the
+// frontend, so `--max-export-mib` is parsed but ignored until it is removed.
+const NATIVE_HARD_MAX_OUTPUT_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+pub(crate) const SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 use llg::sim;
 
 pub(crate) const MIB: u64 = 1024 * 1024;

@@ -84,12 +84,12 @@
 use std::process::Command;
 
 use llg::core::compile;
-use llg::ffi::slang::NATIVE_HARD_MAX_OUTPUT_BYTES;
 use llg::sim;
 
 mod cli;
 mod settings;
 
+#[cfg(test)]
 use cli::MIB;
 use settings::{DriverOptions, SettingsError};
 
@@ -134,44 +134,6 @@ fn config_failure(error: SettingsError) -> i32 {
     1
 }
 
-/// Explain how to raise an exhausted frontend export budget. The native
-/// bridge names the exhausted budget; record-count ceilings are fixed, so only
-/// the byte budget is adjustable from the command line.
-fn export_limit_hint(error: &compile::StartupError, max_export_bytes: u64) -> Option<String> {
-    if error.kind() != compile::StartupErrorKind::LimitExceeded {
-        return None;
-    }
-    let ceiling = NATIVE_HARD_MAX_OUTPUT_BYTES / MIB;
-    let current = max_export_bytes / MIB;
-    if error.contains("export byte limit") {
-        Some(if current < ceiling {
-            format!(
-                "the elaborated design exceeds the {current} MiB frontend export budget; \
-                 raise it with --max-export-mib <MiB> (at most {ceiling})"
-            )
-        } else {
-            format!(
-                "the elaborated design exceeds the native {ceiling} MiB frontend export ceiling"
-            )
-        })
-    } else if [
-        "semantic node limit",
-        "semantic edge limit",
-        "constant limit",
-    ]
-    .iter()
-    .any(|limit| error.contains(limit))
-    {
-        Some(
-            "the elaborated design exceeds a native frontend record-count ceiling, \
-             which --max-export-mib cannot raise"
-                .to_owned(),
-        )
-    } else {
-        None
-    }
-}
-
 fn run(options: DriverOptions) -> i32 {
     let DriverOptions {
         top,
@@ -205,7 +167,7 @@ fn run(options: DriverOptions) -> i32 {
         gen_only,
         no_opt,
         stop_policy,
-        max_export_bytes,
+        max_export_bytes: _,
         cli_build_options,
     } = options;
     // 0. Lint rule settings: the `llg.toml` `[lint]` rules, replaced entirely
@@ -246,15 +208,12 @@ fn run(options: DriverOptions) -> i32 {
         library_files,
         library_order,
         default_library,
-        limits: llg::ffi::slang::Limits::simulator(max_export_bytes),
+        limits: llg::ffi::slang::Limits::simulator(),
         ..Default::default()
     }) {
         Ok(out) => out,
         Err(compile::CompileError::Startup(e)) => {
             eprintln!("llg: compile failed to start: {e}");
-            if let Some(hint) = export_limit_hint(&e, max_export_bytes) {
-                eprintln!("llg: {hint}");
-            }
             return 1;
         }
         Err(compile::CompileError::FrontendDiagnostics(diagnostics)) => {
@@ -514,29 +473,5 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(options.max_export_bytes, Some(MIB));
-    }
-
-    #[test]
-    fn export_failure_hint_names_the_option_and_native_ceiling() {
-        let error = compile::compile_sources_checked(
-            &[compile::OwnedSource::compilation_unit(
-                "tb.sv",
-                "module tb; endmodule",
-            )],
-            &compile::CompileOpts {
-                limits: llg::ffi::slang::Limits::simulator(1),
-                ..Default::default()
-            },
-        )
-        .expect_err("the export cannot fit one byte");
-        let compile::CompileError::Startup(error) = error else {
-            panic!("expected startup limit failure");
-        };
-        let hint = export_limit_hint(&error, MIB).expect("adjustable export hint");
-        assert!(hint.contains("1 MiB frontend export budget"));
-        assert!(hint.contains("--max-export-mib <MiB> (at most 16384)"));
-        let hint = export_limit_hint(&error, NATIVE_HARD_MAX_OUTPUT_BYTES)
-            .expect("native export ceiling hint");
-        assert!(hint.contains("native 16384 MiB frontend export ceiling"));
     }
 }

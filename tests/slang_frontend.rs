@@ -752,33 +752,38 @@ fn exhausted_export_budgets_name_their_limit() {
 }
 
 #[test]
-fn simulator_limits_use_the_native_record_ceilings_and_keep_default_limits() {
-    let simulator = Limits::simulator(slang::NATIVE_HARD_MAX_OUTPUT_BYTES);
-    assert_eq!(
+fn simulator_limits_are_unbounded_and_default_limits_are_unchanged() {
+    let simulator = Limits::simulator();
+    // Byte and value-bit budgets have no ceiling; record counts and source
+    // buffers sit at their structural native ceilings.
+    assert_eq!(simulator.max_output_bytes, u64::MAX);
+    assert_eq!(simulator.max_source_bytes, u64::MAX);
+    assert_eq!(simulator.max_value_bits, u64::MAX);
+    assert_eq!(simulator.max_sources, slang::NATIVE_MAX_SOURCES);
+    for count in [
+        simulator.max_diagnostics,
+        simulator.max_instances,
+        simulator.max_parameters,
+        simulator.max_types,
+        simulator.max_related_diagnostics,
         simulator.max_semantic_nodes,
-        slang::NATIVE_HARD_MAX_SEMANTIC_NODES
-    );
-    assert_eq!(
         simulator.max_semantic_edges,
-        slang::NATIVE_HARD_MAX_SEMANTIC_EDGES
-    );
-    assert_eq!(simulator.max_constants, slang::NATIVE_HARD_MAX_CONSTANTS);
+        simulator.max_lexical_tokens,
+        simulator.max_type_ranges,
+        simulator.max_type_members,
+        simulator.max_constants,
+    ] {
+        assert_eq!(count, slang::NATIVE_MAX_RECORDS);
+    }
+    assert_eq!(slang::NATIVE_MAX_RECORDS, u64::from(u32::MAX));
     // Interactive and library callers keep their established budgets.
     let default = Limits::default();
+    assert_eq!(default.max_sources, 4_096);
+    assert_eq!(default.max_source_bytes, 128 * 1024 * 1024);
     assert_eq!(default.max_output_bytes, 256 * 1024 * 1024);
     assert_eq!(default.max_semantic_nodes, 4_000_000);
     assert_eq!(default.max_semantic_edges, 16_000_000);
     assert_eq!(default.max_constants, 1_000_000);
-    assert_eq!(
-        Limits {
-            max_output_bytes: default.max_output_bytes,
-            max_semantic_nodes: default.max_semantic_nodes,
-            max_semantic_edges: default.max_semantic_edges,
-            max_constants: default.max_constants,
-            ..simulator
-        },
-        default
-    );
 
     let sources = [Source::compilation_unit(
         "many_registers.sv",
@@ -790,7 +795,7 @@ fn simulator_limits_use_the_native_record_ceilings_and_keep_default_limits() {
     assert!(!snapshot.semantic_nodes.is_empty());
 
     let over_ceiling = Limits {
-        max_semantic_edges: slang::NATIVE_HARD_MAX_SEMANTIC_EDGES + 1,
+        max_semantic_edges: slang::NATIVE_MAX_RECORDS + 1,
         ..simulator
     };
     let options = many_register_options(16, over_ceiling);
@@ -818,10 +823,7 @@ fn whole_design_over_the_former_export_budget_compiles_with_simulator_limits() {
     assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
     assert!(error.message().contains("export byte limit exceeded"));
 
-    let options = many_register_options(
-        PROCESSES,
-        Limits::simulator(slang::SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES),
-    );
+    let options = many_register_options(PROCESSES, Limits::simulator());
     let snapshot = compile_valid(&request(&sources, &options))
         .expect("the simulator budget admits the whole design");
     // The fixed-size node and edge records alone exceed the former budget.

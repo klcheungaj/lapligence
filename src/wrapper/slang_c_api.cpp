@@ -91,30 +91,37 @@ private:
   std::chrono::steady_clock::time_point started;
 };
 
+// Zero-request defaults keep small budgets for callers that do not choose
+// their own. Hard ceilings clamp every request and are structural only, so a
+// caller (the batch simulator) may admit a whole design bounded by memory:
+// - record counts stop at UINT32_MAX because the Rust snapshot stores node,
+//   type, constant and edge-window references as 32-bit compact IDs;
+// - source buffers stop at 2^24 because Slang's 28-bit buffer IDs are shared
+//   with macro-expansion locations and wrap silently;
+// - byte and value-bit budgets have no ceiling beyond 64-bit arithmetic.
+// Keep these in sync with the NATIVE_* constants in src/ffi/slang.rs.
+constexpr uint64_t kMaxIndexedRecords = UINT32_MAX;
+constexpr uint64_t kUnboundedBytes = UINT64_MAX;
 constexpr uint64_t kDefaultMaxSources = 256;
-constexpr uint64_t kHardMaxSources = 4096;
+constexpr uint64_t kHardMaxSources = uint64_t{1} << 24;
 constexpr uint64_t kDefaultMaxSourceBytes = 64 * 1024 * 1024;
-constexpr uint64_t kHardMaxSourceBytes = 512 * 1024 * 1024;
+constexpr uint64_t kHardMaxSourceBytes = kUnboundedBytes;
 constexpr uint64_t kDefaultMaxDiagnostics = 10000;
-constexpr uint64_t kHardMaxDiagnostics = 100000;
+constexpr uint64_t kHardMaxDiagnostics = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxInstances = 100000;
-constexpr uint64_t kHardMaxInstances = 1000000;
+constexpr uint64_t kHardMaxInstances = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxParameters = 500000;
-constexpr uint64_t kHardMaxParameters = 2000000;
-// Hard ceilings bound every caller, including ones that request more. The
-// export-related ceilings (constants, output bytes, semantic nodes/edges) admit
-// large whole designs; callers keep tighter requested budgets (the zero-request
-// defaults below are unchanged). Keep these in sync with the NATIVE_HARD_* constants in src/ffi/slang.rs.
+constexpr uint64_t kHardMaxParameters = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxConstants = 1000000;
-constexpr uint64_t kHardMaxConstants = 16000000;
+constexpr uint64_t kHardMaxConstants = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxTypes = 100000;
-constexpr uint64_t kHardMaxTypes = 1000000;
+constexpr uint64_t kHardMaxTypes = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxValueBits = 64 * 1024 * 1024;
-constexpr uint64_t kHardMaxValueBits = 512 * 1024 * 1024;
+constexpr uint64_t kHardMaxValueBits = kUnboundedBytes;
 constexpr uint64_t kDefaultMaxRelatedDiagnostics = 80000;
-constexpr uint64_t kHardMaxRelatedDiagnostics = 800000;
+constexpr uint64_t kHardMaxRelatedDiagnostics = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxOutputBytes = 64 * 1024 * 1024;
-constexpr uint64_t kHardMaxOutputBytes = 16ull * 1024 * 1024 * 1024;
+constexpr uint64_t kHardMaxOutputBytes = kUnboundedBytes;
 
 // Named-event identity is carried by the terminal event type even when the
 // declaration adds one or more unpacked dimensions. Keep this test in the
@@ -143,15 +150,15 @@ bool isNamedEventType(const Type& type) {
   return false;
 }
 constexpr uint64_t kDefaultMaxSemanticNodes = 1000000;
-constexpr uint64_t kHardMaxSemanticNodes = 64000000;
+constexpr uint64_t kHardMaxSemanticNodes = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxSemanticEdges = 4000000;
-constexpr uint64_t kHardMaxSemanticEdges = 256000000;
+constexpr uint64_t kHardMaxSemanticEdges = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxLexicalTokens = 4000000;
-constexpr uint64_t kHardMaxLexicalTokens = 16000000;
+constexpr uint64_t kHardMaxLexicalTokens = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxTypeRanges = 1000000;
-constexpr uint64_t kHardMaxTypeRanges = 4000000;
+constexpr uint64_t kHardMaxTypeRanges = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxTypeMembers = 1000000;
-constexpr uint64_t kHardMaxTypeMembers = 4000000;
+constexpr uint64_t kHardMaxTypeMembers = kMaxIndexedRecords;
 constexpr uint64_t kHardMaxDefines = 4096;
 constexpr uint64_t kHardMaxTopModules = 4096;
 constexpr uint64_t kHardMaxIncludeDirs = 4096;
@@ -5160,6 +5167,10 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   sourceNames.reserve(static_cast<size_t>(request.source_count + request.library_source_count));
   std::vector<std::string> sourcePaths;
   sourcePaths.reserve(static_cast<size_t>(request.source_count + request.library_source_count));
+  // Normalized path -> input index, so uniqueness checks and buffer-to-file
+  // association stay linear in the number of admitted sources.
+  std::unordered_map<std::string, uint64_t> sourcePathIndex;
+  sourcePathIndex.reserve(static_cast<size_t>(request.source_count + request.library_source_count));
   std::vector<std::string_view> sourceTexts;
   sourceTexts.reserve(static_cast<size_t>(request.source_count + request.library_source_count));
   for (uint64_t i = 0; i < request.source_count; i++) {
@@ -5178,7 +5189,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     addChecked(sourceBytes, text.size(), maxSourceBytes, "source byte");
     const std::string normalized =
         std::filesystem::path(name).lexically_normal().generic_string();
-    if (std::find(sourcePaths.begin(), sourcePaths.end(), normalized) != sourcePaths.end())
+    if (!sourcePathIndex.emplace(normalized, sourcePaths.size()).second)
       throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                           "source names must be unique after lexical normalization");
     sourceNames.emplace_back(name);
@@ -5206,7 +5217,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     addChecked(sourceBytes, library.size(), maxSourceBytes, "source byte");
     const std::string normalized =
         std::filesystem::path(name).lexically_normal().generic_string();
-    if (std::find(sourcePaths.begin(), sourcePaths.end(), normalized) != sourcePaths.end())
+    if (!sourcePathIndex.emplace(normalized, sourcePaths.size()).second)
       throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                           "source names must be unique after lexical normalization");
     sourceNames.emplace_back(name);
@@ -5526,12 +5537,8 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     if (!sourceManager.isFileLoc(SourceLocation(buffer, 0)))
       continue;
     const auto path = sourceManager.getFullPath(buffer).generic_string();
-    for (uint64_t i = 0; i < totalSourceCount; i++) {
-      if (path == sourcePaths[static_cast<size_t>(i)]) {
-        capture.fileIds.emplace_back(buffer, i);
-        break;
-      }
-    }
+    if (const auto found = sourcePathIndex.find(path); found != sourcePathIndex.end())
+      capture.fileIds.emplace_back(buffer, found->second);
   }
 
   // Capture source bodies before diagnostics are cached so their errors are included.

@@ -18,8 +18,11 @@ Keep [FFI](../ffi/AGENTS.md) layouts/errors/budgets aligned. `mimalloc_shim.c`
 redirects C malloc/free through GNU/LLD wrapping on musl.
 
 Native zero-request defaults remain 64 MiB export, 1M semantic nodes, 4M edges
-and 1M constants. Hard ceilings are 16 GiB export, 64M nodes, 256M edges and
-16M constants; reject edge requests above the ceiling before UDP work. Charge
+and 1M constants. Hard ceilings are structural only: `UINT32_MAX` for every
+record count (Rust stores 32-bit compact IDs), 2^24 source buffers (Slang's
+28-bit buffer IDs also number macro expansions) and none for source, export or
+value-bit bytes. Never preallocate in proportion to a limit, only to counts
+already captured. Reject edge requests above the ceiling before UDP work. Charge
 export records and strings before storing them, and name the effective exhausted
 budget in diagnostics. A larger export budget does not bound total Slang/Rust RSS.
 On glibc, a compile releases freed heap pages after compilation teardown and

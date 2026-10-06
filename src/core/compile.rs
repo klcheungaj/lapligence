@@ -264,12 +264,6 @@ pub struct CompileOut {
     owned_errors: bool,
 }
 
-// Keep path-based admission below the native bridge's hard source-byte cap.
-// The C++ shim clamps its effective limit to this value; doing the same before
-// opening a path prevents Rust from reading a larger caller-requested budget
-// that the bridge can never accept.
-const NATIVE_HARD_MAX_SOURCE_BYTES: u64 = 512 * 1024 * 1024;
-const NATIVE_HARD_MAX_SOURCES: u64 = 4_096;
 const MAX_LIBRARY_MAP_WORK: u64 = 1_000_000;
 const MAX_LIBRARY_PATTERN_COMPONENTS: usize = 512;
 const MAX_LIBRARY_INCLUDE_DIRS: usize = 4_096;
@@ -503,12 +497,18 @@ where
     work.charge(comparison_bytes, operation)
 }
 
+// The native bridge has no source-byte ceiling, so the caller's budget is the
+// effective one.
 fn effective_source_byte_limit(limits: Limits) -> u64 {
-    limits.max_source_bytes.min(NATIVE_HARD_MAX_SOURCE_BYTES)
+    limits.max_source_bytes
 }
 
+// Keep path-based admission below the native bridge's source-buffer ceiling.
+// The C++ shim clamps its effective limit to this value; doing the same before
+// opening a path prevents Rust from admitting more buffers than the bridge can
+// ever accept.
 fn effective_source_count_limit(limits: Limits) -> usize {
-    usize::try_from(limits.max_sources.min(NATIVE_HARD_MAX_SOURCES)).unwrap_or(usize::MAX)
+    usize::try_from(limits.max_sources.min(slang::NATIVE_MAX_SOURCES)).unwrap_or(usize::MAX)
 }
 
 impl CompileOut {
@@ -4921,13 +4921,15 @@ mod tests {
     }
 
     #[test]
-    fn custom_source_budget_is_clamped_to_the_native_hard_limit() {
+    fn source_budgets_follow_the_native_structural_ceilings() {
+        // Bytes have no native ceiling; buffer counts clamp to the native one.
+        assert_eq!(effective_source_byte_limit(Limits::simulator()), u64::MAX);
         assert_eq!(
-            effective_source_byte_limit(Limits {
-                max_source_bytes: NATIVE_HARD_MAX_SOURCE_BYTES.saturating_add(1),
+            effective_source_count_limit(Limits {
+                max_sources: u64::MAX,
                 ..Limits::default()
-            }),
-            NATIVE_HARD_MAX_SOURCE_BYTES
+            }) as u64,
+            slang::NATIVE_MAX_SOURCES
         );
     }
 

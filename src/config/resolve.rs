@@ -16,7 +16,9 @@ use super::{
 };
 use crate::core::compile::{CompilationUnitMode, LanguageEdition};
 use crate::core::lint::{LintConfig, LintSeverity, RuleConfig};
-use crate::ffi::slang::NATIVE_HARD_MAX_OUTPUT_BYTES;
+// Retired export ceiling kept only to validate `simulator.max_export_mib`,
+// which no longer bounds the frontend, until the key is removed.
+const NATIVE_HARD_MAX_OUTPUT_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 use crate::sim::build::ModelOptLevel;
 
 const MIB: u64 = 1024 * 1024;

@@ -25,10 +25,9 @@ use std::path::{Path, PathBuf};
 
 use llg::config::{self, LlgConfig, StopPolicy};
 use llg::core::compile;
-use llg::ffi::slang::SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES;
 use llg::sim;
 
-use crate::cli::{Cli, MIB};
+use crate::cli::{Cli, MIB, SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES};
 
 /// Default output root: models go to `build/sim/<design>` and the runtime
 /// cache to `build/llg-runtime-cache`, both under the current directory.
@@ -71,6 +70,8 @@ pub(crate) struct DriverOptions {
     pub gen_only: bool,
     pub no_opt: bool,
     pub stop_policy: StopPolicy,
+    // Retired: `Limits::simulator()` no longer takes an export budget.
+    #[allow(dead_code)]
     pub max_export_bytes: u64,
     /// Whether the command line itself named a build-tool option, so
     /// `--gen-only` can warn that it is ignored. Config values do not warn.

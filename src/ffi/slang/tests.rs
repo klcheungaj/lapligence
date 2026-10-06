@@ -616,7 +616,7 @@ fn udp_overlap_budget_is_shared_across_tables() {
 fn udp_wide_wildcard_rejects_before_large_assignment_growth() {
     let table = raw_udp_table(0, 0, 1, 15, "udp");
     let rows = vec![raw_udp_row("???????????????", b'x')];
-    let error = udp_stream(&["udp"], vec![table], rows, NATIVE_HARD_MAX_SEMANTIC_EDGES)
+    let error = udp_stream(&["udp"], vec![table], rows, NATIVE_MAX_RECORDS)
         .expect_err("wide wildcard expansion must stay below the memory boundary");
     assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
     assert!(error.message().contains("bounded assignment capacity"));
