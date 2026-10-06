@@ -74,3 +74,10 @@ fn event_controls_on_subroutine_strings_are_explicit() {
         "event control on subroutine string or handle `tag` in `tb` is not supported (SIM-009)",
     );
 }
+
+#[test]
+fn recursive_tasks_with_string_qualifiers_take_the_typed_path() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/recursive_native_qualifiers.out");
+    sim_cli::run_case_backend_parity(SUITE, "recursive_native_qualifiers", expected, &[], &[]);
+}

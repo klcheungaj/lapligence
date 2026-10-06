@@ -17,3 +17,4 @@ cited clauses, not captured from llg.
 | `expanded_element_refs` | §13.5.2. The call binds `bus[2]` at 0; `i` = 0 at 1 and `bus[0]` = 1 at 2 do not affect it; `bus[2]` rises at 3: `edge 3`. |
 | `expanded_native_qualifiers` | §9.4.2. `level` rises at 1 and 3 and falls at 2. `gate("go")` resumes at 1 (`go 1`); `gate("stop")`'s qualifier is never true; `gate_null(none)` resumes on the fall at 2: `null 2`. |
 | `neg_string_event_control` | Legal by §9.4.2; `@` on a subroutine string has no change marker and is rejected explicitly. |
+| `recursive_native_qualifiers` | §§9.4.2, 13.5. `c` rises at 1, 3 and 5; each activation of `r` waits for the next rise, prints and recurses: `x 2 1`, `x 1 3`, `x 0 5`. |

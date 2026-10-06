@@ -1,6 +1,6 @@
-// SIM-009: an expanded task's `iff` qualifier reads its string and chandle
-// formals; each control resumes only on an edge whose qualifier is true
-// (SV 9.4.2).
+// SIM-009: a task's `iff` qualifier reads its by-value string and chandle
+// formals (copied when the control arms); each control resumes only on an
+// edge whose qualifier is true (SV 9.4.2).
 module tb;
   logic level = 0;
   chandle none;

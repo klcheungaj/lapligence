@@ -724,14 +724,14 @@ strings.
 
 ### Symptom
 
-A task whose event control reads a string or handle formal, or whose `ref`
-formal with an event control is bound to a block or subroutine automatic or
-to an array element, is expanded at each call site, so such a task cannot
-recurse or have a native record or container formal ("needs
+A task whose event control reads a string or handle `ref` formal, or whose
+`ref` formal with an event control is bound to a block or subroutine
+automatic or to an array element, is expanded at each call site, so such a
+task cannot recurse or have a native record or container formal ("needs
 caller-environment expansion, which is not supported"). `@(s)` on a
-subroutine string or handle rejects explicitly; an `iff` qualifier reads its
+subroutine string or handle rejects explicitly; an `iff` qualifier reads a
 string or handle copied when the control arms. Event controls on the task's
-own locals, by-value packed and real formals, `wait (cond)`, module signals,
+own locals, by-value formals of every type, `wait (cond)`, module signals,
 `ref` formals with module-signal actuals and event formals of every direction
 take the typed call path; an expansion's `ref` formal follows its automatic
 actual's shared cell and an element actual's frozen index.
@@ -745,14 +745,14 @@ Expansion cannot carry native formals and cannot recurse.
 ### Intended direction
 
 Bind string and handle `ref` actuals' change markers per specialization like
-packed `ref` formals, copy by-value string and handle formals into the typed
-evaluator context (only the waiting activation and its fork branches can
-write them), and give shared subroutine strings change markers.
+packed `ref` formals, subscribe typed bodies to automatic and element `ref`
+actuals through their descriptors, and give shared subroutine strings change
+markers.
 
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_009/neg_string_event_control.sv`;
-`task automatic r(input string t, int n); @(posedge c iff t != ""); if (n) r(t, n - 1); endtask`.
+`task automatic r(ref logic s, int n); @(posedge s); if (n) r(s, n - 1); endtask` called with a local.
 
 ## Symptom
 

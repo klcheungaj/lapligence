@@ -480,6 +480,7 @@ impl<'a> Codegen<'a> {
                 string_addr.insert(local, name.clone());
             }
         }
+        let event_formals = self.event_read_formals(body);
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             // A container formal that a fork branch names is copied into a
             // shared frame at entry (SV 9.3.2, 13.3); see
@@ -548,7 +549,16 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 {
-                    chandle_read.insert(*io, IrChandleExpr::FormalRead(idx));
+                    // An event evaluator copies a by-value handle formal from
+                    // the activation local the callee binds it to.
+                    chandle_read.insert(
+                        *io,
+                        if !is_ref && !*is_out && event_formals.contains(io) {
+                            IrChandleExpr::LocalRead(format!("a{idx}"))
+                        } else {
+                            IrChandleExpr::FormalRead(idx)
+                        },
+                    );
                     if !const_ref {
                         let target = if is_ref {
                             format!("*r{idx}")
@@ -620,7 +630,16 @@ impl<'a> Codegen<'a> {
                     string_write.insert(*io, name.clone());
                     string_addr.insert(*io, name);
                 } else {
-                    string_read.insert(*io, IrStringExpr::FormalRead(idx));
+                    // An event evaluator copies a by-value string formal from the
+                    // activation local the callee binds it to.
+                    string_read.insert(
+                        *io,
+                        if !*is_out && event_formals.contains(io) {
+                            IrStringExpr::LocalRead(format!("a{idx}"))
+                        } else {
+                            IrStringExpr::FormalRead(idx)
+                        },
+                    );
                     string_write.insert(
                         *io,
                         if *is_out {

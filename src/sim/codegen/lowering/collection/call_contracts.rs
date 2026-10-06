@@ -756,11 +756,39 @@ impl<'a> Codegen<'a> {
 
     /// Classify an event control's reads of subroutine-scoped storage. A `ref`
     /// formal of the task itself is bound statically by a specialization;
-    /// event formals are typed parameters; packed and real by-value formals
-    /// are copied into the evaluator's private context at arm time; locals
-    /// that a fork branch can write are read through their shared cells.
-    /// String and handle formals, whose change markers the evaluator cannot
-    /// name in a shared body, force the call-site expansion.
+    /// event formals are typed parameters; by-value formals are copied into
+    /// the evaluator's private context at arm time (strings and handles from
+    /// their activation locals, see [`Self::event_read_formals`]); locals that
+    /// a fork branch can write are read through their shared cells. String and
+    /// handle `ref` formals, whose change markers the evaluator cannot name in
+    /// a shared body, force the call-site expansion.
+    /// Declarations that an event control in `body` reads (its expressions
+    /// and qualifiers); a by-value string or handle formal among them is read
+    /// through its activation local so evaluators can copy it.
+    pub(in super::super) fn event_read_formals(&self, body: NodeId) -> HashSet<NodeId> {
+        let mut out = HashSet::new();
+        let mut pending = vec![body];
+        while let Some(node) = pending.pop() {
+            if let NodeKind::Stmt(StmtKind::EventControl { specs, .. }) = self.kind(node) {
+                let mut roots = Vec::new();
+                for spec in specs {
+                    self.event_spec_expressions(spec, &mut roots);
+                }
+                while let Some(root) = roots.pop() {
+                    if let NodeKind::Expr(ExprKind::Ref {
+                        target: Some(target),
+                    }) = self.kind(root)
+                    {
+                        out.insert(*target);
+                    }
+                    roots.extend(self.node(root).children.iter().copied());
+                }
+            }
+            pending.extend(self.node(node).children.iter().copied());
+        }
+        out
+    }
+
     fn note_static_reads(&self, node: NodeId, formals: &[(NodeId, bool)], shape: &mut CallShape) {
         let mut visit_target = |target: NodeId| {
             if let Some(index) = formals.iter().position(|(formal, _)| *formal == target) {
@@ -777,11 +805,6 @@ impl<'a> Codegen<'a> {
                         direction: DbDirection::Ref,
                         ..
                     } => shape.inline_only = true,
-                    NodeKind::FuncArg { ty, .. }
-                        if ty.kind == "string" || is_handle_kind(&ty.kind) =>
-                    {
-                        shape.inline_only = true
-                    }
                     _ => {}
                 }
             }
