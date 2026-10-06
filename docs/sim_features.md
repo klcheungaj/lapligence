@@ -357,8 +357,15 @@ Macros, includes and their edition-specific behavior are counted in §11.
   leaves in one native value, with the same checks, tagged-expression
   operands and string/real bindings; conditional operators keep equal
   members under an unknown condition; input and output variable ports link
-  the tag and member storage. Such unions as array elements and NBA
-  targets, and dynamic payloads, reject with explicit diagnostics.
+  the tag and member storage. Elements of one-dimensional fixed, queue,
+  dynamic and associative arrays hold the same tag and members in each
+  element value: tagged expressions, whole-element copies, push/insert/pop,
+  calls, checked member reads/writes and `matches`/`case matches` on
+  elements (a checked element access needs an index free of side effects).
+  Tagged expressions reset inactive members, and equality compares the
+  tags and the active member only. NBA targets,
+  unions nested in records or multidimensional arrays, and dynamic payloads
+  reject with explicit diagnostics.
   **Q03 (resolved):** SV §§4.9.4 and 10.4.2 fix an NBA's target and RHS at
   issue and perform the member assignment at commit; SV §11.9 requires that
   assignment to be consistent with the tag current then, and SV §7.3.2 never

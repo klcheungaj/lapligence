@@ -453,8 +453,11 @@ member default whose value is itself a record with native members (its
 frontend constant is not captured); a pattern item that is a nested native
 record taken from a call result. Tagged unions with real, string, record or
 class-handle members execute as module, static and subroutine values
-(formals, results, locals, variable ports, conditional operators); as array
-elements and in nonblocking writes they reject. String and real pattern variables bind
+(formals, results, locals, variable ports, conditional operators) and as
+elements of one-dimensional fixed, queue, dynamic and associative arrays; a
+checked member access of an element whose index has side effects, unions
+nested in a record or a multidimensional array, and nonblocking writes
+reject. String and real pattern variables bind
 in process and subroutine bodies; handle bindings and structure patterns over
 native records reject. A missing associative record element
 compared with `==` reports the SV 7.8.6 warning once per member.
@@ -491,7 +494,8 @@ roots for forked automatic block records, strings and handles.
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
 `sim_004/neg_static_native_record_nba.sv`,
 `sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
-`sim_007/bad_block_native_*.sv` and `sim_007/bad_record_member_default.sv`.
+`sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv` and
+`sim_007/bad_tagged_*.sv`.
 
 ## Resizable containers at subroutine, object and nesting boundaries
 

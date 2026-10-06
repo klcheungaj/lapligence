@@ -2,6 +2,9 @@
 
 use super::super::containers::PatternAssignmentKind;
 use super::*;
+use crate::sim::codegen::lowering::collection::native_values::{
+    is_native_tag_path, native_tagged_equality,
+};
 
 mod columns;
 mod copies;
@@ -1035,7 +1038,17 @@ impl<'a> Codegen<'a> {
                 self.signal_read_expr(right)?,
             )?
         } else {
-            let mut equality = None;
+            // A tagged union with native members compares its tags and
+            // only the active member's leaves.
+            let tagged = (left_aggregate.kind == AggregateKind::TaggedUnion)
+                .then(|| self.query_descriptor(left_target))
+                .flatten()
+                .and_then(|descriptor| match &descriptor.shape {
+                    TypeShape::Aggregate(layout) => Some(layout.clone()),
+                    _ => None,
+                });
+            let mut tags = None;
+            let mut equalities = Vec::with_capacity(left_aggregate.leaves.len());
             for left in &left_aggregate.leaves {
                 let right = right_aggregate
                     .leaves
@@ -1047,13 +1060,29 @@ impl<'a> Codegen<'a> {
                             aggregate_path_suffix(&left.path)
                         )
                     })?;
+                if tagged.is_some() && is_native_tag_path(&left.path) {
+                    tags = Some((
+                        self.aggregate_leaf_read(left)?,
+                        self.aggregate_leaf_read(right)?,
+                    ));
+                    continue;
+                }
                 let member_equal = self.aggregate_leaf_equality(path, op, left, right)?;
-                equality = Some(match equality {
-                    Some(previous) => cmp_expr_ir(IrBinOp::LogAnd, previous, member_equal),
-                    None => member_equal,
-                });
+                equalities.push((left.path.clone(), member_equal));
             }
-            equality.ok_or_else(|| format!("aggregate equality has no value leaves in `{path}"))?
+            match &tagged {
+                Some(layout) => native_tagged_equality(
+                    layout,
+                    matches!(op, Operation::CaseEqual | Operation::CaseNotEqual),
+                    equalities,
+                    tags,
+                )?,
+                None => equalities
+                    .into_iter()
+                    .map(|(_, equal)| equal)
+                    .reduce(|previous, next| cmp_expr_ir(IrBinOp::LogAnd, previous, next))
+                    .ok_or_else(|| format!("aggregate equality has no value leaves in `{path}"))?,
+            }
         };
         Ok(Some(
             if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {

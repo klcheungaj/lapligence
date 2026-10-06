@@ -18,7 +18,9 @@ mod conditionals;
 mod elements;
 mod member_select;
 mod tagged;
-pub(in crate::sim::codegen) use tagged::NativeTaggedRoot;
+pub(in crate::sim::codegen) use tagged::{
+    is_native_tag_path, native_tagged_equality, NativeTaggedRoot,
+};
 
 /// Largest number of leaves of one native record. Leaf-wise transfers to and
 /// from flattened module storage emit one operation per leaf, so larger
@@ -151,6 +153,15 @@ fn collect_native_leaves(
     let leaves = &mut output.scalars;
     match (element, &descriptor.shape) {
         (IrContainerElement::Aggregate { members, .. }, TypeShape::Aggregate(layout)) => {
+            // Only a whole value or container element is a native tagged
+            // union (`collect_native_root_leaves`); a member access below a
+            // nested one would have no tag check.
+            if layout.kind == AggregateKind::TaggedUnion {
+                return Err(format!(
+                    "tagged union member `{}` with string, real or handle members nested in a record or array is not supported",
+                    aggregate_path_suffix(path)
+                ));
+            }
             if members.len() != layout.members.len() {
                 return Err("native record layout disagrees with its descriptor".to_owned());
             }
@@ -251,7 +262,7 @@ fn collect_native_leaves(
 /// container members: a record of its tag (four-state, so an unassigned
 /// union has no active member) and each non-void member's own storage, the
 /// same leaves as module storage (`collect_native_tagged_union`).
-fn native_tagged_element(
+pub(super) fn native_tagged_element(
     descriptor: &TypeDescriptor,
     layout: &AggregateLayout,
 ) -> Result<IrContainerElement, String> {
@@ -289,7 +300,7 @@ fn is_void_member(member: &AggregateMember) -> bool {
 
 /// Leaves of a whole native value: a tagged union's tag and members by name
 /// (void members have no storage), or a record's members recursively.
-fn collect_native_root_leaves(
+pub(super) fn collect_native_root_leaves(
     descriptor: &TypeDescriptor,
     element: &IrContainerElement,
     output: &mut NativeLeaves,
@@ -1766,6 +1777,31 @@ impl Codegen<'_> {
         if self.native_call_node(actual) {
             return Ok(None);
         }
+        // A whole record element of a container is read in place, leaf by
+        // leaf; its nested containers live inside the element value, so
+        // only a statement temporary can carry them.
+        if layout.containers.is_empty() && self.is_container_record(actual) {
+            let Some(reads) = self.container_record_leaf_reads(path, actual)? else {
+                return Ok(None);
+            };
+            if reads.len() != layout.leaves.len()
+                || reads
+                    .iter()
+                    .zip(&layout.leaves)
+                    .any(|((relative, _), target)| *relative != target.path)
+            {
+                return Err(format!(
+                    "native record argument has an incompatible leaf layout in `{path}`"
+                ));
+            }
+            for ((_, value), target) in reads.into_iter().zip(&layout.leaves) {
+                leaves.push(IrNativeLeafValue {
+                    items: target.items.clone(),
+                    value: value.into_leaf_expr()?,
+                });
+            }
+            return Ok(Some((leaves, containers)));
+        }
         let Some((source, _)) = self.native_endpoint(self.p30_unwrap_cast(actual))? else {
             return Ok(None);
         };
@@ -1978,6 +2014,7 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let (left, right) = (self.p30_unwrap_cast(*left), self.p30_unwrap_cast(*right));
+        let (left_node, right_node) = (left, right);
         let element = self.is_container_record(left) || self.is_container_record(right);
         if !element && self.native_path_of(left)?.is_none() && self.native_path_of(right)?.is_none()
         {
@@ -2005,15 +2042,33 @@ impl Codegen<'_> {
             ));
         }
         let case = matches!(op, Operation::CaseEqual | Operation::CaseNotEqual);
-        let mut equality: Option<IrExpr> = None;
-        for ((_, left), (_, right)) in left.into_iter().zip(right) {
-            let leaf_equal = self.leaf_value_equality(path, left, right, case)?;
-            equality = Some(match equality {
-                Some(previous) => cmp_expr_ir(IrBinOp::LogAnd, previous, leaf_equal),
-                None => leaf_equal,
-            });
+        let tagged = self
+            .native_tagged_root(left_node)
+            .or_else(|| self.native_tagged_root(right_node))
+            .and_then(|root| self.native_tagged_layout(root));
+        let mut tags = None;
+        let mut equalities = Vec::with_capacity(left.len());
+        for ((leaf_path, left), (_, right)) in left.into_iter().zip(right) {
+            if tagged.is_some() && is_native_tag_path(&leaf_path) {
+                let (LeafValue::Packed(left), LeafValue::Packed(right)) = (left, right) else {
+                    return Err("tagged union tag is not a packed leaf".to_owned());
+                };
+                tags = Some((left, right));
+                continue;
+            }
+            equalities.push((
+                leaf_path,
+                self.leaf_value_equality(path, left, right, case)?,
+            ));
         }
-        let equality = equality.ok_or("native record comparison has no leaves")?;
+        let equality = match &tagged {
+            Some(layout) => native_tagged_equality(layout, case, equalities, tags)?,
+            None => equalities
+                .into_iter()
+                .map(|(_, equal)| equal)
+                .reduce(|previous, next| cmp_expr_ir(IrBinOp::LogAnd, previous, next))
+                .ok_or("native record comparison has no leaves")?,
+        };
         Ok(Some(
             if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {
                 IrExpr::new(
@@ -2179,14 +2234,14 @@ impl Codegen<'_> {
                 false,
                 None,
             )),
+            // The default is an unsigned constant; the store keeps the
+            // leaf's own signedness.
             IrClassFieldType::Packed {
-                width,
-                signed,
-                two_state,
+                width, two_state, ..
             } => LeafValue::Packed(IrExpr::new(
                 IrExprKind::Const(IrConst::integral_default(width, two_state)),
                 width,
-                signed,
+                false,
                 None,
             )),
         };

@@ -375,3 +375,58 @@ fn nested_records_and_member_arrays_compare_member_wise() {
         "equality of records with associative array member `sub__k` is not supported",
     );
 }
+
+#[test]
+fn arrays_of_native_tagged_unions_check_each_element() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_tagged_arrays.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_tagged_arrays", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "native_tagged_arrays", expected);
+}
+
+#[test]
+fn inactive_members_of_native_tagged_elements_report() {
+    let expected = source_stderr(
+        "native_tagged_array_inactive",
+        "llg: runtime error: access to inactive tagged-union member S at {source}:13:28\n\
+         llg: runtime error: access to inactive tagged-union member S at {source}:14:9\n\
+         llg: runtime error: access to inactive tagged-union member S at {source}:15:48\n\
+         llg: runtime error: access to inactive tagged-union member F at {source}:15:58\n\
+         llg: runtime error: access to inactive tagged-union member I at {source}:17:9\n\
+         llg: runtime error: access to inactive tagged-union member I at {source}:19:38\n",
+    );
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "native_tagged_array_inactive",
+        &[],
+        &|label, output| {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                "1 []\n2 5 [] 0.0\n3 x x\n",
+                "{label}"
+            );
+            assert_eq!(stderr, expected, "{label}");
+        },
+    );
+}
+
+#[test]
+fn native_tagged_element_boundaries_are_rejected_explicitly() {
+    sim_cli::reject_case(
+        SUITE,
+        "bad_tagged_element_side_effect",
+        "a tagged union element accessed in `tb` must be selected without side effects",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_tagged_nested_member",
+        "tagged union member `r.u` with string, real or handle members nested in a record or array in `tb` is not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_tagged_nested_element",
+        "tagged union member `u` with string, real or handle members nested in a record or array is not supported",
+    );
+}

@@ -20,16 +20,33 @@ enum ElementSelector {
 
 /// One record or fixed-array element of container storage.
 #[derive(Clone)]
-struct ElementSelection {
-    container: usize,
+pub(super) struct ElementSelection {
+    pub(super) container: usize,
     selector: ElementSelector,
 }
 
 impl ElementSelection {
-    fn depth(&self) -> usize {
+    pub(super) fn depth(&self) -> usize {
         match &self.selector {
             ElementSelector::Indices(indices) => indices.len(),
             ElementSelector::Key(_) => 1,
+        }
+    }
+}
+
+/// The value of a fresh element-leaf access named `name`.
+fn element_leaf_value(name: String, ty: IrClassFieldType) -> LeafValue {
+    match ty {
+        IrClassFieldType::String => LeafValue::String(IrStringExpr::LocalRead(name)),
+        IrClassFieldType::Chandle => LeafValue::Chandle(IrChandleExpr::LocalRead(name)),
+        IrClassFieldType::Packed { width, signed, .. } => LeafValue::Packed(IrExpr::new(
+            IrExprKind::LocalRead(name),
+            width,
+            signed,
+            None,
+        )),
+        IrClassFieldType::Real { .. } => {
+            LeafValue::Real(IrExpr::new(IrExprKind::LocalRead(name), 0, false, None))
         }
     }
 }
@@ -43,7 +60,7 @@ fn record_element(element: &IrContainerElement) -> bool {
 
 impl Codegen<'_> {
     /// `q[i]`, `q[i][j]` or `a["k"]` naming a whole record element.
-    fn record_element_of(&self, node: NodeId) -> Option<ElementSelection> {
+    pub(super) fn record_element_of(&self, node: NodeId) -> Option<ElementSelection> {
         let node = self.p30_unwrap_cast(node);
         if let Some((container, key)) = self.associative_string_element(node) {
             return record_element(&self.model.containers[container].element).then_some(
@@ -75,7 +92,7 @@ impl Codegen<'_> {
 
     /// The record type descriptor of a container's element `depth` levels
     /// deep, from the container declaration.
-    fn container_element_descriptor(
+    pub(super) fn container_element_descriptor(
         &self,
         container: usize,
         depth: usize,
@@ -129,14 +146,8 @@ impl Codegen<'_> {
             )
         })?;
         let mut leaves = NativeLeaves::default();
-        collect_native_leaves(
-            &descriptor,
-            &element,
-            &mut Vec::new(),
-            &mut Vec::new(),
-            &mut leaves,
-        )
-        .map_err(|error| format!("{error} (container element `{}`)", descriptor.name))?;
+        collect_native_root_leaves(&descriptor, &element, &mut leaves)
+            .map_err(|error| format!("{error} (container element `{}`)", descriptor.name))?;
         // A container element owns its nested containers inside the value
         // itself, unlike a native record's companion containers.
         if !leaves.containers.is_empty() {
@@ -409,6 +420,15 @@ impl Codegen<'_> {
         &self,
         node: NodeId,
     ) -> Option<(ElementSelection, Vec<AggregatePathPart>)> {
+        self.element_member_parts(node)
+            .map(|(_, selection, path)| (selection, path))
+    }
+
+    /// `element_member_path` with the node naming the whole element.
+    pub(super) fn element_member_parts(
+        &self,
+        node: NodeId,
+    ) -> Option<(NodeId, ElementSelection, Vec<AggregatePathPart>)> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::HierPath { parts, refs }) => {
                 let first = (*refs.first()?)?;
@@ -419,13 +439,14 @@ impl Codegen<'_> {
                     .filter(|part| !part.is_empty())
                     .map(|part| AggregatePathPart::Member(part.clone()))
                     .collect::<Vec<_>>();
-                (!path.is_empty()).then_some((selection, path))
+                (!path.is_empty()).then_some((first, selection, path))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 // A member array is named by a detached array node; the
                 // captured select path gives its element owner.
-                let (selection, mut path) = match self.db.array_select_path(node) {
+                let (element, selection, mut path) = match self.db.array_select_path(node) {
                     Some((owner, members)) => (
+                        owner,
                         self.record_element_of(owner)?,
                         members
                             .iter()
@@ -433,24 +454,43 @@ impl Codegen<'_> {
                             .map(AggregatePathPart::Member)
                             .collect(),
                     ),
-                    None => self.element_member_path(*base)?,
+                    None => self.element_member_parts(*base)?,
                 };
                 for index in indices {
                     path.push(AggregatePathPart::Index(
                         i32::try_from(self.eval_bound_i128(*index).ok()?).ok()?,
                     ));
                 }
-                Some((selection, path))
+                Some((element, selection, path))
             }
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
-                let (selection, mut path) = self.element_member_path(*base)?;
+                let (element, selection, mut path) = self.element_member_parts(*base)?;
                 path.push(AggregatePathPart::Index(
                     i32::try_from(self.eval_bound_i128(*index).ok()?).ok()?,
                 ));
-                Some((selection, path))
+                Some((element, selection, path))
             }
             _ => None,
         }
+    }
+
+    /// A fresh read of the leaf at `path` of the whole record element
+    /// `element`; `None` when the element has no such leaf.
+    pub(super) fn element_path_read(
+        &mut self,
+        path: &str,
+        element: NodeId,
+        leaf_path: &[AggregatePathPart],
+    ) -> Result<Option<LeafValue>, String> {
+        let Some(selection) = self.record_element_of(element) else {
+            return Ok(None);
+        };
+        let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
+        let Some(leaf) = leaves.into_iter().find(|leaf| leaf.path == leaf_path) else {
+            return Ok(None);
+        };
+        let name = self.element_access(path, &selection, &leaf, false)?;
+        Ok(Some(element_leaf_value(name, leaf.ty)))
     }
 
     /// The record element leaf named by `node`; `None` for a sub-record, a
@@ -524,18 +564,7 @@ impl Codegen<'_> {
         let mut reads = Vec::with_capacity(leaves.len());
         for leaf in leaves {
             let name = self.element_access(path, &selection, &leaf, false)?;
-            let value =
-                match leaf.ty {
-                    IrClassFieldType::String => LeafValue::String(IrStringExpr::LocalRead(name)),
-                    IrClassFieldType::Chandle => LeafValue::Chandle(IrChandleExpr::LocalRead(name)),
-                    IrClassFieldType::Packed { width, signed, .. } => LeafValue::Packed(
-                        IrExpr::new(IrExprKind::LocalRead(name), width, signed, None),
-                    ),
-                    IrClassFieldType::Real { .. } => {
-                        LeafValue::Real(IrExpr::new(IrExprKind::LocalRead(name), 0, false, None))
-                    }
-                };
-            reads.push((leaf.path, value));
+            reads.push((leaf.path, element_leaf_value(name, leaf.ty)));
         }
         Ok(Some(reads))
     }
