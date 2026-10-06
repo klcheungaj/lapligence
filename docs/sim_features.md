@@ -1296,9 +1296,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Events declared in procedural blocks and subroutine bodies are their own
   objects, a new one per automatic activation. A `ref` formal read by an
   event control binds a whole module-signal actual (or, for a native record
-  formal, a module, static or block record) per specialized task copy, and
-  event expressions over by-value formals copy them when the control arms;
-  event controls reading string/handle formals and class-method event
+  formal, a module, static or block record) per specialized task copy; a
+  `wait (cond)` or plain or edge control on a whole `ref` formal follows any
+  whole-variable actual through its descriptor in the typed body, so such
+  tasks recurse and take native formals with automatic actuals. Event
+  expressions over by-value formals copy them when the control arms; event
+  controls reading string/handle `ref` formals, evaluated expressions over
+  `ref` formals with automatic or element actuals and class-method event
   formals use inline task paths; event-formal virtual dispatch and process-handle formal ABI remain unsupported. Unresolved environments and broader
   timing/native/aggregate combinations reject. V §12.4 **[1995]**.
 - 🟨 **Read-only helper calls** — Event, continuous, force and other read-only

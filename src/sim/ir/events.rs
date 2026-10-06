@@ -86,6 +86,10 @@ pub enum IrWaitSrc {
     /// Named event; any trigger wakes the waiter ([`IrEdge`] is ignored,
     /// events are edge-triggered by definition).
     Event(IrEventRef),
+    /// The whole variable that `ref` formal `index` of the enclosing typed
+    /// subroutine names (see [`IrDependency::RefFormal`]); a real formal
+    /// only supports `IrEdge::Any`.
+    RefFormal { index: usize, real: bool },
 }
 
 /// Fork join kinds (`LLG_JOIN`/`LLG_JOIN_NONE`/`LLG_JOIN_ANY`).

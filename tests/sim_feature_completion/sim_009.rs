@@ -87,3 +87,9 @@ fn level_waits_on_ref_formals_follow_bound_actuals() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_009/ref_level_waits.out");
     sim_cli::run_case_backend_parity(SUITE, "ref_level_waits", expected, &[], &[]);
 }
+
+#[test]
+fn typed_bodies_follow_whole_ref_actuals() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_009/typed_ref_waits.out");
+    sim_cli::run_case_backend_parity(SUITE, "typed_ref_waits", expected, &[], &[]);
+}

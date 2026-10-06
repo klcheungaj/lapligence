@@ -722,6 +722,10 @@ void llg_dependency_changed(sv4_t* dependency);
 // `dependency`, or a marker that is never written when it is NULL (an
 // activation container no other process can change).
 sv4_t* llg_dependency_or_never(sv4_t* dependency);
+// The storage a whole-variable `ref` descriptor names, as a wait dependency
+// and edge source (stores to it publish at that address); any other
+// descriptor kind yields a marker that is never written.
+sv4_t* llg_ref_dependency(const llg_ref_t* ref);
 void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int change);
 
 void llg_display(const char* fmt, ...);  // formatted output followed by a newline

@@ -273,6 +273,12 @@ impl Frame<'_, '_> {
                 IrWaitSrc::Event(event) | IrWaitSrc::FilteredEvent { event, .. } => {
                     fields.push(format!(".event = {}", self.wait_event_address(event)?));
                 }
+                IrWaitSrc::RefFormal { index, real: true } => {
+                    fields.push(format!(".real_sig = r{index}, .real = 1"));
+                }
+                IrWaitSrc::RefFormal { index, real: false } => {
+                    fields.push(format!(".sig = llg_ref_dependency(r{index})"));
+                }
                 IrWaitSrc::Evaluated { eval, reads, .. }
                 | IrWaitSrc::EvaluatedReal { eval, reads, .. } => {
                     let field = if matches!(source, IrWaitSrc::EvaluatedReal { .. }) {

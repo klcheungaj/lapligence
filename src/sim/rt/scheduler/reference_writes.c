@@ -251,3 +251,8 @@ void llg_ba_d(double* target, double value) {
     if (llg_is_real_forced(target) || pca_real_active(target)) return;
     real_write(target, value);
 }
+
+sv4_t* llg_ref_dependency(const llg_ref_t* ref) {
+    if (ref && ref->base && (llg_ref_kind_t)ref->kind == LLG_REF_WHOLE) return ref->base;
+    return llg_dependency_or_never(NULL);
+}

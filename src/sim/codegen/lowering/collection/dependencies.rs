@@ -28,6 +28,29 @@ enum ProcessWriteMode {
 }
 
 impl<'a> Codegen<'a> {
+    /// The descriptor dependency of `ref` formal `target` in a typed body,
+    /// where no specialization or expansion bound its actual: calls bind such
+    /// a formal only to a whole variable (see `CallShape`).
+    pub(in super::super) fn ref_formal_dependency(&self, target: NodeId) -> Option<IrDependency> {
+        if !matches!(
+            self.kind(target),
+            NodeKind::FuncArg {
+                direction: DbDirection::Ref,
+                ..
+            }
+        ) {
+            return None;
+        }
+        let read = self.func.as_ref()?.arg_ir.get(&target)?;
+        let IrExprKind::FormalRead(index) = read.kind() else {
+            return None;
+        };
+        Some(IrDependency::RefFormal {
+            index: *index,
+            real: read.width == 0,
+        })
+    }
+
     fn unpacked_storage_dependencies(&self, node: NodeId) -> Option<Vec<IrDependency>> {
         let (root, prefix) = self.unpacked_path_for_expr(node).or_else(|| {
             self.unpacked_aggregate_info(node)
@@ -1186,7 +1209,8 @@ impl<'a> Codegen<'a> {
                 IrDependency::ContainerContents(_)
                 | IrDependency::ContainerShape(_)
                 | IrDependency::Object(_)
-                | IrDependency::SharedCell { .. } => {
+                | IrDependency::SharedCell { .. }
+                | IrDependency::RefFormal { .. } => {
                     return Err(format!(
                         "container/object dependencies cannot yet drive force evaluators in `{scope_path}`"
                     ))
@@ -1779,6 +1803,8 @@ impl<'a> Codegen<'a> {
                 for dependency in dependencies {
                     self.add_dependency(dependency.clone(), seen, out);
                 }
+            } else if let Some(dependency) = self.ref_formal_dependency(*target) {
+                self.add_dependency(dependency, seen, out);
             }
             if let Some(array) = self.array_of(*target) {
                 self.add_dependency(
