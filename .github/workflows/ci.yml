@@ -338,6 +338,12 @@ jobs:
         with:
           arch: ${{ matrix.msvc_arch }}
 
+      - name: Pin the MSVC linker for Git Bash steps
+        if: matrix.platform == 'windows'
+        uses: ./.github/actions/msvc-linker
+        with:
+          target: ${{ matrix.target }}
+
       - name: Phase 1 llg_co compile gate with AppleClang
         if: matrix.platform == 'macos'
         shell: bash
@@ -577,6 +583,12 @@ jobs:
         with:
           arch: ${{ matrix.msvc_arch }}
 
+      - name: Pin the MSVC linker for Git Bash steps
+        if: matrix.platform == 'windows'
+        uses: ./.github/actions/msvc-linker
+        with:
+          target: ${{ matrix.target }}
+
       # Generated-model C compiles go through ccache (LLG_C_LAUNCHER). The
       # setup runs after the MSVC environment because it self-checks with the
       # compiler and generator the tests will use (CMAKE_GENERATOR=Ninja, the
@@ -685,6 +697,12 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: ${{ matrix.msvc_arch }}
+
+      - name: Pin the MSVC linker for Git Bash steps
+        if: matrix.platform == 'windows'
+        uses: ./.github/actions/msvc-linker
+        with:
+          target: ${{ matrix.target }}
 
       - name: GMP cache key
         id: gmp-key
