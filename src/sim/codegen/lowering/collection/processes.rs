@@ -1950,8 +1950,14 @@ impl<'a> Codegen<'a> {
         };
         let writes = self.ir_process_writes(self.collect_process_writes(stmt)?);
         let fn_name = self.new_fn_name(path, "proc");
-        let pattern_decls = self
+        // Bindings beyond packed capacity get lexical columns where the
+        // pattern is tested.
+        let pattern_targets = self
             .conditional_pattern_targets(stmt)
+            .into_iter()
+            .filter(|target| !self.column_binding_target(*target))
+            .collect::<Vec<_>>();
+        let pattern_decls = pattern_targets
             .into_iter()
             .filter_map(|target| {
                 // String pattern variables are process-owned string locals
@@ -1962,20 +1968,18 @@ impl<'a> Codegen<'a> {
                         init: None,
                     }));
                 }
-                Some(target)
-                    .map(|target| self.collect_loop_var(path, target))
-                    .and_then(|result| match result {
-                        Ok(info) if info.static_signal.is_none() => Some(Ok(IrStmt::DeclLocal {
-                            name: info.c_name,
-                            width: info.width,
-                            signed: info.signed,
-                            two_state: info.two_state,
-                            // A real pattern variable (width 0) starts at 0.0.
-                            init: (info.width == 0).then(|| Box::new(real_literal_expr(0.0))),
-                        })),
-                        Ok(_) => None,
-                        Err(error) => Some(Err(error)),
-                    })
+                match self.collect_loop_var(path, target) {
+                    Ok(info) if info.static_signal.is_none() => Some(Ok(IrStmt::DeclLocal {
+                        name: info.c_name,
+                        width: info.width,
+                        signed: info.signed,
+                        two_state: info.two_state,
+                        // A real pattern variable (width 0) starts at 0.0.
+                        init: (info.width == 0).then(|| Box::new(real_literal_expr(0.0))),
+                    })),
+                    Ok(_) => None,
+                    Err(error) => Some(Err(error)),
+                }
             })
             .collect::<Result<Vec<_>, _>>()?;
         let (body_stmts, mut pre_fns, shape) = {

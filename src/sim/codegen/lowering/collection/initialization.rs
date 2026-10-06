@@ -173,6 +173,12 @@ impl<'a> Codegen<'a> {
         init: NodeId,
         aggregate: &UnpackedAggregateInfo,
     ) -> Result<(), String> {
+        if aggregate.columns {
+            // Column-layout records have no packed payload; their
+            // initializer runs column by column in the static schedule.
+            self.record_initializers.push((object, init));
+            return Ok(());
+        }
         if self.fixed_value_width(object).is_some() {
             self.array_initializers.push((object, init));
             return Ok(());

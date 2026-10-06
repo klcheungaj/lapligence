@@ -167,7 +167,8 @@ The driver reads `LLG_VALUE_BACKEND=legacy|compact` and
 export. `gmp_root` overrides `GMP_ROOT`, required only for compact GMP kernels.
 An explicit root is authoritative and has no system fallback. Hash its header and
 library contents; CMake verifies version agreement, required mpn APIs and 64-bit
-nail-free limbs compatible with uint64_t. Legacy never discovers/links GMP.
+nail-free limbs (any 64-bit limb C type; see `value_gmp/readme.md`). Legacy never
+discovers/links GMP.
 Source-only projects compile their selected runtime as a static archive. Apply
 waveform definitions to that archive as well as the model. Every translation unit
 gets both literal selector definitions. Preserve ABI 4 for legacy, 5 for compact,

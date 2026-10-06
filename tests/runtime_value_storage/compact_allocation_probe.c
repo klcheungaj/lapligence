@@ -68,7 +68,8 @@ int main(void) {
          c = llg_gmp_sv4_from_u64(3, 8, 0);
     size_t before = allocations, r_before = reallocations;
     g4_t r = llg_gmp_sv4_mul(a, b);
-    CHECK(allocations == before + 1 && reallocations == r_before);
+    CHECK(allocations == before + 1 + llg_gmp_sv4_kernel_scratch_allocations() &&
+          reallocations == r_before);
     llg_gmp_sv4_destroy(&r);
     before = allocations;
     r = llg_gmp_sv4_add(a, c);

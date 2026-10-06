@@ -14,7 +14,7 @@ fn assert_runtime_errors(fixture: &str, expected: &str) {
             ("compact", "gmp"),
         ] {
             if kernel == "gmp" && gmp.is_empty() {
-                eprintln!("BLOCKED GMP parity: set LLG_TEST_GMP_ROOT");
+                let _ = super::sim_harness::test_gmp_root("GMP parity");
                 continue;
             }
             let controls = [

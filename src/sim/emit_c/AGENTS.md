@@ -509,7 +509,25 @@ actions) stay separate because they do not receive the startup record initializa
 Candidates enter exact sharing groups as they are rendered; each group retains
 one normalized source and key. Every member retains its typed operands, including
 each generated constant occurrence and its width/sign, even after its duplicate
-normalized source is released.
+normalized source is released. An operand is a shared kind (declaration, shape,
+access) plus a value; registry entries and scalar literals are interned per pass,
+never copied per occurrence. A member whose body the shared entry replaces drops
+its rendered source.
+
+## Generation memory
+
+Rendering must not accumulate on top of the execution IR. Retained rendered
+bodies are shrunk to their length; a finished `FrameLayout` drops its name and
+access indexes (`release_emission_state`), keeping only the block tree, fields
+and call slots that frame grouping, sharing and metadata read. The production
+path (`render_with_value_config`) owns the `ExecutionModel`: it releases each
+process's operations after that coroutine body is rendered, so a fact needed
+later (the PCA-driver sharing key) is recorded on the artifact, and a changed
+arena-callee set is reanalyzed in place. The borrowed test API keeps the model
+intact and clones only for reanalysis. Assembly moves bodies into the model text
+and drops artifacts before the identifier pass, which bounds identifiers in the
+text's own buffer. Any change must keep `model.c` and `model.symbols.tsv`
+byte-identical between the owned and borrowed paths.
 
 `LLG_SHARE_MIN_INSTANCES` is a positive integer (default 4); `unlimited` disables
 sharing. Each qualifying class emits one body and static const typed records.

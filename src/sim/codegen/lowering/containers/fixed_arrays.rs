@@ -1756,7 +1756,69 @@ impl<'a> Codegen<'a> {
         Ok(IrStmt::Block(captures))
     }
 
+    /// Assign a whole fixed array. A whole member array of a column-layout
+    /// tagged union is guarded by its tag like an element access: writing
+    /// an inactive member reports a runtime error and stores nothing, and
+    /// reading one reports the error and yields the member's
+    /// default-uninitialized value.
     pub(in super::super) fn lower_p30_fixed_array_assignment(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        blocking: bool,
+        op: Operation,
+    ) -> Result<Option<IrStmt>, String> {
+        let target_guard = self.record_member_guard(lhs)?;
+        let source = self.p30_unwrap_cast(rhs);
+        let source_guard = self.record_member_guard(source)?;
+        // The source check below replaces the per-operand check that
+        // `lower_fixed_value` would otherwise add.
+        let saved = std::mem::replace(
+            &mut self.record_guarded_source,
+            source_guard.is_some().then_some(source),
+        );
+        let statement = self.lower_fixed_array_assignment_unguarded(path, lhs, rhs, blocking, op);
+        self.record_guarded_source = saved;
+        let Some(mut statement) = statement? else {
+            return Ok(None);
+        };
+        if let Some(guard) = source_guard {
+            let check = Self::record_guard_check(guard, self.source_location(source))?;
+            let mut inactive = Vec::new();
+            if let (Ok(dst), Some(column)) = (
+                self.fixed_memory_view(path, lhs),
+                self.array_of(source).map(|array| array.ir),
+            ) {
+                let scratch = self.record_uninitialized_array(path, column);
+                inactive.push(IrStmt::FixedArrayDeclare(scratch));
+                inactive.push(IrStmt::FixedValueAssign {
+                    dst,
+                    src: Box::new(crate::sim::ir::IrFixedValue::Array(
+                        self.fixed_view_at(scratch, &[]),
+                    )),
+                    nba: !blocking,
+                });
+            }
+            statement = IrStmt::If {
+                cond: check,
+                then_: vec![statement],
+                els: (!inactive.is_empty()).then_some(inactive),
+                check: IrUniquePriorityCheck::None,
+            };
+        }
+        if let Some(guard) = target_guard {
+            statement = IrStmt::If {
+                cond: Self::record_guard_check(guard, self.source_location(lhs))?,
+                then_: vec![statement],
+                els: None,
+                check: IrUniquePriorityCheck::None,
+            };
+        }
+        Ok(Some(statement))
+    }
+
+    fn lower_fixed_array_assignment_unguarded(
         &mut self,
         path: &str,
         lhs: NodeId,

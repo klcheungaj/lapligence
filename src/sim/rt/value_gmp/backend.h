@@ -116,6 +116,10 @@ g4_t llg_gmp_sv4_unstream_wide(g4_t value, uint32_t slice, int right_to_left);
 g4_t llg_gmp_sv4_array_conditional_merge_wide(g4_t a, g4_t b, g4_t element_default);
 /* End V05 S4/S5 declarations. */
 void llg_gmp_sv4_fail(const char* message);
+/* Extra heap allocations (freed before return) per wide GMP mul/div/mod/decimal
+ * kernel call: 1 when GMP limbs are a C type distinct from uint64_t (macOS),
+ * else 0. Exact allocation probes add it to their expectations. */
+size_t llg_gmp_sv4_kernel_scratch_allocations(void);
 g4_t llg_gmp_sv4_zero_wide(uint32_t width, int8_t sign);
 g4_t llg_gmp_sv4_fill_wide(uint8_t state, uint32_t width, int8_t sign);
 g4_t llg_gmp_sv4_clone_wide(const g4_t* source);

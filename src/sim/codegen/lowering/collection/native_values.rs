@@ -97,7 +97,7 @@ fn capture_leaf(value: LeafValue, name: String, captures: &mut Vec<IrStmt>) -> L
     }
 }
 
-fn leaf_ty(element: &IrContainerElement) -> Result<IrClassFieldType, String> {
+pub(super) fn leaf_ty(element: &IrContainerElement) -> Result<IrClassFieldType, String> {
     match element {
         IrContainerElement::Packed {
             width,
@@ -235,9 +235,12 @@ impl Codegen<'_> {
         };
         // Records whose leaves are all integral are fixed values; beyond
         // packed capacity they use column layout (RTL-101), not native
-        // storage.
+        // storage. So do records with a member array above the dense
+        // threshold, whose real, string and chandle members travel in a
+        // native value of their own (RTL-101b).
         if layout.kind != AggregateKind::UnpackedStruct
             || Self::fixed_descriptor_width_bits(descriptor).is_some()
+            || super::record_columns::record_column_layout_type(descriptor)
         {
             return None;
         }
@@ -548,6 +551,11 @@ impl Codegen<'_> {
         &self,
         node: NodeId,
     ) -> Result<Option<(usize, NativeLeaf)>, String> {
+        // Real, string and chandle members of a column-layout record value
+        // are items of the record's native value.
+        if let Some(leaf) = self.record_native_leaf(node) {
+            return Ok(Some(leaf));
+        }
         let Some((value, path)) = self.native_path_of(node)? else {
             return Ok(None);
         };
@@ -1566,53 +1574,7 @@ impl Codegen<'_> {
         let case = matches!(op, Operation::CaseEqual | Operation::CaseNotEqual);
         let mut equality: Option<IrExpr> = None;
         for ((_, left), (_, right)) in left.into_iter().zip(right) {
-            let leaf_equal = match (left, right) {
-                (LeafValue::String(a), LeafValue::String(b)) => {
-                    let compare = IrExpr::new(
-                        IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringCompare(
-                            a, b, false,
-                        ))),
-                        32,
-                        true,
-                        None,
-                    );
-                    let zero = IrExpr::new(
-                        IrExprKind::Const(
-                            IrConst::packed(vec![0], vec![], vec![], 32, true, None)
-                                .map_err(|error| error.to_string())?,
-                        ),
-                        32,
-                        true,
-                        None,
-                    );
-                    cmp_expr_ir(IrBinOp::Eq, compare, zero)
-                }
-                (LeafValue::Chandle(a), LeafValue::Chandle(b)) => IrExpr::new(
-                    IrExprKind::ObjectQuery(Box::new(IrObjectQuery::ChandleEq(a, b))),
-                    1,
-                    false,
-                    None,
-                ),
-                (
-                    LeafValue::Packed(a) | LeafValue::Real(a),
-                    LeafValue::Packed(b) | LeafValue::Real(b),
-                ) => {
-                    if case && !a.is_real() && !b.is_real() {
-                        cmp_expr_ir(IrBinOp::CaseEq, a, b)
-                    } else if case {
-                        return Err(format!(
-                            "case equality on real record member in `{path}` is not supported"
-                        ));
-                    } else {
-                        common_cmp_expr_ir(IrBinOp::Eq, a, b, path)?
-                    }
-                }
-                _ => {
-                    return Err(format!(
-                        "native record comparison in `{path}` has mismatched member kinds"
-                    ))
-                }
-            };
+            let leaf_equal = self.leaf_value_equality(path, left, right, case)?;
             equality = Some(match equality {
                 Some(previous) => cmp_expr_ir(IrBinOp::LogAnd, previous, leaf_equal),
                 None => leaf_equal,
@@ -1634,6 +1596,171 @@ impl Codegen<'_> {
                 equality
             },
         ))
+    }
+
+    /// One-bit equality of two scalar record leaves (SV 11.4.5): strings
+    /// compare their bytes, chandles their pointers, packed and real leaves
+    /// their values.
+    pub(in super::super) fn native_leaf_equality(
+        &mut self,
+        path: &str,
+        left: &NativeEndpointLeaf,
+        right: &NativeEndpointLeaf,
+        case: bool,
+    ) -> Result<IrExpr, String> {
+        let (left, right) = (
+            self.endpoint_leaf_read(left)?,
+            self.endpoint_leaf_read(right)?,
+        );
+        self.leaf_value_equality(path, left, right, case)
+    }
+
+    fn leaf_value_equality(
+        &mut self,
+        path: &str,
+        left: LeafValue,
+        right: LeafValue,
+        case: bool,
+    ) -> Result<IrExpr, String> {
+        Ok(match (left, right) {
+            (LeafValue::String(a), LeafValue::String(b)) => {
+                let compare = IrExpr::new(
+                    IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringCompare(a, b, false))),
+                    32,
+                    true,
+                    None,
+                );
+                let zero = IrExpr::new(
+                    IrExprKind::Const(
+                        IrConst::packed(vec![0], vec![], vec![], 32, true, None)
+                            .map_err(|error| error.to_string())?,
+                    ),
+                    32,
+                    true,
+                    None,
+                );
+                cmp_expr_ir(IrBinOp::Eq, compare, zero)
+            }
+            (LeafValue::Chandle(a), LeafValue::Chandle(b)) => IrExpr::new(
+                IrExprKind::ObjectQuery(Box::new(IrObjectQuery::ChandleEq(a, b))),
+                1,
+                false,
+                None,
+            ),
+            (
+                LeafValue::Packed(a) | LeafValue::Real(a),
+                LeafValue::Packed(b) | LeafValue::Real(b),
+            ) => {
+                if case && !a.is_real() && !b.is_real() {
+                    cmp_expr_ir(IrBinOp::CaseEq, a, b)
+                } else if case {
+                    return Err(format!(
+                        "case equality on real record member in `{path}` is not supported"
+                    ));
+                } else {
+                    common_cmp_expr_ir(IrBinOp::Eq, a, b, path)?
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "native record comparison in `{path}` has mismatched member kinds"
+                ))
+            }
+        })
+    }
+
+    /// The value of one scalar record leaf as a native leaf initializer.
+    pub(in super::super) fn native_leaf_value(
+        &mut self,
+        leaf: &NativeEndpointLeaf,
+    ) -> Result<IrNativeLeafExpr, String> {
+        Ok(self.endpoint_leaf_read(leaf)?.into_leaf_expr())
+    }
+
+    /// Copy one scalar record leaf into another.
+    pub(in super::super) fn native_leaf_copy(
+        &mut self,
+        path: &str,
+        target: &NativeEndpointLeaf,
+        source: &NativeEndpointLeaf,
+        nba: bool,
+    ) -> Result<IrStmt, String> {
+        let value = self.endpoint_leaf_read(source)?;
+        self.endpoint_leaf_write(path, target, value, nba)
+    }
+
+    /// Assign the value of expression `node` to one scalar record leaf.
+    pub(in super::super) fn native_leaf_assign(
+        &mut self,
+        path: &str,
+        target: &NativeEndpointLeaf,
+        node: NodeId,
+        nba: bool,
+    ) -> Result<IrStmt, String> {
+        let ty = self.endpoint_leaf_type(target)?;
+        let value = self.native_leaf_source(path, ty, node)?;
+        self.endpoint_leaf_write(path, target, value, nba)
+    }
+
+    /// Give one scalar record leaf its type's default-uninitialized value:
+    /// an empty string, a null chandle, 0.0, or X (zero when two-state).
+    pub(in super::super) fn native_leaf_reset(
+        &mut self,
+        path: &str,
+        target: &NativeEndpointLeaf,
+        nba: bool,
+    ) -> Result<IrStmt, String> {
+        let value = match self.endpoint_leaf_type(target)? {
+            IrClassFieldType::String => LeafValue::String(IrStringExpr::Literal(Vec::new())),
+            IrClassFieldType::Chandle => LeafValue::Chandle(IrChandleExpr::Null),
+            IrClassFieldType::Real { .. } => LeafValue::Real(IrExpr::new(
+                IrExprKind::Const(IrConst::real(0.0)),
+                0,
+                false,
+                None,
+            )),
+            IrClassFieldType::Packed {
+                width,
+                signed,
+                two_state,
+            } => LeafValue::Packed(IrExpr::new(
+                IrExprKind::Const(IrConst::integral_default(width, two_state)),
+                width,
+                signed,
+                None,
+            )),
+        };
+        self.endpoint_leaf_write(path, target, value, nba)
+    }
+
+    fn endpoint_leaf_type(&self, leaf: &NativeEndpointLeaf) -> Result<IrClassFieldType, String> {
+        match leaf {
+            NativeEndpointLeaf::Value(_, leaf) => Ok(leaf.ty),
+            NativeEndpointLeaf::Module(leaf) => {
+                if let Some(object) = leaf.object {
+                    return match self.model.objects[self.reference_object(object)].ty {
+                        IrObjectType::String => Ok(IrClassFieldType::String),
+                        IrObjectType::Chandle => Ok(IrClassFieldType::Chandle),
+                        _ => Err("record member object is not a string or chandle".to_owned()),
+                    };
+                }
+                let signal = leaf
+                    .signal
+                    .as_ref()
+                    .ok_or("record member leaf has no scalar storage")?;
+                Ok(if signal.real {
+                    IrClassFieldType::Real {
+                        shortreal: signal.shortreal,
+                    }
+                } else {
+                    IrClassFieldType::Packed {
+                        width: signal.width,
+                        signed: signal.signed,
+                        two_state: signal.two_state,
+                    }
+                })
+            }
+        }
     }
 
     /// Native operand of an expression call. Statement-level callers open a

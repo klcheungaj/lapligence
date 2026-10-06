@@ -24,6 +24,9 @@ pub(in crate::sim::codegen) enum RecordColumn {
     Cell(usize),
     /// Module storage of a real, string or chandle member.
     Leaf(Box<AggregateMemberInfo>),
+    /// A real, string or chandle member of a subroutine record value: one
+    /// item of the value's SIM-003 native value, which holds all of them.
+    Native(usize, Box<NativeLeaf>),
 }
 
 /// A record value as its columns, with paths relative to `descriptor`.
@@ -134,6 +137,88 @@ fn single_member_record(member: &AggregateMember, clear: bool) -> TypeDescriptor
     }
 }
 
+/// Element default of the member-array column at `path`: the uniform cell
+/// value of the nearest enclosing member initializer (SV 7.2.2), else the
+/// element type's own default. A column holds one element default, so an
+/// initializer giving cells different values is rejected rather than
+/// expanded per cell.
+fn record_array_default(
+    root: &TypeDescriptor,
+    path: &[AggregatePathPart],
+    element: &TypeDescriptor,
+    two_state: bool,
+) -> Result<Option<IrConst>, String> {
+    let chain = path_members(root, path).ok_or("member path is unresolved")?;
+    let Some(owner) = chain.iter().position(|member| member.initializer.is_some()) else {
+        return Ok(Codegen::fixed_descriptor_default(element));
+    };
+    let member = chain[owner];
+    let initializer = member.initializer.as_ref().expect("checked initializer");
+    let total = fixed_width_bits(&member.descriptor).ok_or("member initializer has no width")?;
+    let width = i32::try_from(total)
+        .map_err(|_| format!("member initializer of `{}` is too wide", member.name))?;
+    let Val::Bits(value) = val_from_value_data(initializer, width).map_err(|error| {
+        format!(
+            "member initializer of `{}` cannot be decoded: {error}",
+            member.name
+        )
+    })?
+    else {
+        return Err(format!(
+            "member initializer of `{}` is not integral",
+            member.name
+        ));
+    };
+    // Bit offset of the column inside the initialized member's value: later
+    // structure members occupy the less significant bits.
+    let mut offset = 0u64;
+    let mut descriptor = &member.descriptor;
+    for part in &path[owner + 1..] {
+        let AggregatePathPart::Member(name) = part else {
+            return Err("member path has an index".into());
+        };
+        let TypeShape::Aggregate(layout) = &descriptor.shape else {
+            return Err("member path leaves its structure".into());
+        };
+        let index = layout
+            .members
+            .iter()
+            .position(|member| &member.name == name)
+            .ok_or("member path is unresolved")?;
+        for later in &layout.members[index + 1..] {
+            offset += fixed_width_bits(&later.descriptor).ok_or("record member has no width")?;
+        }
+        descriptor = &layout.members[index].descriptor;
+    }
+    let TypeShape::FixedArray { dimensions, .. } = &descriptor.shape else {
+        return Err("member initializer column is not a fixed array".into());
+    };
+    let cells = fixed_array_cell_count(dimensions)?;
+    let cell = u64::from(fixed_width(element).ok_or("record member array element has no width")?);
+    let bit = |index: u64| {
+        let bit = value.bit_lsb(usize::try_from(index).unwrap_or(usize::MAX));
+        if two_state && !matches!(bit, Bit::Zero | Bit::One) {
+            Bit::Zero
+        } else {
+            bit
+        }
+    };
+    for index in 0..cell {
+        let first = bit(offset + index);
+        if (1..cells).any(|position| bit(offset + position * cell + index) != first) {
+            return Err(format!(
+                "member initializer of `{}` gives the column's cells different values; column layout keeps one element default",
+                member.name
+            ));
+        }
+    }
+    let mut bits = (0..cell)
+        .map(|index| bit(offset + index))
+        .collect::<Vec<_>>();
+    bits.reverse();
+    val_to_const(&elab::Value::from_bits(bits, element.info.signed)).map(Some)
+}
+
 /// The column shape of one record leaf, used to allocate temporaries.
 enum ColumnShape {
     Packed {
@@ -142,6 +227,8 @@ enum ColumnShape {
         two_state: bool,
     },
     Array(TypeDescriptor),
+    /// A real, string or chandle leaf, kept in the record's native value.
+    Native(IrContainerElement),
 }
 
 /// Column shapes of a record type in the declaration order used by module
@@ -213,8 +300,22 @@ fn column_shapes(
             ));
             Ok(())
         }
+        TypeShape::Real { .. } | TypeShape::String => {
+            out.push((
+                prefix.to_vec(),
+                ColumnShape::Native(lower_container_element(descriptor)?),
+            ));
+            Ok(())
+        }
+        TypeShape::Opaque { kind } if kind == "Chandle" => {
+            out.push((
+                prefix.to_vec(),
+                ColumnShape::Native(IrContainerElement::Chandle),
+            ));
+            Ok(())
+        }
         _ => Err(format!(
-            "record member `{}` is not integral; a temporary column-layout record value supports integral members only",
+            "record member `{}` is not an integral, real, string or chandle value; a column-layout record value in a subroutine cannot hold it",
             aggregate_path_suffix(prefix)
         )),
     }
@@ -255,14 +356,11 @@ impl Codegen<'_> {
             .ok_or("column-layout record has no type")?;
         let chain = path_members(&root, member_path)
             .ok_or_else(|| format!("record column path `{suffix}` in `{path}` is unresolved"))?;
-        if chain.iter().any(|member| member.initializer.is_some()) {
-            // A member initializer may give each cell a different value; a
-            // column only has a uniform element default.
-            return Err(format!(
-                "member initializer on record member array `{object_name}.{suffix}` in `{path}` is not supported with column layout"
-            ));
-        }
         let two_state = element.two_state || chain.iter().any(|member| member.two_state);
+        let element_default = record_array_default(&root, member_path, element, two_state)
+            .map_err(|error| {
+                format!("record member array `{object_name}.{suffix}` in `{path}`: {error}")
+            })?;
         let c_name = self.c_name("G", path, &[object_name, &suffix]);
         let mut hdl_name = self.waveform_name(object);
         hdl_name.push('\u{1f}');
@@ -273,7 +371,7 @@ impl Codegen<'_> {
             descriptor: true,
             net: None,
             net_elements: Vec::new(),
-            element_default: Self::fixed_descriptor_default(element),
+            element_default,
             element_uninitialized: Self::fixed_element_uninitialized(element),
             c_name: c_name.clone(),
             hdl_name,
@@ -521,6 +619,7 @@ impl Codegen<'_> {
         &mut self,
         path: &str,
         descriptor: &TypeDescriptor,
+        default: Option<IrConst>,
         activation: bool,
     ) -> Result<usize, String> {
         let TypeShape::FixedArray {
@@ -544,7 +643,7 @@ impl Codegen<'_> {
             descriptor: !activation,
             net: None,
             net_elements: Vec::new(),
-            element_default: Self::fixed_descriptor_default(element),
+            element_default: default.or_else(|| Self::fixed_descriptor_default(element)),
             element_uninitialized: Self::fixed_element_uninitialized(element),
             c_name,
             hdl_name: String::new(),
@@ -557,6 +656,27 @@ impl Codegen<'_> {
             total,
         });
         Ok(ir)
+    }
+
+    /// A lexical array shaped like `column` that holds the element's
+    /// default-uninitialized value, the result of reading an inactive
+    /// tagged-union member.
+    pub(in super::super) fn record_uninitialized_array(
+        &mut self,
+        path: &str,
+        column: usize,
+    ) -> usize {
+        let mut array = self.model.arrays[column].clone();
+        array.activation = true;
+        array.descriptor = false;
+        array.net = None;
+        array.net_elements = Vec::new();
+        array.element_default = array.element_uninitialized.clone();
+        array.c_name = self.new_fn_name(path, "record_inactive");
+        array.hdl_name = String::new();
+        let ir = self.model.arrays.len();
+        self.model.arrays.push(array);
+        ir
     }
 
     /// The array an element select addresses: a record column for
@@ -616,9 +736,21 @@ impl Codegen<'_> {
     ) -> Result<RecordValue, String> {
         let mut shapes = Vec::new();
         column_shapes(descriptor, &[], descriptor.two_state, &mut shapes)?;
+        let native = self.record_native_value(path, descriptor, &shapes, activation)?;
+        let mut native_items = 0u32;
         let mut columns = Vec::with_capacity(shapes.len());
         for (member_path, shape) in shapes {
             let column = match shape {
+                ColumnShape::Native(element) => {
+                    let value = native.ok_or("record native leaves have no value")?;
+                    let leaf = NativeLeaf {
+                        path: member_path.clone(),
+                        items: vec![native_items],
+                        ty: super::native_values::leaf_ty(&element)?,
+                    };
+                    native_items += 1;
+                    RecordColumn::Native(value, Box::new(leaf))
+                }
                 ColumnShape::Packed {
                     width,
                     signed,
@@ -633,7 +765,19 @@ impl Codegen<'_> {
                     ))
                 }
                 ColumnShape::Array(array) => {
-                    RecordColumn::Array(self.record_temporary_array(path, &array, activation)?)
+                    let TypeShape::FixedArray { element, .. } = &array.shape else {
+                        return Err(format!("record column in `{path}` is not a fixed array"));
+                    };
+                    let two_state = element.two_state
+                        || array.two_state
+                        || path_members(descriptor, &member_path)
+                            .is_some_and(|chain| chain.iter().any(|member| member.two_state));
+                    let default =
+                        record_array_default(descriptor, &member_path, element, two_state)
+                            .map_err(|error| format!("record member array in `{path}`: {error}"))?;
+                    RecordColumn::Array(
+                        self.record_temporary_array(path, &array, default, activation)?,
+                    )
                 }
             };
             columns.push((member_path, column));
@@ -644,18 +788,133 @@ impl Codegen<'_> {
         })
     }
 
+    /// The SIM-003 native value holding every real, string and chandle leaf
+    /// of a record value of type `descriptor`, in declaration order. The
+    /// value's type is a structure of those leaves only; its nominal
+    /// identity is the record type's, which no other native value has,
+    /// because a column-layout record is never itself a native value.
+    fn record_native_value(
+        &mut self,
+        path: &str,
+        descriptor: &TypeDescriptor,
+        shapes: &[(Vec<AggregatePathPart>, ColumnShape)],
+        activation: bool,
+    ) -> Result<Option<usize>, String> {
+        let members = shapes
+            .iter()
+            .filter_map(|(member_path, shape)| match shape {
+                ColumnShape::Native(element) => Some(IrContainerMember {
+                    name: record_member_label(member_path),
+                    element: Box::new(element.clone()),
+                }),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if members.is_empty() {
+            return Ok(None);
+        }
+        let element = IrContainerElement::Aggregate {
+            type_id: descriptor.id.0,
+            members,
+        };
+        crate::sim::ir::validate_native_type(&element, path)
+            .map_err(|error| format!("record native leaves in `{path}`: {error:?}"))?;
+        let ty = match self
+            .model
+            .native_types
+            .iter()
+            .position(|existing| *existing == element)
+        {
+            Some(ty) => ty,
+            None => {
+                self.model.native_types.push(element);
+                self.model.native_types.len() - 1
+            }
+        };
+        let index = self.model.native_values.len();
+        self.model
+            .native_values
+            .push(crate::sim::ir::IrNativeValue {
+                c_name: format!("S_llg_native_{index}"),
+                ty,
+                activation,
+            });
+        Ok(Some(index))
+    }
+
     /// Declarations of the lexical columns of `value`.
-    pub(in super::super) fn declare_record_columns(value: &RecordValue) -> Vec<IrStmt> {
-        value
+    pub(in super::super) fn declare_record_columns(&self, value: &RecordValue) -> Vec<IrStmt> {
+        let mut statements = Vec::new();
+        let mut natives = Vec::new();
+        for (_, column) in &value.columns {
+            match column {
+                RecordColumn::Array(array) | RecordColumn::Cell(array) => {
+                    statements.push(IrStmt::FixedArrayDeclare(*array));
+                }
+                RecordColumn::Native(native, _)
+                    if self.model.native_values[*native].activation
+                        && !natives.contains(native) =>
+                {
+                    natives.push(*native);
+                    statements.push(IrStmt::NativeValueDeclare(*native));
+                }
+                RecordColumn::Native(..) | RecordColumn::Leaf(_) => {}
+            }
+        }
+        statements
+    }
+
+    /// The native value that holds exactly the real, string and chandle
+    /// leaves of `value`, when they all belong to one.
+    pub(in super::super) fn record_native_group(&self, value: &RecordValue) -> Option<usize> {
+        let mut group = None;
+        let mut count = 0usize;
+        for (_, column) in &value.columns {
+            match column {
+                RecordColumn::Native(native, _) => {
+                    if group.is_some_and(|group| group != *native) {
+                        return None;
+                    }
+                    group = Some(*native);
+                    count += 1;
+                }
+                RecordColumn::Leaf(_) => return None,
+                RecordColumn::Array(_) | RecordColumn::Cell(_) => {}
+            }
+        }
+        let group = group?;
+        let IrContainerElement::Aggregate { members, .. } =
+            &self.model.native_types[self.model.native_values[group].ty]
+        else {
+            return None;
+        };
+        (members.len() == count).then_some(group)
+    }
+
+    /// The native leaf of a subroutine record value that `node` names.
+    pub(in super::super) fn record_native_leaf(&self, node: NodeId) -> Option<(usize, NativeLeaf)> {
+        if !self.record_columns {
+            return None;
+        }
+        let (root, path) = self.activation_record_path(node)?;
+        self.activation_records
+            .get(&root)?
             .columns
             .iter()
-            .filter_map(|(_, column)| match column {
-                RecordColumn::Array(array) | RecordColumn::Cell(array) => {
-                    Some(IrStmt::FixedArrayDeclare(*array))
+            .find_map(|(column_path, column)| match column {
+                RecordColumn::Native(value, leaf) if *column_path == path => {
+                    Some((*value, (**leaf).clone()))
                 }
-                RecordColumn::Leaf(_) => None,
+                _ => None,
             })
-            .collect()
+    }
+
+    /// The native value of a column-layout record formal or result that
+    /// holds its real, string and chandle members, if it has any.
+    pub(in super::super) fn record_formal_native(&self, node: NodeId) -> Option<usize> {
+        self.activation_records
+            .get(&node)
+            .and_then(|value| self.record_native_group(value))
     }
 
     /// Whether values of this type use column layout.
@@ -819,26 +1078,73 @@ impl Codegen<'_> {
                         self.node(node).name
                     )
                 })?;
-            for (_, column) in &value.columns {
-                if let RecordColumn::Array(array) = column {
-                    let info = ArrayInfo {
-                        global: self.model.arrays[*array].c_name.clone(),
-                        elem_width: self.model.arrays[*array].elem_width,
-                        signed: self.model.arrays[*array].signed,
-                        real: false,
-                        shortreal: false,
-                        is_net: false,
-                        dims: self.model.arrays[*array].dims.clone(),
-                        init: None,
-                        ir: *array,
-                    };
-                    self.record_array_infos.insert(*array, info);
-                }
-            }
-            self.record_columns = true;
-            self.activation_records.insert(node, value);
+            self.register_activation_record(node, value);
         }
         Ok(())
+    }
+
+    /// Whether a pattern variable binds a value beyond packed capacity (a
+    /// column-layout record or a descriptor array), which gets lexical column
+    /// storage where its pattern is tested instead of a packed local.
+    pub(in super::super) fn column_binding_target(&self, target: NodeId) -> bool {
+        self.query_descriptor(target).is_some_and(|descriptor| {
+            record_column_layout(descriptor)
+                || fixed_width_bits(descriptor)
+                    .is_some_and(|width| width > u64::from(LLG_MAX_WIDTH))
+                || matches!(&descriptor.shape, TypeShape::FixedArray { dimensions, .. }
+                    if fixed_array_cell_count(dimensions)
+                        .map_or(true, |cells| cells > LLG_DENSE_FIXED_ARRAY_CELLS))
+        })
+    }
+
+    /// Allocate lexical columns for an automatic column-layout record
+    /// declared in a procedural block; false for any other declaration.
+    pub(in super::super) fn automatic_block_record(
+        &mut self,
+        path: &str,
+        declaration: NodeId,
+    ) -> Result<bool, String> {
+        if self.activation_records.contains_key(&declaration) {
+            return Ok(true);
+        }
+        let Some(descriptor) = self
+            .query_descriptor(declaration)
+            .filter(|descriptor| record_column_layout(descriptor))
+            .cloned()
+        else {
+            return Ok(false);
+        };
+        let value = self
+            .allocate_record_columns(path, &descriptor, true)
+            .map_err(|error| {
+                format!(
+                    "column-layout record `{}` in `{path}`: {error}",
+                    self.node(declaration).name
+                )
+            })?;
+        self.register_activation_record(declaration, value);
+        Ok(true)
+    }
+
+    fn register_activation_record(&mut self, node: NodeId, value: RecordValue) {
+        for (_, column) in &value.columns {
+            if let RecordColumn::Array(array) = column {
+                let info = ArrayInfo {
+                    global: self.model.arrays[*array].c_name.clone(),
+                    elem_width: self.model.arrays[*array].elem_width,
+                    signed: self.model.arrays[*array].signed,
+                    real: false,
+                    shortreal: false,
+                    is_net: false,
+                    dims: self.model.arrays[*array].dims.clone(),
+                    init: None,
+                    ir: *array,
+                };
+                self.record_array_infos.insert(*array, info);
+            }
+        }
+        self.record_columns = true;
+        self.activation_records.insert(node, value);
     }
 
     fn record_locals(&self, node: NodeId, out: &mut Vec<(NodeId, bool)>) {
@@ -875,7 +1181,7 @@ impl Codegen<'_> {
                     .iter()
                     .filter_map(|(_, column)| match column {
                         RecordColumn::Array(array) | RecordColumn::Cell(array) => Some(*array),
-                        RecordColumn::Leaf(_) => None,
+                        RecordColumn::Leaf(_) | RecordColumn::Native(..) => None,
                     })
                     .collect()
             })

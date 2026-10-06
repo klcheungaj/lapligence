@@ -410,3 +410,21 @@ pub fn write_value_backend_sources(dir: &std::path::Path) {
         std::fs::write(path, source).expect("write value source dependency");
     }
 }
+
+/// The GMP installation for compact/GMP lanes (`LLG_TEST_GMP_ROOT`). Without it
+/// the lane is reported BLOCKED and skipped, unless `LLG_TEST_REQUIRE_GMP=1`
+/// (the CI GMP qualification lane), where a missing root is a failure so the
+/// lane can never pass without exercising GMP.
+pub(crate) fn test_gmp_root(lane: &str) -> Option<String> {
+    match std::env::var("LLG_TEST_GMP_ROOT") {
+        Ok(root) if !root.is_empty() => Some(root),
+        _ => {
+            assert!(
+                std::env::var("LLG_TEST_REQUIRE_GMP").as_deref() != Ok("1"),
+                "{lane}: LLG_TEST_REQUIRE_GMP=1 but LLG_TEST_GMP_ROOT is unset"
+            );
+            eprintln!("BLOCKED {lane}: set LLG_TEST_GMP_ROOT");
+            None
+        }
+    }
+}

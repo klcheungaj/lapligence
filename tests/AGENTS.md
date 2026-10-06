@@ -218,6 +218,17 @@ logical CPU). Observed platform
 differences and their portable fixes are in
 [shared source policies](../src/AGENTS.md#platform-differences).
 
+GMP qualification: `gmp-test` (Windows/macOS) and `gmp-linux-test` (Ubuntu and
+Rocky per architecture) run the same release archives with compact values, GMP
+kernels and a target-matched GMP from `scripts/ci_gmp.py` (pinned source build
+on Unix, vcpkg static-md on MSVC), printing host/toolchain/GMP identity first.
+They set `LLG_TEST_REQUIRE_GMP=1`, so missing GMP fails rather than skips, and
+run `GMP_SUITE_FILTER` (manual dispatch `gmp-scope: full` runs everything). The
+plain `test`/`linux-test` jobs remain the GMP-free legacy configuration. GMP
+lanes do not gate releases (GMP kernels are experimental and optional); the
+built GMP prefix is a third-party cache keyed on version, recipe, target and
+compiler, saved on master only.
+
 Lint/sanitizer jobs disable Rust debug info/incremental compilation and strip native
 frontend debug sections while retaining debug assertions/overflow checks. Preserve
 nextest's bounded heavyweight group, compatible shared runtime caches and failure-
@@ -231,8 +242,9 @@ sim_procedural_assign with GCC ASan/UBSan; this is not LSP admission coverage.
 The 15-minute dependency-audit runs cargo audit on those triggers and Mondays
 04:17 UTC. Reports stay in workflow logs, not uploaded artifacts.
 
-Caching (binding user rule): CI caches compiled third-party Cargo dependencies and
-the C of generated test models, never anything built from this repository. No
+Caching (binding user rule): CI caches compiled third-party Cargo dependencies,
+the third-party GMP install prefix of the GMP lanes and the C of generated test
+models, never anything built from this repository. No
 sccache/ccache wraps llg or the native Slang/fmt/wrapper build (leave `LLG_CCACHE`
 and `CMAKE_C_COMPILER_LAUNCHER` unset in CI), and no llg, `target/slang`, test
 executable, nextest archive or runtime cache is saved.

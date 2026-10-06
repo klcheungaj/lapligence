@@ -104,6 +104,9 @@ mod rtl_099;
 #[path = "sim_feature_completion/rtl_101.rs"]
 mod rtl_101;
 
+#[path = "sim_feature_completion/rtl_101b.rs"]
+mod rtl_101b;
+
 #[path = "sim_feature_completion/rtl_102.rs"]
 mod rtl_102;
 

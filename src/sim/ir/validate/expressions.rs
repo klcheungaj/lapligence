@@ -422,6 +422,26 @@ impl Validator<'_> {
                     self.validate_expr(value, formals, &format!("{path}.valid_values[{idx}]"))?;
                 }
             }
+            IrExprKind::Sequence(sequence) => {
+                for (index, statement) in sequence.statements.iter().enumerate() {
+                    let statement_path = format!("{path}.statements[{index}]");
+                    if !sequence_statement(statement) {
+                        return self.fail(
+                            statement_path,
+                            "expression statement sequences admit only declarations, blocking copies and calls",
+                        );
+                    }
+                    self.validate_stmt(statement, formals, &statement_path)?;
+                }
+                let value = &sequence.value;
+                if value.width != expr.width || value.signed != expr.signed {
+                    return self.fail(
+                        path,
+                        "statement sequence result shape disagrees with its value",
+                    );
+                }
+                self.validate_expr(value, formals, &format!("{path}.value"))?;
+            }
             IrExprKind::TaggedSelect {
                 base,
                 steps,
@@ -1406,5 +1426,29 @@ impl Validator<'_> {
             },
         }
         Ok(())
+    }
+}
+
+/// Statements an [`IrExprKind::Sequence`] may run: lexical declarations,
+/// blocking copies and function calls, none of which suspends or leaves the
+/// expression.
+fn sequence_statement(statement: &IrStmt) -> bool {
+    match statement.unlocated() {
+        IrStmt::FixedArrayDeclare(_)
+        | IrStmt::NativeValueDeclare(_)
+        | IrStmt::NativeValueCopy { .. }
+        | IrStmt::FixedValueAssign { nba: false, .. }
+        | IrStmt::FixedArrayFill { nba: false, .. }
+        | IrStmt::Assign { nba: false, .. }
+        | IrStmt::Call(_) => true,
+        IrStmt::Object(operation) => matches!(
+            operation.as_ref(),
+            IrObjectStmt::StringAssign(..)
+                | IrObjectStmt::ChandleAssign(..)
+                | IrObjectStmt::StringAssignLocal(..)
+                | IrObjectStmt::ChandleAssignLocal(..)
+        ),
+        IrStmt::Block(statements) => statements.iter().all(sequence_statement),
+        _ => false,
     }
 }

@@ -10,18 +10,26 @@ impl EmitCtx<'_, '_> {
     pub(in super::super) fn lower_stmt(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
         // Container operands that cannot be built inside an expression are
         // built just before a statement that evaluates its operands once;
-        // nested statements never inherit that prelude.
+        // nested statements never inherit that prelude. Whole-value pattern
+        // bindings of this statement declare their lexical storage before
+        // it, so the bound value outlives the test.
         let hoist = matches!(
             self.cg.kind(h),
             NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::SysCall { .. }
         );
         let saved = std::mem::replace(&mut self.cg.container_call_prelude, hoist.then(Vec::new));
+        let outer = self.cg.record_binding_declarations.replace(Vec::new());
         let lowered = self.lower_stmt_operations(h);
+        let declarations =
+            std::mem::replace(&mut self.cg.record_binding_declarations, outer).unwrap_or_default();
         let prelude = std::mem::replace(&mut self.cg.container_call_prelude, saved);
         let mut statements = lowered?;
         if let Some(mut prelude) = prelude.filter(|prelude| !prelude.is_empty()) {
             prelude.append(&mut statements);
             statements = prelude;
+        }
+        if !declarations.is_empty() {
+            statements.splice(0..0, declarations);
         }
         locate_suspensions(&mut statements, &self.cg.origin(h));
         Ok(statements)

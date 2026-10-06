@@ -180,6 +180,12 @@ impl<'a> Codegen<'a> {
             if locals.contains_key(target) {
                 continue;
             }
+            // Bindings of values beyond packed capacity (column-layout
+            // records and descriptor arrays) get lexical column storage
+            // where the pattern is tested.
+            if self.column_binding_target(*target) {
+                continue;
+            }
             let ty = match self.kind(*target) {
                 NodeKind::Var { ty } | NodeKind::Array { ty } => ty,
                 other => {
@@ -1099,6 +1105,11 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
         if let NodeKind::Var { ty } | NodeKind::Array { ty } = self.kind(node) {
+            if self.node(node).parent.is_none() {
+                // A detached member declaration reached through a pattern
+                // key or a select names a record member, not a local.
+                return Ok(());
+            }
             if self.is_native_declaration(node) || self.record_declaration(node) {
                 // Native record locals are descriptor-backed values declared
                 // by `NativeValueDeclare` (see `native_values`); column-layout

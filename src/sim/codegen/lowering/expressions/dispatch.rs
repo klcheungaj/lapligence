@@ -784,6 +784,9 @@ impl<'a> Codegen<'a> {
                 _ => {}
             }
         }
+        if let Some(value) = self.lower_record_call_select(scope_path, h)? {
+            return Ok(value);
+        }
         if self.packed_element_member_select(h).is_some() {
             if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
                 return Ok(value);
@@ -903,6 +906,9 @@ impl<'a> Codegen<'a> {
                 }
             }
             NodeKind::Expr(ExprKind::Ref { target }) => self.lower_ref_expr(scope_path, h, *target),
+            NodeKind::Expr(ExprKind::MemberSelect { .. }) => Err(format!(
+                "member selection of a function result in `{scope_path}` is supported only for column-layout record results"
+            )),
             NodeKind::Expr(
                 ExprKind::BitSelect { .. }
                 | ExprKind::PartSelect { .. }

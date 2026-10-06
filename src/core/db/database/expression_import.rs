@@ -163,7 +163,17 @@ pub(super) fn expression_from_slang(
         },
         75 => match member_path_from_slang(snapshot, type_projector, ids, node, 0)? {
             Some((parts, refs)) => ExprKind::HierPath { parts, refs },
-            None => ExprKind::Other,
+            // A member of a call result has no declaration path; keep the
+            // call as the base so consumers can evaluate it once.
+            None => match (
+                first(SemanticEdgeRole::Base)?,
+                member_select_name(snapshot, ids, node)?,
+            ) {
+                (Some(base), Some(member)) if call_member_access(snapshot, ids, node)? => {
+                    ExprKind::MemberSelect { base, member }
+                }
+                _ => ExprKind::Other,
+            },
         },
         86 => ExprKind::NewArray {
             size: required(SemanticEdgeRole::Width, "dynamic-array size")?,
@@ -644,6 +654,23 @@ pub(super) fn enclosing_scope_name(nodes: &[Node], id: NodeId) -> Option<String>
     let parent = nodes.get(id.index())?.parent?;
     let full_name = &nodes.get(parent.index())?.full_name;
     (!full_name.is_empty()).then(|| full_name.to_string())
+}
+
+/// The member name a member-access node selects.
+fn member_select_name(
+    snapshot: &SlangSnapshot,
+    ids: &SemanticIds,
+    node: &SemanticNode,
+) -> Result<Option<String>, DbError> {
+    let member = node
+        .target_id
+        .map(|id| canonical_reference_target(snapshot, ids, id))
+        .transpose()?;
+    Ok(member
+        .and_then(|id| snapshot.semantic_nodes.get(id.index()))
+        .map(|member| member.name.to_string())
+        .filter(|name| !name.is_empty())
+        .or_else(|| (!node.name.is_empty()).then(|| node.name.to_string())))
 }
 
 #[cfg(test)]

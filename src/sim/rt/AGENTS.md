@@ -20,8 +20,9 @@ Never add a legacy fallback for an unavailable compact operation. Build its
 separate translation units through
 `tests/runtime_value_storage/compact_value.cmake`. Plain C kernels are always
 available; `LLG_SV4_GMP_KERNELS=1` accelerates wide mul/div/mod/pow and decimal
-conversion. Include GMP only in `kernels.c`, require compatible 64-bit nail-free
-limbs, and keep all other operations on direct word loops. The `compact_checks`
+conversion. Include GMP only in `kernels.c`, require 64-bit nail-free limbs,
+never alias `uint64_t` words as a distinct limb type, and keep all other
+operations on direct word loops. The `compact_checks`
 CMake target builds the complete standalone compact inventory. The header inlines <=64-bit operations
 and supports static constants through `LLG_GMP_SV4_LITERAL`.
 

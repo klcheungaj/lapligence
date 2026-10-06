@@ -15,6 +15,9 @@ impl Frame<'_, '_> {
                 {
                     return Err(pending("side-effect-capable evaluator expressions"))
                 }
+                IrExprKind::Sequence(_) => {
+                    return Err(pending("side-effect-capable evaluator expressions"))
+                }
                 _ => {}
             }
         }
@@ -386,6 +389,14 @@ impl Frame<'_, '_> {
                 steps,
                 location,
             } => self.tagged_select(base, steps, expr, location)?,
+            IrExprKind::Sequence(sequence) => {
+                // Lexical declarations made here belong to the current value
+                // scope and are released with the expression's operands.
+                for statement in &sequence.statements {
+                    self.statement(statement)?;
+                }
+                self.expression(&sequence.value)?
+            }
             IrExprKind::Verbatim { .. } => return Err(pending("opaque C expressions")),
         };
         Ok(result)

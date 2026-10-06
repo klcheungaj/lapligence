@@ -1,5 +1,5 @@
-// RTL-101 limit: a function result beyond packed capacity has no packed
-// value, so equality takes record storage operands only.
+// RTL-101 (lifted by RTL-101b): a function result beyond packed capacity
+// compares column by column from a lexical temporary.
 module tb;
   typedef struct { logic [1023:0] w [0:2047]; bit [7:0] t; } big_t;
   big_t r;

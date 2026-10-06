@@ -217,6 +217,16 @@ impl ExecutionModel {
         self.validate()
     }
 
+    /// Release the typed operations of one process once a consumer that
+    /// visits each process once (C emission) no longer needs them. The model
+    /// no longer validates afterwards, so only an owner that drops it after
+    /// that pass may call this; the process shell, region and analysis remain.
+    pub(crate) fn release_process_operations(&mut self, index: usize) {
+        if let Some(process) = self.processes.get_mut(index) {
+            process.blocks = Vec::new();
+        }
+    }
+
     pub fn packed_capacity(&self) -> Result<u128, IrValidationError> {
         let mut capacity = self.ir.packed_capacity()?;
         for process in &self.processes {
@@ -1446,6 +1456,10 @@ fn collect_expression_effects(
             for value in &cast.valid_values {
                 collect_expression_effects(ir, value, effects, visited_calls);
             }
+        }
+        IrExprKind::Sequence(sequence) => {
+            collect_effects(ir, &sequence.statements, effects, visited_calls);
+            collect_expression_effects(ir, &sequence.value, effects, visited_calls);
         }
         IrExprKind::TaggedSelect { base, steps, .. } => {
             effects.push(ExecutionEffect::RuntimeService);

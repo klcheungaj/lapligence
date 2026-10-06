@@ -996,6 +996,30 @@ GMP mode requires `GMP_ROOT`, with no system fallback. Compact frame checks use 
 `compact_selected_frame_lint` covers suspended values, shared instances and
 structural nets with both kernels and optimizer modes.
 
+### GMP dependency qualification
+
+`sim_value_backends::qualification` adds the V09 dependency witnesses: wide
+mul/div/mod/decimal results of compact/GMP equal legacy and portable for the host
+GMP and, on Linux/macOS hosts, for a copy whose header selects the other 64-bit
+limb spelling (`_LONG_LONG_LIMB`), which drives the macOS limb-copy path;
+`--gen-only` exports are moved before they configure and build; byte-identical
+GMP copies share one runtime archive and edited ones do not. With
+`LLG_TEST_REQUIRE_GMP=1` every GMP lane fails instead of reporting BLOCKED when
+`LLG_TEST_GMP_ROOT` is missing; CI's GMP lanes set it. Local full qualification
+(compact/GMP as the default backend for every model):
+
+```sh
+LLG_TEST_GMP_ROOT=/path/to/gmp GMP_ROOT=/path/to/gmp LLG_TEST_REQUIRE_GMP=1 \
+  LLG_VALUE_BACKEND=compact LLG_COMPACT_KERNELS=gmp \
+  scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test-threads 8
+```
+
+`python3 scripts/ci_gmp.py build --prefix DIR --check` builds the pinned,
+checksum-verified GMP 6.3.0 with a generic static configuration (vcpkg
+`*-windows-static-md` on Windows) and prints its identity; `identity --prefix
+DIR` prints host, compiler, version, limb/nail and file hashes and fails for an
+unusable installation. Its unit tests are `scripts/test_ci_gmp.py`.
+
 ### Required RTL-002 capacity lane
 
 This normal suite executes 16,777,216-cell storage, a multidimensional product at

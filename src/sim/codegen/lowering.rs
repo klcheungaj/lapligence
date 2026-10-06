@@ -609,7 +609,7 @@ fn finish_generation(
     execution.validate().map_err(|error| error.to_string())?;
     drop(optimization_stage);
     let render_stage = crate::profile::Stage::new("render");
-    let rendered = crate::sim::emit_c::render_with_value_config(&execution, options.value_config)?;
+    let rendered = crate::sim::emit_c::render_with_value_config(execution, options.value_config)?;
     drop(render_stage);
     Ok(GeneratedModel {
         design_name,
@@ -1221,6 +1221,13 @@ struct Codegen<'a> {
     /// Set while a column-layout record result call is lowered as an
     /// assignment source, the only context that supplies its result columns.
     record_call_result: bool,
+    /// A whole tagged-union member array whose tag the enclosing assignment
+    /// already checks, so its operand needs no check of its own.
+    record_guarded_source: Option<NodeId>,
+    /// Declarations of the lexical storage of whole-value pattern bindings
+    /// beyond packed capacity, made while one procedural statement is
+    /// lowered and placed before it; `None` outside procedural statements.
+    record_binding_declarations: Option<Vec<IrStmt>>,
     /// Native record declarations (formals, results, locals) → type layout.
     native_layouts: HashMap<NodeId, NativeLayout>,
     /// `(instance, declaration)` → native value storage.
@@ -1327,6 +1334,9 @@ struct Codegen<'a> {
     /// They join the static initialization schedule (descriptor storage in
     /// Verilog-2001 keeps an active-region initialization process).
     array_initializers: Vec<(NodeId, NodeId)>,
+    /// `(declaration, initializer)` of static column-layout records,
+    /// lowered into the static initialization schedule after every body.
+    record_initializers: Vec<(NodeId, NodeId)>,
     /// All lowered named events, in collection order (deterministic emission).
     events: Vec<EventInfo>,
     /// NamedEvent arena node → lowered event info.
@@ -1568,6 +1578,8 @@ impl<'a> Codegen<'a> {
             activation_records: HashMap::new(),
             record_array_infos: HashMap::new(),
             record_call_result: false,
+            record_guarded_source: None,
+            record_binding_declarations: None,
             native_layouts: HashMap::new(),
             native_storage: HashMap::new(),
             subroutine_containers: HashMap::new(),
@@ -1603,6 +1615,7 @@ impl<'a> Codegen<'a> {
             fixed_method_iterators: HashMap::new(),
             pending_container_pre_fns: Vec::new(),
             array_initializers: Vec::new(),
+            record_initializers: Vec::new(),
             events: Vec::new(),
             event_globals: HashMap::new(),
             event_elements: HashMap::new(),

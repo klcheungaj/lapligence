@@ -50,6 +50,10 @@ heuristics. One-clause conditional operations and multi-clause
 `ExprKind::Conditional` remain distinct. Consumers traverse every potentially
 reached clause; an earlier conditional write is not necessarily definite.
 Validate tagged pattern member IDs and their relationships.
+A member access whose base is not a declaration path but a function call
+(possibly through further member accesses) is `ExprKind::MemberSelect` with
+the computed base, and an element select of it keeps that node as its base;
+other non-path member accesses stay `Other`.
 
 ## Admission, libraries and editions
 

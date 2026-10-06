@@ -95,8 +95,15 @@ impl<'a> Codegen<'a> {
             let converts = operands
                 .iter()
                 .any(|node| self.converting_descriptor_cast(*node));
-            let arrays =
-                self.array_of(operands[0]).is_some() && self.array_of(operands[1]).is_some();
+            // A whole tagged-union member array is checked against its tag
+            // as a descriptor value operand.
+            let guarded = self.record_columns
+                && operands
+                    .iter()
+                    .any(|node| matches!(self.record_member_guard(*node), Ok(Some(_))));
+            let arrays = !guarded
+                && self.array_of(operands[0]).is_some()
+                && self.array_of(operands[1]).is_some();
             if (!arrays || converts)
                 && (oversized || operands.iter().all(|node| self.descriptor_operand(*node)))
             {

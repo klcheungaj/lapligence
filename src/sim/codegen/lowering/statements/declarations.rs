@@ -10,6 +10,14 @@ impl EmitCtx<'_, '_> {
         if self.func.is_some() && self.cg.record_declaration(declaration) {
             return self.cg.lower_record_local(&self.path, declaration);
         }
+        if self.func.is_none()
+            && self.cg.db.variable_lifetime(declaration) == VariableLifetime::Automatic
+            && self.cg.automatic_block_record(&self.path, declaration)?
+        {
+            // Automatic procedural-block records are lexical columns
+            // declared and initialized at each block entry.
+            return self.cg.lower_record_local(&self.path, declaration);
+        }
         let container = if self.func.is_some() && self.cg.is_subroutine_container(declaration) {
             self.cg
                 .container_globals

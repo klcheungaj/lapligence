@@ -67,7 +67,7 @@ pub use expressions::{
     IrEnumQuery, IrExpr, IrExprKind, IrFileInput, IrFileInputTarget, IrFileReadTarget, IrMathFunc,
     IrMutationExpr, IrNativeBinding, IrPatternCheck, IrPatternExpr, IrPatternMatchKind,
     IrPlusArgTarget, IrPlusArgText, IrRandomFunc, IrRealBinOp, IrRealUnOp, IrRuntimeQuery,
-    IrSampledCall, IrSampledDomain, IrSampledFunc, IrSysFunc, IrTaggedMemberGuard,
+    IrSampledCall, IrSampledDomain, IrSampledFunc, IrSequenceExpr, IrSysFunc, IrTaggedMemberGuard,
     IrTaggedSelectStep, IrTimeKind, IrUnOp,
 };
 mod lvalues;

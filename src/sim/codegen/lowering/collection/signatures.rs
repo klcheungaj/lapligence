@@ -137,6 +137,20 @@ impl<'a> Codegen<'a> {
                         column.fixed_array = Some(array);
                         record_columns.push(column);
                     }
+                    // Real, string and chandle members travel in one native
+                    // value after the columns (SIM-003 transport).
+                    if let Some(value) = self.record_formal_native(*io) {
+                        if formal.is_ref() {
+                            return Err(format!(
+                                "ref formal `{}` of a column-layout record with real, string or chandle members is not supported",
+                                self.node(*io).name
+                            ));
+                        }
+                        let mut column = formal.clone();
+                        column.fixed_array = None;
+                        column.native_value = Some(value);
+                        record_columns.push(column);
+                    }
                 }
                 if dpi.is_some() && !record_columns.is_empty() {
                     return Err(format!(
@@ -171,6 +185,13 @@ impl<'a> Codegen<'a> {
                             IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
                         formal.width = 0;
                         formal.fixed_array = Some(array);
+                        formals_ir.push(formal);
+                    }
+                    if let Some(value) = self.record_formal_native(*c) {
+                        let mut formal =
+                            IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
+                        formal.width = 0;
+                        formal.native_value = Some(value);
                         formals_ir.push(formal);
                     }
                 }
