@@ -563,13 +563,13 @@ fn is_whole_unpacked_value(
         return false;
     }
     if node
-        .parent_id
+        .parent_id()
         .and_then(|parent| nodes.get(&parent))
         .is_some_and(|parent| parent.detail == "ElementSelect")
     {
         return false;
     }
-    if is_fixed_unpacked_type(snapshot, node.type_id) {
+    if is_fixed_unpacked_type(snapshot, node.type_id()) {
         // Memory-file and PLA tasks consume a procedural storage operand;
         // Slang's semantic graph may still label it as a fixed-array value.
         if is_legacy_storage_operand(snapshot, nodes, node.id) {
@@ -577,8 +577,8 @@ fn is_whole_unpacked_value(
         }
         return true;
     }
-    let start = usize::try_from(node.edge_start).ok();
-    let count = usize::try_from(node.edge_count).ok();
+    let start = usize::try_from(node.edge_start()).ok();
+    let count = usize::try_from(node.edge_count()).ok();
     let Some((start, count)) = start.zip(count) else {
         return false;
     };
@@ -607,7 +607,7 @@ fn is_whole_unpacked_value(
             )
         })
         .filter_map(|edge| nodes.get(&edge.target_id).copied())
-        .any(|child| is_fixed_unpacked_type(snapshot, child.type_id))
+        .any(|child| is_fixed_unpacked_type(snapshot, child.type_id()))
         && !is_legacy_storage_operand(snapshot, nodes, node.id)
 }
 
@@ -691,9 +691,9 @@ fn semantic_edges<'a>(
     snapshot: &'a Snapshot,
     node: &SemanticNode,
 ) -> &'a [crate::ffi::slang::SemanticEdge] {
-    usize::try_from(node.edge_start)
+    usize::try_from(node.edge_start())
         .ok()
-        .zip(usize::try_from(node.edge_count).ok())
+        .zip(usize::try_from(node.edge_count()).ok())
         .and_then(|(start, count)| {
             snapshot
                 .semantic_edges
@@ -723,7 +723,7 @@ fn is_systemverilog_for_header(
             || !nodes.get(&first.target_id).is_some_and(|assignment| {
                 assignment.kind == SemanticKind::Expression
                     && assignment.operation == SemanticOperation::Assign
-                    && !assignment.is_nonblocking
+                    && !assignment.is_nonblocking()
             })
         {
             return true;
@@ -805,7 +805,7 @@ fn verilog_2001_semantic_violation(
     types: &HashMap<u64, &Type>,
     node: &SemanticNode,
 ) -> Option<&'static str> {
-    let parent = node.parent_id.and_then(|parent| nodes.get(&parent));
+    let parent = node.parent_id().and_then(|parent| nodes.get(&parent));
     match node.kind {
         SemanticKind::Argument => {
             if semantic_edges(snapshot, node)
@@ -815,9 +815,9 @@ fn verilog_2001_semantic_violation(
                 return Some("default subroutine argument");
             }
             // A.2.6: function_port_list holds tf_input_declarations only.
-            if (node.is_output || node.is_inout || node.is_ref)
+            if (node.is_output() || node.is_inout() || node.is_ref())
                 && parent.is_some_and(|parent| {
-                    parent.kind == SemanticKind::Subroutine && !parent.is_task
+                    parent.kind == SemanticKind::Subroutine && !parent.is_task()
                 })
             {
                 return Some("function output or inout argument");
@@ -831,12 +831,12 @@ fn verilog_2001_semantic_violation(
                 .find(|edge| edge.role == SemanticEdgeRole::Body)
                 .and_then(|edge| nodes.get(&edge.target_id))?;
             // 10.3.1(c): a function shall have at least one input argument.
-            if !node.is_task
+            if !node.is_task()
                 && !edges
                     .iter()
                     .filter(|edge| edge.role == SemanticEdgeRole::Child)
                     .filter_map(|edge| nodes.get(&edge.target_id))
-                    .any(|child| child.kind == SemanticKind::Argument && child.is_input)
+                    .any(|child| child.kind == SemanticKind::Argument && child.is_input())
             {
                 return Some("function without an input argument");
             }
@@ -889,7 +889,7 @@ fn verilog_2001_semantic_violation(
             | SemanticKind::Argument
             | SemanticKind::Parameter
     ) {
-        return later_type_form(types, node.type_id);
+        return later_type_form(types, node.type_id());
     }
     None
 }
@@ -913,7 +913,7 @@ fn written_variable<'a>(
         };
         if node.kind == SemanticKind::Expression
             && node
-                .target_id
+                .target_id()
                 .and_then(|target| nodes.get(&target))
                 .is_some_and(|target| {
                     matches!(target.kind, SemanticKind::Variable | SemanticKind::Array)
@@ -970,7 +970,7 @@ fn verilog_2001_driver_violation(
             }
         }
         SemanticKind::Port => {
-            if node.is_input || node.is_inout {
+            if node.is_input() || node.is_inout() {
                 for low in targets(SemanticEdgeRole::LowConnection) {
                     let variable = nodes.get(&low).is_some_and(|target| {
                         matches!(target.kind, SemanticKind::Variable | SemanticKind::Array)
@@ -980,7 +980,7 @@ fn verilog_2001_driver_violation(
                     }
                 }
             }
-            if node.is_output || node.is_inout {
+            if node.is_output() || node.is_inout() {
                 for high in targets(SemanticEdgeRole::HighConnection) {
                     if let Some(written) = written_variable(snapshot, nodes, high) {
                         return Some((written.range, "output port connected to a variable"));
@@ -988,9 +988,9 @@ fn verilog_2001_driver_violation(
                 }
             }
         }
-        SemanticKind::Primitive if node.is_primitive_instance => {
+        SemanticKind::Primitive if node.is_primitive_instance() => {
             for actual in targets(SemanticEdgeRole::Actual) {
-                if !nodes.get(&actual).is_some_and(|actual| actual.is_output) {
+                if !nodes.get(&actual).is_some_and(|actual| actual.is_output()) {
                     continue;
                 }
                 if let Some(written) = written_variable(snapshot, nodes, actual) {
@@ -1122,7 +1122,7 @@ fn verilog_2001_sequence_violation(
             && token
                 .semantic_id
                 .and_then(|id| nodes.get(&id))
-                .and_then(|node| node.type_id)
+                .and_then(|node| node.type_id())
                 .and_then(|id| types.get(&id))
                 .is_none_or(|ty| {
                     !matches!(
@@ -1256,7 +1256,7 @@ pub(super) fn edition_diagnostics(
             }
             if node.kind == SemanticKind::Definition
                 && node.definition_kind == Some(SemanticDefinitionKind::Module)
-                && node.is_local
+                && node.is_local()
             {
                 violations.push((node.range, "nested module declaration".to_owned()));
             }
@@ -1266,7 +1266,7 @@ pub(super) fn edition_diagnostics(
             if is_systemverilog_for_header(snapshot, &nodes, node) {
                 violations.push((node.range, "SystemVerilog for-loop header".to_owned()));
             }
-            if node.kind == SemanticKind::Port && is_fixed_unpacked_type(snapshot, node.type_id) {
+            if node.kind == SemanticKind::Port && is_fixed_unpacked_type(snapshot, node.type_id()) {
                 violations.push((node.range, "unpacked array port".to_owned()));
             } else if is_whole_unpacked_value(snapshot, &nodes, node) {
                 violations.push((node.range, "whole unpacked array value".to_owned()));
@@ -1364,7 +1364,7 @@ pub(super) fn edition_diagnostics(
         for node in &snapshot.semantic_nodes {
             let top_level = node.kind == SemanticKind::GenerateScope
                 && !node
-                    .parent_id
+                    .parent_id()
                     .and_then(|parent| nodes.get(&parent))
                     .is_some_and(|parent| parent.kind == SemanticKind::GenerateScope);
             let Some(range) = node.range.filter(|_| top_level) else {
@@ -1397,7 +1397,7 @@ pub(super) fn edition_diagnostics(
                         | SemanticKind::Variable
                         | SemanticKind::Array
                         | SemanticKind::Net
-                ) && declaration.parent_id.is_some_and(|parent| {
+                ) && declaration.parent_id().is_some_and(|parent| {
                     nodes
                         .get(&parent)
                         .is_some_and(|scope| scope.detail == "CompilationUnit")

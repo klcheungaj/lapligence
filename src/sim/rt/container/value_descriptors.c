@@ -345,6 +345,136 @@ static int llg_value_equal(const llg_value_t* a, const llg_value_t* b) {
     }
 }
 
+/* ---- SystemVerilog equality of recursive values (SIM-007) -------------- */
+
+/* Fold one item result into an aggregate result: a known mismatch dominates,
+ * then an unknown item (SV 7.2.2, 7.6, 11.4.5). */
+static int llg_value_equality_fold(int result, int item) {
+    if (result == LLG_VALUE_UNEQUAL || item == LLG_VALUE_UNEQUAL)
+        return LLG_VALUE_UNEQUAL;
+    return item == LLG_VALUE_EQUALITY_UNKNOWN ? item : result;
+}
+
+static int llg_packed_equality(sv4_t a, sv4_t b, int case_equality) {
+    if (case_equality)
+        return sv4_same(a, b) ? LLG_VALUE_EQUAL : LLG_VALUE_UNEQUAL;
+    sv4_t equal = sv4_eq(a, b);
+    int result = sv4_is_unknown(equal)
+        ? LLG_VALUE_EQUALITY_UNKNOWN
+        : (sv4_to_bool(equal) ? LLG_VALUE_EQUAL : LLG_VALUE_UNEQUAL);
+    sv4_destroy(&equal);
+    return result;
+}
+
+static int llg_value_items_equality(const llg_value_t* a, size_t a_count,
+                                    const llg_value_t* b, size_t b_count,
+                                    int case_equality) {
+    if (a_count != b_count) return LLG_VALUE_UNEQUAL;
+    int result = LLG_VALUE_EQUAL;
+    for (size_t i = 0; i < a_count && result != LLG_VALUE_UNEQUAL; ++i)
+        result = llg_value_equality_fold(
+            result, llg_value_equality(&a[i], &b[i], case_equality));
+    return result;
+}
+
+int llg_value_equality(const llg_value_t* a, const llg_value_t* b,
+                       int case_equality) {
+    if (!a || !b || !a->desc || !b->desc ||
+        !llg_value_desc_compatible(a->desc, b->desc))
+        return LLG_VALUE_UNEQUAL;
+    switch (a->desc->kind) {
+        case LLG_VALUE_PACKED:
+            return llg_packed_equality(a->value.packed, b->value.packed,
+                                       case_equality);
+        case LLG_VALUE_REAL:
+            /* Numeric comparison: 0.0 equals -0.0 and NaN equals nothing. */
+            return a->value.real == b->value.real ? LLG_VALUE_EQUAL
+                                                  : LLG_VALUE_UNEQUAL;
+        case LLG_VALUE_STRING:
+            return a->value.string.len == b->value.string.len &&
+                           (!a->value.string.len ||
+                            memcmp(a->value.string.data, b->value.string.data,
+                                   a->value.string.len) == 0)
+                       ? LLG_VALUE_EQUAL
+                       : LLG_VALUE_UNEQUAL;
+        case LLG_VALUE_CHANDLE:
+        case LLG_VALUE_EVENT:
+        case LLG_VALUE_OPAQUE:
+        case LLG_VALUE_PROCESS:
+            return a->value.handle == b->value.handle ? LLG_VALUE_EQUAL
+                                                      : LLG_VALUE_UNEQUAL;
+        case LLG_VALUE_AGGREGATE:
+        case LLG_VALUE_FIXED_ARRAY:
+            if (!a->value.items || !b->value.items)
+                return a->value.items == b->value.items ? LLG_VALUE_EQUAL
+                                                        : LLG_VALUE_UNEQUAL;
+            return llg_value_items_equality(a->value.items, a->desc->item_count,
+                                            b->value.items, b->desc->item_count,
+                                            case_equality);
+        case LLG_VALUE_CONTAINER: {
+            /* A null nested container is the empty default. */
+            const llg_dyn_value_array_t* left = a->value.container;
+            const llg_dyn_value_array_t* right = b->value.container;
+            return llg_value_items_equality(
+                left ? left->data : NULL, left ? left->size : 0,
+                right ? right->data : NULL, right ? right->size : 0,
+                case_equality);
+        }
+        default:
+            return LLG_VALUE_UNEQUAL;
+    }
+}
+
+static sv4_t llg_equality_result(int equality, int negate) {
+    if (equality == LLG_VALUE_EQUALITY_UNKNOWN) return sv4_x(1, 0);
+    return sv4_from_u64((equality == LLG_VALUE_EQUAL) != (negate != 0), 1, 0);
+}
+
+sv4_t llg_dyn_value_equal(const llg_dyn_value_array_t* a,
+                          const llg_dyn_value_array_t* b, int case_equality,
+                          int negate) {
+    return llg_equality_result(
+        llg_value_items_equality(a->data, a->size, b->data, b->size,
+                                 case_equality),
+        negate);
+}
+
+sv4_t llg_queue_value_equal(const llg_queue_value_array_t* a,
+                            const llg_queue_value_array_t* b,
+                            int case_equality, int negate) {
+    return llg_equality_result(
+        llg_value_items_equality(a->data, a->size, b->data, b->size,
+                                 case_equality),
+        negate);
+}
+
+static int llg_packed_items_equality(const sv4_t* a, size_t a_count,
+                                     const sv4_t* b, size_t b_count,
+                                     int case_equality) {
+    if (a_count != b_count) return LLG_VALUE_UNEQUAL;
+    int result = LLG_VALUE_EQUAL;
+    for (size_t i = 0; i < a_count && result != LLG_VALUE_UNEQUAL; ++i)
+        result = llg_value_equality_fold(
+            result, llg_packed_equality(a[i], b[i], case_equality));
+    return result;
+}
+
+sv4_t llg_dyn_equal(const llg_dyn_array_t* a, const llg_dyn_array_t* b,
+                    int case_equality, int negate) {
+    return llg_equality_result(
+        llg_packed_items_equality(a->data, a->size, b->data, b->size,
+                                  case_equality),
+        negate);
+}
+
+sv4_t llg_queue_equal(const llg_queue_t* a, const llg_queue_t* b,
+                      int case_equality, int negate) {
+    return llg_equality_result(
+        llg_packed_items_equality(a->data, a->size, b->data, b->size,
+                                  case_equality),
+        negate);
+}
+
 static int llg_value_equal_after_conversion(
     const llg_value_t* target, const llg_value_desc_t* target_desc,
     const llg_value_t* source) {

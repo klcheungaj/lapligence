@@ -774,6 +774,16 @@ impl<'a> Codegen<'a> {
         if let Some(value) = self.overload_current_read(scope_path, h) {
             return value;
         }
+        if let Some(value) = self.native_tagged_expr(scope_path, h)? {
+            return Ok(value);
+        }
+        if let Some(select) = self.native_member_select(scope_path, h)? {
+            match self.native_member_select_read(scope_path, &select)? {
+                crate::sim::ir::IrNativeLeafExpr::Packed(value)
+                | crate::sim::ir::IrNativeLeafExpr::Real(value) => return Ok(value),
+                _ => {}
+            }
+        }
         if let Some(value) = self.lower_record_call_select(scope_path, h)? {
             return Ok(value);
         }

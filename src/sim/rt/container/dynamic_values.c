@@ -114,6 +114,66 @@ void llg_dyn_value_copy(llg_dyn_value_array_t* dst,
     llg_dyn_value_new_count(dst, size, src);
 }
 
+void llg_dyn_value_copy_range(llg_dyn_value_array_t* dst, sv4_t dst_start,
+                              const llg_dyn_value_array_t* src,
+                              sv4_t src_start, uint64_t count) {
+    if (!llg_value_desc_compatible(dst->element, src->element))
+        llg_container_fatal("incompatible recursive container element types");
+    int64_t to;
+    if (!sv4_to_index_i64(dst_start, &to)) return;
+    int64_t from;
+    int from_known = sv4_to_index_i64(src_start, &from);
+    size_t n = llg_checked_count(count, sizeof(llg_value_t));
+    /* Snapshot every selected source element (the default outside the
+     * source) before the first write, so overlapping ranges of one array
+     * read their old elements (SV 7.6). */
+    llg_value_t* items = llg_alloc_items(n, sizeof(*items));
+    if (n) memset(items, 0, n * sizeof(*items));
+    for (size_t i = 0; i < n; ++i) {
+        const llg_value_t* source = NULL;
+        if (from_known && from >= 0 && (uint64_t)from <= SIZE_MAX - i &&
+            (size_t)from + i < src->size)
+            source = &src->data[(size_t)from + i];
+        llg_value_copy(&items[i], dst->element, source);
+    }
+    int changed = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (to < 0 || (uint64_t)to > SIZE_MAX - i || (size_t)to + i >= dst->size)
+            continue;
+        llg_value_t* target = &dst->data[(size_t)to + i];
+        if (llg_value_equal(target, &items[i])) continue;
+        llg_value_drop(target);
+        *target = items[i]; // exclusive ownership transfer
+        memset(&items[i], 0, sizeof(items[i]));
+        changed = 1;
+    }
+    for (size_t i = 0; i < n; ++i) llg_value_drop(&items[i]);
+    free(items);
+    llg_notify(dst->notify, dst->contents_dependency, dst->shape_dependency,
+               changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0);
+}
+
+void llg_dyn_value_merge(llg_dyn_value_array_t* dst,
+                         const llg_dyn_value_array_t* a,
+                         const llg_dyn_value_array_t* b) {
+    if (!llg_value_desc_compatible(dst->element, a->element) ||
+        !llg_value_desc_compatible(dst->element, b->element))
+        llg_container_fatal("incompatible recursive container element types");
+    size_t size = a->size > b->size ? a->size : b->size;
+    llg_value_t* data = llg_alloc_items(size, sizeof(*data));
+    if (size) memset(data, 0, size * sizeof(*data));
+    for (size_t i = 0; i < size; ++i) {
+        const llg_value_t* source =
+            i < a->size && i < b->size &&
+                    llg_value_equality(&a->data[i], &b->data[i], 0) ==
+                        LLG_VALUE_EQUAL
+                ? &a->data[i]
+                : NULL;
+        llg_value_copy(&data[i], dst->element, source);
+    }
+    llg_dyn_value_commit(dst, data, size);
+}
+
 void llg_dyn_value_assign_reals(llg_dyn_value_array_t* dst,
                                 const double* values, size_t count) {
     if (!dst->element || dst->element->kind != LLG_VALUE_REAL)

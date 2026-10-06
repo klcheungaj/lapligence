@@ -52,7 +52,7 @@ fn assertion_repetition(node: &SemanticNode) -> Result<Option<AssertionRepetitio
     if node.auxiliary & SEMANTIC_ASSERTION_REPETITION == 0 {
         return Ok(None);
     }
-    let kind = match node.assertion_repetition_kind {
+    let kind = match node.assertion_repetition_kind() {
         crate::ffi::slang::SEMANTIC_ASSERTION_REPEAT_CONSECUTIVE => {
             AssertionRepetitionKind::Consecutive
         }
@@ -69,8 +69,8 @@ fn assertion_repetition(node: &SemanticNode) -> Result<Option<AssertionRepetitio
     Ok(Some(AssertionRepetition {
         kind,
         range: AssertionRange {
-            min: node.assertion_range_min,
-            max: node.assertion_range_max,
+            min: node.assertion_range_min(),
+            max: node.assertion_range_max(),
         },
     }))
 }
@@ -132,8 +132,8 @@ pub(super) fn assertion_expr_from_slang(
             expr: required(SemanticEdgeRole::Body, "unary assertion body")?,
             ranged: node.auxiliary & SEMANTIC_ASSERTION_RANGE != 0,
             range: (node.auxiliary & SEMANTIC_ASSERTION_RANGE != 0).then_some(AssertionRange {
-                min: node.assertion_range_min,
-                max: node.assertion_range_max,
+                min: node.assertion_range_min(),
+                max: node.assertion_range_max(),
             }),
         },
         6 => AssertionExprKind::Binary {
@@ -157,7 +157,7 @@ pub(super) fn assertion_expr_from_slang(
             AssertionExprKind::Clocking {
                 control,
                 signal,
-                posedge: timing.is_posedge,
+                posedge: timing.is_posedge(),
                 expr: required(SemanticEdgeRole::Body, "clocked assertion body")?,
             }
         }

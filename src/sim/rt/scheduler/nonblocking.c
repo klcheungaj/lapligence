@@ -19,6 +19,7 @@ static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
     n->real_value = 0.0;
     n->is_string = 0;
     n->is_chandle = 0;
+    n->is_values = 0;
     n->tag_view = NULL;
     n->time = g.now + ticks;
     n->sequence = g.nba_sequence++;
@@ -484,6 +485,32 @@ void llg_chandle_nba_after(void** target, void* value, uint64_t ticks) {
     n->is_chandle = 1;
     n->native.chandle.target = target;
     n->native.chandle.value = value;
+    enqueue_nba(n);
+}
+
+void llg_dyn_value_nba(llg_dyn_value_array_t* target, sv4_t dst_start,
+                       const llg_dyn_value_array_t* src, sv4_t src_start,
+                       uint64_t count, int whole) {
+    llg_nba_t* n = new_nba(0);
+    if (!n) return;
+    llg_dyn_value_array_t* payload = (llg_dyn_value_array_t*)llg_checked_calloc(
+        1, sizeof(*payload), "nonblocking array value");
+    llg_dyn_value_init(payload, target->element);
+    if (whole) {
+        llg_dyn_value_copy(payload, src);
+    } else {
+        sv4_t size = sv4_from_u64(count, 64, 0);
+        sv4_t zero = sv4_from_u64(0, 64, 1);
+        llg_dyn_value_new(payload, size, NULL);
+        llg_dyn_value_copy_range(payload, zero, src, src_start, count);
+        sv4_destroy(&zero);
+        sv4_destroy(&size);
+        n->value = sv4_clone(&dst_start);
+    }
+    n->is_values = 1;
+    n->native.values.target = target;
+    n->native.values.payload = payload;
+    n->native.values.whole = whole;
     enqueue_nba(n);
 }
 

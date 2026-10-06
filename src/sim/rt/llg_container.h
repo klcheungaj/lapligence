@@ -157,6 +157,19 @@ void llg_native_value_destroy(void* value);
 int llg_native_value_try_copy(llg_value_t* dst, const llg_value_t* src);
 void llg_native_value_copy(llg_value_t* dst, const llg_value_t* src);
 
+/* SystemVerilog equality of recursive values (SV 7.2.2, 7.6, 11.4.5).
+ * Packed leaves use `==` (a known mismatch dominates, otherwise X/Z is
+ * unknown) or, with `case_equality`, compare X/Z literally; reals compare
+ * numerically, strings by contents and handles by identity. Arrays and
+ * containers of different sizes are unequal. Operands are borrowed. */
+enum {
+    LLG_VALUE_UNEQUAL = 0,
+    LLG_VALUE_EQUAL = 1,
+    LLG_VALUE_EQUALITY_UNKNOWN = 2,
+};
+int llg_value_equality(const llg_value_t* a, const llg_value_t* b,
+                       int case_equality);
+
 /* Explicit native roots. Every live descriptor-backed value owned by model
  * storage, an activation scope or a call temporary is one registered root, so
  * a collector can enumerate the identity handles they keep reachable without
@@ -196,6 +209,23 @@ void llg_dyn_value_copy(llg_dyn_value_array_t* dst,
                         const llg_dyn_value_array_t* src);
 void llg_dyn_value_new(llg_dyn_value_array_t* dst, sv4_t size,
                        const llg_dyn_value_array_t* initializer);
+/* Copy `count` elements of `src` starting at storage position `src_start`
+ * into `dst` at `dst_start` (a fixed-array slice read or write, SV 7.4.6):
+ * source positions outside `src` read the element default, destination
+ * positions outside `dst` and an X/Z `dst_start` write nothing. Every source
+ * element is copied before the first write, so `dst` may be `src`. Packed
+ * positions are borrowed; changed elements notify contents readers. */
+void llg_dyn_value_copy_range(llg_dyn_value_array_t* dst, sv4_t dst_start,
+                              const llg_dyn_value_array_t* src,
+                              sv4_t src_start, uint64_t count);
+/* Ambiguous-condition merge of two arrays (SV 11.4.11): each immediate
+ * element that is known equal in both keeps that value, every other element
+ * takes the element type's default-uninitialized value. Arrays of different
+ * sizes merge to the larger size, unmatched positions taking the default.
+ * `a` and `b` are borrowed and may alias `dst`. */
+void llg_dyn_value_merge(llg_dyn_value_array_t* dst,
+                         const llg_dyn_value_array_t* a,
+                         const llg_dyn_value_array_t* b);
 void llg_dyn_value_assign_reals(llg_dyn_value_array_t* dst,
                                 const double* values, size_t count);
 void llg_dyn_value_assign_strings(llg_dyn_value_array_t* dst,
@@ -459,6 +489,19 @@ int llg_queue_value_insert_container(llg_queue_value_array_t* queue,
 int llg_queue_value_insert_container_from_packed(
     llg_queue_value_array_t* queue, sv4_t index, const llg_dyn_array_t* source);
 int llg_queue_value_delete_index(llg_queue_value_array_t* queue, sv4_t index);
+/* Whole-container `==`/`!=`/`===`/`!==` (`negate` selects the inequality
+ * forms); the one-bit unsigned result is a fresh owner, X when the equality
+ * is unknown. Operands are borrowed. */
+sv4_t llg_dyn_value_equal(const llg_dyn_value_array_t* a,
+                          const llg_dyn_value_array_t* b, int case_equality,
+                          int negate);
+sv4_t llg_queue_value_equal(const llg_queue_value_array_t* a,
+                            const llg_queue_value_array_t* b,
+                            int case_equality, int negate);
+sv4_t llg_dyn_equal(const llg_dyn_array_t* a, const llg_dyn_array_t* b,
+                    int case_equality, int negate);
+sv4_t llg_queue_equal(const llg_queue_t* a, const llg_queue_t* b,
+                      int case_equality, int negate);
 /* Whole elements and in-place members of descriptor-backed containers
  * (SIM-006). Locators return the element at `indices` (`count` >= 1, nested
  * through container elements) or NULL for an invalid index or missing key;

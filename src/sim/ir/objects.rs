@@ -546,7 +546,7 @@ impl IrStringExpr {
             return Ok(());
         }
         let mut valid = true;
-        self.expressions(&mut |expr| valid &= !expr.is_real());
+        self.visit_expressions(false, &mut |expr| valid &= !expr.is_real());
         if !valid {
             return Err(super::IrValidationError::new(
                 "string",
@@ -778,6 +778,13 @@ impl IrStringExpr {
         }
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        self.visit_expressions(true, visit);
+    }
+
+    /// Visit every packed or real operand; `typed_call_args` includes the
+    /// arguments of typed calls, which may legitimately be real or carry
+    /// native leaves and so are not string-operation operands.
+    fn visit_expressions(&self, typed_call_args: bool, visit: &mut impl FnMut(&IrExpr)) {
         match self {
             Self::Literal(_)
             | Self::RandomState
@@ -798,17 +805,19 @@ impl IrStringExpr {
                 if let Some(receiver) = receiver {
                     receiver.expressions(visit);
                 }
-                for arg in args {
-                    arg.expressions(visit);
+                if typed_call_args {
+                    for arg in args {
+                        arg.expressions(visit);
+                    }
                 }
             }
             Self::Concat(parts) => {
                 for part in parts {
-                    part.expressions(visit);
+                    part.visit_expressions(typed_call_args, visit);
                 }
             }
             Self::Repeat(value, count) => {
-                value.expressions(visit);
+                value.visit_expressions(typed_call_args, visit);
                 visit(count);
             }
             Self::FromPacked(value) => visit(value),
@@ -824,9 +833,9 @@ impl IrStringExpr {
                     arg.expressions(visit);
                 }
             }
-            Self::Case(value, _) => value.expressions(visit),
+            Self::Case(value, _) => value.visit_expressions(typed_call_args, visit),
             Self::Substr(value, first, last) => {
-                value.expressions(visit);
+                value.visit_expressions(typed_call_args, visit);
                 visit(first);
                 visit(last);
             }
@@ -836,8 +845,8 @@ impl IrStringExpr {
                 otherwise,
             } => {
                 visit(predicate);
-                then.expressions(visit);
-                otherwise.expressions(visit);
+                then.visit_expressions(typed_call_args, visit);
+                otherwise.visit_expressions(typed_call_args, visit);
             }
         }
     }

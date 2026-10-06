@@ -37,6 +37,7 @@ fn recursive_pattern_checks_use_the_selected_comparator() {
                         binding: None,
                     })
                     .collect(),
+                native_bindings: Vec::new(),
             })),
             1,
             false,

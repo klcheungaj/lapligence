@@ -94,11 +94,11 @@ pub(super) fn statement_from_slang(
                 });
             }
             StmtKind::Case {
-                case_type: if node.case_inside {
+                case_type: if node.case_inside() {
                     CaseKind::Inside
-                } else if node.case_wildcard_x_or_z {
+                } else if node.case_wildcard_x_or_z() {
                     CaseKind::X
-                } else if node.case_wildcard_z {
+                } else if node.case_wildcard_z() {
                     CaseKind::Z
                 } else {
                     CaseKind::Exact
@@ -184,11 +184,11 @@ pub(super) fn statement_from_slang(
                 .map(|edge| semantic_id(ids, edge.target_id))
                 .transpose()?;
             StmtKind::PatternCase {
-                case_type: if node.case_inside {
+                case_type: if node.case_inside() {
                     CaseKind::Inside
-                } else if node.case_wildcard_x_or_z {
+                } else if node.case_wildcard_x_or_z() {
                     CaseKind::X
-                } else if node.case_wildcard_z {
+                } else if node.case_wildcard_z() {
                     CaseKind::Z
                 } else {
                     CaseKind::Exact
@@ -246,7 +246,7 @@ pub(super) fn statement_from_slang(
         45 => StmtKind::Continue,
         46 => StmtKind::Disable {
             target: node
-                .target_id
+                .target_id()
                 .map(|symbol| block_statement_for_symbol(snapshot, ids, symbol))
                 .transpose()?
                 .flatten(),
@@ -265,7 +265,7 @@ pub(super) fn statement_from_slang(
                     ));
                 }
                 StmtKind::Assign {
-                    blocking: !semantic.is_nonblocking,
+                    blocking: !semantic.is_nonblocking(),
                     op: operation_from_slang(semantic.operation, false),
                     delay: intra_control(snapshot, semantic, assignment_edges, ids)?,
                 }
@@ -313,7 +313,7 @@ pub(super) fn statement_from_slang(
                 };
             StmtKind::Fork {
                 target: node
-                    .target_id
+                    .target_id()
                     .map(|symbol| block_statement_for_symbol(snapshot, ids, symbol))
                     .transpose()?
                     .flatten(),
@@ -350,7 +350,7 @@ pub(super) fn statement_from_slang(
             let type_id = snapshot
                 .semantic_nodes
                 .get(base.index())
-                .and_then(|base| base.type_id)
+                .and_then(|base| base.type_id())
                 .ok_or_else(|| {
                     DbError::InvalidSnapshot("foreach array expression has no type".into())
                 })?;
@@ -387,7 +387,7 @@ pub(super) fn statement_from_slang(
         }
         40 => timing_statement(snapshot, node, edges, ids)?,
         41 => StmtKind::EventTrigger {
-            blocking: !node.is_nonblocking,
+            blocking: !node.is_nonblocking(),
             target: edge_target(ids, edges, SemanticEdgeRole::Event)?,
             timing: edge_target(ids, edges, SemanticEdgeRole::Delay)?
                 .map(|timing| event_trigger_timing(snapshot, timing, ids))
@@ -421,7 +421,7 @@ fn block_statement_for_symbol(
     let mut statements = snapshot.semantic_nodes.iter().filter(|candidate| {
         candidate.kind == SemanticKind::Statement
             && matches!(candidate.subkind, 32 | 56..=58)
-            && candidate.target_id == Some(symbol)
+            && candidate.target_id() == Some(symbol)
     });
     let result = statements
         .next()
@@ -612,7 +612,7 @@ pub(super) fn event_specs(
             // samples are published before the named event wakes observers.
             let named_event = clocking_block_from_expression(snapshot, ids, sig, 0)?.is_some()
                 || is_named_event_expression(snapshot, ids, sig)?;
-            let specs = if timing.is_both_edges {
+            let specs = if timing.is_both_edges() {
                 vec![
                     EventSpec::Edge { sig, posedge: true },
                     EventSpec::Edge {
@@ -620,10 +620,10 @@ pub(super) fn event_specs(
                         posedge: false,
                     },
                 ]
-            } else if timing.is_posedge || timing.is_negedge {
+            } else if timing.is_posedge() || timing.is_negedge() {
                 vec![EventSpec::Edge {
                     sig,
-                    posedge: timing.is_posedge,
+                    posedge: timing.is_posedge(),
                 }]
             } else if named_event {
                 vec![EventSpec::Named(sig)]
@@ -684,7 +684,7 @@ pub(super) fn is_named_event_expression(
     }
     match node.subkind {
         65 => node
-            .target_id
+            .target_id()
             .map(|target| semantic_id(ids, target))
             .transpose()?
             .map_or(Ok(false), |target| {
@@ -697,7 +697,7 @@ pub(super) fn is_named_event_expression(
             })
         }
         75 => node
-            .target_id
+            .target_id()
             .map(|target| semantic_id(ids, target))
             .transpose()?
             .map_or(Ok(false), |target| {

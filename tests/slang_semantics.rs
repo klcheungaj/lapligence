@@ -108,8 +108,8 @@ fn node_by_id(snapshot: &slang::Snapshot, id: u64) -> &SemanticNode {
 }
 
 fn edges<'a>(snapshot: &'a slang::Snapshot, node: &SemanticNode) -> &'a [SemanticEdge] {
-    let start = usize::try_from(node.edge_start).expect("edge start fits usize");
-    let count = usize::try_from(node.edge_count).expect("edge count fits usize");
+    let start = usize::try_from(node.edge_start()).expect("edge start fits usize");
+    let count = usize::try_from(node.edge_count()).expect("edge count fits usize");
     snapshot
         .semantic_edges
         .get(start..start + count)
@@ -161,8 +161,8 @@ fn subroutine_bodies_have_exact_edges_and_missing_bodies_fail_lowering() {
         1,
         "function must have one exact body edge"
     );
-    let edge_start = function.edge_start as usize;
-    let edge_end = edge_start + function.edge_count as usize;
+    let edge_start = function.edge_start() as usize;
+    let edge_end = edge_start + function.edge_count() as usize;
     let body_id = body_edges[0].target_id;
     assert_eq!(node_by_id(&snapshot, body_id).kind, SemanticKind::Statement);
     let database = llg::core::db::Db::from_slang(&snapshot).expect("owned function graph");
@@ -199,7 +199,7 @@ fn type_members<'a>(snapshot: &'a slang::Snapshot, ty: &Type) -> &'a [TypeMember
 }
 
 fn integer_payload(snapshot: &slang::Snapshot, node: &SemanticNode) -> Option<(bool, u64, u64)> {
-    let id = usize::try_from(node.constant_id?).ok()?;
+    let id = usize::try_from(node.constant_id()?).ok()?;
     match &snapshot.constants.get(id)?.value {
         ConstantValue::Integer {
             is_signed,
@@ -251,10 +251,10 @@ endmodule
     let top = snapshot
         .semantic_nodes
         .iter()
-        .find(|node| node.kind == SemanticKind::Instance && node.is_top)
+        .find(|node| node.kind == SemanticKind::Instance && node.is_top())
         .expect("top instance");
     assert_eq!(
-        top.time_scale,
+        top.time_scale(),
         Some(SemanticTimeScale {
             unit: SemanticTimeUnit::Nanoseconds,
             magnitude: 1,
@@ -272,10 +272,10 @@ endmodule
         .collect();
     assert!(assignments
         .iter()
-        .any(|assignment| !assignment.is_nonblocking));
+        .any(|assignment| !assignment.is_nonblocking()));
     assert!(assignments
         .iter()
-        .any(|assignment| assignment.is_nonblocking));
+        .any(|assignment| assignment.is_nonblocking()));
     assert!(assignments.iter().all(|assignment| {
         edge_targets(&snapshot, assignment, SemanticEdgeRole::Lhs).len() == 1
             && edge_targets(&snapshot, assignment, SemanticEdgeRole::Rhs).len() == 1
@@ -310,19 +310,19 @@ endmodule
                 && edge_targets(&snapshot, node, SemanticEdgeRole::Delay).len() == 1
         })
         .expect("delay timing control");
-    assert!(delay.parent_id.is_some());
+    assert!(delay.parent_id().is_some());
 
     let posedge = snapshot
         .semantic_nodes
         .iter()
-        .find(|node| node.kind == SemanticKind::TimingControl && node.is_posedge)
+        .find(|node| node.kind == SemanticKind::TimingControl && node.is_posedge())
         .expect("posedge timing control");
     let event_expr = edge_targets(&snapshot, posedge, SemanticEdgeRole::Event);
     assert_eq!(event_expr.len(), 1);
     assert_eq!(event_expr[0].kind, SemanticKind::Expression);
     assert_eq!(
         event_expr[0]
-            .target_id
+            .target_id()
             .map(|id| node_by_id(&snapshot, id).name.as_str()),
         Some("clk")
     );
@@ -339,10 +339,10 @@ endmodule
             node.kind == SemanticKind::Statement
                 && edge_targets(&snapshot, node, SemanticEdgeRole::Event)
                     .iter()
-                    .any(|target| target.target_id == Some(named_event.id))
+                    .any(|target| target.target_id() == Some(named_event.id))
         })
         .expect("event trigger relationship");
-    assert!(!trigger.is_nonblocking);
+    assert!(!trigger.is_nonblocking());
 }
 
 #[test]
@@ -407,7 +407,7 @@ endmodule
         type_by_id(
             &snapshot,
             variable
-                .type_id
+                .type_id()
                 .unwrap_or_else(|| panic!("type for `{name}`")),
         )
     };
@@ -619,11 +619,11 @@ endmodule
                 .iter()
                 .find(|node| {
                     node.kind == SemanticKind::Expression
-                        && node.target_id.is_some()
+                        && node.target_id().is_some()
                         && node.range.is_some_and(|range| range.start == start)
                 })
                 .expect("actual's semantic reference");
-            let storage = node_by_id(&snapshot, expression.target_id.unwrap());
+            let storage = node_by_id(&snapshot, expression.target_id().unwrap());
             assert_eq!(storage.kind, storage_kind, "storage changed: {connection}");
             assert_eq!(storage.range.unwrap().start, declaration_start);
         }
@@ -680,18 +680,18 @@ endmodule
         );
 
         let actual_declaration = actual
-            .target_id
+            .target_id()
             .map(|id| node_by_id(&snapshot, id).name.as_str())
             .expect("actual expression target");
         match port.name.as_str() {
             "data_in" => {
-                assert!(port.is_input);
-                assert!(!port.is_output);
+                assert!(port.is_input());
+                assert!(!port.is_output());
                 assert_eq!(actual_declaration, "source");
             }
             "data_out" => {
-                assert!(port.is_output);
-                assert!(!port.is_input);
+                assert!(port.is_output());
+                assert!(!port.is_input());
                 assert_eq!(actual_declaration, "sink");
             }
             other => panic!("unexpected port `{other}`"),

@@ -118,6 +118,15 @@ restored the 40k peak is 1.514 GiB. These are
 generation-process peaks, not generated-simulator runtime memory. Export size
 is approximately linear for this corpus; other shapes can differ.
 
+Packing the staged `SemanticNode` (booleans into one flag word, `u32`
+references, boxed rare attributes; 248 to 160 bytes) lowered the sampled
+stage peaks on 2026-10-05 (release, medians of three interleaved runs, before
+`a0ffc09e`): stream 347 to 297 MiB at 10k and 1,323 to 1,122 MiB at 40k, DB
+import 397 to 347 MiB at 10k and 1,550 to 1,348 MiB at 40k. The whole-run peak
+did not move (0.388 to 0.386 GiB at 10k, 1.513 GiB at 40k) because typed
+lowering (the DB plus typed IR; 395 MiB at 10k, 1,549 MiB at 40k) now sets it
+at the same level DB import used to.
+
 ### Cause
 
 The [C++ wrapper](../src/wrapper/slang_c_api.cpp) must finish capture while
@@ -132,7 +141,7 @@ table. The receiver interns node names and kind spellings.
 
 [`Db::from_slang`](../src/core/db/readme.md) needs random access to the whole
 node set (child flattening, array-select chains, full names), so the receiver
-stages the owned snapshot (272 bytes per semantic node) and the snapshot and DB
+stages the owned snapshot (160 bytes per semantic node) and the snapshot and DB
 overlap during import. The driver releases the snapshot after import and
 consuming generation releases the DB after typed lowering.
 
@@ -150,9 +159,11 @@ budget, a record-count ceiling or available process memory.
 
 ### Intended direction
 
-Shrink the staged node further (flag bits, sentinel IDs) or import nodes
-incrementally; and compact DB nodes further (side tables for rare kind
-payloads). Rendering memory is tracked in the C emission entry below.
+Lowering now sets the whole-run peak, so lower the DB plus typed IR it holds
+(compact DB nodes with side tables for rare kind payloads), or import nodes
+incrementally to shrink the staged snapshot further (the remaining 160 bytes
+are mostly the 32-byte `Option<SourceRange>` and three 16-byte interned
+texts). Rendering memory is tracked in the C emission entry below.
 Preserve checked C ABI ownership and the single owned DB import; consumers
 must not traverse native ASTs independently. Verify exact values, source
 identity and diagnostics as well as generated-model behavior.
@@ -396,44 +407,64 @@ that commit; allocation failure is fatal, so no partial image is observed.
 
 **Status:** open; SIM-003 implements descriptor-backed native records for
 subroutine formals, results and locals; SIM-006 stores them as elements of
-queues, dynamic and associative arrays.
+queues, dynamic and associative arrays; SIM-007 adds one-dimensional fixed
+arrays of strings, handles and native records, run-time indices into native
+member arrays, packed-member selects, record-element equality and tagged
+unions with native members in module/static variables.
 
 ### Symptom
 
-Unpacked records with string, real or chandle leaves copy, compare and cross
-input/output/inout formals and results as runtime values, and are whole or
-member-addressed elements of resizable containers (SIM-006). These legal forms
-still reject with explicit diagnostics: module-level fixed unpacked arrays of
-native records, their slices, compound or nonblocking writes to a record
-element of a resizable container, a run-time index into a native member array of an automatic record, `ref`
-formals of native record type, nonblocking writes to a static subroutine
-native record (module records and persistent strings/chandles are queued since
-SIM-004), fork-join_none capture of automatic native records,
-`f(...).member` selects on a native result, and native
-outputs bound inside an expression (call them as a statement instead). A packed member select of a
-module-level native record (`h.p.hi`) and event controls on string members are
-also not lowered.
+Unpacked records with string, real, chandle or class-handle leaves copy,
+compare and cross input/output/inout formals and results as runtime values,
+are elements of resizable containers and of one-dimensional fixed arrays.
+These legal forms still reject with explicit diagnostics: multidimensional
+fixed arrays of strings, handles or native records; queue, dynamic or
+associative array members of a record (`struct { string s; int q[$]; }`);
+compound or nonblocking writes to a record element of a resizable container;
+delayed (`#d`) nonblocking writes to a fixed array of native elements; a
+run-time index into a native member array of more than 64 elements or with a
+side-effecting index; a run-time index into an array of records nested in a
+native record (`r.e[k].s`, which currently fails with a generic lowering
+diagnostic rather than a dedicated one); `ref` formals of native record type; nonblocking writes
+to a static subroutine native record; fork-join_none capture of automatic
+native records; `f(...).member` selects on a native result; native outputs
+bound inside an expression (call them as a statement instead); record ports
+whose type has a class-handle member (handles publish no change marker, as
+for whole class-handle ports); and event controls on string members. Tagged unions with real, string, record or
+class-handle members execute only as module or static variables: in
+subroutine storage, arrays, ports, nonblocking writes and conditional
+operators they reject. String and real pattern variables bind in process
+bodies but not in subroutine bodies, and handle bindings and structure
+patterns over native records reject. A missing associative record element
+compared with `==` reports the SV 7.8.6 warning once per member.
 
 ### Cause
 
 A native value is one rooted `llg_value_t` tree; leaves are addressed by
 constant item paths resolved at lowering time. Module-level native records keep
 their per-member lowering, so whole-value transfers between the two
-representations go leaf by leaf, and element-indexed native storage would need
-run-time item addressing plus per-element change records.
+representations go leaf by leaf, and a run-time member index is a bounded
+comparison chain over the declared leaves. Fixed arrays of native elements
+are fixed-size views of the container runtime, so per-element delayed update
+records and nested views are not modeled. A record member that is itself a
+resizable container would need a companion container per record instance;
+the native type descriptor has no queue bound or associative key to build
+one from.
 
 ### Intended direction
 
-Run-time item paths and element change records (SIM-007), native ref aliases
-(SIM-008), a root-plus-item-path pending record for static native roots
+Companion containers for container-valued record members; native ref aliases
+(SIM-008); a root-plus-item-path pending record for static native roots
 (a queued leaf pointer would dangle because a root replaces its leaves on
-assignment), fork capture pins (SIM-010) reuse the same descriptors and root registry, as
-the SIM-006 container elements and container formals/locals already do.
+assignment); fork capture pins (SIM-010); Db capture of member access on
+call results for `f().m`; and native tagged unions in subroutine storage
+through the same descriptors and root registry.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv` and
-`sim_004/neg_static_native_record_nba.sv`.
+`tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
+`sim_004/neg_static_native_record_nba.sv` and
+`sim_007/bad_member_select_limit.sv`.
 
 ## Resizable containers at subroutine, object and nesting boundaries
 
@@ -453,8 +484,7 @@ position that is neither a variable of the formal's type nor a packed/real
 assignment pattern; event controls and monitors on subroutine or object
 containers; mutating methods of a nested container element (`q[i].push_back`;
 `q[i].size()` works); a nested element written from a queue or associative
-variable; `foreach` over a container of containers; equality of record
-elements; and compound or nonblocking writes to a record element. Reads of a
+variable; `foreach` over a container of containers; and compound or nonblocking writes to a record element. Reads of a
 missing nested associative element return the default without the SV 7.8.6
 warning.
 
@@ -473,8 +503,7 @@ array forms of every queue mutation.
 An addressed-container operand (receiver or parent container plus index
 path) for container statements and queries, receiver-qualified class
 properties (SIM-011), retained cells for `ref` (SIM-008), fork capture pins
-(SIM-010) and record-element comparison through the native leaf machinery
-(SIM-007).
+(SIM-010).
 
 ### Reproduce
 

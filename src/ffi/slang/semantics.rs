@@ -211,41 +211,11 @@ pub(super) fn decode_semantic_node(
     let kind = decode_semantic_kind(node.kind)?;
     Ok(SemanticNode {
         id: node.id,
-        parent_id,
+        parent_id: CompactId::pack(parent_id, "parent")?,
         kind,
         subkind: node.subkind,
         operation: decode_semantic_operation(node.operation)?,
-        is_bad: node.flags & 1 != 0,
-        is_uninstantiated: node.flags & 2 != 0,
-        is_automatic: node.flags & 4 != 0,
-        is_static: node.flags & 8 != 0,
-        is_top: node.flags & (1 << 4) != 0,
-        is_implicit: node.flags & (1 << 5) != 0,
-        is_local: node.flags & (1 << 6) != 0,
-        is_nonblocking: node.flags & (1 << 7) != 0,
-        is_input: node.flags & (1 << 8) != 0,
-        is_output: node.flags & (1 << 9) != 0,
-        is_inout: node.flags & (1 << 10) != 0,
-        is_ref: node.flags & (1 << 11) != 0,
-        is_const_ref: kind == SemanticKind::Argument && node.auxiliary & ARGUMENT_CONST_REF != 0,
-        is_ref_static: kind == SemanticKind::Argument && node.auxiliary & ARGUMENT_REF_STATIC != 0,
-        is_implicit_conversion: node.flags & (1 << 12) != 0,
-        is_propagated_conversion: node.flags & (1 << 30) != 0,
-        is_indexed_up: node.flags & (1 << 16) != 0,
-        is_indexed_down: node.flags & (1 << 17) != 0,
-        case_wildcard_x_or_z: node.flags & (1 << 18) != 0,
-        case_wildcard_z: node.flags & (1 << 19) != 0,
-        case_inside: node.flags & (1 << 20) != 0,
-        is_posedge: node.flags & (1 << 21) != 0,
-        is_negedge: node.flags & (1 << 22) != 0,
-        is_both_edges: node.flags & (1 << 23) != 0,
-        is_primitive_declaration: node.flags & (1 << 24) != 0,
-        is_primitive_instance: node.flags & (1 << 25) != 0,
-        is_primitive_port: node.flags & (1 << 26) != 0,
-        is_task: node.flags & (1 << 27) != 0,
-        port_connection_present: node.flags & (1 << 28) != 0,
-        port_connection_open: node.flags & (1 << 29) != 0,
-        method_with_clause: node.flags & (1 << 31) != 0,
+        flags: SemanticFlags::from_raw(node.flags, kind == SemanticKind::Argument, node.auxiliary),
         definition_kind: if node.flags & (1 << 13) != 0 {
             Some(SemanticDefinitionKind::Module)
         } else if node.flags & (1 << 14) != 0 {
@@ -267,19 +237,18 @@ pub(super) fn decode_semantic_node(
                 .intern(node.definition_name, "semantic node definition name")?
         },
         range: decode_range(node.range, context.files)?,
-        type_id,
-        constant_id,
-        target_id,
-        edge_start: node.edge_start,
-        edge_count: node.edge_count,
-        time_scale: decode_time_scale(node)?,
+        type_id: CompactId::pack(type_id, "type")?,
+        constant_id: CompactId::pack(constant_id, "constant")?,
+        target_id: CompactId::pack(target_id, "target")?,
+        edge_start: u32::try_from(node.edge_start)
+            .map_err(|_| invalid_native("semantic node edge window exceeds the compact range"))?,
+        edge_count: u32::try_from(node.edge_count)
+            .map_err(|_| invalid_native("semantic node edge window exceeds the compact range"))?,
+        time_scale: decode_time_scale(node)?.map(Box::new),
         strength0: decode_drive_strength(node.strength0)?,
         strength1: decode_drive_strength(node.strength1)?,
         auxiliary: node.auxiliary,
-        assertion_range_min: node.assertion_range_min,
-        assertion_range_max: (node.kind == 28 && node.assertion_range_max != u32::MAX)
-            .then_some(node.assertion_range_max),
-        assertion_repetition_kind: node.assertion_repetition_kind,
+        assertion: assertion_metadata(node),
     })
 }
 
@@ -584,7 +553,7 @@ pub(super) fn decode_udp_table(
         .filter(|node| node.id == raw_table.primitive_id)
         .ok_or_else(|| invalid_native("UDP table refers to an unknown primitive"))?;
     if declaration.kind != SemanticKind::Primitive
-        || !declaration.is_primitive_declaration
+        || !declaration.is_primitive_declaration()
         || declaration.subkind != 227
     {
         return Err(invalid_native(
@@ -801,6 +770,23 @@ fn udp_first_value(mask: u8) -> u8 {
 
 fn udp_next_value(mask: u8, current: u8) -> Option<u8> {
     ((current + 1)..=2).find(|value| mask & (1 << value) != 0)
+}
+
+/// Assertion metadata, kept only when it differs from the defaults every
+/// other node reads back (`0`, unbounded and `0`).
+fn assertion_metadata(node: &RawSemanticNode) -> Option<Box<AssertionMetadata>> {
+    let meta = AssertionMetadata {
+        range_min: node.assertion_range_min,
+        range_max: (node.kind == 28 && node.assertion_range_max != u32::MAX)
+            .then_some(node.assertion_range_max),
+        repetition_kind: node.assertion_repetition_kind,
+    };
+    let default = AssertionMetadata {
+        range_min: 0,
+        range_max: None,
+        repetition_kind: 0,
+    };
+    (meta != default).then(|| Box::new(meta))
 }
 
 fn decode_time_scale(node: &RawSemanticNode) -> Result<Option<SemanticTimeScale>, SlangError> {

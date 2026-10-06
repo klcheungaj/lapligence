@@ -17,13 +17,42 @@ impl Codegen<'_> {
     ) -> Option<crate::core::db::ArrayMeta> {
         let meta = match self.kind(node) {
             NodeKind::FuncArg { .. } | NodeKind::FuncTask { .. } => {
-                self.db.subroutine_array_meta(node)
+                match self.db.subroutine_array_meta(node) {
+                    Some(meta) => meta,
+                    None => return self.fixed_view_meta(node),
+                }
             }
-            NodeKind::Var { .. } | NodeKind::Array { .. } => self.db.array_meta(node),
-            NodeKind::NamedEvent => self.db.event_array_meta(node),
-            _ => None,
-        }?;
-        (!matches!(meta.kind(), ArrayKind::Static)).then(|| meta.clone())
+            NodeKind::Var { .. } | NodeKind::Array { .. } => self.db.array_meta(node)?,
+            NodeKind::NamedEvent => self.db.event_array_meta(node)?,
+            _ => return None,
+        };
+        if matches!(meta.kind(), ArrayKind::Static) {
+            return self.fixed_view_meta(node);
+        }
+        Some(meta.clone())
+    }
+
+    /// Shape of a one-dimensional fixed array of strings, native records or
+    /// identity handles in subroutine storage: a dynamic container view of
+    /// the declared size, like the same declaration in a module (SIM-007).
+    fn fixed_view_meta(&self, node: NodeId) -> Option<crate::core::db::ArrayMeta> {
+        let descriptor = self.query_descriptor(node)?;
+        let TypeShape::FixedArray {
+            dimensions,
+            element,
+        } = &descriptor.shape
+        else {
+            return None;
+        };
+        if !Self::is_fixed_handle_element(element) {
+            return None;
+        }
+        Some(crate::core::db::ArrayMeta {
+            kind: ArrayKind::Static,
+            dims: dimensions.iter().copied().map(Some).collect(),
+            init: self.db.array_meta(node).and_then(|meta| meta.initializer()),
+            net_type: None,
+        })
     }
 
     /// Whether a function result is a resizable container.
@@ -136,12 +165,26 @@ impl Codegen<'_> {
             let descriptor = self
                 .query_descriptor(node)
                 .ok_or_else(|| format!("container `{name}` has no recursive type descriptor"))?;
-            let TypeShape::Container { element, .. } = &descriptor.shape else {
-                return Err(format!(
-                    "container `{name}` has a non-container type descriptor"
-                ));
-            };
-            lower_container_element(element)?
+            match &descriptor.shape {
+                TypeShape::Container { element, .. } => lower_container_element(element)?,
+                TypeShape::FixedArray {
+                    dimensions,
+                    element,
+                } if Self::is_fixed_handle_element(element) => {
+                    if dimensions.len() != 1 {
+                        return Err(format!(
+                            "multidimensional fixed array `{name}` of {} elements in subroutine storage is not supported",
+                            element.name
+                        ));
+                    }
+                    lower_container_element(element)?
+                }
+                _ => {
+                    return Err(format!(
+                        "container `{name}` has a non-container type descriptor"
+                    ))
+                }
+            }
         };
         let path = format!("llg_sub{}_{}", inst.index(), scope.index());
         let info = self.container_from_meta(&path, &name, node, &meta, element)?;
@@ -197,11 +240,14 @@ impl Codegen<'_> {
         container.c_name = format!("S_llg_container_{ir}");
         container.activation = true;
         container.class_field = None;
-        container.initial_size = None;
+        // A fixed-array view keeps its declared size, so an output formal
+        // or result starts with default elements; other temporaries start
+        // empty.
         self.model.containers.push(container);
         if let Some(range) = self.fixed_view_ranges.get(&like).copied() {
             self.fixed_view_ranges.insert(ir, range);
         }
+        self.container_types_like.insert(ir, like);
         ir
     }
 
@@ -253,17 +299,33 @@ impl Codegen<'_> {
                 return Ok(argument);
             }
         }
-        let Some(prelude) = prelude else {
-            return Err(format!(
-                "container argument for `{name}` in `{path}` must be a container variable of the formal's type unless the call is a whole statement; assign it to a variable first"
-            ));
-        };
-        let temporary = self.container_temporary_like(like);
-        prelude.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
-            temporary,
-        ))));
-        prelude.push(self.lower_container_into(path, formal, temporary, actual)?);
-        Ok(IrCallArg::Container(temporary))
+        if let Some(prelude) = prelude {
+            let temporary = self.container_temporary_like(like);
+            prelude.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                temporary,
+            ))));
+            prelude.push(self.lower_container_into(path, formal, temporary, actual)?);
+            return Ok(IrCallArg::Container(temporary));
+        }
+        // Inside an assignment or system-task statement, an actual without
+        // side effects may be built before the statement: evaluating it
+        // early cannot be observed, even under a short-circuit.
+        if self.container_call_prelude.is_some() && self.side_effect_free(actual) {
+            let temporary = self.container_temporary_like(like);
+            let build = self.lower_container_into(path, formal, temporary, actual)?;
+            let prelude = self
+                .container_call_prelude
+                .as_mut()
+                .ok_or("container call prelude closed while lowering its operand")?;
+            prelude.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                temporary,
+            ))));
+            prelude.push(build);
+            return Ok(IrCallArg::Container(temporary));
+        }
+        Err(format!(
+            "container argument for `{name}` in `{path}` must be a container variable of the formal's type unless the call is a whole statement; assign it to a variable first"
+        ))
     }
 
     /// An assignment-pattern input of packed or real elements, evaluated

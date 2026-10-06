@@ -65,6 +65,9 @@ impl<'a> Codegen<'a> {
         if let Some(value) = self.lower_real_array_equality(scope_path, otype, operands)? {
             return Ok(value);
         }
+        if let Some(value) = self.lower_container_equality(scope_path, otype, operands)? {
+            return Ok(value);
+        }
         if matches!(
             otype,
             Operation::Equal | Operation::NotEqual | Operation::CaseEqual | Operation::CaseNotEqual

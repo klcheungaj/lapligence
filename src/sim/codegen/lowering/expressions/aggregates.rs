@@ -716,15 +716,35 @@ impl<'a> Codegen<'a> {
                     assignments.push(self.object_leaf_nba(path, index, value)?);
                     continue;
                 }
+                // Every source is read before any leaf is written, so a
+                // pattern that reads its own destination (`r = '{r.b, r.a}`)
+                // sees the old members (SV 10.9).
+                let name = format!("_aggo{}_{}", target.0, assignments.len());
                 let operation = match self.model.objects[index].ty {
                     IrObjectType::String => {
-                        IrObjectStmt::StringAssign(index, self.lower_string(path, value_node)?)
+                        let value = self.lower_string(path, value_node)?;
+                        let value = if matches!(value, IrStringExpr::Literal(_)) {
+                            value
+                        } else {
+                            captures.push(IrStmt::DeclString {
+                                name: name.clone(),
+                                init: Some(value),
+                            });
+                            IrStringExpr::LocalRead(name)
+                        };
+                        IrObjectStmt::StringAssign(index, value)
                     }
-                    IrObjectType::Chandle => {
-                        IrObjectStmt::ChandleAssign(index, self.lower_chandle(path, value_node)?)
-                    }
-                    IrObjectType::Semaphore => {
-                        IrObjectStmt::ChandleAssign(index, self.lower_chandle(path, value_node)?)
+                    IrObjectType::Chandle | IrObjectType::Semaphore => {
+                        let value = self.lower_chandle(path, value_node)?;
+                        let value = if matches!(value, IrChandleExpr::Null) {
+                            value
+                        } else {
+                            captures.push(IrStmt::Object(Box::new(
+                                IrObjectStmt::ChandleDeclareLocal(name.clone(), Some(value)),
+                            )));
+                            IrChandleExpr::LocalRead(name)
+                        };
+                        IrObjectStmt::ChandleAssign(index, value)
                     }
                     IrObjectType::Process => {
                         return Err(format!(

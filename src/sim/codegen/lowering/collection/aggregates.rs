@@ -2,6 +2,41 @@
 
 use super::*;
 
+/// Path name of the tag leaf of a tagged union with native members. `$` cannot
+/// start a SystemVerilog identifier, so no member can share it.
+pub(in super::super) const NATIVE_TAG_MEMBER: &str = "$tag";
+
+/// The synthetic packed member describing a native tagged union's tag leaf.
+fn native_tag_member(tag_bits: u32, union: &TypeDescriptor) -> AggregateMember {
+    let ty = crate::core::model::TypeInfo {
+        kind: "logic".to_owned(),
+        width: Some(tag_bits),
+        signed: false,
+        type_name: None,
+    };
+    let range = crate::core::db::PackedRange {
+        left: i128::from(tag_bits) - 1,
+        right: 0,
+    };
+    AggregateMember {
+        initializer: None,
+        name: NATIVE_TAG_MEMBER.to_owned(),
+        ty: ty.clone(),
+        two_state: false,
+        packed_ranges: vec![range],
+        aggregate: None,
+        descriptor: TypeDescriptor {
+            id: union.id,
+            two_state: false,
+            name: format!("{}::tag", union.name),
+            info: ty,
+            shape: TypeShape::PackedAtom {
+                ranges: vec![range],
+            },
+        },
+    }
+}
+
 impl<'a> Codegen<'a> {
     /// Packed width of a struct/union formal. These keep the
     /// existing scalar `sv4_t` ABI, but their member selects must resolve to
@@ -123,6 +158,34 @@ impl<'a> Codegen<'a> {
                     // from the same owned layout.
                     return Ok(false);
                 }
+                // A union with a string, real or handle member keeps its tag
+                // and every member in separate leaf storage (SIM-007); member
+                // accesses check the tag like a packed tagged union.
+                if let Some(descriptor) = self
+                    .query_descriptor(node)
+                    .filter(|descriptor| Self::fixed_descriptor_width_bits(descriptor).is_none())
+                    .cloned()
+                {
+                    if matches!(self.kind(node), NodeKind::Var { .. }) {
+                        self.collect_native_tagged_union(path, node, &layout, &descriptor)?;
+                        return Ok(true);
+                    }
+                    if matches!(
+                        self.kind(node),
+                        NodeKind::Net { .. }
+                            | NodeKind::Array { .. }
+                            | NodeKind::Port { .. }
+                            | NodeKind::IoDecl { .. }
+                            | NodeKind::FuncArg { .. }
+                    ) {
+                        return Err(format!(
+                            "tagged union `{}` in `{path}` with string, real or handle members must be a variable",
+                            self.node(node).name
+                        ));
+                    }
+                    // Type declarations allocate no storage.
+                    return Ok(false);
+                }
                 // A finite payload beyond packed capacity has no descriptor
                 // record transport yet; reject it instead of flattening.
                 if let Some(width) = self
@@ -147,13 +210,15 @@ impl<'a> Codegen<'a> {
                 TypeShape::FixedArray { element, .. } if Self::fixed_descriptor_width(element).is_some())) {
             return Ok(false);
         }
-        // Resizable arrays of records are container storage whose elements
-        // own their record values; they are not per-leaf aggregate storage.
+        // Resizable arrays of records, and fixed arrays of native records,
+        // are container storage whose elements own their record values;
+        // they are not per-leaf aggregate storage.
         if matches!(self.kind(node), NodeKind::Array { .. })
-            && self
+            && (self
                 .db
                 .array_meta(node)
                 .is_some_and(|meta| !matches!(meta.kind(), ArrayKind::Static))
+                || self.is_fixed_handle_array(node))
         {
             return Ok(false);
         }
@@ -374,6 +439,119 @@ impl<'a> Codegen<'a> {
             },
         );
         Ok(true)
+    }
+
+    /// Why a subroutine formal, result or local of `node`'s type has no
+    /// storage representation, for a specific diagnostic.
+    pub(in super::super) fn unrepresented_storage_reason(&self, node: NodeId) -> Option<String> {
+        let descriptor = self.query_descriptor(node)?;
+        match &descriptor.shape {
+            TypeShape::Aggregate(layout)
+                if layout.kind == AggregateKind::TaggedUnion
+                    && Self::fixed_descriptor_width_bits(descriptor).is_none() =>
+            {
+                Some(format!(
+                    "tagged union `{}` with string, real or handle members is supported only in module and static variables",
+                    descriptor.name
+                ))
+            }
+            TypeShape::FixedArray {
+                dimensions,
+                element,
+            } if dimensions.len() > 1 && Self::is_fixed_handle_element(element) => Some(format!(
+                "multidimensional fixed array of `{}` elements is not supported",
+                element.name
+            )),
+            TypeShape::Aggregate(layout) if layout.members.iter().any(|member| {
+                has_resizable_member(&member.descriptor)
+            }) =>
+            {
+                Some(format!(
+                    "record `{}` with a queue, dynamic or associative array member is not supported",
+                    descriptor.name
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// Leaf storage of a tagged union with a native member: one tag signal
+    /// (four-state, so an unassigned union has no active member) and each
+    /// non-void member's own leaves. Inactive members keep stale storage
+    /// that no checked access can observe (SV 7.3.2).
+    fn collect_native_tagged_union(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        layout: &AggregateLayout,
+        descriptor: &TypeDescriptor,
+    ) -> Result<(), String> {
+        let object_name = self.node(node).name.clone();
+        let tag_bits = layout
+            .tag_bits()
+            .ok_or_else(|| format!("tagged union `{object_name}` in `{path}` has no members"))?;
+        let mut leaves = Vec::new();
+        if tag_bits > 0 {
+            let signal = self.collect_aggregate_member_signal(
+                path,
+                node,
+                &object_name,
+                NATIVE_TAG_MEMBER,
+                (tag_bits, false, false),
+            )?;
+            leaves.push(AggregateMemberInfo {
+                member: native_tag_member(tag_bits, descriptor),
+                signal: Some(signal),
+                object: None,
+                array: None,
+                path: vec![AggregatePathPart::Member(NATIVE_TAG_MEMBER.to_owned())],
+            });
+        }
+        for member in &layout.members {
+            if matches!(&member.descriptor.shape, TypeShape::Opaque { kind } if kind == "Void") {
+                continue;
+            }
+            self.collect_aggregate_descriptor_leaves(
+                path,
+                node,
+                &object_name,
+                member,
+                &member.descriptor,
+                &[AggregatePathPart::Member(member.name.clone())],
+                None,
+                false,
+                &mut leaves,
+            )?;
+        }
+        let members = layout
+            .members
+            .iter()
+            .map(|member| {
+                let part = AggregatePathPart::Member(member.name.clone());
+                leaves
+                    .iter()
+                    .find(|leaf| leaf.path.as_slice() == [part.clone()])
+                    .cloned()
+                    .unwrap_or_else(|| AggregateMemberInfo {
+                        member: member.clone(),
+                        signal: None,
+                        object: None,
+                        array: None,
+                        path: vec![part],
+                    })
+            })
+            .collect();
+        self.unpacked_aggregates.insert(
+            node,
+            UnpackedAggregateInfo {
+                kind: AggregateKind::TaggedUnion,
+                type_identity: layout.type_identity.clone(),
+                columns: false,
+                members,
+                leaves,
+            },
+        );
+        Ok(())
     }
 
     /// Recursively lower a fixed non-class descriptor to owned leaf storage.
@@ -621,7 +799,17 @@ impl<'a> Codegen<'a> {
                     })?;
                 }
             }
-            TypeShape::Opaque { kind } if kind == "Chandle" => {
+            // Class handles are identity leaves stored like chandles; the
+            // built-in semaphore, mailbox and process classes keep their
+            // own object kinds and are not record leaves.
+            TypeShape::Opaque { kind }
+                if kind == "Chandle"
+                    || (kind == "Class"
+                        && !matches!(
+                            descriptor.name.as_str(),
+                            "semaphore" | "mailbox" | "process"
+                        )) =>
+            {
                 if shared.is_some() {
                     return Err(format!(
                         "chandle member in unpacked union `{object_name}` in `{path}` is not a packed overlay"
@@ -840,9 +1028,26 @@ impl<'a> Codegen<'a> {
     /// interfaces and class-like objects) use pointer-table container storage
     /// so runtime selects copy identities without flattening objects;
     /// process elements keep their reference counts in that storage.
+    ///
+    /// Strings and unpacked records or untagged unions with a string, real,
+    /// handle or container leaf (no integral fixed payload) use the same
+    /// storage: their elements are owned recursive values (SIM-007), so a
+    /// runtime select reads or writes one element in place instead of
+    /// flattening leaves per cell.
     pub(super) fn is_fixed_handle_element(element: &TypeDescriptor) -> bool {
-        matches!(&element.shape, TypeShape::Opaque { kind }
-            if matches!(kind.as_str(), "Chandle" | "VirtualInterface" | "Class"))
+        match &element.shape {
+            TypeShape::Opaque { kind } => {
+                matches!(kind.as_str(), "Chandle" | "VirtualInterface" | "Class")
+            }
+            TypeShape::String => true,
+            TypeShape::Aggregate(layout) => {
+                matches!(
+                    layout.kind,
+                    AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion
+                ) && Self::fixed_descriptor_width_bits(element).is_none()
+            }
+            _ => false,
+        }
     }
 
     pub(super) fn container_info(
@@ -867,7 +1072,8 @@ impl<'a> Codegen<'a> {
             } if Self::is_fixed_handle_element(element) => {
                 if dimensions.len() != 1 {
                     return Err(format!(
-                        "multidimensional fixed handle array `{name}` in `{path}` is not supported"
+                        "multidimensional fixed array `{name}` of {} elements in `{path}` is not supported",
+                        element.name
                     ));
                 }
                 lower_container_element(element)?
@@ -952,5 +1158,19 @@ impl<'a> Codegen<'a> {
             self.container_initializers.push((node, ir));
         }
         Ok(ContainerInfo { ir })
+    }
+}
+
+/// Whether a record member is, or contains below fixed arrays and nested
+/// records, a resizable container.
+fn has_resizable_member(descriptor: &TypeDescriptor) -> bool {
+    match &descriptor.shape {
+        TypeShape::Container { .. } => true,
+        TypeShape::FixedArray { element, .. } => has_resizable_member(element),
+        TypeShape::Aggregate(layout) => layout
+            .members
+            .iter()
+            .any(|member| has_resizable_member(&member.descriptor)),
+        _ => false,
     }
 }

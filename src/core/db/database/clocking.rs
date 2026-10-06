@@ -42,7 +42,7 @@ pub(super) fn virtual_interface_instance_from_slang(
     if target_node.kind != SemanticKind::Instance {
         return Ok(None);
     }
-    let Some(definition) = target_node.target_id else {
+    let Some(definition) = target_node.target_id() else {
         return Ok(None);
     };
     let definition = snapshot

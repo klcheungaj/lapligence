@@ -223,21 +223,21 @@ fn owned_model_keeps_nested_scope_and_extern_instance_identity() {
     assert_eq!(
         definitions
             .iter()
-            .filter(|node| node.name == "leaf" && node.is_local)
+            .filter(|node| node.name == "leaf" && node.is_local())
             .count(),
         2
     );
     assert_eq!(
         definitions
             .iter()
-            .filter(|node| node.name == "captured_base" && node.is_local)
+            .filter(|node| node.name == "captured_base" && node.is_local())
             .count(),
         2
     );
     assert!(definitions
         .iter()
         .filter(|node| node.name != "leaf" && node.name != "captured_base")
-        .all(|node| !node.is_local));
+        .all(|node| !node.is_local()));
     let database = db::Db::from_slang(&output.snapshot).expect("owned database");
     drop(output);
     let design = model::DesignModel::from_db(&database);

@@ -164,6 +164,12 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
                     walk_lhs_mut(binding, f);
                 }
             }
+            for binding in &mut pattern.native_bindings {
+                if let crate::sim::ir::IrNativeBinding::Value { lhs, .. } = binding {
+                    walk_lhs_mut(lhs, f);
+                }
+                binding.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            }
         }
         IrExprKind::Stream { value, .. } => walk_expr_mut(value, f),
         IrExprKind::FixedStream { selector, .. } => walk_stream_selector_mut(selector, f),
