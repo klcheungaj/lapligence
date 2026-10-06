@@ -193,7 +193,11 @@ module tb;
     logic level;
     task automatic await_edge(input logic enable);
         integer local_value;
-        @(posedge (level & enable));
+        logic gate;
+        // A by-value formal in an event expression takes the typed call
+        // path; a local keeps the task inline-expanded.
+        gate = enable;
+        @(posedge (level & gate));
         local_value = 1;
     endtask
     initial await_edge(1'b1);

@@ -1,5 +1,6 @@
-// IEEE 1800-2009 6.21 and 9.3: a retained fork activation owns a copied
-// automatic real value after the declaring procedural block continues.
+// IEEE 1800-2009 6.21 and 9.3: a retained fork activation shares the
+// automatic reals of the declaring block, so it reads the values the block
+// wrote after the fork (9.5 and 8.5).
 module tb;
     initial begin
         automatic real first;

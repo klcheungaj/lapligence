@@ -1,5 +1,7 @@
-// IEEE 1800-2009 6.21, 9.3, 12.7, and 13.3: each loop iteration's automatic
-// variable is captured by value in its fork activation.
+// IEEE 1800-2009 6.21, 9.3, 12.7, and 13.3: a join_none branch shares the
+// automatic variables it references with the enclosing activation, which
+// outlives the returning subroutine. A for-loop variable is one variable per
+// loop execution, so every branch prints its final value (3, 2 and 12).
 module tb;
     integer first;
     integer second;
