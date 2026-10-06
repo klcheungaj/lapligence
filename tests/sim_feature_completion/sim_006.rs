@@ -208,3 +208,15 @@ fn unsupported_container_boundaries_are_explicit() {
         "container result of `make` in `tb` must be assigned whole to a container variable",
     );
 }
+
+#[test]
+fn unpacked_array_concatenations_assign_queues_and_dynamic_arrays() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/queue_concatenation.out");
+    sim_cli::run_case_backend_parity(SUITE, "queue_concatenation", expected, &[], &[]);
+    sim_cli::reject_case(
+        SUITE,
+        "neg_dynamic_array_concat",
+        "unpacked array concatenation of arrays into a dynamic array",
+    );
+}

@@ -401,7 +401,11 @@ Macros, includes and their edition-specific behavior are counted in §11.
   formals, results and locals (automatic per activation, static per
   declaration), procedural-block locals and class properties (instance
   containers inside their class's methods, static ones anywhere); calls copy
-  them in and out and pattern actuals build at the call. Elements may be
+  them in and out and pattern actuals build at the call. Unpacked array
+  concatenations (§10.10) assign element values to queues and dynamic
+  arrays, and queues also combine queues and queue slices
+  (`q = {q[1:$], x}`); array items assigned to a dynamic array reject.
+  Elements may be
   records (whole and member access, push/insert/pop), nested containers
   (written from dynamic arrays, patterns or concatenations; nested `size()`)
   and identity handles. Associative reads through an X/Z key or of a missing
