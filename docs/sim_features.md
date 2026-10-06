@@ -1257,10 +1257,23 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   projections. SV §13.5.2 **[SV-2005]**.
 - 🟨 **Timed tasks and parallel bodies** — Admitted delay-only tasks suspend;
   event/cancellation-sensitive calls preserve values/selectors and check
-  cancellation before copy-out. Synchronous joined numeric branches can share
-  the suspended activation; join_any/join_none retain supported snapshots of
-  automatic packed/real values and recognized handles. This does not provide
-  arbitrary detached alias propagation or ref-formal captures. Static-local
+  cancellation before copy-out. Synchronous joined numeric branches share
+  the suspended activation. join_any/join_none branches share enclosing
+  automatic packed/real variables through a reference-counted activation frame
+  that lives until the declaring scope and every branch are done, so either
+  side sees the other's writes (the shared loop variable reads its final
+  value); fork block item declarations are created per fork execution
+  ([sim_010](../tests/fixtures/sim/feature_completion/sim_010/readme.md)).
+  Automatic strings and the resizable containers of subroutine storage are
+  shared the same way with branches of every fork kind. Event controls and
+  `wait` on automatics that a fork branch names subscribe to the shared cell,
+  so another process's store wakes them, and a task's event control on its own
+  locals takes the typed call path (native formals, recursion). By-value
+  packed, real and string input formals and packed and real output and inout
+  formals are shared like locals (outputs are copied out at return); string
+  outputs, handles and native records are still copied into detached
+  branches, container formals reject (SIM-010), and ref-formal captures
+  reject. Static-local
   task NBAs are represented, including arrays; NBAs targeting automatic locals
   or automatic formals reject. V §§9.8.2, 10.2; SV §§9.3.2, 10.4.2, 13.3.2
   **[1995/SV-2005]**.
@@ -1274,8 +1287,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Events declared in procedural blocks and subroutine bodies are their own
   objects, a new one per automatic activation. A `ref` formal read by an
   event control binds a whole module-signal actual (or, for a native record
-  formal, a module, static or block record) per specialized task copy;
-  event controls reading other subroutine storage and class-method event
+  formal, a module, static or block record) per specialized task copy, and
+  event expressions over by-value formals copy them when the control arms;
+  event controls reading string/handle formals and class-method event
   formals use inline task paths; event-formal virtual dispatch and process-handle formal ABI remain unsupported. Unresolved environments and broader
   timing/native/aggregate combinations reject. V §12.4 **[1995]**.
 - 🟨 **Read-only helper calls** — Event, continuous, force and other read-only

@@ -1,7 +1,8 @@
 // llg-test-fixture: tests/fixtures/sim/fork_lifecycle/detached_storage.sv
-// IEEE 1800-2009 sections 6.21, 9.3.2, and 9.6.1: detached packed captures
-// retain their values, while a delayed NBA to persistent module storage is
-// committed after the issuing child has completed.
+// IEEE 1800-2009 sections 6.21, 9.3.2, and 9.6.1: a detached child shares
+// the enclosing automatic variable, so it reads the parent's later write, while
+// a delayed NBA to persistent module storage is committed after the issuing
+// child has completed.
 module tb;
     logic [7:0] target;
 

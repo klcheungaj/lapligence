@@ -573,6 +573,12 @@ impl Validator<'_> {
                 init,
                 two_state,
                 ..
+            }
+            | IrStmt::SharedLocal {
+                width,
+                init,
+                two_state,
+                ..
             } => {
                 if *width == 0 {
                     // Width zero is the IR representation for a real
@@ -591,7 +597,7 @@ impl Validator<'_> {
                     self.validate_expr(init, formals, &format!("{path}.init"))?;
                 }
             }
-            IrStmt::DeclString { name, init } => {
+            IrStmt::DeclString { name, init } | IrStmt::SharedString { name, init } => {
                 if name.is_empty() {
                     return self.fail(path, "string local name must not be empty");
                 }

@@ -446,6 +446,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         }
         IrStmt::DeclLocal {
             init: Some(init), ..
+        }
+        | IrStmt::SharedLocal {
+            init: Some(init), ..
         } => collect_expr_reads(init, model, rw),
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
@@ -735,6 +738,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             }
         }
         IrStmt::DeclString {
+            init: Some(init), ..
+        }
+        | IrStmt::SharedString {
             init: Some(init), ..
         } => init.expressions(&mut |child| collect_expr_reads(child, model, rw)),
         // Captures are evaluated at the fork site in the parent process, before

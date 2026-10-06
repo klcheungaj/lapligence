@@ -38,6 +38,7 @@ use crate::sim::ir::{
 mod constants;
 use constants::{as_packed_const, real_of, value_to_const};
 mod traversal;
+pub(in crate::sim) use traversal::walk_expr_mut;
 use traversal::{walk_execution_exprs_mut, walk_lhs_mut, walk_model_exprs_mut};
 mod folding;
 use folding::fold_expr;

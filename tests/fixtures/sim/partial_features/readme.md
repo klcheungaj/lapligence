@@ -33,8 +33,8 @@ for the boundaries these tests do not cover.
 | `event_activation_capture.sv`, `event_pure_functions.sv` | Per-activation locals/formals, trigger-time `iff`, legal input/const-ref function calls and expression-only dependencies |
 | `wait_constant_false.sv` | False and unknown waits suspend without preventing time advancement |
 | `delayed_nba*.sv`, `nba_*.sv` | Value/index capture, future commit, issue ordering, disjoint selections and state conversion |
-| `activation_frames.sv` | Reentrant automatic subroutines, per-iteration loop captures, shadowed declarations and retained fork activations |
-| `real_activation_capture.sv` | Typed retained-frame capture of automatic real locals after the declaring block continues |
+| `activation_frames.sv` | Reentrant automatic subroutines, loop variables shared by their `join_none` branches (one per loop execution), shadowed declarations and retained fork activations |
+| `real_activation_capture.sv` | Automatic real locals shared with `join_none` branches after the declaring block continues |
 | `inertial_*.sv` | Pulse cancellation, captured driver values, unchanged deadlines, scalar/net strengths, region settling, module precision, lifetime, overflow, vector transition selection and per-element array cancellation |
 | `dynamic_delay_*.sv`, `blocking_real_delay.sv`, `unknown_delay_zero.sv`, `negative_*delay*.sv` | Runtime delay capture, module precision, real blocking captures, X/Z and negative packed delays, overflow diagnostics |
 | `*select_ranges.sv` | Ascending/nonzero ranges, array-element selection and invalid indices |

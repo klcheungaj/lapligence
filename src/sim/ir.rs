@@ -23,6 +23,7 @@
 //!   post-simulation phase).
 
 mod containers;
+pub(in crate::sim) use containers::shared_container_capture_name;
 mod native_access;
 pub use native_access::{IrClassAllocation, IrNativeAccess, IrNativeAccessKind};
 mod native_values;
@@ -206,6 +207,10 @@ pub enum StorageKind {
     Opaque,
     /// A named-event handle: a borrowed parent handle or copied object identity.
     Event,
+    /// An owned string value (`llg_string_t`), or a shared frame's string.
+    String,
+    /// An activation container in a shared frame's object slot.
+    Container,
 }
 
 /// A typed reference to one slot in an activation frame.
@@ -317,6 +322,10 @@ pub enum IrDependency {
     /// A persistent native string object. The generated model gives each
     /// string object a stable packed change marker used by link processes.
     Object(usize),
+    /// The fork-shared activation cell bound to the waiting process's local
+    /// `local` (packed, or real when `real`). Sharing processes write it
+    /// through publishing stores, so its address is a wait source.
+    SharedCell { local: String, real: bool },
 }
 
 impl IrDependency {

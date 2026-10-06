@@ -447,11 +447,22 @@ pub enum IrContainerMethod {
     Shuffle,
 }
 
+/// The capture name that stands for shared activation container `index`
+/// (a `StorageKind::Container` capture reads it as a `LocalRead`).
+pub(in crate::sim) fn shared_container_capture_name(index: usize) -> String {
+    format!("_llg_shared_container_{index}")
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrContainerStmt {
     /// Create one empty activation container ([`IrContainer::activation`])
     /// owned by the enclosing lexical value scope.
     Declare(usize),
+    /// Like [`IrContainerStmt::Declare`], but the container lives in a shared
+    /// reference-counted activation frame that fork branches alias
+    /// (SIM-010), so it lives until the declaring scope and every branch
+    /// using it are done.
+    SharedDeclare(usize),
     /// Unstream a packed value into a packed-element dynamic array or queue.
     /// Selector expressions are retained so the runtime can resize the target
     /// and update the requested logical elements after evaluating them once.
@@ -2065,7 +2076,7 @@ impl IrContainerStmt {
             Self::ResetDefault(container) => {
                 container_kind(model, *container, Some("associative")).map(|_| ())
             }
-            Self::Declare(container) => {
+            Self::Declare(container) | Self::SharedDeclare(container) => {
                 if !container_kind(model, *container, None)?.activation {
                     return Err(IrValidationError::new(
                         "container",
@@ -2380,7 +2391,8 @@ impl IrContainerStmt {
             | Self::Method { .. }
             | Self::Delete(_)
             | Self::ResetDefault(_)
-            | Self::Declare(_) => {}
+            | Self::Declare(_)
+            | Self::SharedDeclare(_) => {}
             Self::ValueItemToContainer { root, .. } | Self::ContainerToValueItem { root, .. } => {
                 root.expressions(visit)
             }
@@ -2492,7 +2504,8 @@ impl IrContainerStmt {
             | Self::Method { .. }
             | Self::Delete(_)
             | Self::ResetDefault(_)
-            | Self::Declare(_) => {}
+            | Self::Declare(_)
+            | Self::SharedDeclare(_) => {}
             Self::ValueItemToContainer { root, .. } | Self::ContainerToValueItem { root, .. } => {
                 root.expressions_mut(visit)
             }

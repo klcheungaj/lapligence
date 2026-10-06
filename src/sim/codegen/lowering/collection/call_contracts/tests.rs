@@ -350,10 +350,11 @@ endmodule
         ("calls_typed", false),
         // Event formals of every direction take the typed call path.
         ("output_event", false),
-        ("formal_expression", true),
+        ("formal_expression", false),
         ("ref_edge", true),
-        ("local_expression", true),
-        ("calls_expanded", true),
+        // Locals are read through their (fork-shared) cells.
+        ("local_expression", false),
+        ("calls_expanded", false),
         ("forwards_ref", true),
         ("forwards_local", true),
         ("forwards_module", false),
@@ -378,7 +379,7 @@ endmodule
         ("forwards_ref", false, vec![0]),
         ("forwards_module", false, vec![]),
         ("forwards_local", true, vec![]),
-        ("formal_expression", true, vec![]),
+        ("formal_expression", false, vec![]),
         ("input_event", false, vec![]),
     ] {
         let task = database

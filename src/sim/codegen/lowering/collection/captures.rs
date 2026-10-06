@@ -89,7 +89,62 @@ impl<'a> Codegen<'a> {
                 kind: StorageKind::Event,
             });
         }
+        // A shared activation container is aliased through its frame slot.
+        if let Some(container) = self
+            .container_globals
+            .get(&target)
+            .map(|container| container.ir)
+            .filter(|container| {
+                self.model.containers[*container].activation && self.shared_locals.contains(&target)
+            })
+        {
+            return Some(CaptureSource {
+                info: ProcLocalInfo {
+                    c_name: crate::sim::ir::shared_container_capture_name(container),
+                    width: 0,
+                    signed: false,
+                    two_state: true,
+                    static_signal: None,
+                },
+                initial: IrExpr::new(
+                    IrExprKind::LocalRead(crate::sim::ir::shared_container_capture_name(container)),
+                    0,
+                    false,
+                    None,
+                ),
+                lifetime: StorageLifetime::Automatic,
+                kind: StorageKind::Container,
+            });
+        }
         let function = self.func.as_ref()?;
+        // An automatic string local of the subroutine is captured by value
+        // (or shared, see `fork_shared`) under its own local name.
+        let string_local = match self.kind(target) {
+            NodeKind::Var { ty } => {
+                ty.kind == "string"
+                    && self.db.variable_lifetime(target) == VariableLifetime::Automatic
+            }
+            NodeKind::FuncArg { ty, .. } => {
+                ty.kind == "string" && self.shared_locals.contains(&target)
+            }
+            _ => false,
+        };
+        if string_local {
+            if let Some((c_name, ..)) = function.locals.get(&target) {
+                return Some(CaptureSource {
+                    info: ProcLocalInfo {
+                        c_name: c_name.clone(),
+                        width: 0,
+                        signed: false,
+                        two_state: true,
+                        static_signal: None,
+                    },
+                    initial: IrExpr::new(IrExprKind::LocalRead(c_name.clone()), 0, false, None),
+                    lifetime: StorageLifetime::Automatic,
+                    kind: StorageKind::String,
+                });
+            }
+        }
         if let Some(event) = function.event_args.get(&target) {
             return Some(CaptureSource {
                 info: ProcLocalInfo {
@@ -244,6 +299,90 @@ impl<'a> Codegen<'a> {
             current = self.node(candidate).parent;
         }
         false
+    }
+
+    /// Whether automatic variable `declaration` is shared with a `join_none`
+    /// or `join_any` branch that names it outside the branch's own scope.
+    /// Such a variable lives in a shared activation frame (SV 6.21, 9.3.2).
+    pub(in super::super) fn fork_shared(&mut self, declaration: NodeId) -> bool {
+        self.fork_sets().0.contains(&declaration)
+    }
+
+    /// Whether a branch of any fork names automatic variable `declaration`
+    /// outside the branch's own scope, so another process can write it.
+    pub(in super::super) fn fork_visible(&mut self, declaration: NodeId) -> bool {
+        self.fork_sets().1.contains(&declaration)
+    }
+
+    /// The fork-shared and fork-visible automatic variables of the design.
+    fn fork_sets(&mut self) -> &(HashSet<NodeId>, HashSet<NodeId>) {
+        if self.fork_sets.is_none() {
+            let mut shared = HashSet::new();
+            let mut visible = HashSet::new();
+            for node in self.db.node_ids() {
+                let NodeKind::Stmt(StmtKind::Fork {
+                    join_kind,
+                    branches,
+                    ..
+                }) = self.kind(node)
+                else {
+                    continue;
+                };
+                // Strings and containers are shared with branches of every
+                // fork; other variables only with detached (join_none/join_any)
+                // ones, since a join branch borrows the suspended parent's cell.
+                let detached = matches!(join_kind, DbJoinKind::None | DbJoinKind::Any);
+                for branch in branches {
+                    if matches!(
+                        self.kind(*branch),
+                        NodeKind::Stmt(StmtKind::VariableDecl { .. })
+                    ) {
+                        continue;
+                    }
+                    let mut pending = vec![*branch];
+                    let mut visited = HashSet::new();
+                    while let Some(current) = pending.pop() {
+                        if !visited.insert(current) {
+                            continue;
+                        }
+                        if let NodeKind::Expr(ExprKind::Ref {
+                            target: Some(target),
+                        }) = self.kind(current)
+                        {
+                            // A by-value formal is marked whatever the
+                            // subroutine's lifetime; only an automatic
+                            // activation's body consumes the mark.
+                            let by_value_formal = matches!(
+                                self.kind(*target),
+                                NodeKind::FuncArg { direction, .. } if *direction != DbDirection::Ref
+                            );
+                            if (by_value_formal
+                                || matches!(
+                                    self.kind(*target),
+                                    NodeKind::Var { .. } | NodeKind::Array { .. }
+                                ) && self.db.variable_lifetime(*target)
+                                    == VariableLifetime::Automatic)
+                                && !self.node_is_within(*target, *branch)
+                            {
+                                visible.insert(*target);
+                                if detached
+                                    || matches!(self.kind(*target), NodeKind::Var { ty } if ty.kind == "string")
+                                    || self.subroutine_container_meta(*target).is_some()
+                                {
+                                    shared.insert(*target);
+                                }
+                            }
+                        }
+                        pending.extend(self.node(current).children.iter().copied());
+                        if let NodeKind::Stmt(statement) = self.kind(current) {
+                            statement.referenced_nodes(&mut pending);
+                        }
+                    }
+                }
+            }
+            self.fork_sets = Some((shared, visible));
+        }
+        self.fork_sets.get_or_insert_with(Default::default)
     }
 
     /// Find automatic declarations referenced by a fork branch. Declarations

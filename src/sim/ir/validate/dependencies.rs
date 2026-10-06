@@ -99,6 +99,7 @@ impl Validator<'_> {
             IrDependency::ArrayContents(array) => *array < self.model.arrays.len(),
             IrDependency::ContainerContents(container)
             | IrDependency::ContainerShape(container) => *container < self.model.containers.len(),
+            IrDependency::SharedCell { local, .. } => !local.is_empty(),
             IrDependency::Object(object) => self.model.objects.get(*object).is_some_and(|object| {
                 matches!(
                     object.ty,
