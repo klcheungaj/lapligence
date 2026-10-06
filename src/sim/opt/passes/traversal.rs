@@ -276,6 +276,7 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
                     crate::sim::ir::IrPlusArgTarget::Packed { lhs, .. }
                     | crate::sim::ir::IrPlusArgTarget::Real { lhs, .. } => walk_lhs_mut(lhs, f),
                     crate::sim::ir::IrPlusArgTarget::String { .. } => {}
+                    crate::sim::ir::IrPlusArgTarget::Element { read, .. } => walk_expr_mut(read, f),
                 }
             }
             IrSysFunc::System(Some(command)) => {

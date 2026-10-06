@@ -219,6 +219,7 @@ fn ident_children(e: &mut IrExpr) {
                     crate::sim::ir::IrPlusArgTarget::Packed { lhs, .. }
                     | crate::sim::ir::IrPlusArgTarget::Real { lhs, .. } => ident_lhs(lhs),
                     crate::sim::ir::IrPlusArgTarget::String { .. } => {}
+                    crate::sim::ir::IrPlusArgTarget::Element { read, .. } => ident_expr(read),
                 }
             }
             IrSysFunc::System(Some(command)) => {

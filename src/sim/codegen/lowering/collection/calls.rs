@@ -355,6 +355,14 @@ impl<'a> Codegen<'a> {
                         "streaming `with` copy-out target whose range is runtime-valued or outside the array bounds is not supported for a function call inside an expression in `{scope_path}`"
                     ));
                 }
+                if self.container_element_path(bound[idx].expr).is_some()
+                    || self.associative_string_element(bound[idx].expr).is_some()
+                {
+                    // The element store needs a statement after the call.
+                    return Err(format!(
+                        "output or inout actual naming a queue, dynamic or associative array element is supported only when the call is a statement in `{scope_path}`"
+                    ));
+                }
                 let (wb, actual_read, selector_inits) = self.lower_call_actual(
                     scope_path,
                     bound[idx].expr,

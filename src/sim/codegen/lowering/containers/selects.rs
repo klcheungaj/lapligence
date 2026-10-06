@@ -1,11 +1,11 @@
 //! Packed selects of resizable-container elements.
 
-use super::collection::Select;
+use super::collection::{CallWriteback, Select};
 use super::*;
 
 /// Lowered element address: integral indices, or one string key.
 #[derive(Clone)]
-enum ElementKeys {
+pub(in super::super) enum ElementKeys {
     Integral(Vec<IrExpr>),
     String(IrStringExpr),
 }
@@ -198,6 +198,101 @@ impl Codegen<'_> {
     /// or queue index ignores the write, `q[$+1]` appends, and a missing
     /// associative key is created from the value a read returns (the array's
     /// default) before the selected bits are replaced.
+    /// The copy-out destination of an output or inout actual naming one
+    /// whole packed or real element of a resizable container (SV 13.5): the
+    /// element's keys are evaluated once into locals before the call and the
+    /// formal's final value is stored there after the callee returns.
+    pub(in super::super) fn container_element_writeback(
+        &mut self,
+        path: &str,
+        actual: NodeId,
+        tag: &str,
+        read_actual: bool,
+    ) -> Result<Option<(CallWriteback, Option<IrExpr>)>, String> {
+        let Some((container, indices)) = self.container_element_path(actual).or_else(|| {
+            self.associative_string_element(actual)
+                .map(|(container, key)| (container, vec![key]))
+        }) else {
+            return Ok(None);
+        };
+        if indices.len() != 1 {
+            return Ok(None);
+        }
+        let element = self.model.containers[container].element.clone();
+        if !matches!(
+            element,
+            IrContainerElement::Packed { .. } | IrContainerElement::Real { .. }
+        ) {
+            return Ok(None);
+        }
+        let mut prelude = Vec::new();
+        let keys = match self.lower_element_keys(path, container, indices)? {
+            ElementKeys::Integral(indices) => ElementKeys::Integral(
+                indices
+                    .into_iter()
+                    .enumerate()
+                    .map(|(position, index)| {
+                        let name = format!("_call_key_{tag}_{position}");
+                        let read = IrExpr::new(
+                            IrExprKind::LocalRead(name.clone()),
+                            index.width,
+                            index.signed,
+                            None,
+                        );
+                        prelude.push(IrStmt::DeclLocal {
+                            name,
+                            width: index.width,
+                            signed: index.signed,
+                            two_state: false,
+                            init: Some(Box::new(index)),
+                        });
+                        read
+                    })
+                    .collect(),
+            ),
+            ElementKeys::String(key) => {
+                let name = format!("_call_key_{tag}");
+                prelude.push(IrStmt::DeclString {
+                    name: name.clone(),
+                    init: Some(key),
+                });
+                ElementKeys::String(IrStringExpr::LocalRead(name))
+            }
+        };
+        let read = read_actual.then(|| {
+            let real = matches!(element, IrContainerElement::Real { .. });
+            let operation = match (keys.clone(), real) {
+                (ElementKeys::String(key), false) => IrContainerExpr::GetString { container, key },
+                (ElementKeys::String(key), true) => {
+                    IrContainerExpr::GetStringReal { container, key }
+                }
+                (ElementKeys::Integral(mut indices), false) => IrContainerExpr::Get {
+                    container,
+                    index: Box::new(indices.remove(0)),
+                },
+                (ElementKeys::Integral(mut indices), true) => IrContainerExpr::GetReal {
+                    container,
+                    index: Box::new(indices.remove(0)),
+                },
+            };
+            IrExpr::new(
+                IrExprKind::Container(Box::new(operation)),
+                element.width(),
+                element.signed(),
+                None,
+            )
+        });
+        Ok(Some((
+            CallWriteback::Container {
+                container,
+                keys,
+                element,
+                prelude,
+            },
+            read,
+        )))
+    }
+
     pub(super) fn lower_container_select_assignment(
         &mut self,
         path: &str,

@@ -334,7 +334,8 @@ impl Validator<'_> {
                     let expected = formal
                         .container
                         .and_then(|container| self.model.containers.get(container));
-                    if formal.is_ref()
+                    // A `ref` container formal is an alias bound per call.
+                    if formal.is_ref() && !expected.is_some_and(|expected| expected.activation)
                         || !matches!((actual, expected), (Some(actual), Some(expected))
                             if actual.same_storage_type(expected))
                     {
@@ -348,7 +349,6 @@ impl Validator<'_> {
                         .and_then(|value| self.model.native_values.get(value));
                     if expected
                         .is_none_or(|expected| expected.ty != self.model.native_values[*value].ty)
-                        || formal.is_ref()
                     {
                         return self.fail(&arg_path, "native argument type mismatch");
                     }

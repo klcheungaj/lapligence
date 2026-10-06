@@ -1089,6 +1089,27 @@ impl Validator<'_> {
                                 );
                             }
                         }
+                        IrPlusArgTarget::Element {
+                            read,
+                            width,
+                            signed,
+                            two_state,
+                        } => {
+                            self.validate_file_input(
+                                &IrFileInput::ScanString {
+                                    source: IrStringExpr::Literal(Vec::new()),
+                                    format: IrPlusArgText::Literal(String::new()),
+                                    targets: vec![IrFileInputTarget::Element {
+                                        read: read.clone(),
+                                        width: *width,
+                                        signed: *signed,
+                                        two_state: *two_state,
+                                    }],
+                                },
+                                formals,
+                                &format!("{path}.target"),
+                            )?;
+                        }
                     }
                 }
                 IrSysFunc::System(command) => {

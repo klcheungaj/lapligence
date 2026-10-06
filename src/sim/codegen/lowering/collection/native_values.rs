@@ -620,15 +620,9 @@ impl Codegen<'_> {
         self.native_function_nodes(function, &mut nodes);
         for node in nodes {
             let lifetime = match self.kind(node) {
-                NodeKind::FuncArg { direction, .. } => {
-                    if *direction == DbDirection::Ref && self.native_value_type(node).is_some() {
-                        return Err(format!(
-                            "ref formal `{}` of native record type is not supported",
-                            self.node(node).name
-                        ));
-                    }
-                    automatic
-                }
+                // A `ref` formal aliases the caller's native value, so it is
+                // bound to activation storage (SIM-008).
+                NodeKind::FuncArg { direction, .. } => automatic || *direction == DbDirection::Ref,
                 NodeKind::FuncTask { .. } => automatic,
                 _ => self.db.variable_lifetime(node) == VariableLifetime::Automatic,
             };
@@ -1651,6 +1645,16 @@ impl Codegen<'_> {
             .map(Some)
     }
 
+    /// A native `ref` formal aliases the caller's value storage, which only
+    /// subroutine records have; module, static and process-block records keep
+    /// one storage cell per leaf (see docs/known_issues.md).
+    fn native_ref_actual_error(&self, path: &str, formal: NodeId) -> String {
+        format!(
+            "ref actual of native record formal `{}` in `{path}` must be a subroutine record variable of the same type (SIM-008)",
+            self.node(formal).name
+        )
+    }
+
     /// Caller operand of a native formal. A whole native value of the formal
     /// type passes directly (the callee receives its own copy); any other
     /// actual uses a lexical temporary filled before the call and, for
@@ -1675,6 +1679,9 @@ impl Codegen<'_> {
             if prefix.is_empty() && self.model.native_values[value].ty == layout.ty {
                 return Ok(IrCallArg::NativeValue(value));
             }
+        }
+        if direction == DbDirection::Ref {
+            return Err(self.native_ref_actual_error(path, formal));
         }
         if direction == DbDirection::Input {
             if let Some(argument) = self.native_call_operand(path, &layout, actual)? {
@@ -2240,6 +2247,15 @@ impl Codegen<'_> {
                 if prefix.is_empty() && self.model.native_values[value].ty == layout.ty {
                     return Ok(IrCallArg::NativeValue(value));
                 }
+            }
+            if matches!(
+                self.kind(formal),
+                NodeKind::FuncArg {
+                    direction: DbDirection::Ref,
+                    ..
+                }
+            ) {
+                return Err(self.native_ref_actual_error(path, formal));
             }
             if matches!(
                 self.kind(formal),

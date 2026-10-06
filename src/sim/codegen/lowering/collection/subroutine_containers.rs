@@ -132,17 +132,10 @@ impl Codegen<'_> {
         self.subroutine_container_nodes(function, &mut nodes);
         for node in nodes {
             let lifetime = match self.kind(node) {
-                NodeKind::FuncArg { direction, .. } => {
-                    if *direction == DbDirection::Ref
-                        && self.subroutine_container_meta(node).is_some()
-                    {
-                        return Err(format!(
-                            "ref formal `{}` of resizable container type is not supported (SIM-008)",
-                            self.node(node).name
-                        ));
-                    }
-                    automatic
-                }
+                // A `ref` formal owns no storage: it aliases the caller's
+                // container for the call (SIM-008), so even a static
+                // subroutine binds it per call.
+                NodeKind::FuncArg { direction, .. } => automatic || *direction == DbDirection::Ref,
                 NodeKind::FuncTask { .. } => automatic,
                 _ => self.db.variable_lifetime(node) == VariableLifetime::Automatic,
             };
@@ -302,6 +295,11 @@ impl Codegen<'_> {
             if self.model.containers[source.ir].same_storage_type(&self.model.containers[like]) {
                 return Ok(IrCallArg::Container(source.ir));
             }
+        }
+        if direction == DbDirection::Ref {
+            return Err(format!(
+                "ref actual of container formal `{name}` in `{path}` must be a container variable of the same type"
+            ));
         }
         if direction != DbDirection::Input {
             return Err(format!(

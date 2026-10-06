@@ -11,6 +11,7 @@
 #include "container/methods.c"
 #include "container/queue_references.c"
 #include "container/associative_arrays.c"
+#include "container/element_references.c"
 #include "container/associative_values.c"
 #include "container/associative_value_queries.c"
 #include "container/value_elements.c"

@@ -988,8 +988,13 @@ impl Validator<'_> {
                     }
                 }
                 if let Some(container) = formal.container {
-                    if self.model.containers.get(container).is_none()
-                        || formal.is_ref()
+                    // A `ref` container formal aliases caller storage, so it
+                    // is an activation binding (SIM-008).
+                    if self
+                        .model
+                        .containers
+                        .get(container)
+                        .is_none_or(|storage| formal.is_ref() && !storage.activation)
                         || formal.width != 0
                         || formal.real
                         || formal.string

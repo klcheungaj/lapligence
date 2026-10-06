@@ -110,10 +110,12 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
+    /// Static container initializers join the declaration initialization
+    /// schedule, so each runs after the static declarations it reads and
+    /// before the declarations that read it (SV 6.21, 10.5).
     pub(in super::super) fn emit_container_initializers(&mut self) -> Result<(), String> {
         let initializers = std::mem::take(&mut self.container_initializers);
-        let mut processes = Vec::with_capacity(initializers.len());
-        for (index, (owner, container)) in initializers.into_iter().enumerate() {
+        for (owner, container) in initializers {
             let initializer = self
                 .db
                 .array_meta(owner)
@@ -124,25 +126,13 @@ impl<'a> Codegen<'a> {
                         self.node(owner).full_name()
                     )
                 })?;
-            let descriptor = self.db.type_descriptor(owner).cloned();
-            let path = self.node(owner).full_name();
-            let body =
-                self.lower_container_pattern(path, container, initializer, descriptor.as_ref())?;
-            let name = format!(
-                "p_{}_container_init_{index}",
-                ident(&self.model.design_name)
-            );
-            let label = format!("{}.container_initializer.{index}", self.model.design_name);
-            processes.push(IrProcess::new_with_origin(
-                name,
-                label,
-                IrShape::RunOnce,
-                Vec::new(),
-                vec![body],
-                self.origin(owner),
-            ));
+            // Any legal whole-container source initializes the declaration
+            // (patterns, `new[]`, copies, concatenations, call results).
+            let path = self.node(owner).full_name().to_owned();
+            let body = self.lower_container_into(&path, owner, container, initializer)?;
+            let identity = self.declaration_identity(owner)?;
+            self.declaration_statements.push((identity, body));
         }
-        self.model.processes.splice(0..0, processes);
         Ok(())
     }
 }
