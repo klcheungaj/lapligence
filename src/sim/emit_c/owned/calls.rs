@@ -379,10 +379,15 @@ impl Frame<'_, '_> {
                     }
                 }
                 IrCallArg::Container(container) => {
-                    // The callee always receives fresh storage of its formal
-                    // type: inputs copy the actual in, outputs and results
-                    // are copied back after the callee returns.
                     let actual = self.container_name(*container)?;
+                    // A `ref` formal aliases the caller's storage (SIM-008).
+                    if formal.is_ref() {
+                        parameters.push(format!("(void*)&{actual}"));
+                        continue;
+                    }
+                    // Otherwise the callee receives fresh storage of its
+                    // formal type: inputs copy the actual in, outputs and
+                    // results are copied back after the callee returns.
                     let callee = formal
                         .container
                         .ok_or("container operand requires a container formal")?;

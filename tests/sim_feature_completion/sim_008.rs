@@ -15,3 +15,9 @@ fn container_elements_receive_output_and_inout_copy_out() {
         "naming a queue, dynamic or associative array element is supported only when the call is a statement",
     );
 }
+
+#[test]
+fn container_ref_formals_alias_the_caller_container() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_008/container_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "container_refs", expected, &[], &[]);
+}

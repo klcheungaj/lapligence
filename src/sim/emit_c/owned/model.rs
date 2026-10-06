@@ -302,7 +302,7 @@ fn render_function(
     }
     for (index, formal) in function.formals.iter().enumerate() {
         if let Some(container) = formal.container {
-            let parameter = format!("{}{index}", if formal.is_out { "o" } else { "a" });
+            let parameter = format!("{}{index}", if formal.is_address() { "o" } else { "a" });
             let storage = &ctx.model.containers[container];
             let (ty, _, _) = super::super::containers::activation_storage(storage, "")?;
             let bound = format!("(*({ty}*){parameter})");

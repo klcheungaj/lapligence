@@ -184,11 +184,6 @@ fn wildcard_index_traversal_is_rejected_by_the_frontend() {
 fn unsupported_container_boundaries_are_explicit() {
     sim_cli::reject_case(
         SUITE,
-        "neg_container_ref_formal",
-        "ref formal `q` of resizable container type is not supported (SIM-008)",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "neg_container_fork_capture",
         "references native record or container `q` of the enclosing activation",
     );

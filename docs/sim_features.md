@@ -420,7 +420,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   invalid-key writes warn and do nothing; one element accepts compound
   assignment and `++`/`--`
   ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md)).
-  `ref` container formals (SIM-008), fork capture of automatic containers
+  `ref` formals of queue, dynamic and associative type alias the caller's
+  container variable, including from timed tasks and fork branches
+  ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
+  Fork capture of automatic containers
   (SIM-010), handle-qualified class container properties (SIM-011), mutating
   methods of nested elements, record-element equality (SIM-007), string-key
   index-result queues and event controls on subroutine containers remain

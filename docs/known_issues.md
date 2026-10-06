@@ -501,8 +501,8 @@ handle elements and nested containers.
 
 ### Symptom
 
-These legal forms reject with explicit diagnostics: `ref` container formals;
-a fork branch reading an automatic container of the enclosing activation; an
+These legal forms reject with explicit diagnostics: a `ref` container formal
+whose actual is not a container variable of the formal's type; a fork branch reading an automatic container of the enclosing activation; an
 instance container property selected through a handle (`h.q`) rather than
 inside the class's own methods, and an initializer on such a property; a
 container-result call used other than as a whole assignment source or a
@@ -529,7 +529,7 @@ array forms of every queue mutation.
 
 An addressed-container operand (receiver or parent container plus index
 path) for container statements and queries, receiver-qualified class
-properties (SIM-011), retained cells for `ref` (SIM-008), fork capture pins
+properties (SIM-011), retained element cells for `ref` (SIM-008), fork capture pins
 (SIM-010).
 
 ### Reproduce
