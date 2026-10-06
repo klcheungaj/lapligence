@@ -447,7 +447,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 | Queue/dynamic/associative element | yes (missing: default) | yes, whole element and push/insert/pop | whole dynamic arrays and queues: yes; record elements of resizable containers: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | constant and run-time element index: yes | SIM-008 | delete, resize, container close |
 | Class property | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-018 |
 | DPI argument | SIM-040 | SIM-040 | n/a | n/a | n/a | n/a |
-| Process-block local, call initializer | SIM-022 | SIM-022 | SIM-022 | SIM-022 | n/a | SIM-022 |
+| Process-block local (static or automatic) | yes, including container members and call initializers ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); automatic record in or around a `join_any`/`join_none` fork, or with member defaults: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | yes | yes | constant and run-time index (at most 64 elements): yes | SIM-008 | model close; automatic leaves reset at the next entry |
 
 ## 3. Modules, ports, parameters, hierarchy
 

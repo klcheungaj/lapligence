@@ -410,8 +410,9 @@ subroutine formals, results and locals; SIM-006 stores them as elements of
 queues, dynamic and associative arrays; SIM-007 adds one-dimensional fixed
 arrays of strings, handles and native records, run-time indices into native
 member arrays, packed-member selects, record-element equality and tagged
-unions with native members in module/static variables, and container members
-of module records and of subroutine record values.
+unions with native members in module/static variables, container members
+of module records and of subroutine record values, and native records
+declared in procedural blocks.
 
 ### Symptom
 
@@ -441,7 +442,12 @@ to a static subroutine native record; fork-join_none capture of automatic
 native records; `f(...).member` selects on a native result; native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles
-publish no change marker); and event controls on string members. Tagged unions with real, string, record or
+publish no change marker); event controls on string members; an
+automatic record declared in a procedural block that a `join_any` or
+`join_none` fork can keep live while the block is entered again (declared
+in such a fork's branch or block, or in a block that starts one); and member
+defaults of a record type with native members declared in a procedural
+block. Tagged unions with real, string, record or
 class-handle members execute as module, static and subroutine values
 (formals, results, locals, conditional operators); as array elements, ports
 and in nonblocking writes they reject. String and real pattern variables bind
@@ -460,7 +466,10 @@ are fixed-size views of the container runtime, so per-element delayed update
 records and nested views are not modeled. A record member that is itself a
 resizable container would need a companion container per record instance;
 the native type descriptor has no queue bound or associative key to build
-one from.
+one from. A record declared in a procedural block reuses module-record leaf
+storage, one copy per declaration and instance: an automatic record is reset
+at each block entry, so a second live activation has no storage of its own,
+and member defaults are not applied to native leaf storage.
 
 ### Intended direction
 
@@ -468,14 +477,15 @@ Companion containers for container-valued record members; native ref aliases
 (SIM-008); a root-plus-item-path pending record for static native roots
 (a queued leaf pointer would dangle because a root replaces its leaves on
 assignment); fork capture pins (SIM-010); Db capture of member access on
-call results for `f().m`; and native tagged unions in subroutine storage
-through the same descriptors and root registry.
+call results for `f().m`; native tagged unions in subroutine storage
+through the same descriptors and root registry; and per-activation native
+roots for forked automatic block records.
 
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
-`sim_004/neg_static_native_record_nba.sv` and
-`sim_007/bad_member_select_limit.sv`.
+`sim_004/neg_static_native_record_nba.sv`,
+`sim_007/bad_member_select_limit.sv` and `sim_007/bad_block_record_*.sv`.
 
 ## Resizable containers at subroutine, object and nesting boundaries
 

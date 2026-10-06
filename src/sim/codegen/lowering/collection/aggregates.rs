@@ -284,7 +284,10 @@ impl<'a> Codegen<'a> {
         if let Some(aggregate) = sorted_node_ids(&self.unpacked_aggregates)
             .into_iter()
             .find(|existing| {
-                self.node(*existing).name == object_name && self.instance_path_of(*existing) == path
+                // Procedural-block records are never port views.
+                !self.block_records.contains_key(existing)
+                    && self.node(*existing).name == object_name
+                    && self.instance_path_of(*existing) == path
             })
             .map(|existing| self.unpacked_aggregates[&existing].clone())
         {

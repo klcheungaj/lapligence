@@ -117,6 +117,12 @@ impl EmitCtx<'_, '_> {
                                 body.push(IrStmt::DeclString { name, init: None });
                                 continue;
                             }
+                            if self.cg.block_records.contains_key(child) {
+                                // Record leaf storage is collected with the
+                                // scope; its declaration statement resets an
+                                // automatic record at each entry.
+                                continue;
+                            }
                             let info = self.cg.collect_loop_var(&self.path, *child)?;
                             if info.static_signal.is_none() {
                                 body.push(IrStmt::DeclLocal {

@@ -540,6 +540,7 @@ fn lower_model(db: &Db) -> Result<LoweredModel, String> {
     // their bodies may register initializers flushed below.
     cg.emit_task_specializations()?;
     cg.emit_array_initializers()?;
+    cg.emit_block_record_initializers()?;
     cg.emit_container_initializers()?;
     cg.emit_class_object_initializers()?;
     cg.emit_semaphore_initializers()?;
@@ -1355,6 +1356,12 @@ struct Codegen<'a> {
     /// `(declaration, initializer)` of static column-layout records,
     /// lowered into the static initialization schedule after every body.
     record_initializers: Vec<(NodeId, NodeId)>,
+    /// Procedural-block records with declaration-owned leaf storage →
+    /// owning instance or generate-scope path.
+    block_records: HashMap<NodeId, String>,
+    /// `(declaration, initializer, path)` of static procedural-block
+    /// records, lowered into the static schedule after every body.
+    block_record_initializers: Vec<(NodeId, NodeId, String)>,
     /// All lowered named events, in collection order (deterministic emission).
     events: Vec<EventInfo>,
     /// NamedEvent arena node → lowered event info.
@@ -1635,6 +1642,8 @@ impl<'a> Codegen<'a> {
             pending_container_pre_fns: Vec::new(),
             array_initializers: Vec::new(),
             record_initializers: Vec::new(),
+            block_records: HashMap::new(),
+            block_record_initializers: Vec::new(),
             events: Vec::new(),
             event_globals: HashMap::new(),
             event_elements: HashMap::new(),
