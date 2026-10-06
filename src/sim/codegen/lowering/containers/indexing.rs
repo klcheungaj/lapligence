@@ -92,7 +92,7 @@ impl<'a> Codegen<'a> {
                 Ok(Some(sources))
             }
             NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
-                let Some(source) = self.container_of(*base) else {
+                let Some(source) = self.container_of_select(node, *base) else {
                     return Ok(None);
                 };
                 if !matches!(
@@ -263,7 +263,8 @@ impl<'a> Codegen<'a> {
                 .copied()
                 .flatten()
                 .or_else(|| refs.last().copied().flatten())
-                .and_then(|target| self.container_declaration(target)),
+                .and_then(|target| self.container_declaration(target))
+                .or_else(|| self.record_member_container(node)),
             NodeKind::Expr(ExprKind::Operation {
                 op: Operation::Assignment,
                 operands,
@@ -271,8 +272,40 @@ impl<'a> Codegen<'a> {
             }) => operands
                 .first()
                 .and_then(|operand| self.container_of(*operand)),
-            _ => None,
+            _ => self.record_member_container(node),
         }
+    }
+
+    /// A queue, dynamic or associative member of a module or static record
+    /// (SIM-007), which owns its own container storage.
+    fn record_member_container(&self, node: NodeId) -> Option<ContainerInfo> {
+        self.unpacked_member_info(node)
+            .and_then(|(_, _, member)| member.container)
+    }
+
+    /// The container selected by `select`, whose frontend `base` may be the
+    /// record member's declaration (`m.q[i]` selects through field `q`); the
+    /// select then carries its owning record and member path.
+    pub(in super::super) fn container_of_select(
+        &self,
+        select: NodeId,
+        base: NodeId,
+    ) -> Option<ContainerInfo> {
+        if let Some(container) = self.container_of(base) {
+            return Some(container);
+        }
+        let (owner, members) = self.db.array_select_path(select)?;
+        self.unpacked_aggregates
+            .get(&owner)?
+            .leaves
+            .iter()
+            .find(|leaf| {
+                leaf.path.len() == members.len()
+                    && leaf.path.iter().zip(members).all(|(part, member)| {
+                        matches!(part, AggregatePathPart::Member(name) if name == member)
+                    })
+            })
+            .and_then(|leaf| leaf.container.clone())
     }
 
     /// A nested container element (`q[i]` of `int q[$][$]`) used as a method
@@ -380,7 +413,7 @@ impl<'a> Codegen<'a> {
             prefix.extend(indices);
             return Some((container, prefix));
         }
-        let container = self.container_of(base)?;
+        let container = self.container_of_select(node, base)?;
         // The frontend flattens `d[i][b]` into one select; indices beyond the
         // container depth select bits of a packed element.
         if indices.len() > self.container_index_depth(container.ir) {
@@ -407,7 +440,7 @@ impl<'a> Codegen<'a> {
             }
             _ => return None,
         };
-        let container = self.container_of(base)?;
+        let container = self.container_of_select(node, base)?;
         matches!(
             self.model.containers[container.ir].kind,
             IrContainerKind::Associative {
@@ -428,7 +461,7 @@ impl<'a> Codegen<'a> {
             }
             _ => return None,
         };
-        let container = self.container_of(base)?;
+        let container = self.container_of_select(node, base)?;
         matches!(
             self.model.containers[container.ir].kind,
             IrContainerKind::Associative {
@@ -534,7 +567,10 @@ impl Codegen<'_> {
             | NodeKind::Expr(ExprKind::IndexedPartSelect { base, .. }) => *base,
             _ => return Ok(None),
         };
-        let Some(container) = self.container_of(base).map(|container| container.ir) else {
+        let Some(container) = self
+            .container_of_select(node, base)
+            .map(|container| container.ir)
+        else {
             return Ok(None);
         };
         let Some((left, right)) = self.fixed_view_ranges.get(&container).copied() else {

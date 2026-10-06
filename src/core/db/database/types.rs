@@ -54,6 +54,8 @@ pub enum ValueDefaultSemantics {
     RealZero,
     EmptyString,
     NullHandle,
+    /// Queues, dynamic and associative arrays start empty.
+    EmptyContainer,
     Recursive,
 }
 
@@ -94,6 +96,10 @@ pub enum TypeShape {
     Container {
         kind: String,
         element: Box<TypeDescriptor>,
+        /// Queue bound or associative index type, so a container nested in a
+        /// record or another container can be allocated without a variable's
+        /// own array metadata.
+        array: ArrayKind,
     },
     Opaque {
         kind: String,
@@ -137,7 +143,8 @@ pub struct EnumTypeMetadata {
 impl TypeDescriptor {
     pub fn copy_semantics(&self) -> ValueCopySemantics {
         match self.shape {
-            TypeShape::Container { .. } | TypeShape::Opaque { .. } => ValueCopySemantics::Handle,
+            // SV 7.5-7.10: queues, dynamic and associative arrays are values.
+            TypeShape::Opaque { .. } => ValueCopySemantics::Handle,
             _ => ValueCopySemantics::Deep,
         }
     }
@@ -156,18 +163,17 @@ impl TypeDescriptor {
             TypeShape::Aggregate(_) | TypeShape::FixedArray { .. } => {
                 ValueDefaultSemantics::Recursive
             }
-            TypeShape::Container { .. } | TypeShape::Opaque { .. } => {
-                ValueDefaultSemantics::NullHandle
-            }
+            TypeShape::Container { .. } => ValueDefaultSemantics::EmptyContainer,
+            TypeShape::Opaque { .. } => ValueDefaultSemantics::NullHandle,
         }
     }
 
     pub fn destroy_semantics(&self) -> ValueDestroySemantics {
         match self.shape {
-            TypeShape::Aggregate(_) | TypeShape::FixedArray { .. } => {
-                ValueDestroySemantics::Recursive
-            }
-            TypeShape::Container { .. } | TypeShape::Opaque { .. } => ValueDestroySemantics::Handle,
+            TypeShape::Aggregate(_)
+            | TypeShape::FixedArray { .. }
+            | TypeShape::Container { .. } => ValueDestroySemantics::Recursive,
+            TypeShape::Opaque { .. } => ValueDestroySemantics::Handle,
             _ => ValueDestroySemantics::Trivial,
         }
     }
@@ -177,12 +183,10 @@ impl TypeDescriptor {
             TypeShape::PackedAtom { .. } => ValueEqualitySemantics::FourState,
             TypeShape::Real { .. } => ValueEqualitySemantics::Real,
             TypeShape::String => ValueEqualitySemantics::String,
-            TypeShape::Aggregate(_) | TypeShape::FixedArray { .. } => {
-                ValueEqualitySemantics::Recursive
-            }
-            TypeShape::Container { .. } | TypeShape::Opaque { .. } => {
-                ValueEqualitySemantics::HandleIdentity
-            }
+            TypeShape::Aggregate(_)
+            | TypeShape::FixedArray { .. }
+            | TypeShape::Container { .. } => ValueEqualitySemantics::Recursive,
+            TypeShape::Opaque { .. } => ValueEqualitySemantics::HandleIdentity,
         }
     }
 

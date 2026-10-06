@@ -53,7 +53,7 @@ impl Codegen<'_> {
             }
             match self.kind(current) {
                 NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
-                    if let Some(container) = self.container_of(*base) {
+                    if let Some(container) = self.container_of_select(current, *base) {
                         // A select flattened across the element boundary:
                         // `d[i][b]` arrives as one select with indices beyond
                         // the container depth.

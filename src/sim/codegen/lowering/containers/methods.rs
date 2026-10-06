@@ -266,6 +266,31 @@ impl<'a> Codegen<'a> {
                     "container method `{name}` with a `with` clause in `{path}` is not supported"
                 ));
             }
+            // `void'(q.pop_front())`: remove the element and discard it
+            // (SV 7.10.2.6-7), evaluated once into an unused local.
+            ("pop_front" | "pop_back", []) => {
+                if matches!(
+                    self.model.containers[container.ir].element,
+                    IrContainerElement::String
+                ) {
+                    return Ok(Some(IrStmt::Block(vec![IrStmt::DeclString {
+                        name: format!("_llg_pop{}", node.0),
+                        init: Some(self.lower_string(path, node)?),
+                    }])));
+                }
+                let Some(value) = self.lower_container_query(path, node)? else {
+                    return Ok(None);
+                };
+                let name = format!("_llg_pop{}", node.0);
+                let (width, signed) = (value.width, value.signed);
+                return Ok(Some(IrStmt::Block(vec![IrStmt::DeclLocal {
+                    name,
+                    width,
+                    signed,
+                    init: Some(Box::new(value)),
+                    two_state: false,
+                }])));
+            }
             _ => return Ok(None),
         };
         let operation = IrStmt::Container(Box::new(operation));

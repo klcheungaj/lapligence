@@ -147,10 +147,10 @@ impl<'a> Codegen<'a> {
         }
         let selected = match self.kind(lhs) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => self
-                .container_of(*base)
+                .container_of_select(lhs, *base)
                 .map(|container| (container, *index)),
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => self
-                .container_of(*base)
+                .container_of_select(lhs, *base)
                 .map(|container| (container, indices[0])),
             _ => None,
         };
@@ -567,10 +567,10 @@ impl<'a> Codegen<'a> {
     ) -> Result<IrStmt, String> {
         let (container, index) = match self.kind(lhs) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => self
-                .container_of(*base)
+                .container_of_select(lhs, *base)
                 .map(|container| (container.ir, *index)),
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => self
-                .container_of(*base)
+                .container_of_select(lhs, *base)
                 .map(|container| (container.ir, indices[0])),
             _ => None,
         }
@@ -654,9 +654,11 @@ impl<'a> Codegen<'a> {
     /// single index.
     pub(in super::super) fn is_container_element(&self, node: NodeId) -> bool {
         match self.kind(node) {
-            NodeKind::Expr(ExprKind::BitSelect { base, .. }) => self.container_of(*base).is_some(),
+            NodeKind::Expr(ExprKind::BitSelect { base, .. }) => {
+                self.container_of_select(node, *base).is_some()
+            }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {
-                self.container_of(*base).is_some()
+                self.container_of_select(node, *base).is_some()
             }
             _ => false,
         }

@@ -399,6 +399,7 @@ impl Codegen<'_> {
                 init: None,
                 ir,
             }),
+            container: None,
             path: member_path.to_vec(),
         })
     }
@@ -468,6 +469,7 @@ impl Codegen<'_> {
                 init: None,
                 ir,
             }),
+            container: None,
             path: member_path.to_vec(),
         })
     }
@@ -555,6 +557,7 @@ impl Codegen<'_> {
                 init: None,
                 ir,
             }),
+            container: None,
             path: member_path.to_vec(),
         });
         for nested in &layout.members {

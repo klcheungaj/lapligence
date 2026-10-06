@@ -459,7 +459,7 @@ impl<'a> Codegen<'a> {
         match self.kind(node) {
             NodeKind::Expr(
                 ExprKind::BitSelect { base, .. } | ExprKind::ArraySelect { base, .. },
-            ) => self.container_of(*base).is_some(),
+            ) => self.container_of_select(node, *base).is_some(),
             _ => false,
         }
     }
@@ -518,7 +518,7 @@ impl<'a> Codegen<'a> {
         // detaches that cell without changing its value or other ref aliases.
         let queue_actual = match self.kind(bound.expr) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => self
-                .container_of(*base)
+                .container_of_select(bound.expr, *base)
                 .filter(|container| {
                     matches!(
                         self.model.containers[container.ir].kind,
@@ -527,7 +527,7 @@ impl<'a> Codegen<'a> {
                 })
                 .map(|container| (container.ir, *index)),
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => self
-                .container_of(*base)
+                .container_of_select(bound.expr, *base)
                 .filter(|container| {
                     matches!(
                         self.model.containers[container.ir].kind,

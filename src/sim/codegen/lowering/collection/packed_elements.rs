@@ -144,7 +144,7 @@ impl<'a> Codegen<'a> {
                 }
                 _ => break,
             };
-            if self.array_of(base).is_some() || self.container_of(base).is_some() {
+            if self.array_of(base).is_some() || self.container_of_select(current, base).is_some() {
                 return None;
             }
             selectors.push((base, select));
@@ -375,7 +375,7 @@ impl<'a> Codegen<'a> {
                 _ if current == select => return None,
                 _ => return Some(select),
             };
-            if self.array_of(base).is_some() || self.container_of(base).is_some() {
+            if self.array_of(base).is_some() || self.container_of_select(current, base).is_some() {
                 return None;
             }
             current = base;

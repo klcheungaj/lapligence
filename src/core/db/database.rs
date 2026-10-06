@@ -593,9 +593,9 @@ impl Db {
         self.subroutine_arrays.get(&id)
     }
 
-    /// Resolve an array-select expression to its aggregate owner and
-    /// declaration-relative member path, when Slang exposed that path through
-    /// owned member references.
+    /// Resolve an array-select expression, or a `foreach` statement over a
+    /// record member, to its aggregate owner and declaration-relative member
+    /// path, when Slang exposed that path through owned member references.
     pub fn array_select_path(&self, id: NodeId) -> Option<(NodeId, &[String])> {
         self.array_select_paths
             .get(&id)

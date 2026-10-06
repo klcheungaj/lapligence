@@ -410,16 +410,23 @@ subroutine formals, results and locals; SIM-006 stores them as elements of
 queues, dynamic and associative arrays; SIM-007 adds one-dimensional fixed
 arrays of strings, handles and native records, run-time indices into native
 member arrays, packed-member selects, record-element equality and tagged
-unions with native members in module/static variables.
+unions with native members in module/static variables, and container members
+of module records.
 
 ### Symptom
 
 Unpacked records with string, real, chandle or class-handle leaves copy,
 compare and cross input/output/inout formals and results as runtime values,
 are elements of resizable containers and of one-dimensional fixed arrays.
-These legal forms still reject with explicit diagnostics: multidimensional
-fixed arrays of strings, handles or native records; queue, dynamic or
-associative array members of a record (`struct { string s; int q[$]; }`);
+Queue, dynamic and associative members of module and static records
+(`struct { string s; int q[$]; }`) are their own containers: methods, selects,
+`foreach`, whole-record copies, equality (except associative members) and
+assignment patterns work. These legal forms still reject with explicit
+diagnostics: multidimensional fixed arrays of strings, handles or native
+records; records with queue, dynamic or associative members in subroutine
+storage (formals, results, automatic and static locals), as container or
+fixed-array elements, as class properties and in nonblocking assignments;
+equality of records with an associative member;
 compound or nonblocking writes to a record element of a resizable container;
 delayed (`#d`) nonblocking writes to a fixed array of native elements; a
 run-time index into a native member array of more than 64 elements or with a

@@ -1031,7 +1031,7 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
                 if let Some(array) = self.array_of(*base) {
                     self.add_process_array_write(array, &[*index], writes);
-                } else if let Some(container) = self.container_of(*base) {
+                } else if let Some(container) = self.container_of_select(lhs, *base) {
                     writes.insert(IrDependency::ContainerContents(container.ir));
                     writes.insert(IrDependency::ContainerShape(container.ir));
                 } else {
@@ -1041,7 +1041,7 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 if let Some(array) = self.select_array_of(lhs, *base) {
                     self.add_process_array_write(array, indices, writes);
-                } else if let Some(container) = self.container_of(*base) {
+                } else if let Some(container) = self.container_of_select(lhs, *base) {
                     writes.insert(IrDependency::ContainerContents(container.ir));
                     writes.insert(IrDependency::ContainerShape(container.ir));
                 } else {
@@ -1348,7 +1348,7 @@ impl<'a> Codegen<'a> {
                         bindings,
                     );
                 }
-                if let Some(container) = self.container_of(*base) {
+                if let Some(container) = self.container_of_select(node, *base) {
                     self.add_container_dependencies(container.ir, true, true, seen, out);
                     return self.walk_read_signals_bound(
                         scope_path,
@@ -1377,7 +1377,7 @@ impl<'a> Codegen<'a> {
                     }
                     return Ok(());
                 }
-                if let Some(container) = self.container_of(*base) {
+                if let Some(container) = self.container_of_select(node, *base) {
                     self.add_container_dependencies(container.ir, true, true, seen, out);
                     for index in indices {
                         self.walk_read_signals_bound(
