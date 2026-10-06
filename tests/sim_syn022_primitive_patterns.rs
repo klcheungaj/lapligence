@@ -52,16 +52,24 @@ fn unsupported_whole_value_patterns_have_specific_diagnostics() {
         "conditional whole-value pattern requires a supported fixed value",
         &["--edition", "2009"],
     );
-    sim_cli::reject_case_with_args(
+}
+
+#[test]
+fn real_and_string_whole_value_bindings_run() {
+    sim_cli::run_case_with_args(
         "syn022_primitive_patterns",
-        "unsupported_real_binding",
-        "conditional whole-value pattern requires a supported fixed value",
+        "real_binding",
+        "real binding=1.50 twice=3.00\nfilter rejected\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
-    sim_cli::reject_case_with_args(
+    sim_cli::run_case_with_args(
         "syn022_primitive_patterns",
-        "unsupported_native_binding",
-        "string/class signals are not supported",
+        "string_binding",
+        "native binding=abc joined=abc!\nfilter rejected\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }

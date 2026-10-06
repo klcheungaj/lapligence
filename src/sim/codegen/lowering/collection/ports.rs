@@ -1478,6 +1478,19 @@ impl<'a> Codegen<'a> {
         } else {
             (actual, internal, parent_path)
         };
+        // A value link re-copies the record when a member changes; handle
+        // members publish no change marker, so a handle-only change would
+        // leave the destination stale (whole handle ports reject likewise).
+        if source.leaves.iter().any(|leaf| {
+            leaf.object.is_some_and(|object| {
+                self.model.objects[self.reference_object(object)].ty != IrObjectType::String
+            })
+        }) {
+            return Err(format!(
+                "record port `{}` with a class handle member is not supported by value links in `{child_path}`",
+                self.display_name(port)
+            ));
+        }
         let reads = self.aggregate_link_dependencies(&source);
         let statement = self
             .lower_unpacked_aggregate_assignment(

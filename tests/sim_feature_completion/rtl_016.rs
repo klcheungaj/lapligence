@@ -227,15 +227,6 @@ fn tagged_member_expressions_require_the_member_type() {
 }
 
 #[test]
-fn native_payloads_remain_outside_finite_tagged_storage() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_native_payload",
-        "tagged union `value` in `tb` requires a fixed packed representation",
-    );
-}
-
-#[test]
 fn oversized_payloads_use_column_layout_rather_than_flattening() {
     // One bit beyond `capacity_boundary`, the union keeps its tag and each
     // member in separate columns (RTL-101).

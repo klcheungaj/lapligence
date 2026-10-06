@@ -24,6 +24,16 @@ impl<'a> Codegen<'a> {
         {
             return Ok(Some(statement));
         }
+        if !blocking {
+            if op != Operation::Assignment {
+                return Err(format!(
+                    "compound nonblocking assignment in `{path}` is illegal"
+                ));
+            }
+            if let Some(statement) = self.lower_fixed_view_nba(path, lhs, rhs)? {
+                return Ok(Some(statement));
+            }
+        }
         if self.p30_fixed_array_assignment_candidate(lhs) {
             return self.lower_p30_fixed_array_assignment(path, lhs, rhs, blocking, op);
         }
@@ -266,6 +276,34 @@ impl<'a> Codegen<'a> {
             return Ok(Some(IrStmt::Container(Box::new(operation))));
         }
 
+        if let Some((dst, dst_start, count)) = self.fixed_view_slice(path, lhs)? {
+            if !blocking || op != Operation::Assignment {
+                return Err(format!(
+                    "nonblocking or compound assignment to a fixed-array slice of native elements in `{path}` is not supported"
+                ));
+            }
+            // The source is the whole right-hand array, or a slice of one.
+            let (src, src_start) = match self.fixed_view_slice(path, rhs)? {
+                Some((src, start, _)) => (src, start),
+                None => {
+                    let src = self.container_of(self.p30_unwrap_cast(rhs)).ok_or_else(|| {
+                        format!(
+                            "fixed-array slice assignment in `{path}` needs an array variable or slice source"
+                        )
+                    })?;
+                    (src.ir, pattern_key_expr(0, 64, true, false))
+                }
+            };
+            return Ok(Some(IrStmt::Container(Box::new(
+                IrContainerStmt::CopyRange {
+                    dst,
+                    dst_start,
+                    src,
+                    src_start,
+                    count,
+                },
+            ))));
+        }
         let Some(dst) = self.container_of(lhs) else {
             return Ok(None);
         };
@@ -355,6 +393,14 @@ impl<'a> Codegen<'a> {
                 initializer,
             })));
         }
+        if let Some((src, start, count)) = self.fixed_view_slice(path, rhs)? {
+            return self.lower_slice_into(path, dst.ir, src, start, count);
+        }
+        if let Some(statement) =
+            self.lower_container_conditional_into(path, type_node, dst.ir, rhs)?
+        {
+            return Ok(statement);
+        }
         if matches!(
             self.model.containers[dst.ir].kind,
             IrContainerKind::Queue { .. }
@@ -375,6 +421,136 @@ impl<'a> Codegen<'a> {
         Ok(IrStmt::Container(Box::new(IrContainerStmt::Copy {
             dst: dst.ir,
             src: src.ir,
+        })))
+    }
+
+    /// `dst = c ? a : b` for descriptor-backed dynamic arrays (including
+    /// fixed-array views of native elements). A known predicate assigns one
+    /// arm; an ambiguous one evaluates both arms into temporaries and merges
+    /// immediate elements (SV 11.4.11).
+    fn lower_container_conditional_into(
+        &mut self,
+        path: &str,
+        type_node: NodeId,
+        dst: usize,
+        rhs: NodeId,
+    ) -> Result<Option<IrStmt>, String> {
+        let source = self.p30_unwrap_cast(rhs);
+        let (selector, if_true, if_false) = match self.kind(source) {
+            NodeKind::Expr(ExprKind::Conditional {
+                predicate,
+                if_true,
+                if_false,
+            }) => {
+                let (if_true, if_false) = (*if_true, *if_false);
+                let predicate = predicate.clone();
+                (
+                    self.lower_conditional_predicate(path, &predicate)?,
+                    if_true,
+                    if_false,
+                )
+            }
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Conditional,
+                operands,
+                ..
+            }) if operands.len() == 3 => {
+                let (condition, if_true, if_false) = (operands[0], operands[1], operands[2]);
+                (self.lower_boolean_expr(path, condition)?, if_true, if_false)
+            }
+            _ => return Ok(None),
+        };
+        if !matches!(self.model.containers[dst].kind, IrContainerKind::Dynamic)
+            || self.model.containers[dst].element.is_packed()
+        {
+            return Err(format!(
+                "conditional operator with resizable container operands in `{path}` is not supported"
+            ));
+        }
+        let name = format!("_llg_container_sel_{}", source.index());
+        let (width, signed) = (selector.width, selector.signed);
+        let declare = IrStmt::DeclLocal {
+            name: name.clone(),
+            width,
+            signed,
+            two_state: false,
+            init: Some(Box::new(selector)),
+        };
+        let read = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
+        let known_false = cmp_expr_ir(IrBinOp::CaseEq, read.clone(), const_bits_expr(width, false));
+        let take_true = self.lower_container_into(path, type_node, dst, if_true)?;
+        let take_false = self.lower_container_into(path, type_node, dst, if_false)?;
+        let left = self.container_temporary_like(dst);
+        let right = self.container_temporary_like(dst);
+        let merge = vec![
+            IrStmt::Container(Box::new(IrContainerStmt::Declare(left))),
+            self.lower_container_into(path, type_node, left, if_true)?,
+            IrStmt::Container(Box::new(IrContainerStmt::Declare(right))),
+            self.lower_container_into(path, type_node, right, if_false)?,
+            IrStmt::Container(Box::new(IrContainerStmt::Merge { dst, left, right })),
+        ];
+        // `if` takes its else branch for an unknown condition, so the inner
+        // test separates a known false from an ambiguous predicate.
+        Ok(Some(IrStmt::Block(vec![
+            declare,
+            IrStmt::If {
+                cond: read,
+                then_: vec![take_true],
+                els: Some(vec![IrStmt::If {
+                    cond: known_false,
+                    then_: vec![take_false],
+                    els: Some(merge),
+                    check: IrUniquePriorityCheck::None,
+                }]),
+                check: IrUniquePriorityCheck::None,
+            },
+        ])))
+    }
+
+    /// Replace container `dst` with a slice of a fixed-array view. A
+    /// dynamic-array destination takes the slice size first; the runtime
+    /// snapshots the source before writing.
+    fn lower_slice_into(
+        &mut self,
+        path: &str,
+        dst: usize,
+        src: usize,
+        start: IrExpr,
+        count: u64,
+    ) -> Result<IrStmt, String> {
+        if !matches!(self.model.containers[dst].kind, IrContainerKind::Dynamic)
+            || self.model.containers[dst].element.is_packed()
+        {
+            return Err(format!(
+                "fixed-array slice in `{path}` can only be assigned to a fixed or dynamic array"
+            ));
+        }
+        let mut statements = Vec::new();
+        if self.model.containers[dst].initial_size != Some(count) {
+            let temporary = self.container_temporary_like(dst);
+            self.model.containers[temporary].initial_size = Some(count);
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                temporary,
+            ))));
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::CopyRange {
+                dst: temporary,
+                dst_start: pattern_key_expr(0, 64, true, false),
+                src,
+                src_start: start,
+                count,
+            })));
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::Copy {
+                dst,
+                src: temporary,
+            })));
+            return Ok(IrStmt::Block(statements));
+        }
+        Ok(IrStmt::Container(Box::new(IrContainerStmt::CopyRange {
+            dst,
+            dst_start: pattern_key_expr(0, 64, true, false),
+            src,
+            src_start: start,
+            count,
         })))
     }
 
@@ -488,7 +664,7 @@ impl<'a> Codegen<'a> {
 
     /// Whether evaluating `node` twice is indistinguishable from evaluating
     /// it once: no calls, assignments or increments anywhere inside it.
-    fn side_effect_free(&self, node: NodeId) -> bool {
+    pub(in super::super) fn side_effect_free(&self, node: NodeId) -> bool {
         match self.kind(node) {
             NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. } | NodeKind::SysCall { .. } => {
                 return false

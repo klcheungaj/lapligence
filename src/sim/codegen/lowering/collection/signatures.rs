@@ -714,7 +714,10 @@ impl<'a> Codegen<'a> {
         }
         let width = ty
             .width
-            .ok_or_else(|| format!("return type of `{}` has no width", self.node(ft).name))?;
+            .ok_or_else(|| match self.unrepresented_storage_reason(ft) {
+                Some(reason) => format!("return type of `{}`: {reason}", self.node(ft).name),
+                None => format!("return type of `{}` has no width", self.node(ft).name),
+            })?;
         if width > LLG_MAX_WIDTH {
             return Err(format!(
                 "return type of `{}` is {width} bits wide; the runtime maximum supported width is {LLG_MAX_WIDTH}",
@@ -781,10 +784,14 @@ impl<'a> Codegen<'a> {
                             ))
                         }
                         None => {
-                            return Err(format!(
-                                "return type of `{}` has no width",
-                                self.node(ft).name
-                            ))
+                            return Err(match self.unrepresented_storage_reason(ft) {
+                                Some(reason) => {
+                                    format!("return type of `{}`: {reason}", self.node(ft).name)
+                                }
+                                None => {
+                                    format!("return type of `{}` has no width", self.node(ft).name)
+                                }
+                            })
                         }
                     }
                 }

@@ -67,6 +67,12 @@ fn ident_children(e: &mut IrExpr) {
                     walk_lhs_mut(binding, &mut |child| ident_expr(child));
                 }
             }
+            for binding in &mut pattern.native_bindings {
+                if let crate::sim::ir::IrNativeBinding::Value { lhs, .. } = binding {
+                    walk_lhs_mut(lhs, &mut |child| ident_expr(child));
+                }
+                binding.expressions_mut(&mut |child| ident_expr(child));
+            }
         }
         IrExprKind::Stream { value, .. } => ident_expr(value),
         IrExprKind::Mutation(mutation) => {

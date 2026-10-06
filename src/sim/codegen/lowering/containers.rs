@@ -8,6 +8,7 @@ use crate::sim::ir::{
 
 mod assignments;
 mod callbacks;
+mod equality;
 mod fixed_arrays;
 mod fixed_cells;
 pub(in crate::sim::codegen) use fixed_cells::FIXED_CELL_UNROLL_LIMIT;
@@ -17,6 +18,7 @@ mod fixed_reductions;
 mod indexing;
 mod initialization;
 mod methods;
+mod nonblocking;
 mod patterns;
 mod queries;
 mod real_array_values;
@@ -78,7 +80,12 @@ fn parse_pattern_string_key(key: &str) -> Option<Vec<u8>> {
     decode_verilog_string(key).ok()
 }
 
-fn pattern_key_expr(index: i128, width: u32, signed: bool, _two_state: bool) -> IrExpr {
+pub(in crate::sim::codegen) fn pattern_key_expr(
+    index: i128,
+    width: u32,
+    signed: bool,
+    _two_state: bool,
+) -> IrExpr {
     let limbs = width.div_ceil(64) as usize;
     let raw = index as u128;
     let mut bits = vec![0; limbs];

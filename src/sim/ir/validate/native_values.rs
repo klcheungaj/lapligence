@@ -21,6 +21,9 @@ fn leaf_matches(element: &IrContainerElement, ty: IrClassFieldType) -> bool {
         }
         (IrContainerElement::String, IrClassFieldType::String)
         | (IrContainerElement::Chandle, IrClassFieldType::Chandle) => true,
+        (IrContainerElement::Opaque { kind, .. }, IrClassFieldType::Chandle) => {
+            crate::sim::ir::is_class_handle_kind(kind)
+        }
         _ => false,
     }
 }
@@ -119,7 +122,8 @@ impl Validator<'_> {
                     value.validate(self.model, self.string_return.get())?;
                     true
                 }
-                (Some(IrContainerElement::Chandle), IrNativeLeafExpr::Chandle(value)) => {
+                (Some(IrContainerElement::Chandle), IrNativeLeafExpr::Chandle(value))
+                | (Some(IrContainerElement::Opaque { .. }), IrNativeLeafExpr::Chandle(value)) => {
                     value.validate(self.model, formals, self.chandle_return.get())?;
                     true
                 }

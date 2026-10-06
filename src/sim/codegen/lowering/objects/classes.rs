@@ -177,6 +177,17 @@ impl Codegen<'_> {
             {
                 return self.lower_chandle(path, *base);
             }
+            if let Some(receiver) = self.record_handle_receiver(refs, node, field)? {
+                return Ok(receiver);
+            }
+            // A handle member of a record element (`q[i].h.v`): the base
+            // expression is the frontend's child of the property access.
+            if let [base] = self.node(node).children.as_slice() {
+                let base = *base;
+                if self.element_leaf_kind(base) == Some(crate::sim::ir::IrClassFieldType::Chandle) {
+                    return self.lower_chandle(path, base);
+                }
+            }
         }
         self.class_init_receiver
             .clone()
@@ -191,6 +202,52 @@ impl Codegen<'_> {
                     self.node(field).name
                 )
             })
+    }
+
+    /// A class handle stored as a record member (`r.h.v`, SIM-007): the
+    /// handle leaf of a module record or native subroutine value named by
+    /// the path between the record and the property.
+    fn record_handle_receiver(
+        &mut self,
+        refs: &[Option<NodeId>],
+        node: NodeId,
+        field: NodeId,
+    ) -> Result<Option<IrChandleExpr>, String> {
+        let NodeKind::Expr(ExprKind::HierPath { parts, .. }) = self.kind(node) else {
+            return Ok(None);
+        };
+        let Some(end) = refs.iter().position(|reference| *reference == Some(field)) else {
+            return Ok(None);
+        };
+        let parts = parts.clone();
+        for (index, reference) in refs[..end].iter().enumerate() {
+            let Some(root) = reference else {
+                continue;
+            };
+            let member_path: Vec<AggregatePathPart> = parts[index + 1..end]
+                .iter()
+                .cloned()
+                .map(AggregatePathPart::Member)
+                .collect();
+            if member_path.is_empty() {
+                continue;
+            }
+            if let Some(value) = self.native_roots.get(root).copied() {
+                return self.native_handle_leaf(value, &member_path);
+            }
+            if let Some(aggregate) = self.unpacked_aggregates.get(root) {
+                return Ok(aggregate
+                    .leaves
+                    .iter()
+                    .find(|leaf| leaf.path == member_path)
+                    .and_then(|leaf| leaf.object)
+                    .filter(|object| {
+                        self.model.objects[*object].ty == crate::sim::ir::IrObjectType::Chandle
+                    })
+                    .map(IrChandleExpr::Read));
+            }
+        }
+        Ok(None)
     }
 
     fn class_field_layout(

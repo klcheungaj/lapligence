@@ -66,6 +66,44 @@ impl Frame<'_, '_> {
     }
 
     pub(super) fn pattern(&mut self, pattern: &IrPatternExpr) -> Result<Value, String> {
+        let matched = self.pattern_match(pattern)?;
+        if !pattern.native_bindings.is_empty() {
+            self.line(format!("if ({}) {{", matched.truth()));
+            for binding in &pattern.native_bindings {
+                self.native_pattern_binding(binding)?;
+            }
+            self.line("}");
+        }
+        Ok(matched)
+    }
+
+    /// Store one string, handle or real pattern variable of a matched pattern.
+    fn native_pattern_binding(&mut self, binding: &IrNativeBinding) -> Result<(), String> {
+        match binding {
+            IrNativeBinding::String { local, value } => {
+                let address = self
+                    .native_lookup(local, super::native::NativeKind::String)?
+                    .address;
+                self.string_assign(&address, value)?;
+            }
+            IrNativeBinding::Chandle { local, value } => {
+                let address = self
+                    .native_lookup(local, super::native::NativeKind::Chandle)?
+                    .address;
+                let value = self.chandle(value)?;
+                self.line(format!("*({address}) = {value};"));
+            }
+            IrNativeBinding::Value { lhs, value } => {
+                let target = self.target(lhs)?;
+                let value = self.expression(value)?;
+                self.store(&target, value, false, "0")?;
+                self.release_target(target);
+            }
+        }
+        Ok(())
+    }
+
+    fn pattern_match(&mut self, pattern: &IrPatternExpr) -> Result<Value, String> {
         let value = self.expression(&pattern.value)?;
         if value.width == 0 {
             return Err("conditional pattern requires a packed value".to_owned());

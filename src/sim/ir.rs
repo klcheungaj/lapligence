@@ -26,7 +26,9 @@ mod containers;
 mod native_access;
 pub use native_access::{IrClassAllocation, IrNativeAccess, IrNativeAccessKind};
 mod native_values;
-pub(in crate::sim) use native_values::{native_item_count, native_leaf_type, validate_native_type};
+pub(in crate::sim) use native_values::{
+    is_class_handle_kind, native_item_count, native_leaf_type, validate_native_type,
+};
 pub use native_values::{IrNativeLeafExpr, IrNativeLeafValue, IrNativeValue};
 mod objects;
 mod validate;
@@ -63,9 +65,9 @@ mod expressions;
 pub use expressions::{
     IrBinOp, IrBitQuery, IrConditionalMember, IrDynamicCast, IrEnumMember, IrEnumMethod,
     IrEnumQuery, IrExpr, IrExprKind, IrFileInput, IrFileInputTarget, IrFileReadTarget, IrMathFunc,
-    IrMutationExpr, IrPatternCheck, IrPatternExpr, IrPatternMatchKind, IrPlusArgTarget,
-    IrPlusArgText, IrRandomFunc, IrRealBinOp, IrRealUnOp, IrRuntimeQuery, IrSampledCall,
-    IrSampledDomain, IrSampledFunc, IrSequenceExpr, IrSysFunc, IrTaggedMemberGuard,
+    IrMutationExpr, IrNativeBinding, IrPatternCheck, IrPatternExpr, IrPatternMatchKind,
+    IrPlusArgTarget, IrPlusArgText, IrRandomFunc, IrRealBinOp, IrRealUnOp, IrRuntimeQuery,
+    IrSampledCall, IrSampledDomain, IrSampledFunc, IrSequenceExpr, IrSysFunc, IrTaggedMemberGuard,
     IrTaggedSelectStep, IrTimeKind, IrUnOp,
 };
 mod lvalues;

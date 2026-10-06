@@ -191,7 +191,21 @@ impl EmitCtx<'_, '_> {
         } else {
             None
         };
-        let selector_value = if column_source.is_some() {
+        // A selector without a packed payload (a tagged union with native
+        // members, or a string/real/handle value) is read in place by each
+        // item's native pattern test (SIM-007).
+        let native_source = column_source.is_none()
+            && (self.cg.native_tagged_root(selector).is_some()
+                || self
+                    .cg
+                    .query_descriptor(selector)
+                    .is_some_and(|descriptor| {
+                        matches!(
+                            descriptor.shape,
+                            TypeShape::String | TypeShape::Real { .. } | TypeShape::Opaque { .. }
+                        )
+                    }));
+        let selector_value = if column_source.is_some() || native_source {
             IrExpr::new(
                 IrExprKind::Const(
                     IrConst::packed(vec![0], vec![], vec![], 1, false, None)
@@ -222,6 +236,10 @@ impl EmitCtx<'_, '_> {
             let mut condition = if let Some(value) = &column_source {
                 self.cg
                     .lower_column_pattern(&self.path, value, item.pattern, match_kind)?
+            } else if native_source {
+                self.cg
+                    .lower_native_pattern(&self.path, selector, item.pattern, match_kind)?
+                    .ok_or_else(|| format!("unsupported pattern case item in `{}`", self.path))?
             } else {
                 self.cg.lower_pattern_value(
                     &self.path,
@@ -274,7 +292,7 @@ impl EmitCtx<'_, '_> {
             *check = qualifier;
         }
         let mut lowered = prelude;
-        if column_source.is_none() {
+        if column_source.is_none() && !native_source {
             lowered.push(IrStmt::DeclLocal {
                 name: selector_name,
                 width: selector_value.width,

@@ -16,10 +16,10 @@ pub use analysis::{
 use std::collections::{BTreeSet, HashSet};
 
 use crate::sim::ir::{
-    IrArrayQueryTarget, IrCallArg, IrChandleExpr, IrContainerExpr, IrDependency, IrDisplayArg,
-    IrExpr, IrExprKind, IrInsideItem, IrLhs, IrMailboxExpr, IrMailboxValue, IrModel, IrObjectQuery,
-    IrObjectStmt, IrShape, IrStmt, IrStochasticStmt, IrStreamSelector, IrStreamTarget,
-    IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError,
+    IrArrayQueryTarget, IrCallArg, IrChandleExpr, IrContainerExpr, IrContainerStmt, IrDependency,
+    IrDisplayArg, IrExpr, IrExprKind, IrInsideItem, IrLhs, IrMailboxExpr, IrMailboxValue, IrModel,
+    IrObjectQuery, IrObjectStmt, IrShape, IrStmt, IrStochasticStmt, IrStreamSelector,
+    IrStreamTarget, IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError,
 };
 use crate::sim::semantic::{ExtensionRef, Origin};
 
@@ -692,6 +692,13 @@ fn collect_effects(
             | IrStmt::DelayedChandleAssign { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
                 ScheduleRegion::NonblockingAssign,
             )),
+            IrStmt::Container(operation)
+                if matches!(**operation, IrContainerStmt::Nonblocking { .. }) =>
+            {
+                effects.push(ExecutionEffect::EnqueueUpdate(
+                    ScheduleRegion::NonblockingAssign,
+                ))
+            }
             IrStmt::ClockingDrive { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
                 ScheduleRegion::ReNonblockingAssign,
             )),
@@ -1471,6 +1478,15 @@ fn collect_expression_effects(
                     effects.push(ExecutionEffect::ImmediateStore);
                     collect_lhs_expression_effects(ir, binding, effects, visited_calls);
                 }
+            }
+            for binding in &pattern.native_bindings {
+                effects.push(ExecutionEffect::ImmediateStore);
+                if let crate::sim::ir::IrNativeBinding::Value { lhs, .. } = binding {
+                    collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
+                }
+                binding.expressions(&mut |child| {
+                    collect_expression_effects(ir, child, effects, visited_calls)
+                });
             }
             collect_expression_effects(ir, &pattern.value, effects, visited_calls);
             if let Some(constant) = &pattern.constant {

@@ -150,6 +150,16 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrChandleExpr, String> {
+        if let Some(value) = self.native_tagged_chandle(path, node)? {
+            return Ok(value);
+        }
+        if let Some(select) = self.native_member_select(path, node)? {
+            if let crate::sim::ir::IrNativeLeafExpr::Chandle(value) =
+                self.native_member_select_read(path, &select)?
+            {
+                return Ok(value);
+            }
+        }
         if let Some(value) = self.lower_container_chandle_query(path, node)? {
             return Ok(value);
         }

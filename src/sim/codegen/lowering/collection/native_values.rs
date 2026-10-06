@@ -9,12 +9,14 @@
 use super::super::expressions::AggregateSelection;
 use super::*;
 use crate::sim::ir::{
-    native_item_count, validate_native_type, IrNativeAccessKind, IrNativeLeafExpr,
-    IrNativeLeafValue, IrNativeValue, IrObjectQuery,
+    is_class_handle_kind, native_item_count, validate_native_type, IrNativeAccessKind,
+    IrNativeLeafExpr, IrNativeLeafValue, IrNativeValue, IrObjectQuery,
 };
 
 mod conditionals;
 mod elements;
+mod member_select;
+mod tagged;
 
 /// Largest number of leaves of one native record. Leaf-wise transfers to and
 /// from flattened module storage emit one operation per leaf, so larger
@@ -35,6 +37,9 @@ pub(in super::super) enum NativeEndpoint {
     /// Declaration-owned module record leaves below a path prefix.
     Module(Box<AggregateSelection>),
 }
+
+/// Every leaf value of a record operand with its path, in declaration order.
+type LeafReads = Vec<(Vec<AggregatePathPart>, LeafValue)>;
 
 /// One captured leaf value of a transfer.
 #[derive(Clone)]
@@ -108,6 +113,9 @@ pub(super) fn leaf_ty(element: &IrContainerElement) -> Result<IrClassFieldType, 
         }),
         IrContainerElement::String => Ok(IrClassFieldType::String),
         IrContainerElement::Chandle => Ok(IrClassFieldType::Chandle),
+        IrContainerElement::Opaque { kind, .. } if is_class_handle_kind(kind) => {
+            Ok(IrClassFieldType::Chandle)
+        }
         _ => Err("native record leaf has no scalar representation".to_owned()),
     }
 }
@@ -195,6 +203,28 @@ fn collect_native_leaves(
     }
 }
 
+/// Whether a record reaches a built-in semaphore, mailbox or process handle,
+/// which keep their own object kinds rather than plain identity leaves.
+fn has_builtin_class_leaf(descriptor: &TypeDescriptor) -> bool {
+    match &descriptor.shape {
+        TypeShape::Opaque { kind } => {
+            kind == "Class"
+                && matches!(
+                    descriptor.name.as_str(),
+                    "semaphore" | "mailbox" | "process"
+                )
+        }
+        TypeShape::Aggregate(layout) => layout
+            .members
+            .iter()
+            .any(|member| has_builtin_class_leaf(&member.descriptor)),
+        TypeShape::FixedArray { element, .. } | TypeShape::Container { element, .. } => {
+            has_builtin_class_leaf(element)
+        }
+        _ => false,
+    }
+}
+
 impl Codegen<'_> {
     /// The native value type of a declaration, or `None` when the existing
     /// packed, fixed-array or leaf storage represents it.
@@ -212,6 +242,9 @@ impl Codegen<'_> {
             || Self::fixed_descriptor_width_bits(descriptor).is_some()
             || super::record_columns::record_column_layout_type(descriptor)
         {
+            return None;
+        }
+        if has_builtin_class_leaf(descriptor) {
             return None;
         }
         let element = lower_container_element(descriptor).ok()?;
@@ -577,6 +610,26 @@ impl Codegen<'_> {
         leaf: &NativeLeaf,
     ) -> IrLhs {
         self.native_leaf_lhs(value, leaf)
+    }
+
+    /// Read of the handle leaf at `path` below native value `value`.
+    pub(in super::super) fn native_handle_leaf(
+        &mut self,
+        value: usize,
+        path: &[AggregatePathPart],
+    ) -> Result<Option<IrChandleExpr>, String> {
+        let Some(leaf) = self
+            .native_layout_of_value(value)?
+            .leaves
+            .iter()
+            .find(|leaf| leaf.path == path && leaf.ty == IrClassFieldType::Chandle)
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        Ok(Some(IrChandleExpr::LocalRead(
+            self.native_leaf_symbol(value, &leaf),
+        )))
     }
 
     /// Model-level access name of one native leaf, shared by all uses.
@@ -1357,6 +1410,12 @@ impl Codegen<'_> {
             )?);
         }
         if matches!(direction, DbDirection::Output | DbDirection::Inout) {
+            if let Some(writeback) =
+                self.container_record_writeback(path, actual, temporary, before)?
+            {
+                after.push(writeback);
+                return Ok(IrCallArg::NativeValue(temporary));
+            }
             let (target, _) = self.native_endpoint(actual)?.ok_or_else(|| {
                 format!(
                     "output actual of native record formal `{}` in `{path}` is not a record variable",
@@ -1450,6 +1509,22 @@ impl Codegen<'_> {
         Ok(())
     }
 
+    /// Every leaf of a record operand in declaration order: a native value,
+    /// a module native record or a whole record element of a container.
+    fn record_leaf_reads(&mut self, path: &str, node: NodeId) -> Result<Option<LeafReads>, String> {
+        if let Some(reads) = self.container_record_leaf_reads(path, node)? {
+            return Ok(Some(reads));
+        }
+        let Some((endpoint, _)) = self.native_endpoint(node)? else {
+            return Ok(None);
+        };
+        let mut reads = Vec::new();
+        for (leaf_path, leaf) in self.endpoint_leaves(&endpoint)? {
+            reads.push((leaf_path, self.endpoint_leaf_read(&leaf)?));
+        }
+        Ok(Some(reads))
+    }
+
     /// Member-wise `==`/`!=`/`===`/`!==` when either record operand is
     /// native subroutine storage. Packed leaves keep four-state comparison,
     /// reals compare numerically, strings by contents and chandles by
@@ -1470,21 +1545,24 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let (left, right) = (self.p30_unwrap_cast(*left), self.p30_unwrap_cast(*right));
-        if self.native_path_of(left)?.is_none() && self.native_path_of(right)?.is_none() {
+        let element = self.is_container_record(left) || self.is_container_record(right);
+        if !element && self.native_path_of(left)?.is_none() && self.native_path_of(right)?.is_none()
+        {
             return Ok(None);
         }
-        let (left, right) = match (self.native_endpoint(left)?, self.native_endpoint(right)?) {
-            (Some((left, _)), Some((right, _))) => (left, right),
+        let (left, right) = match (
+            self.record_leaf_reads(path, left)?,
+            self.record_leaf_reads(path, right)?,
+        ) {
+            (Some(left), Some(right)) => (left, right),
             // Scalar members of native values compare as scalars.
-            (None, None) => return Ok(None),
+            (None, None) if !element => return Ok(None),
             _ => {
                 return Err(format!(
                     "native record comparison in `{path}` needs record variables on both sides"
                 ))
             }
         };
-        let left = self.endpoint_leaves(&left)?;
-        let right = self.endpoint_leaves(&right)?;
         if left.len() != right.len()
             || left.is_empty()
             || left.iter().zip(&right).any(|((a, _), (b, _))| a != b)
@@ -1495,8 +1573,8 @@ impl Codegen<'_> {
         }
         let case = matches!(op, Operation::CaseEqual | Operation::CaseNotEqual);
         let mut equality: Option<IrExpr> = None;
-        for ((_, left), (_, right)) in left.iter().zip(&right) {
-            let leaf_equal = self.native_leaf_equality(path, left, right, case)?;
+        for ((_, left), (_, right)) in left.into_iter().zip(right) {
+            let leaf_equal = self.leaf_value_equality(path, left, right, case)?;
             equality = Some(match equality {
                 Some(previous) => cmp_expr_ir(IrBinOp::LogAnd, previous, leaf_equal),
                 None => leaf_equal,
@@ -1530,58 +1608,65 @@ impl Codegen<'_> {
         right: &NativeEndpointLeaf,
         case: bool,
     ) -> Result<IrExpr, String> {
-        Ok(
-            match (
-                self.endpoint_leaf_read(left)?,
-                self.endpoint_leaf_read(right)?,
-            ) {
-                (LeafValue::String(a), LeafValue::String(b)) => {
-                    let compare = IrExpr::new(
-                        IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringCompare(
-                            a, b, false,
-                        ))),
-                        32,
-                        true,
-                        None,
-                    );
-                    let zero = IrExpr::new(
-                        IrExprKind::Const(
-                            IrConst::packed(vec![0], vec![], vec![], 32, true, None)
-                                .map_err(|error| error.to_string())?,
-                        ),
-                        32,
-                        true,
-                        None,
-                    );
-                    cmp_expr_ir(IrBinOp::Eq, compare, zero)
-                }
-                (LeafValue::Chandle(a), LeafValue::Chandle(b)) => IrExpr::new(
-                    IrExprKind::ObjectQuery(Box::new(IrObjectQuery::ChandleEq(a, b))),
-                    1,
-                    false,
+        let (left, right) = (
+            self.endpoint_leaf_read(left)?,
+            self.endpoint_leaf_read(right)?,
+        );
+        self.leaf_value_equality(path, left, right, case)
+    }
+
+    fn leaf_value_equality(
+        &mut self,
+        path: &str,
+        left: LeafValue,
+        right: LeafValue,
+        case: bool,
+    ) -> Result<IrExpr, String> {
+        Ok(match (left, right) {
+            (LeafValue::String(a), LeafValue::String(b)) => {
+                let compare = IrExpr::new(
+                    IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringCompare(a, b, false))),
+                    32,
+                    true,
                     None,
-                ),
-                (
-                    LeafValue::Packed(a) | LeafValue::Real(a),
-                    LeafValue::Packed(b) | LeafValue::Real(b),
-                ) => {
-                    if case && !a.is_real() && !b.is_real() {
-                        cmp_expr_ir(IrBinOp::CaseEq, a, b)
-                    } else if case {
-                        return Err(format!(
-                            "case equality on real record member in `{path}` is not supported"
-                        ));
-                    } else {
-                        common_cmp_expr_ir(IrBinOp::Eq, a, b, path)?
-                    }
-                }
-                _ => {
+                );
+                let zero = IrExpr::new(
+                    IrExprKind::Const(
+                        IrConst::packed(vec![0], vec![], vec![], 32, true, None)
+                            .map_err(|error| error.to_string())?,
+                    ),
+                    32,
+                    true,
+                    None,
+                );
+                cmp_expr_ir(IrBinOp::Eq, compare, zero)
+            }
+            (LeafValue::Chandle(a), LeafValue::Chandle(b)) => IrExpr::new(
+                IrExprKind::ObjectQuery(Box::new(IrObjectQuery::ChandleEq(a, b))),
+                1,
+                false,
+                None,
+            ),
+            (
+                LeafValue::Packed(a) | LeafValue::Real(a),
+                LeafValue::Packed(b) | LeafValue::Real(b),
+            ) => {
+                if case && !a.is_real() && !b.is_real() {
+                    cmp_expr_ir(IrBinOp::CaseEq, a, b)
+                } else if case {
                     return Err(format!(
-                        "native record comparison in `{path}` has mismatched member kinds"
-                    ))
+                        "case equality on real record member in `{path}` is not supported"
+                    ));
+                } else {
+                    common_cmp_expr_ir(IrBinOp::Eq, a, b, path)?
                 }
-            },
-        )
+            }
+            _ => {
+                return Err(format!(
+                    "native record comparison in `{path}` has mismatched member kinds"
+                ))
+            }
+        })
     }
 
     /// The value of one scalar record leaf as a native leaf initializer.

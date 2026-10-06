@@ -26,8 +26,9 @@ backends; representative sources also run after snapshot/Db destruction.
   more keeps the tag and each member in separate columns (RTL-101), so the
   default-filled `Table` reads `5a` at both ends and `tagged Empty` matches.
   The oversized array source of a whole-value binding is still rejected
-  instead of being flattened (`neg_oversized_pattern`). `neg_native_payload` keeps
-  real payloads (SIM-007) outside finite storage. `neg_binding_scope` and
+  instead of being flattened (`neg_oversized_pattern`). Real, string and handle
+  payloads keep separate member storage since SIM-007 (its `native_tagged`
+  fixtures). `neg_binding_scope` and
   `neg_member_value` are the nearest language-illegal forms.
 
 ## Q03: member NBAs and retagging

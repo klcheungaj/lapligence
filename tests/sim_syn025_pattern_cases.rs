@@ -76,11 +76,13 @@ fn pattern_binding_cannot_escape_its_item() {
 }
 
 #[test]
-fn dynamic_pattern_source_diagnoses() {
-    sim_cli::reject_case_with_exact_stderr(
+fn string_selector_binds_a_whole_value() {
+    sim_cli::run_case_with_args(
         "syn025_pattern_cases",
-        "bad_dynamic_pattern",
-        "llg: codegen error: string/class signals are not supported: `bound` in `tb`\n",
+        "string_pattern",
+        "hello 5\n1\n",
+        "",
+        &[],
         &["--edition", "2009"],
     );
 }

@@ -8,13 +8,26 @@ impl EmitCtx<'_, '_> {
     /// the pre-IR emitter decision-for-decision: same errors, warnings,
     /// sensitivity sets and wait tracking.
     pub(in super::super) fn lower_stmt(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
-        // Whole-value pattern bindings of this statement declare their
-        // lexical storage before it, so the bound value outlives the test.
+        // Container operands that cannot be built inside an expression are
+        // built just before a statement that evaluates its operands once;
+        // nested statements never inherit that prelude. Whole-value pattern
+        // bindings of this statement declare their lexical storage before
+        // it, so the bound value outlives the test.
+        let hoist = matches!(
+            self.cg.kind(h),
+            NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::SysCall { .. }
+        );
+        let saved = std::mem::replace(&mut self.cg.container_call_prelude, hoist.then(Vec::new));
         let outer = self.cg.record_binding_declarations.replace(Vec::new());
-        let statements = self.lower_stmt_operations(h);
+        let lowered = self.lower_stmt_operations(h);
         let declarations =
             std::mem::replace(&mut self.cg.record_binding_declarations, outer).unwrap_or_default();
-        let mut statements = statements?;
+        let prelude = std::mem::replace(&mut self.cg.container_call_prelude, saved);
+        let mut statements = lowered?;
+        if let Some(mut prelude) = prelude.filter(|prelude| !prelude.is_empty()) {
+            prelude.append(&mut statements);
+            statements = prelude;
+        }
         if !declarations.is_empty() {
             statements.splice(0..0, declarations);
         }
@@ -87,6 +100,14 @@ impl EmitCtx<'_, '_> {
                                     )),
                                     ProcessTarget::Object(_) => {}
                                 }
+                                continue;
+                            }
+                            if matches!(self.cg.kind(*child), NodeKind::Var { ty } if ty.kind == "string")
+                                && self.cg.proc_string_local_name(*child).is_some()
+                                && !self.cg.is_foreach_iterator(*child)
+                            {
+                                // A string pattern variable of a case item
+                                // is declared with its process (SIM-007).
                                 continue;
                             }
                             if matches!(self.cg.kind(*child), NodeKind::Var { ty } if ty.kind == "string")

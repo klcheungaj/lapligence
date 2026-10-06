@@ -407,6 +407,39 @@ pub struct IrPatternExpr {
     /// Nonempty for recursive structure patterns. Primitive patterns use the
     /// top-level constant/binding fields for the existing compact form.
     pub(in crate::sim) checks: Vec<IrPatternCheck>,
+    /// String, handle and real pattern variables (SIM-007), written in order
+    /// once the whole pattern is definitely matched; their values read the
+    /// matched source then.
+    pub(in crate::sim) native_bindings: Vec<IrNativeBinding>,
+}
+
+/// One pattern variable of a type without a packed payload.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrNativeBinding {
+    /// A lexical string local declared by `IrStmt::DeclString`.
+    String { local: String, value: IrStringExpr },
+    /// A lexical chandle or class-handle local.
+    Chandle { local: String, value: IrChandleExpr },
+    /// A real (or packed) target.
+    Value { lhs: IrLhs, value: IrExpr },
+}
+
+impl IrNativeBinding {
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        match self {
+            Self::String { value, .. } => value.expressions(visit),
+            Self::Chandle { value, .. } => value.expressions(visit),
+            Self::Value { value, .. } => visit(value),
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        match self {
+            Self::String { value, .. } => value.expressions_mut(visit),
+            Self::Chandle { value, .. } => value.expressions_mut(visit),
+            Self::Value { value, .. } => visit(value),
+        }
+    }
 }
 
 /// A lowered expression: its structural [`IrExprKind`] plus the

@@ -55,6 +55,46 @@ pub(super) fn render(
                     .unwrap_or_else(|| "NULL".to_owned())
             )
         }
+        IrContainerStmt::CopyRange {
+            dst,
+            dst_start,
+            src,
+            src_start,
+            count,
+        } => {
+            format!(
+                "    llg_dyn_value_copy_range(&{}, {}, &{}, {}, {count}ULL);\n",
+                name(frame, *dst)?,
+                operand(frame, owners, dst_start)?.code,
+                name(frame, *src)?,
+                operand(frame, owners, src_start)?.code
+            )
+        }
+        IrContainerStmt::Nonblocking {
+            target,
+            dst_start,
+            src,
+            src_start,
+            count,
+        } => {
+            let dst_start = match dst_start {
+                Some(start) => operand(frame, owners, start)?.code,
+                None => zero_operand(frame, owners),
+            };
+            format!(
+                "    llg_dyn_value_nba(&{}, {dst_start}, &{}, {}, {count}ULL, {});\n",
+                name(frame, *target)?,
+                name(frame, *src)?,
+                operand(frame, owners, src_start)?.code,
+                u8::from(dst_start_whole(operation))
+            )
+        }
+        IrContainerStmt::Merge { dst, left, right } => format!(
+            "    llg_dyn_value_merge(&{}, &{}, &{});\n",
+            name(frame, *dst)?,
+            name(frame, *left)?,
+            name(frame, *right)?
+        ),
         IrContainerStmt::Copy { dst, src } => {
             let generic = !ctx.model.containers[*dst].element.is_packed();
             let function = if generic {
@@ -904,4 +944,15 @@ pub(super) fn render(
             key_operand(frame, strings, key)?
         ),
     })
+}
+
+/// Whether a nonblocking array write replaces the whole target.
+fn dst_start_whole(operation: &IrContainerStmt) -> bool {
+    matches!(
+        operation,
+        IrContainerStmt::Nonblocking {
+            dst_start: None,
+            ..
+        }
+    )
 }

@@ -178,6 +178,25 @@ and writes notify readers once the statement completes. Event elements are
 reached through `IrEventRef::Handle`; process elements through
 `IrProcessExpr::Handle`. Containers never travel as `IrFixedValue`.
 
+## Fixed-array views, native tagged unions and native bindings (SIM-007)
+
+A one-dimensional fixed array of strings, handles or native records is an
+`IrContainer` of kind `Dynamic` with `initial_size` set: storage is created at
+the declared size and declared indices are normalized to storage positions at
+lowering (`fixed_view_ranges`). Whole-array `==`/`!=`/`===`/`!==` is
+`IrContainerExpr::Equal` (element-wise; sizes must match). Slice reads and
+writes are `IrContainerStmt::CopyRange`, ambiguous conditionals
+`IrContainerStmt::Merge` (equal immediate elements survive, others take the
+element default), and untimed NBAs `IrContainerStmt::Nonblocking`, which
+copies the source at issue and commits at NBA time. The legacy emitter
+rejects `CopyRange`, `Merge` and `Nonblocking`.
+
+A tagged union with string, real, record or class-handle members in a
+module/static variable is per-leaf storage: a four-state `$tag` signal plus
+each member's own leaves; checked accesses reuse `TaggedSelect` over the tag.
+`IrPatternExpr::native_bindings` lists the string, chandle and value captures
+a successful match performs after its packed bindings (`IrNativeBinding`).
+
 ## Real references, real arrays and real sampling (SIM-005)
 
 Reals stay numeric and never enter the integral fixed-value contract.

@@ -33,6 +33,9 @@ impl<'a> Codegen<'a> {
                     return Some(info);
                 }
             }
+            if let Some(signal) = self.native_record_leaf_signal(node) {
+                return Some(signal);
+            }
             let (target, base_index) = self.hier_path_signal_target(parts, refs)?;
             if base_index + 1 == parts.len() {
                 return self
@@ -42,6 +45,24 @@ impl<'a> Codegen<'a> {
             }
         }
         None
+    }
+
+    /// The packed leaf signal of a member of a module record that has no
+    /// integral payload (a native record, SIM-007), so bit and part selects
+    /// of a packed member address that leaf (`h.p[7:4]`).
+    fn native_record_leaf_signal(&self, node: NodeId) -> Option<&SignalInfo> {
+        let (root, path) = self.unpacked_path_for_expr(node)?;
+        if Self::fixed_descriptor_width_bits(self.query_descriptor(root)?).is_some() {
+            return None;
+        }
+        self.unpacked_aggregates
+            .get(&root)?
+            .leaves
+            .iter()
+            .find(|leaf| leaf.path == path)?
+            .signal
+            .as_ref()
+            .filter(|signal| !signal.real)
     }
 
     pub(super) fn static_proc_local_signal(&self, node: NodeId) -> Option<&SignalInfo> {

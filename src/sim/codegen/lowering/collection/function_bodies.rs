@@ -610,10 +610,16 @@ impl<'a> Codegen<'a> {
                                 ))
                             }
                             None => {
-                                return Err(format!(
-                                    "formal `{}` of `{c_name}` has no width",
-                                    self.node(*io).name
-                                ))
+                                return Err(match self.unrepresented_storage_reason(*io) {
+                                    Some(reason) => format!(
+                                        "formal `{}` of `{c_name}`: {reason}",
+                                        self.node(*io).name
+                                    ),
+                                    None => format!(
+                                        "formal `{}` of `{c_name}` has no width",
+                                        self.node(*io).name
+                                    ),
+                                })
                             }
                         }
                     }
@@ -1162,7 +1168,12 @@ impl<'a> Codegen<'a> {
                             ))
                         }
                         None => {
-                            return Err(format!("local `{}` has no width", self.node(node).name))
+                            return Err(match self.unrepresented_storage_reason(node) {
+                                Some(reason) => {
+                                    format!("local `{}`: {reason}", self.node(node).name)
+                                }
+                                None => format!("local `{}` has no width", self.node(node).name),
+                            })
                         }
                     },
                     false,
