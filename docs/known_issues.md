@@ -426,10 +426,19 @@ Queue, dynamic and associative members of records
 static records and travel as companion containers of subroutine record values
 (formals, results, automatic and static locals): methods, selects, `foreach`,
 whole-record copies, ports, conditionals, equality (except associative
-members) and assignment patterns work. These legal forms still reject with
+members) and assignment patterns work. As elements of queues, dynamic,
+associative and fixed arrays such records keep queue and dynamic-array
+members inside each element value: whole-element copies, calls and
+equality work, and assignment, call and system-task statements that name an
+element's member (`list[i].q.push_back(x)`, `x = list[i].q[j]`) copy that
+member out of the element and back, which costs time proportional to the
+member's size per statement. These legal forms still reject with
 explicit diagnostics: multidimensional fixed arrays of strings, handles or
-native records; records with queue, dynamic or associative members as
-container or fixed-array elements and in nonblocking assignments; class
+native records; associative members of container or fixed-array record
+elements; an element's container member named in a condition, loop header,
+`foreach`, declaration initializer or timing-controlled assignment, or as a
+nonblocking target; records with container members in nonblocking
+assignments; class
 properties of any unpacked record type with string, real, handle or container
 members (these currently fail with a generic `has no resolved packed width`
 diagnostic); equality of records with an associative member (and conditionals
@@ -471,9 +480,10 @@ representations go leaf by leaf, and a run-time member index is a bounded
 comparison chain over the declared leaves. Fixed arrays of native elements
 are fixed-size views of the container runtime, so per-element delayed update
 records and nested views are not modeled. A record member that is itself a
-resizable container would need a companion container per record instance;
-the native type descriptor has no queue bound or associative key to build
-one from. A record, string or handle declared in a procedural block reuses
+resizable container is a companion container of a native value, but a nested
+dynamic array inside a container element's value: no container operation
+addresses that nested slot in place, so a statement stages a copy, and the
+runtime has no nested associative form. A record, string or handle declared in a procedural block reuses
 module storage, one copy per declaration and instance: an automatic one is
 reset at each block entry, so a second live activation has no storage of its
 own. The Db captures member defaults as constants, and an unpacked record
@@ -481,7 +491,8 @@ constant has no captured value.
 
 ### Intended direction
 
-Companion containers for container-valued record members; native ref aliases
+An addressed-container operand for container members of elements (in place
+of statement staging); native ref aliases
 (SIM-008); a root-plus-item-path pending record for static native roots
 (a queued leaf pointer would dangle because a root replaces its leaves on
 assignment); fork capture pins (SIM-010); Db capture of member access on
@@ -494,8 +505,9 @@ roots for forked automatic block records, strings and handles.
 `tests/fixtures/sim/feature_completion/sim_003/neg_native_*.sv`,
 `sim_004/neg_static_native_record_nba.sv`,
 `sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
-`sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv` and
-`sim_007/bad_tagged_*.sv`.
+`sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
+`sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`
+and `sim_007/bad_tagged_*.sv`.
 
 ## Resizable containers at subroutine, object and nesting boundaries
 

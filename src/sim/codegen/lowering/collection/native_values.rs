@@ -237,6 +237,7 @@ fn collect_native_leaves(
                 .collect::<String>();
             output.containers.push(NativeContainerLeaf {
                 path: path.clone(),
+                items: items.clone(),
                 element: lower_container_element(item)?,
                 kind: super::aggregates::ir_container_kind(array, &name, &descriptor.name)?,
             });
@@ -1980,7 +1981,15 @@ impl Codegen<'_> {
 
     /// Every leaf of a record operand in declaration order: a native value,
     /// a module native record or a whole record element of a container.
-    fn record_leaf_reads(&mut self, path: &str, node: NodeId) -> Result<Option<LeafReads>, String> {
+    fn record_leaf_reads(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        setup: &mut Vec<IrStmt>,
+    ) -> Result<Option<LeafReads>, String> {
+        if let Some(reads) = self.container_record_staged_reads(path, node, setup)? {
+            return Ok(Some(reads));
+        }
         if let Some(reads) = self.container_record_leaf_reads(path, node)? {
             return Ok(Some(reads));
         }
@@ -2020,9 +2029,10 @@ impl Codegen<'_> {
         {
             return Ok(None);
         }
+        let mut setup = Vec::new();
         let (left, right) = match (
-            self.record_leaf_reads(path, left)?,
-            self.record_leaf_reads(path, right)?,
+            self.record_leaf_reads(path, left, &mut setup)?,
+            self.record_leaf_reads(path, right, &mut setup)?,
         ) {
             (Some(left), Some(right)) => (left, right),
             // Scalar members of native values compare as scalars.
@@ -2069,21 +2079,33 @@ impl Codegen<'_> {
                 .reduce(|previous, next| cmp_expr_ir(IrBinOp::LogAnd, previous, next))
                 .ok_or("native record comparison has no leaves")?,
         };
-        Ok(Some(
-            if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {
-                IrExpr::new(
-                    IrExprKind::Un {
-                        op: IrUnOp::LogNot,
-                        a: Box::new(equality),
-                    },
-                    1,
-                    false,
-                    None,
-                )
-            } else {
-                equality
-            },
-        ))
+        let result = if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {
+            IrExpr::new(
+                IrExprKind::Un {
+                    op: IrUnOp::LogNot,
+                    a: Box::new(equality),
+                },
+                1,
+                false,
+                None,
+            )
+        } else {
+            equality
+        };
+        // Staged element copies run inside the expression's value scope.
+        Ok(Some(if setup.is_empty() {
+            result
+        } else {
+            IrExpr::new(
+                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                    statements: setup,
+                    value: result,
+                })),
+                1,
+                false,
+                None,
+            )
+        }))
     }
 
     /// One-bit equality of two scalar record leaves (SV 11.4.5): strings
@@ -2314,6 +2336,26 @@ impl Codegen<'_> {
                         leaves,
                         containers,
                     });
+                }
+                // Inside an assignment or system-task statement, an input
+                // free of side effects (such as a container element with a
+                // queue member) may be built in a temporary just before the
+                // statement, as container actuals are.
+                if self.container_call_prelude.is_some() && self.side_effect_free(actual) {
+                    let temporary = self.native_temporary(formal)?;
+                    let target = NativeEndpoint::Value {
+                        value: temporary,
+                        prefix: Vec::new(),
+                    };
+                    let build =
+                        self.native_assign_into(path, &target, &layout.descriptor, actual, false)?;
+                    let prelude = self
+                        .container_call_prelude
+                        .as_mut()
+                        .ok_or("container call prelude closed while lowering its operand")?;
+                    prelude.push(IrStmt::NativeValueDeclare(temporary));
+                    prelude.push(build);
+                    return Ok(IrCallArg::NativeValue(temporary));
                 }
             }
             return Err(format!(

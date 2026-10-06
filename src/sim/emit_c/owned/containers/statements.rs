@@ -909,6 +909,40 @@ pub(super) fn render(
             };
             format!("    llg_value_element_read({root}, {element});\n")
         }
+        IrContainerStmt::ValueItemToContainer {
+            root,
+            items,
+            container,
+        }
+        | IrContainerStmt::ContainerToValueItem {
+            container,
+            root,
+            items,
+        } => {
+            let storage = &ctx.model.containers[*container];
+            let kind = match (&storage.kind, storage.element.is_packed()) {
+                (IrContainerKind::Dynamic, true) => "dyn",
+                (IrContainerKind::Queue { .. }, true) => "queue",
+                (IrContainerKind::Dynamic, false) => "dyn_value",
+                (IrContainerKind::Queue { .. }, false) => "queue_value",
+                (IrContainerKind::Associative { .. }, _) => {
+                    return Err("an associative record member has no nested value form".into())
+                }
+            };
+            let item = match root {
+                IrValueItemRoot::Value(value) => frame.native_value_item(*value, items)?,
+                IrValueItemRoot::Element(element) => {
+                    let element = frame.chandle(element)?;
+                    frame.value_item(&format!("((llg_value_t*){element})"), items)?
+                }
+            };
+            let target = name(frame, *container)?;
+            if matches!(operation, IrContainerStmt::ValueItemToContainer { .. }) {
+                format!("    llg_value_item_to_{kind}(&{target}, {item});\n")
+            } else {
+                format!("    llg_value_item_from_{kind}({item}, &{target});\n")
+            }
+        }
         IrContainerStmt::DeleteIndex { container, index } => {
             let method = match ctx.model.containers[*container].kind {
                 IrContainerKind::Queue { .. }

@@ -968,6 +968,8 @@ struct NativeLeaf {
 #[derive(Clone)]
 struct NativeContainerLeaf {
     path: Vec<AggregatePathPart>,
+    /// Item indices of the member's slot in the value.
+    items: Vec<u32>,
     element: crate::sim::ir::IrContainerElement,
     kind: crate::sim::ir::IrContainerKind,
 }
@@ -1262,6 +1264,11 @@ struct Codegen<'a> {
     /// lowered, open only for statements that evaluate their operands once
     /// (assignments and system-task calls).
     container_call_prelude: Option<Vec<IrStmt>>,
+    /// Queue and dynamic-array members of container record elements named
+    /// by the statement being lowered, by element node and member path
+    /// suffix → the lexical container staging each
+    /// (`stage_element_members`).
+    staged_element_members: HashMap<(NodeId, String), usize>,
     /// Temporary container → container whose declaration types it.
     container_types_like: HashMap<usize, usize>,
     /// Member reads of native tagged unions being lowered without their tag
@@ -1624,6 +1631,7 @@ impl<'a> Codegen<'a> {
             subroutine_containers: HashMap::new(),
             container_result_call: false,
             container_call_prelude: None,
+            staged_element_members: HashMap::new(),
             container_types_like: HashMap::new(),
             native_tagged_bypass: HashSet::new(),
             native_value_layouts: HashMap::new(),

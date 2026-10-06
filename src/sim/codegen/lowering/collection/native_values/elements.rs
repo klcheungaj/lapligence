@@ -7,7 +7,7 @@
 //! module records, native roots, patterns and calls share the SIM-003
 //! transfers. Copies are deep except for handles (SV 7.5-7.10, 8.4).
 use super::*;
-use crate::sim::ir::IrValueSlot;
+use crate::sim::ir::{IrValueItemRoot, IrValueSlot};
 
 /// How one whole element of a container is selected.
 #[derive(Clone)]
@@ -32,6 +32,36 @@ impl ElementSelection {
             ElementSelector::Key(_) => 1,
         }
     }
+}
+
+/// Queue and dynamic-array methods that change their receiver
+/// (SV 7.5.1, 7.10.2, 7.12.2).
+const MUTATING_CONTAINER_METHODS: &[&str] = &[
+    "push_front",
+    "push_back",
+    "pop_front",
+    "pop_back",
+    "insert",
+    "delete",
+    "sort",
+    "rsort",
+    "reverse",
+    "shuffle",
+];
+
+/// One queue or dynamic-array member of a container record element that a
+/// statement names, and whether the statement can change it.
+struct StagedMember {
+    element: NodeId,
+    path: Vec<AggregatePathPart>,
+    mutated: bool,
+}
+
+fn unstaged_member_error(path: &[AggregatePathPart]) -> String {
+    format!(
+        "queue or dynamic-array member `{}` of a container record element is only supported in assignment, call and system-task statements and whole-element copies",
+        aggregate_path_suffix(path)
+    )
 }
 
 /// The value of a fresh element-leaf access named `name`.
@@ -126,12 +156,12 @@ impl Codegen<'_> {
     }
 
     /// Element shape, type descriptor and declaration-order leaves of a
-    /// container's record element.
+    /// container's record element; container members are listed apart.
     fn element_leaves(
         &self,
         container: usize,
         depth: usize,
-    ) -> Result<(IrContainerElement, TypeDescriptor, Vec<NativeLeaf>), String> {
+    ) -> Result<(IrContainerElement, TypeDescriptor, NativeLeaves), String> {
         let name = &self.model.containers[container].c_name;
         let element = self
             .container_element_type(container, depth)
@@ -148,15 +178,65 @@ impl Codegen<'_> {
         let mut leaves = NativeLeaves::default();
         collect_native_root_leaves(&descriptor, &element, &mut leaves)
             .map_err(|error| format!("{error} (container element `{}`)", descriptor.name))?;
-        // A container element owns its nested containers inside the value
-        // itself, unlike a native record's companion containers.
-        if !leaves.containers.is_empty() {
+        // A container element owns a queue or dynamic-array member as a
+        // nested dynamic array inside its value; the runtime has no nested
+        // associative form.
+        if let Some(leaf) = leaves
+            .containers
+            .iter()
+            .find(|leaf| matches!(leaf.kind, IrContainerKind::Associative { .. }))
+        {
             return Err(format!(
-                "whole record element of container `{}` with a queue, dynamic or associative member is not supported here",
-                descriptor.name
+                "record elements of a queue, dynamic, associative or fixed array with associative array member `{}` are not supported: the element value has no nested associative form",
+                aggregate_path_suffix(&leaf.path)
             ));
         }
-        Ok((element, descriptor, leaves.scalars))
+        Ok((element, descriptor, leaves))
+    }
+
+    /// Scalar leaves of a container's record element.
+    fn element_scalar_leaves(
+        &self,
+        container: usize,
+        depth: usize,
+    ) -> Result<Vec<NativeLeaf>, String> {
+        Ok(self.element_leaves(container, depth)?.2.scalars)
+    }
+
+    /// Move every queue or dynamic-array member of `value`, just read from
+    /// container storage, from its nested slot into its companion.
+    fn element_items_to_companions(&self, value: usize) -> Result<Vec<IrStmt>, String> {
+        let layout = self.native_layout_of_value(value)?;
+        Ok(layout
+            .containers
+            .iter()
+            .zip(&self.model.native_values[value].companions)
+            .map(|(leaf, companion)| {
+                IrStmt::Container(Box::new(IrContainerStmt::ValueItemToContainer {
+                    root: IrValueItemRoot::Value(value),
+                    items: leaf.items.clone(),
+                    container: *companion,
+                }))
+            })
+            .collect())
+    }
+
+    /// Copy every companion container of `value` into its nested slot
+    /// before the value is stored into container storage.
+    fn companions_to_element_items(&self, value: usize) -> Result<Vec<IrStmt>, String> {
+        let layout = self.native_layout_of_value(value)?;
+        Ok(layout
+            .containers
+            .iter()
+            .zip(&self.model.native_values[value].companions)
+            .map(|(leaf, companion)| {
+                IrStmt::Container(Box::new(IrContainerStmt::ContainerToValueItem {
+                    container: *companion,
+                    root: IrValueItemRoot::Value(value),
+                    items: leaf.items.clone(),
+                }))
+            })
+            .collect())
     }
 
     /// A lexical native value of a container's element type for one
@@ -182,21 +262,22 @@ impl Codegen<'_> {
         };
         // `site` is an expression, never a declaration that native storage
         // collection could mistake for a record variable.
-        self.native_layouts.insert(
-            site,
-            NativeLayout {
-                ty,
-                descriptor,
-                leaves,
-                containers: Vec::new(),
-            },
-        );
+        // Queue and dynamic-array members travel in companion containers,
+        // like a native record's (`element_items_to_companions`).
+        let layout = NativeLayout {
+            ty,
+            descriptor,
+            leaves: leaves.scalars,
+            containers: leaves.containers,
+        };
+        let companions = self.native_companions(&layout, true);
+        self.native_layouts.insert(site, layout);
         let index = self.model.native_values.len();
         self.model.native_values.push(IrNativeValue {
             c_name: format!("S_llg_native_{index}"),
             ty,
             activation: true,
-            companions: Vec::new(),
+            companions,
         });
         self.native_value_layouts.insert(index, site);
         Ok(index)
@@ -241,15 +322,14 @@ impl Codegen<'_> {
             prefix: Vec::new(),
         };
         let fill = self.native_assign_into(path, &endpoint, &descriptor, rhs, false)?;
-        Ok(IrStmt::Block(vec![
-            IrStmt::NativeValueDeclare(temporary),
-            fill,
-            IrStmt::Container(Box::new(IrContainerStmt::SetValue {
-                container,
-                slot,
-                value: temporary,
-            })),
-        ]))
+        let mut statements = vec![IrStmt::NativeValueDeclare(temporary), fill];
+        statements.extend(self.companions_to_element_items(temporary)?);
+        statements.push(IrStmt::Container(Box::new(IrContainerStmt::SetValue {
+            container,
+            slot,
+            value: temporary,
+        })));
+        Ok(IrStmt::Block(statements))
     }
 
     /// Replace a container of record elements with `values` in order (an
@@ -341,13 +421,13 @@ impl Codegen<'_> {
             }
             slot => slot,
         };
-        Ok(Some(IrStmt::Container(Box::new(
-            IrContainerStmt::SetValue {
-                container: selection.container,
-                slot,
-                value,
-            },
-        ))))
+        let mut statements = self.companions_to_element_items(value)?;
+        statements.push(IrStmt::Container(Box::new(IrContainerStmt::SetValue {
+            container: selection.container,
+            slot,
+            value,
+        })));
+        Ok(Some(IrStmt::Block(statements)))
     }
 
     /// `q[i] = rhs` for a record element (SV 7.5-7.10 value semantics).
@@ -384,6 +464,26 @@ impl Codegen<'_> {
         target: &NativeEndpoint,
         source: NodeId,
     ) -> Result<Option<IrStmt>, String> {
+        let Some((temporary, mut statements)) = self.element_copy(path, source)? else {
+            return Ok(None);
+        };
+        let endpoint = NativeEndpoint::Value {
+            value: temporary,
+            prefix: Vec::new(),
+        };
+        statements.push(self.native_transfer(path, target, &endpoint, false)?);
+        Ok(Some(IrStmt::Block(statements)))
+    }
+
+    /// Statements that copy a whole record element, or the record removed by
+    /// a pop, into a fresh lexical temporary of the element type, with its
+    /// queue and dynamic-array members in the temporary's companions;
+    /// `None` for other sources.
+    fn element_copy(
+        &mut self,
+        path: &str,
+        source: NodeId,
+    ) -> Result<Option<(usize, Vec<IrStmt>)>, String> {
         let (container, depth, slot) = if let Some(selection) = self.record_element_of(source) {
             let slot = self.lower_element_slot(path, &selection)?;
             (selection.container, selection.depth(), slot)
@@ -398,20 +498,16 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let temporary = self.element_temporary(container, depth, source)?;
-        let endpoint = NativeEndpoint::Value {
-            value: temporary,
-            prefix: Vec::new(),
-        };
-        let transfer = self.native_transfer(path, target, &endpoint, false)?;
-        Ok(Some(IrStmt::Block(vec![
+        let mut statements = vec![
             IrStmt::NativeValueDeclare(temporary),
             IrStmt::Container(Box::new(IrContainerStmt::GetValue {
                 container,
                 slot,
                 value: temporary,
             })),
-            transfer,
-        ])))
+        ];
+        statements.extend(self.element_items_to_companions(temporary)?);
+        Ok(Some((temporary, statements)))
     }
 
     /// The member/index path from a record element to `node`, for constant
@@ -485,7 +581,7 @@ impl Codegen<'_> {
         let Some(selection) = self.record_element_of(element) else {
             return Ok(None);
         };
-        let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
+        let leaves = self.element_scalar_leaves(selection.container, selection.depth())?;
         let Some(leaf) = leaves.into_iter().find(|leaf| leaf.path == leaf_path) else {
             return Ok(None);
         };
@@ -501,6 +597,24 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
+        if let Some(leaf) = leaves
+            .containers
+            .iter()
+            .find(|leaf| path.starts_with(&leaf.path))
+        {
+            // A staged member is an ordinary container for the statement.
+            let staged = self
+                .element_member_parts(node)
+                .is_some_and(|(element, _, _)| {
+                    self.staged_element_members
+                        .contains_key(&(element, aggregate_path_suffix(&leaf.path)))
+                });
+            if staged {
+                return Ok(None);
+            }
+            return Err(unstaged_member_error(&leaf.path));
+        }
+        let leaves = leaves.scalars;
         if let Some(leaf) = leaves.iter().find(|leaf| leaf.path == path) {
             return Ok(Some((selection, leaf.clone())));
         }
@@ -561,12 +675,317 @@ impl Codegen<'_> {
             ));
         }
         let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
+        if let Some(leaf) = leaves.containers.first() {
+            return Err(format!(
+                "a container record element with queue or dynamic-array member `{}` cannot be read member by member in `{path}`",
+                aggregate_path_suffix(&leaf.path)
+            ));
+        }
+        let leaves = leaves.scalars;
         let mut reads = Vec::with_capacity(leaves.len());
         for leaf in leaves {
             let name = self.element_access(path, &selection, &leaf, false)?;
             reads.push((leaf.path, element_leaf_value(name, leaf.ty)));
         }
         Ok(Some(reads))
+    }
+
+    /// Every leaf of a whole record element with queue or dynamic-array
+    /// members, read from a copy that `setup` makes in a lexical temporary
+    /// (its container members become the temporary's companions); `None`
+    /// for other operands.
+    pub(super) fn container_record_staged_reads(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        setup: &mut Vec<IrStmt>,
+    ) -> Result<Option<LeafReads>, String> {
+        let Some(selection) = self.record_element_of(node) else {
+            return Ok(None);
+        };
+        let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
+        if leaves.containers.is_empty() {
+            return Ok(None);
+        }
+        // The copy evaluates the element's locator once.
+        let (temporary, copy) = self
+            .element_copy(path, node)?
+            .ok_or("container record element has no element copy")?;
+        setup.extend(copy);
+        let target = NativeEndpoint::Value {
+            value: temporary,
+            prefix: Vec::new(),
+        };
+        let mut reads = Vec::new();
+        for (leaf_path, leaf) in self.endpoint_leaves(&target)? {
+            reads.push((leaf_path, self.endpoint_leaf_read(&leaf)?));
+        }
+        Ok(Some(reads))
+    }
+
+    /// The element and queue or dynamic-array member path that `node` names:
+    /// the member itself (`q[i].m`, a method receiver or whole operand) or a
+    /// select of it (`q[i].m[j]`, whose frontend base is the member's
+    /// declaration and whose select path names the element).
+    fn element_member_container_parts(
+        &self,
+        node: NodeId,
+    ) -> Option<(NodeId, Vec<AggregatePathPart>)> {
+        let select = matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::ArraySelect { .. })
+        )
+        .then(|| self.db.array_select_path(node))
+        .flatten();
+        let (element, path) = match select {
+            Some((owner, members)) => (
+                owner,
+                members
+                    .iter()
+                    .cloned()
+                    .map(AggregatePathPart::Member)
+                    .collect(),
+            ),
+            None => {
+                let (element, _, path) = self.element_member_parts(node)?;
+                (element, path)
+            }
+        };
+        let selection = self.record_element_of(element)?;
+        let (_, _, leaves) = self
+            .element_leaves(selection.container, selection.depth())
+            .ok()?;
+        leaves
+            .containers
+            .iter()
+            .any(|leaf| leaf.path == path)
+            .then_some((element, path))
+    }
+
+    /// The diagnostic for a queue or dynamic-array member of a container
+    /// record element (or a method call on one) used where no statement
+    /// staged it.
+    pub(in crate::sim::codegen) fn unstaged_element_member(&self, node: NodeId) -> Option<String> {
+        let node = match self.kind(node) {
+            NodeKind::MethodCall {
+                receiver: Some(receiver),
+                ..
+            } => *receiver,
+            _ => node,
+        };
+        self.element_member_container_parts(node)
+            .map(|(_, path)| unstaged_member_error(&path))
+    }
+
+    /// The staged container of the element member that `node` names.
+    pub(in crate::sim::codegen) fn staged_element_member(&self, node: NodeId) -> Option<usize> {
+        if self.staged_element_members.is_empty() {
+            return None;
+        }
+        let (element, _, path) = self.element_member_parts(node)?;
+        self.staged_element_members
+            .get(&(element, aggregate_path_suffix(&path)))
+            .copied()
+    }
+
+    /// The staged container of member `members` of element `owner`, for a
+    /// select whose frontend base is the member's declaration.
+    pub(in crate::sim::codegen) fn staged_owner_member(
+        &self,
+        owner: NodeId,
+        members: &[String],
+    ) -> Option<usize> {
+        if self.staged_element_members.is_empty() {
+            return None;
+        }
+        let path = members
+            .iter()
+            .cloned()
+            .map(AggregatePathPart::Member)
+            .collect::<Vec<_>>();
+        self.staged_element_members
+            .get(&(owner, aggregate_path_suffix(&path)))
+            .copied()
+    }
+
+    /// Collect the element member containers below `node`; `mutated` marks
+    /// a write position (an assignment target or an increment operand).
+    fn collect_staged_members(&self, node: NodeId, mutated: bool, out: &mut Vec<StagedMember>) {
+        if let Some((element, path)) = self.element_member_container_parts(node) {
+            if let Some(member) = out
+                .iter_mut()
+                .find(|member| member.element == element && member.path == path)
+            {
+                member.mutated |= mutated;
+            } else {
+                out.push(StagedMember {
+                    element,
+                    path,
+                    mutated,
+                });
+            }
+            // A select's indices are read before the member is written.
+            if matches!(
+                self.kind(node),
+                NodeKind::Expr(ExprKind::ArraySelect { .. })
+            ) {
+                let NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) = self.kind(node) else {
+                    unreachable!("checked above");
+                };
+                for index in indices.clone() {
+                    self.collect_staged_members(index, false, out);
+                }
+            }
+            return;
+        }
+        let children = self.node(node).children.clone();
+        match self.kind(node) {
+            // The target's base chain is written; its indices are read.
+            NodeKind::Expr(
+                ExprKind::ArraySelect { base, .. }
+                | ExprKind::BitSelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. },
+            ) if mutated => {
+                let base = *base;
+                for child in children {
+                    self.collect_staged_members(child, child == base, out);
+                }
+            }
+            NodeKind::MethodCall {
+                name,
+                receiver: Some(receiver),
+                ..
+            } => {
+                let changes = MUTATING_CONTAINER_METHODS.contains(&name.as_str());
+                let receiver = *receiver;
+                for child in children {
+                    self.collect_staged_members(child, child == receiver && changes, out);
+                }
+            }
+            // A member passed to a subroutine may be an output, inout or
+            // ref actual, so it is copied back after the call.
+            NodeKind::FuncCall { .. } => {
+                for child in children {
+                    self.collect_staged_members(child, true, out);
+                }
+            }
+            NodeKind::Expr(ExprKind::Operation {
+                op:
+                    Operation::Assignment
+                    | Operation::PostIncrement
+                    | Operation::PreIncrement
+                    | Operation::PostDecrement
+                    | Operation::PreDecrement,
+                ..
+            }) => {
+                for (position, child) in children.into_iter().enumerate() {
+                    self.collect_staged_members(child, position == 0, out);
+                }
+            }
+            _ => {
+                for child in children {
+                    self.collect_staged_members(child, false, out);
+                }
+            }
+        }
+    }
+
+    /// Stage the queue and dynamic-array members of container record
+    /// elements that statement `h` names (`q[i].m.push_back(x)`,
+    /// `x = q[i].m[j]`, `q[i].m = v`) in lexical containers: each member is
+    /// copied out of its element before the statement and, when the
+    /// statement can change it, copied back after it, so container
+    /// operations work on it unchanged. Returns the statements to run before
+    /// and after `h`; the caller ends the staging with
+    /// `end_element_member_staging`. A container element keeps such a member
+    /// as a nested dynamic array, which no container operation addresses.
+    pub(in crate::sim::codegen) fn stage_element_members(
+        &mut self,
+        path: &str,
+        h: NodeId,
+    ) -> Result<(Vec<IrStmt>, Vec<IrStmt>), String> {
+        let mut members = Vec::new();
+        match self.kind(h) {
+            NodeKind::Stmt(StmtKind::Assign { blocking, .. }) => {
+                let blocking = *blocking;
+                let children = self.node(h).children.clone();
+                for (position, child) in children.into_iter().enumerate() {
+                    self.collect_staged_members(child, position == 0, &mut members);
+                }
+                if !blocking && members.iter().any(|member| member.mutated) {
+                    return Err(format!(
+                        "nonblocking assignment to a queue or dynamic-array member of a container record element in `{path}` is not supported"
+                    ));
+                }
+            }
+            _ => self.collect_staged_members(h, false, &mut members),
+        }
+        let (mut before, mut after) = (Vec::new(), Vec::new());
+        for member in members {
+            let selection = self
+                .record_element_of(member.element)
+                .ok_or("staged element member has no element")?;
+            let (_, _, leaves) = self.element_leaves(selection.container, selection.depth())?;
+            let leaf = leaves
+                .containers
+                .into_iter()
+                .find(|leaf| leaf.path == member.path)
+                .ok_or("staged element member has no container")?;
+            // The element is located again to copy the member back.
+            if !self.side_effect_free(member.element) {
+                return Err(format!(
+                    "a container record element whose queue or dynamic-array member is used in `{path}` must be selected without side effects"
+                ));
+            }
+            let ir = self.model.containers.len();
+            self.model.containers.push(IrContainer {
+                c_name: format!("S_llg_container_{ir}"),
+                element: leaf.element.clone(),
+                kind: leaf.kind.clone(),
+                initial_size: None,
+                activation: true,
+                class_field: None,
+            });
+            self.staged_element_members
+                .insert((member.element, aggregate_path_suffix(&member.path)), ir);
+            let locator = |this: &mut Self, write: bool| -> Result<IrValueItemRoot, String> {
+                let IrValueSlot::Element { indices, key } =
+                    this.lower_element_slot(path, &selection)?
+                else {
+                    unreachable!("element selections lower to element slots");
+                };
+                Ok(IrValueItemRoot::Element(IrChandleExpr::ContainerElement {
+                    container: selection.container,
+                    indices,
+                    key: key.map(Box::new),
+                    write,
+                }))
+            };
+            before.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(ir))));
+            before.push(IrStmt::Container(Box::new(
+                IrContainerStmt::ValueItemToContainer {
+                    root: locator(self, false)?,
+                    items: leaf.items.clone(),
+                    container: ir,
+                },
+            )));
+            if member.mutated {
+                after.push(IrStmt::Container(Box::new(
+                    IrContainerStmt::ContainerToValueItem {
+                        container: ir,
+                        root: locator(self, true)?,
+                        items: leaf.items.clone(),
+                    },
+                )));
+            }
+        }
+        Ok((before, after))
+    }
+
+    /// End the staging that `stage_element_members` opened.
+    pub(in crate::sim::codegen) fn end_element_member_staging(&mut self) {
+        self.staged_element_members.clear();
     }
 
     /// A fresh access to one leaf of a selected record element.

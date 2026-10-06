@@ -696,6 +696,87 @@ pub enum IrContainerStmt {
         slot: IrValueSlot,
         value: usize,
     },
+    /// Replace `container` with the queue or dynamic-array member at item
+    /// path `items` of `root` (SIM-007). A record element of container
+    /// storage keeps such a member as a nested dynamic array in its value; a
+    /// native record keeps it in a companion container, so a whole-element
+    /// read moves it into the temporary's companion, and a member operation
+    /// on an element stages it in a lexical container.
+    ValueItemToContainer {
+        root: IrValueItemRoot,
+        items: Vec<u32>,
+        container: usize,
+    },
+    /// Replace the queue or dynamic-array member slot at `items` of `root`
+    /// with a deep copy of `container`: before a whole-element write stores
+    /// a native value, or after a member operation on an element changed
+    /// its staged copy (SIM-007).
+    ContainerToValueItem {
+        container: usize,
+        root: IrValueItemRoot,
+        items: Vec<u32>,
+    },
+}
+
+/// The value whose item a record container member transfer addresses.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrValueItemRoot {
+    /// A native value root.
+    Value(usize),
+    /// A record element of container storage, located by an
+    /// [`super::IrChandleExpr::ContainerElement`] evaluated at the transfer;
+    /// a write locator publishes the container change afterwards.
+    Element(super::IrChandleExpr),
+}
+
+impl IrValueItemRoot {
+    /// The record type of the root value.
+    fn element<'a>(
+        &self,
+        model: &'a super::IrModel,
+    ) -> Result<&'a IrContainerElement, IrValidationError> {
+        match self {
+            Self::Value(value) => {
+                let root = model.native_values.get(*value).ok_or_else(|| {
+                    IrValidationError::new("container value", "native value is out of bounds")
+                })?;
+                model.native_types.get(root.ty).ok_or_else(|| {
+                    IrValidationError::new("container value", "native type is out of bounds")
+                })
+            }
+            Self::Element(super::IrChandleExpr::ContainerElement {
+                container,
+                indices,
+                key,
+                ..
+            }) => {
+                let storage = model.containers.get(*container).ok_or_else(|| {
+                    IrValidationError::new("container element", "container index is out of bounds")
+                })?;
+                IrValueSlot::Element {
+                    indices: indices.clone(),
+                    key: key.as_deref().cloned(),
+                }
+                .element(storage, true, None, model)
+            }
+            Self::Element(_) => Err(IrValidationError::new(
+                "container value",
+                "record member transfer root must locate a container element",
+            )),
+        }
+    }
+
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        if let Self::Element(element) = self {
+            element.expressions(visit);
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        if let Self::Element(element) = self {
+            element.expressions_mut(visit);
+        }
+    }
 }
 
 /// Where a whole-element value transfer reads or writes.
@@ -1384,6 +1465,44 @@ impl IrContainerStmt {
                     ));
                 }
                 Ok(())
+            }
+            Self::ValueItemToContainer {
+                root,
+                items,
+                container,
+            }
+            | Self::ContainerToValueItem {
+                container,
+                root,
+                items,
+            } => {
+                let container = container_kind(model, *container, None)?;
+                let mut item = Some(root.element(model)?);
+                for step in items {
+                    item = match item {
+                        Some(IrContainerElement::Aggregate { members, .. }) => members
+                            .get(*step as usize)
+                            .map(|member| member.element.as_ref()),
+                        Some(IrContainerElement::FixedArray { element, .. }) => {
+                            Some(element.as_ref())
+                        }
+                        _ => None,
+                    };
+                }
+                match item {
+                    Some(IrContainerElement::Container { element, .. })
+                        if !items.is_empty()
+                            && !matches!(container.kind, IrContainerKind::Associative { .. })
+                            && element.compatible_with(&container.element)
+                            && container.element.compatible_with(element) =>
+                    {
+                        Ok(())
+                    }
+                    _ => Err(IrValidationError::new(
+                        "container value",
+                        "record container member transfer needs a queue or dynamic array of the member's element type",
+                    )),
+                }
             }
             Self::CopyRange {
                 dst,
@@ -2262,6 +2381,9 @@ impl IrContainerStmt {
             | Self::Delete(_)
             | Self::ResetDefault(_)
             | Self::Declare(_) => {}
+            Self::ValueItemToContainer { root, .. } | Self::ContainerToValueItem { root, .. } => {
+                root.expressions(visit)
+            }
         }
     }
 
@@ -2371,6 +2493,9 @@ impl IrContainerStmt {
             | Self::Delete(_)
             | Self::ResetDefault(_)
             | Self::Declare(_) => {}
+            Self::ValueItemToContainer { root, .. } | Self::ContainerToValueItem { root, .. } => {
+                root.expressions_mut(visit)
+            }
         }
     }
 }

@@ -530,6 +530,25 @@ void llg_assoc_value_touch(llg_assoc_value_t* array);
  * element or a non-container value. */
 size_t llg_value_container_size(const llg_value_t* value);
 void llg_value_element_read(llg_value_t* dst, const llg_value_t* element);
+/* Queue and dynamic-array members of records (SIM-007). A container element
+ * keeps such a member as a nested dynamic array in the member's slot `item`
+ * (LLG_VALUE_CONTAINER); a native record value keeps a null slot and one
+ * companion container instead. `to` replaces initialized `dst` with a
+ * converted copy of the slot's elements (a null slot is empty; a bounded
+ * queue keeps its head and warns); `from` replaces the slot with a deep copy
+ * of `src`, null when `src` is empty. Neither notifies the slot's owner. */
+void llg_value_item_to_dyn(llg_dyn_array_t* dst, const llg_value_t* item);
+void llg_value_item_to_queue(llg_queue_t* dst, const llg_value_t* item);
+void llg_value_item_to_dyn_value(llg_dyn_value_array_t* dst,
+                                 const llg_value_t* item);
+void llg_value_item_to_queue_value(llg_queue_value_array_t* dst,
+                                   const llg_value_t* item);
+void llg_value_item_from_dyn(llg_value_t* item, const llg_dyn_array_t* src);
+void llg_value_item_from_queue(llg_value_t* item, const llg_queue_t* src);
+void llg_value_item_from_dyn_value(llg_value_t* item,
+                                   const llg_dyn_value_array_t* src);
+void llg_value_item_from_queue_value(llg_value_t* item,
+                                     const llg_queue_value_array_t* src);
 /* Whole-element writes borrow `value` and copy it with conversion; they
  * return 0 without writing for an invalid index (a queue accepts `$+1`). */
 int llg_dyn_value_set_element(llg_dyn_value_array_t* array,

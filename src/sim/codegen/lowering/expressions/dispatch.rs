@@ -1651,9 +1651,9 @@ impl<'a> Codegen<'a> {
                     self.kind(h)
                 ))
             }
-            other => Err(format!(
-                "unsupported expression in `{scope_path}` (node kind {other:?})"
-            )),
+            other => Err(self.unstaged_element_member(h).unwrap_or_else(|| {
+                format!("unsupported expression in `{scope_path}` (node kind {other:?})")
+            })),
         }
     }
 

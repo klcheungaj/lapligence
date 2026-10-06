@@ -226,7 +226,7 @@ fn record_container_member_boundaries_are_rejected_explicitly() {
     sim_cli::reject_case(
         SUITE,
         "bad_record_container_element",
-        "with a queue, dynamic or associative member is not supported here",
+        "record elements of a queue, dynamic, associative or fixed array with associative array member `a` are not supported: the element value has no nested associative form",
     );
     sim_cli::reject_case(
         SUITE,
@@ -428,5 +428,23 @@ fn native_tagged_element_boundaries_are_rejected_explicitly() {
         SUITE,
         "bad_tagged_nested_element",
         "tagged union member `u` with string, real or handle members nested in a record or array is not supported",
+    );
+}
+
+#[test]
+fn container_elements_hold_records_with_container_members() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/record_container_elements.out");
+    sim_cli::run_case_backend_parity(SUITE, "record_container_elements", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "record_container_elements", expected);
+    sim_cli::reject_case(
+        SUITE,
+        "bad_record_element_member_context",
+        "queue or dynamic-array member `q` of a container record element is only supported in assignment, call and system-task statements and whole-element copies",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_record_element_member_nba",
+        "nonblocking assignment to a queue or dynamic-array member of a container record element in `tb` is not supported",
     );
 }

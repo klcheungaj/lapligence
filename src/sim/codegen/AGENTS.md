@@ -457,7 +457,16 @@ copy container inputs in and outputs back (`IrCallArg::Container`); a pattern
 actual in expression position becomes `ContainerValues`, other non-variable
 actuals need a statement prelude. Record elements go through
 `collection/native_values/elements.rs` (whole-element transfers via native
-temporaries, member leaves via element accesses). A read-modify-write of one
+temporaries, member leaves via element accesses). An element keeps a queue
+or dynamic-array member as a nested dynamic array inside its value, unlike a
+module record (own container) or native value (companion container): element
+temporaries get companions, filled after `GetValue` and copied back before
+`SetValue` (`IrContainerStmt::{ValueItemToContainer, ContainerToValueItem}`);
+an assignment, call or system-task statement naming an element's member
+stages it in a lexical container (`stage_element_members`), copied out before
+the statement and back after it when the statement can change it, so every
+container operation applies unchanged. Associative members and other
+contexts reject explicitly. A read-modify-write of one
 element (`c[k] op= v`, `c[k]++`) needs an index free of side effects; an
 implicit conversion around a container index is stripped so X/Z bits reach the
 runtime's invalid-index check. Reject `ref` container formals (SIM-008), fork
