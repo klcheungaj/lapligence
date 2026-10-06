@@ -6,6 +6,8 @@ D 1
 E mod 9 2
 F p 2 z 9 a 1 1 0
 G 2 0 2 0
+R 6 3
+S x+ 4 4 3
 H init 7 auto 8
 I auto 9
 J out 42

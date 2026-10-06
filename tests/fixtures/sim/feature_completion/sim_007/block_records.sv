@@ -3,8 +3,8 @@
 // Each declaration owns its member storage like a module record: member
 // reads and writes, whole-record copies to and from module records,
 // assignment patterns, container methods and foreach, member-wise equality,
-// calls, conditional operators, tagged unions and nonblocking writes behave
-// as they do for module records.
+// calls (including records with queue members), conditional operators,
+// tagged unions and nonblocking writes behave as they do for module records.
 module tb;
     class C;
         int v;
@@ -26,6 +26,7 @@ module tb;
     typedef struct { string s; int n; } r_t;
     typedef struct { string names[3]; real w; } arr_t;
     typedef union tagged { int I; string S; } u_t;
+    typedef struct { string name; int q[$]; } qrec_t;
     rec_t m;
     string out;
     int base = 7;
@@ -44,6 +45,18 @@ module tb;
         v.s = "out";
         v.n = 42;
     endtask
+
+    function automatic int qsum(input qrec_t v);
+        qsum = 0;
+        foreach (v.q[i]) qsum += v.q[i];
+        v.q.push_back(100);
+    endfunction
+
+    function automatic qrec_t grow(input qrec_t v, input int x);
+        v.q.push_back(x);
+        v.name = {v.name, "+"};
+        return v;
+    endfunction
 
     initial begin
         rec_t a, b;
@@ -78,6 +91,15 @@ module tb;
         b.q.delete(1);
         b.k.delete("w");
         $display("G %0d %0d %0d %0d", b.q.size(), b.q[0], b.q[1], b.k.num());
+        begin
+            qrec_t x;
+            automatic qrec_t y;
+            x.name = "x";
+            x.q = '{1, 2, 3};
+            $display("R %0d %0d", qsum(x), x.q.size());
+            y = grow(x, 4);
+            $display("S %s %0d %0d %0d", y.name, y.q.size(), y.q[3], x.q.size());
+        end
     end
 
     initial begin : calls
