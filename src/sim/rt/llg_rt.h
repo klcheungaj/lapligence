@@ -719,6 +719,9 @@ int llg_process_set_randstate(llg_string_t state);
 void llg_dependency_bind(sv4_t* target, sv4_t* dependency);
 void llg_dependency_bind_real(double* target, sv4_t* dependency);
 void llg_dependency_changed(sv4_t* dependency);
+// `dependency`, or a marker that is never written when it is NULL (an
+// activation container no other process can change).
+sv4_t* llg_dependency_or_never(sv4_t* dependency);
 void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int change);
 
 void llg_display(const char* fmt, ...);  // formatted output followed by a newline

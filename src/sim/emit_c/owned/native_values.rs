@@ -76,8 +76,9 @@ impl Frame<'_, '_> {
     }
 
     /// Declare activation value `index` in slot 0 of a new shared frame owned
-    /// by the lexical value scope, with its companion containers in the
-    /// following slots, so fork branches can alias it (SIM-010).
+    /// by the lexical value scope, with each companion container and its two
+    /// change markers in the following slots, so fork branches can alias it
+    /// (SIM-010).
     pub(super) fn shared_native_value(&mut self, index: usize) -> Result<(), String> {
         let value = self.ctx.model.native_values[index].clone();
         let owner = self.scalar(
@@ -87,7 +88,7 @@ impl Frame<'_, '_> {
         );
         self.line(format!(
             "*{owner} = llg_frame_new({}ULL);",
-            1 + value.companions.len()
+            1 + 3 * value.companions.len()
         ));
         let root = self.scalar(
             "llg_native_root_t*",
@@ -103,7 +104,8 @@ impl Frame<'_, '_> {
             .insert(index, format!("(&{root}->value)"));
         let frame = format!("*{owner}");
         for (offset, container) in value.companions.iter().copied().enumerate() {
-            let storage = self.new_container_in(container, Some((&frame, 1 + offset as u32)))?;
+            let storage =
+                self.new_container_in(container, Some((&frame, 1 + 3 * offset as u32)))?;
             self.containers.insert(container, storage);
         }
         self.shared_cells.insert(
@@ -143,7 +145,10 @@ impl Frame<'_, '_> {
                 let pointer = self.declare(
                     &format!("{ty}*"),
                     "capture_container",
-                    format!("({ty}*)llg_frame_object_address({frame}, {}u)", 1 + offset),
+                    format!(
+                        "({ty}*)llg_frame_object_address({frame}, {}u)",
+                        1 + 3 * offset
+                    ),
                 );
                 self.containers.insert(container, format!("(*{pointer})"));
             }

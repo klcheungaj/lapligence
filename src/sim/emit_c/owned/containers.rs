@@ -52,7 +52,9 @@ impl Frame<'_, '_> {
     }
 
     /// Create activation container `index` owned by the lexical value scope,
-    /// or by slot `slot` of the shared activation frame `frame`.
+    /// or by slot `slot` of the shared activation frame `frame`, whose next
+    /// two slots hold its contents and shape change markers (other processes
+    /// sharing the container wait on them).
     pub(super) fn new_container_in(
         &mut self,
         index: usize,
@@ -80,6 +82,17 @@ impl Frame<'_, '_> {
         let (_, init, _) = super::super::containers::activation_storage(container, &target)?;
         for line in init.lines() {
             self.line(line.trim());
+        }
+        if let Some((frame, slot)) = frame {
+            self.line(format!(
+                "{target}.contents_dependency = llg_frame_value_address({frame}, {}u);",
+                slot + 1
+            ));
+            self.line(format!(
+                "{target}.shape_dependency = llg_frame_value_address({frame}, {}u);",
+                slot + 2
+            ));
+            self.line(format!("{target}.notify = llg_dependency_notify;"));
         }
         if let Some(size) = container.initial_size {
             // A fixed-array view starts with its declared default elements.
@@ -277,7 +290,7 @@ impl Frame<'_, '_> {
                 "(llg_frame_t**)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_frame_t*), llg_owned_frame_drop))"
                     .to_owned(),
             );
-            self.line(format!("*{owner} = llg_frame_new(1ULL);"));
+            self.line(format!("*{owner} = llg_frame_new(3ULL);"));
             let target = self.new_container_in(*container, Some((&format!("*{owner}"), 0)))?;
             self.containers.insert(*container, target);
             self.shared_cells.insert(

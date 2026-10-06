@@ -148,12 +148,18 @@ impl Frame<'_, '_> {
                     "{{ .sig = {trigger}, .value = {value}, .lsb = {lsb}u, .width = {width}u }}"
                 )
             }
+            // An activation container's markers exist only when it is shared
+            // with fork branches, the only other processes that can change it.
             IrDependency::ContainerContents(index) | IrDependency::ContainerShape(index)
                 if !self.ctx.model.containers[*index].is_global_storage() =>
             {
-                return Err(pending(
-                    "event controls on resizable containers in subroutine storage",
-                ))
+                let container = self.container_name(*index)?;
+                let field = if matches!(dependency, IrDependency::ContainerShape(_)) {
+                    "shape_dependency"
+                } else {
+                    "contents_dependency"
+                };
+                format!("{{ .sig = llg_dependency_or_never({container}.{field}) }}")
             }
             IrDependency::ContainerContents(index) => format!(
                 "{{ .sig = &{}_llg_contents_dep }}",

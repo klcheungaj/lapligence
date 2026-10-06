@@ -441,10 +441,12 @@ Macros, includes and their edition-specific behavior are counted in §11.
   `ref` formals of queue, dynamic and associative type alias the caller's
   container variable, including from timed tasks and fork branches
   ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
-  Fork capture of automatic containers
-  (SIM-010), handle-qualified class container properties (SIM-011), mutating
-  methods of nested elements, record-element equality (SIM-007), string-key
-  index-result queues and event controls on subroutine containers remain
+  Automatic containers that fork branches use are shared with them, and
+  event controls and `wait` on them wake on another process's change
+  ([sim_010](../tests/fixtures/sim/feature_completion/sim_010/readme.md)).
+  Fork capture of container formals (SIM-010), handle-qualified class
+  container properties (SIM-011), mutating methods of nested elements,
+  record-element equality (SIM-007) and string-key index-result queues remain
   restricted ([known issue](known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
   Methods are in §7. SV §§7.5, 7.8, 7.10, 7.12 **[SV-2005]**.
 - 🟨 **Chandle** — Typed native-pointer null/copy/identity/Boolean operations,
