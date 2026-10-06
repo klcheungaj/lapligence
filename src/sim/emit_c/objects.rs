@@ -253,6 +253,7 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
     Ok(match value {
         IrChandleExpr::SemaphoreNew(_)
         | IrChandleExpr::Construct(_)
+        | IrChandleExpr::CopyClass { .. }
         | IrChandleExpr::Conditional { .. }
         | IrChandleExpr::EventObject(_)
         | IrChandleExpr::QueuePop { .. }

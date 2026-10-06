@@ -158,7 +158,9 @@ impl Codegen<'_> {
     ) -> IrChandleExpr {
         if matches!(
             handle,
-            IrChandleExpr::Required { .. } | IrChandleExpr::Construct(_)
+            IrChandleExpr::Required { .. }
+                | IrChandleExpr::Construct(_)
+                | IrChandleExpr::CopyClass { .. }
         ) {
             return handle;
         }
@@ -855,6 +857,32 @@ impl Codegen<'_> {
                 function: self.cur_fn_ir,
             });
         Ok(IrChandleExpr::Construct(index))
+    }
+
+    /// Shallow copy `new h` (SV 8.11) of the source expression's class type.
+    /// A null source is a run-time error at the copy's site, like a property
+    /// access. Built-in classes have no property layout to copy.
+    pub(super) fn lower_class_copy(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        source: NodeId,
+        class_type: Option<crate::core::db::TypeId>,
+    ) -> Result<IrChandleExpr, String> {
+        let class = class_type
+            .and_then(|type_id| self.db.class_for_type(type_id))
+            .and_then(|class_node| self.class_nodes.get(&class_node).copied())
+            .ok_or_else(|| {
+                format!(
+                    "shallow copy of a built-in or unlayouted class handle `{}` is not supported in `{path}`",
+                    self.node(source).name
+                )
+            })?;
+        let handle = self.lower_chandle(path, source)?;
+        Ok(IrChandleExpr::CopyClass {
+            class,
+            source: Box::new(self.required_handle(handle, "class copy", path, node)),
+        })
     }
 
     /// Property defaults belong to the new instance, not an enclosing factory

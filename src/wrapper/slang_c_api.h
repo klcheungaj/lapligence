@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 14u
+#define LLG_SLANG_ABI_VERSION 15u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -617,6 +617,9 @@ enum {
   /* The current value of the target of the enclosing
    * LLG_SLANG_OP_OVERLOAD_UPDATE assignment; it has no edges. */
   LLG_SLANG_EXPR_UPDATE_CURRENT = 93,
+  /* A shallow class copy `new h` (IEEE 1800-2009 8.11); its operand edge is
+   * the source handle expression. */
+  LLG_SLANG_EXPR_COPY_CLASS = 94,
   LLG_SLANG_TIMING_DELAY = 112,
   LLG_SLANG_TIMING_SIGNAL_EVENT = 113,
   LLG_SLANG_TIMING_EVENT_LIST = 114,
@@ -1010,7 +1013,7 @@ typedef struct {
   LlgSlangString label;
 } LlgSlangEditionFinding;
 
-/* Capture stream (ABI v14).
+/* Capture stream (ABI v15).
  *
  * llg_slang_compile() does not return a snapshot owner. After Slang has
  * elaborated, analysed and been captured, the bridge destroys the Slang

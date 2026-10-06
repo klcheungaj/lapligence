@@ -175,6 +175,23 @@ fn null_receivers_fail_at_their_source_site() {
 }
 
 #[test]
+fn shallow_copies_copy_properties_without_construction() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "shallow_copy",
+        include_str!("../fixtures/sim/feature_completion/sim_011/shallow_copy.out"),
+        &[],
+        &[],
+    );
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "null_copy",
+        &[],
+        &null_handle_check("before\n", "class copy at tb:12:16"),
+    );
+}
+
+#[test]
 fn invalid_downcasts_return_zero_or_report() {
     sim_cli::run_case_checked_matrix(SUITE, "bad_downcast", &[], &|label, output| {
         let stderr = String::from_utf8_lossy(&output.stderr);

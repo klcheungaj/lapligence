@@ -396,7 +396,9 @@ impl Frame<'_, '_> {
     }
 }
 /// Runtime whole-container copy for the storage type of `container`.
-pub(super) fn copy_function(container: &crate::sim::ir::IrContainer) -> &'static str {
+pub(in crate::sim::emit_c) fn copy_function(
+    container: &crate::sim::ir::IrContainer,
+) -> &'static str {
     match (container.element.is_packed(), &container.kind) {
         (false, IrContainerKind::Dynamic) => "llg_dyn_value_copy",
         (false, IrContainerKind::Queue { .. }) => "llg_queue_value_copy",

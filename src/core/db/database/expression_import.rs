@@ -291,6 +291,10 @@ pub(super) fn expression_from_slang(
                 value: first(SemanticEdgeRole::Body)?,
             }
         }
+        SEMANTIC_EXPR_COPY_CLASS => ExprKind::CopyClass {
+            source: required(SemanticEdgeRole::Operand, "class copy source")?,
+            class_type: node.type_id().map(TypeId),
+        },
         SEMANTIC_EXPR_TAGGED_UNION => ExprKind::TaggedUnion {
             member: node.name.to_string(),
             value: first(SemanticEdgeRole::Body)?,
