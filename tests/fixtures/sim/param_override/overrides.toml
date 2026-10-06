@@ -1,0 +1,18 @@
+# llg.toml parameter overrides for overrides.sv. A string is the VALUE text of
+# `-G NAME=VALUE`; integers, floats and booleans are spelled as literals.
+schema_version = 1
+
+[compile.param_overrides]
+MSG = "from toml, with \"quotes\""
+COUNT = -7
+OFFSET = "-8'sd100"
+WIDE = "36893488147419103232"
+PATTERN = "8'b1x0z_1x0z"
+FLAG = true
+RATE = 0.125
+GAIN = -2.5e3
+DELAY = 1.5
+ANY = "16'hBEEF"
+MODE = "MID"
+PAIR = "'{hi: 4'd9, lo: 4'd3}"
+ELEM = "logic [2:0]"

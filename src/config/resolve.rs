@@ -456,12 +456,24 @@ fn resolve_param_overrides(
             )));
             continue;
         }
+        // A string is the VALUE text of `-G NAME=VALUE`; the other scalars are
+        // spelled as the SystemVerilog literal of the same value.
         let normalized = match value {
             toml::Value::String(text) => text.clone(),
             toml::Value::Integer(int) => int.to_string(),
+            toml::Value::Float(float) => match real_literal(*float) {
+                Some(literal) => literal,
+                None => {
+                    return Err(ConfigError::new(format!(
+                        "compile.param_overrides.{name}: {float} has no SystemVerilog real literal"
+                    )));
+                }
+            },
+            toml::Value::Boolean(flag) => if *flag { "1'b1" } else { "1'b0" }.to_owned(),
             other => {
                 return Err(ConfigError::new(format!(
-                    "compile.param_overrides.{name}: value must be a string or integer, got {}",
+                    "compile.param_overrides.{name}: value must be a string, integer, float or \
+                     boolean, got {}",
                     value_type_name(other)
                 )));
             }
@@ -482,6 +494,13 @@ fn resolve_param_overrides(
         overrides.insert(name.clone(), normalized);
     }
     Ok((overrides, warnings))
+}
+
+/// The SystemVerilog real literal of a finite `value`, exact to the bit: Rust's
+/// shortest round-trip spelling (`1.5`, `2.0`, `1e300`, `-2.5e-7`) is valid
+/// `real_number` syntax, with a leading `-` as the unary operator.
+fn real_literal(value: f64) -> Option<String> {
+    value.is_finite().then(|| format!("{value:?}"))
 }
 
 /// A SystemVerilog simple identifier: letter or underscore first, then

@@ -152,10 +152,11 @@ during rendering. Sampled stage RSS includes all live representations and
 allocator-retained pages; it is not an exclusive allocation total for that
 stage.
 
-`export byte limit exceeded` originates in llg's wrapper capture budget.
-Raising that budget admits larger exports but does not reduce their memory
-cost or bound total process RSS. A large design can still exhaust its export
-budget, a record-count ceiling or available process memory.
+The simulator's capture has no export byte budget: `Limits::simulator()`
+leaves export, source and value-bit bytes unlimited and record counts at their
+structural ceilings (32-bit record IDs), so only available process memory
+bounds a large design. Library and LSP callers keep their bounded
+`Limits::default()` budgets, where `export byte limit exceeded` can still occur.
 
 ### Intended direction
 

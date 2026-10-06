@@ -488,7 +488,7 @@ fn read_fixture_vcd_with_defines(
     assert!(
         diagnostics
             .lines()
-            .all(|line| crate::sim_harness::is_compile_report_line(line)),
+            .all(crate::sim_harness::is_compile_report_line),
         "{fixture}, optimized={optimized} wrote runtime diagnostics: {diagnostics}"
     );
     let vcd = std::fs::read_to_string(dir.path().join("trace.vcd")).expect("read generated VCD");

@@ -183,7 +183,7 @@ fn run(options: DriverOptions) -> i32 {
         library_files,
         library_order,
         default_library,
-        limits: llg::ffi::slang::Limits::simulator(llg::ffi::slang::NATIVE_HARD_MAX_OUTPUT_BYTES),
+        limits: llg::ffi::slang::Limits::simulator(),
         ..Default::default()
     }) {
         Ok(out) => out,

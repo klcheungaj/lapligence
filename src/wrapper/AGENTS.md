@@ -18,8 +18,11 @@ Keep [FFI](../ffi/AGENTS.md) layouts/errors/budgets aligned. `mimalloc_shim.c`
 redirects C malloc/free through GNU/LLD wrapping on musl.
 
 Native zero-request defaults remain 64 MiB export, 1M semantic nodes, 4M edges
-and 1M constants. Hard ceilings are 16 GiB export, 64M nodes, 256M edges and
-16M constants; reject edge requests above the ceiling before UDP work. Charge
+and 1M constants. Hard ceilings are structural only: `UINT32_MAX` for every
+record count (Rust stores 32-bit compact IDs), 2^24 source buffers (Slang's
+28-bit buffer IDs also number macro expansions) and none for source, export or
+value-bit bytes. Never preallocate in proportion to a limit, only to counts
+already captured. Reject edge requests above the ceiling before UDP work. Charge
 export records and strings before storing them, and name the effective exhausted
 budget in diagnostics. A larger export budget does not bound total Slang/Rust RSS.
 On glibc, a compile releases freed heap pages after compilation teardown and
@@ -37,6 +40,27 @@ positions or bulk operations replace roles. Child attachment keeps target dedup
 and the original next-child index, including gaps after role conversion. Avoid
 per-node index storage; many duplicate child positions can still make front
 removal linear in that target's duplicates.
+
+`llg_slang_parse_metadata` (ABI v16) parses cache-only like a compile, never
+elaborates, and reports per unit its outermost declarations (modules,
+interfaces, programs, packages, primitives, checkers, classes) and Slang
+`ParserMetadata` references not declared anywhere in the same tree (nested
+definitions are local; `std` is skipped). Merged mode reports one tree under its
+first unit. Each tree is released before the next parse.
+
+Top-level parameter overrides are planned before the elaborating compilation
+exists: trees are parsed first, and when overrides are present a throwaway
+compilation sharing them creates default instances of the tops (requested, or
+uninstantiated outermost default-library modules/programs) to classify each
+target. String parameters take bare VALUE text as exact bytes unless the whole
+value is a quoted literal; an enum member name that does not resolve in the top
+becomes a cast of its value to the declared named type; type parameters get
+`type(VALUE)` (the tracked Slang patch applies it); unsized decimals of 2^31 or
+more get an explicit signed width (value bits plus one); local parameters are
+rejected (`LocalParameterOverride`) and dropped. Classification uses default
+types, so a type that depends on another override is not re-derived.
+Diagnostics show the given spelling: invalid-option messages and messages in an
+override value's `<command-line>` buffer map rewritten text back.
 
 ## Capture
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -43,6 +44,7 @@
 #include "slang/ast/types/AllTypes.h"
 #include "slang/ast/types/Type.h"
 #include "slang/diagnostics/AnalysisDiags.h"
+#include "slang/diagnostics/CompilationDiags.h"
 #include "slang/diagnostics/DeclarationsDiags.h"
 #include "slang/diagnostics/DiagnosticEngine.h"
 #include "slang/diagnostics/DiagnosticClient.h"
@@ -91,30 +93,37 @@ private:
   std::chrono::steady_clock::time_point started;
 };
 
+// Zero-request defaults keep small budgets for callers that do not choose
+// their own. Hard ceilings clamp every request and are structural only, so a
+// caller (the batch simulator) may admit a whole design bounded by memory:
+// - record counts stop at UINT32_MAX because the Rust snapshot stores node,
+//   type, constant and edge-window references as 32-bit compact IDs;
+// - source buffers stop at 2^24 because Slang's 28-bit buffer IDs are shared
+//   with macro-expansion locations and wrap silently;
+// - byte and value-bit budgets have no ceiling beyond 64-bit arithmetic.
+// Keep these in sync with the NATIVE_* constants in src/ffi/slang.rs.
+constexpr uint64_t kMaxIndexedRecords = UINT32_MAX;
+constexpr uint64_t kUnboundedBytes = UINT64_MAX;
 constexpr uint64_t kDefaultMaxSources = 256;
-constexpr uint64_t kHardMaxSources = 4096;
+constexpr uint64_t kHardMaxSources = uint64_t{1} << 24;
 constexpr uint64_t kDefaultMaxSourceBytes = 64 * 1024 * 1024;
-constexpr uint64_t kHardMaxSourceBytes = 512 * 1024 * 1024;
+constexpr uint64_t kHardMaxSourceBytes = kUnboundedBytes;
 constexpr uint64_t kDefaultMaxDiagnostics = 10000;
-constexpr uint64_t kHardMaxDiagnostics = 100000;
+constexpr uint64_t kHardMaxDiagnostics = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxInstances = 100000;
-constexpr uint64_t kHardMaxInstances = 1000000;
+constexpr uint64_t kHardMaxInstances = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxParameters = 500000;
-constexpr uint64_t kHardMaxParameters = 2000000;
-// Hard ceilings bound every caller, including ones that request more. The
-// export-related ceilings (constants, output bytes, semantic nodes/edges) admit
-// large whole designs; callers keep tighter requested budgets (the zero-request
-// defaults below are unchanged). Keep these in sync with the NATIVE_HARD_* constants in src/ffi/slang.rs.
+constexpr uint64_t kHardMaxParameters = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxConstants = 1000000;
-constexpr uint64_t kHardMaxConstants = 16000000;
+constexpr uint64_t kHardMaxConstants = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxTypes = 100000;
-constexpr uint64_t kHardMaxTypes = 1000000;
+constexpr uint64_t kHardMaxTypes = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxValueBits = 64 * 1024 * 1024;
-constexpr uint64_t kHardMaxValueBits = 512 * 1024 * 1024;
+constexpr uint64_t kHardMaxValueBits = kUnboundedBytes;
 constexpr uint64_t kDefaultMaxRelatedDiagnostics = 80000;
-constexpr uint64_t kHardMaxRelatedDiagnostics = 800000;
+constexpr uint64_t kHardMaxRelatedDiagnostics = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxOutputBytes = 64 * 1024 * 1024;
-constexpr uint64_t kHardMaxOutputBytes = 16ull * 1024 * 1024 * 1024;
+constexpr uint64_t kHardMaxOutputBytes = kUnboundedBytes;
 
 // Named-event identity is carried by the terminal event type even when the
 // declaration adds one or more unpacked dimensions. Keep this test in the
@@ -143,21 +152,23 @@ bool isNamedEventType(const Type& type) {
   return false;
 }
 constexpr uint64_t kDefaultMaxSemanticNodes = 1000000;
-constexpr uint64_t kHardMaxSemanticNodes = 64000000;
+constexpr uint64_t kHardMaxSemanticNodes = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxSemanticEdges = 4000000;
-constexpr uint64_t kHardMaxSemanticEdges = 256000000;
+constexpr uint64_t kHardMaxSemanticEdges = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxLexicalTokens = 4000000;
-constexpr uint64_t kHardMaxLexicalTokens = 16000000;
+constexpr uint64_t kHardMaxLexicalTokens = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxTypeRanges = 1000000;
-constexpr uint64_t kHardMaxTypeRanges = 4000000;
+constexpr uint64_t kHardMaxTypeRanges = kMaxIndexedRecords;
 constexpr uint64_t kDefaultMaxTypeMembers = 1000000;
-constexpr uint64_t kHardMaxTypeMembers = 4000000;
+constexpr uint64_t kHardMaxTypeMembers = kMaxIndexedRecords;
 constexpr uint64_t kHardMaxDefines = 4096;
 constexpr uint64_t kHardMaxTopModules = 4096;
 constexpr uint64_t kHardMaxIncludeDirs = 4096;
 constexpr uint64_t kHardMaxParameterOverrides = 4096;
 constexpr uint64_t kHardMaxSystemSubroutines = 4096;
 constexpr uint64_t kHardMaxConfigBytes = 4 * 1024 * 1024;
+// Logical name Slang gives the buffer of a parsed parameter override value.
+constexpr std::string_view kCommandLineBufferName = "<command-line>";
 
 class BridgeFailure final : public std::runtime_error {
 public:
@@ -436,6 +447,11 @@ struct Capture {
       sourceIdentityGroups;
   std::unordered_set<const ParameterSymbol*> overriddenParameters;
   std::unordered_map<uint64_t, SourceLocation> unitValueDeclarations;
+  // Parameter override spellings the bridge rewrote for Slang, so
+  // diagnostics show what the user wrote: rewritten -> given, for whole
+  // `NAME=VALUE` options and for VALUE texts.
+  std::unordered_map<std::string, std::string> givenOverrideOptions;
+  std::unordered_map<std::string, std::string> givenOverrideValues;
   uint64_t valueBits = 0;
   uint64_t semanticEdgeCount = 0;
   bool declarationOnly = false;
@@ -639,6 +655,28 @@ struct Capture {
     }
 
     const Diagnostic& original = diag.originalDiagnostic;
+    // A parameter override value is parsed from its own unadmitted buffer;
+    // name the value the message is about.
+    std::string message(diag.formattedMessage);
+    if (primary.file_id == LLG_SLANG_INVALID_ID && diag.location.valid() &&
+        sourceManager.getFileName(diag.location) == kCommandLineBufferName) {
+      std::string_view text = sourceManager.getSourceText(diag.location.buffer());
+      while (!text.empty() && text.back() == '\0')
+        text.remove_suffix(1);
+      std::string value(text);
+      if (auto given = givenOverrideValues.find(value); given != givenOverrideValues.end())
+        value = given->second;
+      message = "parameter override value `" + value + "`: " + message;
+    }
+    else if (original.code == diag::InvalidParamOverrideOpt) {
+      for (const auto& [rewritten, given] : givenOverrideOptions) {
+        const std::string quoted = "'" + rewritten + "'";
+        if (auto at = message.find(quoted); at != std::string::npos) {
+          message.replace(at, quoted.size(), "'" + given + "'");
+          break;
+        }
+      }
+    }
     chargeRecord(output, sizeof(LlgSlangDiagnostic));
     output.diagnostics.push_back({
         provider,
@@ -647,7 +685,7 @@ struct Capture {
         original.code.getCode(),
         storeString(output, toString(original.code)),
         storeString(output, engine.getOptionName(original.code)),
-        storeString(output, diag.formattedMessage),
+        storeString(output, message),
         primary,
         relatedStart,
         static_cast<uint64_t>(output.related.size()) - relatedStart,
@@ -5058,6 +5096,307 @@ bool isKnownTopParameter(const RootSymbol& root, std::string_view requested) {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Type-directed top-level parameter overrides.
+//
+// Slang parses each `NAME=VALUE` override as an expression and converts it to
+// the parameter's type. That is exact for most types, but a string parameter
+// cannot take bare text, an enum member is only visible where its type is
+// declared, an unsized decimal of 2^31 or more is rejected, a type parameter
+// needs a type rather than an expression and a local parameter must not be
+// overridden. The bridge therefore classifies each target before compiling,
+// using default instances of the top definitions in a throwaway compilation
+// that shares the parsed trees, and rewrites the VALUE text accordingly.
+
+
+std::string_view trimmed(std::string_view text) {
+  const auto first = text.find_first_not_of(" \t\r\n\f\v");
+  if (first == std::string_view::npos)
+    return {};
+  const auto last = text.find_last_not_of(" \t\r\n\f\v");
+  return text.substr(first, last - first + 1);
+}
+
+bool isSimpleIdentifier(std::string_view text) {
+  if (text.empty() || !(std::isalpha(static_cast<unsigned char>(text[0])) || text[0] == '_'))
+    return false;
+  return std::all_of(text.begin() + 1, text.end(), [](char c) {
+    return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '$';
+  });
+}
+
+// A complete double-quoted SystemVerilog string literal: no unescaped quote
+// before the closing one.
+bool isQuotedStringLiteral(std::string_view text) {
+  if (text.size() < 2 || text.front() != '"' || text.back() != '"')
+    return false;
+  for (size_t i = 1; i + 1 < text.size(); i++) {
+    if (text[i] == '\\')
+      i++;
+    else if (text[i] == '"')
+      return false;
+  }
+  // The closing quote must not itself be escaped.
+  size_t backslashes = 0;
+  for (size_t i = text.size() - 1; i > 1 && text[i - 1] == '\\'; i--)
+    backslashes++;
+  return backslashes % 2 == 0;
+}
+
+// A string literal whose value is exactly the bytes of `text`.
+std::string quotedStringLiteral(std::string_view text) {
+  std::string result = "\"";
+  for (char raw : text) {
+    const auto c = static_cast<unsigned char>(raw);
+    if (c == '\\' || c == '"') {
+      result.push_back('\\');
+      result.push_back(raw);
+    }
+    else if (c < 0x20 || c == 0x7f) {
+      result.push_back('\\');
+      result.push_back(static_cast<char>('0' + ((c >> 6) & 7)));
+      result.push_back(static_cast<char>('0' + ((c >> 3) & 7)));
+      result.push_back(static_cast<char>('0' + (c & 7)));
+    }
+    else {
+      result.push_back(raw);
+    }
+  }
+  result.push_back('"');
+  return result;
+}
+
+// Decimal digits (with `_` separators) longer than this are left to Slang;
+// the conversion below is quadratic in the digit count.
+constexpr size_t kMaxNormalizedDecimalDigits = 100000;
+
+// Bits needed for the unsigned value of decimal `digits`, or 0 for zero.
+uint64_t decimalBitLength(std::string_view digits) {
+  std::vector<uint32_t> limbs; // little-endian base 2^32
+  for (char c : digits) {
+    if (c == '_')
+      continue;
+    uint64_t carry = static_cast<uint64_t>(c - '0');
+    for (uint32_t& limb : limbs) {
+      const uint64_t product = static_cast<uint64_t>(limb) * 10 + carry;
+      limb = static_cast<uint32_t>(product);
+      carry = product >> 32;
+    }
+    if (carry != 0)
+      limbs.push_back(static_cast<uint32_t>(carry));
+  }
+  while (!limbs.empty() && limbs.back() == 0)
+    limbs.pop_back();
+  if (limbs.empty())
+    return 0;
+  return (limbs.size() - 1) * 32 + static_cast<uint64_t>(std::bit_width(limbs.back()));
+}
+
+// An unsized decimal literal (optionally signed) is signed and at least 32
+// bits wide; Slang rejects one of 2^31 or more as an override. Give such a
+// value an explicit width (its bits plus a sign bit) so it keeps its exact
+// value and signedness: `-4294967296` becomes `-34'sd4294967296`.
+std::string normalizedDecimalOverride(std::string_view value) {
+  const std::string_view text = trimmed(value);
+  size_t start = 0;
+  if (!text.empty() && (text[0] == '-' || text[0] == '+'))
+    start = 1;
+  const std::string_view digits = trimmed(text.substr(start));
+  if (digits.empty() || !std::isdigit(static_cast<unsigned char>(digits[0])) ||
+      digits.size() > kMaxNormalizedDecimalDigits ||
+      !std::all_of(digits.begin(), digits.end(), [](char c) {
+        return std::isdigit(static_cast<unsigned char>(c)) || c == '_';
+      }))
+    return std::string(value);
+  const uint64_t bits = decimalBitLength(digits);
+  if (bits < 32)
+    return std::string(value);
+  std::string result(text.substr(0, start));
+  result += std::to_string(bits + 1);
+  result += "'sd";
+  result += digits;
+  return result;
+}
+
+// Declared type syntax is the plain implicit type: no `signed` and no packed
+// dimensions, so the parameter takes the type of its value.
+bool isUntypedParameter(const ParameterSymbol& parameter) {
+  const DeclaredType* declared = parameter.getDeclaredType();
+  const syntax::DataTypeSyntax* syntax = declared ? declared->getTypeSyntax() : nullptr;
+  if (!syntax || syntax->kind != syntax::SyntaxKind::ImplicitType)
+    return false;
+  const auto& implicit = syntax->as<syntax::ImplicitTypeSyntax>();
+  return !implicit.signing && implicit.dimensions.empty();
+}
+
+std::string enumMemberOverride(const InstanceBodySymbol& body,
+                               const ParameterSymbol& parameter,
+                               const Type& canonical, std::string_view value) {
+  const std::string_view name = trimmed(value);
+  // A name visible in the instance keeps its ordinary expression meaning.
+  if (!isSimpleIdentifier(name) || Lookup::unqualified(body, name) != nullptr)
+    return std::string(value);
+  const DeclaredType* declared = parameter.getDeclaredType();
+  const syntax::DataTypeSyntax* typeSyntax = declared ? declared->getTypeSyntax() : nullptr;
+  if (!typeSyntax || typeSyntax->kind != syntax::SyntaxKind::NamedType)
+    return std::string(value);
+  for (const EnumValueSymbol& member : canonical.as<EnumType>().values()) {
+    if (member.name != name)
+      continue;
+    const ConstantValue& constant = member.getValue();
+    if (!constant.isInteger())
+      break;
+    // The declared type name resolves at the parameter, so a cast of the
+    // member's exact value selects that member.
+    return std::string(trimmed(typeSyntax->toString())) + "'(" +
+           constant.integer().toString(LiteralBase::Binary, true) + ")";
+  }
+  return std::string(value);
+}
+
+struct ParameterOverrideRequest {
+  std::string name;
+  std::string value;
+};
+
+struct ParameterOverridePlan {
+  // NAME=VALUE strings handed to Slang.
+  std::vector<std::string> overrides;
+  // Rewritten spelling -> given spelling, for options and for values.
+  std::unordered_map<std::string, std::string> givenOptions;
+  std::unordered_map<std::string, std::string> givenValues;
+  // Overrides rejected before compilation, reported as error diagnostics.
+  std::vector<std::string> localErrors;
+};
+
+// Top definitions Slang will elaborate: the requested tops, or else the
+// outermost modules and programs of non-library default-library units that
+// nothing instantiates.
+std::vector<const DefinitionSymbol*> overrideTopDefinitions(
+    const Compilation& probe,
+    const std::vector<std::shared_ptr<syntax::SyntaxTree>>& trees,
+    const decltype(CompilationOptions::topModules)& topModules) {
+  std::vector<const DefinitionSymbol*> result;
+  const RootSymbol& root = probe.getRootNoFinalize();
+  auto add = [&](std::string_view name) {
+    const Symbol* symbol = probe.tryGetDefinition(name, root).definition;
+    if (!symbol || symbol->kind != SymbolKind::Definition)
+      return false;
+    const auto* definition = &symbol->as<DefinitionSymbol>();
+    if (std::find(result.begin(), result.end(), definition) == result.end())
+      result.push_back(definition);
+    return true;
+  };
+  if (!topModules.empty()) {
+    for (std::string_view top : topModules) {
+      const std::string_view name = top;
+      if (!add(name) && name.find('.') != std::string_view::npos)
+        add(name.substr(name.rfind('.') + 1));
+    }
+    return result;
+  }
+  std::unordered_set<std::string_view> instantiated;
+  for (const auto& tree : trees) {
+    for (const auto* instance : tree->getMetadata().globalInstances)
+      instantiated.emplace(instance->type.valueText());
+  }
+  for (const auto& tree : trees) {
+    const SourceLibrary* library = tree->getSourceLibrary();
+    if (tree->isLibraryUnit || (library && !library->isDefault))
+      continue;
+    for (const auto& [declaration, _] : tree->getMetadata().nodeMeta) {
+      if (!declaration->parent ||
+          declaration->parent->kind != syntax::SyntaxKind::CompilationUnit ||
+          (declaration->kind != syntax::SyntaxKind::ModuleDeclaration &&
+           declaration->kind != syntax::SyntaxKind::ProgramDeclaration))
+        continue;
+      const std::string_view name = declaration->header->name.valueText();
+      if (!name.empty() && !instantiated.contains(name))
+        add(name);
+    }
+  }
+  return result;
+}
+
+ParameterOverridePlan planParameterOverrides(
+    const std::vector<ParameterOverrideRequest>& requests,
+    const std::vector<std::shared_ptr<syntax::SyntaxTree>>& trees,
+    const CompilationOptions& options, const SourceLibrary& defaultLibrary) {
+  ParameterOverridePlan plan;
+  CompilationOptions probeOptions = options;
+  probeOptions.paramOverrides.clear();
+  Bag probeBag;
+  probeBag.set(probeOptions);
+  // Shares the parsed trees; only default instances are created, and nothing
+  // from this compilation outlives the function.
+  Compilation probe(probeBag, &defaultLibrary);
+  for (const auto& tree : trees)
+    probe.addSyntaxTree(tree);
+  std::vector<const InstanceSymbol*> tops;
+  for (const DefinitionSymbol* definition :
+       overrideTopDefinitions(probe, trees, options.topModules))
+    tops.push_back(&InstanceSymbol::createDefault(probe, *definition));
+
+  for (const ParameterOverrideRequest& request : requests) {
+    std::string value = request.value;
+    const ParameterSymbolBase* target = nullptr;
+    const InstanceSymbol* owner = nullptr;
+    for (const InstanceSymbol* top : tops) {
+      for (const ParameterSymbolBase* parameter : top->body.getParameters()) {
+        const std::string_view name = parameter->symbol.name;
+        if (request.name == name || matchesQualifiedParameter(request.name, top->name, name) ||
+            matchesQualifiedParameter(request.name, top->getDefinition().name, name)) {
+          target = parameter;
+          owner = top;
+          break;
+        }
+      }
+      if (target)
+        break;
+    }
+    if (target && target->isLocalParam()) {
+      plan.localErrors.push_back("parameter override '" + request.name +
+                                 "' targets local parameter '" +
+                                 std::string(target->symbol.name) + "' of '" +
+                                 std::string(owner->getDefinition().name) +
+                                 "', which cannot be overridden");
+      continue;
+    }
+    if (target && target->symbol.kind == SymbolKind::TypeParameter) {
+      // A type, spelled as in a parameter value assignment.
+      const std::string_view text = trimmed(value);
+      if (!text.starts_with("type(") && !text.starts_with("type ("))
+        value = "type(" + std::string(text) + ")";
+    }
+    else if (target && target->symbol.kind == SymbolKind::Parameter) {
+      const auto& parameter = target->symbol.as<ParameterSymbol>();
+      const Type& canonical = parameter.getType().getCanonicalType();
+      if (canonical.isString() && !isUntypedParameter(parameter)) {
+        if (!isQuotedStringLiteral(trimmed(value)))
+          value = quotedStringLiteral(value);
+      }
+      else if (canonical.isEnum()) {
+        value = enumMemberOverride(owner->body, parameter, canonical, value);
+      }
+      else {
+        value = normalizedDecimalOverride(value);
+      }
+    }
+    else {
+      // Unknown names are reported after elaboration; still normalize the
+      // spelling so a valid value is not rejected for its width alone.
+      value = normalizedDecimalOverride(value);
+    }
+    if (value != request.value) {
+      plan.givenOptions.emplace(request.name + "=" + value,
+                                request.name + "=" + request.value);
+      plan.givenValues.emplace(value, request.value);
+    }
+    plan.overrides.push_back(request.name + "=" + value);
+  }
+  return plan;
+}
+
 void captureNavigation(Compilation& compilation, Capture& capture) {
   SemanticCapture visitor(capture);
   compilation.getRoot().visit(visitor);
@@ -5160,6 +5499,10 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   sourceNames.reserve(static_cast<size_t>(request.source_count + request.library_source_count));
   std::vector<std::string> sourcePaths;
   sourcePaths.reserve(static_cast<size_t>(request.source_count + request.library_source_count));
+  // Normalized path -> input index, so uniqueness checks and buffer-to-file
+  // association stay linear in the number of admitted sources.
+  std::unordered_map<std::string, uint64_t> sourcePathIndex;
+  sourcePathIndex.reserve(static_cast<size_t>(request.source_count + request.library_source_count));
   std::vector<std::string_view> sourceTexts;
   sourceTexts.reserve(static_cast<size_t>(request.source_count + request.library_source_count));
   for (uint64_t i = 0; i < request.source_count; i++) {
@@ -5178,7 +5521,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     addChecked(sourceBytes, text.size(), maxSourceBytes, "source byte");
     const std::string normalized =
         std::filesystem::path(name).lexically_normal().generic_string();
-    if (std::find(sourcePaths.begin(), sourcePaths.end(), normalized) != sourcePaths.end())
+    if (!sourcePathIndex.emplace(normalized, sourcePaths.size()).second)
       throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                           "source names must be unique after lexical normalization");
     sourceNames.emplace_back(name);
@@ -5206,7 +5549,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     addChecked(sourceBytes, library.size(), maxSourceBytes, "source byte");
     const std::string normalized =
         std::filesystem::path(name).lexically_normal().generic_string();
-    if (std::find(sourcePaths.begin(), sourcePaths.end(), normalized) != sourcePaths.end())
+    if (!sourcePathIndex.emplace(normalized, sourcePaths.size()).second)
       throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                           "source names must be unique after lexical normalization");
     sourceNames.emplace_back(name);
@@ -5288,8 +5631,8 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     defaultLibraryName.assign(name);
   }
 
-  compilationOptions.paramOverrides.reserve(
-      static_cast<size_t>(request.parameter_override_count));
+  std::vector<ParameterOverrideRequest> overrideRequests;
+  overrideRequests.reserve(static_cast<size_t>(request.parameter_override_count));
   for (uint64_t i = 0; i < request.parameter_override_count; i++) {
     const auto& input = request.parameter_overrides[i];
     if (input.has_value != 1 || input.reserved != 0)
@@ -5305,9 +5648,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
                "configuration byte");
     addChecked(configBytes, value.size(), kHardMaxConfigBytes,
                "configuration byte");
-    compilationOptions.paramOverrides.emplace_back(name);
-    compilationOptions.paramOverrides.back().push_back('=');
-    compilationOptions.paramOverrides.back().append(value);
+    overrideRequests.push_back({std::string(name), std::string(value)});
   }
 
   std::vector<std::filesystem::path> includeDirs;
@@ -5430,12 +5771,13 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   parseOptions.set(std::move(preprocessorOptions));
   parseOptions.set(std::move(lexerOptions));
   parseOptions.set(std::move(parserOptions));
-  Bag compileOptions;
-  compileOptions.set(std::move(compilationOptions));
   ProfileStage parseStage("slang.parse");
-  Compilation compilation(compileOptions, &defaultLibrary);
-  for (const auto& subroutine : userDefinedSubroutines)
-    compilation.addSystemSubroutine(subroutine);
+  // Trees are parsed first so parameter overrides can be planned against the
+  // design before the compilation that elaborates it is created.
+  std::vector<std::shared_ptr<syntax::SyntaxTree>> trees;
+  auto addTree = [&](std::shared_ptr<syntax::SyntaxTree> tree) {
+    trees.push_back(std::move(tree));
+  };
   bool anyCompilationUnit = false;
   if ((request.flags & LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS) != 0) {
     std::vector<SourceBuffer> compilationBuffers;
@@ -5444,7 +5786,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
       if ((request.sources[i].flags & LLG_SLANG_SOURCE_LIBRARY_MAP) != 0) {
         auto tree = syntax::SyntaxTree::fromLibraryMapBuffer(
             buffers[static_cast<size_t>(i)], sourceManager, parseOptions);
-        compilation.addSyntaxTree(std::move(tree));
+        addTree(std::move(tree));
         anyCompilationUnit = true;
       } else if ((request.sources[i].flags & LLG_SLANG_SOURCE_COMPILATION_UNIT) != 0) {
         compilationBuffers.push_back(buffers[static_cast<size_t>(i)]);
@@ -5456,7 +5798,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
           compilationBuffers, sourceManager, parseOptions);
       if ((request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0)
         tree->isLibraryUnit = true;
-      compilation.addSyntaxTree(std::move(tree));
+      addTree(std::move(tree));
     }
   } else {
     for (uint64_t i = 0; i < request.source_count; i++) {
@@ -5470,7 +5812,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
                 buffers[static_cast<size_t>(i)], sourceManager, parseOptions);
       if ((request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0)
         tree->isLibraryUnit = true;
-      compilation.addSyntaxTree(std::move(tree));
+      addTree(std::move(tree));
     }
   }
   // Library sources follow the selected compilation-unit mode: merged mode
@@ -5482,23 +5824,37 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     if (mergedUnits) {
       auto tree = syntax::SyntaxTree::fromBuffers(group.second, sourceManager, parseOptions);
       tree->isLibraryUnit = true;
-      compilation.addSyntaxTree(std::move(tree));
+      addTree(std::move(tree));
       continue;
     }
     for (const SourceBuffer& buffer : group.second) {
       auto tree = syntax::SyntaxTree::fromBuffer(buffer, sourceManager, parseOptions);
       tree->isLibraryUnit = true;
-      compilation.addSyntaxTree(std::move(tree));
+      addTree(std::move(tree));
     }
   }
   for (auto& buffer : libraryMapBuffers) {
     auto tree = syntax::SyntaxTree::fromLibraryMapBuffer(buffer, sourceManager, parseOptions);
     tree->isLibraryUnit = true;
-    compilation.addSyntaxTree(std::move(tree));
+    addTree(std::move(tree));
   }
   if (!anyCompilationUnit)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "at least one compilation unit source is required");
+
+  ParameterOverridePlan overridePlan;
+  if (!overrideRequests.empty())
+    overridePlan = planParameterOverrides(overrideRequests, trees, compilationOptions,
+                                          defaultLibrary);
+  compilationOptions.paramOverrides = overridePlan.overrides;
+  Bag compileOptions;
+  compileOptions.set(std::move(compilationOptions));
+  Compilation compilation(compileOptions, &defaultLibrary);
+  for (const auto& subroutine : userDefinedSubroutines)
+    compilation.addSystemSubroutine(subroutine);
+  for (auto& tree : trees)
+    compilation.addSyntaxTree(std::move(tree));
+  trees.clear();
 
   parseStage.finish();
   auto output = std::make_unique<CaptureOutput>();
@@ -5509,6 +5865,8 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
       kDefaultMaxOutputBytes, kHardMaxOutputBytes);
   Capture capture{*output, sourceManager, request.limits,
                   (request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0};
+  capture.givenOverrideOptions = std::move(overridePlan.givenOptions);
+  capture.givenOverrideValues = std::move(overridePlan.givenValues);
   const uint64_t totalSourceCount = request.source_count + request.library_source_count;
   for (uint64_t i = 0; i < totalSourceCount; i++) {
     chargeRecord(*output, sizeof(LlgSlangFile));
@@ -5526,12 +5884,8 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     if (!sourceManager.isFileLoc(SourceLocation(buffer, 0)))
       continue;
     const auto path = sourceManager.getFullPath(buffer).generic_string();
-    for (uint64_t i = 0; i < totalSourceCount; i++) {
-      if (path == sourcePaths[static_cast<size_t>(i)]) {
-        capture.fileIds.emplace_back(buffer, i);
-        break;
-      }
-    }
+    if (const auto found = sourcePathIndex.find(path); found != sourcePathIndex.end())
+      capture.fileIds.emplace_back(buffer, found->second);
   }
 
   // Capture source bodies before diagnostics are cached so their errors are included.
@@ -5566,6 +5920,8 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
           "unknown top-level parameter override '" + std::string(name) + "'");
     }
   }
+  for (std::string& message : overridePlan.localErrors)
+    capture.addIntegrationDiagnostic("LocalParameterOverride", std::move(message));
   for (const InstanceSymbol* top : root.topInstances)
     capture.instance(*top, LLG_SLANG_INVALID_ID);
 
@@ -5709,6 +6065,216 @@ void streamCapture(CaptureOutput& output, const LlgSlangSink& sink) {
   checkSink(sink.end(sink.context));
 }
 
+// Definition names a compilation unit declares at its outermost level, the
+// scope whose definitions other units can instantiate, import or name.
+// Nested modules and classes inside other declarations are local.
+void unitDeclaredNames(const syntax::SyntaxNode& root,
+                       std::unordered_set<std::string_view>& names) {
+  if (root.kind != syntax::SyntaxKind::CompilationUnit)
+    return;
+  for (const syntax::MemberSyntax* member :
+       root.as<syntax::CompilationUnitSyntax>().members) {
+    parsing::Token name;
+    switch (member->kind) {
+      case syntax::SyntaxKind::ModuleDeclaration:
+      case syntax::SyntaxKind::InterfaceDeclaration:
+      case syntax::SyntaxKind::ProgramDeclaration:
+      case syntax::SyntaxKind::PackageDeclaration:
+        name = member->as<syntax::ModuleDeclarationSyntax>().header->name;
+        break;
+      case syntax::SyntaxKind::UdpDeclaration:
+        name = member->as<syntax::UdpDeclarationSyntax>().name;
+        break;
+      case syntax::SyntaxKind::CheckerDeclaration:
+        name = member->as<syntax::CheckerDeclarationSyntax>().name;
+        break;
+      case syntax::SyntaxKind::ClassDeclaration:
+        name = member->as<syntax::ClassDeclarationSyntax>().name;
+        break;
+      default:
+        continue;
+    }
+    if (!name.valueText().empty())
+      names.emplace(name.valueText());
+  }
+}
+
+// Report one parsed tree's declared and referenced definition names to the
+// sink under `sourceIndex`. Referenced names exclude every definition the
+// tree declares itself, including nested modules and classes (Slang's
+// ParserMetadata declared set), and the built-in `std` package.
+void reportTreeMetadata(const syntax::SyntaxTree& tree, uint64_t sourceIndex,
+                        const LlgSlangMetadataSink& sink) {
+  std::unordered_set<std::string_view> declared;
+  unitDeclaredNames(tree.root(), declared);
+  std::unordered_set<std::string_view> local = declared;
+  const parsing::ParserMetadata& metadata = tree.getMetadata();
+  metadata.visitDeclaredSymbols([&](std::string_view name) { local.emplace(name); });
+  std::vector<std::string_view> referenced;
+  std::unordered_set<std::string_view> seen;
+  metadata.visitReferencedSymbols([&](std::string_view name) {
+    if (!name.empty() && name != "std" && !local.contains(name) &&
+        seen.emplace(name).second)
+      referenced.push_back(name);
+  });
+  std::vector<std::string_view> declaredNames(declared.begin(), declared.end());
+  // Deterministic delivery order independent of hash iteration.
+  std::sort(declaredNames.begin(), declaredNames.end());
+  std::sort(referenced.begin(), referenced.end());
+  auto deliver = [&](uint32_t role, std::string_view name) {
+    checkSink(sink.name(sink.context, sourceIndex, role,
+                        LlgSlangString{reinterpret_cast<const uint8_t*>(name.data()),
+                                       static_cast<uint64_t>(name.size())}));
+  };
+  for (std::string_view name : declaredNames)
+    deliver(LLG_SLANG_METADATA_DECLARED, name);
+  for (std::string_view name : referenced)
+    deliver(LLG_SLANG_METADATA_REFERENCED, name);
+}
+
+// Parse-only metadata request: preprocess and parse each compilation-unit
+// buffer with the compile's edition and defines (cache-only include lookup,
+// diagnostics discarded) and stream its definition names. Nothing is
+// elaborated and no native state outlives the call.
+void metadataImpl(const LlgSlangMetadataRequest& request,
+                  const LlgSlangMetadataSink& sink) {
+  if (request.abi_version != LLG_SLANG_ABI_VERSION)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                        "unsupported Slang ABI version");
+  constexpr uint32_t knownFlags = LLG_SLANG_COMPILE_EDITION_VERILOG_2001 |
+                                  LLG_SLANG_COMPILE_EDITION_SYSTEMVERILOG_2009 |
+                                  LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS;
+  if ((request.flags & ~knownFlags) != 0)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                        "unknown metadata request flags");
+  const EditionPolicy edition = editionPolicy(request.flags);
+  if (request.source_count != 0 && request.sources == nullptr)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT, "sources has a null pointer");
+  if (request.define_count != 0 && request.defines == nullptr)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT, "defines has a null pointer");
+  if (request.include_dir_count != 0 && request.include_dirs == nullptr)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                        "include_dirs has a null pointer");
+  if (request.source_count > kHardMaxSources)
+    throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED, "source count limit exceeded");
+  if (request.define_count > kHardMaxDefines)
+    throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED, "define count limit exceeded");
+  if (request.include_dir_count > kHardMaxIncludeDirs)
+    throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                        "include directory count limit exceeded");
+  const uint64_t maxSourceBytes = effectiveLimit(
+      request.max_source_bytes, kDefaultMaxSourceBytes, kHardMaxSourceBytes);
+
+  uint64_t sourceBytes = 0;
+  uint64_t configBytes = 0;
+  std::vector<std::string> sourcePaths;
+  sourcePaths.reserve(static_cast<size_t>(request.source_count));
+  std::unordered_set<std::string> uniquePaths;
+  uniquePaths.reserve(static_cast<size_t>(request.source_count));
+  std::vector<std::string_view> sourceTexts;
+  sourceTexts.reserve(static_cast<size_t>(request.source_count));
+  for (uint64_t i = 0; i < request.source_count; i++) {
+    const auto& input = request.sources[i];
+    if ((input.flags & ~LLG_SLANG_SOURCE_COMPILATION_UNIT) != 0 || input.reserved != 0)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "unknown metadata source flags or nonzero reserved field");
+    const std::string_view name = checkedView(input.name, "source name");
+    const std::string_view text = checkedView(input.text, "source text");
+    if (name.empty() || name.find('\0') != std::string_view::npos)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "source names must be nonempty and contain no NUL bytes");
+    addChecked(sourceBytes, name.size(), maxSourceBytes, "source byte");
+    addChecked(sourceBytes, text.size(), maxSourceBytes, "source byte");
+    std::string normalized = std::filesystem::path(name).lexically_normal().generic_string();
+    if (!uniquePaths.emplace(normalized).second)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "source names must be unique after lexical normalization");
+    sourcePaths.push_back(std::move(normalized));
+    sourceTexts.push_back(text);
+  }
+
+  std::vector<std::string> predefines;
+  predefines.reserve(static_cast<size_t>(request.define_count));
+  for (uint64_t i = 0; i < request.define_count; i++) {
+    const auto& input = request.defines[i];
+    if (input.has_value > 1 || input.reserved != 0)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT, "invalid define flags");
+    const std::string_view name = checkedView(input.name, "define name");
+    const std::string_view value = checkedView(input.value, "define value");
+    if (name.empty() || name.find('\0') != std::string_view::npos ||
+        value.find('\0') != std::string_view::npos)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "define text is empty or contains a NUL byte");
+    addChecked(configBytes, name.size(), kHardMaxConfigBytes, "configuration byte");
+    addChecked(configBytes, value.size(), kHardMaxConfigBytes, "configuration byte");
+    predefines.emplace_back(name);
+    if (input.has_value) {
+      predefines.back().push_back('=');
+      predefines.back().append(value);
+    }
+  }
+  std::vector<std::filesystem::path> includeDirs;
+  includeDirs.reserve(static_cast<size_t>(request.include_dir_count));
+  for (uint64_t i = 0; i < request.include_dir_count; i++) {
+    const std::string_view name = checkedView(request.include_dirs[i], "include directory");
+    if (name.find('\0') != std::string_view::npos)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "include directories must contain no NUL bytes");
+    addChecked(configBytes, name.size(), kHardMaxConfigBytes, "configuration byte");
+    includeDirs.emplace_back(std::filesystem::path(name).lexically_normal());
+  }
+
+  SourceManager sourceManager;
+  sourceManager.setDisableProximatePaths(true);
+  sourceManager.setCacheOnlyReads(true);
+  std::vector<SourceBuffer> buffers;
+  buffers.reserve(static_cast<size_t>(request.source_count));
+  for (uint64_t i = 0; i < request.source_count; i++)
+    buffers.push_back(sourceManager.assignText(sourcePaths[static_cast<size_t>(i)],
+                                               sourceTexts[static_cast<size_t>(i)]));
+
+  parsing::PreprocessorOptions preprocessorOptions;
+  preprocessorOptions.languageVersion = edition.languageVersion;
+  preprocessorOptions.predefines = std::move(predefines);
+  preprocessorOptions.additionalIncludePaths = std::move(includeDirs);
+  preprocessorOptions.keywordMapping.reserve(sourcePaths.size());
+  for (const std::string& path : sourcePaths)
+    preprocessorOptions.keywordMapping.emplace_back(path, edition.keywordVersion);
+  parsing::LexerOptions lexerOptions;
+  lexerOptions.languageVersion = edition.languageVersion;
+  parsing::ParserOptions parserOptions;
+  parserOptions.languageVersion = edition.languageVersion;
+  Bag parseOptions;
+  parseOptions.set(std::move(preprocessorOptions));
+  parseOptions.set(std::move(lexerOptions));
+  parseOptions.set(std::move(parserOptions));
+
+  if ((request.flags & LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS) != 0) {
+    std::vector<SourceBuffer> unitBuffers;
+    uint64_t firstUnit = 0;
+    for (uint64_t i = 0; i < request.source_count; i++) {
+      if ((request.sources[i].flags & LLG_SLANG_SOURCE_COMPILATION_UNIT) == 0)
+        continue;
+      if (unitBuffers.empty())
+        firstUnit = i;
+      unitBuffers.push_back(buffers[static_cast<size_t>(i)]);
+    }
+    if (!unitBuffers.empty()) {
+      auto tree = syntax::SyntaxTree::fromBuffers(unitBuffers, sourceManager, parseOptions);
+      reportTreeMetadata(*tree, firstUnit, sink);
+    }
+    return;
+  }
+  for (uint64_t i = 0; i < request.source_count; i++) {
+    if ((request.sources[i].flags & LLG_SLANG_SOURCE_COMPILATION_UNIT) == 0)
+      continue;
+    // Each tree (and the names it borrows) is released before the next parse.
+    auto tree = syntax::SyntaxTree::fromBuffer(buffers[static_cast<size_t>(i)],
+                                               sourceManager, parseOptions);
+    reportTreeMetadata(*tree, i, sink);
+  }
+}
+
 } // namespace
 
 extern "C" uint32_t llg_slang_compile(const LlgSlangCompileRequest* request,
@@ -5735,6 +6301,40 @@ extern "C" uint32_t llg_slang_compile(const LlgSlangCompileRequest* request,
     // receiver allocated its copy between them; return the free pages
     // inside the heap before the caller's import allocates more.
     llg::wrapper::platform::releaseFreedHeapPages();
+    return LLG_SLANG_STATUS_OK;
+  }
+  catch (const SinkAborted& error) {
+    *out_error = makeError(LLG_SLANG_STATUS_SINK_ABORTED, error.what());
+    return LLG_SLANG_STATUS_SINK_ABORTED;
+  }
+  catch (const BridgeFailure& error) {
+    *out_error = makeError(error.status, error.what());
+    return error.status;
+  }
+  catch (const std::exception& error) {
+    *out_error = makeError(LLG_SLANG_STATUS_FRONTEND_ERROR, error.what());
+    return LLG_SLANG_STATUS_FRONTEND_ERROR;
+  }
+  catch (...) {
+    *out_error = makeError(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                           "unknown native frontend failure");
+    return LLG_SLANG_STATUS_INTERNAL_ERROR;
+  }
+}
+
+extern "C" uint32_t llg_slang_parse_metadata(const LlgSlangMetadataRequest* request,
+                                             const LlgSlangMetadataSink* sink,
+                                             LlgSlangError** out_error) {
+  if (out_error)
+    *out_error = nullptr;
+  if (!request || !sink || !sink->name || !out_error) {
+    if (out_error)
+      *out_error = makeError(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                             "request, sink callback and error output are required");
+    return LLG_SLANG_STATUS_INVALID_ARGUMENT;
+  }
+  try {
+    metadataImpl(*request, *sink);
     return LLG_SLANG_STATUS_OK;
   }
   catch (const SinkAborted& error) {

@@ -1,6 +1,6 @@
 //! Safe, owned Rust facade over the Slang C ABI.
 //!
-//! [`compile`] receives the finished capture through the ABI v15 record
+//! [`compile`] receives the finished capture through the ABI v16 record
 //! stream (see the `stream` module) and owns every decoded record. No Slang
 //! pointer or native allocation escapes it.
 
@@ -37,8 +37,11 @@ use values::{
 };
 mod stream;
 use stream::{sink_for, StreamBuilder};
+mod metadata;
+pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
+use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 15;
+const ABI_VERSION: u32 = 16;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -63,7 +66,6 @@ const SNAPSHOT_KNOWN_FLAGS: u32 = SNAPSHOT_HAS_ERRORS
     | SNAPSHOT_ANALYSIS_RAN
     | SNAPSHOT_EDITION_MASK
     | SNAPSHOT_MERGED_COMPILATION_UNITS;
-const MAX_SOURCES: usize = 4_096;
 const MAX_DEFINES: usize = 4_096;
 const MAX_TOP_MODULES: usize = 4_096;
 const MAX_INCLUDE_DIRS: usize = 4_096;
@@ -71,21 +73,21 @@ const MAX_PARAMETER_OVERRIDES: usize = 4_096;
 const MAX_SYSTEM_SUBROUTINES: usize = 4_096;
 const MAX_CONFIG_BYTES: u64 = 4 * 1024 * 1024;
 // Keep these in sync with the native bridge's kHardMax* ceilings. The bridge
-// clamps larger requests to them; the Rust decoder uses the caller's edge limit
-// for UDP validation, so an edge budget above its ceiling is rejected instead.
-/// Native ceiling on exported bytes for one compilation (16 GiB).
-pub const NATIVE_HARD_MAX_OUTPUT_BYTES: u64 = 16 * 1024 * 1024 * 1024;
-/// Native ceiling on exported semantic nodes for one compilation.
-pub const NATIVE_HARD_MAX_SEMANTIC_NODES: u64 = 64_000_000;
-/// Native ceiling on exported semantic edges (and UDP rows).
-pub const NATIVE_HARD_MAX_SEMANTIC_EDGES: u64 = 256_000_000;
-/// Native ceiling on exported constants for one compilation.
-pub const NATIVE_HARD_MAX_CONSTANTS: u64 = 16_000_000;
-/// Default export byte budget of [`Limits::simulator`] (4 GiB). The frontend
-/// export grows linearly with the elaborated design, about 15 KiB per small
-/// `always` process plus its continuous assignment, so this admits roughly
-/// 250,000 such processes while still bounding a runaway elaboration.
-pub const SIMULATOR_DEFAULT_MAX_OUTPUT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+// clamps larger requests to them. They are structural, not resource budgets:
+// byte and value-bit budgets have no native ceiling, so only memory bounds a
+// compile whose limits reach these values.
+/// Native ceiling on every capture record count (semantic nodes and edges,
+/// UDP rows, constants, types, instances, parameters, diagnostics, lexical
+/// tokens, type ranges and members). Snapshot node, type, constant and
+/// edge-window references are 32-bit compact IDs. A semantic-edge budget above
+/// it is rejected rather than clamped, because the decoder validates UDP rows
+/// against the caller's edge limit.
+pub const NATIVE_MAX_RECORDS: u64 = u32::MAX as u64;
+/// Native ceiling on admitted source buffers. Slang's 28-bit buffer IDs are
+/// shared with macro-expansion locations and wrap silently, so admitted
+/// buffers stay well below that width.
+pub const NATIVE_MAX_SOURCES: u64 = 1 << 24;
+const MAX_SOURCES: usize = NATIVE_MAX_SOURCES as usize;
 
 /// One admitted in-memory SystemVerilog compilation unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -325,17 +327,29 @@ impl Default for Limits {
 impl Limits {
     /// Limits for capturing a whole elaborated design for simulation.
     ///
-    /// The export byte budget `max_output_bytes` is the operative guard: every
-    /// exported node, edge and constant is charged against it, so the record
-    /// counts are set to their native ceilings and bounded by the bytes. Other
-    /// limits keep their [`Default`] values.
-    pub fn simulator(max_output_bytes: u64) -> Self {
+    /// No capture budget bounds the design: source, export and value-bit byte
+    /// budgets are unlimited, and record counts and source buffers sit at their
+    /// structural native ceilings ([`NATIVE_MAX_RECORDS`],
+    /// [`NATIVE_MAX_SOURCES`]), so only available memory limits the frontend.
+    /// A resource bound comes from the process-memory guard instead
+    /// (`LLG_MEMORY_LIMIT_MB`).
+    pub fn simulator() -> Self {
         Self {
-            max_output_bytes,
-            max_semantic_nodes: NATIVE_HARD_MAX_SEMANTIC_NODES,
-            max_semantic_edges: NATIVE_HARD_MAX_SEMANTIC_EDGES,
-            max_constants: NATIVE_HARD_MAX_CONSTANTS,
-            ..Self::default()
+            max_sources: NATIVE_MAX_SOURCES,
+            max_source_bytes: u64::MAX,
+            max_diagnostics: NATIVE_MAX_RECORDS,
+            max_instances: NATIVE_MAX_RECORDS,
+            max_parameters: NATIVE_MAX_RECORDS,
+            max_types: NATIVE_MAX_RECORDS,
+            max_value_bits: u64::MAX,
+            max_related_diagnostics: NATIVE_MAX_RECORDS,
+            max_output_bytes: u64::MAX,
+            max_semantic_nodes: NATIVE_MAX_RECORDS,
+            max_semantic_edges: NATIVE_MAX_RECORDS,
+            max_lexical_tokens: NATIVE_MAX_RECORDS,
+            max_type_ranges: NATIVE_MAX_RECORDS,
+            max_type_members: NATIVE_MAX_RECORDS,
+            max_constants: NATIVE_MAX_RECORDS,
         }
     }
 }
@@ -1756,6 +1770,11 @@ unsafe extern "C" {
         sink: *const RawSink,
         out_error: *mut *mut RawError,
     ) -> u32;
+    fn llg_slang_parse_metadata(
+        request: *const RawMetadataRequest,
+        sink: *const RawMetadataSink,
+        out_error: *mut *mut RawError,
+    ) -> u32;
     fn llg_slang_error_view(error: *const RawError, out_view: *mut RawErrorView) -> u32;
     fn llg_slang_error_destroy(error: *mut RawError);
 }
@@ -2141,9 +2160,9 @@ fn validate_request(request: &CompileRequest<'_>) -> Result<(), SlangError> {
     {
         return Err(invalid_argument("Slang capture limits must be positive"));
     }
-    if limits.max_semantic_edges > NATIVE_HARD_MAX_SEMANTIC_EDGES {
+    if limits.max_semantic_edges > NATIVE_MAX_RECORDS {
         return Err(limit_exceeded(format!(
-            "max_semantic_edges exceeds the native hard ceiling ({NATIVE_HARD_MAX_SEMANTIC_EDGES})"
+            "max_semantic_edges exceeds the native hard ceiling ({NATIVE_MAX_RECORDS})"
         )));
     }
     Ok(())

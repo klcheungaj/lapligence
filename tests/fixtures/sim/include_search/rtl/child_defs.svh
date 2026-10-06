@@ -1,0 +1,1 @@
+`define CHILD_VALUE 42

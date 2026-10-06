@@ -1,0 +1,49 @@
+--- a/source/ast/Compilation.cpp
++++ b/source/ast/Compilation.cpp
+@@ -318,8 +318,7 @@ const RootSymbol& Compilation::getRoot(bool skipDefParamsAndBinds) {
+     auto isValidTop = [&](auto& definition) {
+         // All parameters must have defaults.
+         for (auto& param : definition.parameters) {
+-            if (!param.hasDefault() &&
+-                (param.isTypeParam || cliOverrides.find(param.name) == cliOverrides.end())) {
++            if (!param.hasDefault() && cliOverrides.find(param.name) == cliOverrides.end()) {
+                 return false;
+             }
+         }
+@@ -511,11 +510,16 @@ const RootSymbol& Compilation::getRoot(bool skipDefParamsAndBinds) {
+         for (auto [result, _] : topDefs) {
+             auto& def = result.definition->as<DefinitionSymbol>();
+             for (auto& param : def.parameters) {
+-                if (!param.isTypeParam && param.hasSyntax) {
++                if (param.hasSyntax) {
+                     auto it = cliOverrides.find(param.name);
+                     if (it != cliOverrides.end()) {
++                        // Type parameters are keyed by their type assignment
++                        // and take the override expression as a type.
++                        const SyntaxNode* key = param.isTypeParam
++                                                    ? static_cast<const SyntaxNode*>(param.typeDecl)
++                                                    : param.valueDecl;
+                         hierarchyOverrides.childNodes[*def.getSyntax()].paramOverrides.emplace(
+-                            param.valueDecl, it->second);
++                            key, it->second);
+                     }
+                 }
+             }
+--- a/source/ast/symbols/ParameterBuilder.cpp
++++ b/source/ast/symbols/ParameterBuilder.cpp
+@@ -176,6 +176,15 @@ const ParameterSymbolBase& ParameterBuilder::createParam(
+             }
+         }
+ 
++        // A command-line override of a top-level type parameter. Instance
++        // and configuration assignments take precedence.
++        if (!newInitializer && overrideNode && decl.hasSyntax && decl.typeDecl) {
++            if (auto it = overrideNode->paramOverrides.find(decl.typeDecl);
++                it != overrideNode->paramOverrides.end() && it->second.expr) {
++                newInitializer = it->second.expr;
++            }
++        }
++
+         auto& tt = param->targetType;
+         if (newInitializer) {
+             // If this is a NameSyntax, the parser didn't know we were assigning to

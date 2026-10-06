@@ -18,6 +18,12 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   Library-unit recovery uses the same buffers/limits; reject unknown request flags.
   Cache keys are lexically normalized; include directories are lookup prefixes,
   not permission to read the filesystem.
+- ABI v16 `parse_metadata` (`slang/metadata.rs`) borrows the same kind of
+  units/include buffers, defines and include prefixes for one blocking
+  `llg_slang_parse_metadata` call and receives each distinct (source, role,
+  name) through a one-callback sink with the stream's panic/abort rules. It
+  rejects library maps, unknown sources/roles, empty or repeated names, and
+  bounds sources by `max_source_bytes`; parse diagnostics are discarded.
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;
@@ -67,12 +73,12 @@ remain on the calling thread; do not implement `Send` or `Sync`.
 - Keep static `#[link]` metadata for wrapper, Slang and fmt. The library and every
   final musl target must retain the required native archives/wrapping.
 - Bound UDP semantic nodes/edges; reject an edge budget above the native ceiling
-  of 256 million. `Limits::default()` retains the library/interactive budgets
-  (256 MiB export, 4M semantic nodes, 16M edges, 1M constants).
-  `Limits::simulator(bytes)` uses the native record ceilings (64M nodes, 256M
-  edges, 16M constants), retaining all other default limits. Keep these ceilings
-  and the 16 GiB native export ceiling aligned with the wrapper; the simulator
-  driver chooses a separate 4 GiB export budget. Each
+  `NATIVE_MAX_RECORDS` (`u32::MAX`). `Limits::default()` retains the
+  library/interactive budgets (256 MiB export, 4M semantic nodes, 16M edges,
+  1M constants). `Limits::simulator()` bounds nothing but memory: unlimited
+  source/export/value-bit bytes, every record count at `NATIVE_MAX_RECORDS`
+  and sources at `NATIVE_MAX_SOURCES` (2^24). These structural ceilings mirror
+  the wrapper's `kHardMax*`; keep them aligned. Each
   row owns exactly one valid window. Wildcard indexing has snapshot-wide ceilings
   of 65,536 assignments and 8 MiB key bytes; check expanded bucket/key costs before
   allocation.
