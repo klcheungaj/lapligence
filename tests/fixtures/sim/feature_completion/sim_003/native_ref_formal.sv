@@ -1,6 +1,5 @@
-// SIM-008 boundary: a native record `ref` formal aliases subroutine records;
-// a module record actual is legal by IEEE 1800-2009 13.5.2 and rejected
-// explicitly.
+// SIM-008: a native record `ref` formal bound to a module record writes the
+// record itself (IEEE 1800-2009 13.5.2).
 module tb;
   typedef struct {string s; int n;} T;
   T v;

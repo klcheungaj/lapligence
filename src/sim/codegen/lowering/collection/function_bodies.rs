@@ -32,15 +32,18 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    /// The model function for `task` with its static `ref` formals bound to
-    /// `statics`, creating it on first use. The clone keeps the template's
-    /// signature: callers still pass the reference descriptors, which the
-    /// body ignores for the bound formals.
+    /// The model function for `task` (a task or function) with its static
+    /// `ref` formals bound to `statics` and its native record `ref` formals
+    /// bound to `records`, creating it on first use. The clone keeps the
+    /// template's signature: callers still pass the reference descriptors,
+    /// which the body ignores for the bound formals, and null parameters for
+    /// the bound records ([`IrCallArg::NativeRefBound`]).
     pub(in super::super) fn task_specialization(
         &mut self,
         task: NodeId,
         inst: NodeId,
         statics: Vec<StaticRef>,
+        records: Vec<RecordRefBinding>,
     ) -> Result<usize, String> {
         let signals = statics
             .iter()
@@ -49,10 +52,26 @@ impl<'a> Codegen<'a> {
                 _ => Err("task specialization requires a whole-signal actual".to_owned()),
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let key = (task, inst, signals);
+        let key = (task, inst, signals, records.clone());
         if let Some(index) = self.task_specializations.get(&key) {
             return Ok(*index);
         }
+        let formals = self.func_formals(task);
+        let bound_native_refs = records
+            .iter()
+            .map(|binding| {
+                formals
+                    .iter()
+                    .position(|(formal, _)| *formal == binding.formal)
+                    .ok_or_else(|| {
+                        format!(
+                            "record `ref` formal `{}` is not a formal of `{}`",
+                            self.node(binding.formal).name,
+                            self.node(task).name
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let template = self
             .func_meta
             .get(&task)
@@ -65,6 +84,7 @@ impl<'a> Codegen<'a> {
             self.task_specializations.len()
         );
         function.inline_expanded = false;
+        function.bound_native_refs = bound_native_refs;
         let ir = self.model.funcs.len();
         self.model.funcs.push(function);
         self.task_specializations.insert(key, ir);
@@ -73,6 +93,7 @@ impl<'a> Codegen<'a> {
             task,
             inst,
             statics,
+            records,
         });
         Ok(ir)
     }
@@ -126,6 +147,9 @@ impl<'a> Codegen<'a> {
             || self.real_array_return(ft))
         .then_some(ft);
         self.bind_native_function(inst, ft);
+        if let Some(specialization) = specialization {
+            self.bind_record_refs(&specialization.records)?;
+        }
         self.bind_container_function(inst, ft);
         let body = self
             .func_body(ft)
@@ -920,6 +944,9 @@ impl<'a> Codegen<'a> {
         }
         // Restore the process-level context for whatever is lowered next
         // (continuous assignments, processes).
+        if let Some(specialization) = specialization {
+            self.unbind_record_refs(&specialization.records);
+        }
         self.func = None;
         self.cur_fn_ir = None;
         self.depth_arg = "0".to_string();

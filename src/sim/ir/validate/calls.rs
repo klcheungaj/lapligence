@@ -152,10 +152,27 @@ impl Validator<'_> {
         let parameter_order = callee
             .formals
             .iter()
-            .filter(|formal| formal.is_address())
-            .chain(callee.formals.iter().filter(|formal| !formal.is_address()));
-        for (idx, (arg, formal)) in args.iter().zip(parameter_order).enumerate() {
+            .enumerate()
+            .filter(|(_, formal)| formal.is_address())
+            .chain(
+                callee
+                    .formals
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, formal)| !formal.is_address()),
+            );
+        for (idx, (arg, (formal_index, formal))) in args.iter().zip(parameter_order).enumerate() {
             let arg_path = format!("{path}.args[{idx}]");
+            // A formal the callee binds statically takes exactly the bound
+            // marker, which no other formal accepts (SIM-008).
+            if callee.bound_native_refs.contains(&formal_index)
+                != matches!(arg, IrCallArg::NativeRefBound)
+            {
+                return self.fail(
+                    &arg_path,
+                    "statically bound native ref formal and operand must match",
+                );
+            }
             if formal.fixed_array.is_some()
                 && !matches!(arg, IrCallArg::FixedArray(_) | IrCallArg::FixedValue(_))
             {
@@ -165,6 +182,7 @@ impl Validator<'_> {
                 != matches!(
                     arg,
                     IrCallArg::NativeValue(_)
+                        | IrCallArg::NativeRefBound
                         | IrCallArg::NativeLeaves { .. }
                         | IrCallArg::NativeCall { .. }
                 )
@@ -335,6 +353,11 @@ impl Validator<'_> {
                             if actual.same_storage_type(expected))
                     {
                         return self.fail(&arg_path, "container argument type mismatch");
+                    }
+                }
+                IrCallArg::NativeRefBound => {
+                    if !formal.is_ref() {
+                        return self.fail(&arg_path, "bound native operand requires a ref formal");
                     }
                 }
                 IrCallArg::NativeValue(value) => {

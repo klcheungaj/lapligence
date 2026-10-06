@@ -14,6 +14,12 @@ pub enum IrCallArg {
     /// Inputs receive a fresh caller copy; outputs and results are written
     /// in place and copied back by the caller after return.
     NativeValue(usize),
+    /// A native record `ref` formal that the called specialization binds to
+    /// declaration-owned record storage (SIM-008): the callee reads and
+    /// writes the record's leaves directly, so the call passes no value
+    /// (its parameters are null). Valid only for a formal listed in the
+    /// callee's [`super::IrFunc::bound_native_refs`].
+    NativeRefBound,
     /// Whole caller container passed to a container formal. The call gives
     /// the callee fresh storage: inputs and inouts copy the actual in,
     /// outputs and results are copied back after the callee returns.

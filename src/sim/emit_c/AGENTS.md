@@ -295,7 +295,9 @@ See the [runtime retainer inventory](../rt/AGENTS.md#frame-resident-cells).
 
 String inputs are copied; reserve return ownership before argument scopes. Check
 cancellation before copy-out. Native ref descriptors borrow addresses, not string
-allocations. An input event formal is a by-value `llg_event_t` (frame field in a
+allocations. A native record `ref` formal bound by a specialization
+(`IrCallArg::NativeRefBound`) receives null value and companion parameters
+that its body never reads. An input event formal is a by-value `llg_event_t` (frame field in a
 coroutine callee) holding the object the actual named at the call: the caller
 snapshots `{ p ? p->object : NULL }` and the callee binds a private handle copy
 (`IrEventRef::Formal`), so rebinding the actual or the formal cannot move waits.

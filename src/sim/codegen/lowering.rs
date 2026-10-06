@@ -536,16 +536,23 @@ fn lower_model(db: &Db) -> Result<LoweredModel, String> {
         cg.emit_pass(*top, Pass::Procs)?;
     }
     cg.emit_clocking_processes()?;
-    // Every call site that requests a task specialization has been lowered;
-    // their bodies may register initializers flushed below.
-    cg.emit_task_specializations()?;
-    cg.emit_array_initializers()?;
-    cg.emit_record_statement_initializers()?;
-    cg.emit_block_native_initializers()?;
-    cg.emit_container_initializers()?;
-    cg.emit_class_object_initializers()?;
-    cg.emit_semaphore_initializers()?;
-    cg.emit_mailbox_object_initializers()?;
+    // Every process call site that requests a task specialization has been
+    // lowered; their bodies may register initializers flushed below, and an
+    // initializer may call a subroutine bound to a record (SIM-008), so drain
+    // both until no specialization is pending.
+    loop {
+        cg.emit_task_specializations()?;
+        cg.emit_array_initializers()?;
+        cg.emit_record_statement_initializers()?;
+        cg.emit_block_native_initializers()?;
+        cg.emit_container_initializers()?;
+        cg.emit_class_object_initializers()?;
+        cg.emit_semaphore_initializers()?;
+        cg.emit_mailbox_object_initializers()?;
+        if cg.pending_specializations.is_empty() {
+            break;
+        }
+    }
     let mut model = std::mem::replace(
         &mut cg.model,
         IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
@@ -947,7 +954,7 @@ struct AggregateMemberInfo {
     path: Vec<AggregatePathPart>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum AggregatePathPart {
     Member(String),
     Index(i32),
@@ -1170,9 +1177,10 @@ struct Codegen<'a> {
     /// Persistent storage for locals of static delay-bearing tasks. Those
     /// tasks are inlined, so their storage must live outside each call site.
     static_task_locals: HashMap<(NodeId, NodeId), SignalInfo>,
-    /// Task specializations keyed by (task, owning instance, actual signal per
-    /// static `ref` formal); the value is the model function index.
-    task_specializations: HashMap<(NodeId, NodeId, Vec<usize>), usize>,
+    /// Subroutine specializations keyed by (subroutine, owning instance,
+    /// actual signal per static `ref` formal, record bound per native record
+    /// `ref` formal); the value is the model function index.
+    task_specializations: HashMap<SpecializationKey, usize>,
     /// Specializations whose bodies are lowered after all call sites exist.
     pending_specializations: Vec<PendingSpecialization>,
     /// Persistent native string storage for static delay-bearing task locals.
@@ -1278,6 +1286,9 @@ struct Codegen<'a> {
     native_value_layouts: HashMap<usize, NodeId>,
     /// Native declarations of the subroutine instance being lowered.
     native_roots: HashMap<NodeId, usize>,
+    /// Native record `ref` formals of the specialization being lowered, each
+    /// bound to declaration-owned record storage (SIM-008).
+    record_ref_aliases: HashMap<NodeId, RecordRefBinding>,
     /// Shared access names of native leaves, by value and item path.
     native_leaf_symbols: HashMap<(usize, Vec<u32>), String>,
     /// Distinguishes the capture locals of successive native transfers.
@@ -1639,6 +1650,7 @@ impl<'a> Codegen<'a> {
             native_tagged_bypass: HashSet::new(),
             native_value_layouts: HashMap::new(),
             native_roots: HashMap::new(),
+            record_ref_aliases: HashMap::new(),
             native_leaf_symbols: HashMap::new(),
             native_copy_sequence: 0,
             native_call_prelude: None,
@@ -2326,6 +2338,22 @@ struct StaticRef {
     const_ref: bool,
 }
 
+/// A native record `ref` formal bound at lowering to a module, static or
+/// procedural-block record (or a constant member/index selection of one):
+/// the specialization's body reads and writes the record's own leaves, so
+/// writes publish and wake readers exactly as direct writes do (SIM-008).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct RecordRefBinding {
+    formal: NodeId,
+    /// Declaration owning the leaves, never another bound formal.
+    root: NodeId,
+    prefix: Vec<AggregatePathPart>,
+}
+
+/// Identity of one subroutine specialization; see
+/// [`Codegen::task_specializations`].
+type SpecializationKey = (NodeId, NodeId, Vec<usize>, Vec<RecordRefBinding>);
+
 /// A task specialization awaiting body lowering. `ir` indexes the model
 /// entry cloned from the task's template definition.
 struct PendingSpecialization {
@@ -2333,6 +2361,7 @@ struct PendingSpecialization {
     task: NodeId,
     inst: NodeId,
     statics: Vec<StaticRef>,
+    records: Vec<RecordRefBinding>,
 }
 
 /// How to read a formal argument (or local) in the lowered IR: width and

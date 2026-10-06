@@ -196,6 +196,12 @@ pub(in crate::sim::emit_c) fn main(
             out.push_str(&format!("    (void){};\n", function.c_name));
         }
     }
+    // A coroutine subroutine with no caller (a timed task never called, or a
+    // template whose callers all bind records, SIM-008) leaves its
+    // descriptor unreferenced.
+    for &index in execution.analysis().callee_first_functions() {
+        out.push_str(&format!("    (void)&{}_desc;\n", model.funcs[index].c_name));
+    }
     if !model.virtual_interfaces.is_empty() {
         out.push_str("    (void)llg_vif_member; (void)llg_vif_read;\n");
         for (interface_id, interface) in model.virtual_interfaces.iter().enumerate() {

@@ -317,6 +317,12 @@ impl Frame<'_, '_> {
                         parameters.push(storage);
                     }
                 }
+                IrCallArg::NativeRefBound => {
+                    // The specialization binds this `ref` formal to record
+                    // leaves of its own (SIM-008); its parameters stay null.
+                    parameters.push("NULL".to_owned());
+                    parameters.extend(formal.native_companions.iter().map(|_| "NULL".to_owned()));
+                }
                 IrCallArg::NativeValue(value) => {
                     let actual = self.native_value_address(*value)?;
                     // A `ref` formal aliases the caller's value and its

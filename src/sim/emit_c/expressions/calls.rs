@@ -92,6 +92,7 @@ pub(super) fn render_call_expr(
             | IrCallArg::RealArrayValues(_)
             | IrCallArg::ContainerValues { .. }
             | IrCallArg::NativeValue(_)
+            | IrCallArg::NativeRefBound
             | IrCallArg::Container(_)
             | IrCallArg::NativeLeaves { .. }
             | IrCallArg::NativeCall { .. }

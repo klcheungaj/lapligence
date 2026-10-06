@@ -1,6 +1,6 @@
 //! SIM-008: native references and copy-out destinations: output and inout
-//! actuals naming container elements. Oracles are derived by hand in the
-//! fixture readme.
+//! actuals naming container elements, and native record `ref` formals.
+//! Oracles are derived by hand in the fixture readme.
 use super::sim_cli;
 
 const SUITE: &str = "feature_completion/sim_008";
@@ -32,10 +32,37 @@ fn element_refs_follow_elements_until_outdated() {
 fn native_record_ref_formals_alias_subroutine_records() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_008/record_refs.out");
     sim_cli::run_case_backend_parity(SUITE, "record_refs", expected, &[], &[]);
+}
+
+#[test]
+fn native_record_ref_formals_bind_module_and_block_records() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_008/module_record_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "module_record_refs", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "module_record_refs", expected);
+}
+
+#[test]
+fn timed_record_refs_share_the_record_with_other_processes() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_008/timed_record_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "timed_record_refs", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "timed_record_refs", expected);
+}
+
+#[test]
+fn unbindable_record_ref_actuals_are_rejected_explicitly() {
+    const UNBOUND: &str = "ref actual of native record formal `r` in `tb` must be a whole subroutine record, or a module, static or procedural-block record or a constant member/index selection of one, of the same type (SIM-008)";
+    sim_cli::reject_case(SUITE, "neg_record_ref_element", UNBOUND);
+    sim_cli::reject_case(SUITE, "neg_record_ref_member", UNBOUND);
     sim_cli::reject_case(
         SUITE,
-        "neg_module_record_ref",
-        "ref actual of native record formal `r` in `tb` must be a subroutine record variable of the same type (SIM-008)",
+        "neg_record_ref_method",
+        "a module, static or procedural-block record as the actual of native record `ref` formal `r` of method `f` in `tb` is not supported (SIM-008)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_record_ref_const_write",
+        "cannot assign to read-only variable 'r'",
     );
 }
 

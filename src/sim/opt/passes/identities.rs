@@ -188,6 +188,7 @@ fn ident_children(e: &mut IrExpr) {
                     | IrCallArg::FixedArray(_)
                     | IrCallArg::RealArray(_)
                     | IrCallArg::NativeValue(_)
+                    | IrCallArg::NativeRefBound
                     | IrCallArg::Container(_)
                     | IrCallArg::EventVal(_)
                     | IrCallArg::EventAddr(_)
