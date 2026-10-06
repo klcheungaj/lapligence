@@ -8,8 +8,7 @@ use std::path::PathBuf;
 
 use llg::core::{compile, db, elab, model};
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 /// Absolute path of the shared `param_top` test design.
 const PARAMS_SV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/elaboration/params.sv");

@@ -1,9 +1,6 @@
 //! SYN-038 hierarchical static function return slots as ref actuals.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn hierarchical_static_function_return_slot_binds_to_task_ref_formal() {

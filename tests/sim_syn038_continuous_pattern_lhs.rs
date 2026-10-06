@@ -1,9 +1,6 @@
 //! SYN-038 positional assignment-pattern continuous LHSs through the public CLI.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn continuous_pattern_lvalues_preserve_targets_and_rhs_sensitivity() {

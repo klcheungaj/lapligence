@@ -1,9 +1,6 @@
 //! SYN-038 hierarchy, process, call-result, and constant-elaboration remainders.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 const FIXTURE_SOURCE: &str =
     include_str!("fixtures/sim/syn038_pairwise/hierarchy_process_call_remainders.sv");

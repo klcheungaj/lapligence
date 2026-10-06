@@ -1,9 +1,6 @@
 //! SYN-038 public-CLI witnesses for process declarations in an interface body.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn interface_body_latch_and_ff_members_match_in_both_modes() {

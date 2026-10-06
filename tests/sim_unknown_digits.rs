@@ -4,10 +4,7 @@
 //! no x bit. `%b` stays per-bit lowercase. Every expected line is derived by
 //! hand from the digit boundaries of the fixture value, not from the runtime.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 const SUITE: &str = "unknown_digits";
 

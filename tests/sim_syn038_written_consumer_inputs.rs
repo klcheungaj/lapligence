@@ -1,9 +1,6 @@
 //! SYN-038 written sources consumed by static child inputs and function inputs.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 use llg::core::{
     compile::{self, CompileOpts, LanguageEdition},

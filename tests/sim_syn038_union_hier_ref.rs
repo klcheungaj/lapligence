@@ -5,10 +5,7 @@
 //! of the hierarchical call route. Both use the public CLI in both optimizer
 //! modes under IEEE 1800-2009.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn hierarchical_task_ref_updates_union_storage_and_named_view() {

@@ -1,8 +1,5 @@
 //! Continuation coverage for value ports, structural connectivity and callbacks.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn fixed_inputs_retain_nested_conversions_at_every_limb_width() {

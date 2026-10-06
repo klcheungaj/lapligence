@@ -1,10 +1,7 @@
 //! Provisional SYN-038 witnesses replacing function-result rows that attached
 //! CP=function to a separate receiving target.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 use llg::core::{
     compile::{self, CompileOpts, LanguageEdition},

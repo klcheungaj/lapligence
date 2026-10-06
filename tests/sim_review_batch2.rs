@@ -1,8 +1,5 @@
 //! Source-review regressions. Added without executing builds or tests.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn program_exit_uses_dynamic_origin_and_instance_identity() {

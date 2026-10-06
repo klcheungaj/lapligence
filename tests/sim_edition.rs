@@ -1,9 +1,6 @@
 //! End-to-end target-edition and ordinary time-literal acceptance tests.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 use llg::core::compile::{self, CompileOpts, LanguageEdition, OwnedSource};
 use llg::core::db::Db;

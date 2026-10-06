@@ -1,8 +1,5 @@
 //! SYN-026: legal fixed-array iterator index queries through the public CLI.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn fixed_array_reduction_and_ordering_indices_follow_declared_coordinates() {

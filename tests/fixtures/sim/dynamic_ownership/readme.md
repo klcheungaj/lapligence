@@ -27,7 +27,7 @@ These output checks alone do not establish zero leaks. Pair them with allocation
 measurement and supported sanitizer configurations. Real coroutine ASan coverage
 remains a separate gate; do not infer it from the sanitizer-safe component suite.
 
-Run: `cargo test --locked --no-default-features --test sim_dynamic_ownership`.
+Run: `cargo test --locked --no-default-features --test sim_a_m sim_dynamic_ownership::`.
 These fixtures terminate with `$finish(0)` because their exact stderr contract
 excludes informational termination messages; runtime diagnostics are not filtered.
 The active host-lifecycle IR tests can also be selected directly with

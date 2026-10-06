@@ -2,10 +2,7 @@
 //! sensitivity. The CLI harness runs every fixture with and without
 //! optimization.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn fixed_array_readers_wake_on_element_and_index_changes() {

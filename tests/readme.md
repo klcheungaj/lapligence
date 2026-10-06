@@ -7,6 +7,46 @@
 - [LSP fixtures](fixtures/lsp/): framed stdio tests, manifests and source headers.
 - [Simulation feature status](../docs/sim_features.md): the sole support checklist.
 
+## Test binaries
+
+Cargo `autotests` is off. Each `tests/<suite>.rs` file is a module of one grouped
+test binary, so the library, Slang and the C++ wrapper are linked once per group
+instead of once per file (each link is ~80 MB in `quick`; per-file binaries made a
+single profile's `deps/` ~22 GB):
+
+| Binary | Suites (`mod` lines in the root) |
+| --- | --- |
+| `sim_syn` | `tests/sim_syn*.rs` |
+| `sim_a_m` | other `tests/sim_[a-m]*.rs` |
+| `sim_n_z` | `tests/sim_[n-z]*.rs` except `sim_syn*` |
+| `runtime` | `tests/runtime_*.rs` |
+| `general` | every other `tests/*.rs` (frontend, LSP, lint, CLI, configuration, tooling) |
+| `sim_feature_completion` | its `#[path]` task modules |
+| `sim_cmake`, `wide_elab` | standalone: they change the process environment or CWD outside the shared harness lock, which plain `cargo test` would share across a group |
+| `cli_info` | standalone small harness for the CI release linkage audit |
+
+A new suite needs one `mod <suite>;` line in its group root (`tests/<group>.rs`);
+the `general` binary's `test_layout` suite fails with that exact line otherwise.
+Shared helpers (`support/sim.rs` as `sim_harness`, `support/sim_cli.rs` as
+`sim_cli`, `support/c_compiler.rs`, `support/generated_c_lint.rs`, `support/`) are
+declared once in each group root; suites import them with
+`use crate::sim_harness;` rather than their own `#[path]` copy.
+
+Test names carry the suite module: a test `t` in `tests/sim_force.rs` is
+`sim_force::t` in binary `sim_a_m`. Select a suite by name prefix:
+
+```sh
+scripts/run-tests.sh --test sim_force                 # translated (below)
+cargo nextest run -E 'test(/^sim_force::/)'
+cargo test --test sim_a_m sim_force::                 # plain cargo test filter
+```
+
+`scripts/run-tests.sh --test <suite>` translates a grouped suite into its group
+binary plus `test(/^<suite>::/)`; binaries named directly stay whole and any `-E`
+filtersets are intersected with that selection. Under nextest every test still
+runs in its own process. Plain `cargo test` runs a whole group in one process, so
+process-global changes go through the shared harness lock or a standalone binary.
+
 ## Simulator testing methodology
 
 - Target IEEE 1364-2001/SystemVerilog-2009 using tracked clause/production references.
@@ -72,7 +112,7 @@ Run focused acceptance with an explicit empty-selection failure:
 ```sh
 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick \
   --test sim_feature_completion --test emit_decoupling --lib \
-  -E 'binary(sim_feature_completion) | binary(emit_decoupling) | test(sim::rt::tests::)' \
+  -E 'binary(sim_feature_completion) | test(/^emit_decoupling::/) | test(sim::rt::tests::)' \
   --test-threads 6 --no-tests fail
 ```
 
@@ -160,7 +200,7 @@ and these fixtures also run under the generated-runtime sanitizers below with
 
 RTL-018's library, configuration and bind fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_018::)'`, with
-`binary(sim_syn032_library_configs)` and `binary(sim_syn033_structural_bind)`.
+`test(/^sim_syn032_library_configs::/)` and `test(/^sim_syn033_structural_bind::/)`.
 Companion maps, library sources and configurations are named through
 `sim_cli::run_case_with_inputs`/`reject_case_with_inputs`, whose input lists
 the fixture checker treats as references. The composition runs in both
@@ -170,7 +210,7 @@ Db destruction.
 
 RTL-019's source-mapping and edition-admission fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_019::)'`, with
-`binary(sim_edition)`, `binary(sim_syn017_directive_effects)` and the LSP
+`test(/^sim_edition::/)`, `test(/^sim_syn017_directive_effects::/)` and the LSP
 binaries for shared source-map/edition changes. Mapped `__FILE__`/`__LINE__`
 values and runtime locations are counted by hand; the mapping and
 resumed-task fixtures run on every backend (set `LLG_TEST_GMP_ROOT` for the GMP
@@ -235,7 +275,7 @@ zero-time nonconvergence; delayed pattern drivers remain ADV-002's boundary.
 
 RTL-011's alias and inout-collapse fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_011::)'`, together with
-`binary(sim_port_net_types)` and `test(net_collapse::)`. Positive fixtures run in
+`test(/^sim_port_net_types::/)` and `test(net_collapse::)`. Positive fixtures run in
 both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane);
 warning-free ones except the waveform fixture also run after Db destruction.
 Collapse warnings carry absolute paths, so the module compares their text up to
@@ -246,7 +286,7 @@ legality rules; the `inout uwire` formal is positive since RTL-105.
 
 SIM-001's region and procedural-time fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_001::)'` with
-`binary(runtime_regions)` for the native region-callback probe. Every executed fixture
+`test(/^runtime_regions::/)` for the native region-callback probe. Every executed fixture
 runs in both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP
 lane). `sim_cli::run_case_checked_matrix` hands each output to a checker, so the
 region litmus is compared as a line multiset plus the orders the §4.5 reference
@@ -287,7 +327,7 @@ called-function writers.
 
 RTL-020's combinational UDP fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_020::)'`, together with
-`binary(sim_udp)` and `test(emit_c::owned::tests::udp::)`. Positive fixtures run
+`test(/^sim_udp::/)` and `test(emit_c::owned::tests::udp::)`. Positive fixtures run
 in both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP
 lane), `.v` sources also as Verilog-2001, and three after Db destruction. The
 exhaustive table sweep compares with the all-matching-rows oracle in
@@ -332,7 +372,7 @@ index holds the applied state (restore with
 `git restore --staged --worktree -- vendor/libfst`).
 
 ```sh
-cargo test --locked --test vendor_patches -- --test-threads=1
+cargo test --locked --test general vendor_patches:: -- --test-threads=1
 ```
 
 ## Coverage
@@ -581,8 +621,8 @@ The simulator's in-process Rust pipeline benefits from this optimization.
 Use `quick` for shorter rebuilds during edit-test loops:
 
 ```sh
-cargo test --locked --profile quick --test sim_counter
-cargo nextest run --locked --cargo-profile quick --test sim_counter
+cargo test --locked --profile quick --test sim_a_m sim_counter::
+cargo nextest run -E 'test(/^sim_counter::/)' --locked --cargo-profile quick
 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_counter
 ```
 
@@ -756,6 +796,27 @@ Runner regression checks (no Rust compiler required):
 python3 -m unittest discover -s scripts -p test_run_tests.py
 ```
 
+#### Stale Cargo outputs
+
+Cargo never deletes outputs whose hash changed: a new dependency version,
+feature set, flag or toolchain leaves the previous copy of the library, test
+binaries and incremental sessions behind in `target/<profile>/`. Remove them,
+while no build runs in that worktree, with:
+
+```sh
+scripts/prune-target.py --dry-run     # report what would go
+scripts/prune-target.py               # default --keep-days 1
+scripts/prune-target.py --keep-days 0 # everything superseded, however recent
+```
+
+A unit (one fingerprinted package/target-kind hash with its `deps/` and `build/`
+outputs, or an incremental session) is removed only when a newer unit of the same
+package and target kind exists in that profile and none of its files changed
+within the keep window, so the newest copy is always kept and configurations in
+active alternation (for example clippy `--all-features` and the test build) are
+not evicted. Cargo rebuilds anything it still needs. Checks:
+`python3 -m unittest scripts.test_prune_target`.
+
 #### Individual environment overrides
 
 Set `LLG_TEST_BUILD_DIR` to place the shared simulator harness's temporary builds
@@ -794,12 +855,12 @@ still uses the repository's `target/slang` directory.
 ### Focused simulator suites
 
 ```sh
-cargo nextest run --locked --test sim_type_conformance --test sim_partial_features
-cargo nextest run --locked --test sim_data_types --test sim_data_types_extended --test sim_data_type_edges
-cargo nextest run --locked --test sim_data_types_next --test sim_data_types_completion --test sim_net_resolution --test sim_net_defaults --test runtime_values --test runtime_random
-cargo nextest run --locked --test sim_physical_time --test sim_mailboxes
+cargo nextest run -E 'test(/^(sim_type_conformance|sim_partial_features)::/)' --locked
+cargo nextest run -E 'test(/^(sim_data_types|sim_data_types_extended|sim_data_type_edges)::/)' --locked
+cargo nextest run -E 'test(/^(sim_data_types_next|sim_data_types_completion|sim_net_resolution|sim_net_defaults|runtime_values|runtime_random)::/)' --locked
+cargo nextest run -E 'test(/^(sim_physical_time|sim_mailboxes)::/)' --locked
 cargo test --locked --lib core::compile::editions::tests -- --test-threads=1
-cargo test --locked --test sim_loops --test sim_edition --test sim_syn016_elaboration --test sim_file_io --test runtime_file_io -- --test-threads=1
+cargo test --locked --test sim_a_m --test sim_syn --test runtime -- sim_loops:: sim_edition:: sim_syn016_elaboration:: sim_file_io:: runtime_file_io:: --test-threads=1
 ```
 
 ### `llg.toml` configuration
@@ -807,10 +868,10 @@ cargo test --locked --test sim_loops --test sim_edition --test sim_syn016_elabor
 ```sh
 cargo nextest run --locked --lib config::
 cargo nextest run --locked --bin llg settings::
-cargo nextest run --locked --test llg_config_cli --test lint_config_cli
+cargo nextest run -E 'test(/^(llg_config_cli|lint_config_cli)::/)' --locked
 cargo nextest run --locked --bin llg_ls config::
-cargo nextest run --locked --test dump_tokens dump_accepts_driver_only_config_keys
-cargo nextest run --locked --test lsp_stdio lsp_stdio_accepts_driver_keys
+cargo nextest run -E 'test(/^dump_tokens::/)' --locked dump_accepts_driver_only_config_keys
+cargo nextest run -E 'test(/^lsp_stdio::/)' --locked lsp_stdio_accepts_driver_keys
 ```
 
 `llg_config_cli` copies `tests/fixtures/config_cli` into an isolated directory
@@ -835,7 +896,7 @@ LLG_CC=gcc \
 LLG_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
 ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1:log_path=/tmp/llg-asan-model' \
 UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=1' \
-cargo nextest run --locked --test sim_partial_features --test sim_type_conformance --test sim_procedural_assign --test runtime_values --test runtime_random
+cargo nextest run -E 'test(/^(sim_partial_features|sim_type_conformance|sim_procedural_assign|runtime_values|runtime_random)::/)' --locked
 ```
 
 Inspect every `/tmp/llg-asan-model.*` file for errors. Stackless coroutine frames
@@ -933,7 +994,7 @@ paths or whole-simulator speedups.
 ```sh
 cargo test --lib --no-default-features sim::emit_c::owned::tests
 cargo test --lib --no-default-features structured_owned_model_
-cargo test --locked --no-default-features --test sim_dynamic_ownership
+cargo test --locked --no-default-features --test sim_a_m sim_dynamic_ownership::
 python3 tests/runtime_value_storage/validate.py --compiler gcc --compiler clang --sanitizers --full
 ```
 

@@ -18,8 +18,7 @@ use std::path::{Path, PathBuf};
 
 use llg::core::{compile, elab, model};
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 /// Run `f` with the CWD set to a fresh temp dir, then restore and clean up.
 fn in_temp_dir<R>(f: impl FnOnce(&PathBuf) -> R) -> R {

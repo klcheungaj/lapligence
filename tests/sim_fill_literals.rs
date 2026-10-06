@@ -3,8 +3,7 @@
 //! The same design runs with optimization enabled and disabled because fill
 //! identity must survive until each context-determined expression is sized.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use llg::core::{compile, db::Db};
 use llg::sim::{self, opt::OptConfig};

@@ -1,8 +1,5 @@
 //! Independent bit-string oracles for electrical range partitioning.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 fn bits(width: usize, bit: impl Fn(usize) -> char) -> String {
     (0..width).rev().map(bit).collect()

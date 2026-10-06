@@ -1,7 +1,6 @@
 //! SYN-038 read-only `ref` actual for a continuously driven logic variable.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use llg::core::{
     compile::{self, CompileOpts, LanguageEdition},

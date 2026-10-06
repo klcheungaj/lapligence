@@ -1,7 +1,6 @@
 //! SYN-038 module runtime initialization from an interface data member.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use std::path::Path;
 use std::process::Command;

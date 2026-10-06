@@ -2,8 +2,7 @@
 //! expressions. IEEE 1800-2009 §5.8 defines them as realtime values scaled
 //! to the calling design element's unit and rounded to its precision.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use llg::core::compile;
 use llg::core::db::{ConstantSource, ExprKind, NodeKind};

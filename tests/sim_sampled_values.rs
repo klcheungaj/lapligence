@@ -1,9 +1,6 @@
 //! H21 sampled-value system-function acceptance tests.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn sampled_value_domains_preserve_history_and_preponed_values() {

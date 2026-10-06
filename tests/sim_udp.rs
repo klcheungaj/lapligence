@@ -1,10 +1,8 @@
 //! Public CLI coverage for combinational UDP truth tables and explicit UDP
 //! rejection boundaries. Each fixture runs with and without optimization.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 use llg::core::compile::{self, CompileOpts, OwnedSource};
 use llg::core::db::{NodeKind, PrimClass};

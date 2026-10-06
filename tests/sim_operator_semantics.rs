@@ -3,8 +3,7 @@
 //! Each case runs the standard Slang → semantic DB → codegen → CMake path
 //! and checks the complete stdout trace.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use std::path::Path;
 use std::sync::Mutex;

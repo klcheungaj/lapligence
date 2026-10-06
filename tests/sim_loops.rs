@@ -6,10 +6,8 @@
 //! optimizer parity. The Slang compilation uses the shared serialized temporary
 //! CWD harness because the frontend writes process-global artifacts.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 use llg::core::{compile, db};
 use llg::ffi::slang::DiagnosticSeverity;

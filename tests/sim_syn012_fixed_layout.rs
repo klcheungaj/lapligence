@@ -1,10 +1,7 @@
 //! SYN-012 fixed integral aggregate layout and value-context evidence.
 #![allow(clippy::needless_borrows_for_generic_args)]
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 const WIDTHS: &[&str] = &["1", "7", "8", "31", "32", "33", "64", "65", "129"];
 

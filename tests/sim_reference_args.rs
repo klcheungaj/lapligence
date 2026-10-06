@@ -1,9 +1,6 @@
 //! CLI coverage for typed `ref` and `const ref` subroutine aliases.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn reference_argument_aliases_run_in_both_optimizer_modes() {

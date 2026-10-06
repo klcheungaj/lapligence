@@ -1,9 +1,6 @@
 //! SYN-038 typed actuals through output, inout, ref, and const-ref task formals.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn typed_actuals_keep_formal_directions_distinct_from_storage() {

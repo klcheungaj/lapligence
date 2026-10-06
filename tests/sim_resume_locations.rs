@@ -4,8 +4,7 @@ use llg::sim::codegen::{generate_from_db_with_codegen_options, CodegenOptions};
 use llg::sim::execution::ExecutionAnalysisOptions;
 use llg::sim::opt::OptConfig;
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 fn database(sources: &[OwnedSource]) -> Db {
     let compiled = compile_sources_checked(

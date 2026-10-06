@@ -2,8 +2,7 @@ use llg::core::compile::{compile_checked, CompileOpts, OwnedSource};
 use llg::core::db::{CaseKind, Db, NodeKind, StmtKind};
 use llg::sim::semantic::{Origin, SemanticModel, SynthesisIssueKind, SynthesisProfile};
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 fn owned_design(text: &str) -> Db {
     let compiled = compile_checked(&CompileOpts {

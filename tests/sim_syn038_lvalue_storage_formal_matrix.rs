@@ -1,9 +1,6 @@
 //! Selected SYN-038 lvalue shapes across storage, formal, call, and function contexts.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn lvalue_storage_and_formal_paths_preserve_selected_values() {

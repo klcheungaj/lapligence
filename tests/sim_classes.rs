@@ -4,8 +4,7 @@
 //! through CMake.  Keeping the HDL in checked-in fixtures makes the source
 //! provenance and exact optimizer-parity oracle reviewable.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use std::path::Path;
 

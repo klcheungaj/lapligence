@@ -13,8 +13,7 @@
 //!
 //! `final` is a SystemVerilog construct, so every design here uses `.sv`.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use std::sync::Mutex;
 

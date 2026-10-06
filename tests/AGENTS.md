@@ -8,6 +8,12 @@ with a fresh temp directory and unwind-safe restoration. Use `compile_checked` f
 successful execution/elaboration; raw `compile` is for partial snapshots/diagnostics,
 including proof that checked compilation withholds blocking-error snapshots.
 
+Integration suites are modules of a few grouped test binaries (`autotests = false`):
+register a new `tests/<suite>.rs` with `mod <suite>;` in its group root and import
+shared helpers from the crate root (`use crate::sim_harness;`), never a per-suite
+`#[path]` copy. Select suites by name prefix (`test(/^<suite>::/)`, or
+`scripts/run-tests.sh --test <suite>`). See [test binaries](readme.md#test-binaries).
+
 ## Simulator and native acceptance
 
 - Shared `support/sim_cli.rs` suites require CMake, isolated child directories,
@@ -165,7 +171,7 @@ and startup integration:
 ```sh
 cargo nextest run --locked --lib memory_limit::tests
 cargo nextest run --locked --lib ffi::process_memory
-cargo nextest run --locked --test sim_memory_guard
+cargo nextest run -E 'test(/^sim_memory_guard::/)' --locked
 cargo nextest run --locked --bin llg_ls input_budget
 cargo nextest run --locked --bin llg_ls oversized
 cargo nextest run --locked --bin llg_ls response_budget

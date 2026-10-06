@@ -5,10 +5,7 @@
 //! `always_ff`. The Rust oracle is independent of the HDL checks and runs in
 //! both optimizer modes under IEEE 1800-2009.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn selected_array_process_targets_capture_expected_values() {

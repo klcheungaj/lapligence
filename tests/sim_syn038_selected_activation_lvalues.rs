@@ -1,9 +1,6 @@
 //! SYN-038 selected writes preserve activation and local storage roots.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn selected_formal_local_and_return_lvalues_match_in_both_optimizer_modes() {

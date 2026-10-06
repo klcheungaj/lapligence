@@ -3,10 +3,7 @@
 //! Each checked-in HDL fixture runs through `llg` with and without optimization,
 //! and its exact output is checked independently of the generated model.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 const SUITE: &str = "review_bundle";
 

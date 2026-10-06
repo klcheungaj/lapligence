@@ -1,9 +1,6 @@
 //! SYN-038 automatic fixed-record array initialization and selected `ref` use.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn automatic_record_array_initializer_and_selected_ref_match_oracle() {

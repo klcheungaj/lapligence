@@ -1,8 +1,7 @@
 //! SYN-038 expression consumers across call arguments, event controls,
 //! function returns, port actuals, declaration initializers, and dimensions.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use std::path::Path;
 use std::process::Command;

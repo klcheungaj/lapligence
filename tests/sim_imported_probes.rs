@@ -1,9 +1,6 @@
 //! Focused acceptance witnesses supplied separately from the existing feature suites.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 const SUITE: &str = "imported_probes/acceptance";
 

@@ -1,7 +1,4 @@
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn waits_rearm_and_disable_in_both_optimizer_modes() {

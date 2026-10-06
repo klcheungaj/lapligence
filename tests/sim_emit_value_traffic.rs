@@ -1,7 +1,4 @@
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn emitted_value_traffic_arithmetic_aliases_and_boundaries() {

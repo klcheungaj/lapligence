@@ -1,9 +1,6 @@
 //! SYN-038 public-CLI witnesses for record-valued conditional writes in latches.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn child_record_and_selected_record_array_latches_match_in_both_modes() {

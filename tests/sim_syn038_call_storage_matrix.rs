@@ -1,9 +1,6 @@
 //! SYN-038 task/function actuals across storage lifetimes and access routes.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn call_actual_storage_and_routes_match_in_both_optimizer_modes() {

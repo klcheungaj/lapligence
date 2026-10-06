@@ -1,9 +1,6 @@
 //! Static-review regression sources for the eight remaining findings.
 //! These cases have not been executed as part of the patch delivery.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn queue_outdated() {

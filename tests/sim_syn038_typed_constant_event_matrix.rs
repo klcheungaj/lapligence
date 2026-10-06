@@ -1,9 +1,6 @@
 //! SYN-038 typed constant, initializer, return, and event source paths.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn typed_constant_event_paths_keep_exact_values_in_both_optimizer_modes() {

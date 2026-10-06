@@ -1,8 +1,6 @@
 //! R06: source-ordered predicates in independent optimized and unoptimized CLI runs.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 #[test]
 fn sequential_predicate_truth_table() {

@@ -1,9 +1,6 @@
 //! SYN-038 interface-member storage through selected lvalue assignment forms.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn interface_member_lvalues_and_initializer_keep_separate_readbacks() {

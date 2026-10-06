@@ -19,5 +19,5 @@ Coverage: seventeen execution-positive cases for string conversions, aggregate
 Run serially:
 
 ```sh
-cargo nextest run --locked --test sim_data_types_completion
+cargo nextest run -E 'test(/^sim_data_types_completion::/)' --locked
 ```

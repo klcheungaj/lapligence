@@ -1,9 +1,6 @@
 //! SYN-038 public-CLI witnesses for enum equality in generated event and port contexts.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn generated_enum_equality_event_and_child_predicate_match_in_both_modes() {

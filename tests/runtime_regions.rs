@@ -5,8 +5,7 @@ use std::time::Duration;
 
 use llg::sim;
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 #[test]
 fn region_callbacks_trace_fixed_point_and_read_only_boundaries() {

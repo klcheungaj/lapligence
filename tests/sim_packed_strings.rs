@@ -1,7 +1,6 @@
 //! End-to-end packed Verilog string constant simulation tests.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use llg::core::compile;
 use llg::core::db::Db;

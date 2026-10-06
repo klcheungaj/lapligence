@@ -1,7 +1,6 @@
 //! SYN-038 hierarchical continuous writes to a static function result.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use llg::core::{
     compile::{self, CompileOpts, LanguageEdition},

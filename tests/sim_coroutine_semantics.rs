@@ -4,10 +4,7 @@
 //! harness invokes every positive fixture through the public CLI with and
 //! without optimizer passes.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn event_waits_named_events_and_wait_order_are_one_shot() {

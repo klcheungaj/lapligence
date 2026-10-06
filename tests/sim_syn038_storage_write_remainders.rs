@@ -1,9 +1,7 @@
 //! SYN-038 remaining legal storage/write-kind pairings.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 #[test]
 fn storage_write_remainder_cells_run_in_both_optimizer_modes() {

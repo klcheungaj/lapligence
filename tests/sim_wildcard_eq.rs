@@ -3,8 +3,7 @@
 //! Both optimizer configurations run the same four-state cases so constant
 //! folding and the generated runtime are required to agree.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use llg::core::{compile, db::Db};
 use llg::sim::{self, opt::OptConfig};

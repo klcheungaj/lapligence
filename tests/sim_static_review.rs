@@ -1,9 +1,6 @@
 //! Regression cases for the source-only review continuation.
 //! Added as future coverage; no compile or test run was made during the review.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn call_arguments() {

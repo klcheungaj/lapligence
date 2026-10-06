@@ -1,9 +1,7 @@
 //! Strict compile gates for the embedded stackless coroutine library.
 
-#[path = "support/c_compiler.rs"]
-mod c_compiler;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::c_compiler;
+use crate::sim_harness;
 
 use std::io;
 use std::path::{Path, PathBuf};

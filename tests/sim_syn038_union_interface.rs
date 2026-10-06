@@ -1,9 +1,6 @@
 //! SYN-038 public-CLI evidence for packed-union interface storage and ports.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn interface_union_field_nba_and_child_input_actual_match_in_both_modes() {

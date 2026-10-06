@@ -1,9 +1,6 @@
 //! SYN-038 public-CLI evidence for interface record input through const ref.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn interface_record_const_ref_function_returns_the_source_key() {

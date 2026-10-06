@@ -3,10 +3,8 @@
 //! Positive fixtures run in both optimizer modes with exact stdout, including
 //! tagged pattern-case selection through the owned tag guard.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 #[test]
 fn control_nested_foreach_cleanup() {

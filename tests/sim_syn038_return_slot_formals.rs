@@ -1,9 +1,6 @@
 //! SYN-038 static function return slots as output, inout, and ref actuals.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn static_function_return_slots_bind_each_writable_formal_direction() {

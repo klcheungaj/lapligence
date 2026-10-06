@@ -1,8 +1,5 @@
 //! R05: dissimilar port-net resolution, separate from true alias legality.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn port_net_type_wire_wired() {

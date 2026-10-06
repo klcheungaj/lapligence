@@ -4,8 +4,7 @@
 //! state, status codes, and simulation-time statistics cannot depend on IR
 //! rewriting.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use std::path::Path;
 

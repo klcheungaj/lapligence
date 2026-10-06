@@ -1,9 +1,6 @@
 //! Typed continuous assignments across whole values, lvalues, and operations.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn typed_continuous_assignments_match_with_and_without_optimization() {

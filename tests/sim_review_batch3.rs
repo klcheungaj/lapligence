@@ -1,9 +1,6 @@
 //! Regressions for review batch 03. Each case uses strict output comparison
 //! in both optimizer modes. Their presence is not a recorded test result.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn clocking_event() {

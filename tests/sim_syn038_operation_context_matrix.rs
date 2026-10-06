@@ -1,7 +1,6 @@
 //! SYN-038 typed expression operations across storage and lexical contexts.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use llg::core::{
     compile::{self, CompileOpts, LanguageEdition},

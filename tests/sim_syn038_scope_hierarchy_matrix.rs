@@ -1,9 +1,6 @@
 //! SYN-038 source routes across module, generate, interface, and subroutine scopes.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 const FIXTURE_SOURCE: &str = include_str!("fixtures/sim/syn038_pairwise/scope_hierarchy_matrix.sv");
 const EXPECTED_STDOUT: &str = "scope=if:10,6b,00 gen:20,a7 module:10 types:5c,22,88,44 op:a7,0,05,e5 return:a7 init:1000a700 event=1 latch=a7,10 ff=10\n";

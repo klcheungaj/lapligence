@@ -695,7 +695,7 @@ static void test_sv4_wide(void) {
 // 4-state implementations are cross-checked on identical inputs.  Regenerate
 // with:
 //
-//   cargo test --test property_elab gen_c_vectors -- --ignored --nocapture > /tmp/vectors.inc
+//   cargo test --test general property_elab::gen_c_vectors -- --ignored --nocapture > /tmp/vectors.inc
 //
 // Field order: op, a_bits/a_x/a_z/a_w/a_s, b_bits/b_x/b_z/b_w/b_s,
 // c_bits/c_x/c_z/c_w/c_s (mux selector / resize target), e_bits/e_x/e_z/e_w/e_s

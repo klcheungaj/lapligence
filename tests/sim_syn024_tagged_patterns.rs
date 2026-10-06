@@ -1,8 +1,5 @@
 //! SYN-024: finite tagged patterns through the public simulator.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn tagged_bindings_nested_payloads_and_conditional_arms() {

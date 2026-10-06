@@ -1,8 +1,5 @@
 //! Fixed array ordering regressions from the synthesizable review.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn unpacked_record_reverse_preserves_fields() {

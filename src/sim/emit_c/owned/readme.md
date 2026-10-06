@@ -44,7 +44,7 @@ Component success is not full HDL or platform acceptance.
 ```sh
 cargo test --lib --no-default-features sim::emit_c
 cargo test --lib --no-default-features structured_owned_model_
-cargo test --locked --no-default-features --test sim_dynamic_ownership
+cargo test --locked --no-default-features --test sim_a_m sim_dynamic_ownership::
 ```
 
 See [runtime ownership](../../rt/value/ownership.md) and

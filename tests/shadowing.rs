@@ -15,7 +15,7 @@
 //! ordinary contract tests.
 #![cfg(feature = "lsp")]
 
-mod support;
+use crate::support;
 
 use std::fs;
 use std::path::{Path, PathBuf};

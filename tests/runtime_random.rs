@@ -1,7 +1,6 @@
 //! Standalone tests for the IEEE Annex N legacy random runtime.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use std::process::Command;
 use std::time::Duration;

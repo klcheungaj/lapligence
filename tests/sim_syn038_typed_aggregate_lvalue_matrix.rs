@@ -1,9 +1,6 @@
 //! Typed aggregate lvalues retain selected values and adjacent sentinels.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn typed_aggregate_lvalue_matrix_matches_exact_oracle_in_both_optimizer_modes() {

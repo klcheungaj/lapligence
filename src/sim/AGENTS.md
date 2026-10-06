@@ -86,7 +86,7 @@ Keep original runtime/waveform ownership self-tests active. Property vectors mir
 `core::elab::Value`; regenerate with:
 
 ```sh
-cargo test --test property_elab gen_c_vectors -- --ignored --nocapture > /tmp/vectors.inc
+cargo test --test general property_elab::gen_c_vectors -- --ignored --nocapture > /tmp/vectors.inc
 ```
 
 ## Build contract

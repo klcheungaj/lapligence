@@ -4,11 +4,10 @@
 //! pipeline.  The runtime's lower-level self-test separately validates queue
 //! wraparound and reopens FST output with GTKWave's official reader.
 
-use std::process::Command;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
 

@@ -1,8 +1,5 @@
 //! Focused public-CLI regressions for assignment-pattern keys and lvalues.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 const SUITE: &str = "review_bundle";
 const EDITION: &[&str] = &["--edition", "2009"];

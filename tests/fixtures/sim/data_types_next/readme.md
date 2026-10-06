@@ -24,5 +24,5 @@ Coverage: untagged and finite packed tagged unions/structs, streaming and
 Run serially:
 
 ```sh
-cargo nextest run --locked --test sim_data_types_next
+cargo nextest run -E 'test(/^sim_data_types_next::/)' --locked
 ```

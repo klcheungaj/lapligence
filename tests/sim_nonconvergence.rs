@@ -5,8 +5,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 use std::time::Duration;
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 fn invoke(fixture: &str, optimized: bool, env: &[(&str, &str)]) -> Output {
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))

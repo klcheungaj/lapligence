@@ -1,9 +1,6 @@
 //! SYN-013 finite zero-time subroutine, lifetime, and reference evidence.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn zero_time_calls_preserve_fixed_values_lifetimes_and_references() {

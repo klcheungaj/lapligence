@@ -3,8 +3,7 @@
 use std::process::Command;
 use std::time::Duration;
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 const VALUE_PROBE: &str = include_str!("runtime_value_storage/value_isolation_probe.c");
 

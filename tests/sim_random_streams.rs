@@ -6,8 +6,7 @@ use llg::core::compile;
 use llg::sim;
 use llg::sim::opt::OptConfig;
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 const RANDOM_STREAMS: &str = include_str!("fixtures/sim/random_streams/random_streams.sv");
 

@@ -3,10 +3,8 @@
 //! Each fixture is lowered and executed in both optimizer modes so array
 //! snapshot semantics and notifications cannot diverge between pipelines.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 use std::path::Path;
 

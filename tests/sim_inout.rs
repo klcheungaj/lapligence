@@ -12,10 +12,8 @@ use std::sync::Mutex;
 use llg::core::compile;
 use llg::sim::{self, opt::OptConfig};
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 static CWD_LOCK: Mutex<()> = Mutex::new(());
 

@@ -4,10 +4,8 @@
 //! map reviewable. Focused public-CLI witnesses run the corrected grammar rows
 //! and the high-risk context combinations through both optimizer modes.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
+use crate::sim_harness;
 
 use std::collections::HashSet;
 use std::fs;

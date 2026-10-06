@@ -1,8 +1,5 @@
 //! SYN-023: recursive fixed structure patterns through the public simulator.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn recursive_fixed_structure_patterns_preserve_values_and_scope() {

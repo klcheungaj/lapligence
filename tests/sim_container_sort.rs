@@ -3,10 +3,7 @@
 //! and a size that a quadratic sort cannot finish quickly. Expected text is
 //! written by hand or recomputed here with Rust integer arithmetic.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 const SUITE: &str = "container_sort";
 

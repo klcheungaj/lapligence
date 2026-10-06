@@ -1,10 +1,7 @@
 //! SYN-038 function-result and fixed-array-reduction provenance through calls,
 //! storage, hierarchy, interface members, declarations, ports, and processes.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 const FIXTURE_SOURCE: &str = include_str!("fixtures/sim/syn038_pairwise/call_provenance_matrix.sv");
 

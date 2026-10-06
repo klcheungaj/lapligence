@@ -1,9 +1,6 @@
 //! SYN-036 separates packed value capacity from fixed-array cell storage.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 const SUITE: &str = "syn036_capacity";
 

@@ -3,10 +3,7 @@
 //! The checked-in fixture is executed through the public simulator in both
 //! optimizer modes so target capture and conversion behavior cannot diverge.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn expression_mutations_preserve_target_capture_and_value_conversions() {

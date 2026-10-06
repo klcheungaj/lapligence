@@ -2,10 +2,7 @@ use llg::core::compile::{compile_checked, CompileOpts};
 use llg::core::db::Db;
 use llg::sim::{codegen::generate_from_db_with_opts, opt::OptConfig};
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 fn render(stem: &str, options: &OptConfig) -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

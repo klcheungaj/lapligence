@@ -14,11 +14,7 @@
 //! Every expected trace is derived here from Rust integer arithmetic and the
 //! LRM bit-width rules; no expected value is captured from the simulator.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
-
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
+use crate::sim_cli;
 
 mod g1_34 {
     use super::sim_cli;

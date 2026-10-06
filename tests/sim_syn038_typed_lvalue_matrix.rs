@@ -1,9 +1,6 @@
 //! SYN-038 selected lvalue paths over enums, packed structs, and packed unions.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn typed_selected_lvalue_matrix_matches_in_both_optimizer_modes() {

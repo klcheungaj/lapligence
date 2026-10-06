@@ -1,9 +1,6 @@
 //! U01 executable-node coverage through the public simulator CLI.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn reachable_unsupported_primitive_fails_with_source_span() {

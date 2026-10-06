@@ -1,9 +1,6 @@
 //! SYN-028 public CLI qualification of fixed-array sort and rsort.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn signed_unsigned_enum_and_packed_record_ordering() {

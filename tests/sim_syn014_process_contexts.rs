@@ -1,9 +1,6 @@
 //! SYN-014 public-pipeline evidence for aggregate sensitivity and always-family contracts.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn aggregate_sensitivity_and_always_family_contracts_match_in_both_modes() {

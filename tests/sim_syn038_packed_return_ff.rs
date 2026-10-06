@@ -1,9 +1,6 @@
 //! SYN-038 packed-struct cast function returns in an always_ff NBA RHS.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn packed_cast_function_return_is_captured_by_always_ff() {

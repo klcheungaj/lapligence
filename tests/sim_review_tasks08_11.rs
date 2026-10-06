@@ -1,8 +1,5 @@
 //! Public regressions for pruned-schedule positions eight through eleven.
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn tagged_pattern_comparisons_inherit_the_case_mode() {

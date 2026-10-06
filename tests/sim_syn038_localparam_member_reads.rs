@@ -1,9 +1,6 @@
 //! SYN-038 packed localparam member projections used at runtime.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn packed_localparam_members_lower_as_constant_runtime_reads() {

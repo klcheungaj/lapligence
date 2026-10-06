@@ -4,10 +4,8 @@ use llg::sim::codegen::{generate_from_db_with_codegen_options, CodegenOptions};
 use llg::sim::execution::ExecutionAnalysisOptions;
 use llg::sim::opt::OptConfig;
 
-#[path = "support/c_compiler.rs"]
-mod c_compiler;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::c_compiler;
+use crate::sim_harness;
 
 fn render_source_with_execution_options(
     name: &str,

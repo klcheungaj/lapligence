@@ -3,8 +3,7 @@
 //! Each test copies the checked-in `tests/fixtures/config_cli` project into an
 //! isolated directory, writes a config file there and runs `llg` from it.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

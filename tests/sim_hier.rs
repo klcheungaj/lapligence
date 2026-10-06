@@ -12,8 +12,7 @@
 //! These tests temporarily change the process working directory, so each test
 //! runs with the CWD pointed at a fresh temp dir (serialized through a mutex).
 
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_harness;
 
 /// Run `sv` in a fresh temp dir (holding the CWD mutex) and assert the
 /// exact stdout.

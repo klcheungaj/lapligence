@@ -1,9 +1,6 @@
 //! SYN-038 packed aggregate and predicate declaration initializer sites.
 
-#[path = "support/sim_cli.rs"]
-mod sim_cli;
-#[path = "support/sim.rs"]
-mod sim_harness;
+use crate::sim_cli;
 
 #[test]
 fn typed_initializers_keep_their_constant_and_runtime_values() {
