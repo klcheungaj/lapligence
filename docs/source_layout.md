@@ -58,7 +58,9 @@ The standalone compact value backend in
 [`value_gmp/`](../src/sim/rt/value_gmp/) has its own header and separately compiled
 storage, logic, arithmetic, shifts/reductions, comparison/membership, selections,
 references, assembly, consumer bridges, net adapters, real/time, formatting/index
-and limb-kernel units. Its optional GMP dependency is confined to the limb kernel.
+and limb-kernel units. Its optional GMP dependency is confined to the limb kernel;
+[`rt/gmp.rs`](../src/sim/rt/gmp.rs) embeds the bundled `vendor/gmp` subset, with
+its CMake recipe and generated tables in [`rt/gmp/`](../src/sim/rt/gmp/).
 Native probes in `tests/runtime_value_storage/`
 link it beside live legacy for differential checks; experimental generated-source
 selection embeds it behind the unchanged facade, with legacy as the default.
@@ -78,8 +80,8 @@ order and embedded list synchronized; [`rt/tests.rs`](../src/sim/rt/tests.rs)
 checks that relationship without compiling C.
 
 The value, string, random, VPI, coroutine and waveform sources retain their
-separate translation-unit contracts. Vendored frontend, GTKWave and zlib
-(`vendor/zlib`) sources are not reorganized by this layout.
+separate translation-unit contracts. Vendored frontend, GTKWave, zlib
+(`vendor/zlib`) and GMP (`vendor/gmp`) sources are not reorganized by this layout.
 
 ## Test organization
 

@@ -2,28 +2,63 @@ use super::{BuildError, CmakeBuildOpts};
 use crate::sim::value_backend::{CompactKernel, ValueBackend};
 use std::path::PathBuf;
 
-struct GmpInput {
+/// Where compact GMP kernels get GMP.
+enum GmpInput {
+    /// The `vendor/gmp` subset llg writes under `gmp/` and compiles into the
+    /// runtime (see [`crate::sim::rt::gmp`]).
+    Bundled,
+    /// An installation named by `gmp_root` or `GMP_ROOT`.
+    External(ExternalGmp),
+}
+
+struct ExternalGmp {
     include: PathBuf,
     library: PathBuf,
     identity: String,
 }
 
+impl GmpInput {
+    fn identity(&self) -> String {
+        match self {
+            Self::Bundled => format!(
+                "gmp-bundled-{:016x}",
+                crate::sim::rt::gmp::bundled_gmp_identity()
+            ),
+            Self::External(input) => input.identity.clone(),
+        }
+    }
+}
+
 fn gmp_input(opts: &CmakeBuildOpts) -> Result<Option<GmpInput>, BuildError> {
+    // An empty `GMP_ROOT` selects the bundled sources, like an unset one.
+    let env_root = std::env::var_os("GMP_ROOT").filter(|root| !root.is_empty());
+    gmp_input_with(opts, env_root.map(PathBuf::from))
+}
+
+/// [`gmp_input`] with the `GMP_ROOT` environment value supplied by the caller.
+fn gmp_input_with(
+    opts: &CmakeBuildOpts,
+    env_root: Option<PathBuf>,
+) -> Result<Option<GmpInput>, BuildError> {
     opts.value_config
         .validate()
         .map_err(BuildError::InvalidValueConfig)?;
     if opts.value_config.kernel != CompactKernel::Gmp {
         return Ok(None);
     }
-    let root = opts
-        .gmp_root
-        .clone()
-        .or_else(|| std::env::var_os("GMP_ROOT").map(PathBuf::from))
-        .ok_or_else(|| {
-            BuildError::InvalidValueConfig(
-                "compact GMP kernels require GMP_ROOT (include/gmp.h and lib/libgmp)".into(),
-            )
-        })?;
+    let Some(root) = opts.gmp_root.clone().or(env_root) else {
+        return Ok(Some(GmpInput::Bundled));
+    };
+    external_gmp(root).map(|input| Some(GmpInput::External(input)))
+}
+
+/// Whether the build compiles the bundled GMP sources, which the caller must
+/// then write with [`crate::sim::rt::write_bundled_gmp_sources`].
+pub(super) fn uses_bundled_gmp(opts: &CmakeBuildOpts) -> Result<bool, BuildError> {
+    Ok(matches!(gmp_input(opts)?, Some(GmpInput::Bundled)))
+}
+
+fn external_gmp(root: PathBuf) -> Result<ExternalGmp, BuildError> {
     let root = crate::ffi::platform::canonicalize(&root).map_err(|error| {
         BuildError::InvalidValueConfig(format!("invalid GMP_ROOT {}: {error}", root.display()))
     })?;
@@ -66,11 +101,11 @@ fn gmp_input(opts: &CmakeBuildOpts) -> Result<Option<GmpInput>, BuildError> {
             hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
         }
     }
-    Ok(Some(GmpInput {
+    Ok(ExternalGmp {
         include: root.join("include"),
         library,
         identity: format!("gmp64-nail0-{hash:016x}"),
-    }))
+    })
 }
 
 pub(super) fn identity(opts: &CmakeBuildOpts) -> Result<String, BuildError> {
@@ -80,7 +115,7 @@ pub(super) fn identity(opts: &CmakeBuildOpts) -> Result<String, BuildError> {
         opts.value_config.backend.abi(),
         opts.value_config.backend.selector(),
         opts.value_config.kernel.selector(),
-        gmp.map_or_else(|| "portable".into(), |input| input.identity)
+        gmp.map_or_else(|| "portable".into(), |input| input.identity())
     ))
 }
 
@@ -106,10 +141,36 @@ pub(super) fn cmake_setup(opts: &CmakeBuildOpts, target: &str) -> Result<String,
     if opts.value_config.backend == ValueBackend::Compact {
         out.push_str("# Compact operations use prefixed symbols; unavailable operations fail at link time.\n");
     }
-    if let Some(input) = gmp {
-        let include = cmake_path(&input.include)?;
-        let library = cmake_path(&input.library)?;
-        out.push_str(&format!(r#"set(CMAKE_REQUIRED_INCLUDES "{include}")
+    match gmp {
+        None => {}
+        Some(GmpInput::Bundled) => out.push_str(&bundled_cmake_setup(target)),
+        Some(GmpInput::External(input)) => out.push_str(&external_cmake_setup(&input, target)?),
+    }
+    Ok(out)
+}
+
+/// Compile the bundled subset into the runtime library. A model project
+/// builds it only when it builds the runtime itself (no cached
+/// `LLG_RUNTIME_LIBRARY`); the cached archive already contains the objects.
+fn bundled_cmake_setup(target: &str) -> String {
+    let setup = r#"set(LLG_GMP_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/gmp")
+set(LLG_GMP_TABLE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/gmp/generated")
+include("${CMAKE_CURRENT_SOURCE_DIR}/gmp/llg_gmp.cmake")
+target_sources(llg_runtime PRIVATE $<TARGET_OBJECTS:llg_gmp>)
+target_include_directories(llg_runtime PRIVATE ${LLG_GMP_INCLUDE_DIRS})
+"#;
+    if target == "llg_runtime" {
+        setup.to_owned()
+    } else {
+        format!("if(NOT LLG_RUNTIME_LIBRARY)\n{setup}endif()\n")
+    }
+}
+
+fn external_cmake_setup(input: &ExternalGmp, target: &str) -> Result<String, BuildError> {
+    let include = cmake_path(&input.include)?;
+    let library = cmake_path(&input.library)?;
+    Ok(format!(
+        r#"set(CMAKE_REQUIRED_INCLUDES "{include}")
 set(CMAKE_REQUIRED_LIBRARIES "{library}")
 include(CheckCSourceRuns)
 unset(LLG_GMP_COMPATIBLE CACHE)
@@ -138,9 +199,13 @@ if(NOT LLG_GMP_COMPATIBLE)
 endif()
 target_include_directories({target} PRIVATE "{include}")
 target_link_libraries({target} {visibility} "{library}")
-"#, visibility = if target == "llg_runtime" { "PUBLIC" } else { "PRIVATE" }));
-    }
-    Ok(out)
+"#,
+        visibility = if target == "llg_runtime" {
+            "PUBLIC"
+        } else {
+            "PRIVATE"
+        }
+    ))
 }
 
 #[cfg(test)]
@@ -189,5 +254,34 @@ mod tests {
         let missing = identity(&options(&base.join("a"))).unwrap_err();
         assert!(missing.to_string().contains("system fallback is disabled"));
         std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn gmp_kernels_default_to_the_bundled_sources() {
+        let options = CmakeBuildOpts {
+            value_config: ValueConfig {
+                backend: ValueBackend::Compact,
+                kernel: CompactKernel::Gmp,
+            },
+            ..Default::default()
+        };
+        let input = gmp_input_with(&options, None).unwrap().unwrap();
+        assert!(matches!(input, GmpInput::Bundled));
+        let identity = input.identity();
+        assert_eq!(
+            identity,
+            format!(
+                "gmp-bundled-{:016x}",
+                crate::sim::rt::gmp::bundled_gmp_identity()
+            )
+        );
+        let setup = bundled_cmake_setup("llg_runtime");
+        assert!(setup.contains("include(\"${CMAKE_CURRENT_SOURCE_DIR}/gmp/llg_gmp.cmake\")"));
+        assert!(setup.contains("$<TARGET_OBJECTS:llg_gmp>"));
+        // A model links the cached runtime archive, which already holds GMP.
+        assert!(bundled_cmake_setup("sim").starts_with("if(NOT LLG_RUNTIME_LIBRARY)\n"));
+        // An explicit root still selects an installation.
+        let missing = gmp_input_with(&options, Some("/nonexistent-llg-gmp".into()));
+        assert!(missing.is_err_and(|error| error.to_string().contains("invalid GMP_ROOT")));
     }
 }

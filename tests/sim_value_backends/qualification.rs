@@ -1,6 +1,6 @@
 //! V09 dependency qualification: GMP limb-type adaptation, relocated source
-//! exports and runtime-cache isolation between GMP installations.
-use super::{find_archive_optional, options, sim_harness, PROBE};
+//! exports and runtime-cache isolation between external GMP installations.
+use super::{configs, find_archive_optional, options, sim_harness, PROBE};
 use llg::sim::{
     build,
     value_backend::{CompactKernel, ValueBackend, ValueConfig},
@@ -109,16 +109,15 @@ fn run_probe(project: &Path, probe: &str, opts: &build::CmakeBuildOpts) -> Vec<u
 /// `unsigned long long` with `_LONG_LONG_LIMB` (64-bit Windows). macOS declares
 /// `uint64_t` as `unsigned long long`, so its GMP limbs are a distinct C type of
 /// the same size. The kernels then copy through native limb scratch instead of
-/// aliasing. Where the host GMP header has undefined `_LONG_LONG_LIMB` and
-/// `unsigned long` is 64 bits (Linux, macOS), defining it yields the other
-/// spelling with an identical calling convention, so both the direct and the
-/// copying path run on one host. Results must equal legacy and portable.
+/// aliasing. The bundled GMP takes the host's spelling (and, at 8256 bits, its
+/// Toom and FFT paths). Given an external installation whose header has
+/// undefined `_LONG_LONG_LIMB` and `unsigned long` is 64 bits (Linux, macOS),
+/// defining it yields the other spelling with an identical calling convention,
+/// so both the direct and the copying path run on one host. Results must equal
+/// legacy and portable.
 #[test]
 fn component_gmp_limb_type_adapter_matches_portable_and_legacy() {
     assert!(build::cmake_available());
-    let Some(root) = sim_harness::test_gmp_root("GMP limb-type adapter").map(PathBuf::from) else {
-        return;
-    };
     let dir = sim_harness::TempDir::new("gmp-limb-types").unwrap();
     let cache = dir.path().join("cache");
     let reference = run_probe(
@@ -141,6 +140,27 @@ fn component_gmp_limb_type_adapter_matches_portable_and_legacy() {
         ),
     );
     assert_eq!(portable, reference, "compact/portable differs from legacy");
+    let bundled = run_probe(
+        &dir.path().join("gmp-bundled"),
+        WIDE_PROBE,
+        &build::CmakeBuildOpts {
+            gmp_root: None,
+            ..options(
+                ValueConfig {
+                    backend: ValueBackend::Compact,
+                    kernel: CompactKernel::Gmp,
+                },
+                &cache,
+            )
+        },
+    );
+    assert_eq!(
+        bundled, reference,
+        "bundled compact/GMP differs from legacy"
+    );
+    let Some(root) = sim_harness::test_gmp_installation("external GMP limb-type adapter") else {
+        return;
+    };
     let native = run_probe(
         &dir.path().join("gmp"),
         WIDE_PROBE,
@@ -171,26 +191,14 @@ fn component_gmp_limb_type_adapter_matches_portable_and_legacy() {
 
 /// A `--gen-only` export is moved away from where it was generated before it
 /// is configured and built, so the project cannot depend on its original
-/// location. GMP stays an external dependency named by absolute path.
+/// location. The bundled GMP travels with the export; an external GMP stays
+/// a dependency named by absolute path.
 #[test]
 fn component_relocated_source_exports_build_outside_their_tree() {
     assert!(build::cmake_available());
     let dir = sim_harness::TempDir::new("value-relocated").unwrap();
     let cache = dir.path().join("cache");
-    let mut configs = vec![
-        ValueConfig::default(),
-        ValueConfig {
-            backend: ValueBackend::Compact,
-            kernel: CompactKernel::Portable,
-        },
-    ];
-    if sim_harness::test_gmp_root("relocated compact GMP export").is_some() {
-        configs.push(ValueConfig {
-            backend: ValueBackend::Compact,
-            kernel: CompactKernel::Gmp,
-        });
-    }
-    for (index, config) in configs.into_iter().enumerate() {
+    for (index, config) in configs().into_iter().enumerate() {
         let original = dir.path().join(format!("generated-{index}"));
         build::generate_model_sources_with_opts(
             &original,
@@ -261,8 +269,7 @@ fn ready_entries(cache: &Path) -> Vec<PathBuf> {
 #[test]
 fn component_distinct_gmp_installations_use_distinct_runtime_archives() {
     assert!(build::cmake_available());
-    let Some(root) = sim_harness::test_gmp_root("GMP runtime cache isolation").map(PathBuf::from)
-    else {
+    let Some(root) = sim_harness::test_gmp_installation("GMP runtime cache isolation") else {
         return;
     };
     let dir = sim_harness::TempDir::new("gmp-cache-isolation").unwrap();

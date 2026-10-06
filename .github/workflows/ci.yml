@@ -15,9 +15,7 @@
 # scripts/ci_prune_cargo_cache.py removes llg, target/slang, test executables
 # and archives from every target directory before it is saved. ccache is used
 # only for the C of generated test models, through LLG_C_LAUNCHER (see
-# .github/actions/ccache-setup). The GMP qualification lanes also cache the
-# third-party GMP install prefix they build (scripts/ci_gmp.py). Caches are
-# saved by pushes to master only; releases, manual runs elsewhere and other
+# .github/actions/ccache-setup). Caches are saved by pushes to master only; releases, manual runs elsewhere and other
 # branches restore them.
 name: CI and Release
 
@@ -80,11 +78,13 @@ jobs:
           python3 scripts/check_sim_fixture_integrity.py --tracked
           python3 -m unittest discover -s scripts -p test_sim_fixture_integrity.py
 
-      - name: Check parallel test runner, CI cache and GMP scripts
+      - name: Check parallel test runner and CI cache scripts
         run: |
           python3 -m unittest discover -s scripts -p test_run_tests.py
           python3 -m unittest discover -s scripts -p test_ci_cache.py
-          python3 -m unittest discover -s scripts -p test_ci_gmp.py
+
+      - name: Check the bundled GMP tables against vendor/gmp
+        run: python3 scripts/gmp_tables.py --check
 
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
@@ -627,14 +627,9 @@ jobs:
           python: python
 
   # GMP qualification (V09) on Windows and macOS: the build job's release
-  # test archive runs with compact values, GMP kernels and a target-matched
-  # GMP. The plain `test` job above stays the GMP-free legacy configuration.
-  # GMP is third-party, so its install prefix is cached (master saves only),
-  # keyed on version, pinned recipe, target, runner and compiler banner.
-  # macOS builds the pinned, checksum-verified source tarball with a generic
-  # (not host-tuned) configuration; Windows MSVC uses the vcpkg `gmp` port as
-  # static libraries with the dynamic CRT (static-md triplets), matching the
-  # /MD generated models. Missing GMP fails the lane (LLG_TEST_REQUIRE_GMP).
+  # test archive runs with compact values and GMP kernels as the default value
+  # configuration. Generated runtimes compile the bundled vendor/gmp subset
+  # (src/sim/rt/gmp) with the target's own compiler, so no GMP is installed.
   gmp-test:
     if: github.event_name != 'schedule'
     name: ${{ matrix.name }} GMP qualification (${{ matrix.target }})
@@ -650,20 +645,17 @@ jobs:
             platform: windows
             python_arch: x64
             msvc_arch: amd64
-            compiler: cl
             target: x86_64-pc-windows-msvc
           - name: Windows arm64
             runner: windows-11-vs2026-arm
             platform: windows
             python_arch: arm64
             msvc_arch: amd64_arm64
-            compiler: cl
             target: aarch64-pc-windows-msvc
           - name: macOS arm64
             runner: macos-15
             platform: macos
             python_arch: arm64
-            compiler: cc
             target: aarch64-apple-darwin
 
     env:
@@ -699,44 +691,12 @@ jobs:
         with:
           target: ${{ matrix.target }}
 
-      - name: GMP cache key
-        id: gmp-key
-        shell: bash
-        run: >-
-          python scripts/ci_gmp.py cache-key --target "${{ matrix.target }}"
-          --compiler "${{ matrix.compiler }}" --extra "${{ matrix.runner }}"
-          --output "$GITHUB_OUTPUT"
-
-      - name: Restore GMP
-        id: gmp-cache
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ runner.temp }}/gmp
-          key: ${{ steps.gmp-key.outputs.key }}
-
-      # Rebuilds when the restored prefix fails the identity probe. The
-      # source route also runs GMP's own `make check`.
-      - name: Build or reuse GMP
-        shell: bash
-        run: >-
-          python scripts/ci_gmp.py build --reuse --check
-          --prefix "$RUNNER_TEMP/gmp" --work "$RUNNER_TEMP/gmp-work"
-
-      - name: Save GMP
-        if: ${{ success() && github.ref == 'refs/heads/master' && steps.gmp-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ runner.temp }}/gmp
-          key: ${{ steps.gmp-key.outputs.key }}
-
-      - name: Record host, toolchain and GMP identity
+      - name: Record host and toolchain
         shell: bash
         run: |
           uname -a
           cmake --version
           if [ "${{ matrix.platform }}" = windows ]; then (cl 2>&1 || true) | head -n 1; else cc --version; sw_vers; fi
-          python scripts/ci_gmp.py identity --prefix "$RUNNER_TEMP/gmp"
-          ls -l "$RUNNER_TEMP/gmp/lib" "$RUNNER_TEMP/gmp/share/licenses/gmp"
 
       - name: Apply the libfst patch
         shell: bash
@@ -745,8 +705,7 @@ jobs:
       - name: Compact/GMP qualification suite
         shell: bash
         run: |
-          export LLG_TEST_GMP_ROOT="$RUNNER_TEMP/gmp" GMP_ROOT="$RUNNER_TEMP/gmp"
-          export LLG_TEST_REQUIRE_GMP=1 LLG_VALUE_BACKEND=compact LLG_COMPACT_KERNELS=gmp
+          export LLG_VALUE_BACKEND=compact LLG_COMPACT_KERNELS=gmp
           cargo nextest run --no-fail-fast \
             --archive-file "$RUNNER_TEMP/nextest-archive/nextest-archive.tar.zst" \
             --workspace-remap "$GITHUB_WORKSPACE" --extract-to "$GITHUB_WORKSPACE" \
@@ -1049,10 +1008,9 @@ jobs:
           stats: "false"
 
   # GMP qualification (V09) on Linux: the static musl test archive runs in
-  # the same glibc distributions as linux-test, with GMP built from the
-  # pinned tarball by each container's own compiler (generic, not host-tuned
-  # configuration, plus `make check`). The tarball is fetched and verified on
-  # the runner because the minimal images carry no CA bundle guarantee.
+  # the same glibc distributions as linux-test with compact values and GMP
+  # kernels; each container's own compiler builds the bundled vendor/gmp
+  # subset into the generated runtimes.
   gmp-linux-test:
     if: github.event_name != 'schedule'
     name: Linux ${{ matrix.arch }} GMP qualification on ${{ matrix.distro }}
@@ -1079,12 +1037,12 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive &&
               apt-get update &&
               apt-get install -y --no-install-recommends
-              build-essential clang cmake git m4 procps python3
+              build-essential clang cmake git procps python3
           - distro: rocky-9
             image: rockylinux/rockylinux:9
             install: >-
               dnf install -y --setopt=install_weak_deps=False
-              clang cmake gcc gcc-c++ git m4 make procps-ng python3 util-linux
+              clang cmake gcc gcc-c++ git make procps-ng python3 util-linux
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1103,64 +1061,33 @@ jobs:
           curl -LsSf "https://get.nexte.st/latest/${{ matrix.nextest_platform }}" \
             | tar -xzf - -C "$RUNNER_TEMP/nextest-bin"
 
-      - name: GMP cache key
-        id: gmp-key
-        shell: bash
-        run: >-
-          python3 scripts/ci_gmp.py cache-key --target "${{ matrix.arch }}-linux-gnu"
-          --extra "${{ matrix.image }}" --output "$GITHUB_OUTPUT"
-
-      - name: Restore GMP
-        id: gmp-cache
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ runner.temp }}/gmp
-          key: ${{ steps.gmp-key.outputs.key }}
-
-      - name: Fetch the pinned GMP source
-        shell: bash
-        run: python3 scripts/ci_gmp.py fetch --work "$RUNNER_TEMP/gmp-work"
-
       - name: Apply the libfst patch
         shell: bash
         run: git apply --whitespace=nowarn --directory=vendor/libfst patches/libfst/libfst-local-changes.patch
 
-      - name: Build GMP and run the compact/GMP qualification suite
+      - name: Compact/GMP qualification suite
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/gmp"
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace" \
             --volume "$RUNNER_TEMP/nextest-archive:/nextest-archive:ro" \
             --volume "$RUNNER_TEMP/nextest-bin:/nextest-bin:ro" \
-            --volume "$RUNNER_TEMP/gmp:/gmp" \
-            --volume "$RUNNER_TEMP/gmp-work:/gmp-work" \
             --workdir /workspace \
             --env NEXTEST_PROFILE \
             --env GMP_SUITE_FILTER \
             --env LLG_INSTALL="${{ matrix.install }}" \
             "${{ matrix.image }}" sh -euxc '
               eval "$LLG_INSTALL"
-              python3 scripts/ci_gmp.py build --reuse --check --prefix /gmp --work /gmp-work
               uname -a
               cat /etc/os-release
               cc --version
               cmake --version
-              python3 scripts/ci_gmp.py identity --prefix /gmp
-              export LLG_TEST_GMP_ROOT=/gmp GMP_ROOT=/gmp LLG_TEST_REQUIRE_GMP=1
               export LLG_VALUE_BACKEND=compact LLG_COMPACT_KERNELS=gmp
               /nextest-bin/cargo-nextest nextest run --no-fail-fast \
                 --archive-file /nextest-archive/nextest-archive.tar.zst \
                 --workspace-remap /workspace --extract-to /workspace \
                 -E "$GMP_SUITE_FILTER"
             '
-
-      - name: Save GMP
-        if: ${{ success() && github.ref == 'refs/heads/master' && steps.gmp-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ runner.temp }}/gmp
-          key: ${{ steps.gmp-key.outputs.key }}
 
   release:
     name: Attach packages to GitHub release

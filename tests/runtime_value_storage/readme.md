@@ -195,8 +195,10 @@ ABI to compile and the stale ABI to fail. Linux execution does not validate MSVC
 
 `LLG_STORAGE_TEST_VALUE_BACKEND=compact` builds every runtime, scheduler,
 container, VPI and waveform probe above against the compact descriptor, as
-generated models select it; `LLG_STORAGE_TEST_COMPACT_KERNELS=gmp` (with
-`LLG_GMP_ROOT`) selects GMP kernels. The compact units are compiled once with
+generated models select it; `LLG_STORAGE_TEST_COMPACT_KERNELS=gmp` selects GMP
+kernels, built from the bundled `vendor/gmp` subset with the recipe generated
+models use (`gmp.cmake`, `src/sim/rt/gmp/llg_gmp.cmake`) unless `LLG_GMP_ROOT`
+names an installation. The compact units are compiled once with
 `malloc`/`calloc`/`realloc`/`free` renamed to the tracked hooks in
 `tracked_value.c`/`storage_runtime.c`, so live-owner, byte and allocation
 counters cover both backends. A resize of an existing owner (compact X/Z plane
@@ -214,15 +216,15 @@ the backend's fatal `allocation failed` diagnostic.
 
 ```sh
 cmake -S tests/runtime_value_storage -B /build/llg-storage-compact -DCMAKE_BUILD_TYPE=Debug \
-  -DLLG_STORAGE_TEST_VALUE_BACKEND=compact -DLLG_STORAGE_TEST_COMPACT_KERNELS=gmp \
-  -DLLG_GMP_ROOT=/path/to/gmp-install
+  -DLLG_STORAGE_TEST_VALUE_BACKEND=compact -DLLG_STORAGE_TEST_COMPACT_KERNELS=gmp
 cmake --build /build/llg-storage-compact --parallel 6
 ctest --test-dir /build/llg-storage-compact --output-on-failure --parallel 6
 ```
 
 Add `-DLLG_STORAGE_TEST_SANITIZERS=ON -DCMAKE_C_FLAGS=-DLLG_CO_DEBUG=1` for the
 sanitizer and coroutine-debug lane. `tests/runtime_value_storage.rs` runs the
-legacy, compact portable and (given `LLG_TEST_GMP_ROOT`) compact GMP projects.
+legacy, compact portable and compact GMP projects (the last against
+`LLG_TEST_GMP_ROOT` when set).
 
 ## Standalone compact value backend
 
@@ -235,16 +237,15 @@ exclusive-limit rejection and allocation counts. Public headers remain GMP-free.
 ```sh
 cmake -S tests/runtime_value_storage -B /build/llg-compact-gcc \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc \
-  -DLLG_STORAGE_TEST_WAVEFORMS=OFF -DLLG_STORAGE_TEST_COMPACT=ON \
-  -DLLG_GMP_ROOT=/path/to/gmp-install
+  -DLLG_STORAGE_TEST_WAVEFORMS=OFF -DLLG_STORAGE_TEST_COMPACT=ON
 cmake --build /build/llg-compact-gcc --parallel 6 --target compact_checks
 ctest --test-dir /build/llg-compact-gcc -R '^compact_' --output-on-failure --parallel 6
 /build/llg-compact-gcc/compact_gmp_benchmark
 ```
 
 The `compact_checks` target builds every enabled compact probe (S1–S9 and
-V06 consumer bridges). Omit `LLG_GMP_ROOT` for a dependency-free
-portable build. Use a separate build directory with
+V06 consumer bridges) for portable and GMP kernels (bundled GMP, or
+`-DLLG_GMP_ROOT=/path/to/gmp-install`). Use a separate build directory with
 `-DCMAKE_C_COMPILER=clang` for Clang, or add
 `-DLLG_STORAGE_TEST_SANITIZERS=ON` for GCC ASan/UBSan. Allocation counter targets
 use linker wrapping on ELF Unix hosts. Checks remain active under `NDEBUG`.

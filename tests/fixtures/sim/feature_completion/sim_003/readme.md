@@ -3,7 +3,7 @@
 The task module runs every positive fixture through the public CLI in both HDL
 optimizer modes. `native_record_calls`, `native_record_lifetimes` and
 `native_record_sensitivity` also run on legacy, compact/portable and
-compact/GMP backends (GMP when `LLG_TEST_GMP_ROOT` is set) and execute after
+compact/GMP backends and execute after
 the frontend snapshot and owned Db are destroyed. Expected outputs are derived
 by hand from the cited clauses, not captured from llg.
 

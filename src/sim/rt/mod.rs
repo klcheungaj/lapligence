@@ -12,7 +12,8 @@
 //! [`container_sources`] and [`string_sources`] the dynamically sized value
 //! stores, [`runtime_sources`] the event scheduler (`llg_rt.h` / `llg_rt.c`),
 //! [`waveform_sources`] the optional
-//! asynchronous VCD/FST writer and vendored libfst sources, and
+//! asynchronous VCD/FST writer and vendored libfst sources,
+//! [`gmp::bundled_gmp_sources`] the GMP subset behind compact GMP kernels, and
 //! [`selftest_source`] the runtime's C self-test.  The driver and integration
 //! tests write these into a build directory and build them together with the
 //! generated model through CMake (`sim::build`) — the runtime is deliberately
@@ -20,6 +21,8 @@
 //!
 //! See `llg_value.h` for value semantics and `llg_rt.h` for the scheduler API;
 //! correctness of the 4-state math mirrors `core::elab`.
+
+pub mod gmp;
 
 /// The bounded public VPI declarations and generated-model bridge.
 pub fn vpi_sources() -> (&'static str, &'static str) {
@@ -326,7 +329,22 @@ pub fn waveform_sources() -> &'static [(&'static str, &'static str)] {
 pub(crate) fn write_waveform_sources(
     out_dir: &std::path::Path,
 ) -> Result<(), super::build::BuildError> {
-    for (name, content) in waveform_sources() {
+    write_source_files(out_dir, waveform_sources())
+}
+
+/// Write [`gmp::bundled_gmp_sources`] under `out_dir/gmp`.
+pub(crate) fn write_bundled_gmp_sources(
+    out_dir: &std::path::Path,
+) -> Result<(), super::build::BuildError> {
+    write_source_files(out_dir, gmp::bundled_gmp_sources())
+}
+
+/// Write (relative path, contents) pairs, creating parent directories.
+fn write_source_files(
+    out_dir: &std::path::Path,
+    files: &[(&str, &str)],
+) -> Result<(), super::build::BuildError> {
+    for (name, content) in files {
         let path = out_dir.join(name);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|source| super::build::BuildError::Io {

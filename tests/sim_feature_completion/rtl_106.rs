@@ -15,10 +15,10 @@ const SUITE: &str = "feature_completion/rtl_106";
 const LATER: &str = "is not available in IEEE 2001";
 const ARGS_2001: [&str; 2] = ["--edition", "2001"];
 
-/// Value-backend lanes: legacy, compact portable and, when a GMP root is
-/// supplied, compact GMP. A missing GMP root is reported as blocked.
+/// Value-backend lanes: legacy, compact portable and compact GMP (bundled
+/// unless `gmp` names an installation).
 fn backend_lanes(gmp: &str) -> Vec<Vec<(&'static str, String)>> {
-    let mut lanes = vec![
+    vec![
         vec![
             ("LLG_VALUE_BACKEND", "legacy".to_owned()),
             ("LLG_COMPACT_KERNELS", "portable".to_owned()),
@@ -27,17 +27,12 @@ fn backend_lanes(gmp: &str) -> Vec<Vec<(&'static str, String)>> {
             ("LLG_VALUE_BACKEND", "compact".to_owned()),
             ("LLG_COMPACT_KERNELS", "portable".to_owned()),
         ],
-    ];
-    if gmp.is_empty() {
-        let _ = super::sim_harness::test_gmp_root("GMP parity");
-    } else {
-        lanes.push(vec![
+        vec![
             ("LLG_VALUE_BACKEND", "compact".to_owned()),
             ("LLG_COMPACT_KERNELS", "gmp".to_owned()),
             ("GMP_ROOT", gmp.to_owned()),
-        ]);
-    }
-    lanes
+        ],
+    ]
 }
 
 /// Nearest legal composition: named generate loops, `parameter` ports,
@@ -47,7 +42,7 @@ fn backend_lanes(gmp: &str) -> Vec<Vec<(&'static str, String)>> {
 /// both editions.
 #[test]
 fn legal_2001_composition_executes_in_both_editions() {
-    let gmp = std::env::var("LLG_TEST_GMP_ROOT").unwrap_or_default();
+    let gmp = super::sim_harness::test_gmp_root();
     for lane in backend_lanes(&gmp) {
         let envs: Vec<(&str, &str)> = lane.iter().map(|(k, v)| (*k, v.as_str())).collect();
         for edition in ["2001", "2009"] {

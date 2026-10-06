@@ -25,10 +25,10 @@ fn fixture(name: &str) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// Value-backend lanes: legacy, compact portable and, when a GMP root is
-/// supplied, compact GMP. A missing GMP root is reported as blocked.
+/// Value-backend lanes: legacy, compact portable and compact GMP (bundled
+/// unless `gmp` names an installation).
 fn backend_lanes(gmp: &str) -> Vec<Vec<(&'static str, String)>> {
-    let mut lanes = vec![
+    vec![
         vec![
             ("LLG_VALUE_BACKEND", "legacy".to_owned()),
             ("LLG_COMPACT_KERNELS", "portable".to_owned()),
@@ -37,17 +37,12 @@ fn backend_lanes(gmp: &str) -> Vec<Vec<(&'static str, String)>> {
             ("LLG_VALUE_BACKEND", "compact".to_owned()),
             ("LLG_COMPACT_KERNELS", "portable".to_owned()),
         ],
-    ];
-    if gmp.is_empty() {
-        let _ = super::sim_harness::test_gmp_root("GMP parity");
-    } else {
-        lanes.push(vec![
+        vec![
             ("LLG_VALUE_BACKEND", "compact".to_owned()),
             ("LLG_COMPACT_KERNELS", "gmp".to_owned()),
             ("GMP_ROOT", gmp.to_owned()),
-        ]);
-    }
-    lanes
+        ],
+    ]
 }
 
 /// A01: configuration (library cells in generate scopes, parameter overrides),
@@ -56,7 +51,7 @@ fn backend_lanes(gmp: &str) -> Vec<Vec<(&'static str, String)>> {
 /// both optimizer modes and every value backend.
 #[test]
 fn configured_bound_generate_composition_runs_on_every_backend() {
-    let gmp = std::env::var("LLG_TEST_GMP_ROOT").unwrap_or_default();
+    let gmp = super::sim_harness::test_gmp_root();
     for lane in backend_lanes(&gmp) {
         let envs: Vec<(&str, &str)> = lane.iter().map(|(k, v)| (*k, v.as_str())).collect();
         for mode in ["separate", "merged"] {

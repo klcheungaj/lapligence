@@ -3,8 +3,7 @@
 IEEE 1364-2001 §§4.1.5–4.1.6, 4.1.12, 4.4–4.5 and IEEE 1800-2009 §§11.4.1–11.4.3,
 11.4.10, 11.6–11.8 (Table 11-4), 10.3, 13.4, 23.3 and 6.5 supply the oracles.
 Every positive source runs through the public CLI in both optimizer modes and
-on the legacy, compact/portable and compact/GMP value backends (the GMP lane
-needs `LLG_TEST_GMP_ROOT`; without it the run reports that lane as blocked).
+on the legacy, compact/portable and compact/GMP value backends.
 
 Arithmetic expectations are computed in the test by an independent four-state
 limb oracle (`tests/sim_feature_completion/rtl_006/oracle.rs`): Knuth division,

@@ -296,7 +296,7 @@ def command_text(command):
 def backend_env(backend, gmp_root):
     env = dict(os.environ)
     env.update(BACKENDS[backend])
-    if backend == "compact-gmp":
+    if backend == "compact-gmp" and gmp_root:
         env["GMP_ROOT"] = str(gmp_root)
     else:
         env.pop("GMP_ROOT", None)
@@ -368,7 +368,8 @@ def build_bench(args, backend, model_dir, logs, commands):
     definitions = compile_definitions((model_dir / "CMakeLists.txt").read_text())
     command = [args.cc, "-std=c11", "-O3", "-DNDEBUG", "-Wall"] + definitions + ["-I", str(model_dir)]
     link = [str(model_dir / "build" / "libllg_runtime.a")]
-    if backend == "compact-gmp":
+    # The bundled GMP is inside the runtime archive; an installation is not.
+    if backend == "compact-gmp" and args.gmp_root:
         command += ["-I", str(args.gmp_root / "include")]
         link.append(str(args.gmp_root / "lib" / "libgmp.a"))
     command += [str(VALUES_DIR / "value_ops_bench.c")] + link + ["-lm", "-ldl", "-o", str(output)]
@@ -516,9 +517,7 @@ def parse_args(argv):
             parser.error(f"--{name.replace('_', '-')} is required")
     args.backends = args.backend or list(BACKENDS)
     args.workloads = args.workload or list(WORKLOADS)
-    if "compact-gmp" in args.backends:
-        if not args.gmp_root:
-            parser.error("compact-gmp requires --gmp-root or GMP_ROOT")
+    if "compact-gmp" in args.backends and args.gmp_root:
         args.gmp_root = Path(args.gmp_root).resolve()
     if args.runs < 1 or args.warmups < 0:
         parser.error("--runs must be positive and --warmups non-negative")

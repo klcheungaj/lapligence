@@ -214,7 +214,7 @@ fn deep_recursion_runs() {
 }
 
 /// Recursion on the chain arena and pointer-passed packed results with the
-/// compact backend (portable and, given `LLG_TEST_GMP_ROOT`, GMP kernels),
+/// compact backend (portable and GMP kernels),
 /// against legacy and the independent expected output.
 #[test]
 fn stack_bounds_fixtures_match_on_compact_backends() {

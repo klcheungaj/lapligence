@@ -32,8 +32,9 @@ See [feature status](../../docs/sim_features.md),
 [source layout](../../docs/source_layout.md).
 
 Experimental packed-value selection uses `LLG_VALUE_BACKEND=compact` and
-`LLG_COMPACT_KERNELS=portable|gmp`; defaults are legacy/portable. GMP mode requires
-`GMP_ROOT` containing compatible headers and library. Portable needs no GMP;
+`LLG_COMPACT_KERNELS=portable|gmp`; defaults are legacy/portable. GMP mode
+compiles the bundled `vendor/gmp` subset ([`rt/gmp.rs`](rt/gmp.rs)) into the
+runtime unless `GMP_ROOT` names a compatible installation. Portable needs no GMP;
 legacy never inspects or links it. Library callers pass the same `ValueConfig`
 in `CodegenOptions` and `CmakeBuildOpts`. Source export retains the selection,
 ABI guards and dependency fingerprint. Compact selected models include S1–S9

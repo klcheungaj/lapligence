@@ -183,5 +183,7 @@ unchanged; runtime-content hashing rebuilds cached archives.
 The experimental [compact value backend](value_gmp/readme.md) uses ABI 5 and
 provides inline small values, canonical optional B storage and optional GMP wide
 mul/div/mod/pow kernels. Generated sources and runtime archives can select it with
-`LLG_VALUE_BACKEND=compact` and `LLG_COMPACT_KERNELS=portable|gmp`; GMP requires
-`GMP_ROOT`. Selected compact builds include S1–S9 and native V06 consumer helpers.
+`LLG_VALUE_BACKEND=compact` and `LLG_COMPACT_KERNELS=portable|gmp`; GMP uses the
+bundled subset in [`gmp.rs`](gmp.rs) (written under `gmp/` and built by
+`gmp/llg_gmp.cmake`; tables from `scripts/gmp_tables.py`) unless `GMP_ROOT`
+names an installation. Selected compact builds include S1–S9 and native V06 consumer helpers.

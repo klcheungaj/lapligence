@@ -107,7 +107,7 @@ differs from legacy.
 
 ```sh
 python3 perf/scripts/value_backends.py \
-  --sim-bin target/release/llg --gmp-root /path/to/gmp \
+  --sim-bin target/release/llg \
   --runs 7 --jobs 8 \
   --heaptrack /path/to/heaptrack --tool-library-path /path/to/heaptrack/libs \
   --scratch-dir /build/my-value-backends --output-dir /path/to/results

@@ -3,8 +3,7 @@
 IEEE 1800-2009 §§3.14.2.3, 20.3, 20.4 and 21.2.1.3 and IEEE 1364-2001
 §§17.3 and 17.7 supply the oracles; every expectation is computed by hand
 from those clauses. Executed sources run through the public CLI in both
-optimizer modes on the legacy and compact (portable and, with
-`LLG_TEST_GMP_ROOT`, GMP) value backends; `.v` fixtures also run with
+optimizer modes on the legacy and compact (portable and GMP) value backends; `.v` fixtures also run with
 `--edition 2001`. Executed fixtures, including the adopted positive FND-002
 witnesses, end with `$finish(0)` so no diagnostic reaches stderr; the witnesses
 are otherwise unchanged.

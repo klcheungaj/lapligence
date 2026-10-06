@@ -1,8 +1,7 @@
 # Class field layouts and suspendable method dispatch (SIM-011)
 
 The task module runs every positive fixture through the public CLI in both HDL
-optimizer modes on legacy, compact/portable and compact/GMP values (GMP when
-`LLG_TEST_GMP_ROOT` is set). Expected outputs are derived by hand from the
+optimizer modes on legacy, compact/portable and compact/GMP values. Expected outputs are derived by hand from the
 cited clauses (IEEE 1800-2009 Clause 8, §§6.21-6.22, 13.3-13.5), not captured
 from llg. Times are printed with `%0d $time` in the default 1 ns unit.
 

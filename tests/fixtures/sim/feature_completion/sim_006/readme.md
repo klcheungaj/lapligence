@@ -1,8 +1,7 @@
 # Recursive containers and handle-array storage (SIM-006)
 
 The task module runs every positive fixture through the public CLI in both HDL
-optimizer modes on legacy, compact/portable and compact/GMP values (GMP when
-`LLG_TEST_GMP_ROOT` is set). The feature fixtures without runtime warnings
+optimizer modes on legacy, compact/portable and compact/GMP values. The feature fixtures without runtime warnings
 also run after the frontend snapshot and owned Db are destroyed; the two
 fixtures that warn also check their exact runtime stderr. Expected outputs are
 derived by hand from the cited clauses, not captured from llg.

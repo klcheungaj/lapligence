@@ -26,7 +26,8 @@ Keep reusable processing in the library. Bins import `llg::config`, `llg::core`,
   warning under `--gen-only`. Never derive defaults from compile-time paths.
 - Experimental model selection uses `LLG_VALUE_BACKEND=legacy|compact` and
   `LLG_COMPACT_KERNELS=portable|gmp`; defaults legacy/portable. GMP kernels
-  require `GMP_ROOT`. The emitter and builder receive the same configuration.
+  build the bundled `vendor/gmp` subset; `GMP_ROOT` optionally names an
+  installation. The emitter and builder receive the same configuration.
   Compact selection remains experimental; do not claim production support before V12.
 - Repeated `--dpi-lib <path>` validates explicit DPI-C libraries before CMake and
   retains them in source-only output. `--no-opt` disables normally enabled IR

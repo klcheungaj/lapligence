@@ -122,8 +122,9 @@ include independent state/arithmetic oracles, differential checks and allocation
 counters.
 
 Generated builds select `LLG_VALUE_BACKEND=compact` and
-`LLG_COMPACT_KERNELS=portable|gmp`; GMP mode requires `GMP_ROOT`. Exported CMake
-projects propagate both literal definitions to every model/runtime unit and
+`LLG_COMPACT_KERNELS=portable|gmp`; GMP mode builds the bundled subset (below)
+unless `GMP_ROOT` names an installation. Exported CMake projects propagate both
+literal definitions to every model/runtime unit; with an installation they also
 verify matching GMP headers/library and 64-bit nail-free compatible limbs. The
 facade selects native compact consumer and reference implementations;
 there are no pending declarations for currently emitted operations and no legacy
@@ -151,28 +152,42 @@ Net resolution starts with the A plane only and promotes B once, at the first
 word carrying X/Z, so a known resolved net costs one allocation instead of an
 allocation plus a shrinking reallocation.
 
-## Platform qualification and GMP licensing
+## Bundled GMP, platform qualification and licensing
 
-GMP is an optional, user-supplied dependency selected with
-`LLG_COMPACT_KERNELS=gmp` and an explicit `GMP_ROOT` (`include/gmp.h` plus a
-static `lib/libgmp.a`, `lib/gmp.lib` or `lib/libgmp.lib`). Headers, library,
-compiler ABI and limb configuration must match the model compiler; CMake checks
-version agreement and 64-bit nail-free limbs, and the content hash keeps runtime
-archives of different installations apart. CI qualifies one route per compiler
-ABI (`scripts/ci_gmp.py`, `.github/workflows/ci.yml` `gmp-test` and
-`gmp-linux-test`): the pinned, SHA-256-verified GMP 6.3.0 tarball built with a
-generic (not host-tuned) static configuration and `make check` on Linux and
-macOS, and the vcpkg `gmp` port with `*-windows-static-md` triplets (static
-library, dynamic CRT like generated models) on Windows MSVC x64/arm64. A host-tuned
-build (for example `-march=native`) is valid only on matching CPUs.
+GMP kernels call `mpn_mul_n`, `mpn_mul_1`, `mpn_addmul_1`, `mpn_tdiv_qr` and
+`mpn_get_str`. By default `llg` builds them from the `vendor/gmp` submodule
+(GMP 6.3.0) without GMP's autotools: [`../gmp.rs`](../gmp.rs) embeds the
+generic-C `mpn` subset forming their link closure, `gmp-h.in`, `gmp-impl.h`,
+`longlong.h`, the licence texts and the tables generated for 64-bit nail-free
+limbs ([`../gmp/generated`](../gmp/generated), regenerated and checked by
+`scripts/gmp_tables.py`). Generated projects receive them under `gmp/`;
+[`../gmp/llg_gmp.cmake`](../gmp/llg_gmp.cmake) configures `gmp.h` and a minimal
+`config.h` for the target (64-bit, little-endian; `unsigned long long` limbs
+where `unsigned long` is 32-bit, as on Windows) and compiles the OBJECT library
+`llg_gmp` into the runtime archive. The archive is keyed by the bundle's content
+hash, so GMP compiles once per runtime cache entry. Moving the submodule needs the
+tables regenerated and the `LLG_GMP_MPN_SOURCES` closure rechecked: the Debug
+storage probes and Release models fail to link when it is incomplete. The
+subset is portable C (no assembly `mpn` kernels), so an asm-tuned installation
+can be faster for very wide operands.
+
+`GMP_ROOT` (or `CmakeBuildOpts::gmp_root`) instead names an installation
+(`include/gmp.h` plus a static `lib/libgmp.a`, `lib/gmp.lib` or `lib/libgmp.lib`).
+Headers, library, compiler ABI and limb configuration must match the model
+compiler; CMake checks version agreement and 64-bit nail-free limbs, and the
+content hash keeps runtime archives of different installations apart. A
+host-tuned build (for example `-march=native`) is valid only on matching CPUs.
+CI's `gmp-test` and `gmp-linux-test` lanes qualify the bundled build with each
+target's compiler (MSVC x64/arm64, macOS arm64 and Linux glibc distributions);
+installation tests run when `LLG_TEST_GMP_ROOT` is set.
 
 Licensing (review, not legal advice): GMP is dual-licensed LGPLv3-or-later /
-GPLv2-or-later. Lapligence distributes no GMP source or binary: release packages
-and the `llg`/`llg_ls` executables never link it, and only a model the user
-builds with GMP kernels links the user's static `libgmp`. Such a model also
-contains the GPLv2 Lapligence runtime, so whoever distributes it relies on GMP's
-GPLv2 option (LGPLv3 alone is not GPLv2-compatible) and must ship GMP's licence
-texts and corresponding source. Under LGPLv3 alone (a differently licensed
-runtime), static linking would additionally require relinkable object files. The
-legacy backend and portable compact kernels never use GMP, so GMP-free builds
-are unaffected. See `THIRD_PARTY_NOTICES.md`.
+GPLv2-or-later. Lapligence carries the GMP subset as source text: the `llg` and
+`llg_ls` executables never link it, and only a model the user builds with GMP
+kernels compiles and links it. Such a model also contains the GPLv2 Lapligence
+runtime, so whoever distributes it relies on GMP's GPLv2 option (LGPLv3 alone is
+not GPLv2-compatible) and must ship GMP's licence texts and corresponding source;
+generated projects carry both under `gmp/`. Under LGPLv3 alone (a differently
+licensed runtime), static linking would additionally require relinkable object
+files. The legacy backend and portable compact kernels never use GMP, so
+GMP-free builds are unaffected. See `THIRD_PARTY_NOTICES.md`.

@@ -225,15 +225,14 @@ differences and their portable fixes are in
 [shared source policies](../src/AGENTS.md#platform-differences).
 
 GMP qualification: `gmp-test` (Windows/macOS) and `gmp-linux-test` (Ubuntu and
-Rocky per architecture) run the same release archives with compact values, GMP
-kernels and a target-matched GMP from `scripts/ci_gmp.py` (pinned source build
-on Unix, vcpkg static-md on MSVC), printing host/toolchain/GMP identity first.
-They set `LLG_TEST_REQUIRE_GMP=1`, so missing GMP fails rather than skips, and
-run `GMP_SUITE_FILTER` (manual dispatch `gmp-scope: full` runs everything). The
-plain `test`/`linux-test` jobs remain the GMP-free legacy configuration. GMP
-lanes do not gate releases (GMP kernels are experimental and optional); the
-built GMP prefix is a third-party cache keyed on version, recipe, target and
-compiler, saved on master only.
+Rocky per architecture) run the same release archives with compact values and
+GMP kernels as every model's default, printing host/toolchain identity first.
+Generated runtimes compile the bundled `vendor/gmp` subset with the target's
+compiler, so no GMP is installed. They run `GMP_SUITE_FILTER` (manual dispatch
+`gmp-scope: full` runs everything). The plain `test`/`linux-test` jobs keep the
+legacy default; their compact/GMP parity lanes also build the bundled GMP. GMP
+lanes do not gate releases (GMP kernels are experimental and optional). The
+lint job runs `scripts/gmp_tables.py --check`.
 
 Lint/sanitizer jobs disable Rust debug info/incremental compilation and strip native
 frontend debug sections while retaining debug assertions/overflow checks. Preserve

@@ -7,7 +7,7 @@ expected text comes from the all-matching-rows oracle in
 `tests/sim_feature_completion/rtl_020.rs` (a Z input reads as X, `b` covers
 0/1, `?` covers 0/1/X, no match gives X). Positive sources run through the
 public CLI in both optimizer modes and on the legacy and compact value
-backends (set `LLG_TEST_GMP_ROOT` for the GMP lane); `.v` sources also run as
+backends; `.v` sources also run as
 Verilog-2001.
 
 - `exhaustive_tables.v` drives a mux, a parity table and a table using every

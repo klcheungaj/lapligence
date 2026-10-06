@@ -3,8 +3,7 @@
 Each fixture checks retained packed owners against literals computed outside
 the simulator (Python integers or hand-derived X/Z layouts) and prints
 `PASS <fixture>` only when every check holds. `sim_value_backends/parity.rs`
-runs them through the public CLI with legacy, compact portable and (given
-`LLG_TEST_GMP_ROOT`) compact GMP in both optimizer modes; stdout and stderr
+runs them through the public CLI with legacy, compact portable and compact GMP in both optimizer modes; stdout and stderr
 must equal legacy and the expected line. Values cross the 64-bit inline/wide
 boundary and the known/X-Z boundary, where the compact backend moves payloads.
 

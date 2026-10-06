@@ -31,26 +31,31 @@ int main(void) {
 "#;
 
 fn configs() -> Vec<ValueConfig> {
-    let mut configs = vec![
+    vec![
         ValueConfig::default(),
         ValueConfig {
             backend: ValueBackend::Compact,
             kernel: CompactKernel::Portable,
         },
-    ];
-    if sim_harness::test_gmp_root("compact GMP exports").is_some() {
-        configs.push(ValueConfig {
+        ValueConfig {
             backend: ValueBackend::Compact,
             kernel: CompactKernel::Gmp,
-        });
-    }
-    configs
+        },
+    ]
+}
+
+/// The external GMP override under test, if any; otherwise GMP kernels use
+/// the bundled sources.
+fn test_gmp_override() -> Option<PathBuf> {
+    Some(sim_harness::test_gmp_root())
+        .filter(|root| !root.is_empty())
+        .map(PathBuf::from)
 }
 
 fn options(config: ValueConfig, cache: &Path) -> build::CmakeBuildOpts {
     build::CmakeBuildOpts {
         value_config: config,
-        gmp_root: std::env::var_os("LLG_TEST_GMP_ROOT").map(PathBuf::from),
+        gmp_root: test_gmp_override(),
         runtime_cache_dir: Some(cache.to_owned()),
         build_jobs: Some(6),
         ..Default::default()
@@ -159,13 +164,12 @@ fn component_selected_exports_build_and_wrong_backend_archives_fail() {
         archives.push((project, find_archive(entry)));
     }
     if cfg!(unix) {
-        let mut mixed = vec![(0, 1, 0, 0, "llg_value_v4"), (1, 0, 1, 0, "llg_value_v5")];
-        if archives.len() == 3 {
-            mixed.extend([
-                (1, 2, 1, 0, "llg_value_v5_b1_k0"),
-                (2, 1, 1, 1, "llg_value_v5_b1_k1"),
-            ]);
-        }
+        let mixed = [
+            (0, 1, 0, 0, "llg_value_v4"),
+            (1, 0, 1, 0, "llg_value_v5"),
+            (1, 2, 1, 0, "llg_value_v5_b1_k0"),
+            (2, 1, 1, 1, "llg_value_v5_b1_k1"),
+        ];
         for (source, library, backend, kernel, guard) in mixed {
             let mut compiler = Command::new("cc");
             compiler
@@ -178,11 +182,9 @@ fn component_selected_exports_build_and_wrong_backend_archives_fail() {
                 .arg(&archives[library].1)
                 .args(["-lm", "-o"])
                 .arg(dir.path().join(format!("wrong-{source}")));
-            if library == 2 {
-                compiler.arg(
-                    PathBuf::from(std::env::var_os("LLG_TEST_GMP_ROOT").unwrap())
-                        .join("lib/libgmp.a"),
-                );
+            // The bundled GMP is inside the runtime archive; an override is not.
+            if let Some(root) = test_gmp_override().filter(|_| library == 2) {
+                compiler.arg(root.join("lib/libgmp.a"));
             }
             let output = sim_harness::run_command(&mut compiler, Duration::from_secs(60)).unwrap();
             assert!(!output.status.success());
@@ -284,8 +286,7 @@ fn component_invalid_driver_selector_is_rejected() {
 
 #[test]
 fn component_gmp_header_library_and_limb_mismatches_fail_configure() {
-    let Some(root) = sim_harness::test_gmp_root("GMP dependency witnesses").map(PathBuf::from)
-    else {
+    let Some(root) = sim_harness::test_gmp_installation("GMP dependency witnesses") else {
         return;
     };
     let dir = sim_harness::TempDir::new("gmp-mismatch").unwrap();

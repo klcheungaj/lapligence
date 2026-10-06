@@ -3,7 +3,7 @@
 IEEE 1800-2009 §§11.4.2, 11.11, 26.3 and 26.6 supply the oracles; every `.out`
 file was derived by hand from the bound functions' bodies. Positive sources run
 through the public CLI in both optimizer modes and on the legacy,
-compact/portable and (with `LLG_TEST_GMP_ROOT`) compact/GMP value backends;
+compact/portable and compact/GMP value backends;
 `incdec_values` and `single_evaluation` also run after snapshot/Db destruction.
 
 An overloaded compound assignment or increment whose value is used, or whose

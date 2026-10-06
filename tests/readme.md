@@ -138,15 +138,14 @@ both optimizer modes on the legacy and compact backends (`run_case_backend_parit
 and after Db destruction; descriptor casts also bound generated model size.
 
 RTL-006's arithmetic and mutation fixtures use `-E 'binary(sim_feature_completion) &
-test(rtl_006::)'`; set `LLG_TEST_GMP_ROOT` to include the compact GMP lane. The
+test(rtl_006::)'`. The
 arithmetic expectations come from the in-test limb oracle
 (`sim_feature_completion/rtl_006/oracle.rs`) at widths 1 through 129 and at the
 8,128/8,129-bit kernel threshold, in both optimizer modes on every backend.
 
 RTL-007's zero-time call and evaluator fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_007::)'`. Positive fixtures run in
-both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP
-kernel lane); stateful event helpers assert the documented process-evaluation
+both optimizer modes on both backends; stateful event helpers assert the documented process-evaluation
 policy and check evaluation counters only as lower bounds. RTL-007b's effectful
 helpers in force sources, intra-assignment/NBA/`->>` controls, named-event and
 real lists and `$monitor`/`$strobe` use
@@ -155,8 +154,7 @@ the runtime queries are also covered by `sim_counter::sim_rt_selftest`.
 
 RTL-008's initialization, package/`$unit` and let fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_008::)'`. Single-file positives run
-in both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP
-lane); multi-file package and `$unit` cases run in separate and merged
+in both optimizer modes on both backends; multi-file package and `$unit` cases run in separate and merged
 compilation-unit modes through `run_case_with_source_prefix`. Cross-scope
 initialization oracles are order-independent or follow a static read
 dependency; the Verilog-2001 race fixture asserts its allowed result set.
@@ -170,21 +168,21 @@ output-target writer conflicts.
 
 RTL-102's modport expression-port fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_102::)'`. Positive fixtures run in
-both optimizer modes on every backend (set `LLG_TEST_GMP_ROOT` for the GMP lane)
+both optimizer modes on every backend
 and after Db destruction. Negatives cover non-lvalue outputs, input writes,
 non-constant selectors, writer conflicts through expression ports and the
 deferred virtual-interface access.
 
 RTL-015's bit-stream and streaming fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_015::)'`. Positive fixtures run in
-both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane),
+both optimizer modes on both backends,
 most also after Db destruction; expectations are independent bit-string
 derivations. `target_bounds` prints its results to stderr, compared exactly with
 the run-time bounds reports.
 
 RTL-103's streaming and pattern fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_103::)'`. Positive fixtures run in
-both optimizer modes on every backend (set `LLG_TEST_GMP_ROOT` for the GMP lane),
+both optimizer modes on every backend,
 the main ones also after Db destruction; `copyout_bounds` and `mixed_state`
 print their results to stderr, compared exactly with the run-time bounds
 reports. Expectations are hand derivations of the stream and pattern rules.
@@ -193,7 +191,7 @@ The positional pattern row and for-step update fixtures use
 `-E 'binary(sim_feature_completion) & test(ki_pattern_rows::)'`: small dense,
 descriptor and nested row targets (blocking, NBA and continuous) and overloaded
 `for` steps on packed, native and descriptor targets run in both optimizer
-modes on every backend (set `LLG_TEST_GMP_ROOT` for the GMP lane); a row shape
+modes on every backend; a row shape
 mismatch, a runtime continuous row and an automatic NBA row reject. The RTL-103
 and these fixtures also run under the generated-runtime sanitizers below with
 `-E 'test(rtl_103::) | test(ki_pattern_rows::)'`.
@@ -204,8 +202,7 @@ RTL-018's library, configuration and bind fixtures use
 Companion maps, library sources and configurations are named through
 `sim_cli::run_case_with_inputs`/`reject_case_with_inputs`, whose input lists
 the fixture checker treats as references. The composition runs in both
-compilation-unit modes on every backend (set `LLG_TEST_GMP_ROOT` for the GMP
-lane) and, through `sim_cli::run_compile_opts_after_db_drop`, after snapshot and
+compilation-unit modes on every backend and, through `sim_cli::run_compile_opts_after_db_drop`, after snapshot and
 Db destruction.
 
 RTL-019's source-mapping and edition-admission fixtures use
@@ -213,8 +210,7 @@ RTL-019's source-mapping and edition-admission fixtures use
 `test(/^sim_edition::/)`, `test(/^sim_syn017_directive_effects::/)` and the LSP
 binaries for shared source-map/edition changes. Mapped `__FILE__`/`__LINE__`
 values and runtime locations are counted by hand; the mapping and
-resumed-task fixtures run on every backend (set `LLG_TEST_GMP_ROOT` for the GMP
-lane) and after snapshot and Db destruction. Each `neg_2001_*.v` holds one
+resumed-task fixtures run on every backend and after snapshot and Db destruction. Each `neg_2001_*.v` holds one
 later form that must reject under `--edition 2001` and compile under 2009.
 
 RTL-106's mapped-diagnostic and strict-2001 fixtures use
@@ -222,7 +218,7 @@ RTL-106's mapped-diagnostic and strict-2001 fixtures use
 `test(line_mapped) | test(lint_diagnostics_add)` for the LSP projection.
 Each `neg_*.v` holds one later form (several built by macros) or variable
 driver, rejects under 2001 at an exact `file:line:col` and compiles under 2009;
-`legal_2001.v` executes on every backend (set `LLG_TEST_GMP_ROOT`) in both
+`legal_2001.v` executes on every backend in both
 editions. To re-audit the 2001 profile, run every `.v`/`.sv` fixture with
 `llg --edition 2001 --gen-only` and compare the strict-edition diagnostics with
 the previous revision: no fixture accepted before may newly reject unless it is
@@ -231,7 +227,7 @@ language-illegal.
 SIM-003's native record fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_003::)'`. Positive call,
 lifetime and sensitivity fixtures run in both optimizer modes on every backend
-(set `LLG_TEST_GMP_ROOT` for the GMP lane) and after Db destruction; the
+and after Db destruction; the
 borrowed-chandle fixture builds its companion C file into a DPI library (Unix
 hosts). Component checks are `native_value_descriptors_probe.c` in
 `runtime_value_storage` and the `sim::ir::validate::tests::native_values` unit
@@ -239,21 +235,19 @@ tests.
 
 SIM-004's native assignment, link and conditional fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_004::)'`. Positive fixtures run in
-both optimizer modes on every backend (set `LLG_TEST_GMP_ROOT` for the GMP lane);
+both optimizer modes on every backend;
 single-file ones also run after Db destruction, and the chandle fixture builds
 its companion C file into a DPI library (Unix hosts).
 
 SIM-005's real reference, real-array and real-sampling fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_005::)'`. Positive fixtures run
-in both optimizer modes on every backend (set `LLG_TEST_GMP_ROOT` for the GMP
-lane) and, except the numeric-extremes fixture (which also runs at model
+in both optimizer modes on every backend and, except the numeric-extremes fixture (which also runs at model
 `-O0`/`-O3`), after Db destruction. Component checks are the
 `sim::ir::validate::tests::real_values` unit tests.
 
 SIM-006's container, record-element, handle-array and associative-default
 fixtures use `-E 'binary(sim_feature_completion) & test(sim_006::)'`. Positive
-fixtures run in both optimizer modes on every backend (set `LLG_TEST_GMP_ROOT`
-for the GMP lane); fixtures without runtime warnings also run after Db
+fixtures run in both optimizer modes on every backend; fixtures without runtime warnings also run after Db
 destruction, and the two warning fixtures compare their SV 7.8.6 warnings with
 stderr exactly. Component checks are `container_values_probe.c` in
 `runtime_value_storage` and the
@@ -261,14 +255,13 @@ stderr exactly. Component checks are `container_values_probe.c` in
 
 RTL-016's tagged-union, pattern and Q03 fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_016::)'`. Positive fixtures and
-the run-time error fixtures run in both optimizer modes on both backends (set
-`LLG_TEST_GMP_ROOT` for the GMP lane). Run-time error fixtures print their
+the run-time error fixtures run in both optimizer modes on both backends. Run-time error fixtures print their
 results to stderr, compared exactly with the reports; the interprocess Q03 race
 asserts its allowed result set.
 
 RTL-010's continuous topology fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_010::)'`. Positive fixtures run in
-both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane)
+both optimizer modes on both backends
 and after Db destruction; descriptor scatter also bounds generated model size.
 Negatives cover overlapping variable writers, runtime pattern-leaf selects and
 zero-time nonconvergence; delayed pattern drivers remain ADV-002's boundary.
@@ -276,7 +269,7 @@ zero-time nonconvergence; delayed pattern drivers remain ADV-002's boundary.
 RTL-011's alias and inout-collapse fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_011::)'`, together with
 `test(/^sim_port_net_types::/)` and `test(net_collapse::)`. Positive fixtures run in
-both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane);
+both optimizer modes on both backends;
 warning-free ones except the waveform fixture also run after Db destruction.
 Collapse warnings carry absolute paths, so the module compares their text up to
 the location, and the permuted chain twin must print the same values and
@@ -287,15 +280,14 @@ legality rules; the `inout uwire` formal is positive since RTL-105.
 SIM-001's region and procedural-time fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_001::)'` with
 `test(/^runtime_regions::/)` for the native region-callback probe. Every executed fixture
-runs in both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP
-lane). `sim_cli::run_case_checked_matrix` hands each output to a checker, so the
+runs in both optimizer modes on both backends. `sim_cli::run_case_checked_matrix` hands each output to a checker, so the
 region litmus is compared as a line multiset plus the orders the §4.5 reference
 algorithm fixes, races accept every permitted outcome, and tick-limit failures
 compare the output printed before the diagnostic.
 
 SIM-002's time-reporting fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_002::)'`. Executed fixtures run in
-both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane);
+both optimizer modes on both backends;
 `.v` fixtures also run with `--edition 2001`, and the scope fixtures also run after
 the native snapshot and Db are dropped.
 
@@ -303,13 +295,13 @@ RTL-012's strength and `unconnected_drive` fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_012::)'`. The scalar matrix and
 the 70-bit composition compare against the exhaustive outcome oracle in
 `sim_feature_completion/rtl_012/oracle.rs`; positives run in both optimizer
-modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane), the matrix
+modes on both backends, the matrix
 and tristate fixtures in both editions. Negatives cover supply-net, selected
 vector-bit, highz-pair and pullup-strength0 forms.
 
 RTL-014's fixed loop, method, membership and query fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_014::)'`. Positive fixtures run in
-both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane),
+both optimizer modes on both backends,
 most also after Db destruction; descriptor methods also bound generated model
 size. Unspecified equal-key and unknown-key orders are checked only through
 permutation invariants. Negatives cover read-only iterators and receivers,
@@ -318,7 +310,7 @@ methods and the packed limit for row keys.
 
 RTL-013's sensitivity and always-writer fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_013::)'`. Positive fixtures run in
-both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP lane),
+both optimizer modes on both backends,
 most also after Db destruction; wake counters compare changes after the first
 sample, and descriptor processes also bound generated model size. Negatives
 cover timing, forks and event-control counts in always_comb/always_latch/
@@ -328,8 +320,7 @@ called-function writers.
 RTL-020's combinational UDP fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_020::)'`, together with
 `test(/^sim_udp::/)` and `test(emit_c::owned::tests::udp::)`. Positive fixtures run
-in both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT` for the GMP
-lane), `.v` sources also as Verilog-2001, and three after Db destruction. The
+in both optimizer modes on both backends, `.v` sources also as Verilog-2001, and three after Db destruction. The
 exhaustive table sweep compares with the all-matching-rows oracle in
 `sim_feature_completion/rtl_020.rs`. Negatives cover vector definition ports,
 row widths, conflicting rows, terminal counts, empty terminals, mis-sized array
@@ -338,14 +329,13 @@ connections and vector or aggregate terminals of single instances.
 RTL-099's gate fixtures use `-E 'binary(sim_feature_completion) & test(rtl_099::)'`.
 They pin the output-port writer rule for constant slices of descriptor-backed
 arrays: disjoint procedural writers execute in both optimizer modes on both
-backends (set `LLG_TEST_GMP_ROOT` for the GMP lane) and after Db destruction,
+backends and after Db destruction,
 and procedural, second-port and always_ff writers overlapping a slice reject.
 
 RTL-104's operator-overload fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_104::)'`: increment and compound
 values, once-evaluated targets, relational-operand expected types and package
-overloads run in both optimizer modes on both backends (set
-`LLG_TEST_GMP_ROOT` for the GMP lane); nested or unmatched relational operands,
+overloads run in both optimizer modes on both backends; nested or unmatched relational operands,
 explicit, late and re-exported imports, two imported candidates and a native
 update value reject. The package ruling is in
 [sim_data_semantics](../docs/sim_data_semantics.md#project-rulings-where-the-lrm-is-silent).
@@ -353,8 +343,7 @@ update value reject. The package ruling is in
 RTL-105's frontend-admission fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_105::)'`: `inout uwire` formals,
 concatenated uwire inout actuals and runtime-selected continuous assignments to
-variables run in both optimizer modes on both backends (set `LLG_TEST_GMP_ROOT`
-for the GMP lane) and after Db destruction; collapsed uwire driver conflicts,
+variables run in both optimizer modes on both backends and after Db destruction; collapsed uwire driver conflicts,
 net and gate-terminal runtime selects and writers inside a runtime select's
 longest static prefix reject. The legality ruling is in the
 [fixture readme](fixtures/sim/feature_completion/rtl_105/readme.md).
@@ -1043,18 +1032,19 @@ model selection and do not replace later HDL/model integration acceptance.
 
 `sim_value_backends` checks selected runtime archives, clean source-only builds,
 both wrong-backend and wrong-kernel links, exact C selectors, missing GMP and
-positive generated-HDL parity with independent expected outputs. Set
-`LLG_TEST_GMP_ROOT` to include the GMP lane; without it legacy and compact portable
-run, and GMP parity is reported blocked. Native `selected_*_facade` probes in
+positive generated-HDL parity with independent expected outputs. The GMP lane
+builds the bundled `vendor/gmp` subset; `LLG_TEST_GMP_ROOT` makes the lanes use
+an installation instead and enables the installation-only tests below. Native `selected_*_facade` probes in
 `runtime_value_storage` exercise the common consumer bridge in all three modes.
 
 ```sh
-CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 LLG_TEST_GMP_ROOT=/path/to/gmp scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_value_backends --test-threads 6
+CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_value_backends --test-threads 6
 ```
 
 `CodegenOptions.value_config` and `CmakeBuildOpts.value_config` must agree. Driver
 selection uses `LLG_VALUE_BACKEND` and `LLG_COMPACT_KERNELS`; default legacy/portable.
-GMP mode requires `GMP_ROOT`, with no system fallback. Compact frame checks use a
+GMP mode builds the bundled subset unless `GMP_ROOT` names an installation (no
+system fallback). Compact frame checks use a
 24-byte descriptor instead of legacy's 32-byte descriptor on 64-bit hosts;
 `compact_selected_frame_lint` covers suspended values, shared instances and
 structural nets with both kernels and optimizer modes.
@@ -1062,26 +1052,24 @@ structural nets with both kernels and optimizer modes.
 ### GMP dependency qualification
 
 `sim_value_backends::qualification` adds the V09 dependency witnesses: wide
-mul/div/mod/decimal results of compact/GMP equal legacy and portable for the host
-GMP and, on Linux/macOS hosts, for a copy whose header selects the other 64-bit
-limb spelling (`_LONG_LONG_LIMB`), which drives the macOS limb-copy path;
-`--gen-only` exports are moved before they configure and build; byte-identical
-GMP copies share one runtime archive and edited ones do not. With
-`LLG_TEST_REQUIRE_GMP=1` every GMP lane fails instead of reporting BLOCKED when
-`LLG_TEST_GMP_ROOT` is missing; CI's GMP lanes set it. Local full qualification
-(compact/GMP as the default backend for every model):
+mul/div/mod/decimal results of the bundled compact/GMP build (reaching its Toom
+and FFT paths) equal legacy and portable, and `--gen-only` exports, which carry
+the bundled sources, are moved before they configure and build. With
+`LLG_TEST_GMP_ROOT` naming an installation (`include/gmp.h` and a static
+library), the same probe runs against it and, on Linux/macOS hosts, against a
+copy whose header selects the other 64-bit limb spelling (`_LONG_LONG_LIMB`),
+which drives the macOS limb-copy path; byte-identical installation copies share
+one runtime archive and edited ones do not; and header/library mismatches fail
+configure. Without it those installation tests print SKIP. Local full
+qualification (compact/GMP as the default backend for every model):
 
 ```sh
-LLG_TEST_GMP_ROOT=/path/to/gmp GMP_ROOT=/path/to/gmp LLG_TEST_REQUIRE_GMP=1 \
-  LLG_VALUE_BACKEND=compact LLG_COMPACT_KERNELS=gmp \
+LLG_VALUE_BACKEND=compact LLG_COMPACT_KERNELS=gmp \
   scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test-threads 8
 ```
 
-`python3 scripts/ci_gmp.py build --prefix DIR --check` builds the pinned,
-checksum-verified GMP 6.3.0 with a generic static configuration (vcpkg
-`*-windows-static-md` on Windows) and prints its identity; `identity --prefix
-DIR` prints host, compiler, version, limb/nail and file hashes and fails for an
-unusable installation. Its unit tests are `scripts/test_ci_gmp.py`.
+After moving the `vendor/gmp` submodule, run `python3 scripts/gmp_tables.py` to
+regenerate the bundled tables (`--check` compares; CI's lint job runs it).
 
 ### Required RTL-002 capacity lane
 
@@ -1112,7 +1100,7 @@ LLG_VALUE_BACKEND=compact LLG_COMPACT_KERNELS=portable CARGO_BUILD_JOBS=6 CMAKE_
 Run the cross-backend parity matrix alone with:
 
 ```sh
-LLG_TEST_GMP_ROOT=/path/to/gmp CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_value_backends -E 'test(parity::compact_parity_) | test(compact_hdl_subset_matches_legacy_and_independent_outputs)' --test-threads 6
+CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_value_backends -E 'test(parity::compact_parity_) | test(compact_hdl_subset_matches_legacy_and_independent_outputs)' --test-threads 6
 ```
 
 These tests force both backends,
@@ -1126,9 +1114,9 @@ inertial/sequence captures). `sim_stack_bounds` adds the deep-recursion and
 long-body fixtures to the same matrix.
 
 The native runtime probes run against each backend through
-`tests/runtime_value_storage.rs` (legacy, compact portable, and compact GMP when
-`LLG_TEST_GMP_ROOT` is set):
+`tests/runtime_value_storage.rs` (legacy, compact portable and compact GMP, the
+last with the bundled GMP or `LLG_TEST_GMP_ROOT`):
 
 ```sh
-LLG_TEST_GMP_ROOT=/path/to/gmp CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test runtime_value_storage --test-threads 6
+CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test runtime_value_storage --test-threads 6
 ```

@@ -2,7 +2,7 @@
 
 The task module runs every positive fixture through the public CLI in both HDL
 optimizer modes. The six feature fixtures also run on legacy,
-compact/portable and compact/GMP backends (GMP when `LLG_TEST_GMP_ROOT` is set)
+compact/portable and compact/GMP backends
 and, except the numeric-extremes fixture, after the frontend snapshot and owned
 Db are destroyed; the extremes fixture also runs at model `-O0` and `-O3`.
 Expected outputs are derived by hand from the cited clauses, not captured from
