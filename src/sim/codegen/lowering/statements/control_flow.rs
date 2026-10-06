@@ -324,7 +324,12 @@ impl EmitCtx<'_, '_> {
             .first()
             .copied()
             .ok_or_else(|| "case without selector".to_string())?;
-        if case_type == DbCaseKind::Inside && self.cg.is_string_expr(&self.path, sel) {
+        // A string selector compares items as strings (SV 11.4.5, 12.5); an
+        // ordinary item list is the same membership test as `case inside`
+        // without ranges, so both share the string lowering.
+        if matches!(case_type, DbCaseKind::Inside | DbCaseKind::Exact)
+            && self.cg.is_string_expr(&self.path, sel)
+        {
             let selector = self.cg.lower_string(&self.path, sel)?;
             return self.lower_case_inside_string(items, selector, qualifier);
         }

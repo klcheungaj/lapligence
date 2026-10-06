@@ -240,3 +240,121 @@ void llg_queue_value_pop_value(llg_queue_value_array_t* queue, int back,
     llg_value_drop(&removed);
     if (taken) llg_queue_value_pop_notify(queue);
 }
+
+/* ---- Container members of record values (SIM-007) ------------------------ */
+
+/* The nested dynamic array of a record member slot, or NULL for the empty
+ * (null) default. */
+static const llg_dyn_value_array_t* llg_value_item_container(
+    const llg_value_t* item) {
+    if (!item || !item->desc || item->desc->kind != LLG_VALUE_CONTAINER)
+        llg_container_fatal("record container member has no container slot");
+    return item->value.container;
+}
+
+/* Borrowed packed payloads of a nested array of packed elements. The caller
+ * frees the returned array without destroying its items. */
+static sv4_t* llg_value_item_packed_view(const llg_dyn_value_array_t* nested,
+                                         size_t* count) {
+    *count = nested ? nested->size : 0;
+    if (nested && nested->element->kind != LLG_VALUE_PACKED)
+        llg_container_fatal("packed container member has a non-packed element");
+    sv4_t* values = llg_alloc_items(*count, sizeof(*values));
+    for (size_t i = 0; i < *count; ++i) values[i] = nested->data[i].value.packed;
+    return values;
+}
+
+void llg_value_item_to_dyn(llg_dyn_array_t* dst, const llg_value_t* item) {
+    size_t count = 0;
+    sv4_t* values =
+        llg_value_item_packed_view(llg_value_item_container(item), &count);
+    llg_dyn_assign_values(dst, values, count);
+    free(values);
+}
+
+void llg_value_item_to_queue(llg_queue_t* dst, const llg_value_t* item) {
+    size_t count = 0;
+    sv4_t* values =
+        llg_value_item_packed_view(llg_value_item_container(item), &count);
+    llg_queue_assign_values(dst, values, count);
+    free(values);
+}
+
+void llg_value_item_to_dyn_value(llg_dyn_value_array_t* dst,
+                                 const llg_value_t* item) {
+    const llg_dyn_value_array_t* nested = llg_value_item_container(item);
+    if (nested) {
+        llg_dyn_value_copy(dst, nested);
+    } else {
+        llg_dyn_value_delete(dst);
+    }
+}
+
+void llg_value_item_to_queue_value(llg_queue_value_array_t* dst,
+                                   const llg_value_t* item) {
+    const llg_dyn_value_array_t* nested = llg_value_item_container(item);
+    if (!nested) {
+        llg_queue_value_delete(dst);
+        return;
+    }
+    if (!llg_value_desc_compatible(dst->element, nested->element))
+        llg_container_fatal("incompatible recursive queue element types");
+    size_t count = nested->size < dst->limit ? nested->size : dst->limit;
+    llg_value_t* data = llg_alloc_items(count, sizeof(*data));
+    if (count) memset(data, 0, count * sizeof(*data));
+    for (size_t i = 0; i < count; ++i)
+        llg_value_copy(&data[i], dst->element, &nested->data[i]);
+    llg_queue_value_commit(dst, data, count);
+    if (count != nested->size)
+        llg_container_warning("bounded queue assignment discarded tail elements");
+}
+
+/* Replace a record member slot with `replacement`, keeping the null default
+ * for an empty container so equal values stay identical. */
+static void llg_value_item_store(llg_value_t* item, llg_value_t* replacement) {
+    if (replacement->value.container && !replacement->value.container->size) {
+        llg_dyn_value_destroy(replacement->value.container);
+        free(replacement->value.container);
+        replacement->value.container = NULL;
+    }
+    llg_value_drop(item);
+    *item = *replacement;
+}
+
+void llg_value_item_from_dyn(llg_value_t* item, const llg_dyn_array_t* src) {
+    llg_value_item_container(item);
+    llg_value_t replacement = llg_value_from_packed_container(item->desc, src);
+    llg_value_item_store(item, &replacement);
+}
+
+void llg_value_item_from_queue(llg_value_t* item, const llg_queue_t* src) {
+    llg_value_item_container(item);
+    /* A borrowed view of the queue's contiguous payloads. */
+    llg_dyn_array_t view = {0};
+    view.data = src->data;
+    view.size = src->size;
+    view.element_width = src->element_width;
+    view.element_signed = src->element_signed;
+    view.element_two_state = src->element_two_state;
+    llg_value_t replacement = llg_value_from_packed_container(item->desc, &view);
+    llg_value_item_store(item, &replacement);
+}
+
+void llg_value_item_from_dyn_value(llg_value_t* item,
+                                   const llg_dyn_value_array_t* src) {
+    llg_value_item_container(item);
+    llg_value_t replacement = llg_value_from_container(item->desc, src);
+    llg_value_item_store(item, &replacement);
+}
+
+void llg_value_item_from_queue_value(llg_value_t* item,
+                                     const llg_queue_value_array_t* src) {
+    llg_value_item_container(item);
+    /* A borrowed view of the queue's contiguous elements. */
+    llg_dyn_value_array_t view = {0};
+    view.data = src->data;
+    view.size = src->size;
+    view.element = src->element;
+    llg_value_t replacement = llg_value_from_container(item->desc, &view);
+    llg_value_item_store(item, &replacement);
+}

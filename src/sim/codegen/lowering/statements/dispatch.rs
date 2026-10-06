@@ -19,7 +19,30 @@ impl EmitCtx<'_, '_> {
         );
         let saved = std::mem::replace(&mut self.cg.container_call_prelude, hoist.then(Vec::new));
         let outer = self.cg.record_binding_declarations.replace(Vec::new());
-        let lowered = self.lower_stmt_operations(h);
+        // Queue and dynamic-array members of container record elements are
+        // staged around statements that evaluate their operands once.
+        let staging = matches!(
+            self.cg.kind(h),
+            NodeKind::Stmt(StmtKind::Assign { delay: None, .. })
+                | NodeKind::SysCall { .. }
+                | NodeKind::FuncCall { .. }
+                | NodeKind::MethodCall { .. }
+                | NodeKind::Expr(ExprKind::Operation { .. })
+        ) && self.cg.staged_element_members.is_empty();
+        let staged = if staging {
+            Some(self.cg.stage_element_members(&self.path, h))
+        } else {
+            None
+        };
+        let (lowered, (before, after)) = match staged {
+            Some(Err(error)) => (Err(error), Default::default()),
+            Some(Ok(staging)) => {
+                let lowered = self.lower_stmt_operations(h);
+                self.cg.end_element_member_staging();
+                (lowered, staging)
+            }
+            None => (self.lower_stmt_operations(h), Default::default()),
+        };
         let declarations =
             std::mem::replace(&mut self.cg.record_binding_declarations, outer).unwrap_or_default();
         let prelude = std::mem::replace(&mut self.cg.container_call_prelude, saved);
@@ -27,6 +50,13 @@ impl EmitCtx<'_, '_> {
         if let Some(mut prelude) = prelude.filter(|prelude| !prelude.is_empty()) {
             prelude.append(&mut statements);
             statements = prelude;
+        }
+        // Staged members are copied out before the operand prelude and back
+        // after the statement, in one lexical scope.
+        if !before.is_empty() || !after.is_empty() {
+            statements = vec![IrStmt::Block(
+                before.into_iter().chain(statements).chain(after).collect(),
+            )];
         }
         if !declarations.is_empty() {
             statements.splice(0..0, declarations);

@@ -1,6 +1,7 @@
 /* SIM-006 recursive container values: whole record elements, in-place
  * element locators, identity-handle elements and their lifecycle hooks,
- * and repeated deletion, with tracked packed-owner accounting. */
+ * repeated deletion and (SIM-007) record container members moving between
+ * nested slots and containers, with tracked packed-owner accounting. */
 #include "llg_container.c"
 #include "probe.h"
 #include <string.h>
@@ -169,10 +170,111 @@ static void check_identity_handles(void) {
     CHECK(value_test_live() == 0);
 }
 
+/* SIM-007: a record's queue/dynamic-array member moves between its nested
+ * slot in a value and a standalone container, in both directions. */
+static const llg_value_desc_t int_desc = {LLG_VALUE_PACKED, 0, 32, 1, 0, 0, 0, NULL, NULL, 0};
+static const llg_value_desc_t ints_desc = {LLG_VALUE_CONTAINER, 11, 0, 0, 0, 0, 0, &int_desc, NULL, 0};
+static const llg_value_desc_t texts_desc = {LLG_VALUE_CONTAINER, 12, 0, 0, 0, 0, 0, &text_desc, NULL, 0};
+static const llg_value_member_desc_t holder_members[] = {{&text_desc}, {&ints_desc}, {&texts_desc}};
+static const llg_value_desc_t holder_desc = {
+    LLG_VALUE_AGGREGATE, 10, 0, 0, 0, 0, 3, NULL, holder_members, 3};
+
+static int64_t packed_item(const llg_dyn_value_array_t* nested, size_t index) {
+    int64_t value = 0;
+    CHECK(sv4_to_index_i64(nested->data[index].value.packed, &value));
+    return value;
+}
+
+static void check_record_container_members(void) {
+    llg_value_t holder = {0};
+    llg_native_value_init(&holder, &holder_desc);
+    llg_value_t* ints = &holder.value.items[1];
+    llg_value_t* texts = &holder.value.items[2];
+    CHECK(ints->value.container == NULL && llg_value_container_size(ints) == 0);
+
+    llg_queue_t queue;
+    llg_queue_init(&queue, 32, 1, 0, UINT64_MAX);
+    for (uint64_t i = 1; i <= 3; ++i) {
+        sv4_t value = sv4_from_u64(i * 10, 32, 1);
+        llg_queue_push_back(&queue, value);
+        sv4_destroy(&value);
+    }
+    llg_value_item_from_queue(ints, &queue);
+    CHECK(llg_value_container_size(ints) == 3);
+    CHECK(packed_item(ints->value.container, 0) == 10);
+    CHECK(packed_item(ints->value.container, 2) == 30);
+
+    llg_dyn_array_t dyn;
+    llg_dyn_init(&dyn, 32, 1, 0);
+    llg_value_item_to_dyn(&dyn, ints);
+    CHECK(llg_dyn_size(&dyn) == 3);
+    llg_queue_t bounded;
+    llg_queue_init(&bounded, 32, 1, 0, 2);
+    llg_value_item_to_queue(&bounded, ints);
+    CHECK(llg_queue_size(&bounded) == 2);
+
+    /* A dynamic array source replaces the slot; an empty one leaves null. */
+    sv4_t zero = sv4_from_u64(0, 32, 0);
+    sv4_t seven = sv4_from_u64(7, 32, 1);
+    CHECK(llg_dyn_set(&dyn, zero, seven));
+    llg_value_item_from_dyn(ints, &dyn);
+    CHECK(packed_item(ints->value.container, 0) == 7);
+    llg_queue_delete(&queue);
+    llg_value_item_from_queue(ints, &queue);
+    CHECK(ints->value.container == NULL);
+    llg_value_item_to_dyn(&dyn, ints);
+    CHECK(llg_dyn_size(&dyn) == 0);
+
+    llg_queue_value_array_t words, words_copy;
+    llg_queue_value_init(&words, &text_desc, UINT64_MAX);
+    llg_queue_value_init(&words_copy, &text_desc, 1);
+    llg_value_t word = {0};
+    llg_native_value_init(&word, &text_desc);
+    word.value.string = llg_string_bytes("ab", 2);
+    llg_queue_value_push_value(&words, 1, &word);
+    llg_string_destroy(&word.value.string);
+    word.value.string = llg_string_bytes("cde", 3);
+    llg_queue_value_push_value(&words, 1, &word);
+    llg_native_value_destroy(&word);
+    llg_value_item_from_queue_value(texts, &words);
+    CHECK(llg_value_container_size(texts) == 2);
+    CHECK(texts->value.container->data[1].value.string.len == 3);
+    llg_dyn_value_array_t words_dyn;
+    llg_dyn_value_init(&words_dyn, &text_desc);
+    llg_value_item_to_dyn_value(&words_dyn, texts);
+    CHECK(llg_dyn_value_size(&words_dyn) == 2);
+    llg_value_item_to_queue_value(&words_copy, texts);
+    CHECK(llg_queue_value_size(&words_copy) == 1);
+    llg_value_item_from_dyn_value(texts, &words_dyn);
+    CHECK(llg_value_container_size(texts) == 2);
+
+    /* Copies of the holder own their nested members. */
+    llg_value_t copy = {0};
+    llg_native_value_init(&copy, &holder_desc);
+    llg_native_value_copy(&copy, &holder);
+    llg_queue_value_delete(&words);
+    llg_value_item_from_queue_value(texts, &words);
+    CHECK(texts->value.container == NULL);
+    CHECK(llg_value_container_size(&copy.value.items[2]) == 2);
+
+    llg_native_value_destroy(&copy);
+    llg_native_value_destroy(&holder);
+    llg_queue_destroy(&queue);
+    llg_queue_destroy(&bounded);
+    llg_dyn_destroy(&dyn);
+    llg_queue_value_destroy(&words);
+    llg_queue_value_destroy(&words_copy);
+    llg_dyn_value_destroy(&words_dyn);
+    sv4_destroy(&zero);
+    sv4_destroy(&seven);
+    CHECK(value_test_live() == 0);
+}
+
 int main(void) {
     check_record_queue();
     check_assoc_records();
     check_identity_handles();
+    check_record_container_members();
     puts("container value probe passed");
     return 0;
 }

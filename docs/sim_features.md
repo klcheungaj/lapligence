@@ -327,9 +327,14 @@ Macros, includes and their edition-specific behavior are counted in §11.
   containers in module/static records and companion containers of subroutine
   record values (methods, selects, `foreach`, deep whole-record copies, calls,
   ports, member-wise equality except associative members, patterns).
-  Multidimensional native arrays, container record members in element,
-  class-property or nonblocking storage, record ports with built-in
-  semaphore/mailbox/process members, `f().m` on a native result, native ref formals, static subroutine-root NBAs
+  Records with queue and dynamic-array members are also container and
+  fixed-array elements (an element keeps them inside its value; statements
+  naming an element's member stage it). Scalar members of a native record
+  call result (`f(x).s`, `f(x).n + 1`) and nested record pattern items from
+  calls (`'{inner: f()}`) are evaluated through a temporary. Multidimensional
+  native arrays, associative members of element records, class-property or
+  nonblocking storage of container record members, record ports with built-in
+  semaphore/mailbox/process members, native ref formals, static subroutine-root NBAs
   and fork capture remain restricted. SV §§6.7, 7.2–7.4 **[SV-2005]**.
 - 🟨 **Tagged unions** — Packed and unpacked tagged unions with fixed payloads
   use one finite storage owner: the tag in the most significant bits and each
@@ -357,8 +362,18 @@ Macros, includes and their edition-specific behavior are counted in §11.
   leaves in one native value, with the same checks, tagged-expression
   operands and string/real bindings; conditional operators keep equal
   members under an unknown condition; input and output variable ports link
-  the tag and member storage. Such unions as array elements and NBA
-  targets, and dynamic payloads, reject with explicit diagnostics.
+  the tag and member storage. Elements of one-dimensional fixed, queue,
+  dynamic and associative arrays hold the same tag and members in each
+  element value: tagged expressions, whole-element copies, push/insert/pop,
+  calls, checked member reads/writes and `matches`/`case matches` on
+  elements (a checked element access needs an index free of side effects).
+  Tagged expressions reset inactive members, and equality compares the
+  tags and the active member only. Whole module and static variables take
+  nonblocking tagged expressions and copies (value fixed at issue; member,
+  resets and tag committed together). Nonblocking member writes (they need
+  a commit-time tag check, see Q03), subroutine-storage NBAs, unions nested
+  in records or multidimensional arrays, and dynamic payloads reject with
+  explicit diagnostics.
   **Q03 (resolved):** SV §§4.9.4 and 10.4.2 fix an NBA's target and RHS at
   issue and perform the member assignment at commit; SV §11.9 requires that
   assignment to be consistent with the tag current then, and SV §7.3.2 never
@@ -458,11 +473,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 | --- | --- | --- | --- | --- | --- | --- |
 | Module/static variable | yes, member defaults applied; initializer from a pattern, copy, call result or conditional | yes | yes, including nested records and member arrays | constant, run-time index (at most 64 elements) and packed-member bit/part select: yes | SIM-008 | model close |
 | Automatic/static subroutine local | yes (root) | yes | yes | constant and run-time index (at most 64 elements): yes | SIM-008 | scope exit, cancel, close |
-| Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant and run-time index: yes; `f().m` rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | `ref`/`const ref` formal aliasing a subroutine record: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); module, static or block record actual: rejected | scope exit, cancel, close |
+| Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant and run-time index: yes; scalar members of a call result (`f().m`): yes | `ref`/`const ref` formal aliasing a subroutine record: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); module, static or block record actual: rejected | scope exit, cancel, close |
 | NBA target or source | module record: yes (untimed and `#delay`); static subroutine root target: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)); automatic: illegal | yes, issue-time copy | n/a | constant: yes | n/a | commit or cancellation |
 | Fork-join_none capture | SIM-010 | SIM-010 | n/a | n/a | n/a | SIM-010 |
 | Unpacked array element, slice | one-dimensional fixed array: yes ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); multidimensional: rejected | yes, elements, constant/indexed slices, patterns, conditional merges, untimed NBAs | yes, element-wise | yes | SIM-008 | owner scope or model close |
-| Queue/dynamic/associative element | yes (missing: default) | yes, whole element and push/insert/pop | whole dynamic arrays and queues: yes; record elements of resizable containers: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | constant and run-time element index: yes | SIM-008 | delete, resize, container close |
+| Queue/dynamic/associative element | yes (missing: default), including queue and dynamic-array members ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); associative members: rejected | yes, whole element and push/insert/pop | yes, element-wise, including container members (whole associative arrays of records: rejected, [known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | constant and run-time element index: yes; container members in assignment, call and system-task statements | SIM-008 | delete, resize, container close |
 | Class property | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-011 | SIM-018 |
 | DPI argument | SIM-040 | SIM-040 | n/a | n/a | n/a | n/a |
 | Process-block local (static or automatic) | yes, including container members, member defaults and call initializers ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); automatic record that a `join_any`/`join_none` fork running again can keep live: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | yes | yes, including nested records and member arrays | constant and run-time index (at most 64 elements): yes | SIM-008 | model close; automatic leaves reset at the next entry |

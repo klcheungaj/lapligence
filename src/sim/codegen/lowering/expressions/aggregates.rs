@@ -2,6 +2,9 @@
 
 use super::super::containers::PatternAssignmentKind;
 use super::*;
+use crate::sim::codegen::lowering::collection::native_values::{
+    is_native_tag_path, native_tagged_equality, NativeEndpoint,
+};
 
 mod columns;
 mod copies;
@@ -735,11 +738,36 @@ impl<'a> Codegen<'a> {
                 let descriptor = self
                     .query_descriptor(target)
                     .and_then(|root| Self::descriptor_at_path(root, &member_path));
-                let (Some(source), Some(descriptor)) = (source, descriptor) else {
+                let Some(descriptor) = descriptor else {
                     return Err(format!(
                         "aggregate pattern path `{}` has no destination in `{path}`",
                         aggregate_path_suffix(&member_path)
                     ));
+                };
+                let Some(source) = source else {
+                    // A record taken from a call, conditional or container
+                    // element is built into a temporary with the captures,
+                    // then copied leaf by leaf with the writes.
+                    let destination =
+                        NativeEndpoint::Module(Box::new(copies::AggregateSelection {
+                            root: target,
+                            prefix: member_path.clone(),
+                            descriptor: descriptor.clone(),
+                            storage: aggregate.clone(),
+                        }));
+                    let Some((temporary, fill)) = self.native_value_of(path, value_node)? else {
+                        return Err(format!(
+                            "aggregate pattern path `{}` has no destination in `{path}`",
+                            aggregate_path_suffix(&member_path)
+                        ));
+                    };
+                    let source = NativeEndpoint::Value {
+                        value: temporary,
+                        prefix: Vec::new(),
+                    };
+                    captures.extend(fill);
+                    assignments.push(self.native_transfer(path, &destination, &source, nba)?);
+                    continue;
                 };
                 let destination = copies::AggregateSelection {
                     root: target,
@@ -1035,7 +1063,17 @@ impl<'a> Codegen<'a> {
                 self.signal_read_expr(right)?,
             )?
         } else {
-            let mut equality = None;
+            // A tagged union with native members compares its tags and
+            // only the active member's leaves.
+            let tagged = (left_aggregate.kind == AggregateKind::TaggedUnion)
+                .then(|| self.query_descriptor(left_target))
+                .flatten()
+                .and_then(|descriptor| match &descriptor.shape {
+                    TypeShape::Aggregate(layout) => Some(layout.clone()),
+                    _ => None,
+                });
+            let mut tags = None;
+            let mut equalities = Vec::with_capacity(left_aggregate.leaves.len());
             for left in &left_aggregate.leaves {
                 let right = right_aggregate
                     .leaves
@@ -1047,13 +1085,29 @@ impl<'a> Codegen<'a> {
                             aggregate_path_suffix(&left.path)
                         )
                     })?;
+                if tagged.is_some() && is_native_tag_path(&left.path) {
+                    tags = Some((
+                        self.aggregate_leaf_read(left)?,
+                        self.aggregate_leaf_read(right)?,
+                    ));
+                    continue;
+                }
                 let member_equal = self.aggregate_leaf_equality(path, op, left, right)?;
-                equality = Some(match equality {
-                    Some(previous) => cmp_expr_ir(IrBinOp::LogAnd, previous, member_equal),
-                    None => member_equal,
-                });
+                equalities.push((left.path.clone(), member_equal));
             }
-            equality.ok_or_else(|| format!("aggregate equality has no value leaves in `{path}"))?
+            match &tagged {
+                Some(layout) => native_tagged_equality(
+                    layout,
+                    matches!(op, Operation::CaseEqual | Operation::CaseNotEqual),
+                    equalities,
+                    tags,
+                )?,
+                None => equalities
+                    .into_iter()
+                    .map(|(_, equal)| equal)
+                    .reduce(|previous, next| cmp_expr_ir(IrBinOp::LogAnd, previous, next))
+                    .ok_or_else(|| format!("aggregate equality has no value leaves in `{path}"))?,
+            }
         };
         Ok(Some(
             if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {

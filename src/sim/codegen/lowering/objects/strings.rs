@@ -330,9 +330,14 @@ impl Codegen<'_> {
                     _ => Err(format!("unsupported string method or argument count: {name}")),
                 }
             }
-            NodeKind::Expr(ExprKind::MemberSelect { .. }) => Err(format!(
-                "a string member of a function result in `{path}` must be read from a record variable holding the result"
-            )),
+            NodeKind::Expr(ExprKind::MemberSelect { .. }) => {
+                if let Some(value) = self.lower_native_call_string_select(path, node)? {
+                    return Ok(value);
+                }
+                Err(format!(
+                    "a string member of a function result in `{path}` must be read from a record variable holding the result"
+                ))
+            }
             _ => Err(format!("string assignment requires a string expression, literal, or explicit cast in `{path}`")),
         }
     }

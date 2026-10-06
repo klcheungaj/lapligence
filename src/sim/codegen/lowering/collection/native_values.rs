@@ -18,7 +18,9 @@ mod conditionals;
 mod elements;
 mod member_select;
 mod tagged;
-pub(in crate::sim::codegen) use tagged::NativeTaggedRoot;
+pub(in crate::sim::codegen) use tagged::{
+    is_native_tag_path, native_tagged_equality, NativeTaggedRoot,
+};
 
 /// Largest number of leaves of one native record. Leaf-wise transfers to and
 /// from flattened module storage emit one operation per leaf, so larger
@@ -151,6 +153,15 @@ fn collect_native_leaves(
     let leaves = &mut output.scalars;
     match (element, &descriptor.shape) {
         (IrContainerElement::Aggregate { members, .. }, TypeShape::Aggregate(layout)) => {
+            // Only a whole value or container element is a native tagged
+            // union (`collect_native_root_leaves`); a member access below a
+            // nested one would have no tag check.
+            if layout.kind == AggregateKind::TaggedUnion {
+                return Err(format!(
+                    "tagged union member `{}` with string, real or handle members nested in a record or array is not supported",
+                    aggregate_path_suffix(path)
+                ));
+            }
             if members.len() != layout.members.len() {
                 return Err("native record layout disagrees with its descriptor".to_owned());
             }
@@ -226,6 +237,7 @@ fn collect_native_leaves(
                 .collect::<String>();
             output.containers.push(NativeContainerLeaf {
                 path: path.clone(),
+                items: items.clone(),
                 element: lower_container_element(item)?,
                 kind: super::aggregates::ir_container_kind(array, &name, &descriptor.name)?,
             });
@@ -251,7 +263,7 @@ fn collect_native_leaves(
 /// container members: a record of its tag (four-state, so an unassigned
 /// union has no active member) and each non-void member's own storage, the
 /// same leaves as module storage (`collect_native_tagged_union`).
-fn native_tagged_element(
+pub(super) fn native_tagged_element(
     descriptor: &TypeDescriptor,
     layout: &AggregateLayout,
 ) -> Result<IrContainerElement, String> {
@@ -289,7 +301,7 @@ fn is_void_member(member: &AggregateMember) -> bool {
 
 /// Leaves of a whole native value: a tagged union's tag and members by name
 /// (void members have no storage), or a record's members recursively.
-fn collect_native_root_leaves(
+pub(super) fn collect_native_root_leaves(
     descriptor: &TypeDescriptor,
     element: &IrContainerElement,
     output: &mut NativeLeaves,
@@ -1423,6 +1435,131 @@ impl Codegen<'_> {
             .then_some((call, name, callee, function)))
     }
 
+    /// A lexical temporary that statements fill with the record value of
+    /// `node` when it is not record storage: a native-result call, a
+    /// conditional or a container element; `None` for other operands.
+    pub(in super::super) fn native_value_of(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<(usize, Vec<IrStmt>)>, String> {
+        let temporary = match self.native_result_callee(node)? {
+            Some((_, _, _, function)) => self.native_temporary(function)?,
+            None => match self.native_temporary(node) {
+                Ok(temporary) => temporary,
+                Err(_) => return Ok(None),
+            },
+        };
+        let descriptor = self.native_layout_of_value(temporary)?.descriptor.clone();
+        let target = NativeEndpoint::Value {
+            value: temporary,
+            prefix: Vec::new(),
+        };
+        let fill = self.native_assign_into(path, &target, &descriptor, node, false)?;
+        Ok(Some((
+            temporary,
+            vec![IrStmt::NativeValueDeclare(temporary), fill],
+        )))
+    }
+
+    /// A member of a call returning a native record (`f(x).m`, `f(x).s.m`):
+    /// the statements that run the call once into a lexical temporary, and
+    /// the selected scalar leaf read from it; `None` for other operands.
+    fn native_call_select(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<(Vec<IrStmt>, LeafValue)>, String> {
+        let mut members = Vec::new();
+        let mut current = node;
+        while let NodeKind::Expr(ExprKind::MemberSelect { base, member }) = self.kind(current) {
+            members.push(AggregatePathPart::Member(member.clone()));
+            current = *base;
+        }
+        if members.is_empty() || !self.native_call_node(current) {
+            return Ok(None);
+        }
+        members.reverse();
+        let Some((temporary, statements)) = self.native_value_of(path, current)? else {
+            return Ok(None);
+        };
+        let leaf = self
+            .native_layout_of_value(temporary)?
+            .leaves
+            .iter()
+            .find(|leaf| leaf.path == members)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "selection `{}` of a native record call result in `{path}` must name a scalar member",
+                    aggregate_path_suffix(&members)
+                )
+            })?;
+        let value = self.endpoint_leaf_read(&NativeEndpointLeaf::Value(temporary, leaf))?;
+        Ok(Some((statements, value)))
+    }
+
+    /// A packed or real member of a native-record call result (`f(x).n`):
+    /// the call runs once into a temporary owned by the expression's value
+    /// scope.
+    pub(in super::super) fn lower_native_call_select(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let Some((statements, value)) = self.native_call_select(path, node)? else {
+            return Ok(None);
+        };
+        let value = match value {
+            LeafValue::Packed(value) | LeafValue::Real(value) => value,
+            _ => {
+                return Err(format!(
+                    "string or handle member of a native record call result in `{path}` is not a packed or real value"
+                ))
+            }
+        };
+        let (width, signed) = (value.width, value.signed);
+        Ok(Some(IrExpr::new(
+            IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                statements,
+                value,
+            })),
+            width,
+            signed,
+            None,
+        )))
+    }
+
+    /// A string member of a native-record call result (`f(x).s`): a known
+    /// predicate whose setup runs the call selects the member read.
+    pub(in super::super) fn lower_native_call_string_select(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrStringExpr>, String> {
+        let Some((statements, value)) = self.native_call_select(path, node)? else {
+            return Ok(None);
+        };
+        let LeafValue::String(value) = value else {
+            return Err(format!(
+                "member of a native record call result in `{path}` is not a string"
+            ));
+        };
+        Ok(Some(IrStringExpr::Conditional {
+            predicate: Box::new(IrExpr::new(
+                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                    statements,
+                    value: const_bits_expr(1, true),
+                })),
+                1,
+                false,
+                None,
+            )),
+            then: Box::new(value),
+            otherwise: Box::new(IrStringExpr::Literal(Vec::new())),
+        }))
+    }
+
     /// The typed statement call of a native-result function writing its
     /// result into `result` through the trailing output operand.
     fn native_result_call(
@@ -1572,10 +1709,10 @@ impl Codegen<'_> {
         if self.native_record_conditional(source) {
             return self.native_conditional_into(path, target, descriptor, source, nba);
         }
-        if !nba {
-            if let Some(statement) = self.container_record_into(path, target, source)? {
-                return Ok(statement);
-            }
+        // An element source is copied at issue; a nonblocking target then
+        // queues every leaf (SV 10.4.2).
+        if let Some(statement) = self.container_record_into(path, target, source, nba)? {
+            return Ok(statement);
         }
         let (source, _) = self
             .native_endpoint(source)?
@@ -1773,6 +1910,31 @@ impl Codegen<'_> {
         if self.native_call_node(actual) {
             return Ok(None);
         }
+        // A whole record element of a container is read in place, leaf by
+        // leaf; its nested containers live inside the element value, so
+        // only a statement temporary can carry them.
+        if layout.containers.is_empty() && self.is_container_record(actual) {
+            let Some(reads) = self.container_record_leaf_reads(path, actual)? else {
+                return Ok(None);
+            };
+            if reads.len() != layout.leaves.len()
+                || reads
+                    .iter()
+                    .zip(&layout.leaves)
+                    .any(|((relative, _), target)| *relative != target.path)
+            {
+                return Err(format!(
+                    "native record argument has an incompatible leaf layout in `{path}`"
+                ));
+            }
+            for ((_, value), target) in reads.into_iter().zip(&layout.leaves) {
+                leaves.push(IrNativeLeafValue {
+                    items: target.items.clone(),
+                    value: value.into_leaf_expr()?,
+                });
+            }
+            return Ok(Some((leaves, containers)));
+        }
         let Some((source, _)) = self.native_endpoint(self.p30_unwrap_cast(actual))? else {
             return Ok(None);
         };
@@ -1951,7 +2113,15 @@ impl Codegen<'_> {
 
     /// Every leaf of a record operand in declaration order: a native value,
     /// a module native record or a whole record element of a container.
-    fn record_leaf_reads(&mut self, path: &str, node: NodeId) -> Result<Option<LeafReads>, String> {
+    fn record_leaf_reads(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        setup: &mut Vec<IrStmt>,
+    ) -> Result<Option<LeafReads>, String> {
+        if let Some(reads) = self.container_record_staged_reads(path, node, setup)? {
+            return Ok(Some(reads));
+        }
         if let Some(reads) = self.container_record_leaf_reads(path, node)? {
             return Ok(Some(reads));
         }
@@ -1985,14 +2155,16 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let (left, right) = (self.p30_unwrap_cast(*left), self.p30_unwrap_cast(*right));
+        let (left_node, right_node) = (left, right);
         let element = self.is_container_record(left) || self.is_container_record(right);
         if !element && self.native_path_of(left)?.is_none() && self.native_path_of(right)?.is_none()
         {
             return Ok(None);
         }
+        let mut setup = Vec::new();
         let (left, right) = match (
-            self.record_leaf_reads(path, left)?,
-            self.record_leaf_reads(path, right)?,
+            self.record_leaf_reads(path, left, &mut setup)?,
+            self.record_leaf_reads(path, right, &mut setup)?,
         ) {
             (Some(left), Some(right)) => (left, right),
             // Scalar members of native values compare as scalars.
@@ -2012,30 +2184,60 @@ impl Codegen<'_> {
             ));
         }
         let case = matches!(op, Operation::CaseEqual | Operation::CaseNotEqual);
-        let mut equality: Option<IrExpr> = None;
-        for ((_, left), (_, right)) in left.into_iter().zip(right) {
-            let leaf_equal = self.leaf_value_equality(path, left, right, case)?;
-            equality = Some(match equality {
-                Some(previous) => cmp_expr_ir(IrBinOp::LogAnd, previous, leaf_equal),
-                None => leaf_equal,
-            });
+        let tagged = self
+            .native_tagged_root(left_node)
+            .or_else(|| self.native_tagged_root(right_node))
+            .and_then(|root| self.native_tagged_layout(root));
+        let mut tags = None;
+        let mut equalities = Vec::with_capacity(left.len());
+        for ((leaf_path, left), (_, right)) in left.into_iter().zip(right) {
+            if tagged.is_some() && is_native_tag_path(&leaf_path) {
+                let (LeafValue::Packed(left), LeafValue::Packed(right)) = (left, right) else {
+                    return Err("tagged union tag is not a packed leaf".to_owned());
+                };
+                tags = Some((left, right));
+                continue;
+            }
+            equalities.push((
+                leaf_path,
+                self.leaf_value_equality(path, left, right, case)?,
+            ));
         }
-        let equality = equality.ok_or("native record comparison has no leaves")?;
-        Ok(Some(
-            if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {
-                IrExpr::new(
-                    IrExprKind::Un {
-                        op: IrUnOp::LogNot,
-                        a: Box::new(equality),
-                    },
-                    1,
-                    false,
-                    None,
-                )
-            } else {
-                equality
-            },
-        ))
+        let equality = match &tagged {
+            Some(layout) => native_tagged_equality(layout, case, equalities, tags)?,
+            None => equalities
+                .into_iter()
+                .map(|(_, equal)| equal)
+                .reduce(|previous, next| cmp_expr_ir(IrBinOp::LogAnd, previous, next))
+                .ok_or("native record comparison has no leaves")?,
+        };
+        let result = if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {
+            IrExpr::new(
+                IrExprKind::Un {
+                    op: IrUnOp::LogNot,
+                    a: Box::new(equality),
+                },
+                1,
+                false,
+                None,
+            )
+        } else {
+            equality
+        };
+        // Staged element copies run inside the expression's value scope.
+        Ok(Some(if setup.is_empty() {
+            result
+        } else {
+            IrExpr::new(
+                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                    statements: setup,
+                    value: result,
+                })),
+                1,
+                false,
+                None,
+            )
+        }))
     }
 
     /// One-bit equality of two scalar record leaves (SV 11.4.5): strings
@@ -2186,14 +2388,14 @@ impl Codegen<'_> {
                 false,
                 None,
             )),
+            // The default is an unsigned constant; the store keeps the
+            // leaf's own signedness.
             IrClassFieldType::Packed {
-                width,
-                signed,
-                two_state,
+                width, two_state, ..
             } => LeafValue::Packed(IrExpr::new(
                 IrExprKind::Const(IrConst::integral_default(width, two_state)),
                 width,
-                signed,
+                false,
                 None,
             )),
         };
@@ -2275,6 +2477,26 @@ impl Codegen<'_> {
                         leaves,
                         containers,
                     });
+                }
+                // Inside an assignment or system-task statement, an input
+                // free of side effects (such as a container element with a
+                // queue member) may be built in a temporary just before the
+                // statement, as container actuals are.
+                if self.container_call_prelude.is_some() && self.side_effect_free(actual) {
+                    let temporary = self.native_temporary(formal)?;
+                    let target = NativeEndpoint::Value {
+                        value: temporary,
+                        prefix: Vec::new(),
+                    };
+                    let build =
+                        self.native_assign_into(path, &target, &layout.descriptor, actual, false)?;
+                    let prelude = self
+                        .container_call_prelude
+                        .as_mut()
+                        .ok_or("container call prelude closed while lowering its operand")?;
+                    prelude.push(IrStmt::NativeValueDeclare(temporary));
+                    prelude.push(build);
+                    return Ok(IrCallArg::NativeValue(temporary));
                 }
             }
             return Err(format!(

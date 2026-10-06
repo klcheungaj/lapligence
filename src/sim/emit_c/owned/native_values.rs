@@ -181,6 +181,29 @@ impl Frame<'_, '_> {
         Ok(())
     }
 
+    /// `llg_value_t*` of the item selected by a nonempty `path` below a
+    /// native value.
+    pub(super) fn native_value_item(&self, index: usize, path: &[u32]) -> Result<String, String> {
+        self.value_item(&format!("({})", self.native_value_address(index)?), path)
+    }
+
+    /// `llg_value_t*` of the item selected by a nonempty `path` below the
+    /// `llg_value_t*` expression `root`.
+    pub(super) fn value_item(&self, root: &str, path: &[u32]) -> Result<String, String> {
+        let mut item = root.to_owned();
+        for (depth, step) in path.iter().enumerate() {
+            item = if depth == 0 {
+                format!("{item}->value.items[{step}]")
+            } else {
+                format!("{item}.value.items[{step}]")
+            };
+        }
+        if path.is_empty() {
+            return Err("native value item requires an item path".to_owned());
+        }
+        Ok(format!("&{item}"))
+    }
+
     /// Address of one leaf payload selected by `path` below a native value.
     pub(super) fn native_value_leaf(
         &self,

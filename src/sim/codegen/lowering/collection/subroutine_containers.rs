@@ -291,6 +291,17 @@ impl Codegen<'_> {
             NodeKind::FuncArg { direction, .. } => *direction,
             _ => return Err(format!("container formal `{name}` is not an argument")),
         };
+        // A staged member of a container record element is a copy, which a
+        // reference must not alias (SIM-007).
+        if direction == DbDirection::Ref
+            && self
+                .staged_element_member(self.p30_unwrap_cast(actual))
+                .is_some()
+        {
+            return Err(format!(
+                "a queue or dynamic-array member of a container record element as the ref actual of `{name}` in `{path}` is not supported"
+            ));
+        }
         if let Some(source) = self.container_of(self.p30_unwrap_cast(actual)) {
             if self.model.containers[source.ir].same_storage_type(&self.model.containers[like]) {
                 return Ok(IrCallArg::Container(source.ir));

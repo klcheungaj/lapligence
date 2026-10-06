@@ -1,6 +1,7 @@
 //! Assignments.
 
 use super::*;
+use crate::sim::codegen::lowering::collection::native_values::NativeTaggedRoot;
 
 impl EmitCtx<'_, '_> {
     /// Lower an assignment without intra-assignment delay (`force_blocking`
@@ -54,7 +55,13 @@ impl EmitCtx<'_, '_> {
         // Tagged unions with string, real or handle members (SIM-007): a
         // tagged construction sets the tag and one member; a member write
         // happens only while that member is active.
-        if let Some(root) = self.cg.native_tagged_root(lhs) {
+        // A container element is replaced through a temporary of its type
+        // (`lower_container_record_assignment`), which accepts these sources.
+        if let Some(root) = self
+            .cg
+            .native_tagged_root(lhs)
+            .filter(|root| !matches!(root, NativeTaggedRoot::Element(_)))
+        {
             if let Some(statement) = self
                 .cg
                 .lower_native_tagged_construct(&self.path, root, rhs, !blocking)?
@@ -67,13 +74,14 @@ impl EmitCtx<'_, '_> {
                 }
                 return Ok(statement);
             }
-            if !blocking {
+            if !blocking && !matches!(root, NativeTaggedRoot::Module(_)) {
                 return Err(format!(
-                    "nonblocking assignment to a tagged union with string, real or handle members in `{}` is not supported",
+                    "nonblocking assignment to a tagged union with string, real or handle members in subroutine storage in `{}` is not supported",
                     self.path
                 ));
             }
             if self.cg.native_tagged_root(rhs).is_none()
+                && !self.cg.is_container_record(rhs)
                 && !self.cg.native_call_node(rhs)
                 && !self
                     .cg
@@ -95,9 +103,12 @@ impl EmitCtx<'_, '_> {
             return self.cg.native_member_select_write(&self.path, &select, rhs);
         }
         if self.cg.native_tagged_access(lhs).is_some() {
+            // SV 11.9 checks a member write against the tag current when it
+            // is performed; for a nonblocking write that is the commit, and
+            // queued native writes carry no commit-time tag check.
             if !blocking {
                 return Err(format!(
-                    "nonblocking assignment to a member of a tagged union with string, real or handle members in `{}` is not supported",
+                    "nonblocking assignment to a member of a tagged union with string, real or handle members in `{}` is not supported: the write needs a commit-time tag check",
                     self.path
                 ));
             }
@@ -106,7 +117,9 @@ impl EmitCtx<'_, '_> {
                 self.lower_assignment_operands_unchecked(lhs, rhs, blocking, op, force_blocking);
             self.cg.native_tagged_bypass.remove(&lhs);
             let statement = statement?;
-            return self.cg.native_tagged_guarded_write(lhs, statement);
+            return self
+                .cg
+                .native_tagged_guarded_write(&self.path, lhs, statement);
         }
         self.lower_assignment_operands_unchecked(lhs, rhs, blocking, op, force_blocking)
     }
