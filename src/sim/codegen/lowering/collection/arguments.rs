@@ -454,6 +454,17 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    /// Whether `formal` is a `ref` or `const ref` subroutine argument.
+    pub(in super::super) fn is_ref_formal(&self, formal: NodeId) -> bool {
+        matches!(
+            self.kind(formal),
+            NodeKind::FuncArg {
+                direction: DbDirection::Ref,
+                ..
+            }
+        )
+    }
+
     /// Whether a ref actual selects an element of a resizable container.
     fn container_of_ref_actual(&self, node: NodeId) -> bool {
         match self.kind(node) {

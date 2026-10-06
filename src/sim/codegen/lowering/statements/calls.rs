@@ -237,7 +237,8 @@ impl EmitCtx<'_, '_> {
                     bound[idx].expr,
                     Some(&mut before),
                 )?;
-                if *is_out {
+                // `ref` formals pass by address with the outputs.
+                if *is_out || self.cg.is_ref_formal(*io) {
                     out_args.push(argument);
                 } else {
                     in_args.push((idx, argument));
@@ -282,7 +283,7 @@ impl EmitCtx<'_, '_> {
                     &mut before,
                     &mut after,
                 )?;
-                if *is_out {
+                if *is_out || self.cg.is_ref_formal(*io) {
                     out_args.push(argument);
                 } else {
                     in_args.push((idx, argument));
