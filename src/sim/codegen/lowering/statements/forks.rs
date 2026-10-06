@@ -17,6 +17,35 @@ impl EmitCtx<'_, '_> {
         join_kind: DbJoinKind,
         branches: &[NodeId],
     ) -> Result<Vec<IrStmt>, String> {
+        // Declarations of the fork's own block items (`fork automatic int
+        // k = i; ... join_none`) arrive among the branch statements. They are
+        // not processes: the process executing the fork statement creates and
+        // initializes them before any branch starts (SV 9.3.2), and the
+        // branches then capture them like enclosing automatics.
+        let mut declarations = Vec::new();
+        let mut processes = Vec::with_capacity(branches.len());
+        for branch in branches {
+            if let NodeKind::Stmt(StmtKind::VariableDecl { declaration }) = self.cg.kind(*branch) {
+                let declaration = *declaration;
+                declarations.extend(self.lower_variable_decl(declaration)?);
+            } else {
+                processes.push(*branch);
+            }
+        }
+        let mut statements = self.lower_fork_branches(target, join_kind, &processes)?;
+        if !declarations.is_empty() {
+            declarations.append(&mut statements);
+            statements = declarations;
+        }
+        Ok(statements)
+    }
+
+    fn lower_fork_branches(
+        &mut self,
+        target: Option<NodeId>,
+        join_kind: DbJoinKind,
+        branches: &[NodeId],
+    ) -> Result<Vec<IrStmt>, String> {
         if let Some(function) = &self.func {
             if !function.is_task && join_kind != DbJoinKind::None {
                 return Err(format!(
