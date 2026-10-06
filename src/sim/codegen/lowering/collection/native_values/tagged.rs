@@ -411,7 +411,7 @@ impl Codegen<'_> {
             tag_bits: member.tag_bits,
             index: member.index,
             descriptor,
-            value: value.map(LeafValue::into_leaf_expr),
+            value: value.map(LeafValue::into_leaf_expr).transpose()?,
             payload,
         })
     }

@@ -25,6 +25,10 @@ pub struct IrFormal {
     /// Descriptor-backed native value bound to this formal in the callee
     /// (`llg_value_t*`); index into [`super::IrModel::native_values`].
     pub(in crate::sim) native_value: Option<usize>,
+    /// Companion containers of `native_value` (see
+    /// [`super::IrNativeValue::companions`]); each is one more `void*` C
+    /// parameter right after the value's own, passed like a container formal.
+    pub(in crate::sim) native_companions: Vec<usize>,
     /// Real fixed-array storage bound to this formal in the callee (a
     /// `double*` C parameter); index into [`super::IrModel::arrays`]. Real
     /// arrays keep numeric cells and never use the packed fixed-value ABI.
@@ -101,6 +105,7 @@ impl IrFormal {
             ref_static: false,
             fixed_array: None,
             native_value: None,
+            native_companions: Vec::new(),
             real_array: None,
             container: None,
             fixed_shape: None,

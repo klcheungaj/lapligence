@@ -1502,11 +1502,23 @@ pub(in crate::sim::emit_c) fn activation_storage(
 
 /// Destroy adapters for the activation container storage types of `model`.
 pub(in crate::sim::emit_c) fn activation_drop_helpers(model: &crate::sim::ir::IrModel) -> String {
+    // Call boundaries create fresh storage of a formal's container type,
+    // including a static subroutine's (model-storage) formal containers.
+    let formal_containers = model
+        .funcs
+        .iter()
+        .flat_map(|function| &function.formals)
+        .flat_map(|formal| formal.container.iter().chain(&formal.native_companions))
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
     let mut types = std::collections::BTreeSet::new();
-    for container in model
+    for (_, container) in model
         .containers
         .iter()
-        .filter(|container| !container.is_global_storage())
+        .enumerate()
+        .filter(|(index, container)| {
+            !container.is_global_storage() || formal_containers.contains(index)
+        })
     {
         let ty = if container.element.is_packed() {
             c_type(&container.kind)

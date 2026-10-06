@@ -1170,7 +1170,11 @@ impl<'a> Codegen<'a> {
 
 /// Runtime container kind of a queue, dynamic or associative array type.
 /// Fixed arrays of handles reuse the dynamic-array runtime.
-fn ir_container_kind(array: &ArrayKind, name: &str, path: &str) -> Result<IrContainerKind, String> {
+pub(super) fn ir_container_kind(
+    array: &ArrayKind,
+    name: &str,
+    path: &str,
+) -> Result<IrContainerKind, String> {
     Ok(match array {
         // Fixed virtual-interface arrays use the same owned pointer-table
         // runtime as dynamic arrays; their HDL bounds remain in the

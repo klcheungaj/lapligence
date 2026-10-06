@@ -126,7 +126,7 @@ impl Codegen<'_> {
         ) && self.descriptor_transport(node)
             // A member array of a record is reachable through element
             // selects as a detached declaration; it is not a local.
-            && self.node(node).parent.is_some()
+            && self.is_body_local(node)
         {
             output.push(node);
             return;

@@ -50,6 +50,27 @@ pub(super) fn func_param_names(f: &IrFunc) -> String {
         .join(", ")
 }
 
+/// One `void*` parameter per companion container of a native formal, named
+/// after the value's parameter (SIM-007).
+fn native_companion_params(
+    form: &crate::sim::ir::IrFormal,
+    parameter: &str,
+) -> Vec<(String, String)> {
+    (0..form.native_companions.len())
+        .map(|position| {
+            (
+                "void*".to_owned(),
+                native_companion_param(parameter, position),
+            )
+        })
+        .collect()
+}
+
+/// C parameter naming companion `position` of native formal `parameter`.
+pub(in crate::sim::emit_c) fn native_companion_param(parameter: &str, position: usize) -> String {
+    format!("{parameter}_c{position}")
+}
+
 /// Coroutine argument fields stored in the callee frame by the caller. Packed
 /// inputs are descriptor borrows copied into the callee's own owners at entry.
 pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
@@ -62,6 +83,7 @@ pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
             params.push(("void*".to_owned(), format!("o{idx}")));
         } else if form.native_value.is_some() && form.is_address() {
             params.push(("llg_value_t*".to_owned(), format!("o{idx}")));
+            params.extend(native_companion_params(form, &format!("o{idx}")));
         } else if form.real_array.is_some() && form.is_address() {
             params.push((
                 "double*".to_owned(),
@@ -112,6 +134,7 @@ pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
     }
     for (idx, form) in f.formals.iter().enumerate() {
         if !form.is_address() {
+            let companions = native_companion_params(form, &format!("a{idx}"));
             params.push((
                 (if form.container.is_some() {
                     "void*"
@@ -135,6 +158,7 @@ pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
                 .to_owned(),
                 format!("a{idx}"),
             ));
+            params.extend(companions);
         }
     }
     params.push(("int".to_owned(), "depth".to_owned()));

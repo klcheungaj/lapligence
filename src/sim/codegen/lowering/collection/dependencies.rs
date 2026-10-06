@@ -45,6 +45,12 @@ impl<'a> Codegen<'a> {
                 dependencies.push(IrDependency::ArrayContents(self.reference_array(array.ir)));
                 continue;
             }
+            // A queue, dynamic or associative member (SIM-007) is read whole.
+            if let Some(container) = &leaf.container {
+                dependencies.push(IrDependency::ContainerContents(container.ir));
+                dependencies.push(IrDependency::ContainerShape(container.ir));
+                continue;
+            }
             let Some(signal) = &leaf.signal else {
                 // A string member publishes its own change marker; other
                 // native members have none (see `walk_read_signals_bound`).
@@ -1023,6 +1029,10 @@ impl<'a> Codegen<'a> {
                 if let Some((_, _, member)) = self.unpacked_member_info(lhs) {
                     if let Some(signal) = member.signal.as_ref() {
                         writes.insert(self.signal_dependency(signal));
+                    }
+                    if let Some(container) = &member.container {
+                        writes.insert(IrDependency::ContainerContents(container.ir));
+                        writes.insert(IrDependency::ContainerShape(container.ir));
                     }
                 } else if let Some(info) = self.hier_path_signal(lhs) {
                     writes.insert(self.signal_dependency(info));

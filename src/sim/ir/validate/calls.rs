@@ -278,13 +278,28 @@ impl Validator<'_> {
                     self.native_activations.borrow_mut().pop();
                     valid?;
                 }
-                IrCallArg::NativeLeaves { ty, leaves } => {
+                IrCallArg::NativeLeaves {
+                    ty,
+                    leaves,
+                    containers,
+                } => {
                     let expected = formal
                         .native_value
                         .and_then(|value| self.model.native_values.get(value));
                     if formal.is_address() || expected.is_none_or(|expected| expected.ty != *ty) {
                         return self
                             .fail(&arg_path, "native leaf operand requires an input formal");
+                    }
+                    if containers.len() != formal.native_companions.len()
+                        || containers.iter().zip(&formal.native_companions).any(
+                            |(actual, expected)| {
+                                self.model.containers.get(*actual).is_none_or(|actual| {
+                                    !actual.same_storage_type(&self.model.containers[*expected])
+                                })
+                            },
+                        )
+                    {
+                        return self.fail(&arg_path, "native leaf operand container mismatch");
                     }
                     self.validate_native_leaf_values(*ty, leaves, formals, &arg_path)?;
                 }
@@ -336,6 +351,18 @@ impl Validator<'_> {
                         || formal.is_ref()
                     {
                         return self.fail(&arg_path, "native argument type mismatch");
+                    }
+                    let actual = &self.model.native_values[*value].companions;
+                    if actual.len() != formal.native_companions.len()
+                        || actual
+                            .iter()
+                            .zip(&formal.native_companions)
+                            .any(|(actual, expected)| {
+                                !self.model.containers[*actual]
+                                    .same_storage_type(&self.model.containers[*expected])
+                            })
+                    {
+                        return self.fail(&arg_path, "native argument companion mismatch");
                     }
                 }
                 IrCallArg::FixedValue(value) => {

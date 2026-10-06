@@ -43,6 +43,20 @@ impl Validator<'_> {
             if !value.activation && (value.c_name.is_empty() || !names.insert(&value.c_name)) {
                 return self.fail(path, "persistent native value needs a unique storage name");
             }
+            for (position, companion) in value.companions.iter().enumerate() {
+                let Some(container) = self.model.containers.get(*companion) else {
+                    return self.fail(
+                        format!("{path}.companions[{position}]"),
+                        "native companion container is out of bounds",
+                    );
+                };
+                if container.activation != value.activation || container.class_field.is_some() {
+                    return self.fail(
+                        format!("{path}.companions[{position}]"),
+                        "native companion container must share its value's lifetime",
+                    );
+                }
+            }
         }
         for (index, function) in self.model.funcs.iter().enumerate() {
             for (formal_index, formal) in function.formals.iter().enumerate() {
@@ -62,6 +76,12 @@ impl Validator<'_> {
                     || formal.width != 0
                 {
                     return self.fail(path, "native formal has a conflicting value ABI");
+                }
+                if formal.native_companions != self.model.native_values[value].companions {
+                    return self.fail(
+                        path,
+                        "native formal companions differ from its value's companions",
+                    );
                 }
             }
         }

@@ -333,6 +333,9 @@ impl Frame<'_, '_> {
                             == 1
                     {
                         parameters.push(actual);
+                        for container in self.ctx.model.native_values[*value].companions.clone() {
+                            parameters.push(format!("(void*)&{}", self.container_name(container)?));
+                        }
                         continue;
                     }
                     // Otherwise the callee gets a fresh value: inputs and
@@ -349,6 +352,27 @@ impl Frame<'_, '_> {
                         native_copyouts.push((actual, storage.clone()));
                     }
                     parameters.push(storage);
+                    // Companion containers follow the same copy-in/copy-out
+                    // protocol as container operands (SIM-007).
+                    let pairs = formal
+                        .native_companions
+                        .iter()
+                        .copied()
+                        .zip(self.ctx.model.native_values[*value].companions.clone())
+                        .collect::<Vec<_>>();
+                    for (callee, actual) in pairs {
+                        let actual = self.container_name(actual)?;
+                        let storage = self.new_container(callee)?;
+                        let copy =
+                            super::containers::copy_function(&self.ctx.model.containers[callee]);
+                        if matches!(formal.mode, IrFormalMode::Input | IrFormalMode::Inout) {
+                            self.line(format!("{copy}(&{storage}, &{actual});"));
+                        }
+                        if formal.is_out {
+                            container_copyouts.push((copy, actual, storage.clone()));
+                        }
+                        parameters.push(format!("(void*)&{storage}"));
+                    }
                 }
                 IrCallArg::Container(container) => {
                     // The callee always receives fresh storage of its formal
@@ -392,13 +416,32 @@ impl Frame<'_, '_> {
                     // operand references, so the callee may own it directly.
                     let storage = self.new_native_value(self.ctx.model.native_values[*value].ty);
                     self.native_values.insert(*value, storage.clone());
+                    self.declare_native_companions(*value)?;
                     self.call_statement(call)?;
                     parameters.push(storage);
+                    for container in self.ctx.model.native_values[*value].companions.clone() {
+                        parameters.push(format!("(void*)&{}", self.container_name(container)?));
+                    }
                 }
-                IrCallArg::NativeLeaves { ty, leaves } => {
+                IrCallArg::NativeLeaves {
+                    ty,
+                    leaves,
+                    containers,
+                } => {
                     let storage = self.new_native_value(*ty);
                     self.native_leaves_into(&storage, *ty, leaves)?;
                     parameters.push(storage);
+                    // Container members are fresh copies of their sources.
+                    for (callee, source) in
+                        formal.native_companions.clone().into_iter().zip(containers)
+                    {
+                        let copy =
+                            super::containers::copy_function(&self.ctx.model.containers[callee]);
+                        let source = self.container_name(*source)?;
+                        let storage = self.new_container(callee)?;
+                        self.line(format!("{copy}(&{storage}, &{source});"));
+                        parameters.push(format!("(void*)&{storage}"));
+                    }
                 }
                 IrCallArg::RealArray(array) => {
                     let actual = self.real_array_base(*array)?;

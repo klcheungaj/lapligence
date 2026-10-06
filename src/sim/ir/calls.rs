@@ -32,6 +32,9 @@ pub enum IrCallArg {
     NativeLeaves {
         ty: usize,
         leaves: Vec<super::IrNativeLeafValue>,
+        /// Source containers copied into the callee's companion containers,
+        /// in companion order (SIM-007); empty when the type has none.
+        containers: Vec<usize>,
     },
     /// Input native-value formal fed by a native-result call evaluated at
     /// this operand. `value` is the lexical result storage the inner call
