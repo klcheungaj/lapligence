@@ -9,3 +9,9 @@ fn fork_block_declarations_are_created_per_fork_execution() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_010/fork_declarations.out");
     sim_cli::run_case_backend_parity(SUITE, "fork_declarations", expected, &[], &[]);
 }
+
+#[test]
+fn detached_branches_share_enclosing_automatics() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_010/shared_automatics.out");
+    sim_cli::run_case_backend_parity(SUITE, "shared_automatics", expected, &[], &[]);
+}

@@ -328,6 +328,18 @@ pub enum IrStmt {
         init: Option<Box<IrExpr>>,
         two_state: bool,
     },
+    /// Declare an automatic packed or real variable that `join_none` or
+    /// `join_any` branches share with the declaring activation (SV 6.21,
+    /// 9.3.2): its cell lives in a reference-counted activation frame that
+    /// branches alias ([`StorageOwnership::Shared`]), so it lives until the
+    /// declaring scope and every branch using it have finished.
+    SharedLocal {
+        name: String,
+        width: u32,
+        signed: bool,
+        init: Option<Box<IrExpr>>,
+        two_state: bool,
+    },
     /// Declare an automatic native string slot at the source declaration.
     /// The optional initializer is an owned byte-string expression.
     DeclString {

@@ -6,11 +6,16 @@ pub(super) enum CapturedValue {
     Numeric(Value),
     Handle(String),
     Borrowed(String),
+    /// A slot of a shared activation frame: (frame expression, slot).
+    Shared(String, u32),
 }
 
 fn check_capture(storage: StorageRef) -> Result<(), String> {
-    if storage.ownership() == StorageOwnership::Shared {
-        return Err(pending("shared activation captures"));
+    if storage.ownership() == StorageOwnership::Shared
+        && (storage.lifetime() != StorageLifetime::Automatic
+            || !matches!(storage.kind(), StorageKind::Packed | StorageKind::Real))
+    {
+        return Err("shared fork capture requires automatic numeric storage".to_owned());
     }
     if storage.ownership() == StorageOwnership::Borrowed
         && (storage.lifetime() != StorageLifetime::Automatic
@@ -52,6 +57,17 @@ impl Frame<'_, '_> {
                     )
                 };
                 values.push((storage, CapturedValue::Handle(handle)));
+                continue;
+            }
+            if storage.ownership() == StorageOwnership::Shared {
+                let IrExprKind::LocalRead(name) = initial.kind() else {
+                    return Err("shared fork capture requires a local source".to_owned());
+                };
+                let (frame, slot) =
+                    self.shared_cells.get(name).cloned().ok_or_else(|| {
+                        format!("shared fork capture of `{name}` has no shared cell")
+                    })?;
+                values.push((storage, CapturedValue::Shared(frame, slot)));
                 continue;
             }
             if storage.ownership() == StorageOwnership::Borrowed {
@@ -149,6 +165,10 @@ impl Frame<'_, '_> {
                     "llg_frame_capture_opaque({access}, {}u, {handle});",
                     storage.slot()
                 )),
+                CapturedValue::Shared(frame, slot) => self.line(format!(
+                    "llg_frame_alias_slot({access}, {}u, {frame}, {slot}u);",
+                    storage.slot()
+                )),
                 CapturedValue::Numeric(value) => {
                     let operation = if storage.kind() == StorageKind::Real {
                         "real"
@@ -196,7 +216,16 @@ impl Frame<'_, '_> {
                 .insert(name.to_owned(), address);
             return Ok(());
         }
-        if storage.ownership() == StorageOwnership::Borrowed {
+        if matches!(
+            storage.ownership(),
+            StorageOwnership::Borrowed | StorageOwnership::Shared
+        ) {
+            if storage.ownership() == StorageOwnership::Shared {
+                // Nested forks alias this branch's own slot, which aliases
+                // the declaring frame.
+                self.shared_cells
+                    .insert(name.to_owned(), (source.to_owned(), storage.slot()));
+            }
             let (ty, operation) = if storage.kind() == StorageKind::Real {
                 ("double", "real")
             } else {

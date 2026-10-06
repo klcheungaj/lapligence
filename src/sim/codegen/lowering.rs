@@ -1378,6 +1378,11 @@ struct Codegen<'a> {
     /// Automatic named events declared in subroutine bodies: the binding
     /// name of their activation-owned handle (`IrStmt::EventDeclare`).
     local_event_handles: HashMap<NodeId, String>,
+    /// Automatic variables that a `join_none`/`join_any` branch reads or
+    /// writes outside its own scope (computed once, syntactically).
+    fork_shared: Option<HashSet<NodeId>>,
+    /// Declarations lowered as `IrStmt::SharedLocal`.
+    shared_locals: HashSet<NodeId>,
     /// Event-array declaration and linear element index → lowered event info.
     event_elements: HashMap<(NodeId, u64), EventInfo>,
     /// Named-event array declaration → descriptor index in the IR event table.
@@ -1665,6 +1670,8 @@ impl<'a> Codegen<'a> {
             events: Vec::new(),
             event_globals: HashMap::new(),
             local_event_handles: HashMap::new(),
+            fork_shared: None,
+            shared_locals: HashSet::new(),
             event_elements: HashMap::new(),
             event_arrays: HashMap::new(),
             scalar_inits: Vec::new(),

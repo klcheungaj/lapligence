@@ -154,6 +154,9 @@ pub(super) struct Frame<'a, 'm> {
     next_name: usize,
     bindings: Vec<HashMap<String, Binding>>,
     event_bindings: Vec<HashMap<String, String>>,
+    /// Locals that live in a shared activation frame (`IrStmt::SharedLocal`,
+    /// `StorageOwnership::Shared` captures): name -> (frame expression, slot).
+    shared_cells: HashMap<String, (String, u32)>,
     native_bindings: Vec<HashMap<String, native::NativeBinding>>,
     formal_overrides: Vec<Vec<Binding>>,
     callback_signal_overrides: Vec<HashMap<usize, usize>>,
@@ -317,6 +320,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             next_name: 0,
             bindings: vec![HashMap::new()],
             event_bindings: vec![HashMap::new()],
+            shared_cells: HashMap::new(),
             native_bindings: vec![HashMap::new()],
             formal_overrides: Vec::new(),
             callback_signal_overrides: Vec::new(),
@@ -1087,6 +1091,61 @@ impl<'a, 'm> Frame<'a, 'm> {
             .last_mut()
             .expect("frame always has a binding scope")
             .insert(name.to_owned(), binding.clone());
+        if let Some(init) = init {
+            let value = self.expression(init)?;
+            let value = self.convert(value, width, signed, two_state, false);
+            if width == 0 {
+                self.line(format!("*({address}) = {};", value.code));
+            } else {
+                self.line(format!("sv4_move({address}, &{});", value.code));
+            }
+            self.discard(value);
+        }
+        Ok(())
+    }
+    /// A local in a fresh one-slot activation frame owned by the current
+    /// lexical scope; fork branches alias the slot and retain the frame.
+    fn shared_local(
+        &mut self,
+        name: &str,
+        width: u32,
+        signed: bool,
+        two_state: bool,
+        init: Option<&IrExpr>,
+    ) -> Result<(), String> {
+        let owner = self.scalar(
+            "llg_frame_t**",
+            "(llg_frame_t**)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_frame_t*), llg_owned_frame_drop))"
+                .to_owned(),
+        );
+        self.line(format!("*{owner} = llg_frame_new(1ULL);"));
+        let address = if width == 0 {
+            self.line(format!("llg_frame_capture_real(*{owner}, 0u, 0.0);"));
+            self.scalar("double*", format!("llg_frame_real_address(*{owner}, 0u)"))
+        } else {
+            let address = self.scalar("sv4_t*", format!("llg_frame_value_address(*{owner}, 0u)"));
+            self.assign(
+                &address,
+                &super::expressions::packed_default(width, signed, two_state),
+            );
+            address
+        };
+        self.shared_cells
+            .insert(name.to_owned(), (format!("(*{owner})"), 0));
+        self.bindings
+            .last_mut()
+            .expect("frame always has a binding scope")
+            .insert(
+                name.to_owned(),
+                Binding {
+                    address: address.clone(),
+                    width,
+                    signed,
+                    two_state,
+                    shortreal: false,
+                    automatic: true,
+                },
+            );
         if let Some(init) = init {
             let value = self.expression(init)?;
             let value = self.convert(value, width, signed, two_state, false);

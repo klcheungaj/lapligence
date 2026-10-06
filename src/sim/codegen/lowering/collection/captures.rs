@@ -248,6 +248,59 @@ impl<'a> Codegen<'a> {
 
     /// Find automatic declarations referenced by a fork branch. Declarations
     /// inside the branch are owned by that branch and are not captures.
+    /// Whether automatic variable `declaration` is shared with a `join_none`
+    /// or `join_any` branch that names it outside the branch's own scope.
+    /// Such a variable lives in a shared activation frame (SV 6.21, 9.3.2).
+    pub(in super::super) fn fork_shared(&mut self, declaration: NodeId) -> bool {
+        if self.fork_shared.is_none() {
+            let mut shared = HashSet::new();
+            for node in self.db.node_ids() {
+                let NodeKind::Stmt(StmtKind::Fork {
+                    join_kind: DbJoinKind::None | DbJoinKind::Any,
+                    branches,
+                    ..
+                }) = self.kind(node)
+                else {
+                    continue;
+                };
+                for branch in branches {
+                    if matches!(
+                        self.kind(*branch),
+                        NodeKind::Stmt(StmtKind::VariableDecl { .. })
+                    ) {
+                        continue;
+                    }
+                    let mut pending = vec![*branch];
+                    let mut visited = HashSet::new();
+                    while let Some(current) = pending.pop() {
+                        if !visited.insert(current) {
+                            continue;
+                        }
+                        if let NodeKind::Expr(ExprKind::Ref {
+                            target: Some(target),
+                        }) = self.kind(current)
+                        {
+                            if matches!(self.kind(*target), NodeKind::Var { .. })
+                                && !self.node_is_within(*target, *branch)
+                                && self.db.variable_lifetime(*target) == VariableLifetime::Automatic
+                            {
+                                shared.insert(*target);
+                            }
+                        }
+                        pending.extend(self.node(current).children.iter().copied());
+                        if let NodeKind::Stmt(statement) = self.kind(current) {
+                            statement.referenced_nodes(&mut pending);
+                        }
+                    }
+                }
+            }
+            self.fork_shared = Some(shared);
+        }
+        self.fork_shared
+            .as_ref()
+            .is_some_and(|shared| shared.contains(&declaration))
+    }
+
     pub(in super::super) fn fork_capture_targets(&self, branch: NodeId) -> Vec<NodeId> {
         fn visit(
             cg: &Codegen<'_>,

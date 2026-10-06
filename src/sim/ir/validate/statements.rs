@@ -565,6 +565,12 @@ impl Validator<'_> {
                 init,
                 two_state,
                 ..
+            }
+            | IrStmt::SharedLocal {
+                width,
+                init,
+                two_state,
+                ..
             } => {
                 if *width == 0 {
                     // Width zero is the IR representation for a real

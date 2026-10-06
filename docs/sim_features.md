@@ -1234,10 +1234,15 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   projections. SV §13.5.2 **[SV-2005]**.
 - 🟨 **Timed tasks and parallel bodies** — Admitted delay-only tasks suspend;
   event/cancellation-sensitive calls preserve values/selectors and check
-  cancellation before copy-out. Synchronous joined numeric branches can share
-  the suspended activation; join_any/join_none retain supported snapshots of
-  automatic packed/real values and recognized handles. This does not provide
-  arbitrary detached alias propagation or ref-formal captures. Static-local
+  cancellation before copy-out. Synchronous joined numeric branches share
+  the suspended activation. join_any/join_none branches share enclosing
+  automatic packed/real variables through a reference-counted activation frame
+  that lives until the declaring scope and every branch are done, so either
+  side sees the other's writes (the shared loop variable reads its final
+  value); fork block item declarations are created per fork execution
+  ([sim_010](../tests/fixtures/sim/feature_completion/sim_010/readme.md)).
+  Formals, strings, handles and native values are still copied into detached
+  branches (SIM-010), and ref-formal captures reject. Static-local
   task NBAs are represented, including arrays; NBAs targeting automatic locals
   or automatic formals reject. V §§9.8.2, 10.2; SV §§9.3.2, 10.4.2, 13.3.2
   **[1995/SV-2005]**.

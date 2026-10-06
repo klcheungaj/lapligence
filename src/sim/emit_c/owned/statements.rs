@@ -284,6 +284,13 @@ impl Frame<'_, '_> {
                 init,
                 two_state,
             } => self.local(name, *width, *signed, *two_state, init.as_deref())?,
+            IrStmt::SharedLocal {
+                name,
+                width,
+                signed,
+                init,
+                two_state,
+            } => self.shared_local(name, *width, *signed, *two_state, init.as_deref())?,
             IrStmt::InertialAssign { lhs, rhs, delay } => self.inertial_assign(lhs, rhs, *delay)?,
             IrStmt::PcaAssign { .. } | IrStmt::PcaDrive { .. } => self.pca_task(statement)?,
             IrStmt::PcaDeassign { sig } => {

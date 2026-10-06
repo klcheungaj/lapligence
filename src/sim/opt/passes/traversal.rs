@@ -441,6 +441,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::ClockingCycleWait { count, .. } => walk_expr_mut(count, f),
         IrStmt::DeclLocal {
             init: Some(init), ..
+        }
+        | IrStmt::SharedLocal {
+            init: Some(init), ..
         } => walk_expr_mut(init, f),
         IrStmt::FixedArrayFill { value, .. } => walk_expr_mut(value, f),
         IrStmt::FixedArrayOrder(order) => {

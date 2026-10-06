@@ -164,6 +164,12 @@ impl EmitCtx<'_, '_> {
                         )
                     {
                         StorageOwnership::Borrowed
+                    } else if self.cg.shared_locals.contains(target)
+                        && source.lifetime == StorageLifetime::Automatic
+                        && matches!(source.kind, StorageKind::Packed | StorageKind::Real)
+                    {
+                        // A detached branch shares the declaring frame's cell.
+                        StorageOwnership::Shared
                     } else {
                         StorageOwnership::Owned
                     },

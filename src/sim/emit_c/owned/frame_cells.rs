@@ -349,7 +349,7 @@ impl CellEligibility {
             | IrStmt::ProgramExit
             | IrStmt::MonitorEnable(_)
             | IrStmt::PrintTimescale { .. } => {}
-            IrStmt::DeclLocal { init, .. } => {
+            IrStmt::DeclLocal { init, .. } | IrStmt::SharedLocal { init, .. } => {
                 if let Some(init) = init {
                     self.expression(ctx, init);
                 }

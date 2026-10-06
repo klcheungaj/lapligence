@@ -435,6 +435,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         }
         IrStmt::DeclLocal {
             init: Some(init), ..
+        }
+        | IrStmt::SharedLocal {
+            init: Some(init), ..
         } => collect_expr_reads(init, model, rw),
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
