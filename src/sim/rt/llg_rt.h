@@ -1670,10 +1670,12 @@ void llg_nba_d_after(double* target, double value, uint64_t ticks);
 void llg_clocking_nba_d_sync_after(double* target, double value, uint64_t ticks,
                                    const llg_wait_src_t* specs, int n_specs);
 // Native NBAs to persistent storage. The string value is consumed; the
-// chandle value is a borrowed foreign pointer stored as-is at commit.
+// chandle or class handle value is stored as-is at commit, which toggles
+// `dependency` (the handle's change marker, or NULL) when the value changes.
 void llg_string_nba_after(llg_string_t* target, llg_string_t value,
                           uint64_t ticks);
-void llg_chandle_nba_after(void** target, void* value, uint64_t ticks);
+void llg_chandle_nba_after(void** target, void* value, uint64_t ticks,
+                           sv4_t* dependency);
 // Nonblocking write to persistent descriptor-backed array storage (a
 // fixed-array view of string, record or handle elements, SIM-007). The
 // source elements (`count` from storage position `src_start`, or the whole

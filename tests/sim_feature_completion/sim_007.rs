@@ -204,9 +204,24 @@ fn nested_native_records_cross_calls_ports_and_selects() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_007/native_lifecycle.out");
     sim_cli::run_case_backend_parity(SUITE, "native_lifecycle", expected, &[], &[]);
     sim_cli::run_case_after_db_drop(SUITE, "native_lifecycle", expected);
+}
+
+#[test]
+fn nested_records_with_strings_reals_queues_and_handles_complete_their_lifecycle() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/native_lifecycle_containers.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_lifecycle_containers", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "native_lifecycle_containers", expected);
+}
+
+#[test]
+fn class_handle_stores_wake_ports_comb_logic_and_event_controls() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_007/handle_sensitivity.out");
+    sim_cli::run_case_backend_parity(SUITE, "handle_sensitivity", expected, &[], &[]);
     sim_cli::reject_case(
         SUITE,
-        "bad_handle_record_port",
-        "record port `tb.u.i` with a class handle member is not supported by value links",
+        "bad_chandle_record_port",
+        "is not a valid type for a port because it contains type 'chandle'",
     );
 }

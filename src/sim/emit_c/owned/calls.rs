@@ -261,6 +261,10 @@ impl Frame<'_, '_> {
         let mut native_owners = Vec::new();
         let mut fixed_copyouts = Vec::new();
         let mut native_copyouts = Vec::new();
+        // Persistent handles written through an output or ref operand and
+        // their values before the call: a changed handle publishes its
+        // change marker after the callee returns (SIM-007).
+        let mut handle_publishes = Vec::new();
         let mut container_copyouts = Vec::new();
         let mut string_copyouts = Vec::new();
         let mut real_copyouts = Vec::new();
@@ -565,7 +569,16 @@ impl Frame<'_, '_> {
                     parameters.push(self.native_address(address, NativeKind::String)?.address);
                 }
                 IrCallArg::ChandleAddr(address) | IrCallArg::ChandleRefAddr(address) => {
-                    parameters.push(self.native_address(address, NativeKind::Chandle)?.address);
+                    let address = self.native_address(address, NativeKind::Chandle)?.address;
+                    if let Some(object) = self.ctx.model.objects.iter().find(|object| {
+                        object.ty == crate::sim::ir::IrObjectType::Chandle
+                            && address == format!("&{}", object.c_name)
+                    }) {
+                        let name = object.c_name.clone();
+                        let previous = self.scalar("void*", name.clone());
+                        handle_publishes.push((name, previous));
+                    }
+                    parameters.push(address);
                 }
                 IrCallArg::StringOutTemp {
                     name,
@@ -743,6 +756,11 @@ impl Frame<'_, '_> {
         }
         for (target, storage) in native_copyouts {
             self.line(format!("llg_native_value_copy({target}, {storage});"));
+        }
+        for (name, previous) in handle_publishes {
+            self.line(format!(
+                "if ({name} != {previous}) llg_dependency_changed(&{name}_llg_dep);"
+            ));
         }
         for (target, storage) in string_copyouts {
             self.line(format!(

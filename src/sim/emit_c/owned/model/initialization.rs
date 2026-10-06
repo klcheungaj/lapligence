@@ -440,7 +440,17 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
                 );
                 initialize.push_str(&format!("    {name}.notify = llg_dependency_changed; {name}.dependency = &{name}_llg_dep;\n"));
             }
-            IrObjectType::Chandle => initialize.push_str(&format!("    {name} = NULL;\n")),
+            IrObjectType::Chandle => {
+                initialize.push_str(&format!("    {name} = NULL;\n"));
+                defaults(
+                    &mut initialize,
+                    &mut destroy,
+                    &format!("{name}_llg_dep"),
+                    1,
+                    false,
+                    true,
+                );
+            }
             IrObjectType::Process => {
                 initialize.push_str(&format!("    {name} = NULL;\n"));
                 destroy.push_str(&format!("    llg_process_assign(&{name}, NULL);\n"));

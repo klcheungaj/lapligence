@@ -799,6 +799,25 @@ impl EmitCtx<'_, '_> {
         ) && persistent_subroutine_signal.is_none()
             && self.cg.resolve_signal_id(&self.path, expression).is_err()
             && self.cg.unpacked_path_for_expr(expression).is_some();
+        // A whole class handle waits on its change marker (SIM-007), which
+        // toggles on every changed store; a handle has no edges.
+        if simple && condition.is_none() && !mapped_formal {
+            if let Some(object) = self.cg.object_of(&self.path, expression).filter(|object| {
+                self.cg.model.objects[*object].ty == crate::sim::ir::IrObjectType::Chandle
+            }) {
+                if edge != IrEdge::Any {
+                    return Err(format!(
+                        "edge control on a class handle is not supported in `{}`",
+                        self.cg.source_path(&self.path)
+                    ));
+                }
+                let object = self.cg.reference_object(object);
+                return Ok((
+                    IrWaitSrc::Sig(format!("{}_llg_dep", self.cg.model.objects[object].c_name)),
+                    edge,
+                ));
+            }
+        }
         if simple
             && !selected_aggregate_member
             && !unresolved_member

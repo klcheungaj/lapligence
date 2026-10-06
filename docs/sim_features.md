@@ -325,8 +325,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   record values (methods, selects, `foreach`, deep whole-record copies, calls,
   ports, member-wise equality except associative members, patterns).
   Multidimensional native arrays, container record members in element,
-  class-property or nonblocking storage, record ports with
-  class-handle members, `f().m` on a native result, native ref formals, static subroutine-root NBAs
+  class-property or nonblocking storage, record ports with built-in
+  semaphore/mailbox/process members, `f().m` on a native result, native ref formals, static subroutine-root NBAs
   and fork capture remain restricted. SV §§6.7, 7.2–7.4 **[SV-2005]**.
 - 🟨 **Tagged unions** — Packed and unpacked tagged unions with fixed payloads
   use one finite storage owner: the tag in the most significant bits and each
@@ -782,9 +782,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Implicit sensitivity** — `@*`/`@(*)` use call-site body reads, unlike
   `always_comb`'s transitive function reads. Fixed-array elements/contents
   (including descriptor arrays), nested record members, ref-port targets,
-  container contents/shape, and string variables and string record members wake
-  admitted readers after copies, mutations or resizing. Non-string object
-  (chandle/class handle) dependencies remain restricted (SIM-013); these are
+  container contents/shape, string variables and string record members, and
+  class-handle variables and record members wake admitted readers after
+  copies, mutations or resizing; a changed handle store (blocking, nonblocking,
+  task output or ref formal, published when the callee returns) toggles the
+  handle's change marker, which also drives whole-handle ports and `@(h)`
+  (SIM-007). Mutating an object through a handle (`h.v = 1`) and built-in
+  semaphore/mailbox/process handles publish nothing (SIM-013); these are
   dependency-collection limits, not full implicit-sensitivity support.
   V §9.7.5 **[2001]**.
 - 🟨 **Evaluated events** — Packed/scalar-real any-change expressions, packed LSB

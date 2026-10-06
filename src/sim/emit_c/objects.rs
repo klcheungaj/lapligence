@@ -234,6 +234,21 @@ fn render_string_format(
     Ok(format!("({{ {} }})", statements.join(" ")))
 }
 
+/// Address of the change marker of the persistent handle object named
+/// `c_name`, or `NULL` for storage without one.
+pub(super) fn chandle_marker(model: &crate::sim::ir::IrModel, c_name: &str) -> String {
+    model
+        .objects
+        .iter()
+        .find(|object| {
+            object.ty == crate::sim::ir::IrObjectType::Chandle && object.c_name == c_name
+        })
+        .map_or_else(
+            || "NULL".to_owned(),
+            |object| format!("&{}_llg_dep", object.c_name),
+        )
+}
+
 pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, String> {
     Ok(match value {
         IrChandleExpr::SemaphoreNew(_)
@@ -808,11 +823,13 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrObjectStmt) -> Result<Stri
                 .transpose()?
                 .unwrap_or_else(|| "NULL".to_owned())
         ),
-        IrObjectStmt::ChandleAssign(index, value) => format!(
-            "    {} = {};\n",
-            ctx.model.objects[*index].c_name,
-            chandle(ctx, value)?
-        ),
+        IrObjectStmt::ChandleAssign(index, value) => {
+            let name = &ctx.model.objects[*index].c_name;
+            format!(
+                "    {{ void *_llg_handle = {}; if (_llg_handle != {name}) {{ {name} = _llg_handle; llg_dependency_changed(&{name}_llg_dep); }} }}\n",
+                chandle(ctx, value)?
+            )
+        }
         IrObjectStmt::ChandleAssignLocal(target, value) => {
             format!("    {target} = {};\n", chandle(ctx, value)?)
         }

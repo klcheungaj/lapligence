@@ -45,10 +45,13 @@ static void apply_nba(llg_nba_t* next) {
             sv4_destroy(&zero);
         }
     } else if (next->is_chandle) {
-        // Chandles are borrowed foreign pointers with no change notification,
-        // matching a blocking chandle write.
-        if (next->native.chandle.target)
-            *next->native.chandle.target = next->native.chandle.value;
+        // Handle storage publishes its change marker on a changed value,
+        // matching a blocking handle write.
+        void** target = next->native.chandle.target;
+        if (target && *target != next->native.chandle.value) {
+            *target = next->native.chandle.value;
+            llg_dependency_changed(next->native.chandle.dependency);
+        }
     } else if (next->is_real) {
         if (!llg_is_real_forced(next->real_target) && !pca_real_active(next->real_target))
             real_write(next->real_target, next->real_value);

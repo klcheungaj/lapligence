@@ -371,9 +371,10 @@ impl Frame<'_, '_> {
             }
             ChandleAssign(index, value) => {
                 let value = self.chandle(value)?;
+                let name = &self.ctx.model.objects[*index].c_name;
+                // Readers wait on the handle's change marker (SIM-007).
                 self.line(format!(
-                    "{} = {value};",
-                    self.ctx.model.objects[*index].c_name
+                    "{{ void *_llg_handle = {value}; if (_llg_handle != {name}) {{ {name} = _llg_handle; llg_dependency_changed(&{name}_llg_dep); }} }}"
                 ));
             }
             ChandleAssignLocal(name, value) => {

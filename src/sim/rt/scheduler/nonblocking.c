@@ -484,12 +484,14 @@ void llg_string_nba_after(llg_string_t* target, llg_string_t value,
     enqueue_nba(n);
 }
 
-void llg_chandle_nba_after(void** target, void* value, uint64_t ticks) {
+void llg_chandle_nba_after(void** target, void* value, uint64_t ticks,
+                           sv4_t* dependency) {
     llg_nba_t* n = new_nba(ticks);
     if (!n) return;
     n->is_chandle = 1;
     n->native.chandle.target = target;
     n->native.chandle.value = value;
+    n->native.chandle.dependency = dependency;
     enqueue_nba(n);
 }
 

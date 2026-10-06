@@ -99,11 +99,12 @@ impl Validator<'_> {
             IrDependency::ArrayContents(array) => *array < self.model.arrays.len(),
             IrDependency::ContainerContents(container)
             | IrDependency::ContainerShape(container) => *container < self.model.containers.len(),
-            IrDependency::Object(object) => self
-                .model
-                .objects
-                .get(*object)
-                .is_some_and(|object| object.ty == crate::sim::ir::IrObjectType::String),
+            IrDependency::Object(object) => self.model.objects.get(*object).is_some_and(|object| {
+                matches!(
+                    object.ty,
+                    crate::sim::ir::IrObjectType::String | crate::sim::ir::IrObjectType::Chandle
+                )
+            }),
         }
     }
 

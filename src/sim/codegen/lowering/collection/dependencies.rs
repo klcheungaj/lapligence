@@ -52,10 +52,13 @@ impl<'a> Codegen<'a> {
                 continue;
             }
             let Some(signal) = &leaf.signal else {
-                // A string member publishes its own change marker; other
-                // native members have none (see `walk_read_signals_bound`).
+                // String and handle members publish their own change marker;
+                // other native members have none (see `walk_read_signals_bound`).
                 if let Some(object) = leaf.object.map(|object| self.reference_object(object)) {
-                    if self.model.objects[object].ty == IrObjectType::String {
+                    if matches!(
+                        self.model.objects[object].ty,
+                        IrObjectType::String | IrObjectType::Chandle
+                    ) {
                         dependencies.push(IrDependency::Object(object));
                     }
                 }
@@ -968,10 +971,14 @@ impl<'a> Codegen<'a> {
             self.add_process_lhs_write_bound(expression, writes, bindings);
             return;
         }
-        // A string store publishes the same marker its readers wait on, so it
-        // is both a writer identity and a combinational read exclusion.
+        // A string or handle store publishes the same marker its readers
+        // wait on, so it is both a writer identity and a combinational read
+        // exclusion.
         if let Some(object) = self.object_of("", lhs).filter(|object| {
-            self.model.objects.get(*object).map(|o| o.ty) == Some(IrObjectType::String)
+            matches!(
+                self.model.objects.get(*object).map(|o| o.ty),
+                Some(IrObjectType::String | IrObjectType::Chandle)
+            )
         }) {
             writes.insert(IrDependency::Object(object));
             return;
@@ -1311,15 +1318,17 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
         if let Some(object) = self.object_of(scope_path, node) {
-            // Native strings publish a change marker on every changed store,
-            // including record members with their own string owner. Other
-            // native objects have no change marker.
-            if self.model.objects.get(object).map(|object| object.ty) == Some(IrObjectType::String)
-            {
+            // Native strings and handles publish a change marker on every
+            // changed store, including record members with their own owner.
+            // Other native objects have no change marker.
+            if matches!(
+                self.model.objects.get(object).map(|object| object.ty),
+                Some(IrObjectType::String | IrObjectType::Chandle)
+            ) {
                 self.add_dependency(IrDependency::Object(object), seen, out);
                 return Ok(());
             }
-            return Err(format!("chandle/handle changes cannot yet be used in sensitivity or wait expressions in `{scope_path}`"));
+            return Err(format!("semaphore, mailbox or process handle changes cannot yet be used in sensitivity or wait expressions in `{scope_path}`"));
         }
         if matches!(
             self.kind(node),
