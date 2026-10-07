@@ -1,6 +1,6 @@
 //! V09 dependency qualification: GMP limb-type adaptation, relocated source
 //! exports and runtime-cache isolation between external GMP installations.
-use super::{configs, find_archive_optional, options, sim_harness, PROBE};
+use super::{configs, find_archive_optional, options, sim_harness, test_gmp_override, PROBE};
 use llg::sim::{
     build,
     value_backend::{CompactKernel, ValueBackend, ValueConfig},
@@ -227,9 +227,20 @@ fn component_relocated_source_exports_build_outside_their_tree() {
         let output = sim_harness::run_command(&mut configure, Duration::from_secs(120)).unwrap();
         assert!(
             output.status.success(),
-            "{}",
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        // MSVC compiles gmp.h's plain `__inline` functions into an external
+        // definition in every object that uses one, which the program link
+        // rejects as duplicates; the bundled recipe makes them static copies.
+        if config.kernel == CompactKernel::Gmp && test_gmp_override().is_none() {
+            let header = std::fs::read_to_string(build_dir.join("llg_gmp/gmp.h")).unwrap();
+            assert!(
+                header.contains("#ifdef _MSC_VER\n#define __GMP_EXTERN_INLINE  static __inline\n"),
+                "bundled gmp.h keeps external MSVC inline definitions"
+            );
+        }
         let mut compile = Command::new("cmake");
         compile
             .arg("--build")
@@ -238,7 +249,8 @@ fn component_relocated_source_exports_build_outside_their_tree() {
         let output = sim_harness::run_command(&mut compile, Duration::from_secs(300)).unwrap();
         assert!(
             output.status.success(),
-            "{}",
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
         let executable = ["sim", "sim.exe", "Release/sim", "Release/sim.exe"]

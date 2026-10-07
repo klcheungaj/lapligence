@@ -48,7 +48,26 @@ else()
   set(DEFN_LONG_LONG_LIMB "#define _LONG_LONG_LIMB 1")
 endif()
 set(LLG_GMP_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/llg_gmp")
-configure_file("${LLG_GMP_SOURCE_DIR}/gmp-h.in" "${LLG_GMP_GENERATED_DIR}/gmp.h" @ONLY)
+configure_file("${LLG_GMP_SOURCE_DIR}/gmp-h.in" "${LLG_GMP_GENERATED_DIR}/gmp.h.new" @ONLY)
+# gmp.h defines its inline mpn/mpz/mpq functions as plain `__inline` for MSVC,
+# whose C compiler then emits an ordinary external definition in every object
+# that uses one: the subset's objects define __gmpn_zero_p and others several
+# times (LNK4006 when archiving, LNK2005 once a program pulls two of them in).
+# Use `static __inline` copies, as gmp.h does for DEC and Sun C; the
+# out-of-line definitions that __GMP_FORCE_* selects (add.c, zero_p.c, ...)
+# stay external.
+set(llg_gmp_msvc_inline "#ifdef _MSC_VER\n#define __GMP_EXTERN_INLINE  __inline\n#endif\n")
+file(READ "${LLG_GMP_GENERATED_DIR}/gmp.h.new" llg_gmp_header)
+string(FIND "${llg_gmp_header}" "${llg_gmp_msvc_inline}" llg_gmp_msvc_inline_at)
+if(llg_gmp_msvc_inline_at EQUAL -1)
+  message(FATAL_ERROR "gmp-h.in no longer has the MSVC inline definition this recipe replaces")
+endif()
+string(REPLACE "${llg_gmp_msvc_inline}"
+  "#ifdef _MSC_VER\n#define __GMP_EXTERN_INLINE  static __inline\n#endif\n"
+  llg_gmp_header "${llg_gmp_header}")
+file(WRITE "${LLG_GMP_GENERATED_DIR}/gmp.h.new" "${llg_gmp_header}")
+# Rewrite only on change so a reconfigure does not rebuild the subset.
+configure_file("${LLG_GMP_GENERATED_DIR}/gmp.h.new" "${LLG_GMP_GENERATED_DIR}/gmp.h" COPYONLY)
 configure_file("${LLG_GMP_SOURCE_DIR}/mpn/generic/gmp-mparam.h"
   "${LLG_GMP_GENERATED_DIR}/gmp-mparam.h" COPYONLY)
 file(WRITE "${LLG_GMP_GENERATED_DIR}/config.h.new" "/* Generated for the bundled GMP subset. */

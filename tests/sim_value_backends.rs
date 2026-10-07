@@ -125,7 +125,8 @@ fn component_selected_exports_build_and_wrong_backend_archives_fail() {
         let output = sim_harness::run_command(&mut configure, Duration::from_secs(60)).unwrap();
         assert!(
             output.status.success(),
-            "{}",
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
         let mut compile = Command::new("cmake");
@@ -136,7 +137,8 @@ fn component_selected_exports_build_and_wrong_backend_archives_fail() {
         let output = sim_harness::run_command(&mut compile, Duration::from_secs(180)).unwrap();
         assert!(
             output.status.success(),
-            "{}",
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
         let executable = ["sim", "sim.exe", "Debug/sim", "Debug/sim.exe"]

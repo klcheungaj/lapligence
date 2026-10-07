@@ -163,8 +163,10 @@ limbs ([`../gmp/generated`](../gmp/generated), regenerated and checked by
 `scripts/gmp_tables.py`). Generated projects receive them under `gmp/`;
 [`../gmp/llg_gmp.cmake`](../gmp/llg_gmp.cmake) configures `gmp.h` and a minimal
 `config.h` for the target (64-bit, little-endian; `unsigned long long` limbs
-where `unsigned long` is 32-bit, as on Windows) and compiles the OBJECT library
-`llg_gmp` into the runtime archive. The archive is keyed by the bundle's content
+where `unsigned long` is 32-bit, as on Windows; `static __inline` copies of
+`gmp.h`'s inline functions under MSVC, whose plain `__inline` would define them
+externally in every object) and compiles the OBJECT library `llg_gmp` into the
+runtime archive. The archive is keyed by the bundle's content
 hash, so GMP compiles once per runtime cache entry. Moving the submodule needs the
 tables regenerated and the `LLG_GMP_MPN_SOURCES` closure rechecked: the Debug
 storage probes and Release models fail to link when it is incomplete. The
