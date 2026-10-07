@@ -124,15 +124,37 @@ impl Codegen<'_> {
                             true,
                         )));
                     }
-                    ("try_put", [value]) => IrObjectQuery::MailboxTryPut {
-                        mailbox,
-                        value: self.lower_mailbox_value(path, *value)?,
-                    },
-                    ("try_get" | "try_peek", [target]) => IrObjectQuery::MailboxTryGet {
-                        mailbox,
-                        target: self.lower_mailbox_target(path, *target)?,
-                        peek: name == "try_peek",
-                    },
+                    ("try_put", [value]) => {
+                        let (before, value) = self.lower_mailbox_put_operand(path, *value)?;
+                        self.mailbox_expression_prelude(path, &name, before)?;
+                        IrObjectQuery::MailboxTryPut { mailbox, value }
+                    }
+                    ("try_get" | "try_peek", [target]) => {
+                        let (before, target, after) =
+                            self.lower_mailbox_get_operand(path, *target)?;
+                        if after.is_empty() {
+                            self.mailbox_expression_prelude(path, &name, before)?;
+                            IrObjectQuery::MailboxTryGet {
+                                mailbox,
+                                target,
+                                peek: name == "try_peek",
+                            }
+                        } else {
+                            // The copy-out must follow the retrieval, so the
+                            // whole operation runs before the statement.
+                            let mut statements = before;
+                            let status = self.mailbox_try_get_status(
+                                node,
+                                mailbox,
+                                target,
+                                name == "try_peek",
+                                after,
+                                &mut statements,
+                            );
+                            self.mailbox_expression_prelude(path, &name, statements)?;
+                            return Ok(Some(status));
+                        }
+                    }
                     ("num" | "try_put" | "try_get" | "try_peek", _) => {
                         return Err(format!(
                             "mailbox method `{name}` has the wrong argument count in `{path}`"

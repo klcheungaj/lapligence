@@ -1,0 +1,6 @@
+record 5 n=0
+class full=0
+class 6 8
+arrays 9 n=2
+arrays 9 10
+ref 11 null=0

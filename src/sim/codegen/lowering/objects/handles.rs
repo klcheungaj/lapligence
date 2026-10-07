@@ -274,6 +274,16 @@ impl Codegen<'_> {
                 return self.lower_chandle(path, *operand);
             }
         }
+        // A mailbox constructor in any handle storage (a class property, a
+        // record member) needs the specialization's element type (SIM-017).
+        if matches!(self.kind(node), NodeKind::Expr(ExprKind::NewClass { .. }))
+            && self.is_mailbox_expr(path, node)
+        {
+            let element = self.mailbox_element_for_decl(node);
+            return Ok(IrChandleExpr::Mailbox(Box::new(
+                self.lower_mailbox_expr(path, node, element)?,
+            )));
+        }
         if let NodeKind::Expr(ExprKind::NewClass {
             class_name,
             class_type,

@@ -74,16 +74,6 @@ static unsigned mode;
 static void real_evaluator(double* out, void* context) {
     (void)context;
     ++evaluations;
-    if (evaluations == 2 && mode == 2) {
-        /* Defensive runtime-API cancellation case, not an HDL callback claim. */
-        llg_process_kill(llg_current(), receiver_handle);
-        CHECK(destroyed == 0);
-        CHECK(value_scope_index_find(destination) != NULL);
-        CHECK(*destination == sent);
-    } else if (evaluations == 2 && mode == 3) {
-        llg_rt_finish();
-        if (llg_rt_exiting()) return;
-    }
     *out = *destination;
 }
 
@@ -110,6 +100,8 @@ LLG_PROBE_PROCESS(receiver, review_receiver_frame_t, 1) {
     LLG_PROBE_AWAIT(
         1, llg_arm_mailbox_get_value(
                self, mailbox, llg_mailbox_target_real(F->local, mode == 1), 0));
+    /* A woken get writes its destination when it resumes. */
+    llg_mailbox_delivery_take(self, llg_mailbox_target_real(F->local, mode == 1));
     CHECK(mode < 2);
     observed = *F->local;
     ++resumed;
@@ -138,7 +130,19 @@ LLG_PROBE_SIMPLE_PROCESS(writer, 2) {
     LLG_PROBE_AWAIT(
         2, llg_arm_mailbox_put_value(
                self, mailbox, llg_mailbox_value_real(sent, mode == 1)));
-    CHECK(mode != 3);
+    if (mode >= 2) {
+        /* The receiver is woken with a pending delivery but has not written
+         * its live storage yet. Killing it hands the message back (mode 2);
+         * finishing drops the pending delivery at teardown (mode 3). */
+        CHECK(evaluations == 1 && *destination == 0.0 && destroyed == 0);
+        if (mode == 2) {
+            llg_process_kill(self, receiver_handle);
+            CHECK(llg_mailbox_num(mailbox) == 1);
+        }
+        llg_rt_finish();
+        LLG_CO_EXIT_CHECK(ch);
+        CHECK(0);
+    }
     LLG_PROBE_DONE();
 }
 
@@ -159,7 +163,7 @@ static void real_coroutines(void) {
                 CHECK(resumed == 1);
                 CHECK(observed == (mode == 1 ? (double)(float)sent : sent));
             } else {
-                CHECK(resumed == 0 && evaluations == 2);
+                CHECK(resumed == 0 && evaluations == 1);
             }
             llg_rt_cleanup();
             llg_process_assign(&receiver_handle, NULL);

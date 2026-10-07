@@ -1,0 +1,5 @@
+unbounded 1 alpha 0.50 2 11 22 20 same=1
+bounded 1 alpha 0.50 2 11
+untyped 1 alpha 2
+independent 22 3
+nested outer beta 3 33 2.25

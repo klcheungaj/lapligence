@@ -1,0 +1,10 @@
+full try_put=0 n=1
+ints 1 2 3 size=3
+source 100 2 size=4
+peek x yy n=1
+get x yy n=0
+dyn size=3 0001 xxxx 1111
+records size=2 7 seven 8 eight
+as_strings=-1 n=1
+as_ints=1 size=3 n=0
+a 1 50 3

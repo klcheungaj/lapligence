@@ -930,6 +930,10 @@ pub(super) fn render(
                 }
             };
             let item = match root {
+                // The whole value is the container (a mailbox message).
+                IrValueItemRoot::Value(value) if items.is_empty() => {
+                    frame.native_value_address(*value)?
+                }
                 IrValueItemRoot::Value(value) => frame.native_value_item(*value, items)?,
                 IrValueItemRoot::Element(element) => {
                     let element = frame.chandle(element)?;

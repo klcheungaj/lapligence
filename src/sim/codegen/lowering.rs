@@ -1322,6 +1322,11 @@ struct Codegen<'a> {
     /// lowered, open only for statements that evaluate their operands once
     /// (assignments and system-task calls).
     container_call_prelude: Option<Vec<IrStmt>>,
+    /// Statements that run an expression-form `try_put`/`try_get` of an
+    /// aggregate or selected operand before the statement being lowered
+    /// (SIM-017); open only for statements that evaluate it once
+    /// (assignments, system-task calls and `if` conditions).
+    mailbox_statement_prelude: Option<Vec<IrStmt>>,
     /// Queue and dynamic-array members of container record elements named
     /// by the statement being lowered, by element node and member path
     /// suffix → the lexical container staging each
@@ -1713,6 +1718,7 @@ impl<'a> Codegen<'a> {
             subroutine_containers: HashMap::new(),
             container_result_call: false,
             container_call_prelude: None,
+            mailbox_statement_prelude: None,
             staged_element_members: HashMap::new(),
             container_types_like: HashMap::new(),
             native_tagged_bypass: HashSet::new(),

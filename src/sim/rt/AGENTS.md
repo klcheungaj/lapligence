@@ -312,8 +312,14 @@ waiters without an extra put; do not grant during an incomplete cancellation bat
 or teardown. Mailboxes retain bounded/unbounded FIFO/peek rules and nominal typed
 identity (including null handles), packed width/sign/state and real precision.
 Mismatched try calls return -1 without assignment/consumption; blocking mismatches
-fail. Remove consumed nodes before callbacks, clone peek values and register
-ref targets/delivery snapshots through reentrant publication.
+fail. A blocked get is serviced by type check, then removal (a peek clones) into
+the waiter's `mailbox_delivery`, then wake; the waiter writes its destination when
+it resumes (`llg_mailbox_delivery_take`). A waiter killed first hands a consumed
+message back to the head of its mailbox (a peek copy is dropped) and the mailbox is
+re-serviced after the cancellation batch, like a semaphore grant. `LLG_MAILBOX_VALUE`
+messages own a descriptor-backed `llg_value_t` matched by the model's static
+equivalence key; `llg_mailbox_trace` enumerates queued, blocked-put and pending
+messages for tracing roots (SIM-018).
 
 Clocking input samples complete before the Observed block event. Output captures
 publish Re-NBA with constant skew; off-event drives wait for the next event and

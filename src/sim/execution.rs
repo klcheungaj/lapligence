@@ -2090,6 +2090,8 @@ fn collect_mailbox_value_effects(
         IrMailboxValue::Typed { value, .. } => {
             collect_mailbox_value_effects(ir, value, effects, visited_calls)
         }
+        // A lexical native value read by the runtime's deep copy.
+        IrMailboxValue::Native { .. } => {}
     }
 }
 

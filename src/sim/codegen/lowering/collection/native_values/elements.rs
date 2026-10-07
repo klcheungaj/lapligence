@@ -205,7 +205,7 @@ impl Codegen<'_> {
 
     /// Move every queue or dynamic-array member of `value`, just read from
     /// container storage, from its nested slot into its companion.
-    fn element_items_to_companions(&self, value: usize) -> Result<Vec<IrStmt>, String> {
+    pub(super) fn element_items_to_companions(&self, value: usize) -> Result<Vec<IrStmt>, String> {
         let layout = self.native_layout_of_value(value)?;
         Ok(layout
             .containers
@@ -223,7 +223,7 @@ impl Codegen<'_> {
 
     /// Copy every companion container of `value` into its nested slot
     /// before the value is stored into container storage.
-    fn companions_to_element_items(&self, value: usize) -> Result<Vec<IrStmt>, String> {
+    pub(super) fn companions_to_element_items(&self, value: usize) -> Result<Vec<IrStmt>, String> {
         let layout = self.native_layout_of_value(value)?;
         Ok(layout
             .containers

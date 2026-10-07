@@ -17,6 +17,7 @@ use crate::sim::ir::{
 mod conditionals;
 mod elements;
 mod member_select;
+mod messages;
 mod record_refs;
 mod tagged;
 pub(in crate::sim::codegen) use tagged::{

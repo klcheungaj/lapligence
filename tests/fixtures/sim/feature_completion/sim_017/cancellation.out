@@ -1,0 +1,10 @@
+killed getter n=1 keep=-1 untouched
+killed putter n=2
+fifo 2 two n=0
+pending n=1
+handed back n=2 wrote=0
+head 4 four
+next 5 five
+peek dropped n=1 str=[]
+disabled n=1 wrote=0
+teardown n=2 0 str=p

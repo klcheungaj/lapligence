@@ -156,6 +156,9 @@ void llg_native_value_init(llg_value_t* value, const llg_value_desc_t* desc);
 void llg_native_value_destroy(void* value);
 int llg_native_value_try_copy(llg_value_t* dst, const llg_value_t* src);
 void llg_native_value_copy(llg_value_t* dst, const llg_value_t* src);
+/* Construct `dst` (empty or uninitialized) as a deep copy of `src` with
+ * src's descriptor, in one allocation pass; allocation failure is fatal. */
+void llg_native_value_clone(llg_value_t* dst, const llg_value_t* src);
 
 /* SystemVerilog equality of recursive values (SV 7.2.2, 7.6, 11.4.5).
  * Packed leaves use `==` (a known mismatch dominates, otherwise X/Z is

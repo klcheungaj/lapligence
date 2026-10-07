@@ -395,6 +395,12 @@ fn mailbox_expr(ctx: &RCtx<'_>, value: &IrMailboxExpr) -> Result<String, String>
                 IrMailboxElement::Real { shortreal } => (1, 0, 0, 0, i32::from(*shortreal)),
                 IrMailboxElement::String => (2, 0, 0, 0, 0),
                 IrMailboxElement::Handle => (3, 0, 0, 0, 0),
+                IrMailboxElement::Value { type_id } => {
+                    return Ok(format!(
+                        "llg_mailbox_new_value({}, {type_id}ULL)",
+                        render_expr_impl(ctx, bound)?.code
+                    ))
+                }
             };
             format!(
                 "llg_mailbox_new({}, {kind}, {width}, {signed}, {two_state}, {shortreal})",
@@ -428,14 +434,17 @@ fn mailbox_value(ctx: &RCtx<'_>, value: &IrMailboxValue) -> Result<String, Strin
         IrMailboxValue::Handle(value) => {
             format!("llg_mailbox_value_handle({})", chandle(ctx, value)?)
         }
+        IrMailboxValue::Native { .. } => {
+            return Err("aggregate mailbox messages require the owned emitter".to_owned())
+        }
     })
 }
 
-fn mailbox_target(target: &IrMailboxTarget) -> String {
-    match target {
+fn mailbox_target(target: &IrMailboxTarget) -> Result<String, String> {
+    Ok(match target {
         IrMailboxTarget::Typed { type_id, target } => format!(
             "llg_mailbox_typed_target({}, {type_id}ULL)",
-            mailbox_target(target)
+            mailbox_target(target)?
         ),
         IrMailboxTarget::Ref { addr } => format!("llg_mailbox_target_ref({addr})"),
         IrMailboxTarget::Packed {
@@ -453,7 +462,10 @@ fn mailbox_target(target: &IrMailboxTarget) -> String {
         }
         IrMailboxTarget::String { addr } => format!("llg_mailbox_target_string({addr})"),
         IrMailboxTarget::Handle { addr } => format!("llg_mailbox_target_handle({addr})"),
-    }
+        IrMailboxTarget::Native { .. } => {
+            return Err("aggregate mailbox messages require the owned emitter".to_owned())
+        }
+    })
 }
 
 pub(super) fn process(ctx: &RCtx<'_>, value: &IrProcessExpr) -> Result<String, String> {
@@ -588,7 +600,7 @@ pub(super) fn query(
         } => format!(
             "sv4_from_u64((uint64_t)llg_mailbox_try_get_value((llg_mailbox_t*){}, {}, {}), {width}, {})",
             chandle(ctx, mailbox)?,
-            mailbox_target(target),
+            mailbox_target(target)?,
             i32::from(*peek),
             u8::from(signed)
         ),
@@ -917,26 +929,26 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrObjectStmt) -> Result<Stri
             format!(
                 "    llg_mailbox_get_value((llg_mailbox_t*){}, {}, {});\n",
                 chandle(ctx, mailbox)?,
-                mailbox_target(target),
+                mailbox_target(target)?,
                 i32::from(*peek)
             )
         }
         IrObjectStmt::MailboxGetLocal(_local, mailbox, target, peek) => format!(
             "    llg_mailbox_get_value((llg_mailbox_t*){}, {}, {});\n",
             chandle(ctx, mailbox)?,
-            mailbox_target(target),
+            mailbox_target(target)?,
             i32::from(*peek)
         ),
         IrObjectStmt::MailboxTryGet(_index, mailbox, target, peek) => format!(
             "    (void)llg_mailbox_try_get_value((llg_mailbox_t*){}, {}, {});\n",
             chandle(ctx, mailbox)?,
-            mailbox_target(target),
+            mailbox_target(target)?,
             i32::from(*peek)
         ),
         IrObjectStmt::MailboxTryGetLocal(_local, mailbox, target, peek) => format!(
             "    (void)llg_mailbox_try_get_value((llg_mailbox_t*){}, {}, {});\n",
             chandle(ctx, mailbox)?,
-            mailbox_target(target),
+            mailbox_target(target)?,
             i32::from(*peek)
         ),
         IrObjectStmt::ProcessDeclareLocal(name, value) => {

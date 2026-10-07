@@ -470,6 +470,9 @@ static void semaphore_service_cancelled_waiters(void) {
         semaphore->cancelled_waiter = 0;
         semaphore_wake_available(semaphore);
     }
+    // Mailbox messages handed back by killed getters follow the same
+    // end-of-batch rule (SIM-017).
+    mailbox_service_returned_deliveries();
 }
 
 // Remove a W_EVENT/W_MIXED waiter from every named-event list it registered

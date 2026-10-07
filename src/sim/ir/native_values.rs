@@ -138,13 +138,17 @@ pub(in crate::sim) fn validate_native_type(
     element: &IrContainerElement,
     path: &str,
 ) -> Result<(), IrValidationError> {
+    // A whole queue or dynamic array is a native value only as a mailbox
+    // message (SIM-017): a null slot plus one companion container.
     if !matches!(
         element,
-        IrContainerElement::Aggregate { .. } | IrContainerElement::FixedArray { .. }
+        IrContainerElement::Aggregate { .. }
+            | IrContainerElement::FixedArray { .. }
+            | IrContainerElement::Container { .. }
     ) {
         return Err(IrValidationError::new(
             path,
-            "native value type must be an unpacked aggregate or fixed array",
+            "native value type must be an unpacked aggregate, fixed array or resizable container",
         ));
     }
     validate_native_level(element, path, 0)

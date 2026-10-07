@@ -24,12 +24,17 @@ impl Codegen<'_> {
         // typedef keeps its own shape wherever it is declared; the rendered
         // parameter spelling is neither unique nor scope-qualified.
         match self.db.mailbox_element(descriptor.id) {
-            Some(element) => Self::mailbox_element_from_descriptor(element),
+            Some(element) => self.mailbox_element_from_descriptor(element),
             None => IrMailboxElement::Untyped,
         }
     }
 
-    fn mailbox_element_from_descriptor(descriptor: &TypeDescriptor) -> IrMailboxElement {
+    fn mailbox_element_from_descriptor(&self, descriptor: &TypeDescriptor) -> IrMailboxElement {
+        if Self::is_mailbox_message_type(descriptor) {
+            return IrMailboxElement::Value {
+                type_id: self.mailbox_message_key(descriptor),
+            };
+        }
         match &descriptor.shape {
             TypeShape::PackedAtom { .. } => IrMailboxElement::Packed {
                 width: descriptor.info.width.unwrap_or_default(),
@@ -207,10 +212,12 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrMailboxTarget, String> {
+        // A mailbox handle message (`mailbox #(mailbox)`) shares its mailbox.
         if self.is_mailbox_expr(path, node) {
-            return Err(format!(
-                "mailbox handle is not a writable message target in {path}"
-            ));
+            let (target, _) = self.lower_chandle_lvalue(path, node)?;
+            return Ok(IrMailboxTarget::Handle {
+                addr: self.chandle_target_address(&target),
+            });
         }
         if self.is_string_expr(path, node) {
             self.ensure_string_actual_writable(path, node)?;
@@ -243,7 +250,10 @@ impl Codegen<'_> {
             return Ok(IrMailboxValue::String(self.lower_string(path, node)?));
         }
         // A process handle travels as a pinned identity (SIM-015).
-        if self.is_chandle_expr(path, node) || self.is_process_value(path, node) {
+        if self.is_chandle_expr(path, node)
+            || self.is_process_value(path, node)
+            || self.is_mailbox_expr(path, node)
+        {
             return Ok(IrMailboxValue::Handle(self.lower_chandle(path, node)?));
         }
         let value = self.lower_expr(path, node)?;
@@ -258,6 +268,287 @@ impl Codegen<'_> {
                 two_state: self.db.is_two_state_type(node),
             }
         })
+    }
+
+    /// The message of `put`/`try_put` and the statements that must run
+    /// before the operation: an aggregate is built in a lexical value.
+    pub(in super::super) fn lower_mailbox_put_operand(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<(Vec<IrStmt>, IrMailboxValue), String> {
+        if self.is_event_operand(node) {
+            // An event message is the identity of its synchronization object
+            // (SV 15.5.5), like a class handle.
+            let event = if self.is_null_event_expression(node) {
+                IrChandleExpr::Null
+            } else {
+                let target = self.event_target_of(node).ok_or_else(|| {
+                    format!("mailbox event message in `{path}` must name an event or null")
+                })?;
+                IrChandleExpr::EventObject(Box::new(self.event_ref_of(&target, path)?))
+            };
+            let value = IrMailboxValue::Handle(event);
+            return Ok((
+                Vec::new(),
+                match self.mailbox_nominal_type(node)? {
+                    Some(type_id) => IrMailboxValue::Typed {
+                        type_id,
+                        value: Box::new(value),
+                    },
+                    None => value,
+                },
+            ));
+        }
+        if let Some(descriptor) = self.mailbox_message_type(node) {
+            let type_id = self.mailbox_message_key(&descriptor);
+            let message = self.mailbox_message_source(path, &descriptor, node)?;
+            return Ok((
+                message.before,
+                IrMailboxValue::Native {
+                    value: message.value,
+                    type_id,
+                },
+            ));
+        }
+        Ok((Vec::new(), self.lower_mailbox_value(path, node)?))
+    }
+
+    /// The destination of `get`/`peek`/`try_get`/`try_peek` with statements
+    /// to run before the operation and, after a successful retrieval, the
+    /// copy-out. Whole variables are written directly; an aggregate, or a
+    /// packed or real element, member or select, is received into a lexical
+    /// value and copied out with its selectors frozen at the call (the
+    /// argument is a `ref`, Annex G.4).
+    pub(in super::super) fn lower_mailbox_get_operand(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<(Vec<IrStmt>, IrMailboxTarget, Vec<IrStmt>), String> {
+        if self.is_event_operand(node) {
+            // The event variable is rebound to the received object after
+            // the retrieval, as `e = other` does.
+            let target = self.event_target_of(node).ok_or_else(|| {
+                format!("mailbox event destination in `{path}` must be an event variable")
+            })?;
+            let target = self.event_ref_of(&target, path)?;
+            let local = format!("_llg_mailbox_event_{}", node.index());
+            let before = vec![IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                local.clone(),
+                None,
+            )))];
+            let storage = IrMailboxTarget::Handle {
+                addr: format!("&{local}"),
+            };
+            let storage = match self.mailbox_nominal_type(node)? {
+                Some(type_id) => IrMailboxTarget::Typed {
+                    type_id,
+                    target: Box::new(storage),
+                },
+                None => storage,
+            };
+            let after = vec![IrStmt::EventAssign {
+                target,
+                source: Some(IrEventRef::Handle(Box::new(IrChandleExpr::LocalRead(
+                    local,
+                )))),
+            }];
+            return Ok((before, storage, after));
+        }
+        if let Some(descriptor) = self.mailbox_message_type(node) {
+            let type_id = self.mailbox_message_key(&descriptor);
+            let message = self.mailbox_message_destination(path, &descriptor, node)?;
+            return Ok((
+                message.before,
+                IrMailboxTarget::Native {
+                    value: message.value,
+                    type_id,
+                },
+                message.after,
+            ));
+        }
+        if !self.is_selected_scalar_destination(path, node) {
+            return Ok((
+                Vec::new(),
+                self.lower_mailbox_target(path, node)?,
+                Vec::new(),
+            ));
+        }
+        let descriptor = self
+            .query_descriptor(node)
+            .cloned()
+            .ok_or_else(|| "mailbox destination has no owned type descriptor".to_owned())?;
+        let tag = format!("mbx{}", node.index());
+        let (mut writeback, _, captures) = self.lower_call_writeback(path, node, &tag, false)?;
+        let mut before = Vec::new();
+        for (name, width, signed, two_state, init) in captures {
+            before.push(IrStmt::DeclLocal {
+                name,
+                width,
+                signed,
+                two_state,
+                init: Some(Box::new(init)),
+            });
+        }
+        before.extend(writeback.take_prelude());
+        let local = format!("_llg_mailbox_dest_{}", node.index());
+        let addr = format!("&{local}");
+        let (width, signed, two_state, target) = match descriptor.shape {
+            TypeShape::Real { shortreal } => {
+                (0, false, false, IrMailboxTarget::Real { addr, shortreal })
+            }
+            _ => {
+                let width = descriptor
+                    .info
+                    .width
+                    .filter(|width| *width != 0)
+                    .ok_or_else(|| {
+                        format!("mailbox destination in `{path}` has no packed width")
+                    })?;
+                let signed = descriptor.info.signed;
+                let two_state = self.db.is_two_state_type(node);
+                (
+                    width,
+                    signed,
+                    two_state,
+                    IrMailboxTarget::Packed {
+                        addr,
+                        width,
+                        signed,
+                        two_state,
+                    },
+                )
+            }
+        };
+        let init = (width == 0).then(|| {
+            Box::new(IrExpr::new(
+                IrExprKind::Const(IrConst::real(0.0)),
+                0,
+                false,
+                None,
+            ))
+        });
+        before.push(IrStmt::DeclLocal {
+            name: local.clone(),
+            width,
+            signed,
+            two_state,
+            init,
+        });
+        let target = match self.mailbox_nominal_type(node)? {
+            Some(type_id) => IrMailboxTarget::Typed {
+                type_id,
+                target: Box::new(target),
+            },
+            None => target,
+        };
+        let read = IrExpr::new(IrExprKind::LocalRead(local), width, signed, None);
+        let after = vec![writeback.store(&self.model, read)?];
+        Ok((before, target, after))
+    }
+
+    /// Hoist the statements an expression-form mailbox method needs before
+    /// the enclosing statement; only statements that evaluate the call once
+    /// accept them.
+    pub(in super::super) fn mailbox_expression_prelude(
+        &mut self,
+        path: &str,
+        name: &str,
+        statements: Vec<IrStmt>,
+    ) -> Result<(), String> {
+        if statements.is_empty() {
+            return Ok(());
+        }
+        match self.mailbox_statement_prelude.as_mut() {
+            Some(prelude) => {
+                prelude.extend(statements);
+                Ok(())
+            }
+            None => Err(format!(
+                "mailbox `{name}` with an aggregate or selected operand in `{}` is supported only as a statement, in an assignment, a system-task argument or an if condition (SIM-017)",
+                self.source_path(path)
+            )),
+        }
+    }
+
+    /// Append a `try_get`/`try_peek` whose result lands in a status local,
+    /// followed by the copy-out when it succeeded (a mismatch or an empty
+    /// mailbox leaves the destination untouched). Returns the status read.
+    pub(in super::super) fn mailbox_try_get_status(
+        &self,
+        node: NodeId,
+        mailbox: IrChandleExpr,
+        target: IrMailboxTarget,
+        peek: bool,
+        after: Vec<IrStmt>,
+        statements: &mut Vec<IrStmt>,
+    ) -> IrExpr {
+        let status = format!("_llg_mailbox_status_{}", node.index());
+        statements.push(IrStmt::DeclLocal {
+            name: status.clone(),
+            width: 32,
+            signed: true,
+            two_state: false,
+            init: Some(Box::new(object_query(
+                IrObjectQuery::MailboxTryGet {
+                    mailbox,
+                    target,
+                    peek,
+                },
+                32,
+                true,
+            ))),
+        });
+        let read = IrExpr::new(IrExprKind::LocalRead(status), 32, true, None);
+        if !after.is_empty() {
+            let zero = IrExpr::new(
+                IrExprKind::Const(
+                    IrConst::packed(vec![0], vec![], vec![], 32, true, None)
+                        .expect("32-bit zero constant"),
+                ),
+                32,
+                true,
+                None,
+            );
+            statements.push(IrStmt::If {
+                cond: IrExpr::new(
+                    IrExprKind::Bin {
+                        op: IrBinOp::Gt,
+                        a: Box::new(read.clone()),
+                        b: Box::new(zero),
+                    },
+                    1,
+                    false,
+                    None,
+                ),
+                then_: after,
+                els: None,
+                check: IrUniquePriorityCheck::None,
+            });
+        }
+        read
+    }
+
+    fn is_event_operand(&self, node: NodeId) -> bool {
+        self.query_descriptor(node).is_some_and(
+            |descriptor| matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "Event"),
+        )
+    }
+
+    /// A packed or real destination that is not a whole variable, ref
+    /// formal or other directly addressable cell.
+    fn is_selected_scalar_destination(&mut self, path: &str, node: NodeId) -> bool {
+        if self.is_mailbox_expr(path, node)
+            || self.is_string_expr(path, node)
+            || self.is_chandle_expr(path, node)
+            || self.is_process_value(path, node)
+        {
+            return false;
+        }
+        !matches!(
+            self.lower_lhs(path, node),
+            Ok(IrLhs::Whole(_) | IrLhs::WholeRef { .. } | IrLhs::Ref { bit: None, .. })
+        )
     }
 
     pub(in super::super) fn lower_mailbox_method(
@@ -299,32 +590,30 @@ impl Codegen<'_> {
             ("num", []) => {
                 return Err("mailbox num() is an expression, not a statement".to_owned());
             }
-            ("put", [value]) => match index {
-                Some(index) => IrObjectStmt::MailboxPut(
-                    index,
-                    mailbox,
-                    self.lower_mailbox_value(path, *value)?,
-                    false,
-                ),
-                None => IrObjectStmt::MailboxPutLocal(
-                    local.expect("local mailbox name"),
-                    mailbox,
-                    self.lower_mailbox_value(path, *value)?,
-                    false,
-                ),
-            },
-            ("try_put", [value]) => match index {
-                Some(index) => IrObjectStmt::MailboxTryPut(
-                    index,
-                    mailbox,
-                    self.lower_mailbox_value(path, *value)?,
-                ),
-                None => IrObjectStmt::MailboxTryPutLocal(
-                    local.expect("local mailbox name"),
-                    mailbox,
-                    self.lower_mailbox_value(path, *value)?,
-                ),
-            },
+            ("put" | "try_put", [value]) => {
+                let (mut before, value) = self.lower_mailbox_put_operand(path, *value)?;
+                let put = match (index, name == "put") {
+                    (Some(index), true) => IrObjectStmt::MailboxPut(index, mailbox, value, false),
+                    (None, true) => IrObjectStmt::MailboxPutLocal(
+                        local.expect("local mailbox name"),
+                        mailbox,
+                        value,
+                        false,
+                    ),
+                    (Some(index), false) => IrObjectStmt::MailboxTryPut(index, mailbox, value),
+                    (None, false) => IrObjectStmt::MailboxTryPutLocal(
+                        local.expect("local mailbox name"),
+                        mailbox,
+                        value,
+                    ),
+                };
+                if before.is_empty() {
+                    put
+                } else {
+                    before.push(IrStmt::Object(Box::new(put)));
+                    return Ok(IrStmt::Block(before));
+                }
+            }
             ("get" | "peek", [target]) => {
                 // A process variable receives through a handle temporary and
                 // a counted assignment once the message is delivered.
@@ -348,7 +637,27 @@ impl Codegen<'_> {
                             None => storage,
                         }
                     }
-                    None => self.lower_mailbox_target(path, *target)?,
+                    None => {
+                        let (before, target, after) =
+                            self.lower_mailbox_get_operand(path, *target)?;
+                        let peek = name == "peek";
+                        let get = match index {
+                            Some(index) => IrObjectStmt::MailboxGet(index, mailbox, target, peek),
+                            None => IrObjectStmt::MailboxGetLocal(
+                                local.expect("local mailbox name"),
+                                mailbox,
+                                target,
+                                peek,
+                            ),
+                        };
+                        if before.is_empty() && after.is_empty() {
+                            return Ok(IrStmt::Object(Box::new(get)));
+                        }
+                        let mut statements = before;
+                        statements.push(IrStmt::Object(Box::new(get)));
+                        statements.extend(after);
+                        return Ok(IrStmt::Block(statements));
+                    }
                 };
                 let peek = name == "peek";
                 let get = match index {
@@ -379,16 +688,29 @@ impl Codegen<'_> {
                 get
             }
             ("try_get" | "try_peek", [target]) => {
-                let target = self.lower_mailbox_target(path, *target)?;
+                let (before, target, after) = self.lower_mailbox_get_operand(path, *target)?;
                 let peek = name == "try_peek";
-                match index {
-                    Some(index) => IrObjectStmt::MailboxTryGet(index, mailbox, target, peek),
-                    None => IrObjectStmt::MailboxTryGetLocal(
-                        local.expect("local mailbox name"),
+                if after.is_empty() && before.is_empty() {
+                    match index {
+                        Some(index) => IrObjectStmt::MailboxTryGet(index, mailbox, target, peek),
+                        None => IrObjectStmt::MailboxTryGetLocal(
+                            local.expect("local mailbox name"),
+                            mailbox,
+                            target,
+                            peek,
+                        ),
+                    }
+                } else {
+                    let mut statements = before;
+                    let _status = self.mailbox_try_get_status(
+                        node,
                         mailbox,
                         target,
                         peek,
-                    ),
+                        after,
+                        &mut statements,
+                    );
+                    return Ok(IrStmt::Block(statements));
                 }
             }
             ("put" | "try_put" | "get" | "peek" | "try_get" | "try_peek", _) => {
