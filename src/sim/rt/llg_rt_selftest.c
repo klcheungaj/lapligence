@@ -12,6 +12,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef LLG_SELFTEST_TRACK_STORAGE
+// Counters of the tracking allocator that storage test builds link. Declared
+// at file scope: MSVC /W4 rejects block-scope function declarations (C4210).
+size_t value_test_live(void);
+size_t value_test_bytes(void);
+#endif
+
 static int failures = 0;
 
 static llg_event_object_t lifecycle_event_object;
@@ -2416,8 +2423,6 @@ int main(int argc, char** argv) {
     sv4_destroy(&region_sample_signal);
     sv4_destroy(&region_resume_signal);
 #ifdef LLG_SELFTEST_TRACK_STORAGE
-    extern size_t value_test_live(void);
-    extern size_t value_test_bytes(void);
     CHECK(value_test_live() == 0);
     CHECK(value_test_bytes() == 0);
 #endif
