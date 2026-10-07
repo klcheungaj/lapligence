@@ -1,0 +1,5 @@
+4 lo=c b7=0 cat=1f0/10 hs=5 pl=2 pw=e2/e sum=14 dbl=14
+4 rr=2.500 rz=18.000 rh=2.500 sr=0.750
+9 lo=1 b7=1 cat=1c1/10 hs=5 pl=2 pw=e2/e sum=14 dbl=14
+9 rr=3.250 rz=6.500 rh=3.250 sr=0.750
+lo@4 b7@9
