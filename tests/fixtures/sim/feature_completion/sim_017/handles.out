@@ -1,0 +1,12 @@
+obj same=1 v=2
+rebind 2 3
+e2 woke at 5
+process same=1 WAITING n=1
+vif 5a
+vif a5
+box same=1 x=9
+as_event=-1 n=3
+as_obj=1 v=3
+as_box=-1
+as_event=1
+as_box=1 same=1 n=0

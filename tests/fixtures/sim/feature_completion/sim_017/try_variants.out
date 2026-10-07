@@ -1,0 +1,12 @@
+empty get=0 peek=0 y=-1 dest n=0
+put 1 1 0 n=2
+peek=1 y=1 one n=2
+get=1 y=1 one n=1
+full=0 n=2
+fifo 2 two n=0
+mismatch -1 -1 -1 -1 n=1
+kept 9 nine 5 str 1.5
+match 1 2 two n=0
+byte=-1 by=0 logic=1 l=x5
+int=-1 i=5 l=11 n=1
+final=1 l=x5 n=0

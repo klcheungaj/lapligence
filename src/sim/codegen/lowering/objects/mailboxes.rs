@@ -212,10 +212,12 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrMailboxTarget, String> {
+        // A mailbox handle message (`mailbox #(mailbox)`) shares its mailbox.
         if self.is_mailbox_expr(path, node) {
-            return Err(format!(
-                "mailbox handle is not a writable message target in {path}"
-            ));
+            let (target, _) = self.lower_chandle_lvalue(path, node)?;
+            return Ok(IrMailboxTarget::Handle {
+                addr: self.chandle_target_address(&target),
+            });
         }
         if self.is_string_expr(path, node) {
             self.ensure_string_actual_writable(path, node)?;
@@ -248,7 +250,10 @@ impl Codegen<'_> {
             return Ok(IrMailboxValue::String(self.lower_string(path, node)?));
         }
         // A process handle travels as a pinned identity (SIM-015).
-        if self.is_chandle_expr(path, node) || self.is_process_value(path, node) {
+        if self.is_chandle_expr(path, node)
+            || self.is_process_value(path, node)
+            || self.is_mailbox_expr(path, node)
+        {
             return Ok(IrMailboxValue::Handle(self.lower_chandle(path, node)?));
         }
         let value = self.lower_expr(path, node)?;

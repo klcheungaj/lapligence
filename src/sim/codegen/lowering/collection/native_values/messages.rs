@@ -57,7 +57,7 @@ impl Codegen<'_> {
                 format!("member `{}`", aggregate_path_suffix(&leaf.path))
             };
             return Err(format!(
-                "mailbox message of type `{}` in `{path}` is not supported: {part} is an associative array, which has no nested value form",
+                "mailbox message of type `{}` in `{path}` is not supported: {part} is an associative array, which has no nested value form (SIM-017)",
                 descriptor.name
             ));
         }

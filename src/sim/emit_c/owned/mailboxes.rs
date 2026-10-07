@@ -233,11 +233,14 @@ impl Frame<'_, '_> {
             }
             _ => return Err(pending("object query ownership contract")),
         };
-        let result = self.value(
-            format!("sv4_from_i64((int64_t)({code}), {})", expression.width),
-            expression.width,
-            expression.signed,
-        );
+        // Identity comparisons are one-bit unsigned; method statuses are
+        // signed `int` (Annex G.4). The value carries the expression's sign.
+        let code = if expression.signed {
+            format!("sv4_from_i64((int64_t)({code}), {})", expression.width)
+        } else {
+            format!("sv4_from_u64((uint64_t)({code}), {}, 0)", expression.width)
+        };
+        let result = self.value(code, expression.width, expression.signed);
         self.cancellation_check_covering(cancellation_mark)?;
         Ok(result)
     }
