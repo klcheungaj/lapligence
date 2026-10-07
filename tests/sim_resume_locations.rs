@@ -107,9 +107,9 @@ fn pruning_and_inline_event_tasks_keep_definition_site_locations() {
     let database = database(&[OwnedSource::compilation_unit(
         "inline.sv",
         "module tb;\n\
-// An evaluated event on a ref formal bound to a block local expands the task.\n\
+event go; // A ref-formal select listed with a named event expands the task.\n\
 task automatic await_event(ref logic [1:0] e);\n\
-    @(e[0]);\n\
+    @(e[0] or go);\n\
     #2;\n\
 endtask\n\
 initial begin automatic logic [1:0] ready;\n\

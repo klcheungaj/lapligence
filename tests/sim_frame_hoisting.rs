@@ -191,10 +191,12 @@ fn inline_expanded_task_storage_is_hoisted_into_its_host_frame() {
         r#"
 module tb;
     // A block-local ref actual of a formal read by an evaluated event
-    // expression expands the task at its call site.
+    // expression listed with a named event expands the task at its call
+    // site.
+    event go;
     task automatic await_edge(ref logic [1:0] source);
         integer local_value;
-        @(posedge source[0]);
+        @(posedge source[0] or go);
         local_value = 1;
     endtask
     initial begin
