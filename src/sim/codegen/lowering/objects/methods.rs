@@ -16,7 +16,7 @@ impl Codegen<'_> {
             } => (name.clone(), *receiver),
             _ => return Err("object method has no receiver".to_owned()),
         };
-        if self.is_process_expr(path, receiver)
+        if self.is_process_value(path, receiver)
             && matches!(name.as_str(), "kill" | "suspend" | "resume" | "await")
         {
             let args = self.node(node).children.get(1..).unwrap_or_default();
@@ -71,6 +71,30 @@ impl Codegen<'_> {
                 )),
                 _ => Err(format!("unsupported process random method: {name}")),
             };
+        }
+        if self.is_process_value(path, receiver)
+            && matches!(name.as_str(), "srandom" | "set_randstate")
+        {
+            // Any other handle seeds or restores the stream of the process it
+            // names, which need not be the caller (SV 18.14).
+            let args = self.node(node).children.get(1..).unwrap_or_default();
+            let [argument] = args else {
+                return Err(format!("{name} requires exactly one argument in {path}"));
+            };
+            let op = if name == "srandom" {
+                let seed = self.lower_expr(path, *argument)?;
+                if seed.is_real() {
+                    return Err(format!("srandom seed must be integral in {path}"));
+                }
+                IrProcessRandom::Seed(IrExpr::convert_to(seed, 32, false))
+            } else {
+                IrProcessRandom::SetState(self.lower_string(path, *argument)?)
+            };
+            let target = self.lower_process(path, receiver)?;
+            return Ok(IrStmt::Object(Box::new(IrObjectStmt::ProcessRandom {
+                target,
+                op,
+            })));
         }
         if self.is_semaphore_expr(path, receiver) {
             let args = self.node(node).children.get(1..).unwrap_or_default();

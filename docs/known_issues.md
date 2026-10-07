@@ -572,6 +572,109 @@ receivers computed by element selects or calls, retained element cells for
 
 `tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`.
 
+## Process handles in plain handle storage stay allocated until teardown
+
+**Status:** open (SIM-015; reclamation belongs to SIM-018).
+
+### Symptom
+
+A process whose handle was ever stored into a class property, a record
+member, an output, inout or `ref` formal, a function result, a static
+subroutine formal or a task variable shared with fork branches keeps its
+handle record (a few dozen bytes) until the model is torn down, even after
+every such copy is gone. Handles kept only in process variables, by-value
+automatic formals and container elements are freed as soon as the last copy
+is released.
+
+### Cause
+
+Those storage forms hold plain pointers without reference counts. A handle
+entering them is pinned (`llg_process_pin`), so a still-reachable copy can
+never observe a recycled identity (SV 9.7).
+
+### Intended direction
+
+Reclaim pinned handles with the object reachability work of SIM-018, or give
+class properties and native record leaves counted handle slots.
+
+### Reproduce
+
+`class C; process p; endclass` with `c.p = process::self();` in a loop that
+forks many short-lived children: the pinned handle count grows with the
+number of children until the model ends.
+
+## Suspended event-control waits keep a wake that arrives while suspended
+
+**Status:** open (SIM-015).
+
+### Symptom
+
+A process suspended while blocked on an event control (`@e`, `@(posedge s)`)
+resumes the statement after the control when `resume()` is called, if the
+event occurred while it was suspended. SV 9.7 says `resume()` resensitizes
+the process to the event expression, so such an event would be missed and
+the process would keep waiting.
+
+### Cause
+
+Every wait kind uses one rule: a condition met while suspended leaves a
+pending wake that `resume()` delivers. That rule is correct for delays, wait
+conditions, `wait fork`, `await`, semaphores and mailboxes ("if the wait
+condition is now true or the original delay has transpired"), and the
+process-control tests rely on it for event controls as well.
+
+### Intended direction
+
+Mark event-expression waits at arm time and, while the waiter is suspended,
+refresh their edge snapshots and named-event registrations instead of
+recording a wake; keep the pending wake for the other wait kinds.
+
+### Reproduce
+
+Suspend a process waiting on `@e`, trigger `e`, then resume it a time step
+later: the process continues instead of waiting for the next `->e`.
+
+## Rejected process-handle forms
+
+**Status:** open (SIM-015).
+
+### Symptom
+
+These legal forms are rejected with explicit diagnostics:
+
+- a `ref` process formal whose actual is a class property, a record member
+  or an array element;
+- an output or inout process formal bound to a process variable in a
+  function call inside an expression;
+- `try_get`/`try_peek` of a mailbox into a process variable;
+- `status()` inside a `wait` condition, an event expression, an implicit
+  (`@*`, `always_comb`) sensitivity body or a continuous assignment;
+- `suspend()` or `await()` inside a function body.
+
+### Cause
+
+A `ref` process formal aliases counted process-variable storage, so the
+callee retains and releases through it; plain handle storage holds pinned
+identities without counts and cannot share that alias. Outputs and mailbox
+receives bound to a counted variable are copied back by a statement after
+the operation, which an expression does not have. Status changes publish no
+change event, so a status wait would never wake. Functions cannot suspend,
+and the target of `suspend()` is known only at run time.
+
+### Intended direction
+
+Pass the slot kind with the `ref` binding (or route plain slots through a
+counted temporary with write-through); stage expression outputs through the
+caller's statement like other native outputs; publish a status change event
+at a safe scheduler point for status waits; allow `suspend()` of another
+process from a function with a run-time check for self-suspension.
+
+### Reproduce
+
+`task automatic t(ref process p); ... t(obj.p);`, `x = f(q) + 1;` with
+`function int f(output process p)`, `mb.try_get(q)` for a `process q`,
+`wait (p.status() == process::FINISHED);`.
+
 ## Real references and real-array expressions outside stable storage
 
 **Status:** open; SIM-005 implements real/shortreal references to stable

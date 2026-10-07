@@ -384,7 +384,10 @@ int llg_assoc_value_set_integral_chandle(llg_assoc_value_t* array, sv4_t key,
 
     if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { llg_container_warning("invalid associative-array key write"); result_value = 0; goto cleanup_key; } while (0);
     llg_value_t source = llg_value_from_chandle(array->element, value);
-    do { result_value = llg_assoc_value_set_source(array, &normalized, NULL, 0, &source, &change); goto cleanup_key; } while (0);
+    /* The entry copies the handle; a counted (process) source owns one more
+     * reference that must not outlive the call. */
+    result_value = llg_assoc_value_set_source(array, &normalized, NULL, 0, &source, &change);
+    llg_value_drop(&source);
 cleanup_key:
     sv4_destroy(&normalized);
     /* No temporary owner may remain live across the callback. */

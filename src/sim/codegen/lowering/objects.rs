@@ -3,7 +3,7 @@ use super::*;
 use crate::sim::ir::{
     IrChandleExpr, IrClassFieldType, IrDisplayArg, IrEnumMember, IrEnumMethod, IrEnumQuery, IrExpr,
     IrMailboxElement, IrMailboxExpr, IrMailboxTarget, IrMailboxValue, IrObject, IrObjectQuery,
-    IrObjectStmt, IrObjectType, IrProcessControl, IrProcessExpr, IrStringExpr,
+    IrObjectStmt, IrObjectType, IrProcessControl, IrProcessExpr, IrProcessRandom, IrStringExpr,
 };
 
 mod assignments;

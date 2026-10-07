@@ -55,6 +55,14 @@ impl Codegen<'_> {
             {
                 return Ok(IrStringExpr::RandomState);
             }
+            if name == "get_randstate"
+                && self.is_process_value(path, *receiver)
+                && self.node(node).children.len() == 1
+            {
+                return Ok(IrStringExpr::ProcessRandState(Box::new(
+                    self.lower_process(path, *receiver)?,
+                )));
+            }
         }
         if let Some(value) = self.lower_container_string_query(path, node)? {
             return Ok(value);
@@ -144,6 +152,38 @@ impl Codegen<'_> {
                         ..
                     }
                 );
+                if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind))
+                {
+                    // Handle formals keep their identity (SV 13.5); process
+                    // formals bind as in other expression calls.
+                    if !is_ref && !*is_out {
+                        in_args.push(IrCallArg::ChandleVal(self.lower_handle_argument(
+                            path,
+                            *io,
+                            bound[idx].expr,
+                        )?));
+                        continue;
+                    }
+                    if self.is_process_formal(*io) {
+                        if let Some(argument) = self.process_formal_expression_binding(
+                            path,
+                            *io,
+                            bound[idx].expr,
+                            is_ref,
+                        )? {
+                            out_args.push(argument);
+                            continue;
+                        }
+                    }
+                    let (target, _) = self.lower_chandle_lvalue(path, bound[idx].expr)?;
+                    let address = self.chandle_target_address(&target);
+                    out_args.push(if is_ref {
+                        IrCallArg::ChandleRefAddr(address)
+                    } else {
+                        IrCallArg::ChandleAddr(address)
+                    });
+                    continue;
+                }
                 if is_ref {
                     if !bound[idx].string {
                         return Err(format!(
@@ -212,6 +252,9 @@ impl Codegen<'_> {
                 matches!(
                     arg,
                     IrCallArg::StringVal(_)
+                        | IrCallArg::ChandleVal(_)
+                        | IrCallArg::ChandleAddr(_)
+                        | IrCallArg::ChandleRefAddr(_)
                         | IrCallArg::StringOutAddr(_)
                         | IrCallArg::StringRefAddr { .. }
                         | IrCallArg::StringOutTemp { .. }

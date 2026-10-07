@@ -10,6 +10,9 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Option<&crate::core::db::EnumTypeMetadata> {
         let descriptor = self.query_descriptor(node)?;
+        if descriptor.name == "std::process::state" {
+            return Some(process_state_metadata());
+        }
         self.db.enum_type_metadata(descriptor.id)
     }
 
@@ -198,4 +201,25 @@ impl Codegen<'_> {
             members,
         }))
     }
+}
+
+/// The built-in `process::state` enumeration (SV 9.7, Annex G.6). The
+/// frontend captures only the members a design names, so the complete
+/// declaration-order table comes from its normative definition.
+fn process_state_metadata() -> &'static crate::core::db::EnumTypeMetadata {
+    static METADATA: std::sync::OnceLock<crate::core::db::EnumTypeMetadata> =
+        std::sync::OnceLock::new();
+    METADATA.get_or_init(|| crate::core::db::EnumTypeMetadata {
+        width: 32,
+        signed: true,
+        two_state: true,
+        members: ["FINISHED", "RUNNING", "WAITING", "SUSPENDED", "KILLED"]
+            .iter()
+            .zip(0u64..)
+            .map(|(name, value)| crate::core::db::EnumMember {
+                name: (*name).to_owned(),
+                value: Val::Bits(crate::core::elab::Value::from_u64(value, 32, true)),
+            })
+            .collect(),
+    })
 }

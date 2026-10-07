@@ -151,6 +151,21 @@ static void check_identity_handles(void) {
     llg_queue_value_destroy(&copy);
     CHECK(live_refs == 0);
 
+    /* Associative writes and defaults keep exactly one reference per copy
+     * (SIM-015: the integral-key and default setters dropped no source). */
+    llg_assoc_value_t by_key;
+    llg_assoc_value_init_integral(&by_key, &process_desc, 32, 0, 0);
+    sv4_t three = sv4_from_u64(3, 32, 0);
+    llg_assoc_value_set_integral_chandle(&by_key, three, &a);
+    CHECK(live_refs == 1);
+    llg_assoc_value_set_integral_chandle(&by_key, three, &b);
+    CHECK(live_refs == 1);
+    llg_assoc_value_set_default_chandle(&by_key, &a);
+    CHECK(live_refs == 2);
+    llg_assoc_value_destroy(&by_key);
+    CHECK(live_refs == 0);
+    sv4_destroy(&three);
+
     /* New event elements refer to new events; copies share them. */
     llg_dyn_value_array_t events, events_copy;
     llg_dyn_value_init(&events, &event_desc);

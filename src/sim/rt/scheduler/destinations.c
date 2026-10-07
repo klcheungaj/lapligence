@@ -38,6 +38,9 @@ void llg_rt_ref_read_to(sv4_t* dst, const llg_ref_t* ref) {
 void llg_process_get_randstate_to(llg_string_t* dst) {
     llg_string_replace(dst, llg_process_get_randstate());
 }
+void llg_process_handle_get_randstate_to(llg_string_t* dst, llg_process_handle_t* handle) {
+    llg_string_replace(dst, llg_process_handle_get_randstate(handle));
+}
 void llg_string_format_typed_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int n, const char* scope) {
     llg_string_replace(dst, llg_string_format_typed(llg_string_take(format), args, n, scope));
 }

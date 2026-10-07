@@ -1,0 +1,18 @@
+t1 k0 WAITING
+t1 k1 WAITING
+t1 k2 WAITING
+t1 k3 WAITING
+t1 k4 WAITING
+fixed SUSPENDED
+dyn SUSPENDED
+queue KILLED
+t15 fixed SUSPENDED
+fixed done=1 at 15
+t15 dyn WAITING
+assoc done=1 at 40
+end k0 FINISHED
+end k1 FINISHED
+end k2 KILLED
+end k3 FINISHED
+end k4 KILLED
+done 1 1 0 1 0

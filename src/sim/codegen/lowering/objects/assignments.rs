@@ -297,7 +297,7 @@ impl Codegen<'_> {
             ));
         }
         if self.is_mailbox_expr(path, lhs)
-            || self.is_process_expr(path, lhs)
+            || self.is_process_value(path, lhs)
             || self.is_semaphore_expr(path, lhs)
         {
             return Err(format!(

@@ -97,6 +97,15 @@ pub enum IrClassFieldType {
     Chandle,
 }
 
+impl IrObjectType {
+    /// Whether whole-object stores publish a one-bit change marker
+    /// (`<name>_llg_dep`) that event controls and waits can depend on.
+    /// Semaphore objects publish none.
+    pub(crate) fn has_change_marker(self) -> bool {
+        matches!(self, Self::String | Self::Chandle | Self::Process)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 /// Persistent object storage. Strings default empty; chandles default null.
 pub struct IrObject {
@@ -114,6 +123,9 @@ pub enum IrStringExpr {
     /// Snapshot of the current process/object random stream. The returned
     /// bytes are an owned, versioned state string consumed by set_randstate.
     RandomState,
+    /// Snapshot of another process's random stream through its handle
+    /// (`p.get_randstate()`, SV 18.14).
+    ProcessRandState(Box<IrProcessExpr>),
     Read(usize),
     LocalRead(String),
     /// Read and clone a native string formal. The callee owns the returned
@@ -348,6 +360,11 @@ pub enum IrChandleExpr {
     /// A process handle stored into a process element of container storage.
     /// The element retains its own reference (see `LLG_VALUE_PROCESS`).
     Process(Box<IrProcessExpr>),
+    /// A process handle stored into plain handle storage that keeps no
+    /// reference count (class properties, non-input formals, function
+    /// results, fork-shared slots). The handle is pinned: its identity stays
+    /// valid until runtime cleanup, so no copy can observe a recycled one.
+    PinnedProcess(Box<IrProcessExpr>),
     /// A mailbox handle (construction, read or null) stored into handle
     /// storage such as a mailbox array element. Construction allocates a
     /// runtime mailbox; reads share the existing one.
@@ -457,6 +474,15 @@ pub enum IrMailboxExpr {
     },
 }
 
+/// A random-stream method of a process handle (SV 18.14).
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrProcessRandom {
+    /// `srandom(seed)`: a 32-bit seed.
+    Seed(IrExpr),
+    /// `set_randstate(state)`: a state string from `get_randstate`.
+    SetState(IrStringExpr),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IrProcessControl {
     Kill,
@@ -541,6 +567,11 @@ pub enum IrObjectStmt {
         target: IrProcessExpr,
     },
     ProcessAwait(IrProcessExpr),
+    /// Seed or restore the random stream of the process `target` names.
+    ProcessRandom {
+        target: IrProcessExpr,
+        op: IrProcessRandom,
+    },
 }
 
 impl IrStringExpr {
@@ -796,6 +827,8 @@ impl IrStringExpr {
                 }
                 Ok(())
             }
+            // Formal indices are checked by the enclosing statement.
+            Self::ProcessRandState(target) => target.validate_shape(model),
             _ => Ok(()),
         }
     }
@@ -814,6 +847,7 @@ impl IrStringExpr {
             | Self::LocalRead(_)
             | Self::FormalRead(_)
             | Self::QueuePop { .. } => {}
+            Self::ProcessRandState(target) => target.expressions(visit),
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter().for_each(visit),
             Self::AssociativeGet { key, .. } => key.expressions(visit),
@@ -880,6 +914,7 @@ impl IrStringExpr {
             | Self::LocalRead(_)
             | Self::FormalRead(_)
             | Self::QueuePop { .. } => {}
+            Self::ProcessRandState(target) => target.expressions_mut(visit),
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter_mut().for_each(visit),
             Self::AssociativeGet { key, .. } => key.expressions_mut(visit),
@@ -1081,6 +1116,19 @@ impl IrProcessExpr {
                 "formal index is out of bounds",
             )),
             Self::Handle(handle) => handle.validate(model, formals, None),
+        }
+    }
+
+    /// Validate everything except formal indices, for contexts that do not
+    /// carry the enclosing function's formals.
+    pub(in crate::sim) fn validate_shape(
+        &self,
+        model: &super::IrModel,
+    ) -> Result<(), super::IrValidationError> {
+        match self {
+            Self::FormalRead(_) => Ok(()),
+            Self::Handle(handle) if matches!(**handle, IrChandleExpr::FormalRead(_)) => Ok(()),
+            _ => self.validate(model, &[]),
         }
     }
 
@@ -1629,6 +1677,19 @@ impl IrObjectStmt {
             Self::ProcessControl { target, .. } | Self::ProcessAwait(target) => {
                 target.validate(model, formals)
             }
+            Self::ProcessRandom { target, op } => {
+                target.validate(model, formals)?;
+                match op {
+                    IrProcessRandom::Seed(seed) if seed.is_real() || seed.width != 32 => {
+                        Err(super::IrValidationError::new(
+                            "process srandom",
+                            "seed must be a 32-bit integral value",
+                        ))
+                    }
+                    IrProcessRandom::Seed(_) => Ok(()),
+                    IrProcessRandom::SetState(state) => state.validate(model, None),
+                }
+            }
         }
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
@@ -1660,6 +1721,13 @@ impl IrObjectStmt {
             | Self::ProcessAssignLocal(_, value)
             | Self::ProcessControl { target: value, .. }
             | Self::ProcessAwait(value) => value.expressions(visit),
+            Self::ProcessRandom { target, op } => {
+                target.expressions(visit);
+                match op {
+                    IrProcessRandom::Seed(seed) => visit(seed),
+                    IrProcessRandom::SetState(state) => state.expressions(visit),
+                }
+            }
             Self::ChandleDeclareLocal(_, None)
             | Self::ChandleDeclareShared(_, None)
             | Self::MailboxGet(..)
@@ -1712,6 +1780,13 @@ impl IrObjectStmt {
             | Self::ProcessAssignLocal(_, value)
             | Self::ProcessControl { target: value, .. }
             | Self::ProcessAwait(value) => value.expressions_mut(visit),
+            Self::ProcessRandom { target, op } => {
+                target.expressions_mut(visit);
+                match op {
+                    IrProcessRandom::Seed(seed) => visit(seed),
+                    IrProcessRandom::SetState(state) => state.expressions_mut(visit),
+                }
+            }
             Self::ChandleDeclareLocal(_, None)
             | Self::ChandleDeclareShared(_, None)
             | Self::MailboxGet(..)
@@ -1818,7 +1893,9 @@ impl IrChandleExpr {
                 source.validate(model, formals, chandle_return)
             }
             Self::Mailbox(mailbox) => mailbox.validate(model, formals, chandle_return),
-            Self::Process(process) => process.validate(model, formals),
+            Self::Process(process) | Self::PinnedProcess(process) => {
+                process.validate(model, formals)
+            }
             Self::ContainerElement {
                 container,
                 indices,
@@ -2081,7 +2158,7 @@ impl IrChandleExpr {
                 handle.expressions(visit)
             }
             Self::Mailbox(mailbox) => mailbox.expressions(visit),
-            Self::Process(process) => process.expressions(visit),
+            Self::Process(process) | Self::PinnedProcess(process) => process.expressions(visit),
             Self::ContainerElement { indices, key, .. } => {
                 indices.iter().for_each(&mut *visit);
                 if let Some(key) = key {
@@ -2119,7 +2196,7 @@ impl IrChandleExpr {
                 handle.expressions_mut(visit)
             }
             Self::Mailbox(mailbox) => mailbox.expressions_mut(visit),
-            Self::Process(process) => process.expressions_mut(visit),
+            Self::Process(process) | Self::PinnedProcess(process) => process.expressions_mut(visit),
             Self::ContainerElement { indices, key, .. } => {
                 indices.iter_mut().for_each(&mut *visit);
                 if let Some(key) = key {
