@@ -19,6 +19,12 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::SysCall { .. }
         );
         let saved = std::mem::replace(&mut self.cg.container_call_prelude, hoist.then(Vec::new));
+        let mailbox_hoist =
+            hoist || matches!(self.cg.kind(h), NodeKind::Stmt(StmtKind::IfElse { .. }));
+        let saved_mailbox = std::mem::replace(
+            &mut self.cg.mailbox_statement_prelude,
+            mailbox_hoist.then(Vec::new),
+        );
         let outer = self.cg.record_binding_declarations.replace(Vec::new());
         // Queue and dynamic-array members of container record elements are
         // staged around statements that evaluate their operands once.
@@ -47,8 +53,14 @@ impl EmitCtx<'_, '_> {
         let declarations =
             std::mem::replace(&mut self.cg.record_binding_declarations, outer).unwrap_or_default();
         let prelude = std::mem::replace(&mut self.cg.container_call_prelude, saved);
+        let mailbox_prelude =
+            std::mem::replace(&mut self.cg.mailbox_statement_prelude, saved_mailbox);
         let mut statements = lowered?;
         if let Some(mut prelude) = prelude.filter(|prelude| !prelude.is_empty()) {
+            prelude.append(&mut statements);
+            statements = prelude;
+        }
+        if let Some(mut prelude) = mailbox_prelude.filter(|prelude| !prelude.is_empty()) {
             prelude.append(&mut statements);
             statements = prelude;
         }

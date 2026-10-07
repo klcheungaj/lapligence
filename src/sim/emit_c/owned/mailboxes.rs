@@ -30,6 +30,14 @@ impl Frame<'_, '_> {
                     IrMailboxElement::Real { shortreal } => (1, 0, false, false, *shortreal),
                     IrMailboxElement::String => (2, 0, false, false, false),
                     IrMailboxElement::Handle => (3, 0, false, false, false),
+                    IrMailboxElement::Value { type_id } => {
+                        let handle = self.scalar(
+                            "void*",
+                            format!("llg_mailbox_new_value({}, UINT64_C({type_id}))", bound.code),
+                        );
+                        self.discard(bound);
+                        return Ok(handle);
+                    }
                 };
                 let handle = self.scalar(
                     "void*",
@@ -93,6 +101,10 @@ impl Frame<'_, '_> {
             IrMailboxValue::Handle(value) => {
                 format!("llg_mailbox_value_handle({})", self.chandle(value)?)
             }
+            IrMailboxValue::Native { value, type_id } => format!(
+                "llg_mailbox_value_native({}, UINT64_C({type_id}))",
+                self.native_value_address(*value)?
+            ),
         };
         Ok(message)
     }
@@ -150,6 +162,10 @@ impl Frame<'_, '_> {
             IrMailboxTarget::Handle { addr } => format!(
                 "llg_mailbox_target_handle({})",
                 self.native_address(addr, NativeKind::Chandle)?.address
+            ),
+            IrMailboxTarget::Native { value, type_id } => format!(
+                "llg_mailbox_target_native({}, UINT64_C({type_id}))",
+                self.native_value_address(*value)?
             ),
         })
     }

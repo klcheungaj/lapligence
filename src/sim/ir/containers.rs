@@ -1506,8 +1506,10 @@ impl IrContainerStmt {
                     };
                 }
                 match item {
+                    // An empty path names a whole native value of container
+                    // type, such as a mailbox message (SIM-017).
                     Some(IrContainerElement::Container { element, .. })
-                        if !items.is_empty()
+                        if (!items.is_empty() || matches!(root, IrValueItemRoot::Value(_)))
                             && !matches!(container.kind, IrContainerKind::Associative { .. })
                             && element.compatible_with(&container.element)
                             && container.element.compatible_with(element) =>
