@@ -364,10 +364,10 @@ endmodule
         ("forwards_ref", false),
         ("forwards_local", false),
         ("forwards_module", false),
-        // An evaluated expression over a `ref` formal needs its actual's
-        // dependencies: a specialization or the call-site expansion.
-        ("ref_select", true),
-        ("forwards_select", true),
+        // An evaluated expression over a `ref` formal is evaluated by the
+        // waiting process, which follows the descriptor's whole variable.
+        ("ref_select", false),
+        ("forwards_select", false),
     ] {
         let task = database
             .node_ids()
@@ -384,16 +384,16 @@ endmodule
     // A `ref` formal read by an event control is bound by a specialization
     // when it (or a task it is forwarded to) has a whole-signal actual. A
     // caller local is followed through its descriptor when every read of the
-    // formal is a direct wait (`bound_refs` empty), and forces the expansion
-    // otherwise.
+    // formal is an explicit event control or level wait (`bound_refs`
+    // empty), and forces the expansion otherwise.
     for (name, inline_only, static_refs, bound_refs) in [
         ("ref_edge", false, vec![0], vec![]),
         ("ref_level", false, vec![0], vec![]),
-        ("ref_select", false, vec![0], vec![0]),
+        ("ref_select", false, vec![0], vec![]),
         ("forwards_ref", false, vec![0], vec![]),
         ("forwards_module", false, vec![], vec![]),
         ("forwards_local", false, vec![], vec![]),
-        ("forwards_select", true, vec![], vec![]),
+        ("forwards_select", false, vec![], vec![]),
         ("formal_expression", false, vec![], vec![]),
         ("input_event", false, vec![], vec![]),
     ] {

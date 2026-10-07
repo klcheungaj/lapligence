@@ -202,8 +202,15 @@ pub(in crate::sim::emit_c) fn main(
     for &index in execution.analysis().callee_first_functions() {
         out.push_str(&format!("    (void)&{}_desc;\n", model.funcs[index].c_name));
     }
+    if !model.classes.is_empty() {
+        out.push_str(
+            "    (void)llg_class_field_quiet; (void)llg_class_packed_dependency; (void)llg_class_real_dependency; (void)llg_class_handle_dependency; (void)llg_class_handle_store;\n",
+        );
+    }
     if !model.virtual_interfaces.is_empty() {
-        out.push_str("    (void)llg_vif_member; (void)llg_vif_read;\n");
+        out.push_str(
+            "    (void)llg_vif_member; (void)llg_vif_read; (void)llg_vif_member_quiet; (void)llg_vif_member_dependency;\n",
+        );
         for (interface_id, interface) in model.virtual_interfaces.iter().enumerate() {
             for instance in &interface.instances {
                 out.push_str(&format!("    (void){};\n", instance.c_name));

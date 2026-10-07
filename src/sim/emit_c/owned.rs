@@ -180,6 +180,10 @@ pub(super) struct Frame<'a, 'm> {
     cancellation_points: usize,
     may_disable: HashMap<usize, bool>,
     access_stack: Vec<String>,
+    /// Resolving a wait dependency's native-access receiver: null checks
+    /// and class-property lookups yield null or scratch storage silently,
+    /// because arming a wait on an unbound handle is not an access.
+    quiet_receivers: bool,
     /// Containers written in place through element-item accesses during the
     /// current statement; their readers are notified once it completes.
     pending_touches: Vec<(String, &'static str)>,
@@ -348,6 +352,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             cancellation_points: 0,
             may_disable: HashMap::new(),
             access_stack: Vec::new(),
+            quiet_receivers: false,
             pending_touches: Vec::new(),
             construction_stack: Vec::new(),
             layout: FrameLayout::with_backend(storage, ctx.value_backend),

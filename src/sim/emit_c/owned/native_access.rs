@@ -64,10 +64,13 @@ impl Frame<'_, '_> {
                     IrClassFieldType::String => ("string", 2),
                     IrClassFieldType::Chandle => ("handle", 3),
                 };
+                let lookup = if self.quiet_receivers {
+                    "llg_class_field_quiet"
+                } else {
+                    "llg_class_field"
+                };
                 (
-                    format!(
-                        "&llg_class_field({receiver}, {class}, {field}, {kind})->value.{member}"
-                    ),
+                    format!("&{lookup}({receiver}, {class}, {field}, {kind})->value.{member}"),
                     ty,
                 )
             }
@@ -75,10 +78,14 @@ impl Frame<'_, '_> {
                 let metadata = &self.ctx.model.virtual_interfaces[interface].members[member];
                 let site = access.site.as_deref().unwrap_or(name);
                 (
-                    format!(
-                        "llg_vif_member({receiver}, {interface}, {member}, {})",
-                        c_string_literal(site)
-                    ),
+                    if self.quiet_receivers {
+                        format!("llg_vif_member_quiet({receiver}, {interface}, {member})")
+                    } else {
+                        format!(
+                            "llg_vif_member({receiver}, {interface}, {member}, {})",
+                            c_string_literal(site)
+                        )
+                    },
                     IrClassFieldType::Packed {
                         width: metadata.width,
                         signed: metadata.signed,

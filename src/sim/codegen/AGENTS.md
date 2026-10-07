@@ -115,8 +115,10 @@ expanded (`lower_task_inline`) only where `CallShape` says the caller's environm
 is needed: output/inout/ref event formals, event controls reading by-value formals
 or locals, and class/virtual-interface event calls. A `ref` formal read by an event
 control binds a whole-signal actual statically: each distinct actual signal gets one
-cloned task (`task_specialization`, lowered after all call sites), otherwise the
-call expands. Keep those cases in that one predicate and record new ones there.
+cloned task (`task_specialization`, lowered after all call sites); a level wait or
+an explicit control without named events follows a whole-variable actual through
+its descriptor (selects/qualifiers are process-evaluated), otherwise the call
+expands. Keep those cases in that one predicate and record new ones there.
 Fixed aggregate projections of static function locals use that persistent signal
 as their read/write owner, including tagged-member guards; activation locals do
 not name the persistent cell.
@@ -353,7 +355,14 @@ waits. True waits execute once immediately; false/X/Z constant waits suspend on
 empty dependencies without polling or blocking time advancement. Evaluated events
 compare expression values, not every operand change; qualifiers run at trigger.
 Packed edges use LSB, real any-change uses IEEE bits (signed-zero changes wake;
-identical NaN payloads do not). Copy supported automatic evaluator captures and
+identical NaN payloads do not). Storage reached through a handle (class
+properties, nonvirtual methods' `this` reads, handle-property chains,
+virtual-interface members) is an `IrDependency::NativeAccess` prepared per wait
+root by `with_dynamic_reads` (`collection/dynamic_reads.rs`); only waits that
+re-arm after every wake (`wait`, process-evaluated event plans) may use it, so
+such event controls, foreign functions and `ref`-formal selects take the
+process plan. always_comb/`@*` never add class (§9.2.2.2.1) or
+virtual-interface (§25.9) storage; chandle event expressions reject (§6.14). Copy supported automatic evaluator captures and
 transitively reject disallowed callback effects/captures. Named/mixed events retain
 identity and atomic registration. `->>` captures delay at issue and queues NBA;
 event/repeat timing uses an independent detached waiter, whose final trigger is

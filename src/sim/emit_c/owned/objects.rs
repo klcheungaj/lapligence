@@ -55,6 +55,9 @@ impl Frame<'_, '_> {
             }
             IrChandleExpr::Required { handle, site } => {
                 let handle = self.chandle(handle)?;
+                if self.quiet_receivers {
+                    return Ok(handle);
+                }
                 return Ok(self.scalar(
                     "void*",
                     format!("llg_class_require({handle}, {})", c_string_literal(site)),
@@ -425,6 +428,22 @@ impl Frame<'_, '_> {
                     self.line(format!("{name} = {value};"));
                 }
             }
+            ChandleAssignLocal(name, value) if self.class_handle_property(name).is_some() => {
+                // Rebinding a handle property toggles its object's marker,
+                // which waits on properties selected through it observe.
+                let Some(access) = self.class_handle_property(name) else {
+                    unreachable!("guarded above");
+                };
+                let IrNativeAccessKind::ClassField { class, field } = access.kind else {
+                    unreachable!("class handle properties are class fields");
+                };
+                let receiver = self.chandle(&access.receiver)?;
+                let receiver = self.scalar("void*", receiver);
+                let value = self.chandle(value)?;
+                self.line(format!(
+                    "llg_class_handle_store({receiver}, {class}, {field}, {value});"
+                ));
+            }
             ChandleAssignLocal(name, value) => {
                 let address = self.native_lookup(name, NativeKind::Chandle)?.address;
                 let value = self.chandle(value)?;
@@ -547,6 +566,25 @@ impl Frame<'_, '_> {
 }
 
 impl Frame<'_, '_> {
+    /// The class handle property that native access `name` selects.
+    fn class_handle_property(&self, name: &str) -> Option<IrNativeAccess> {
+        self.ctx
+            .model
+            .native_accesses
+            .iter()
+            .find(|access| access.name == name)
+            .filter(|access| match access.kind {
+                IrNativeAccessKind::ClassField { class, field } => {
+                    let layout = &self.ctx.model.classes[class].fields[field];
+                    layout.ty == IrClassFieldType::Chandle
+                        && layout.container.is_none()
+                        && layout.native_value.is_none()
+                }
+                _ => false,
+            })
+            .cloned()
+    }
+
     /// Address of one element of descriptor-backed container storage for an
     /// element-item access. A missing or invalid element resolves to a fresh
     /// default value owned by the current lexical scope, so reads see the

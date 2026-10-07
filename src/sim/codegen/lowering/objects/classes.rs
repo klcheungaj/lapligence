@@ -189,7 +189,7 @@ impl Codegen<'_> {
         }
     }
 
-    pub(super) fn native_access_symbol(
+    pub(in super::super) fn native_access_symbol(
         &mut self,
         receiver: IrChandleExpr,
         kind: crate::sim::ir::IrNativeAccessKind,

@@ -341,7 +341,12 @@ object created by `new_container`), and a class property container is
 (`IrContainer::receiver`, a plain handle read rendered without statements).
 Fixed-array properties allocate their elements when the object is created.
 Activation and per-object containers have no change dependencies, so waits and
-monitors on them reject. Calls give every container formal fresh storage and
+monitors on them reject. An `IrDependency::NativeAccess` renders its receiver
+with `quiet_receivers` (no null report: `llg_class_field_quiet`,
+`llg_vif_member_quiet`) and arms on the field/member storage or, for a handle
+property, on the object's lazily allocated `handle_dependency`, which
+`llg_class_handle_store` toggles on a changed blocking store; a null receiver
+arms on the never-changing marker. Calls give every container formal fresh storage and
 copy back outputs after the cancellation check, like native values.
 
 ## Streaming and event captures

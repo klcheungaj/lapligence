@@ -483,8 +483,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   or yields null. Chandle ports (including ref ports and records with chandle
   members), packed containment, arithmetic, continuous assignments (including
   of a record with a chandle member) and sensitivity/event expressions are
-  language-illegal under SV §6.14, rather than implementation gaps. Other
-  object sensitivity contexts remain partial.
+  language-illegal under SV §6.14, rather than implementation gaps; an event
+  control on a chandle rejects with a located diagnostic, while class-handle
+  changes are events
+  ([sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)).
   SV §6.14 **[SV-2005]**.
 
 <a id="native-record-capability-matrix"></a>
@@ -667,8 +669,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Unchanged results do not notify downstream readers; a closed latch retains
   its value. Branches pruned by the optimizer keep their wake sources. Blocking
   timing and forks reject; delayed NBAs are not rejected merely for their delay.
-  Non-string object and dynamic/native aggregate contexts remain partial
-  (SIM-013). SV §§9.2.2.2–9.2.2.3 **[SV-2005]**.
+  Class-property and method reads add nothing beyond the handle variables read
+  (§9.2.2.2.1) and virtual-interface members add nothing (§25.9); dynamic
+  container elements and sizes are read through their contents/shape markers
+  ([sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)).
+  Native record leaves held in dynamic containers remain partial.
+  SV §§9.2.2.2–9.2.2.3 **[SV-2005]**.
 - ✅ **`always_ff` and writer rules** — Requires one event control and rejects
   blocking timing (also in called tasks), forks and extra overlapping writers.
   Blocking data assignments, timing-free calls, delayed NBAs, event triggers and
@@ -852,9 +858,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   task output or ref formal, published when the callee returns) toggles the
   handle's change marker, which also drives whole-handle ports and `@(h)`
   (SIM-007). Module process handles publish the same marker (SIM-015).
-  Mutating an object through a handle (`h.v = 1`) and built-in
-  semaphore/mailbox handles publish nothing (SIM-013); these are
-  dependency-collection limits, not full implicit-sensitivity support.
+  Like `always_comb`, `@*` adds nothing for a property read through a handle
+  (`h.v`) or a virtual-interface member (SV §§9.2.2.2.1, 25.9); explicit event
+  controls and `wait` follow them instead (below). Built-in semaphore/mailbox
+  handles have no change marker and reject in sensitivity and wait expressions.
   V §9.7.5 **[2001]**.
 - 🟨 **Evaluated events** — Packed/scalar-real any-change expressions, packed LSB
   edges, trigger-time `iff`, numeric activation captures and atomic mixed named-event lists are represented. Sensitivity follows operands and eligible helpers,
@@ -862,9 +869,20 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   or descriptor-array formals are evaluated by the waiting process when the
   control is reached and after each dependency change (§9), including lists
   with declared named events (trigger counts) and real values (IEEE bit
-  patterns). Real edge descriptors, unsupported qualifiers/captures, event
-  handles or array-reading helpers in such named-event lists and helper forms
-  outside §9 reject.
+  patterns). Event controls and level waits on class properties (`@(h.x)`,
+  `hs[i].x`, `n.next.x`, `posedge h.w[0]`), nonvirtual class methods,
+  virtual-interface members (`@(posedge v.clk)`), foreign functions and
+  selects or qualifiers over a typed task's `ref` formal are evaluated by the
+  waiting process, which re-arms on the storage the handle, selector or
+  descriptor names after every wake; rebinding a handle variable, element or
+  handle property therefore moves the wait, and a null receiver arms on
+  nothing. Built-in container and string query methods (`size`, `num`,
+  `exists`, `len`, …) are admitted
+  ([sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)).
+  Real edges (SV §6.12.1), chandles (§6.14) and functions with output/ref
+  formals (§13.4) reject as language rules. Event handles or array-reading
+  helpers in named-event lists with process-evaluated sources, string or
+  handle `ref` formals, virtual methods and helper forms outside §9 reject.
   V §§9.7.2–9.7.4 **[1995]**.
 - 🟨 **Intra-assignment controls** — Packed/real/shortreal RHS values are captured
   immediately. Blocking assignments suspend and use update-time selectors; NBAs
@@ -1322,13 +1340,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   objects, a new one per automatic activation. A `ref` formal read by an
   event control binds a whole module-signal actual (or, for a native record
   formal, a module, static or block record) per specialized task copy; a
-  `wait (cond)` or plain or edge control on a whole `ref` formal follows any
-  whole-variable actual through its descriptor in the typed body, so such
-  tasks recurse and take native formals with automatic actuals. Event
+  `wait (cond)` or explicit event control on a `ref` formal (a select,
+  operator or qualifier being evaluated by the waiting process, SIM-013)
+  follows any whole-variable actual through its descriptor in the typed body,
+  so such tasks recurse and take native formals with automatic actuals. Event
   expressions over by-value formals copy them when the control arms; event
-  controls reading string/handle `ref` formals, evaluated expressions over
-  `ref` formals with automatic or element actuals and class-method event
-  formals use inline task paths; event-formal virtual dispatch and process-handle formal ABI remain unsupported. Unresolved environments and broader
+  controls reading string/handle `ref` formals, `ref`-formal expressions in
+  lists with named events and class-method event formals use inline task
+  paths; event-formal virtual dispatch and process-handle formal ABI remain unsupported. Unresolved environments and broader
   timing/native/aggregate combinations reject. V §12.4 **[1995]**.
 - 🟨 **Read-only helper calls** — Event, continuous, force and other read-only
   evaluators admit bounded numeric value/const-ref helpers with private locals,
@@ -1345,8 +1364,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   or real event lists also evaluate them in processes (RTL-007b).
   `$monitor`/`$strobe` arguments run them in Postponed only when their stores
   target the helpers' own storage, applied without publication; a visible write
-  rejects (SV 4.4.2.9). Native/DPI dispatch, suspension and arbitrary
-  shared/native captures reject.
+  rejects (SV 4.4.2.9). Imported (DPI) functions in event expressions run in the
+  waiting process; in `$monitor`/`$strobe` a non-context import is admitted and
+  a context import, which may write through exports, rejects (SV 35.5.3,
+  4.4.2.9; [sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)).
+  Suspension and arbitrary shared/native captures reject.
   Unique/priority diagnostics remain active; side-effect-free source alone does
   not establish eligibility.
 - ❌ **Unsupported or illegal call forms** — Recursive task calls requiring

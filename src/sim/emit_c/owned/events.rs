@@ -173,12 +173,54 @@ impl Frame<'_, '_> {
                 "{{ .sig = &{}_llg_shape_dep }}",
                 self.ctx.model.containers[*index].c_name
             ),
+            IrDependency::NativeAccess(name) => self.native_access_dependency(name)?,
             IrDependency::Object(index) => {
                 let object = &self.ctx.model.objects[*index];
                 if !object.ty.has_change_marker() {
                     return Err(pending("semaphore object dependencies"));
                 }
                 format!("{{ .sig = &{}_llg_dep }}", object.c_name)
+            }
+        })
+    }
+
+    /// The storage a native access selects when the wait arms. The receiver
+    /// renders quietly: a null handle at any step selects never-changing
+    /// storage instead of reporting an access error.
+    fn native_access_dependency(&mut self, name: &str) -> Result<String, String> {
+        let access = self
+            .ctx
+            .model
+            .native_accesses
+            .iter()
+            .find(|access| access.name == name)
+            .cloned()
+            .ok_or_else(|| pending(&format!("unresolved native access dependency {name}")))?;
+        let previous = std::mem::replace(&mut self.quiet_receivers, true);
+        let receiver = self.chandle(&access.receiver);
+        self.quiet_receivers = previous;
+        let receiver = receiver?;
+        Ok(match access.kind {
+            IrNativeAccessKind::ClassField { class, field } => {
+                match self.ctx.model.classes[class].fields[field].ty {
+                    // A handle property: the marker its object toggles when
+                    // one of its handle properties is rebound.
+                    IrClassFieldType::Chandle => {
+                        format!("{{ .sig = llg_class_handle_dependency({receiver}) }}")
+                    }
+                    IrClassFieldType::Real { .. } => format!(
+                        "{{ .real = llg_class_real_dependency({receiver}, {class}, {field}) }}"
+                    ),
+                    _ => format!(
+                        "{{ .sig = llg_class_packed_dependency({receiver}, {class}, {field}) }}"
+                    ),
+                }
+            }
+            IrNativeAccessKind::InterfaceMember { interface, member } => format!(
+                "{{ .sig = llg_dependency_or_never(llg_vif_member_dependency({receiver}, {interface}, {member})) }}"
+            ),
+            IrNativeAccessKind::ValueItem { .. } | IrNativeAccessKind::ElementItem { .. } => {
+                return Err(pending("native value item wait dependencies"))
             }
         })
     }

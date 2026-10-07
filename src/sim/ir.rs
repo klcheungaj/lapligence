@@ -335,6 +335,16 @@ pub enum IrDependency {
     /// formal is the cell address itself). Calls bind such formals only to
     /// whole variables.
     RefFormal { index: usize, real: bool },
+    /// The packed or real storage that native access `name` (a class
+    /// property or virtual-interface member, see
+    /// [`crate::sim::ir::IrNativeAccess`]) currently selects; for a class
+    /// handle property, the marker its object toggles when a handle property
+    /// is rebound. The receiver is evaluated when the wait arms, so only
+    /// waits that arm again after every wake (`WaitAny`, `WaitCond` and
+    /// sensitivity loops) may name it; rebinding the receiver then moves the
+    /// next wait to the new storage. A null or invalid receiver selects
+    /// storage that never changes.
+    NativeAccess(String),
 }
 
 impl IrDependency {

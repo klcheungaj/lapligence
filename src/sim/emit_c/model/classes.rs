@@ -22,6 +22,9 @@ typedef struct llg_class_object {
     size_t count;
     llg_class_field_t* fields;
     struct llg_class_object* next;
+    /* Change marker of the object's handle properties, allocated when a wait
+     * first observes a property selected through one of them. */
+    sv4_t* handle_dependency;
 } llg_class_object_t;
 static llg_class_object_t* llg_class_objects;
 /* A null handle is a run-time error (SV 8.4). The first check of a failing
@@ -46,6 +49,10 @@ static void llg_class_storage_destroy(void) {
             if (object->fields[i].kind == 0) sv4_destroy(&object->fields[i].value.packed);
             else if (object->fields[i].kind == 2) llg_string_destroy(&object->fields[i].value.string);
             else if (object->fields[i].kind == 4) { object->fields[i].drop(object->fields[i].value.handle); free(object->fields[i].value.handle); }
+        }
+        if (object->handle_dependency) {
+            sv4_destroy(object->handle_dependency);
+            free(object->handle_dependency);
         }
         free(object->fields);
         free(object);
@@ -73,6 +80,47 @@ static llg_class_field_t* llg_class_field(void* handle, uint32_t expected, size_
         return &llg_class_field_invalid[kind & 3u];
     }
     return &object->fields[index];
+}
+/* Wait dependencies and their receivers resolve without reporting: arming
+ * a wait on a null handle is not an access. */
+static llg_class_field_t* llg_class_field_lookup(void* handle, uint32_t expected, size_t index) {
+    llg_class_object_t* object = (llg_class_object_t*)handle;
+    if (!object || !llg_class_is_a(handle, expected) || index >= object->count) return NULL;
+    return &object->fields[index];
+}
+static llg_class_field_t* llg_class_field_quiet(void* handle, uint32_t expected, size_t index, unsigned kind) {
+    llg_class_field_t* field = llg_class_field_lookup(handle, expected, index);
+    return field ? field : &llg_class_field_invalid[kind & 3u];
+}
+static sv4_t* llg_class_packed_dependency(void* handle, uint32_t expected, size_t index) {
+    llg_class_field_t* field = llg_class_field_lookup(handle, expected, index);
+    return llg_dependency_or_never(field ? &field->value.packed : NULL);
+}
+static double* llg_class_real_dependency(void* handle, uint32_t expected, size_t index) {
+    static double never;
+    llg_class_field_t* field = llg_class_field_lookup(handle, expected, index);
+    return field ? &field->value.real : &never;
+}
+/* Handle properties are opaque pointers without a change marker of their
+ * own: a changed store toggles the object's marker once some wait has
+ * observed a property selected through one of them. */
+static sv4_t* llg_class_handle_dependency(void* handle) {
+    llg_class_object_t* object = (llg_class_object_t*)handle;
+    if (!object) return llg_dependency_or_never(NULL);
+    if (!object->handle_dependency) {
+        sv4_t empty = SV4_EMPTY;
+        object->handle_dependency = (sv4_t*)malloc(sizeof *object->handle_dependency);
+        if (!object->handle_dependency) abort();
+        *object->handle_dependency = empty;
+    }
+    return object->handle_dependency;
+}
+static void llg_class_handle_store(void* handle, uint32_t expected, size_t index, void* value) {
+    void** slot = &llg_class_field(handle, expected, index, 3)->value.handle;
+    if (*slot == value) return;
+    *slot = value;
+    llg_class_object_t* object = (llg_class_object_t*)handle;
+    if (object && object->handle_dependency) llg_dependency_changed(object->handle_dependency);
 }
 "#);
     for (index, class) in model.classes.iter().enumerate() {

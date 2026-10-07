@@ -1247,6 +1247,9 @@ struct Codegen<'a> {
     /// Class property declaration → `(layout index, field index)` for
     /// non-static properties.
     class_fields: HashMap<NodeId, (usize, usize)>,
+    /// Class-property and interface-member reads of the expression whose
+    /// wait dependencies are being collected (`with_dynamic_reads`).
+    dynamic_reads: HashMap<NodeId, Vec<IrDependency>>,
     /// Static class properties use ordinary model storage and retain their
     /// declaration identity here.
     class_static_signals: HashMap<NodeId, SignalInfo>,
@@ -1676,6 +1679,7 @@ impl<'a> Codegen<'a> {
             class_nodes: HashMap::new(),
             method_virtual_slots: HashMap::new(),
             class_fields: HashMap::new(),
+            dynamic_reads: HashMap::new(),
             class_static_signals: HashMap::new(),
             class_static_objects: HashMap::new(),
             class_object_initializers: Vec::new(),

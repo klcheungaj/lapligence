@@ -49,6 +49,21 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
              }}\n\
              return env->members[slot];\n\
          }}\n\n\
+         /* Wait dependencies and their receivers resolve without reporting:\n\
+          * arming a wait on an unbound handle is not an access. */\n\
+         static sv4_t *llg_vif_member_dependency(void *raw, uint32_t interface_id,\n\
+                                                 uint32_t slot) {{\n\
+             llg_vif_env_t *env = (llg_vif_env_t *)raw;\n\
+             if (!env || env->interface_id != interface_id || slot >= env->member_count ||\n\
+                 slot >= LLG_VIF_MAX_MEMBERS)\n\
+                 return NULL;\n\
+             return env->members[slot];\n\
+         }}\n\n\
+         static sv4_t *llg_vif_member_quiet(void *raw, uint32_t interface_id,\n\
+                                            uint32_t slot) {{\n\
+             sv4_t *member = llg_vif_member_dependency(raw, interface_id, slot);\n\
+             return member ? member : &llg_vif_invalid;\n\
+         }}\n\n\
          static sv4_t llg_vif_read(void *raw, uint32_t interface_id,\n\
                                    uint32_t slot, uint32_t width, int8_t is_signed,\n\
                                    const char *site) {{\n\
