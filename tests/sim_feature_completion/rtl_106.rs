@@ -322,7 +322,12 @@ fn lint_findings_append_the_line_mapped_position() {
             &[],
         );
         assert!(output.status.success(), "{output:?}");
-        assert_eq!(String::from_utf8_lossy(&output.stderr), lint, "{edition}");
+        // The frontend's own missing-default warning precedes the report.
+        let report: String = String::from_utf8_lossy(&output.stderr)
+            .split_inclusive('\n')
+            .filter(|line| super::sim_harness::is_lint_report_line(line.trim_end()))
+            .collect();
+        assert_eq!(report, lint, "{edition}");
     }
     // `--lint-json` takes a following operand as its output path.
     let output = sim_cli::invoke_with_env(

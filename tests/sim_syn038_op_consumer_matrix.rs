@@ -81,6 +81,10 @@ fn expression_consumers_keep_distinct_contexts_in_both_cli_modes() {
             String::from_utf8_lossy(&output.stdout)
         );
         assert_eq!(output.stdout.as_slice(), EXPECTED_STDOUT, "{label}");
-        assert_eq!(output.stderr.as_slice(), EXPECTED_STDERR, "{label}");
+        assert_eq!(
+            crate::sim_harness::strip_lint_reports(&output.stderr).as_bytes(),
+            EXPECTED_STDERR,
+            "{label}"
+        );
     }
 }

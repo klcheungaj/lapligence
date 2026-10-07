@@ -316,7 +316,7 @@ fn assert_public_cli_fixture_contract(cli_helper: &str, row_id: &str) {
         "if !optimized",
         "command.arg(\"--no-opt\")",
         "command.args(args)",
-        "command.arg(source)",
+        "command.arg(&source)",
     ] {
         assert!(
             invoke_body.contains(required),
@@ -428,7 +428,7 @@ fn assert_static_return_continuous_cli_contract(
         ".args([\"--top\", \"tb\"])",
         "if !optimized",
         "command.arg(\"--no-opt\")",
-        "command.args([\"--edition\", \"2009\"])",
+        "command.args([\"--edition\", \"sv2009\"])",
         "if let Some(define) = define",
         "command.args([\"--define\", define])",
         "command.arg(source)",
@@ -446,7 +446,7 @@ fn assert_static_return_continuous_cli_contract(
         "let output = invoke(optimized, define)",
         "assert_eq!(output.status.code(), Some(expected_status)",
         "String::from_utf8_lossy(&output.stdout),\n            expected_stdout,",
-        "String::from_utf8_lossy(&output.stderr),\n            expected_stderr,",
+        "crate::sim_harness::strip_lint_reports(&output.stderr),\n            expected_stderr,",
     ] {
         assert!(
             exact_cli_body.contains(required),
@@ -589,12 +589,11 @@ fn assert_op_consumer_source_bound_cli_contract(
         ".args([\"--top\", \"tb\"])",
         "if !optimized",
         "command.arg(\"--no-opt\")",
-        "command.args([\"--edition\", \"2009\"]).arg(&fixture_path)",
+        "command.args([\"--edition\", \"sv2009\"]).arg(&fixture_path)",
         "sim_harness::run_command(&mut command, Duration::from_secs(180))",
         "assert_eq!(\n            output.status.code(),\n            Some(0),",
         "assert_eq!(output.stdout.as_slice(), EXPECTED_STDOUT, \"{label}\");",
-        "assert_eq!(crate::sim_harness::strip_lint_reports(&output.stderr).as_bytes(),
-            EXPECTED_STDERR, \"{label}\");",
+        "assert_eq!(\n            crate::sim_harness::strip_lint_reports(&output.stderr).as_bytes(),\n            EXPECTED_STDERR,\n            \"{label}\"\n        );",
     ] {
         assert!(
             mode_loop.contains(required),
@@ -655,17 +654,16 @@ fn assert_operation_context_matrix_cli_contract(test_source: &str, owner_body: &
         "command.current_dir(directory.path()).args([\"--top\", \"tb\"]);",
         "if !optimized",
         "command.arg(\"--no-opt\");",
-        "command.args([\"--edition\", \"2009\"]).arg(&fixture_path);",
+        "command.args([\"--edition\", \"sv2009\"]).arg(&fixture_path);",
         "sim_harness::run_command(&mut command, Duration::from_secs(180))",
         "output.status.code(),\n            Some(0),",
         "assert_eq!(output.stdout.as_slice(), EXPECTED_STDOUT, \"{label}\");",
-        "assert_eq!(crate::sim_harness::strip_lint_reports(&output.stderr).as_bytes(),
-            EXPECTED_STDERR, \"{label}\");",
+        "assert_eq!(\n            crate::sim_harness::strip_lint_reports(&output.stderr).as_bytes(),\n            EXPECTED_STDERR,\n            \"{label}\"\n        );",
         "for (filename, source, line, column, variable_actual, expression_actual) in\n            CONST_REF_NEGATIVES",
         "let negative_path = negative_root.join(filename);",
         "negative_command\n                .current_dir(negative_directory.path())\n                .args([\"--top\", \"tb\"]);",
         "negative_command.arg(\"--no-opt\");",
-        "negative_command\n                .args([\"--edition\", \"2009\"])\n                .arg(&negative_path);",
+        "negative_command\n                .args([\"--edition\", \"sv2009\"])\n                .arg(&negative_path);",
         "negative_output.status.code(),\n                Some(1),",
         "assert!(negative_output.stdout.is_empty(), \"{negative_label}\");",
         "assert_eq!(\n                negative_output.stderr.as_slice(),\n                expected_negative_stderr.as_bytes(),",
@@ -747,11 +745,11 @@ fn assert_interface_runtime_initializer_cli_contract(
     for required in [
         "command.current_dir(directory.path()).args([\"--top\", \"tb\"]);",
         "if !optimized {\n            command.arg(\"--no-opt\");\n        }",
-        "command.args([\"--edition\", \"2009\"]).arg(&fixture_path);",
+        "command.args([\"--edition\", \"sv2009\"]).arg(&fixture_path);",
         "sim_harness::run_command(&mut command, Duration::from_secs(180))",
         "output.status.success(),",
         "String::from_utf8_lossy(&output.stdout),\n            EXPECTED_STDOUT,",
-        "String::from_utf8_lossy(&output.stderr),\n            expected_stderr,",
+        "crate::sim_harness::strip_lint_reports(&output.stderr),\n            expected_stderr,",
     ] {
         assert!(
             mode_loop.contains(required),
@@ -823,7 +821,7 @@ fn assert_storage_write_remainders_cli_contract(root: &Path, owner_body: &str, o
         "sim_cli::invoke_with_env(\n            \"syn038_pairwise\",\n            \"storage_write_remainders\",\n            optimized,\n            &[\"--edition\", \"sv2009\"],\n            &[],\n            &[],\n        );",
         "output.status.code(), Some(0),",
         "output.stdout.as_slice(), expected_stdout, \"{label}\"",
-        "String::from_utf8_lossy(&output.stderr),\n            expected_stderr,",
+        "crate::sim_harness::strip_lint_reports(&output.stderr),\n            expected_stderr,",
     ] {
         assert!(
             mode_loop.contains(required),
@@ -879,7 +877,7 @@ fn assert_static_return_ref_actual_cli_contract(root: &Path, owner_body: &str, o
         "sim_cli::invoke_with_env(\n            \"syn038_pairwise\",\n            \"static_return_ref_actual\",\n            optimized,\n            &[\"--edition\", \"sv2009\"],\n            &[],\n            &[],\n        );",
         "assert_eq!(output.status.code(), Some(0), \"{label}\");",
         "output.stdout.as_slice(),\n            b\"static-return-ref=passed\\n\",",
-        "String::from_utf8_lossy(&output.stderr),\n            expected_stderr,",
+        "crate::sim_harness::strip_lint_reports(&output.stderr),\n            expected_stderr,",
         "let expected_stderr = \"llg: $finish at time 0 at tb:18:9\\n\";",
     ] {
         assert!(
@@ -959,7 +957,7 @@ fn assert_read_only_ref_continuous_variable_cli_contract(
         ".args([\"--top\", \"tb\"])",
         "if !optimized",
         "command.arg(\"--no-opt\")",
-        "command.args([\"--edition\", \"2009\"]).arg(&source)",
+        "command.args([\"--edition\", \"sv2009\"]).arg(&source)",
         "sim_harness::run_command(&mut command",
         "output.status.success(),",
         "output.stdout, EXPECTED_STDOUT.as_bytes()",
@@ -1551,7 +1549,7 @@ fn audited_evidence_map_names_real_fixtures_and_test_invocations() {
                 "\"syn038_pairwise\"",
                 "\"static_local_continuous\"",
                 "\"semantic error: multiple continuous assignments to variable storage\"",
-                "&[\"--edition\", \"2009\", \"--define\", \"SYN038_DUPLICATE_DRIVER\"],",
+                "&[\"--edition\", \"sv2009\", \"--define\", \"SYN038_DUPLICATE_DRIVER\"],",
             ] {
                 assert!(
                     negative_body.contains(required),
@@ -1680,7 +1678,7 @@ fn audited_evidence_map_names_real_fixtures_and_test_invocations() {
             );
             assert!(
                 cells[4].contains("direct public CLI")
-                    && cells[4].contains("--edition 2009")
+                    && cells[4].contains("--edition sv2009")
                     && cells[4].contains("both optimizer modes"),
                 "W87 invocation must document its source-bound CLI, explicit edition, and both modes"
             );
@@ -1688,7 +1686,7 @@ fn audited_evidence_map_names_real_fixtures_and_test_invocations() {
             assert_storage_write_remainders_cli_contract(&root, owner_body, owner);
             assert!(
                 cells[4].contains("syn038_pairwise/storage_write_remainders")
-                    && cells[4].contains("--edition 2009")
+                    && cells[4].contains("--edition sv2009")
                     && cells[4].contains("optimized and `--no-opt`"),
                 "W88 invocation must document its fixture, explicit edition, and both modes"
             );
@@ -1696,7 +1694,7 @@ fn audited_evidence_map_names_real_fixtures_and_test_invocations() {
             assert_static_return_ref_actual_cli_contract(&root, owner_body, owner);
             assert!(
                 cells[4].contains("syn038_pairwise/static_return_ref_actual")
-                    && cells[4].contains("--edition 2009")
+                    && cells[4].contains("--edition sv2009")
                     && cells[4].contains("optimized and `--no-opt`"),
                 "W89 invocation must document its fixture, explicit edition, and both modes"
             );
@@ -1704,7 +1702,7 @@ fn audited_evidence_map_names_real_fixtures_and_test_invocations() {
             assert_operation_context_matrix_cli_contract(&test_source, owner_body, owner);
             assert!(
                 cells[4].contains("syn038_pairwise/operation_context_matrix")
-                    && cells[4].contains("--top tb --edition 2009")
+                    && cells[4].contains("--top tb --edition sv2009")
                     && cells[4].contains("optimized and `--no-opt`"),
                 "W98 invocation must document its fixture, top, explicit edition, and both modes"
             );
@@ -1717,7 +1715,7 @@ fn audited_evidence_map_names_real_fixtures_and_test_invocations() {
             );
             assert!(
                 cells[4].contains("syn038_pairwise/co_same_root_assignment_rhs")
-                    && cells[4].contains("--top tb --edition 2009")
+                    && cells[4].contains("--top tb --edition sv2009")
                     && cells[4].contains("optimized and `--no-opt`")
                     && cells[4].contains("source-identity equality"),
                 "W106 invocation must document its fixture, top, edition, modes, and DB binding proof"
@@ -1731,7 +1729,7 @@ fn audited_evidence_map_names_real_fixtures_and_test_invocations() {
             );
             assert!(
                 cells[4].contains("syn038_pairwise/ref_read_continuous_variable")
-                    && cells[4].contains("--edition 2009")
+                    && cells[4].contains("--edition sv2009")
                     && cells[4].contains("optimized and `--no-opt`")
                     && cells[4].contains("#1` precedes the call"),
                 "W123 invocation must document its source-bound fixture, settle, edition, and both modes"
@@ -1739,7 +1737,7 @@ fn audited_evidence_map_names_real_fixtures_and_test_invocations() {
         } else if source_bound_static_return_case {
             assert_static_return_continuous_cli_contract(&root, &test_source, owner_body, owner);
             assert!(
-                cells[4].contains("--edition 2009")
+                cells[4].contains("--edition sv2009")
                     && cells[4]
                         .contains("helper chain `assert_exact_cli` → `invoke` → `fixture_path`"),
                 "W66 invocation must document its explicit edition and exact helper chain"
@@ -1747,7 +1745,7 @@ fn audited_evidence_map_names_real_fixtures_and_test_invocations() {
         } else if source_bound_op_consumer_case {
             assert_op_consumer_source_bound_cli_contract(&root, &test_source, owner_body, owner);
             assert!(
-                cells[4].contains("--edition 2009")
+                cells[4].contains("--edition sv2009")
                     && cells[4].contains("explicit public-CLI runs with and without optimization"),
                 "W69 invocation must document the explicit edition and both CLI modes"
             );

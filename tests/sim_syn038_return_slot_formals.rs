@@ -28,6 +28,10 @@ fn static_function_return_slots_bind_each_writable_formal_direction() {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(output.stdout.as_slice(), expected_stdout, "{label}");
-        assert_eq!(output.stderr.as_slice(), b"", "{label}");
+        assert_eq!(
+            crate::sim_harness::strip_lint_reports(&output.stderr),
+            "",
+            "{label}"
+        );
     }
 }

@@ -743,12 +743,22 @@ impl ExpectedLint {
                 Some(format!("{rule} {line_number}:{col}"))
             })
             .collect();
+        // Each instance of a module reports its findings; the manifest lists
+        // distinct positions.
         actual.sort();
+        actual.dedup();
         assert_eq!(
             actual, self.errors,
             "{label}: default lint errors: {stderr}"
         );
     }
+}
+
+/// Whether `output` reports a lint error finding.
+fn has_lint_error(output: &Output) -> bool {
+    String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .any(|line| line.contains(": [ERROR] "))
 }
 
 /// Run the `llg` command `build(lint_args)` for the fixture `source`. A
@@ -763,7 +773,13 @@ fn run_fixture_command(source: &Path, label: &str, build: impl Fn(&[&str]) -> Co
     match expected_lint(source) {
         None => run(build(&[])),
         Some(expected) => {
-            expected.assert_stopped(source, &run(build(&[])), label);
+            let output = run(build(&[]));
+            // A frontend rejection (an edition without the fixture's syntax,
+            // for instance) ends the run before lint; the caller checks it.
+            if !output.status.success() && !has_lint_error(&output) {
+                return output;
+            }
+            expected.assert_stopped(source, &output, label);
             run(build(&expected.allow_args()))
         }
     }
