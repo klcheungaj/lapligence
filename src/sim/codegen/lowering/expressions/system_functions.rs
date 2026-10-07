@@ -959,6 +959,12 @@ impl<'a> Codegen<'a> {
                     if let Some(width) = descriptor.fixed_size_bits() {
                         return Ok(Self::query_integer(i128::from(width)));
                     }
+                    // A real is a 64-bit and a shortreal a 32-bit value
+                    // (IEEE 1800-2009 6.12); an untyped parameter takes this
+                    // shape from a real override.
+                    if let TypeShape::Real { shortreal } = descriptor.shape {
+                        return Ok(Self::query_integer(if shortreal { 32 } else { 64 }));
+                    }
                     if let Some(container) = self.container_of(a) {
                         let element_width = match &self.model.containers[container.ir].element {
                             crate::sim::ir::IrContainerElement::Packed { width, .. } => *width,

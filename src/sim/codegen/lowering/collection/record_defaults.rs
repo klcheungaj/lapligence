@@ -89,11 +89,14 @@ impl Codegen<'_> {
                     }
                 }
                 TypeShape::String => {
+                    // Source-spelled text decodes its escapes like every
+                    // other string constant.
                     return match value {
-                        ValueData::Bytes(bytes) => Ok(LeafDefault::String(bytes.clone())),
-                        ValueData::Str(text) => Ok(LeafDefault::String(text.as_bytes().to_vec())),
+                        ValueData::Bytes(_) | ValueData::Str(_) => {
+                            decoded_string_bytes(value).map(LeafDefault::String)
+                        }
                         _ => Err(unsupported()),
-                    }
+                    };
                 }
                 // The only constant handle value is `null`.
                 TypeShape::Opaque { .. } => {

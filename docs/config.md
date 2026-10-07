@@ -148,7 +148,7 @@ server, accepted and ignored by `llg`.
 | `compile.compilation_units` | `"separate"` \| `"merged"` | llg | `--compilation-units`; the server always separates |
 | `compile.include_dirs` | strings | both | `-I` |
 | `compile.defines` | `NAME[=VALUE]` strings | both | `-D` |
-| `compile.param_overrides` | table | both | `--param-override`/`-G`, `NAME = "value"` or integer |
+| `compile.param_overrides` | table | both | `--param-override`/`-G`; string, integer, float or boolean values |
 | `compile.system_tasks` | strings | llg | `--define-system-task` prototypes |
 | `libraries.map_files` | strings | llg | `--libmap` |
 | `libraries.files` | `[lib=]path` strings | llg | `--libfile`; only the path is resolved |
@@ -249,11 +249,24 @@ Required integer; must be `1`.
 - `defines` (array of `NAME` or `NAME=VALUE`) — preprocessor defines applied
   to every analyzed source (`-D`); they drive `` `ifdef ``/`` `elsif ``
   selection and macro expansion.
-- `param_overrides` (table, `NAME = <string | integer>`) — top-level parameter
-  overrides (`-PNAME=VALUE`, equivalent to `top -GNAME=value`); they apply to
-  the top-level instances only, and an override no top module declares is
-  reported as an error. `llg` accepts the same overrides with
-  `--param-override NAME=VALUE` (`-G`).
+- `param_overrides` (table, `NAME = <string | integer | float | boolean>`) —
+  top-level parameter overrides; they apply to the top-level instances only.
+  `llg` accepts the same overrides with `--param-override NAME=VALUE` (`-G`).
+  A TOML string is the `VALUE` text of `-G NAME=VALUE`; an integer is its
+  decimal value, a float its exact real literal and a boolean `1'b1`/`1'b0`.
+  The value is converted to the parameter's declared type as in an assignment:
+  - integral parameters take sized/based literals, X/Z digits, negative values
+    and assignment patterns; an unsized decimal of any size keeps its value (an
+    untyped parameter gets the value's bits plus a sign bit);
+  - a `string` parameter takes `VALUE` as its exact text, unless the whole
+    `VALUE` is a double-quoted literal, whose escapes then apply
+    (`-G MSG=hello` and `-G 'MSG="hello"'` are the same);
+  - an enum parameter accepts a member name;
+  - a type parameter takes a data type (`-G 'T=logic [7:0]'`), also when it has
+    no default.
+
+  Overriding a `localparam`, a name no top module declares, an unparsable value
+  or one that does not convert to the type is an error naming the override.
 - `system_tasks` (array of strings, `llg` only) — VPI system task/function
   prototypes (`--define-system-task`).
 

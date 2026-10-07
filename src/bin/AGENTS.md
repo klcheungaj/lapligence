@@ -42,6 +42,10 @@ Keep reusable processing in the library. Bins import `llg::config`, `llg::core`,
   prefix or `:config` suffix, on the command line and in `compile.top`.
   `--edition` takes `v2001` or `sv2009`. Unknown `-` options are usage errors
   (exit 2), never source files.
+- `--param-override`/`-G NAME=VALUE` (`compile.param_overrides`) reaches the
+  wrapper as text; the wrapper converts it to the top parameter's declared type
+  ([wrapper](../wrapper/AGENTS.md) owns the rules). `llg.toml` floats and
+  booleans become exact SystemVerilog literals in `llg::config`.
 - Simulator compiles use `Limits::simulator()` with no export budget;
   [FFI](../ffi/AGENTS.md) owns the native limits. The optional process-memory
   guard remains independent.

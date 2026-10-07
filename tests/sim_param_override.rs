@@ -37,6 +37,20 @@ fn defaults_without_overrides() {
 }
 
 #[test]
+fn untyped_parameter_takes_the_type_of_a_real_override() {
+    // `$bits` of an untyped parameter overridden with a real is the 64 bits
+    // of a real (IEEE 1800-2009 23.10).
+    sim_cli::run_case_with_args(
+        SUITE,
+        "real_untyped",
+        "ANY=2.5 bits=64\n",
+        NO_FINISH,
+        &[],
+        &["-G", "ANY=2.5"],
+    );
+}
+
+#[test]
 fn command_line_overrides_follow_each_parameter_type() {
     // A string parameter takes bare text verbatim; a negative value converts
     // to signed types; an unsized decimal wider than 64 bits keeps its value

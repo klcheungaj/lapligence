@@ -22,7 +22,7 @@ use editions::edition_diagnostics;
 use library_mapping::{library_match_pattern, LibraryMapBuffers, LibrarySpecificity};
 
 /// A source buffer owned by a compile request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OwnedSource {
     pub name: String,
     pub text: String,
@@ -740,7 +740,8 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
     let path_roots = owned;
     let mut owned = opts.sources.clone();
     owned.extend(path_roots.iter().cloned());
-    let map_originals = if !opts.library_map_files.is_empty() || !opts.library_maps.is_empty() {
+    let maps_present = !opts.library_map_files.is_empty() || !opts.library_maps.is_empty();
+    let map_originals = if maps_present {
         let mut buffers =
             LibraryMapBuffers::new(&mut owned, &mut library_owned, &mut library_map_work)?;
         admit_library_maps_with_targets(
@@ -770,10 +771,19 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
     };
     let mut macros = macro_environment_from_defines(&opts.defines);
     let expansion_budget = MacroExpansionBudget::new(effective_source_byte_limit(opts.limits));
-    for path_root in path_roots {
-        let Some(root) = owned.iter().find(|source| *source == &path_root).cloned() else {
-            continue;
-        };
+    // Library maps may move a path root into a library or project its text;
+    // only roots still owned unchanged admit their includes here. One set
+    // lookup per root keeps this linear in the source count.
+    let path_roots = if maps_present {
+        let kept: HashSet<&OwnedSource> = owned.iter().collect();
+        path_roots
+            .into_iter()
+            .filter(|root| kept.contains(root))
+            .collect::<Vec<_>>()
+    } else {
+        path_roots
+    };
+    for root in path_roots {
         if matches!(opts.compilation_unit_mode, CompilationUnitMode::Separate) {
             macros = macro_environment_from_defines(&opts.defines);
         }

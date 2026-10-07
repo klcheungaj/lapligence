@@ -24,8 +24,9 @@
 //! * `sources.include`/`exclude` are directory-relative globs evaluated against
 //!   each source directory; exclude wins. Only `.v`/`.sv` files become
 //!   compilation units.
-//! * `[compile.param_overrides]` maps top-level parameter names to string or
-//!   integer values, converted to `NAME=VALUE`.
+//! * `[compile.param_overrides]` maps top-level parameter names to string,
+//!   integer, float or boolean values, converted to `NAME=VALUE` (a string is
+//!   the VALUE text; the others become exact SystemVerilog literals).
 //! * `[analysis]` bounds each unique language-server input file (1 MiB by
 //!   default) and the complete input set (8 MiB).
 //! * Structural errors (malformed TOML, unknown fields/versions, wrong types,
