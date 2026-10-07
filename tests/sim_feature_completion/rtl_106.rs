@@ -293,10 +293,15 @@ fn frontend_diagnostics_append_the_line_mapped_position() {
 /// do not change the simulated result.
 #[test]
 fn lint_findings_append_the_line_mapped_position() {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim")
-        .join(SUITE)
-        .join("line_lint.v");
+    // One component per join: llg prints the path with native separators.
+    let fixture = ["tests", "fixtures", "sim"]
+        .into_iter()
+        .chain(SUITE.split('/'))
+        .chain(["line_lint.v"])
+        .fold(
+            Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf(),
+            |path, part| path.join(part),
+        );
     let stderr = format!(
         "{}:7:5 (`line orig_lint.v:31): [WARNING] incomplete-case: case without default in combinational process may infer a latch\n\
          lint: 0 error(s), 1 warning(s)\n\
