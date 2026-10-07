@@ -47,10 +47,41 @@ impl NativeValue {
     }
 }
 
+/// Destructor helpers every whole model defines, as (name, body) pairs. Most
+/// models reference only some of them, so `helpers_used` marks each one
+/// intentionally used; keep both derived from this list.
+const DROP_HELPERS: [(&str, &str); 3] = [
+    (
+        "llg_owned_string_drop",
+        "llg_string_destroy((llg_string_t*)p);",
+    ),
+    (
+        "llg_owned_process_drop",
+        "llg_process_release(*(llg_process_handle_t**)p);",
+    ),
+    (
+        "llg_owned_frame_drop",
+        "llg_frame_release(*(llg_frame_t**)p);",
+    ),
+];
+
 pub(in crate::sim::emit_c) fn helpers(out: &mut String) {
-    out.push_str("static void llg_owned_string_drop(void* p) { llg_string_destroy((llg_string_t*)p); }\n\
-        static void llg_owned_process_drop(void* p) { llg_process_release(*(llg_process_handle_t**)p); }\n\
-        static void llg_owned_frame_drop(void* p) { llg_frame_release(*(llg_frame_t**)p); }\n\n");
+    for (name, body) in DROP_HELPERS {
+        out.push_str(&format!("static void {name}(void* p) {{ {body} }}\n"));
+    }
+    out.push('\n');
+}
+
+/// A statement for `llg_model_start` that references every drop helper, so
+/// compilers that diagnose unused static functions accept models that need
+/// none of them.
+pub(in crate::sim::emit_c) fn helpers_used() -> String {
+    let mut line = String::from("   ");
+    for (name, _) in DROP_HELPERS {
+        line.push_str(&format!(" (void){name};"));
+    }
+    line.push('\n');
+    line
 }
 
 impl Frame<'_, '_> {

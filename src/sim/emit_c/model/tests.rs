@@ -360,3 +360,26 @@ fn unreferenced_activation_descriptor_tables_are_omitted() {
     assert_eq!(referenced_descriptor_tables(rendered, &tables), tables[1].1);
     assert!(referenced_descriptor_tables(rendered, &[]).is_empty());
 }
+
+/// Every whole model defines the owned drop helpers, but a model without
+/// strings, processes or detached frames calls none of them. Each definition
+/// must still be referenced, or clang's `-Wunused-function` rejects the model
+/// under `-Werror`.
+#[test]
+fn owned_drop_helpers_are_referenced_by_a_model_that_needs_none() {
+    let model = IrModel::new("plain".to_string(), 1).unwrap();
+    let execution = ExecutionModel::lower(model).unwrap();
+    let c = render(&execution).unwrap();
+    let identifiers = c_identifiers(&c).collect::<Vec<_>>();
+    let helpers = c
+        .lines()
+        .filter_map(|line| line.strip_prefix("static void "))
+        .filter_map(|rest| rest.split_once("(void* p)").map(|(name, _)| name))
+        .filter(|name| name.starts_with("llg_owned_") && name.ends_with("_drop"))
+        .collect::<Vec<_>>();
+    assert!(helpers.contains(&"llg_owned_frame_drop"), "{c}");
+    for helper in helpers {
+        let uses = identifiers.iter().filter(|name| **name == helper).count();
+        assert!(uses > 1, "{helper} is defined but never referenced:\n{c}");
+    }
+}
