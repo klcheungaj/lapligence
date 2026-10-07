@@ -60,6 +60,19 @@ impl Validator<'_> {
         formals: &[IrFormal],
         path: &str,
     ) -> ValidationResult {
+        // A native-access dependency is resolved each time its wait arms.
+        if let IrStmt::WaitAny { sens } | IrStmt::WaitCond { sens, .. } = stmt {
+            for (index, dependency) in sens.iter().enumerate() {
+                if matches!(dependency, IrDependency::NativeAccess(_))
+                    && !self.valid_dependency(dependency)
+                {
+                    return self.fail(
+                        format!("{path}.sens[{index}]"),
+                        "native-access dependency must name a class property or interface member",
+                    );
+                }
+            }
+        }
         if let IrStmt::Delay { ticks }
         | IrStmt::DelayedAssign { ticks, .. }
         | IrStmt::ClockingDrive { ticks, .. }
@@ -919,7 +932,9 @@ impl Validator<'_> {
                     | IrWaitSrc::EvaluatedReal { reads, .. } = source
                     {
                         for read in reads {
-                            if !self.valid_dependency(read) {
+                            if !self.valid_dependency(read)
+                                || matches!(read, IrDependency::NativeAccess(_))
+                            {
                                 return self.fail(
                                     format!("{path}.specs[{idx}]"),
                                     "event dependency must name active storage",
@@ -1036,7 +1051,9 @@ impl Validator<'_> {
                     | IrWaitSrc::EvaluatedReal { reads, .. } = source
                     {
                         for read in reads {
-                            if !self.valid_dependency(read) {
+                            if !self.valid_dependency(read)
+                                || matches!(read, IrDependency::NativeAccess(_))
+                            {
                                 return self.fail(
                                     format!("{path}.specs[{idx}]"),
                                     "event dependency must name active storage",

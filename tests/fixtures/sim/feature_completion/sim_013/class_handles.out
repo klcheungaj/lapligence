@@ -1,0 +1,7 @@
+h.v: 2 3 5
+h: 3
+h.sum(): 1 2 3 5 9
+hs[i].v: 11 12 14 21
+n.next.v: 15 16 18
+posedge h.w[0]: 1 9
+wait: 20

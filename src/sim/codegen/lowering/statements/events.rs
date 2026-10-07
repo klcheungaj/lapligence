@@ -118,7 +118,9 @@ impl EmitCtx<'_, '_> {
             _ => unreachable!("non-event-control passed to lower_event_control"),
         };
         let body = body.ok_or_else(|| "event_control without body".to_string())?;
-        let mut out = if !implicit && self.event_specs_need_process(specs) {
+        let mut out = if !implicit
+            && (self.event_specs_need_process(specs) || self.specs_read_unbound_ref_formal(specs))
+        {
             self.lower_process_evaluated_event(h, specs)?
         } else {
             vec![self.lower_event_wait(specs, implicit, body)?]
@@ -185,9 +187,12 @@ impl EmitCtx<'_, '_> {
     }
 
     /// Whether an explicit event control evaluates a helper that is a legal
-    /// zero-time function but not a read-only runtime callback. Expressions
-    /// that fail classification outright keep the ordinary path, which
-    /// reports the same diagnostic.
+    /// zero-time function but not a read-only runtime callback, or reads
+    /// storage through a class or virtual-interface handle: a runtime
+    /// callback keeps the dependencies it armed with, while the waiting
+    /// process re-arms on the storage the handle names after every wake.
+    /// Expressions that fail classification outright keep the ordinary path,
+    /// which reports the same diagnostic.
     pub(super) fn event_specs_need_process(&self, specs: &[EventSpec]) -> bool {
         specs.iter().any(|spec| match spec {
             EventSpec::Qualified { event, condition } => {
@@ -196,9 +201,81 @@ impl EmitCtx<'_, '_> {
             }
             EventSpec::Named(_) => false,
             EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. } => {
-                self.expression_needs_process(*sig)
+                self.cg.reads_dynamic_storage(*sig) || self.expression_needs_process(*sig)
             }
         })
+    }
+
+    /// Whether a blocking event control evaluates a `ref` formal of the
+    /// typed body through a select, an operator or a qualifier. A plain or
+    /// edge control on the whole formal waits on its descriptor directly.
+    fn specs_read_unbound_ref_formal(&self, specs: &[EventSpec]) -> bool {
+        specs.iter().any(|spec| match spec {
+            EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. }
+                if matches!(self.cg.kind(*sig), NodeKind::Expr(ExprKind::Ref { .. })) =>
+            {
+                false
+            }
+            spec => self.spec_reads_unbound_ref_formal(spec),
+        })
+    }
+
+    fn spec_reads_unbound_ref_formal(&self, spec: &EventSpec) -> bool {
+        match spec {
+            EventSpec::Qualified { event, condition } => {
+                self.spec_reads_unbound_ref_formal(event)
+                    || self.reads_unbound_ref_formal(*condition)
+            }
+            EventSpec::Named(_) => false,
+            EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. } => {
+                self.reads_unbound_ref_formal(*sig)
+            }
+        }
+    }
+
+    /// Whether `expression` reads a `ref` formal of the typed body being
+    /// lowered that no specialization or expansion bound: only the waiting
+    /// process can evaluate it, through the formal's descriptor, while the
+    /// wait follows the whole variable the descriptor names
+    /// (`IrDependency::RefFormal`).
+    fn reads_unbound_ref_formal(&self, expression: NodeId) -> bool {
+        let Some(func) = self.func.as_ref() else {
+            return false;
+        };
+        let mut pending = vec![expression];
+        while let Some(node) = pending.pop() {
+            if let NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) = self.cg.kind(node)
+            {
+                if !func.arg_dependencies.contains_key(target)
+                    && self.cg.ref_formal_dependency(*target).is_some()
+                {
+                    return true;
+                }
+            }
+            pending.extend(self.cg.node(node).children.iter().copied());
+        }
+        false
+    }
+
+    /// SV 6.14: a chandle is not a legal event expression (unlike a class
+    /// handle, whose change is an event).
+    fn reject_chandle_event(&self, expression: NodeId) -> Result<(), String> {
+        let chandle = self.cg.query_descriptor(expression).is_some_and(|descriptor| {
+            matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "Chandle")
+        });
+        if !chandle {
+            return Ok(());
+        }
+        let node = self.cg.node(expression);
+        Err(format!(
+            "a chandle cannot be used in an event expression (IEEE 1800-2009 6.14) at {}:{}:{} in `{}`",
+            node.file.as_deref().unwrap_or("<unknown>"),
+            node.line,
+            node.col,
+            self.cg.source_path(&self.path)
+        ))
     }
 
     fn expression_needs_process(&self, expression: NodeId) -> bool {
@@ -339,6 +416,7 @@ impl EmitCtx<'_, '_> {
                     (count, changed)
                 }
                 Source::Value(expression, edge) => {
+                    self.reject_chandle_event(expression)?;
                     let value = self.cg.lower_expr(&self.path, expression)?;
                     let value = if value.is_real() {
                         if edge != IrEdge::Any {
@@ -360,10 +438,10 @@ impl EmitCtx<'_, '_> {
                     } else {
                         IrExpr::convert_to(value, 1, false)
                     };
-                    for dependency in self
-                        .cg
-                        .collect_evaluator_sensitivity(&self.path, expression)?
-                    {
+                    let path = self.path.clone();
+                    for dependency in self.cg.with_dynamic_reads(&path, expression, |cg| {
+                        cg.collect_evaluator_sensitivity(&path, expression)
+                    })? {
                         if !sens.contains(&dependency) {
                             sens.push(dependency);
                         }
@@ -771,6 +849,7 @@ impl EmitCtx<'_, '_> {
             ));
         }
         let expression = expression.ok_or_else(|| "event control has no expression".to_string())?;
+        self.reject_chandle_event(expression)?;
         // A modport expression port waits on its port expression (SV 25.5.4).
         let expression = self
             .cg

@@ -1210,7 +1210,8 @@ impl<'a> Codegen<'a> {
                 | IrDependency::ContainerShape(_)
                 | IrDependency::Object(_)
                 | IrDependency::SharedCell { .. }
-                | IrDependency::RefFormal { .. } => {
+                | IrDependency::RefFormal { .. }
+                | IrDependency::NativeAccess(_) => {
                     return Err(format!(
                         "container/object dependencies cannot yet drive force evaluators in `{scope_path}`"
                     ))
@@ -1310,6 +1311,9 @@ impl<'a> Codegen<'a> {
                 self.add_dependency(prefix.clone(), seen, out);
                 return Ok(());
             }
+        }
+        for dependency in self.dynamic_reads.get(&node).into_iter().flatten() {
+            self.add_dependency(dependency.clone(), seen, out);
         }
         if self.is_process_self_call(node) {
             return Ok(());

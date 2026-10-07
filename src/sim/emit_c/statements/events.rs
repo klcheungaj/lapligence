@@ -83,8 +83,12 @@ fn dependency_pointer(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
         IrDependency::Object(object) => {
             format!("&{}_llg_dep", ctx.model.objects[*object].c_name)
         }
-        IrDependency::SharedCell { .. } | IrDependency::RefFormal { .. } => {
-            unreachable!("shared cells and ref formals exist only in the owned emitter")
+        IrDependency::SharedCell { .. }
+        | IrDependency::RefFormal { .. }
+        | IrDependency::NativeAccess(_) => {
+            unreachable!(
+                "shared cells, ref formals and native accesses exist only in the owned emitter"
+            )
         }
     }
 }
@@ -148,8 +152,12 @@ fn dependency_entry(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
                 ctx.model.objects[*object].c_name
             )
         }
-        IrDependency::SharedCell { .. } | IrDependency::RefFormal { .. } => {
-            unreachable!("shared cells and ref formals exist only in the owned emitter")
+        IrDependency::SharedCell { .. }
+        | IrDependency::RefFormal { .. }
+        | IrDependency::NativeAccess(_) => {
+            unreachable!(
+                "shared cells, ref formals and native accesses exist only in the owned emitter"
+            )
         }
     }
 }

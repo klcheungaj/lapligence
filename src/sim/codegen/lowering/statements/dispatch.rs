@@ -428,7 +428,10 @@ impl EmitCtx<'_, '_> {
                     return Ok(vec![IrStmt::WaitEventTriggered { event, body }]);
                 }
                 let c = self.cg.lower_expr(&self.path, *cond)?;
-                let mut sens = self.cg.collect_read_signals(&self.path, *cond)?;
+                let path = self.path.clone();
+                let mut sens = self
+                    .cg
+                    .with_dynamic_reads(&path, *cond, |cg| cg.collect_read_signals(&path, *cond))?;
                 sens.extend(self.cg.shared_event_dependencies(*cond));
                 self.saw_wait = true;
                 // The body is optional (`wait (cond);`); the semantic database
