@@ -50,7 +50,7 @@ static void check_ranges(void) {
         llg_sv4_range_copy(&source, 0, source);
         llg_sv4_mask_remove(&mask, removed);
         for (uint32_t bit = 0; bit < width; ++bit)
-            CHECK(llg_sv4_state(mask, bit) == (bit % 2u && bit % 3u != 0));
+            CHECK(llg_sv4_state(mask, bit) == (unsigned)(bit % 2u && bit % 3u != 0));
         llg_sv4_two_state_inplace(&target);
         CHECK(!sv4_is_unknown(target));
         CHECK(value_test_allocations() == allocations);
@@ -125,10 +125,10 @@ static void check_digits(void) {
         for (const char* digit = decimal; *digit; ++digit)
             llg_sv4_mul_add_known(&value, 10, (uint32_t)(*digit - '0'));
         for (uint32_t bit = 0; bit < width; ++bit)
-            CHECK(llg_sv4_state(value, bit) == (bit == 64));
+            CHECK(llg_sv4_state(value, bit) == (unsigned)(bit == 64));
         llg_sv4_negate_known(&value);
         for (uint32_t bit = 0; bit < width; ++bit)
-            CHECK(llg_sv4_state(value, bit) == (bit >= 64));
+            CHECK(llg_sv4_state(value, bit) == (unsigned)(bit >= 64));
         llg_sv4_range_fill(&value, 0, width, 0);
         for (unsigned digit = 0; digit < 80; ++digit)
             llg_sv4_append_digit(&value, 4, digit % 4u == 2u ? 2u : digit % 4u == 3u ? 3u : 0u,

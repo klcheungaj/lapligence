@@ -44,11 +44,15 @@ static inline sv4_t* test_value_owner(sv4_t value) {
     return &test_value_owners->value;
 }
 
+#ifdef LLG_SELFTEST_TRACK_STORAGE
+/* File scope: MSVC rejects a block-scope function declaration (C4210). */
+size_t value_test_live(void);
+#endif
+
 static int test_values_run(int (*probe)(void)) {
     int result = probe();
     test_values_clear();
 #ifdef LLG_SELFTEST_TRACK_STORAGE
-    extern size_t value_test_live(void);
     if (value_test_live() != 0) {
         fprintf(stderr, "vector leaked %zu packed owners\n", value_test_live());
         return 1;

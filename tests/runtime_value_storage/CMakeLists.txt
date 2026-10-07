@@ -28,9 +28,10 @@ function(strict_c target)
     target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_options(${target} PRIVATE /W4 /WX)
   else()
-    # -Wshadow mirrors MSVC /W4 C4456/C4457/C4459, which the Windows lanes
-    # reject through /WX.
-    target_compile_options(${target} PRIVATE -Wall -Wextra -Wshadow -Werror -pedantic-errors)
+    # -Wshadow mirrors MSVC /W4 C4456/C4457/C4459 and -Wnested-externs C4210
+    # (GCC only), which the Windows lanes reject through /WX.
+    target_compile_options(${target} PRIVATE -Wall -Wextra -Wshadow -Wnested-externs -Werror
+      -pedantic-errors)
   endif()
 endfunction()
 

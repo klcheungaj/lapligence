@@ -8,6 +8,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef LLG_SELFTEST_TRACK_STORAGE
+// Counters of the tracking allocator that storage test builds link. Declared
+// at file scope: MSVC /W4 rejects block-scope function declarations (C4210).
+size_t value_test_live(void);
+size_t value_test_bytes(void);
+#endif
+
 #define CHECK(expr) do { \
     if (!(expr)) { \
         fprintf(stderr, "wave selftest failed at line %d: %s\n", __LINE__, #expr); \
@@ -143,8 +150,6 @@ cleanup:
     sv4_destroy(&punctuated);
     sv4_destroy(&packed);
 #ifdef LLG_SELFTEST_TRACK_STORAGE
-    extern size_t value_test_live(void);
-    extern size_t value_test_bytes(void);
     if (value_test_live() || value_test_bytes()) {
         fprintf(stderr, "wave selftest leaked packed storage\n");
         result = 1;

@@ -174,7 +174,10 @@ static int check_owners(void) {
     CHECK(llg_sv4_has_x(literal) && !llg_sv4_has_z(literal));
     sv4_replace(&literal, SV4_Z(4));
     CHECK(llg_sv4_has_z(literal) && !llg_sv4_has_x(literal));
-    CHECK(LLG_MASK(0) == 0 && LLG_MASK(64) == UINT64_MAX);
+    /* Run-time widths: with a constant 64, MSVC diagnoses the shift in the
+     * macro's untaken branch (C4293). */
+    const uint32_t mask_widths[] = {0, 64};
+    CHECK(LLG_MASK(mask_widths[0]) == 0 && LLG_MASK(mask_widths[1]) == UINT64_MAX);
     sv4_destroy(&literal);
     const uint32_t widths[] = {1, 64, 65, 129};
     for (size_t i = 0; i < sizeof(widths) / sizeof(widths[0]); ++i) {

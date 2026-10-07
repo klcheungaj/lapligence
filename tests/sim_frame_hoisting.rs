@@ -580,6 +580,9 @@ fn assert_strict_c11(model: &str) {
     use std::process::{Command, Stdio};
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    // Generate (discarded) assembly rather than stopping at `-fsyntax-only`:
+    // GCC diagnoses unused static functions only once it compiles the whole
+    // unit, while clang (`gcc` on macOS) reports them while parsing.
     let mut child = Command::new("gcc")
         .args([
             "-x",
@@ -589,7 +592,9 @@ fn assert_strict_c11(model: &str) {
             "-Wextra",
             "-pedantic",
             "-Werror",
-            "-fsyntax-only",
+            "-S",
+            "-o",
+            "-",
             "-",
         ])
         .arg(format!("-I{}", root.join("src/sim/rt").display()))
@@ -611,13 +616,16 @@ fn assert_strict_c11(model: &str) {
         .stderr(Stdio::piped())
         .spawn()
         .expect("start strict C11 frame check");
-    child
-        .stdin
-        .as_mut()
-        .expect("strict C11 stdin")
-        .write_all(model.as_bytes())
-        .expect("write strict C11 model");
+    // Feed the model from another thread: the compiler may write assembly to
+    // the stdout pipe before it has consumed all of its input.
+    let mut stdin = child.stdin.take().expect("strict C11 stdin");
+    let source = model.to_owned();
+    let writer = std::thread::spawn(move || stdin.write_all(source.as_bytes()));
     let output = child.wait_with_output().expect("wait for strict C11 check");
+    writer
+        .join()
+        .expect("strict C11 writer")
+        .expect("write strict C11 model");
     assert!(
         output.status.success(),
         "deep overlay model failed strict C11 compilation:\n{}",
