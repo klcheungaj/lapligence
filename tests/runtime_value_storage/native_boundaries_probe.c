@@ -48,18 +48,9 @@ static void evaluator(sv4_t* out, void* context) {
             CHECK(llg_mailbox_try_put_value(
                 mailbox, llg_mailbox_value_packed(payload, 129, 0, 0)));
             CHECK(llg_mailbox_num(mailbox) == (mode % 2 ? 2u : 1u));
-            llg_rt_finish();
-            if (llg_rt_exiting()) return;
         }
-        if (mode == 4) {
-            llg_process_kill(llg_current(), receiver_handle);
-            /* The publisher pins this descriptor even after its owner dies. */
-            CHECK(value_scope_index_find(destination) != NULL);
-            CHECK(sv4_to_u64(*destination) == 7);
-        } else {
-            llg_rt_finish();
-            if (llg_rt_exiting()) return;
-        }
+        llg_rt_finish();
+        if (llg_rt_exiting()) return;
     }
     sv4_copy(out, destination);
 }
@@ -73,7 +64,7 @@ static llg_co_arm_t arm_observer(llg_proc_t* self) {
 LLG_PROBE_SIMPLE_PROCESS(observer, 1) {
     LLG_PROBE_SIMPLE_BEGIN(1);
     LLG_PROBE_AWAIT(1, arm_observer(self));
-    CHECK(mode == 4);
+    CHECK(0); /* every observed change finishes the run. */
     LLG_PROBE_DONE();
 }
 LLG_PROBE_SIMPLE_PROCESS(receiver, 1) {
@@ -88,6 +79,11 @@ LLG_PROBE_SIMPLE_PROCESS(receiver, 1) {
                self, mailbox,
                llg_mailbox_target_packed(destination, 129, 0, 0),
                mode % 2 == 1));
+    /* A woken get writes its destination when it resumes; the observer of
+     * that write finishes the run from inside this delivery. */
+    llg_mailbox_delivery_take(
+        self, llg_mailbox_target_packed(destination, 129, 0, 0));
+    LLG_CO_EXIT_CHECK(ch);
     CHECK(0); /* finish or kill must prevent this continuation. */
     LLG_PROBE_DONE();
 }
@@ -101,6 +97,14 @@ LLG_PROBE_SIMPLE_PROCESS(publisher, 2) {
             2, llg_arm_mailbox_put_value(
                    self, mailbox,
                    llg_mailbox_value_packed(payload, 129, 0, 0)));
+        if (mode == 4) {
+            /* Killed after its wake but before it resumes, the receiver
+             * hands the message back and never writes its destination. */
+            CHECK(sv4_to_u64(*destination) == 0 && evaluations == 1);
+            llg_process_kill(self, receiver_handle);
+            CHECK(llg_mailbox_num(mailbox) == 1);
+            llg_rt_finish();
+        }
     } else {
         sv4_t* selectors = llg_value_scope_values(llg_value_scope_begin(2));
         sv4_replace(&selectors[0], sv4_zero(32, 0));
@@ -110,7 +114,7 @@ LLG_PROBE_SIMPLE_PROCESS(publisher, 2) {
         else llg_queue_unstream_assign(&queue, payload, 1, 0, kind, selectors[0], selectors[1]);
     }
     LLG_CO_EXIT_CHECK(ch);
-    CHECK(mode == 4);
+    CHECK(mode == 2 || mode == 3);
     LLG_PROBE_DONE();
 }
 static void native_callbacks(void) {
@@ -136,7 +140,7 @@ static void native_callbacks(void) {
             llg_spawn(&observer_desc, "publication observer");
             llg_spawn(&publisher_desc, "mailbox/stream publisher");
             llg_rt_run();
-            CHECK(evaluations == 2);
+            CHECK(evaluations == (mode == 4 ? 1u : 2u));
             llg_rt_cleanup();
             llg_process_assign(&receiver_handle, NULL);
             llg_dyn_destroy(&dynamic_array); llg_queue_destroy(&queue);
