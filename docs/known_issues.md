@@ -881,10 +881,16 @@ A wait on a property selected through a class handle property (`@(n.next.v)`,
 rebinds that property (`n.next = m`). Other writers of a handle property (task
 or function output copy-out, mailbox `get`/`peek` into the property, task-form
 `$cast`) store without toggling the object's handle marker, so such a wait
-keeps observing the previous object until another dependency changes. Waits
-on handle variables, handle array elements and the property itself are not
-affected. Direction: route every class handle-property store through
-`llg_class_handle_store`. Reproduce: replace `n.next = new;` in
+keeps observing the previous object until another dependency changes. A
+mailbox retrieval stores through the raw slot address frozen at the call,
+when the receiver resumes (`llg_mailbox_delivery_take`, SIM-017). For the
+same reason a mailbox `get`/`peek` into a module class handle variable does
+not wake `@(h)` on that variable. Other waits on handle variables, handle
+array elements and the property itself are not affected. Direction: route
+every class handle-property store through `llg_class_handle_store`; for
+mailboxes, give the handle target the object's (or variable's) change marker
+so the delivery toggles it while keeping the frozen slot. Reproduce: replace
+`n.next = new;` in
 `tests/fixtures/sim/feature_completion/sim_013/class_handles.sv` with a task
 call whose `output Node` formal is bound to `n.next`.
 
