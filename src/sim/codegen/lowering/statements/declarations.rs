@@ -228,11 +228,17 @@ impl EmitCtx<'_, '_> {
             return match self.cg.db.variable_lifetime(declaration) {
                 VariableLifetime::Static => Ok(Vec::new()),
                 VariableLifetime::Automatic => {
+                    // A fork-shared process local is plain handle storage
+                    // declared by the generic handle branch below.
                     if matches!(
                         self.cg.kind(declaration),
                         NodeKind::Var { ty }
                             if ty.kind == "class" && ty.type_name.as_deref() == Some("process")
-                    ) {
+                    ) && self
+                        .func
+                        .as_ref()
+                        .is_some_and(|function| !function.chandle_read.contains_key(&declaration))
+                    {
                         let name = self
                             .func
                             .as_ref()

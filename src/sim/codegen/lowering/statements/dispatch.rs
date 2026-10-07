@@ -427,6 +427,7 @@ impl EmitCtx<'_, '_> {
                     self.saw_wait = true;
                     return Ok(vec![IrStmt::WaitEventTriggered { event, body }]);
                 }
+                self.cg.reject_process_status_wait(&self.path, *cond)?;
                 let c = self.cg.lower_expr(&self.path, *cond)?;
                 let path = self.path.clone();
                 let mut sens = self
@@ -616,7 +617,7 @@ impl EmitCtx<'_, '_> {
                 ..
             } => {
                 if (matches!(name.as_str(), "suspend" | "await")
-                    && self.cg.is_process_expr(&self.path, *receiver))
+                    && self.cg.is_process_value(&self.path, *receiver))
                     || (name == "get" && self.cg.is_semaphore_expr(&self.path, *receiver))
                 {
                     if self.in_final {

@@ -948,10 +948,7 @@ fn render_model(
     render_static_local_decls(model, &mut out);
     super::owned::model::persistent_returns(model, &mut out);
     for object in &model.objects {
-        if matches!(
-            object.ty,
-            crate::sim::ir::IrObjectType::String | crate::sim::ir::IrObjectType::Chandle
-        ) {
+        if object.ty.has_change_marker() {
             out.push_str(&format!(
                 "static sv4_t {}_llg_dep = SV4_EMPTY;\n",
                 object.c_name

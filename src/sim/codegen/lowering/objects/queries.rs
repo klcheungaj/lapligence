@@ -94,16 +94,17 @@ impl Codegen<'_> {
                 name,
                 receiver: Some(receiver),
                 ..
-            } if name == "status" && self.is_process_expr(path, *receiver) => {
+            } if name == "status" && self.is_process_value(path, *receiver) => {
                 let receiver = *receiver;
                 let args = self.node(node).children.get(1..).unwrap_or_default();
                 if !args.is_empty() {
                     return Err(format!("process status takes no arguments in `{path}`"));
                 }
                 return Ok(Some(object_query(
+                    // `process::state` has the default `int` base (Annex G.6).
                     IrObjectQuery::ProcessStatus(self.lower_process(path, receiver)?),
                     32,
-                    false,
+                    true,
                 )));
             }
             NodeKind::MethodCall {
@@ -204,7 +205,7 @@ impl Codegen<'_> {
                             const_type: ConstantType::Null,
                             ..
                         })
-                    ) && self.is_process_expr(path, *node)
+                    ) && self.is_process_value(path, *node)
                 });
                 if is_process {
                     if !matches!(

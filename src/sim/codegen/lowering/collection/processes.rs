@@ -558,6 +558,7 @@ impl<'a> Codegen<'a> {
                 ));
             }
             let fn_name = self.new_fn_name(path, "ca");
+            self.reject_process_status_wait(path, rhs)?;
             let sigs = self.collect_read_signals(path, rhs)?;
             let body = self.wrap_continuous_self_feedback(ca, lhs, &sigs, vec![pattern_body])?;
             let shape = if sigs.is_empty() {
@@ -743,6 +744,7 @@ impl<'a> Codegen<'a> {
         lhs: NodeId,
         rhs: NodeId,
     ) -> Result<Vec<IrDependency>, String> {
+        self.reject_process_status_wait(path, rhs)?;
         let mut reads = self.collect_read_signals(path, rhs)?;
         let mut seen = reads.iter().cloned().collect::<HashSet<_>>();
         let mut pending = vec![lhs];

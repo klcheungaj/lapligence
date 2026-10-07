@@ -210,9 +210,16 @@ impl Codegen<'_> {
         actual: NodeId,
     ) -> Result<IrChandleExpr, String> {
         if self.is_process_formal(formal) {
-            return Ok(IrChandleExpr::Process(Box::new(
-                self.lower_process(path, actual)?,
-            )));
+            let value = Box::new(self.lower_process(path, actual)?);
+            // A static subroutine keeps the value in plain handle storage
+            // after the call returns, so it must hold a pinned identity.
+            return Ok(
+                if self.db.variable_lifetime(formal) == VariableLifetime::Static {
+                    IrChandleExpr::PinnedProcess(value)
+                } else {
+                    IrChandleExpr::Process(value)
+                },
+            );
         }
         self.lower_chandle(path, actual)
     }
@@ -230,6 +237,13 @@ impl Codegen<'_> {
     ) -> Result<IrChandleExpr, String> {
         if let Some(value) = self.native_tagged_chandle(path, node)? {
             return Ok(value);
+        }
+        // A counted process handle leaving its counted storage for plain
+        // handle storage is pinned (see `IrChandleExpr::PinnedProcess`).
+        if self.is_counted_process_source(path, node) {
+            return Ok(IrChandleExpr::PinnedProcess(Box::new(
+                self.lower_process(path, node)?,
+            )));
         }
         if let Some(select) = self.native_member_select(path, node)? {
             if let crate::sim::ir::IrNativeLeafExpr::Chandle(value) =
@@ -504,6 +518,17 @@ impl Codegen<'_> {
                             "chandle function `{}` does not support packed output/ref formals",
                             self.node(ft).name
                         ));
+                    }
+                    if self.is_process_formal(*formal) {
+                        if let Some(argument) = self.process_formal_expression_binding(
+                            path,
+                            *formal,
+                            bound[idx].expr,
+                            is_ref,
+                        )? {
+                            out_args.push(argument);
+                            continue;
+                        }
                     }
                     let (target, _) = self.lower_chandle_lvalue(path, bound[idx].expr)?;
                     let address = self.chandle_target_address(&target);

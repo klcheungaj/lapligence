@@ -1,0 +1,9 @@
+by_value 2
+output 1
+inout 1 1
+ref 1 RUNNING
+return 1
+const_ref 1
+static WAITING
+killed KILLED KILLED
+const_ref 0 stage 0

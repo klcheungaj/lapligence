@@ -125,12 +125,11 @@ impl Validator<'_> {
                     crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. } => true,
                     _ => false,
                 }),
-            IrDependency::Object(object) => self.model.objects.get(*object).is_some_and(|object| {
-                matches!(
-                    object.ty,
-                    crate::sim::ir::IrObjectType::String | crate::sim::ir::IrObjectType::Chandle
-                )
-            }),
+            IrDependency::Object(object) => self
+                .model
+                .objects
+                .get(*object)
+                .is_some_and(|object| object.ty.has_change_marker()),
         }
     }
 

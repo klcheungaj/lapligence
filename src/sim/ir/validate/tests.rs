@@ -5,6 +5,7 @@ mod fixed_array_cells;
 mod fixed_array_reductions;
 mod fixed_streams;
 mod native_values;
+mod process_handles;
 mod real_values;
 mod sequential_predicates;
 mod subroutine_containers;

@@ -454,6 +454,14 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             IrObjectType::Process => {
                 initialize.push_str(&format!("    {name} = NULL;\n"));
                 destroy.push_str(&format!("    llg_process_assign(&{name}, NULL);\n"));
+                defaults(
+                    &mut initialize,
+                    &mut destroy,
+                    &format!("{name}_llg_dep"),
+                    1,
+                    false,
+                    true,
+                );
             }
             IrObjectType::Semaphore => initialize.push_str(&format!("    {name} = NULL;\n")),
         }

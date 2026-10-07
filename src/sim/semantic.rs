@@ -705,6 +705,14 @@ fn assignment_pattern_metadata_node(db: &Db, id: NodeId) -> bool {
 }
 
 fn process_reference(db: &Db, id: NodeId) -> bool {
+    // Member selections, function results and other computed receivers carry
+    // their static type on the expression itself.
+    if db.type_descriptor(id).is_some_and(|descriptor| {
+        matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "Class")
+            && descriptor.name == "process"
+    }) {
+        return true;
+    }
     let mut current = id;
     for _ in 0..db.nodes().len() {
         match db.node_kind(current) {

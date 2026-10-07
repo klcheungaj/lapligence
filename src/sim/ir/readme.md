@@ -187,7 +187,10 @@ insert, pop) and native temporaries; members are read and written in place
 through `IrNativeAccessKind::ElementItem` with a `ContainerElement` receiver,
 and writes notify readers once the statement completes. Event elements are
 reached through `IrEventRef::Handle`; process elements through
-`IrProcessExpr::Handle`. Containers never travel as `IrFixedValue`.
+`IrProcessExpr::Handle`. A process value written into plain handle storage
+is `IrChandleExpr::PinnedProcess`; `IrObjectStmt::ProcessRandom` and
+`IrStringExpr::ProcessRandState` reach another process's random stream.
+Containers never travel as `IrFixedValue`.
 
 ## Fixed-array views, native tagged unions and native bindings (SIM-007)
 

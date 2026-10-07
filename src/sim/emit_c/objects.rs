@@ -15,7 +15,9 @@ pub(super) fn render_indices(ctx: &RCtx<'_>, indices: &[IrExpr]) -> Result<Strin
 
 pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, String> {
     Ok(match value {
-        IrStringExpr::Conditional { .. } | IrStringExpr::QueuePop { .. } => {
+        IrStringExpr::Conditional { .. }
+        | IrStringExpr::QueuePop { .. }
+        | IrStringExpr::ProcessRandState(_) => {
             return Err("string conditionals require whole-model ownership emission".to_owned())
         }
         IrStringExpr::Literal(bytes) => {
@@ -259,6 +261,7 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
         | IrChandleExpr::QueuePop { .. }
         | IrChandleExpr::Mailbox(_)
         | IrChandleExpr::Process(_)
+        | IrChandleExpr::PinnedProcess(_)
         | IrChandleExpr::ContainerElement { .. }
         | IrChandleExpr::Required { .. }
         | IrChandleExpr::InterfaceInstance { .. } => {
@@ -967,6 +970,9 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrObjectStmt) -> Result<Stri
         }
         IrObjectStmt::ProcessAwait(target) => {
             format!("    llg_process_await({});\n", process(ctx, target)?)
+        }
+        IrObjectStmt::ProcessRandom { .. } => {
+            return Err("process random methods require the ownership emitter".to_owned())
         }
     })
 }

@@ -65,6 +65,18 @@ type VirtualInterfaceMemberEntries = Vec<(String, SignalInfo)>;
 type VirtualInterfaceMethodEntries = Vec<(String, usize)>;
 type VirtualInterfaceMethodInfo = (usize, usize, NodeId, NodeId, NodeId);
 
+/// A record or union member. A `process` member is a plain handle leaf that
+/// holds pinned identities (SIM-015); only whole container elements keep a
+/// reference count.
+fn lower_member_element(descriptor: &TypeDescriptor) -> Result<IrContainerElement, String> {
+    match &descriptor.shape {
+        TypeShape::Opaque { kind } if kind == "Class" && descriptor.name == "process" => {
+            Ok(IrContainerElement::Chandle)
+        }
+        _ => lower_container_element(descriptor),
+    }
+}
+
 fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerElement, String> {
     let packed = || {
         descriptor
@@ -131,7 +143,7 @@ fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerEle
                     .map(|member| {
                         Ok(IrContainerMember {
                             name: member.name.clone(),
-                            element: Box::new(lower_container_element(&member.descriptor)?),
+                            element: Box::new(lower_member_element(&member.descriptor)?),
                         })
                     })
                     .collect::<Result<Vec<_>, String>>()?,
@@ -145,7 +157,7 @@ fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerEle
                 .map(|member| {
                     Ok(IrContainerMember {
                         name: member.name.clone(),
-                        element: Box::new(lower_container_element(&member.descriptor)?),
+                        element: Box::new(lower_member_element(&member.descriptor)?),
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?,

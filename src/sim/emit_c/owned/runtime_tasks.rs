@@ -271,10 +271,7 @@ impl Frame<'_, '_> {
                         ),
                     ),
                     IrDependency::Object(index)
-                        if matches!(
-                            self.ctx.model.objects[*index].ty,
-                            IrObjectType::String | IrObjectType::Chandle
-                        ) =>
+                        if self.ctx.model.objects[*index].ty.has_change_marker() =>
                     {
                         (
                             "LLG_FMT_PACKED",

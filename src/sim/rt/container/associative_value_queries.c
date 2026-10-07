@@ -84,6 +84,7 @@ void llg_assoc_value_set_default_chandle(llg_assoc_value_t* array, void* value) 
     int change = 0;
     llg_value_t source = llg_value_from_chandle(array->element, value);
     llg_assoc_value_set_default_source(array, &source, &change);
+    llg_value_drop(&source);
     /* No temporary owner may remain live across the callback. */
     llg_notify(array->notify, array->contents_dependency,
                array->shape_dependency, change);

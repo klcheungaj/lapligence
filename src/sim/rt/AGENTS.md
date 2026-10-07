@@ -243,7 +243,11 @@ Creators release frame references after spawn; children release on completion,
 cancellation and teardown. Joined children may borrow live parent cells; cancel
 children before releasing parent storage. Completed parents remain alive for
 detached descendants. Process handles retain terminal identity separately from
-coroutine storage. Normal process completion returns `LLG_CO_DONE`; terminating
+coroutine storage: counted storage (process variables, by-value formals,
+container elements) retains and releases; plain handle storage (class
+properties, record leaves, non-input formals, results, fork-shared slots)
+holds `llg_process_pin`ned handles, whose pin `llg_rt_cleanup` drops. Process
+methods through a null handle and `await` on the caller are fatal. Normal process completion returns `LLG_CO_DONE`; terminating
 services set `chain.exiting` and the generated continuation returns
 `LLG_CO_EXIT` after unwinding its lexical scopes.
 
