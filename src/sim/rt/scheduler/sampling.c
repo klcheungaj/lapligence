@@ -344,6 +344,28 @@ static void sample_preponed_values(void) {
     }
 }
 
+// Clockvar samples publish like signal writes, so `@(cb.x)` and edges of a
+// clockvar wake on a changed sampled value (IEEE 1800-2009 14.15).
+static void clocking_publish(sv4_t* sample, const sv4_t* value) {
+    clocking_sample_publication = 1;
+    sig_write(sample, *value);
+    clocking_sample_publication = 0;
+}
+
+static void clocking_publish_real(double* sample, double value) {
+    clocking_sample_publication = 1;
+    real_write(sample, value);
+    clocking_sample_publication = 0;
+}
+
+int llg_clocking_sample(const sv4_t* source, sv4_t* sample) {
+    if (!sample) return 0;
+    const sv4_t* value = llg_sampled_value(source);
+    if (!value) return 0;
+    clocking_publish(sample, value);
+    return 1;
+}
+
 typedef struct {
     sv4_t* source;
     sv4_t* sample;
@@ -351,7 +373,7 @@ typedef struct {
 
 static void clocking_copy_observed(void* data) {
     llg_clocking_observed_t* copy = (llg_clocking_observed_t*)data;
-    sv4_copy(copy->sample, copy->source);
+    clocking_publish(copy->sample, copy->source);
     free(copy);
 }
 
@@ -373,12 +395,12 @@ int llg_clocking_sample_observed(sv4_t* source, sv4_t* sample) {
     return 1;
 }
 
-int llg_clocking_sample_history(sv4_t* source, sv4_t* sample, uint64_t ticks) {
-    if (!source || !sample) return 0;
+// The newest retained value at or before `ticks` in the past.
+static const sv4_t* clocking_history_value(const sv4_t* source, uint64_t ticks) {
     llg_sampled_value_t* item = find_sampled_value(source);
     if (!item) {
         report_unregistered_sampled_signal();
-        return 0;
+        return NULL;
     }
     uint64_t target = g.now < ticks ? 0 : g.now - ticks;
     llg_sampled_history_t* selected = NULL;
@@ -387,6 +409,69 @@ int llg_clocking_sample_history(sv4_t* source, sv4_t* sample, uint64_t ticks) {
         if (history->time > target) continue;
         if (!selected || selected->time < history->time) selected = history;
     }
-    sv4_copy(sample, selected ? &selected->value : &item->value);
+    return selected ? &selected->value : &item->value;
+}
+
+int llg_clocking_sample_history(sv4_t* source, sv4_t* sample, uint64_t ticks) {
+    if (!source || !sample) return 0;
+    const sv4_t* value = clocking_history_value(source, ticks);
+    if (!value) return 0;
+    clocking_publish(sample, value);
     return 1;
+}
+
+// Real clockvars are sampled from the 64-bit IEEE image their expression
+// keeps in packed storage, so they share the packed Preponed, Observed and
+// history entries; only the final store decodes the image.
+static int clocking_store_real(const sv4_t* image, double* sample) {
+    if (!image || llg_sv4_width(*image) != 64) {
+        fprintf(stderr, "llg: real clocking sample needs a 64-bit image\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return 0;
+    }
+    clocking_publish_real(sample, sv4_bitstoreal(*image));
+    return 1;
+}
+
+int llg_clocking_sample_real(const sv4_t* source, double* sample) {
+    if (!source || !sample) return 0;
+    return clocking_store_real(llg_sampled_value(source), sample);
+}
+
+typedef struct {
+    sv4_t* source;
+    double* sample;
+} llg_clocking_observed_real_t;
+
+static void clocking_copy_observed_real(void* data) {
+    llg_clocking_observed_real_t* copy = (llg_clocking_observed_real_t*)data;
+    (void)clocking_store_real(copy->source, copy->sample);
+    free(copy);
+}
+
+int llg_clocking_sample_observed_real(sv4_t* source, double* sample) {
+    if (!source || !sample) return 0;
+    if (!find_sampled_value(source)) {
+        report_unregistered_sampled_signal();
+        return 0;
+    }
+    llg_clocking_observed_real_t* copy =
+        (llg_clocking_observed_real_t*)llg_checked_malloc(
+            1, sizeof(*copy), "clocking observed sample");
+    copy->source = source;
+    copy->sample = sample;
+    if (!llg_schedule_region_callback(LLG_REGION_OBSERVED,
+                                      clocking_copy_observed_real, copy)) {
+        free(copy);
+        return 0;
+    }
+    return 1;
+}
+
+int llg_clocking_sample_history_real(sv4_t* source, double* sample,
+                                     uint64_t ticks) {
+    if (!source || !sample) return 0;
+    const sv4_t* value = clocking_history_value(source, ticks);
+    return value ? clocking_store_real(value, sample) : 0;
 }

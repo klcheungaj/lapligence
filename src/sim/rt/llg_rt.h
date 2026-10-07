@@ -1678,13 +1678,22 @@ sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks);
 /// `kind`: 0 rose, 1 fell, 2 stable, 3 changed; 4 stable and 5 changed
 /// compare 64-bit real images numerically (`==` on the decoded reals).
 int llg_sampled_domain_status(uint64_t identity, int kind);
-// Clocking input copies. Observed copies are queued into the current time
-// slot's observed region; history copies read the preponed sample at or before
-// `ticks` simulation ticks in the past, where `ticks` must not exceed the
-// source's llg_sampled_register_history depth.
+// Clocking input copies. Each publishes a changed sample to its waiters.
+// llg_clocking_sample copies the Preponed (#1step) value; observed copies are
+// queued into the current time slot's observed region; history copies read the
+// preponed sample at or before `ticks` simulation ticks in the past, where
+// `ticks` must not exceed the source's llg_sampled_register_history depth.
+int llg_clocking_sample(const sv4_t* source, sv4_t* sample);
 int llg_clocking_sample_observed(sv4_t* source, sv4_t* sample);
 int llg_clocking_sample_history(sv4_t* source, sv4_t* sample,
                                 uint64_t ticks);
+// Real clockvar samples: `source` is the packed 64-bit `$realtobits` image
+// of the clocking expression, registered like a packed source; the selected
+// image is decoded into the real sample.
+int llg_clocking_sample_real(const sv4_t* source, double* sample);
+int llg_clocking_sample_observed_real(sv4_t* source, double* sample);
+int llg_clocking_sample_history_real(sv4_t* source, double* sample,
+                                     uint64_t ticks);
 
 // Forget clocking history before freeing/reusing an externally owned packed
 // descriptor that received runtime writes. Registered packed value scopes do

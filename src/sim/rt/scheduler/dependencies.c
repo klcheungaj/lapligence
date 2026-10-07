@@ -709,8 +709,13 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
     force_dependency_changed(target, NULL, 0);
 }
 
+// Set while a clocking block publishes its own sampled clockvars. #0 inputs
+// update in the Observed region (IEEE 1800-2009 14.13), whose user code is
+// otherwise read-only, and `@(cb.x)` waiters must still see the change.
+static int clocking_sample_publication;
+
 static void sig_write(sv4_t* target, sv4_t value) {
-    if (region_is_read_only_now(g.current_region)) {
+    if (region_is_read_only_now(g.current_region) && !clocking_sample_publication) {
         if (region_private_store("signal write")) sv4_copy(target, &value);
         return;
     }
@@ -804,7 +809,7 @@ static int sig_write_range(sv4_t* target, uint32_t offset, sv4_t value) {
 // Real equality is bitwise: repeated NaNs with the same payload are
 // suppressed, while changes in NaN payload and signed zero are observable.
 static void real_write(double* target, double value) {
-    if (region_is_read_only_now(g.current_region)) {
+    if (region_is_read_only_now(g.current_region) && !clocking_sample_publication) {
         if (region_private_store("real write")) *target = value;
         return;
     }

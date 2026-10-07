@@ -326,6 +326,12 @@ but native runtime callers can pass any live packed owner to the borrowed-source
 APIs. Globally filtering that storage class would change accepted runtime behavior.
 Ordinary waits use their own snapshots, input skew sampling uses
 `sampling.c`, and named-event `.triggered` uses event-object state.
+`llg_clocking_sample*` store a clockvar's sample and publish it through
+`sig_write`/`real_write` while `clocking_sample_publication` is set, the one
+exception to the read-only Observed region, so `@(cb.x)` and edges on clockvars
+wake. A real or shortreal input bound to an expression samples its 64-bit
+`$realtobits` image signal; the `_real` variants decode it into the `double`
+sample.
 `llg_sampled_register_value` keeps only a signal's Preponed value (procedural
 `$sampled`, every concurrent-assertion read) in a separate list, so it adds no
 history and no per-write lookup. `llg_sampled_register` adds Observed clocking
