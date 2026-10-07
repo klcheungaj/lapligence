@@ -488,3 +488,54 @@ fn statically_bound_record_refs_take_the_bound_operand_only() {
     model.funcs[1].bound_native_refs = vec![1];
     assert!(model.validate().is_err(), "bound formal out of bounds");
 }
+
+#[test]
+fn mailbox_aggregate_messages_name_a_native_value_and_a_type() {
+    use crate::sim::ir::{IrMailboxTarget, IrMailboxValue};
+    let mut model = native_model();
+    let put = |value, type_id| {
+        IrExpr::new(
+            IrExprKind::ObjectQuery(Box::new(IrObjectQuery::MailboxTryPut {
+                mailbox: IrChandleExpr::Null,
+                value: IrMailboxValue::Native { value, type_id },
+            })),
+            32,
+            true,
+            None,
+        )
+    };
+    let get = |value, type_id| {
+        IrExpr::new(
+            IrExprKind::ObjectQuery(Box::new(IrObjectQuery::MailboxTryGet {
+                mailbox: IrChandleExpr::Null,
+                target: IrMailboxTarget::Native { value, type_id },
+                peek: false,
+            })),
+            32,
+            true,
+            None,
+        )
+    };
+    model.validate_expr(&put(1, 7), None).unwrap();
+    model.validate_expr(&get(1, 7), None).unwrap();
+    assert!(
+        model.validate_expr(&put(2, 7), None).is_err(),
+        "value out of bounds"
+    );
+    assert!(
+        model.validate_expr(&put(1, 0), None).is_err(),
+        "zero message type"
+    );
+    assert!(
+        model.validate_expr(&get(1, 0), None).is_err(),
+        "zero target type"
+    );
+
+    // A whole queue is a native type only as a mailbox message.
+    model.native_types[0] = IrContainerElement::Container {
+        type_id: 5,
+        kind: "Queue".into(),
+        element: Box::new(packed(8)),
+    };
+    model.validate().unwrap();
+}
