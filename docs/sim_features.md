@@ -905,8 +905,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   event-formal numeric/virtual-interface dispatch remain restricted.
   V §9.7.3; SV §15.5 **[1995/SV-2005]**.
 - 🟨 **Cycle delays** — Procedural `##N` repeats the resolved default clocking
-  event, including irregular periods. Missing default events and unsupported
-  cross-clock forms reject. Clocking drives and assertion sequence delays are
+  event, including irregular periods; `##0` continues in a step where the
+  event already occurred, and a default named by `default clocking cb;` or
+  declared in a nested module is resolved per module
+  ([sim_033](../tests/fixtures/sim/feature_completion/sim_033/readme.md)).
+  Missing default events and unsupported cross-clock forms reject. Clocking drives and assertion sequence delays are
   bounded separately in §12. SV §14.11 **[SV-2005]**.
 
 ## 7. Expressions & operators
@@ -1685,14 +1688,21 @@ These are bounded implementations, not full verification-infrastructure support.
   one. Last-initial completion cancels that program's detached descendants;
   all program initials completing causes immediate implicit finish. The broader
   program phase remains unaccepted. SV §§24.3, 24.7 **[SV-2005]**.
-- 🟨 **Clocking** — Declarations, aliases, default/global clocks, concrete
-  interfaces and events support input `#1step`, `#0` and constant positive-skew
-  samples. Constant output/inout skews capture values for Re-NBA; off-event
-  drives wait for the next event. Inouts retain resolved-net drives and sampled
-  reads; admitted signal-edge qualifiers and packed selected targets are present.
-  [Input collection](../src/sim/codegen/lowering/clocking_context.rs) requires a
-  collected packed signal: real-valued inputs and uncollected source expressions
-  reject. Output/inout writes must use admitted nonblocking assignments; compound
+- 🟨 **Clocking** — Declarations, aliases, default/global clocks (also named
+  by `default clocking cb;`, and nested per module), concrete interfaces,
+  modport clocking ports, virtual-interface handles and views, and events
+  support input `#1step`, `#0` and constant positive-skew samples on irregular
+  clock intervals. Inputs may be bound to signals, selects, concatenations,
+  hierarchical and member expressions and computed or function-call
+  expressions of packed, real or shortreal type; `@(cb.x)` and edges on
+  clockvars see sampled-value changes
+  ([sim_033](../tests/fixtures/sim/feature_completion/sim_033/readme.md)).
+  Constant output/inout skews capture values for Re-NBA; off-event drives wait
+  for the next event. Inouts retain resolved-net drives and sampled reads;
+  admitted signal-edge qualifiers and packed selected targets are present.
+  Unpacked, string, class and event inputs, edge-qualified input skews and
+  `@(vif.cb)` reject explicitly; chandle inputs are illegal (SV §§6.14, 14.5).
+  Output/inout writes must use admitted nonblocking assignments; compound
   writes and concatenated clockvar lvalues are prohibited by SV §14.16. Skews
   must be constant expressions (SV §14.4); runtime skews are language-illegal.
   Unsupported cross-clock forms remain excluded.
