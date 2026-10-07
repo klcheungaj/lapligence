@@ -135,7 +135,8 @@ impl Validator<'_> {
                 source
             {
                 for read in reads {
-                    if !self.valid_dependency(read) {
+                    if !self.valid_dependency(read) || matches!(read, IrDependency::NativeAccess(_))
+                    {
                         return self.fail(
                             format!("{path}[{idx}]"),
                             "event dependency must name active storage",

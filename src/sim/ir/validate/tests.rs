@@ -576,6 +576,76 @@ fn evaluated_waits_require_valid_helpers_and_dependencies() {
 }
 
 #[test]
+fn native_access_dependencies_name_rearmed_class_or_interface_storage() {
+    let mut model = valid_model();
+    model.classes.push(IrClass {
+        c_name: "C".into(),
+        base: None,
+        fields: vec![IrClassField {
+            c_name: "x".into(),
+            ty: IrClassFieldType::Packed {
+                width: 1,
+                signed: false,
+                two_state: false,
+            },
+            container: None,
+            native_value: None,
+        }],
+    });
+    model.native_accesses.push(IrNativeAccess {
+        name: "_llg_access_0".into(),
+        receiver: IrChandleExpr::Null,
+        kind: IrNativeAccessKind::ClassField { class: 0, field: 0 },
+        site: None,
+        item_path: Vec::new(),
+        function: None,
+    });
+    let dependency = IrDependency::NativeAccess("_llg_access_0".into());
+    let wait = |sens| IrStmt::WaitAny { sens };
+    model.processes.push(IrProcess::new(
+        "proc".into(),
+        "top.initial".into(),
+        IrShape::RunOnce,
+        Vec::new(),
+        vec![wait(vec![dependency.clone()])],
+    ));
+    model.spawns.push("proc".into());
+    model
+        .validate()
+        .expect("a re-armed wait may name a class property");
+    model.processes[0].body = vec![wait(vec![IrDependency::NativeAccess("missing".into())])];
+    assert!(model
+        .validate()
+        .unwrap_err()
+        .detail()
+        .contains("native-access dependency"));
+    // A runtime callback keeps the dependencies it armed with, so it cannot
+    // follow a rebinding receiver.
+    model.processes[0].pre_fns.push(IrPreFn::MonEval {
+        c_name: "eval".into(),
+        args: vec![packed_const(1, 1)],
+        context: None,
+        item: false,
+        real_item: false,
+    });
+    model.processes[0].body = vec![IrStmt::WaitEvents {
+        specs: vec![(
+            IrWaitSrc::Evaluated {
+                eval: "eval".into(),
+                condition: None,
+                reads: vec![dependency],
+            },
+            IrEdge::Any,
+        )],
+    }];
+    assert!(model
+        .validate()
+        .unwrap_err()
+        .detail()
+        .contains("event dependency"));
+}
+
+#[test]
 fn z_array_initialization_requires_valid_four_state_storage() {
     let mut model = valid_model();
     model.init_steps.push(IrInitStep::FillArrayZ(0));

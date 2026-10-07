@@ -15,7 +15,9 @@ mod tests;
 /// forwarded to) is `static_refs`: its evaluator's dependencies are those of
 /// the actual, which a shared body cannot know, so each distinct static
 /// actual gets its own specialization of the task. When every such read is a
-/// level `wait` or a plain `@(r)`/edge control on the whole formal, the typed
+/// level `wait` or an explicit event control without a named event (a plain
+/// or edge control on the whole formal waits on it directly; a select,
+/// operator or qualifier is evaluated by the waiting process), the typed
 /// body also follows the variable a whole-variable descriptor names
 /// (`IrDependency::RefFormal`), so calls with automatic actuals take it
 /// instead of expanding; `bound_refs` lists the formals with other reads.
@@ -133,6 +135,30 @@ impl<'a> Codegen<'a> {
         Ok((process, external))
     }
 
+    /// Built-in container and string methods that only read their receiver
+    /// (SV 9.4.2 admits built-in methods with singular results).
+    fn builtin_query_method(&self, scope_path: &str, name: &str, receiver: NodeId) -> bool {
+        if self.container_of(receiver).is_some() {
+            return matches!(name, "size" | "num" | "exists");
+        }
+        self.is_string_expr(scope_path, receiver)
+            && matches!(
+                name,
+                "len"
+                    | "getc"
+                    | "toupper"
+                    | "tolower"
+                    | "compare"
+                    | "icompare"
+                    | "substr"
+                    | "atoi"
+                    | "atohex"
+                    | "atooct"
+                    | "atobin"
+                    | "atoreal"
+            )
+    }
+
     fn check_event_node(
         &self,
         node: NodeId,
@@ -191,7 +217,20 @@ impl<'a> Codegen<'a> {
                         return rejected("non-const ref formals are not read-only");
                     }
                 }
-                if visited_functions.insert(ft) {
+                if let Some(import) = self.db.dpi_import(ft) {
+                    // A foreign function has no summarized body: it runs
+                    // with ordinary call semantics in the evaluating
+                    // process. Only a context import can reach SystemVerilog
+                    // storage (through exported subroutines, SV 35.5.3).
+                    needs_process(process, "foreign (DPI) functions have no effect summary");
+                    if import.context {
+                        external.get_or_insert_with(|| {
+                            format!(
+                                "context import `{name}` in `{scope_path}` may write SystemVerilog storage through exported subroutines"
+                            )
+                        });
+                    }
+                } else if visited_functions.insert(ft) {
                     let body = self.func_body(ft).ok_or_else(|| {
                         format!(
                             "function calls in evaluated event controls are not supported in `{scope_path}`: function `{name}` has no body"
@@ -255,6 +294,55 @@ impl<'a> Codegen<'a> {
                     return rejected(&format!(
                         "fixed-array reduction method `{name}` has no pure effect summary"
                     ));
+                }
+            }
+            NodeKind::MethodCall {
+                name,
+                receiver: Some(receiver),
+                ..
+            } if self.builtin_query_method(scope_path, name, *receiver) => {}
+            NodeKind::MethodCall {
+                name,
+                callee: Some(method),
+                ..
+            } if matches!(
+                self.kind(*method),
+                NodeKind::FuncTask {
+                    is_task: false,
+                    is_virtual: false,
+                    ..
+                }
+            ) && self.class_method_owner(*method).is_some() =>
+            {
+                // SV 9.4.2 admits nonvirtual class methods. The waiting
+                // process calls them; their property reads are resolved
+                // through the call's receiver (`with_dynamic_reads`).
+                needs_process(process, "class method calls run in the waiting process");
+                for (formal, is_out) in self.func_formals(*method) {
+                    if is_out
+                        || matches!(
+                            self.kind(formal),
+                            NodeKind::FuncArg {
+                                direction: DbDirection::Ref,
+                                const_ref: false,
+                                ..
+                            }
+                        )
+                    {
+                        return rejected("output, inout and ref formals are not read-only");
+                    }
+                }
+                if visited_functions.insert(*method) {
+                    if let Some(body) = self.func_body(*method) {
+                        self.check_event_node(
+                            body,
+                            scope_path,
+                            visited_functions,
+                            Some(*method),
+                            process,
+                            external,
+                        )?;
+                    }
                 }
             }
             NodeKind::MethodCall { name, .. } => {
@@ -712,11 +800,16 @@ impl<'a> Codegen<'a> {
                 implicit,
                 body,
             }) => {
+                // An explicit control on a whole formal waits on the variable
+                // its descriptor names; a select, operator or qualifier over
+                // it is evaluated by the waiting process, which re-reads the
+                // formal after every change of that variable. That process
+                // cannot share one atomic wait with a named event, so such a
+                // list, like implicit `@*` sensitivity, is evaluated with the
+                // actual's dependencies.
+                let named = specs.iter().any(|spec| self.event_spec_names_event(spec));
                 let mut roots = Vec::new();
                 for spec in specs {
-                    // A plain or edge control on a whole formal waits on the
-                    // variable its descriptor names; other expressions are
-                    // evaluated with the actual's dependencies.
                     match spec {
                         EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. }
                             if matches!(self.kind(*sig), NodeKind::Expr(ExprKind::Ref { .. })) =>
@@ -726,11 +819,11 @@ impl<'a> Codegen<'a> {
                         _ => self.event_spec_expressions(spec, &mut roots),
                     }
                 }
-                if *implicit {
-                    roots.extend(body);
-                }
                 for root in roots {
-                    self.note_static_reads(root, formals, shape, false);
+                    self.note_static_reads(root, formals, shape, !named);
+                }
+                if let Some(body) = body.filter(|_| *implicit) {
+                    self.note_static_reads(body, formals, shape, false);
                 }
             }
             // A level wait re-evaluates its condition in the waiting process
@@ -767,6 +860,16 @@ impl<'a> Codegen<'a> {
         }
         for child in &self.node(node).children {
             self.call_shape_walk(*child, inst, formals, stack, shape);
+        }
+    }
+
+    /// Whether an event spec waits on a named event.
+    fn event_spec_names_event(&self, spec: &EventSpec) -> bool {
+        match spec {
+            EventSpec::Qualified { event, .. } => self.event_spec_names_event(event),
+            EventSpec::Named(_) => true,
+            EventSpec::AnyChange { sig } => self.event_target_of(*sig).is_some(),
+            EventSpec::Edge { .. } => false,
         }
     }
 

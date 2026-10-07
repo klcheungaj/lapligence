@@ -101,6 +101,30 @@ impl Validator<'_> {
             | IrDependency::ContainerShape(container) => *container < self.model.containers.len(),
             IrDependency::SharedCell { local, .. } => !local.is_empty(),
             IrDependency::RefFormal { .. } => true,
+            IrDependency::NativeAccess(name) => self
+                .model
+                .native_accesses
+                .iter()
+                .find(|access| access.name == *name)
+                .is_some_and(|access| match access.kind {
+                    crate::sim::ir::IrNativeAccessKind::ClassField { class, field } => self
+                        .model
+                        .classes
+                        .get(class)
+                        .and_then(|class| class.fields.get(field))
+                        .is_some_and(|field| {
+                            field.container.is_none()
+                                && field.native_value.is_none()
+                                && matches!(
+                                    field.ty,
+                                    IrClassFieldType::Packed { .. }
+                                        | IrClassFieldType::Real { .. }
+                                        | IrClassFieldType::Chandle
+                                )
+                        }),
+                    crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. } => true,
+                    _ => false,
+                }),
             IrDependency::Object(object) => self.model.objects.get(*object).is_some_and(|object| {
                 matches!(
                     object.ty,

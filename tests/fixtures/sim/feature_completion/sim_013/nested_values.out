@@ -1,0 +1,9 @@
+s.a: 2 last=3
+o.in.b: 6 8 last=10
+arr[i]: 10 12 15 last=5
+arr[3]: 16 last=41
+d[k]: 18 19 25 last=1
+d.size: 20 last=5
+q[0]: 22 last=0
+aa[b]: 24 last=8
+wait: 26

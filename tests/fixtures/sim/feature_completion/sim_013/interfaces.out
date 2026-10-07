@@ -1,0 +1,3 @@
+v.sig: 2 3 7 9
+posedge v.clk: 1 6
+wait: 9
