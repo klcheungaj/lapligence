@@ -291,6 +291,9 @@ impl Frame<'_, '_> {
                             u8::from(*peek)
                         ),
                     )?;
+                    // A suspended get writes its destination on resume, so
+                    // the write lands in live storage (SIM-017).
+                    self.line(format!("llg_mailbox_delivery_take(self, {target});"));
                 }
             }
             _ => return Err(pending("object statement ownership contract")),

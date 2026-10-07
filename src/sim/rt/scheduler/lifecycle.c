@@ -26,6 +26,10 @@ static void free_proc_storage(llg_proc_t* p) {
     // A kill has already returned the keys of a grant it interrupted.
     free(p->granted_request);
     p->granted_request = NULL;
+    // Likewise a kill has handed back any mailbox delivery; one left here
+    // belongs to a process torn down at model close.
+    mailbox_message_free(p->mailbox_delivery);
+    p->mailbox_delivery = NULL;
     if (p->wait.kind == W_MAILBOX_GET || p->wait.kind == W_MAILBOX_PUT)
         mailbox_unlink_wait(&p->wait);
     wait_payload_release(&p->wait);

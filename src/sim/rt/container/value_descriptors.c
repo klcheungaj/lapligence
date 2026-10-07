@@ -623,6 +623,13 @@ void llg_native_value_copy(llg_value_t* dst, const llg_value_t* src) {
         llg_container_fatal("container allocation failed");
 }
 
+void llg_native_value_clone(llg_value_t* dst, const llg_value_t* src) {
+    if (!dst || !src || !src->desc)
+        llg_container_fatal("missing native value descriptor");
+    if (!llg_value_try_construct_copy(dst, src->desc, src))
+        llg_container_fatal("container allocation failed");
+}
+
 static llg_native_root_t* llg_native_roots_head;
 static size_t llg_native_roots_live;
 
