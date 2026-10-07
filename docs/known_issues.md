@@ -603,6 +603,44 @@ class properties and native record leaves counted handle slots.
 forks many short-lived children: the pinned handle count grows with the
 number of children until the model ends.
 
+## Mailbox message forms without a nested value
+
+**Status:** open (SIM-017).
+
+### Symptom
+
+These mailbox forms stop compilation with a SIM-017 diagnostic:
+
+- a message whose type is, or has a member that is, an associative array;
+- a whole unpacked fixed-array variable as a `put` source or a `get`
+  destination (assignment patterns and record members of array type work);
+- `try_put`/`try_get`/`try_peek` with a record, array or selected operand used
+  in a loop condition, or in another expression that is not a statement, an
+  assignment, a system-task argument or an `if` condition.
+
+At run time, a message handed back by a killed receiver returns to the head
+of a bounded mailbox even when a sender filled the freed slot meanwhile, so
+`num()` can exceed the bound until the next `get`.
+
+### Cause
+
+An aggregate message is one descriptor-backed runtime value. The runtime
+nests queues and dynamic arrays in such values but has no nested associative
+form, and a whole fixed-array variable has no leaf transfer to or from a
+lexical native value. The aggregate copy-in and copy-out are statements, which
+the lowering hoists only for the statement contexts listed above.
+
+### Intended direction
+
+Add a nested associative value form, give fixed-array variables the leaf
+transfer that record members already have, and hoist the copy statements into
+loop conditions.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_017/neg_assoc_message.sv`,
+`neg_array_variable.sv` and `neg_loop_condition.sv`.
+
 ## Suspended event-control waits keep a wake that arrives while suspended
 
 **Status:** open (SIM-015).

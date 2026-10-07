@@ -569,8 +569,15 @@ clocks, unsupported temporal/cross-clock forms or unrepresented copy-out. Deferr
 assertions retain issue-time values and Reactive actions under the single-call
 contract, rejecting unowned automatic/dynamic refs or timing/control actions.
 Mailboxes preserve typed copy/identity semantics and delegate waits/cancellation to
-runtime queues. Container kinds keep distinct storage, key conversion, notification
-and lifetime rules; another container's admitted operation is not a fallback.
+runtime queues. Aggregate messages (records, unpacked arrays, queues, dynamic
+arrays) go through a lexical native value of the message type
+(`collection/native_values/messages.rs`) and the SIM-003/SIM-006 transfers; their
+type identity is the static equivalence key `mailbox_message_key` (SV 6.22.2), and
+the runtime only compares it. Destinations that are not whole variables receive into
+a local and copy out after the retrieval with selectors frozen at the call (a `ref`
+argument, Annex G.4); expression-form `try_*` calls that need this are hoisted only
+before assignments, system-task calls and `if` conditions. Container kinds keep
+distinct storage, key conversion, notification and lifetime rules; another container's admitted operation is not a fallback.
 The frontend flattens `c[i][b]` into one select: split indices at the container
 depth. A packed select of an element is one read/modify/write with indices and
 RHS captured once, written back through the whole-element store. Mailbox element

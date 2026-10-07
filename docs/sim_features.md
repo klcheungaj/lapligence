@@ -1703,12 +1703,18 @@ These are bounded implementations, not full verification-infrastructure support.
   (SIM-016). SV §15.3 **[SV-2005]**.
 - 🟨 **Mailboxes** — Typed/untyped bounded/unbounded FIFO
   `new/num/put/get/peek/try_put/try_get/try_peek` supports packed, real/shortreal,
-  string and admitted handle messages with nominal enum/class/handle identity.
-  Empty, mismatch and delivery differ; mismatch preserves message/destination,
-  peek does not consume, and consuming delivery commits before callbacks.
-  Delivery survives admitted reentrancy/cancellation; fixed and resizable
-  mailbox arrays share mailboxes by handle. General aggregate messages and
-  arbitrary automatic native/shared captures reject (SIM-017).
+  string, record (string/real/queue/class members, nested), queue, dynamic-array
+  and pattern-built unpacked-array messages as deep copies, and class, event,
+  process, virtual-interface and mailbox handles by identity; untyped mailboxes
+  match nominal and SV 6.22 equivalent types. Empty, full and mismatch differ;
+  failed calls preserve message and destination, peek does not consume. Element,
+  member and select destinations keep the selectors of the call; a blocked
+  receiver writes on resume, and one killed first hands the message back to the
+  head. Mailbox handles work in arrays, queues, record members, class properties
+  and by-value/`ref` formals
+  ([sim_017](../tests/fixtures/sim/feature_completion/sim_017/readme.md)).
+  Associative-array messages, whole unpacked-array variable operands and
+  aggregate `try_get` in loop conditions reject (see known issues).
   SV §15.4 **[SV-2005]**.
 
 ### Assertions and sampled values — partial

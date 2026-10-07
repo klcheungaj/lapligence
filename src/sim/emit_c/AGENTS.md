@@ -320,9 +320,9 @@ between unrelated structures. Model registries retain cyclic objects until close
 this is not garbage collection.
 
 Mailbox payload capture follows all user operand effects. Remove a consumed node
-before callbacks; peek clones. Delivery snapshots and automatic destinations remain
-registered/pinned through reentrant publication and cancellation. Never cast an
-integer to a target pointer.
+before callbacks; peek clones. A blocking get emits `llg_mailbox_delivery_take`
+with the same destination right after its arm, so a suspended get writes only
+live storage on resume. Never cast an integer to a target pointer.
 
 DPI input strings remain borrowed for the call. Snapshot the foreign return and
 all string outputs before the first copy-out or input destruction, preserving
