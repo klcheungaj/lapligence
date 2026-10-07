@@ -216,6 +216,13 @@ impl Frame<'_, '_> {
                     ),
                 }
             }
+            IrNativeAccessKind::InterfaceMember { interface, member }
+                if self.ctx.model.virtual_interfaces[interface].members[member].real =>
+            {
+                format!(
+                    "{{ .real = llg_vif_real_member_quiet({receiver}, {interface}, {member}) }}"
+                )
+            }
             IrNativeAccessKind::InterfaceMember { interface, member } => format!(
                 "{{ .sig = llg_dependency_or_never(llg_vif_member_dependency({receiver}, {interface}, {member})) }}"
             ),

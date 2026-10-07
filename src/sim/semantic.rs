@@ -1188,6 +1188,8 @@ fn is_declaration_only_unknown(detail: Option<&str>) -> bool {
                 | "LocalAssertionVar"
                 | "ClockingBlock"
                 | "ClockingBlockPort"
+                // `modport m(clocking cb)` only exports the interface's block.
+                | "ModportClocking"
                 | "Constraint"
                 | "ExplicitImport"
                 | "Export"

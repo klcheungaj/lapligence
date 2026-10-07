@@ -468,7 +468,15 @@ Reals stay numeric (SIM-005): real `ref` formals bind the actual's cell
 `IrArray` storage (`collection/real_arrays.rs`), and non-storage real-array
 values lower to per-element expressions (`containers/real_array_values.rs`,
 bounded by `REAL_ARRAY_ELEMENTWISE_LIMIT`). Never encode a real as packed bits
-except as the exact 64-bit image a sampled history transports.
+except as the exact 64-bit image a sampled history or a clocking-input
+expression image transports.
+Clocking inputs (SIM-033, `clocking_context.rs`): a clockvar bound to a plain
+reference samples that signal; any other expression (select, concatenation,
+computed, real) gets a hidden image signal kept equal to it by a synthetic
+process plus a declaration-phase initializer, so Preponed at time 0 already
+sees it. Every clockvar has one static sample cell of its own type; reads of
+`cb.x`, its members and selects resolve to that cell, writes (outputs/inouts)
+to the source. Sample types are limited to packed, real and shortreal.
 Resizable containers in subroutine, procedural-block and class storage
 (SIM-006) use `collection/subroutine_containers.rs`: storage per (instance,
 declaration), bound into `container_globals` for the body being lowered, with

@@ -209,7 +209,7 @@ pub(in crate::sim::emit_c) fn main(
     }
     if !model.virtual_interfaces.is_empty() {
         out.push_str(
-            "    (void)llg_vif_member; (void)llg_vif_read; (void)llg_vif_member_quiet; (void)llg_vif_member_dependency;\n",
+            "    (void)llg_vif_member; (void)llg_vif_read; (void)llg_vif_member_quiet; (void)llg_vif_member_dependency; (void)llg_vif_real_member; (void)llg_vif_real_member_quiet;\n",
         );
         for (interface_id, interface) in model.virtual_interfaces.iter().enumerate() {
             for instance in &interface.instances {

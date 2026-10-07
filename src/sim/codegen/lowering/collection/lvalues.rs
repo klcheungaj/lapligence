@@ -11,6 +11,19 @@ impl<'a> Codegen<'a> {
         node: NodeId,
     ) -> Result<(String, SignalInfo), String> {
         let name = self.node(node).name.clone();
+        // A clockvar names its sampled storage (SV §14.13).
+        let clockvar = match self.kind(node) {
+            NodeKind::Expr(
+                ExprKind::ScopeRef { target }
+                | ExprKind::Ref {
+                    target: Some(target),
+                },
+            ) => *target,
+            _ => node,
+        };
+        if let Some(info) = self.sampled_signal_of(clockvar) {
+            return Ok((info.global.clone(), info.clone()));
+        }
         match self.kind(node) {
             NodeKind::Net { .. } | NodeKind::Var { .. } => {
                 if let Some(info) = self.signal_of(node) {
@@ -412,16 +425,23 @@ impl<'a> Codegen<'a> {
             .clocking_var_target(lhs)
             .or_else(|| self.db.is_clocking_var(lhs).then_some(lhs))
         {
-            let info = self
-                .clocking_var_source_info(target)
-                .cloned()
+            if let Some(info) = self.clocking_var_source_info(target).cloned() {
+                return Ok(Lhs::Whole(info));
+            }
+            // A clockvar bound to a select or concatenation drives the lvalue
+            // its clocking expression names (SV §14.5).
+            let expression = self
+                .db
+                .clocking_var(target)
+                .map(|var| var.expression)
+                .filter(|expression| *expression != lhs)
                 .ok_or_else(|| {
                     format!(
                         "clocking member `{}` has no writable source in `{path}`",
                         self.node(target).name
                     )
                 })?;
-            return Ok(Lhs::Whole(info));
+            return self.analyze_lhs(path, expression);
         }
         match self.kind(lhs) {
             NodeKind::Expr(ExprKind::Streaming {

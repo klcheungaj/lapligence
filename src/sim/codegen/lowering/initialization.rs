@@ -5,7 +5,7 @@ use super::*;
 mod order;
 
 impl<'a> Codegen<'a> {
-    fn declaration_init_phase(&self) -> IrInitPhase {
+    pub(super) fn declaration_init_phase(&self) -> IrInitPhase {
         if self.db.edition() == LanguageEdition::SystemVerilog2009 {
             IrInitPhase::BeforeProcesses
         } else {
@@ -214,10 +214,7 @@ impl<'a> Codegen<'a> {
         let mut sampled_sources: Vec<(usize, usize)> = self
             .clocking_samples
             .values()
-            .filter_map(|sample| {
-                self.signal_of(sample.source)
-                    .map(|source| (source.ir, sample.sample.ir))
-            })
+            .map(|sample| (sample.source.ir, sample.sample.ir))
             .collect();
         sampled_sources.sort_unstable();
         sampled_sources.dedup_by_key(|(source, _)| *source);

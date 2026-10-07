@@ -484,7 +484,7 @@ impl<'a> Codegen<'a> {
         Self::fixed_descriptor_width(descriptor)
     }
 
-    pub(super) fn signal_width(
+    pub(in super::super) fn signal_width(
         &self,
         path: &str,
         name: &str,

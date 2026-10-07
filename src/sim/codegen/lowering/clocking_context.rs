@@ -9,7 +9,7 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn clocking_var_source_info(&self, target: NodeId) -> Option<&SignalInfo> {
-        let source = self.db.clocking_var(target)?.source;
+        let source = self.db.clocking_var(target)?.source?;
         self.signal_of(source)
     }
 
@@ -104,6 +104,12 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn default_clocking_block(&self, inst: NodeId) -> Option<NodeId> {
+        if let Some(block) = self
+            .owner_instance(inst)
+            .and_then(|inst| self.db.default_clocking(inst))
+        {
+            return Some(block);
+        }
         let mut current = Some(inst);
         while let Some(scope) = current {
             if let Some(block) = self.node(scope).children.iter().copied().find(|child| {
@@ -174,7 +180,10 @@ impl<'a> Codegen<'a> {
     /// Allocate one hidden sampled storage cell for every input/inout clocking
     /// member. Sources are resolved through the ordinary signal table after
     /// net groups have been built, so aliases and resolved nets retain their
-    /// canonical storage identity.
+    /// canonical storage identity. A clockvar bound to anything but one whole
+    /// packed signal also gets a hidden packed image of its expression, which
+    /// `emit_clocking_processes` keeps current; the sample has the clockvar's
+    /// own type (SV §14.5).
     pub(super) fn collect_clocking_storage(&mut self) -> Result<(), String> {
         let design: HashSet<NodeId> = self.design_nodes().into_iter().collect();
         let blocks: Vec<NodeId> = self
@@ -194,7 +203,7 @@ impl<'a> Codegen<'a> {
             let event = self.new_event_info(format!("E_clocking_{}", block.index()));
             self.event_globals.insert(block, event);
             for var in self.node(block).children.iter().copied() {
-                let Some(var_info) = self.db.clocking_var(var) else {
+                let Some(var_info) = self.db.clocking_var(var).cloned() else {
                     continue;
                 };
                 if !matches!(var_info.direction, DbDirection::Input | DbDirection::Inout) {
@@ -203,61 +212,246 @@ impl<'a> Codegen<'a> {
                 if self.clocking_samples.contains_key(&var) {
                     continue;
                 }
-                let source = self.signal_of(var_info.source).cloned().ok_or_else(|| {
-                    format!(
-                        "clocking variable `{}` source `{}` is not a collected packed signal in `{scope}`",
-                        self.node(var).name,
-                        self.node(var_info.source).full_name
-                    )
-                })?;
-                if source.real {
-                    return Err(format!(
-                        "real-valued clocking input `{}` is not supported in `{scope}`",
-                        self.node(var).name
-                    ));
-                }
-                if source.width > LLG_MAX_WIDTH {
-                    return Err(format!(
-                        "clocking input `{}` in `{scope}` exceeds the runtime width limit",
-                        self.node(var).name
-                    ));
-                }
-                let global =
-                    self.c_name("G", &scope, &[&block_name, &self.node(var).name, "sample"]);
-                let ir = self.model.signals.len();
-                let sample = SignalInfo {
-                    global: global.clone(),
-                    width: source.width,
-                    signed: source.signed,
-                    two_state: source.two_state,
-                    real: false,
-                    shortreal: false,
-                    net_driver: None,
-                    ir,
+                let var_name = self.node(var).name.clone();
+                let direct = var_info
+                    .source
+                    .and_then(|source| self.signal_of(source))
+                    .filter(|source| !source.real)
+                    .cloned();
+                let sample_global = |cg: &Self, prefix: &str| {
+                    cg.c_name(prefix, &scope, &[&block_name, &var_name, "sample"])
                 };
-                self.model.signals.push(IrSignal {
-                    fixed_default: None,
-                    c_name: global,
-                    hdl_name: None,
-                    ty: IrType::Packed {
-                        width: source.width,
-                        signed: source.signed,
-                        two_state: source.two_state,
-                    },
-                    net_driver: None,
-                    net_alias: Vec::new(),
-                    alias: None,
-                    omit: false,
-                });
-                self.signals.push(sample.clone());
-                self.clocking_samples.insert(
-                    var,
-                    ClockingSampleInfo {
-                        source: var_info.source,
-                        sample,
-                    },
-                );
+                let (source, sample) = if let Some(source) = direct {
+                    if source.width > LLG_MAX_WIDTH {
+                        return Err(format!(
+                            "clocking input `{var_name}` in `{scope}` exceeds the runtime width limit"
+                        ));
+                    }
+                    let global = sample_global(self, "G");
+                    let sample = self.push_clocking_signal(
+                        global,
+                        IrType::Packed {
+                            width: source.width,
+                            signed: source.signed,
+                            two_state: source.two_state,
+                        },
+                    );
+                    (source, sample)
+                } else {
+                    let ty = self.clocking_var_value_type(var, &scope)?;
+                    let real = matches!(ty, IrType::Real { .. });
+                    // A real value travels through the packed sampler as its
+                    // exact IEEE image; a shortreal widens to real exactly.
+                    let image_ty = if real {
+                        IrType::Packed {
+                            width: 64,
+                            signed: false,
+                            two_state: true,
+                        }
+                    } else {
+                        ty
+                    };
+                    let image_global = self.c_name("G", &scope, &[&block_name, &var_name, "image"]);
+                    let image = self.push_clocking_signal(image_global, image_ty);
+                    let global = sample_global(self, if real { "D" } else { "G" });
+                    let sample = self.push_clocking_signal(global, ty);
+                    self.clocking_expression_sources
+                        .push(ClockingExpressionSource {
+                            variable: var,
+                            expression: var_info.expression,
+                            image: image.clone(),
+                            real,
+                        });
+                    (image, sample)
+                };
+                self.clocking_samples
+                    .insert(var, ClockingSampleInfo { source, sample });
             }
+        }
+        Ok(())
+    }
+
+    /// The sampled storage type of an expression-backed clockvar: its own
+    /// declared type, limited to packed integral and real values.
+    fn clocking_var_value_type(&self, var: NodeId, scope: &str) -> Result<IrType, String> {
+        let name = &self.node(var).name;
+        let NodeKind::Var { ty } = self.kind(var) else {
+            return Err(format!(
+                "clocking member `{name}` in `{scope}` is not a variable declaration"
+            ));
+        };
+        if ty.kind == "chandle" {
+            // A clocking input must be a legal input port connection (SV
+            // §14.5), and ports shall not have the chandle type (§6.14).
+            return Err(format!(
+                "chandle clocking input `{name}` in `{scope}` is illegal: chandles cannot be \
+                 clocking signals (SV 6.14, 14.5)"
+            ));
+        }
+        let unsupported = || {
+            format!(
+                "clocking input `{name}` in `{scope}` has type `{}`; sampled clockvars are \
+                 limited to packed integral, real and shortreal values",
+                self.db
+                    .type_descriptor(var)
+                    .map_or(ty.kind.as_str(), |descriptor| descriptor.name.as_str())
+            )
+        };
+        match self
+            .db
+            .type_descriptor(var)
+            .map(|descriptor| &descriptor.shape)
+        {
+            Some(TypeShape::Real { shortreal }) => {
+                return Ok(IrType::Real {
+                    shortreal: *shortreal,
+                })
+            }
+            Some(TypeShape::PackedAtom { .. }) | None => {}
+            Some(_) => return Err(unsupported()),
+        }
+        if is_real_kind(&ty.kind) {
+            return Ok(IrType::Real {
+                shortreal: ty.kind == "shortreal",
+            });
+        }
+        let width = self
+            .signal_width(scope, name, ty)
+            .map_err(|_| unsupported())?;
+        if width == 0 {
+            return Err(unsupported());
+        }
+        Ok(IrType::Packed {
+            width,
+            signed: ty.signed,
+            two_state: self.db.is_two_state_type(var) || is_two_state_kind(&ty.kind),
+        })
+    }
+
+    /// Register one hidden clocking storage cell in the model.
+    fn push_clocking_signal(&mut self, global: String, ty: IrType) -> SignalInfo {
+        let ir = self.model.signals.len();
+        let (width, signed, two_state, real, shortreal) = match ty {
+            IrType::Packed {
+                width,
+                signed,
+                two_state,
+            } => (width, signed, two_state, false, false),
+            IrType::Real { shortreal } => (0, false, false, true, shortreal),
+        };
+        let info = SignalInfo {
+            global: global.clone(),
+            width,
+            signed,
+            two_state,
+            real,
+            shortreal,
+            net_driver: None,
+            ir,
+        };
+        self.model.signals.push(IrSignal {
+            fixed_default: None,
+            c_name: global,
+            hdl_name: None,
+            ty,
+            net_driver: None,
+            net_alias: Vec::new(),
+            alias: None,
+            omit: false,
+        });
+        self.signals.push(info.clone());
+        info
+    }
+
+    /// The packed image value of an expression-backed clockvar.
+    fn clocking_image_value(
+        &mut self,
+        path: &str,
+        source: &ClockingExpressionSource,
+    ) -> Result<IrExpr, String> {
+        let value = self.lower_expr(path, source.expression)?;
+        if source.real {
+            let value = if value.is_real() {
+                value
+            } else {
+                IrExpr::new(
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::Itor(Box::new(value)))),
+                    0,
+                    false,
+                    None,
+                )
+            };
+            return Ok(IrExpr::new(
+                IrExprKind::SysFunc(Box::new(IrSysFunc::RealToBits(Box::new(value)))),
+                64,
+                false,
+                None,
+            ));
+        }
+        let image = &source.image;
+        let value = apply_assignment_expression_width(value, image.width);
+        ir_to_storage(value, image.width, image.signed, image.two_state)
+    }
+
+    /// Keep every expression-backed clockvar image equal to its expression:
+    /// a static initializer gives the Preponed region of time zero the
+    /// declaration-time value, and a synthetic continuous evaluation follows
+    /// later changes, so every input skew samples the settled expression.
+    fn emit_clocking_expression_sources(&mut self) -> Result<(), String> {
+        for source in self.clocking_expression_sources.clone() {
+            let block = self
+                .db
+                .clocking_var(source.variable)
+                .map(|info| info.block)
+                .ok_or_else(|| "clocking expression source lost its declaration".to_owned())?;
+            let parent = self.node(block).parent.ok_or_else(|| {
+                format!(
+                    "clocking block `{}` has no owning instance",
+                    self.node(block).name
+                )
+            })?;
+            let path = self.instance_path_of(parent);
+            // Callee resolution and hierarchical names use the owning instance.
+            self.inst = parent;
+            let initial = self.clocking_image_value(&path, &source)?;
+            self.record_initializer_source(source.variable, source.expression);
+            let initialization = IrInitialization::new(
+                self.declaration_identity(source.variable)?,
+                StorageLifetime::Static,
+                self.declaration_init_phase(),
+                IrInitTarget::Signal(source.image.ir),
+                initial,
+                self.origin(source.variable),
+            );
+            self.declaration_inits.push(initialization);
+            let value = self.clocking_image_value(&path, &source)?;
+            let reads = self.collect_read_signals(&path, source.expression)?;
+            let shape = if reads.is_empty() {
+                IrShape::RunOnce
+            } else {
+                IrShape::SensLoop { reads }
+            };
+            let variable = self.node(source.variable).name.clone();
+            let block_name = self.node(block).name.clone();
+            let process_name =
+                self.new_fn_name(&path, &format!("clocking_{block_name}_{variable}_image"));
+            self.model.processes.push(IrProcess::new_with_origin(
+                process_name,
+                format!("{path}.{block_name}.{variable}"),
+                shape,
+                Vec::new(),
+                vec![IrStmt::Assign {
+                    lhs: IrLhs::Whole(source.image.ir),
+                    rhs: value,
+                    nba: false,
+                }],
+                crate::sim::semantic::Origin::Synthetic {
+                    reason: format!(
+                        "clocking input expression of {}",
+                        self.node(source.variable).full_name
+                    ),
+                },
+            ));
         }
         Ok(())
     }
@@ -265,8 +459,17 @@ impl<'a> Codegen<'a> {
     fn clocking_sample_mode(
         &mut self,
         skew: &ClockingSkew,
+        variable: NodeId,
         path: &str,
     ) -> Result<IrClockingSampleMode, String> {
+        if !matches!(skew.edge, ClockingEdge::None) {
+            // SV §14.3 allows an edge skew but does not define which sample
+            // an input takes at it; reject rather than silently use #1step.
+            return Err(format!(
+                "edge-qualified input skew of clocking input `{}` in `{path}` is not supported",
+                self.node(variable).name
+            ));
+        }
         let Some(delay) = skew.delay else {
             return Ok(IrClockingSampleMode::OneStep);
         };
@@ -291,6 +494,7 @@ impl<'a> Codegen<'a> {
     /// distinct block event after its Observed samples;
     /// input skews override block defaults and an omitted skew means #1step.
     pub(super) fn emit_clocking_processes(&mut self) -> Result<(), String> {
+        self.emit_clocking_expression_sources()?;
         let blocks: Vec<NodeId> = self
             .design_nodes()
             .into_iter()
@@ -332,11 +536,8 @@ impl<'a> Codegen<'a> {
                 } else {
                     &block_info.default_input
                 };
-                let mode = self.clocking_sample_mode(skew, &path)?;
-                let source = self
-                    .signal_of(storage.source)
-                    .ok_or_else(|| "clocking source storage disappeared".to_owned())?
-                    .ir;
+                let mode = self.clocking_sample_mode(skew, var, &path)?;
+                let source = storage.source.ir;
                 if let IrClockingSampleMode::History(ticks) = mode {
                     let deepest = self.clocking_history_ticks.entry(source).or_default();
                     *deepest = (*deepest).max(ticks);

@@ -408,6 +408,7 @@ impl<'a> Codegen<'a> {
                 }
                 let info = self
                     .signal_of(target)
+                    .or_else(|| self.sampled_signal_of(target))
                     .or_else(|| self.static_proc_local_signal(target))
                     .or_else(|| self.hier_path_signal(node));
                 return info
@@ -2042,6 +2043,7 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::Ref { target: Some(t) }) => {
                 if let Some(info) = self
                     .signal_of(*t)
+                    .or_else(|| self.sampled_signal_of(*t))
                     .or_else(|| self.static_proc_local_signal(*t))
                 {
                     self.add_dependency(self.signal_dependency(info), seen, out);

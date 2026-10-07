@@ -816,7 +816,7 @@ impl<'a> Codegen<'a> {
         }
         if !matches!(self.kind(h), NodeKind::Expr(ExprKind::Cast { .. }))
             && (self.array_of(h).is_some() || self.unpacked_aggregate_info(h).is_some())
-            && self.packed_member_info(h).is_none()
+            && self.packed_member_read_info(h).is_none()
         {
             if let Some(value) = self.lower_bitstream_source(scope_path, h)? {
                 return Ok(value);
@@ -1275,7 +1275,7 @@ impl<'a> Codegen<'a> {
                 }
                 let mut l = self.eval_bound_i128(*left)?;
                 let mut r = self.eval_bound_i128(*right)?;
-                if let Some((_, member)) = self.packed_member_info(*base) {
+                if let Some((_, member)) = self.packed_member_read_info(*base) {
                     l = i128::from(self.aggregate_member_relative_bound(
                         &member.name,
                         &member.packed_ranges,
@@ -1617,7 +1617,7 @@ impl<'a> Codegen<'a> {
                         member_value
                     });
                 }
-                if let Some((info, member)) = self.packed_member_info(h) {
+                if let Some((info, member)) = self.packed_member_read_info(h) {
                     let base = self.signal_read_expr(&info)?;
                     let member_value = IrExpr::new(
                         IrExprKind::PartSel {

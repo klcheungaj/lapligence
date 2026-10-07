@@ -64,7 +64,7 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
              sv4_t *member = llg_vif_member_dependency(raw, interface_id, slot);\n\
              return member ? member : &llg_vif_invalid;\n\
          }}\n\n\
-         static sv4_t llg_vif_read(void *raw, uint32_t interface_id,\n\
+         /* A real member slot holds the address of its `double` storage. A\n          * failed access yields never-changing scratch storage. */\n         static double llg_vif_invalid_real;\n\n         static double *llg_vif_real_member(void *raw, uint32_t interface_id,\n                                            uint32_t slot, const char *site) {{\n             sv4_t *member = llg_vif_member(raw, interface_id, slot, site);\n             return member == &llg_vif_invalid ? &llg_vif_invalid_real\n                                               : (double *)(void *)member;\n         }}\n\n         static double *llg_vif_real_member_quiet(void *raw, uint32_t interface_id,\n                                                  uint32_t slot) {{\n             sv4_t *member = llg_vif_member_dependency(raw, interface_id, slot);\n             return member ? (double *)(void *)member : &llg_vif_invalid_real;\n         }}\n\n         static sv4_t llg_vif_read(void *raw, uint32_t interface_id,\n\
                                    uint32_t slot, uint32_t width, int8_t is_signed,\n\
                                    const char *site) {{\n\
              return sv4_resize(*llg_vif_member(raw, interface_id, slot, site),\n\
@@ -78,7 +78,13 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
                 .iter()
                 .map(|signal| {
                     signal
-                        .map(|index| format!("&{}", signal_storage_name(model, index)))
+                        .map(|index| {
+                            if matches!(model.signals[index].ty, IrType::Real { .. }) {
+                                format!("(sv4_t *)(void *)&{}", signal_storage_name(model, index))
+                            } else {
+                                format!("&{}", signal_storage_name(model, index))
+                            }
+                        })
                         .unwrap_or_else(|| "NULL".to_owned())
                 })
                 .collect::<Vec<_>>();

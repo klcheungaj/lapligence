@@ -14,7 +14,10 @@ impl<'a> Codegen<'a> {
             return Some(info);
         }
         if let Some(target) = self.clocking_var_target(node) {
-            if let Some(info) = self.clocking_var_source_info(target) {
+            if let Some(info) = self
+                .sampled_signal_of(target)
+                .or_else(|| self.clocking_var_source_info(target))
+            {
                 return Some(info);
             }
         }
@@ -135,11 +138,30 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn packed_member_info(&self, node: NodeId) -> Option<(SignalInfo, PackedMember)> {
+        self.packed_member_storage(node, false)
+    }
+
+    /// [`Self::packed_member_info`] for a read: a clockvar member (`cb.s.a`)
+    /// selects from the clockvar's sampled value (SV §14.13), while its
+    /// drives keep targeting the clocking signal.
+    pub(super) fn packed_member_read_info(
+        &self,
+        node: NodeId,
+    ) -> Option<(SignalInfo, PackedMember)> {
+        self.packed_member_storage(node, true)
+    }
+
+    fn packed_member_storage(
+        &self,
+        node: NodeId,
+        read: bool,
+    ) -> Option<(SignalInfo, PackedMember)> {
         let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) else {
             return None;
         };
         let (target, base_index) = self.hier_path_signal_target(parts, refs)?;
-        let info = self.signal_of(target)?.clone();
+        let sampled = read.then(|| self.sampled_signal_of(target)).flatten();
+        let info = sampled.or_else(|| self.signal_of(target))?.clone();
         Some((
             info,
             self.packed_member_layout(target, &parts[base_index + 1..])?,
@@ -867,7 +889,7 @@ impl<'a> Codegen<'a> {
         let target = self
             .db
             .is_clocking_var(target)
-            .then(|| self.db.clocking_var(target).map(|var| var.source))
+            .then(|| self.db.clocking_var(target).and_then(|var| var.source))
             .flatten()
             .unwrap_or(target);
         let Some(dimensions) = self.db.packed_dimensions(target) else {
@@ -946,7 +968,7 @@ impl<'a> Codegen<'a> {
                 let target = self
                     .clocking_var_target(base)
                     .or_else(|| self.db.is_clocking_var(base).then_some(base))
-                    .and_then(|target| self.db.clocking_var(target).map(|var| var.source))
+                    .and_then(|target| self.db.clocking_var(target).and_then(|var| var.source))
                     .unwrap_or(base);
                 self.db.packed_dimensions(target).map(ToOwned::to_owned)
             }

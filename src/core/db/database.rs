@@ -265,6 +265,9 @@ pub struct Db {
     clocking_blocks: HashMap<NodeId, ClockingBlockInfo>,
     /// Clocking block variables and the source signal each samples.
     clocking_vars: HashMap<NodeId, ClockingVarInfo>,
+    /// Default clocking block in effect for each elaborated instance, as the
+    /// frontend resolved it, including `default clocking id;` references.
+    default_clockings: HashMap<NodeId, NodeId>,
     /// Direction of each captured modport port. This is kept separately from
     /// `NodeKind::ModPort` so the frontend-neutral node shape remains stable.
     modport_directions: HashMap<NodeId, Direction>,
@@ -334,6 +337,7 @@ impl Db {
             source_identities: HashMap::new(),
             clocking_blocks: HashMap::new(),
             clocking_vars: HashMap::new(),
+            default_clockings: HashMap::new(),
             modport_directions: HashMap::new(),
             modport_expressions: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
@@ -402,6 +406,7 @@ impl Db {
             source_identities: HashMap::new(),
             clocking_blocks: HashMap::new(),
             clocking_vars: HashMap::new(),
+            default_clockings: HashMap::new(),
             modport_directions: HashMap::new(),
             modport_expressions: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
@@ -629,6 +634,18 @@ impl Db {
     /// All owned clocking-variable metadata keyed by declaration identity.
     pub fn clocking_vars(&self) -> &HashMap<NodeId, ClockingVarInfo> {
         &self.clocking_vars
+    }
+
+    /// The default clocking block in effect for elaborated instance `id`
+    /// (IEEE 1800-2009 14.12), whether declared `default clocking` there or
+    /// named by a `default clocking id;` item.
+    pub fn default_clocking(&self, id: NodeId) -> Option<NodeId> {
+        self.default_clockings.get(&id).copied()
+    }
+
+    /// All default clocking assignments keyed by instance.
+    pub fn default_clockings(&self) -> &HashMap<NodeId, NodeId> {
+        &self.default_clockings
     }
 
     pub fn is_clocking_block(&self, id: NodeId) -> bool {

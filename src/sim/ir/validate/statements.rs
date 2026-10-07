@@ -654,13 +654,19 @@ impl Validator<'_> {
                         format!("clocking sample index {sample} is out of bounds"),
                     );
                 };
-                if !matches!(source_signal.ty, IrType::Packed { .. })
-                    || !matches!(sample_signal.ty, IrType::Packed { .. })
-                    || source_signal.ty.width() != sample_signal.ty.width()
-                {
+                // A real sample decodes the 64-bit image its source keeps.
+                let matching = match (source_signal.ty, sample_signal.ty) {
+                    (IrType::Packed { .. }, IrType::Packed { .. }) => {
+                        source_signal.ty.width() == sample_signal.ty.width()
+                    }
+                    (IrType::Packed { width, .. }, IrType::Real { .. }) => width == 64,
+                    _ => false,
+                };
+                if !matching {
                     return self.fail(
                         path,
-                        "clocking sample source and destination must be matching packed signals",
+                        "clocking sample source and destination must be matching packed signals \
+                         or a 64-bit image and a real sample",
                     );
                 }
                 // The runtime retains a source's history only as deep as its

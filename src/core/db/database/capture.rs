@@ -293,6 +293,7 @@ impl Db {
         let mut packed_dimensions = HashMap::new();
         let mut clocking_blocks = HashMap::new();
         let mut clocking_vars = HashMap::new();
+        let mut default_clockings = HashMap::new();
         let dpi_imports = snapshot
             .semantic_nodes
             .iter()
@@ -395,7 +396,11 @@ impl Db {
                                     if instance_array {
                                         edge.role == SemanticEdgeRole::Child
                                     } else {
+                                        // The default clocking edge names a
+                                        // block owned elsewhere or already a
+                                        // child.
                                         edge.role != SemanticEdgeRole::Reference
+                                            && edge.role != SemanticEdgeRole::Clocking
                                     }
                                 })
                                 .filter(|edge| {
@@ -491,6 +496,42 @@ impl Db {
                     },
                 );
             }
+            if semantic.kind == SemanticKind::Instance && semantic.subkind != 193 {
+                // The instance body carries the frontend's resolved default
+                // clocking as an extra clocking edge.
+                for edge in edges
+                    .iter()
+                    .filter(|edge| edge.role == SemanticEdgeRole::Child)
+                {
+                    let body = snapshot
+                        .semantic_nodes
+                        .get(edge.target_id as usize)
+                        .ok_or_else(|| {
+                            DbError::InvalidSnapshot("instance body is missing".into())
+                        })?;
+                    if body.kind != SemanticKind::Scope || body.subkind != 194 {
+                        continue;
+                    }
+                    let Some(block) = edge_target(
+                        &ids,
+                        semantic_edges(snapshot, body)?,
+                        SemanticEdgeRole::Clocking,
+                    )?
+                    else {
+                        continue;
+                    };
+                    let block_node = snapshot.semantic_nodes.get(block.index());
+                    if !block_node.is_some_and(|node| {
+                        node.kind == SemanticKind::Scope
+                            && node.subkind == SEMANTIC_SCOPE_CLOCKING_BLOCK
+                    }) {
+                        return Err(DbError::InvalidSnapshot(
+                            "default clocking does not name a clocking block".into(),
+                        ));
+                    }
+                    default_clockings.insert(id, block);
+                }
+            }
             if semantic.kind == SemanticKind::Variable
                 && semantic.subkind == SEMANTIC_VARIABLE_CLOCKING
             {
@@ -500,10 +541,7 @@ impl Db {
                             "clocking variable has no source expression".into(),
                         )
                     })?;
-                let source = clocking_source_from_expression(snapshot, &ids, initializer, 0)?
-                    .ok_or_else(|| {
-                        DbError::InvalidSnapshot("clocking variable source is unresolved".into())
-                    })?;
+                let source = clocking_source_from_expression(snapshot, &ids, initializer, 0)?;
                 let parent_raw = semantic
                     .parent_id()
                     .and_then(|parent| snapshot.semantic_nodes.get(parent as usize));
@@ -528,6 +566,7 @@ impl Db {
                     ClockingVarInfo {
                         block,
                         source,
+                        expression: initializer,
                         direction: direction_from_slang(semantic),
                         input: clocking_skew_from_slang(
                             snapshot,
@@ -1138,6 +1177,7 @@ impl Db {
             source_identities,
             clocking_blocks,
             clocking_vars,
+            default_clockings,
             modport_directions,
             modport_expressions,
             virtual_interface_targets,

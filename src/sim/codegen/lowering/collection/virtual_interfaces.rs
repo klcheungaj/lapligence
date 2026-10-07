@@ -398,6 +398,30 @@ impl<'a> Codegen<'a> {
                             NodeKind::FuncTask { .. } => {
                                 methods.insert(self.node(port).name.clone());
                             }
+                            _ if self.db.semantic_detail(port) == Some("ModportClocking") => {
+                                // `modport m(clocking cb)` exports every
+                                // clockvar of the interface's block `cb`
+                                // with its clocking direction (SV §25.5).
+                                let name = &self.node(port).name;
+                                let block =
+                                    self.node(interface).children.iter().copied().find(|block| {
+                                        self.db.is_clocking_block(*block)
+                                            && self.node(*block).name == *name
+                                    });
+                                // The block event itself is read-only.
+                                members.insert(name.clone(), DbDirection::Input);
+                                for variable in block
+                                    .map(|block| self.node(block).children.clone())
+                                    .unwrap_or_default()
+                                {
+                                    if let Some(info) = self.db.clocking_var(variable) {
+                                        members.insert(
+                                            format!("{name}.{}", self.node(variable).name),
+                                            info.direction,
+                                        );
+                                    }
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -440,18 +464,20 @@ impl<'a> Codegen<'a> {
                     let signal = member_info.get(name).ok_or_else(|| {
                         format!("virtual interface member `{name}` has no signal metadata")
                     })?;
-                    if signal.real || signal.width == 0 || signal.width > LLG_MAX_WIDTH {
+                    if !signal.real && (signal.width == 0 || signal.width > LLG_MAX_WIDTH) {
                         return Err(format!(
-                            "virtual interface member `{name}` must be a packed signal within the runtime width limit"
+                            "virtual interface member `{name}` must be a real or packed signal within the runtime width limit"
                         ));
                     }
                     self.virtual_interface_members
                         .insert((descriptor_index, name.clone()), member_index);
                     Ok(IrVirtualInterfaceMember {
                         name: name.clone(),
-                        width: signal.width,
-                        signed: signal.signed,
+                        width: if signal.real { 0 } else { signal.width },
+                        signed: signal.signed && !signal.real,
                         two_state: signal.two_state,
+                        real: signal.real,
+                        shortreal: signal.shortreal,
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?;

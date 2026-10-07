@@ -297,10 +297,25 @@ impl Validator<'_> {
                     "clocking variable references an unknown clocking block",
                 );
             }
-            self.node(
-                metadata.source,
-                &format!("clocking_vars[{}].source", variable.0),
+            if let Some(source) = metadata.source {
+                self.node(source, &format!("clocking_vars[{}].source", variable.0))?;
+            }
+            let expression = self.node(
+                metadata.expression,
+                &format!("clocking_vars[{}].expression", variable.0),
             )?;
+            if !matches!(
+                expression.kind,
+                NodeKind::Expr(_)
+                    | NodeKind::FuncCall { .. }
+                    | NodeKind::SysCall { .. }
+                    | NodeKind::MethodCall { .. }
+            ) {
+                return self.fail(
+                    format!("clocking_vars[{}].expression", variable.0),
+                    "clocking variable expression is not an expression",
+                );
+            }
             for (name, skew) in [("input", &metadata.input), ("output", &metadata.output)] {
                 if let Some(delay) = skew.delay {
                     self.node(
@@ -314,6 +329,14 @@ impl Validator<'_> {
                         &format!("clocking_vars[{}].{name}.delay_expression", variable.0),
                     )?;
                 }
+            }
+        }
+
+        for (instance, block) in self.db.default_clockings() {
+            let path = format!("default_clockings[{}]", instance.0);
+            self.node(*instance, &path)?;
+            if !self.db.clocking_blocks().contains_key(block) {
+                return self.fail(path, "default clocking names an unknown clocking block");
             }
         }
 

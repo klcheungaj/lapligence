@@ -507,17 +507,31 @@ impl Frame<'_, '_> {
                 sample,
                 mode,
             } => {
+                let real = matches!(self.ctx.model.signal(*sample).ty, IrType::Real { .. });
                 let source = self.canonical_signal(*source);
-                let sample = self.canonical_signal(*sample);
-                self.line(match mode {
-                    IrClockingSampleMode::OneStep => {
-                        format!("(void)llg_sampled_copy({source}, {sample});")
+                let sample = if real {
+                    format!("&{}", self.ctx.model.signal(*sample).c_name)
+                } else {
+                    self.canonical_signal(*sample)
+                };
+                self.line(match (mode, real) {
+                    (IrClockingSampleMode::OneStep, false) => {
+                        format!("(void)llg_clocking_sample({source}, {sample});")
                     }
-                    IrClockingSampleMode::Observed => {
+                    (IrClockingSampleMode::OneStep, true) => {
+                        format!("(void)llg_clocking_sample_real({source}, {sample});")
+                    }
+                    (IrClockingSampleMode::Observed, false) => {
                         format!("(void)llg_clocking_sample_observed({source}, {sample});")
                     }
-                    IrClockingSampleMode::History(ticks) => format!(
+                    (IrClockingSampleMode::Observed, true) => {
+                        format!("(void)llg_clocking_sample_observed_real({source}, {sample});")
+                    }
+                    (IrClockingSampleMode::History(ticks), false) => format!(
                         "(void)llg_clocking_sample_history({source}, {sample}, {ticks}ULL);"
+                    ),
+                    (IrClockingSampleMode::History(ticks), true) => format!(
+                        "(void)llg_clocking_sample_history_real({source}, {sample}, {ticks}ULL);"
                     ),
                 });
             }

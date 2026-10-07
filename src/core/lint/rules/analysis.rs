@@ -42,7 +42,13 @@ pub fn signal_of_ref(db: &Db, id: NodeId) -> Option<NodeId> {
     }
     match db.node_kind(id) {
         NodeKind::Net { .. } | NodeKind::Var { .. } | NodeKind::Array { .. } => {
-            Some(db.clocking_var(id).map_or(id, |var| var.source))
+            // A clockvar stands for its clocking signal; one bound to a
+            // select resolves to the selected signal (SV §14.5).
+            Some(
+                db.clocking_var(id)
+                    .and_then(|var| var.source.or_else(|| signal_of_ref(db, var.expression)))
+                    .unwrap_or(id),
+            )
         }
         NodeKind::Expr(ExprKind::Ref { target }) => {
             target.and_then(|target| signal_of_ref(db, target))
@@ -350,6 +356,22 @@ fn walk_lhs_select_reads(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: 
 }
 
 fn add_read(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+    // Reading a clockvar bound to a computed expression reads its operands.
+    let clockvar = match db.node_kind(node) {
+        NodeKind::Expr(ExprKind::Ref { target: Some(t) } | ExprKind::ScopeRef { target: t }) => {
+            Some(*t)
+        }
+        NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+            refs.iter().rev().flatten().copied().next()
+        }
+        _ => Some(node),
+    };
+    if let Some(var) = clockvar.and_then(|clockvar| db.clocking_var(clockvar)) {
+        if var.source.is_none() && signal_of_ref(db, var.expression).is_none() {
+            walk_reads(db, var.expression, seen, out);
+            return;
+        }
+    }
     match db.node_kind(node) {
         NodeKind::Net { .. } | NodeKind::Var { .. } | NodeKind::Array { .. } => {
             if let Some(signal) = signal_of_ref(db, node) {
@@ -360,6 +382,14 @@ fn add_read(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<Nod
         }
         NodeKind::Expr(ExprKind::Ref { target: Some(t) }) => {
             if let Some(signal) = signal_of_ref(db, *t) {
+                if seen.insert(signal) {
+                    out.push(signal);
+                }
+            }
+        }
+        // `cb.x` names a clockvar through its clocking block scope.
+        NodeKind::Expr(ExprKind::ScopeRef { target }) if db.is_clocking_var(*target) => {
+            if let Some(signal) = signal_of_ref(db, *target) {
                 if seen.insert(signal) {
                     out.push(signal);
                 }

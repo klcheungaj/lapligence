@@ -42,15 +42,18 @@ pub struct IrClassField {
     pub(in crate::sim) native_value: Option<usize>,
 }
 
-/// One packed member exposed by a virtual-interface view. The member index is
-/// shared by every elaborated interface instance of the same specialization;
-/// each instance supplies the concrete signal address at that slot.
+/// One packed or real member exposed by a virtual-interface view. The member
+/// index is shared by every elaborated interface instance of the same
+/// specialization; each instance supplies the concrete signal address at that
+/// slot. A real member has width 0 and `double` storage.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IrVirtualInterfaceMember {
     pub(in crate::sim) name: String,
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
     pub(in crate::sim) two_state: bool,
+    pub(in crate::sim) real: bool,
+    pub(in crate::sim) shortreal: bool,
 }
 
 /// One concrete interface instance reachable through a virtual-interface
