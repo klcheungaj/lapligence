@@ -2,6 +2,28 @@
 
 use super::*;
 
+/// Explain why a lowered sampled-value argument has no sampled storage. A
+/// read of automatic storage (a procedural local or formal) is illegal (SV
+/// 16.9.3: argument variables shall be static); other forms, such as unpacked
+/// element selections, are legal but unsupported.
+fn sampled_argument_error(name: &str, scope_path: &str, argument: &IrExpr) -> String {
+    let mut automatic = false;
+    let mut probe = argument.clone();
+    crate::sim::opt::walk_expr_mut(&mut probe, &mut |expression| {
+        automatic |= matches!(expression.kind(), IrExprKind::FormalRead(_))
+            || matches!(expression.kind(), IrExprKind::LocalRead(name)
+                if !name.starts_with("llg_sequence_local_read("));
+    });
+    if automatic {
+        format!(
+            "{name} argument reads an automatic variable in `{scope_path}`: variables in \
+             sampled-value arguments shall be static (SV 16.9.3)"
+        )
+    } else {
+        format!("{name} argument must be a static packed or real expression in `{scope_path}`")
+    }
+}
+
 impl<'a> Codegen<'a> {
     /// Classify a sampled-value argument by its declared type before it is
     /// lowered, so a non-integral operand gets a specific diagnostic instead
@@ -71,9 +93,7 @@ impl<'a> Codegen<'a> {
             self.check_sampled_argument_type(scope_path, name, *argument)?;
             let argument = self.lower_expr(scope_path, *argument)?;
             if !super::super::assertions::sampled_compatible(&argument) {
-                return Err(format!(
-                    "$sampled argument must be a static packed or real expression in `{scope_path}`"
-                ));
+                return Err(sampled_argument_error(name, scope_path, &argument));
             }
             // Outside an assertion `$sampled` still returns the Preponed
             // value (SV 16.9.3): register every signal it reads. A real keeps
@@ -136,9 +156,7 @@ impl<'a> Codegen<'a> {
         self.check_sampled_argument_type(scope_path, name, args[0])?;
         let argument = self.lower_expr(scope_path, args[0])?;
         if !super::super::assertions::sampled_compatible(&argument) {
-            return Err(format!(
-                "{name} argument must be a static packed or real expression in `{scope_path}`"
-            ));
+            return Err(sampled_argument_error(name, scope_path, &argument));
         }
         // A real argument's history holds its exact 64-bit IEEE image, which
         // `$past` decodes and `$stable`/`$changed` compare as reals. `$rose`
