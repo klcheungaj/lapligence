@@ -25,7 +25,10 @@ The driver exposes it as `--model-opt-level <O0|O1|O2|O3|Os>`, including in
 source-only output. Release adds only NDEBUG; explicit `--cflags` (else
 `LLG_CFLAGS`) follow the selected level and can override it. Runtime archive
 cache entries include the level and user flags. MSVC maps O0 to `/Od`, O1/Os
-to `/O1`, and O2/O3 to `/O2`.
+to `/O1`, and O2/O3 to `/O2`. Every llg configure passes
+`-DCMAKE_BUILD_TYPE=Release` (MSVC single-config generators would otherwise
+default to Debug: `/Od`, `/debug` link); self-contained `--gen-only` projects
+need the same argument under MSVC with Ninja.
 
 See [feature status](../../docs/sim_features.md),
 [build and CLI usage](../../readme.md), [tests](../../tests/readme.md) and
