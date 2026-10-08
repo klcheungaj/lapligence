@@ -402,7 +402,10 @@ impl<'a, 'm> Frame<'a, 'm> {
         self.code.push_str(text);
         self.code.push('\n');
         if is_runtime_suspension(text) {
-            self.layout.mark_resume();
+            match resume_state(text) {
+                Some(state) => self.layout.mark_resume_state(state),
+                None => self.layout.mark_resume(),
+            }
             self.resume_probe = true;
             self.cancellation_points += 1;
             if self.layout.storage() == FrameStorage::CoFrame {
@@ -1256,6 +1259,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 .cached_fields
                 .prologue_loads(|name| self.layout.field_access(name));
             let mut layout = self.layout;
+            layout.compute_gc_map();
             layout.release_emission_state();
             Ok(CoroutineBody {
                 body: format!("{loads}{rewritten}"),
@@ -1407,6 +1411,25 @@ fn has_statement_boundary(text: &str) -> bool {
 
 /// Runtime calls corresponding to Phase 2 resume sites. Direct coroutine
 /// calls arm the same probe explicitly at their emission site.
+/// The resume number of a numbered suspension macro (`LLG_CO_AWAIT(co, ch,
+/// N, ...)` and the `LLG_CO_CALL*` forms): its third argument.
+fn resume_state(text: &str) -> Option<u32> {
+    [
+        "LLG_CO_AWAIT(",
+        "LLG_CO_CALL(",
+        "LLG_CO_CALL_ANCHOR(",
+        "LLG_CO_CALL_ARENA(",
+    ]
+    .into_iter()
+    .find_map(|macro_name| {
+        let start = text.find(macro_name)? + macro_name.len();
+        let mut arguments = text[start..].splitn(4, ',');
+        arguments.next()?;
+        arguments.next()?;
+        arguments.next()?.trim().parse::<u32>().ok()
+    })
+}
+
 fn is_runtime_suspension(text: &str) -> bool {
     [
         "LLG_CO_AWAIT(",

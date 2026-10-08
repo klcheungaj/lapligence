@@ -567,6 +567,83 @@ fn render_coroutine_metadata(
     Ok(out)
 }
 
+/// Collector frame maps (SIM-018): for every coroutine whose suspended frame
+/// can hold handles, the traced field offsets at each resume state, and the
+/// descriptor table registering them. Identical maps (instances of one
+/// process or task) share one table. Recursive subprogram coroutines run
+/// synchronously inside a process turn and are never suspended at a
+/// collection, so they have none.
+fn render_gc_frame_maps<'a>(
+    artifacts: impl Iterator<Item = &'a CoroutineArtifact>,
+    analysis: &ExecutionAnalysis,
+) -> Result<String, String> {
+    let mut tables = String::new();
+    let mut names = HashMap::new();
+    let mut registrations = Vec::new();
+    for artifact in artifacts {
+        if artifact.recursive_sites.is_some() || artifact.layout.gc_map().is_empty() {
+            continue;
+        }
+        let states = analysis
+            .sites(artifact.owner)
+            .ok_or_else(|| format!("missing coroutine sites for {:?}", artifact.owner))?
+            .len()
+            + 1;
+        let mut slots = String::new();
+        let mut first = vec![0usize; states];
+        let mut count = vec![0usize; states];
+        let mut index = 0usize;
+        for (state, entries) in artifact.layout.gc_map() {
+            let state = *state as usize;
+            if state >= states {
+                return Err(format!(
+                    "collector frame map of {} names resume state {state} beyond its {states} sites",
+                    artifact.desc_name
+                ));
+            }
+            first[state] = index;
+            count[state] = entries.len();
+            for entry in entries {
+                slots.push_str(&format!(
+                    "{{ (uint32_t)offsetof({}, {}), {} }}, ",
+                    artifact.frame_type, entry.path, entry.kind
+                ));
+                index += 1;
+            }
+        }
+        let join = |values: &[usize]| {
+            values
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let (first, count) = (join(&first), join(&count));
+        let key = format!("{slots}|{first}|{count}");
+        let next = names.len();
+        let name = names
+            .entry(key)
+            .or_insert_with(|| {
+                let name = format!("llg_gc_frame_map_{next}");
+                tables.push_str(&format!(
+                    "static const llg_gc_frame_slot_t {name}_slots[] = {{ {slots}}};\nstatic const uint32_t {name}_first[{states}] = {{ {first} }};\nstatic const uint32_t {name}_count[{states}] = {{ {count} }};\nstatic const llg_gc_frame_map_t {name} = {{ {name}_slots, {name}_first, {name}_count, {states} }};\n"
+                ));
+                name
+            })
+            .clone();
+        registrations.push((artifact.desc_name.clone(), name));
+    }
+    if registrations.is_empty() {
+        return Ok(String::new());
+    }
+    tables.push_str("static const struct { const llg_co_desc_t* desc; const llg_gc_frame_map_t* map; } llg_model_gc_frames[] = {\n");
+    for (desc, map) in registrations {
+        tables.push_str(&format!("    {{ &{desc}, &{map} }},\n"));
+    }
+    tables.push_str("};\n");
+    Ok(tables)
+}
+
 /// Descriptor of a recursive subprogram's coroutine. Its resume points are
 /// arena calls, which backtraces follow through the anchor chain, so every
 /// site records no static callee.
@@ -902,6 +979,16 @@ fn render_model(
             model,
         )?);
     }
+    if !model.classes.is_empty() {
+        let frame_maps = render_gc_frame_maps(
+            coroutine_functions
+                .values()
+                .chain(coroutine_processes.iter().filter_map(Option::as_ref))
+                .chain(coroutine_branches.values()),
+            execution.analysis(),
+        )?;
+        classes::render_gc_register(model, &frame_maps, &mut coroutine_metadata);
+    }
     out.push_str("/* signals start all-X; driven by processes and link processes */\n");
     if model.containers.iter().any(|container| {
         matches!(
@@ -963,6 +1050,7 @@ fn render_model(
         out.push_str(&format!("static {ty} {} = {{0}};\n", object.c_name));
     }
     out.push('\n');
+    classes::render_gc_roots(model, &mut out);
     // Arrays start all-X; elements are filled in `main()` (a function call
     // is not a valid static initializer).
     for a in model.arrays.iter().filter(|array| !array.activation) {

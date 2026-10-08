@@ -1505,6 +1505,26 @@ pub(in crate::sim::emit_c) fn activation_storage(
 
 /// Destroy adapters for the activation container storage types of `model`.
 pub(in crate::sim::emit_c) fn activation_drop_helpers(model: &crate::sim::ir::IrModel) -> String {
+    activation_drop_types(model)
+        .into_iter()
+        .map(|ty| {
+            let destroy = match ty {
+                "llg_dyn_array_t" => "llg_dyn_destroy",
+                "llg_queue_t" => "llg_queue_destroy",
+                "llg_assoc_t" => "llg_assoc_destroy",
+                "llg_dyn_value_array_t" => "llg_dyn_value_destroy",
+                "llg_queue_value_array_t" => "llg_queue_value_destroy",
+                _ => "llg_assoc_value_destroy",
+            };
+            format!("static void llg_owned_drop_{ty}(void* p) {{ {destroy}(({ty}*)p); }}\n")
+        })
+        .collect()
+}
+
+/// Storage types that have an `llg_owned_drop_<type>` adapter in `model`.
+pub(in crate::sim::emit_c) fn activation_drop_types(
+    model: &crate::sim::ir::IrModel,
+) -> std::collections::BTreeSet<&'static str> {
     // Call boundaries create fresh storage of a formal's container type,
     // including a static subroutine's (model-storage) formal containers.
     let formal_containers = model
@@ -1535,19 +1555,6 @@ pub(in crate::sim::emit_c) fn activation_drop_helpers(model: &crate::sim::ir::Ir
         types.insert(ty);
     }
     types
-        .into_iter()
-        .map(|ty| {
-            let destroy = match ty {
-                "llg_dyn_array_t" => "llg_dyn_destroy",
-                "llg_queue_t" => "llg_queue_destroy",
-                "llg_assoc_t" => "llg_assoc_destroy",
-                "llg_dyn_value_array_t" => "llg_dyn_value_destroy",
-                "llg_queue_value_array_t" => "llg_queue_value_destroy",
-                _ => "llg_assoc_value_destroy",
-            };
-            format!("static void llg_owned_drop_{ty}(void* p) {{ {destroy}(({ty}*)p); }}\n")
-        })
-        .collect()
 }
 
 pub(super) fn destroy(container: &crate::sim::ir::IrContainer) -> String {

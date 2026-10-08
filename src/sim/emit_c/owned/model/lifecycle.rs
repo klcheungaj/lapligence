@@ -188,7 +188,12 @@ pub(in crate::sim::emit_c) fn main(
     if model.waveform {
         out.push_str("static int llg_model_wave_live;\n");
     }
-    out.push_str(&format!("int llg_model_start(int argc, char** argv) {{\n    llg_value_require_abi();\n    if (llg_model_live) return 1;\n    llg_model_live = 1;\n    llg_model_done = llg_model_status = 0;\n    llg_rt_init_with_args_and_precision(argc, argv, {}ULL);\n    if (llg_rt_failed()) goto start_failed;\n    llg_model_storage_defaults();\n    llg_model_initializers();\n    if (llg_rt_failed()) goto start_failed;\n", model.precision_fs));
+    out.push_str(&format!("int llg_model_start(int argc, char** argv) {{\n    llg_value_require_abi();\n    if (llg_model_live) return 1;\n    llg_model_live = 1;\n    llg_model_done = llg_model_status = 0;\n    llg_rt_init_with_args_and_precision(argc, argv, {}ULL);\n    if (llg_rt_failed()) goto start_failed;\n", model.precision_fs));
+    if !model.classes.is_empty() {
+        // Collector roots precede storage initializers, which may allocate.
+        out.push_str("    if (!llg_model_gc_register()) {\n        fprintf(stderr, \"llg: allocation failed registering collector roots\\n\");\n        goto start_failed;\n    }\n");
+    }
+    out.push_str("    llg_model_storage_defaults();\n    llg_model_initializers();\n    if (llg_rt_failed()) goto start_failed;\n");
     out.push_str(&crate::sim::emit_c::owned::native::helpers_used());
     // Mark otherwise unused generated function definitions as intentional.
     for function in &model.funcs {
