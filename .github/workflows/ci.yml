@@ -90,11 +90,12 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/master' }}
 
       # Slang's generated headers require Python. build.rs needs CMake and a
-      # C++20 compiler; vendor patches are applied by Rust.
+      # C++20 compiler; vendor patches are applied by Rust. Generated models
+      # build with Ninja, the default CMake generator.
       - name: Install native build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ python3
+          sudo apt-get install -y cmake g++ ninja-build python3
 
       # fmt first: it fails fast without paying for the native build.
       - name: cargo fmt --check
@@ -192,7 +193,7 @@ jobs:
       - name: Install native build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ python3
+          sudo apt-get install -y cmake g++ ninja-build python3
 
       # The sanitizer flags in LLG_CFLAGS are part of every ccache hash, so
       # sanitized and plain objects never mix (and this job has its own cache).
@@ -817,12 +818,13 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive &&
               apt-get update &&
               apt-get install -y --no-install-recommends
-              build-essential clang cmake git procps python3
+              build-essential clang cmake git ninja-build procps python3
           - distro: rocky-9
             image: rockylinux/rockylinux:9
+            # ninja-build ships in the CodeReady Builder (crb) repository.
             install: >-
-              dnf install -y --setopt=install_weak_deps=False
-              clang cmake gcc gcc-c++ git make procps-ng python3 util-linux
+              dnf install -y --setopt=install_weak_deps=False --enablerepo=crb
+              clang cmake gcc gcc-c++ git make ninja-build procps-ng python3 util-linux
     steps:
       - uses: actions/checkout@v7
         with:

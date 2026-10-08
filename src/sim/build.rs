@@ -21,7 +21,11 @@
 //!   clean-from-scratch retry before the error is reported.
 //!
 //! Generator selection: [`CmakeBuildOpts::generator`] > `$CMAKE_GENERATOR` >
-//! none (cmake picks its default generator for the host). The optional
+//! [`DEFAULT_GENERATOR`] (`Ninja`) on every host; empty values count as
+//! unset. A configure that finds no build program for the generator (Ninja
+//! not installed) fails at once with [`BuildError::BuildProgramNotFound`]
+//! instead of the clean retry. A tree configured with another generator is
+//! rebuilt from scratch once, so changing the generator never loops. The optional
 //! [`CmakeBuildOpts::launcher`] > `$LLG_C_LAUNCHER` > none is forwarded as
 //! `CMAKE_C_COMPILER_LAUNCHER` without selecting a default. (The `llg` driver
 //! layers `llg.toml` below the variable before it fills the option: command
@@ -271,8 +275,8 @@ const RUNTIME_CACHE_LOCK_POLL: Duration = Duration::from_millis(25);
 pub struct CmakeBuildOpts {
     /// Explicit cmake `-G` generator backend (e.g. `"Ninja"`,
     /// `"Unix Makefiles"`).  Takes precedence over `$CMAKE_GENERATOR`; when
-    /// `None`, `$CMAKE_GENERATOR` is forwarded if set and otherwise cmake
-    /// chooses its host default.
+    /// `None` (or empty), a non-empty `$CMAKE_GENERATOR` is used, then
+    /// [`DEFAULT_GENERATOR`].
     pub generator: Option<String>,
     /// Must match the configuration used by the emitter.
     pub value_config: super::value_backend::ValueConfig,
@@ -398,6 +402,9 @@ pub enum BuildError {
     CmakeLaunch { program: String, source: io::Error },
     /// CMake configuration failed after one clean retry.
     Configure { command: String, output: String },
+    /// CMake found no build program for the selected generator (for the
+    /// default [`DEFAULT_GENERATOR`], Ninja is not installed).
+    BuildProgramNotFound { generator: String, output: String },
     /// Compilation of the generated C project failed.
     Compile { output: String },
     /// CMake succeeded but no simulator executable was produced.
@@ -442,6 +449,15 @@ impl fmt::Display for BuildError {
             Self::Configure { command, output } => {
                 write!(f, "cmake configure failed ({command}):\n{output}")
             }
+            Self::BuildProgramNotFound { generator, output } => write!(
+                f,
+                "cmake found no build program for generator `{generator}`; {}, or select another generator with --generator or CMAKE_GENERATOR:\n{output}",
+                if generator.starts_with("Ninja") {
+                    "install Ninja (https://ninja-build.org; for example the `ninja-build` package, `brew install ninja`, or the Visual Studio C++ CMake tools) so `ninja` is on PATH"
+                } else {
+                    "install that generator's build tool"
+                }
+            ),
             Self::Compile { output } => write!(f, "cmake build failed:\n{output}"),
             Self::ExecutableNotFound { directory, listing } => write!(
                 f,
@@ -495,31 +511,23 @@ pub fn build_model_cmake_with_opts(
     let cmake_prog = resolve_cmake(opts);
     let waveform = waveform_enabled(extra);
     let jobs = build_jobs_for(opts);
+    let generator = generator_for(opts);
     let runtime_library = prepare_runtime_cache(waveform, &cc, &flags, &cmake_prog, jobs, opts)?;
 
     // Drop an incompatible CMake build tree so configure starts clean: no
     // cache means a previous configure died midway; a generator mismatch
     // would make cmake refuse the directory outright.  A compatible tree is
     // kept — reconfigure + build are incremental.
-    if build_dir.exists() {
-        match cached_generator(&build_dir) {
-            None => remove_dir_all_quiet(&build_dir),
-            Some(cached) => {
-                if generator_for(opts).is_some_and(|req| req != cached) {
-                    remove_dir_all_quiet(&build_dir);
-                }
-            }
-        }
-    }
+    remove_incompatible_build_dir(&build_dir, &generator);
 
-    // Configure.  A failed configure leaves the tree unusable no matter the
-    // cause (poisoned/stale cache, half-written state, changed toolchain), so
-    // retry exactly once from scratch before reporting the error.
     let mut configure = Command::new(&cmake_prog);
-    configure.arg("-S").arg(out_dir).arg("-B").arg(&build_dir);
-    if let Some(generator) = generator_for(opts) {
-        configure.arg("-G").arg(generator);
-    }
+    configure
+        .arg("-S")
+        .arg(out_dir)
+        .arg("-B")
+        .arg(&build_dir)
+        .arg("-G")
+        .arg(&generator);
     configure.arg(format!(
         "-DCMAKE_C_COMPILER_LAUNCHER={}",
         resolve_launcher(opts)
@@ -535,17 +543,7 @@ pub fn build_model_cmake_with_opts(
         program: cmake_prog.clone(),
         source,
     };
-    let mut output = configure.output().map_err(&launch_error)?;
-    if !output.status.success() {
-        remove_dir_all_quiet(&build_dir);
-        output = configure.output().map_err(&launch_error)?;
-    }
-    if !output.status.success() {
-        return Err(BuildError::Configure {
-            command: format!("{configure:?}"),
-            output: output_tail(&output),
-        });
-    }
+    run_configure(&mut configure, &cmake_prog, &build_dir, &generator)?;
 
     // Build.
     let mut build_cmd = build_command(&cmake_prog, &build_dir, jobs, None);
@@ -738,6 +736,42 @@ fn cached_generator(build_dir: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// Remove `build_dir` unless it holds a readable cache for `generator`: a
+/// missing cache means an earlier configure died midway, and CMake refuses a
+/// tree configured with another generator. A tree from an older default
+/// generator is therefore rebuilt once and then matches.
+fn remove_incompatible_build_dir(build_dir: &Path, generator: &str) {
+    if build_dir.exists() && cached_generator(build_dir).as_deref() != Some(generator) {
+        remove_dir_all_quiet(build_dir);
+    }
+}
+
+/// Run `configure`. A failed configure leaves the tree unusable no matter the
+/// cause (poisoned/stale cache, half-written state, changed toolchain), so it
+/// is retried exactly once from scratch, except when CMake found no build
+/// program for `generator`, which a retry cannot fix.
+fn run_configure(
+    configure: &mut Command,
+    cmake_prog: &str,
+    build_dir: &Path,
+    generator: &str,
+) -> Result<(), BuildError> {
+    let launch_error = |source| BuildError::CmakeLaunch {
+        program: cmake_prog.to_owned(),
+        source,
+    };
+    let mut output = configure.output().map_err(launch_error)?;
+    if !output.status.success() && !missing_build_program(&output) {
+        remove_dir_all_quiet(build_dir);
+        output = configure.output().map_err(launch_error)?;
+    }
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(configure_error(configure, generator, &output))
+    }
 }
 
 fn remove_dir_all_quiet(dir: &Path) {
@@ -941,22 +975,17 @@ fn prepare_runtime_cache(
     })?;
 
     let build_dir = entry.join("build");
-    if build_dir.exists() {
-        match cached_generator(&build_dir) {
-            None => remove_dir_all_quiet(&build_dir),
-            Some(cached) => {
-                if generator_for(opts).is_some_and(|requested| requested != cached) {
-                    remove_dir_all_quiet(&build_dir);
-                }
-            }
-        }
-    }
+    let generator = generator_for(opts);
+    remove_incompatible_build_dir(&build_dir, &generator);
 
     let mut configure = Command::new(cmake_prog);
-    configure.arg("-S").arg(&entry).arg("-B").arg(&build_dir);
-    if let Some(generator) = generator_for(opts) {
-        configure.arg("-G").arg(generator);
-    }
+    configure
+        .arg("-S")
+        .arg(&entry)
+        .arg("-B")
+        .arg(&build_dir)
+        .arg("-G")
+        .arg(&generator);
     configure
         .arg(format!("-DCMAKE_C_COMPILER={cc}"))
         .arg(format!("-DCMAKE_C_FLAGS:STRING={flags}"))
@@ -968,17 +997,7 @@ fn prepare_runtime_cache(
         program: cmake_prog.to_owned(),
         source,
     };
-    let mut output = configure.output().map_err(&launch_error)?;
-    if !output.status.success() {
-        remove_dir_all_quiet(&build_dir);
-        output = configure.output().map_err(&launch_error)?;
-    }
-    if !output.status.success() {
-        return Err(BuildError::Configure {
-            command: format!("{configure:?}"),
-            output: output_tail(&output),
-        });
-    }
+    run_configure(&mut configure, cmake_prog, &build_dir, &generator)?;
 
     let mut build = build_command(cmake_prog, &build_dir, jobs, Some("llg_runtime"));
     let output = build.output().map_err(launch_error)?;
@@ -1077,7 +1096,7 @@ fn runtime_cache_key_with_compiler(
     target: &str,
 ) -> String {
     let mut hash = 0xcbf29ce484222325u64;
-    let generator = generator_for(opts).unwrap_or_default();
+    let generator = generator_for(opts);
     let launcher = resolve_launcher(opts);
     for text in [
         RUNTIME_CMAKELISTS_TEMPLATE,
@@ -1369,11 +1388,58 @@ pub fn cmake_available() -> bool {
     })
 }
 
-/// `-G` value: explicit option > `$CMAKE_GENERATOR` > none.
-fn generator_for(opts: &CmakeBuildOpts) -> Option<String> {
-    opts.generator
-        .clone()
-        .or_else(|| std::env::var("CMAKE_GENERATOR").ok())
+/// Generator used when neither [`CmakeBuildOpts::generator`] nor
+/// `$CMAKE_GENERATOR` names one, on every host. Ninja builds the many small
+/// model and runtime translation units with less per-invocation overhead
+/// than Makefiles or MSBuild, and one default keeps cache keys and build
+/// trees uniform across platforms. Model builds therefore require Ninja
+/// unless another generator is selected explicitly.
+pub const DEFAULT_GENERATOR: &str = "Ninja";
+
+/// `-G` value: explicit option > `$CMAKE_GENERATOR` > [`DEFAULT_GENERATOR`].
+fn generator_for(opts: &CmakeBuildOpts) -> String {
+    generator_from(
+        opts.generator.as_deref(),
+        std::env::var("CMAKE_GENERATOR").ok().as_deref(),
+    )
+}
+
+/// Pure generator precedence; empty values count as unset.
+fn generator_from(explicit: Option<&str>, env_value: Option<&str>) -> String {
+    explicit
+        .filter(|name| !name.is_empty())
+        .or(env_value.filter(|name| !name.is_empty()))
+        .unwrap_or(DEFAULT_GENERATOR)
+        .to_owned()
+}
+
+/// Whether configure output reports that CMake found no build program for
+/// the selected generator (for Ninja: `ninja` is not installed). Retrying
+/// from scratch cannot fix that, so the caller reports it directly.
+fn missing_build_program(output: &std::process::Output) -> bool {
+    [&output.stderr, &output.stdout].iter().any(|bytes| {
+        let text = String::from_utf8_lossy(bytes);
+        text.contains("CMAKE_MAKE_PROGRAM is not set")
+            || text.contains("unable to find a build program corresponding to")
+    })
+}
+
+/// Error for a configure that failed with `output`.
+fn configure_error(
+    command: &Command,
+    generator: &str,
+    output: &std::process::Output,
+) -> BuildError {
+    if missing_build_program(output) {
+        return BuildError::BuildProgramNotFound {
+            generator: generator.to_owned(),
+            output: output_tail(output),
+        };
+    }
+    BuildError::Configure {
+        command: format!("{command:?}"),
+        output: output_tail(output),
+    }
 }
 
 /// Launcher precedence shared by the environment fallback and the tests:
@@ -1775,6 +1841,58 @@ mod tests {
     }
 
     #[test]
+    fn generator_precedence_is_option_then_environment_then_ninja() {
+        assert_eq!(
+            generator_from(Some("Unix Makefiles"), Some("Ninja Multi-Config")),
+            "Unix Makefiles"
+        );
+        assert_eq!(
+            generator_from(None, Some("Unix Makefiles")),
+            "Unix Makefiles"
+        );
+        assert_eq!(
+            generator_from(Some(""), Some("Unix Makefiles")),
+            "Unix Makefiles",
+            "an empty option counts as unset"
+        );
+        assert_eq!(generator_from(None, Some("")), DEFAULT_GENERATOR);
+        assert_eq!(generator_from(None, None), "Ninja");
+    }
+
+    #[test]
+    fn missing_build_program_is_reported_without_a_retry_hint() {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+        // CMake 3.16-3.31 wording when `-G Ninja` finds no `ninja`.
+        let stderr = b"CMake Error: CMake was unable to find a build program corresponding to \"Ninja\".  CMAKE_MAKE_PROGRAM is not set.  You probably need to select a different build tool.\nCMake Error: CMAKE_C_COMPILER not set, after EnableLanguage\n-- Configuring incomplete, errors occurred!\n";
+        let missing = std::process::Output {
+            status: std::process::ExitStatus::from_raw(1),
+            stdout: Vec::new(),
+            stderr: stderr.to_vec(),
+        };
+        assert!(missing_build_program(&missing));
+        let command = Command::new("cmake");
+        let error = configure_error(&command, "Ninja", &missing);
+        assert!(matches!(error, BuildError::BuildProgramNotFound { .. }));
+        let message = error.to_string();
+        assert!(message.contains("install Ninja"), "{message}");
+        assert!(message.contains("CMAKE_GENERATOR"), "{message}");
+        assert!(message.contains("--generator"), "{message}");
+
+        let other = std::process::Output {
+            stderr: b"CMake Error at CMakeLists.txt:1 (project): bad\n".to_vec(),
+            ..missing
+        };
+        assert!(!missing_build_program(&other));
+        assert!(matches!(
+            configure_error(&command, "Ninja", &other),
+            BuildError::Configure { .. }
+        ));
+    }
+
+    #[test]
     fn runtime_cache_key_varies_with_toolchain_and_waveforms_not_model_width() {
         let defaults = CmakeBuildOpts::default();
         let base = runtime_cache_key(false, "cc", "-O2", "cmake", &defaults);
@@ -1786,6 +1904,15 @@ mod tests {
         assert_ne!(
             base,
             runtime_cache_key(true, "cc", "-O2", "cmake", &defaults)
+        );
+        let generator = |name: &str| CmakeBuildOpts {
+            generator: Some(name.to_owned()),
+            ..Default::default()
+        };
+        assert_ne!(
+            runtime_cache_key(false, "cc", "-O2", "cmake", &generator("Ninja")),
+            runtime_cache_key(false, "cc", "-O2", "cmake", &generator("Unix Makefiles")),
+            "the effective generator selects distinct runtime archives"
         );
         let launched = CmakeBuildOpts {
             launcher: Some("ccache".to_owned()),

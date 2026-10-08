@@ -64,7 +64,8 @@
 //!   available parallelism.
 //! - `--generator <backend>` selects cmake's generator backend (`-G`,
 //!   e.g. `Ninja`, `"Unix Makefiles"`); it overrides `$CMAKE_GENERATOR`,
-//!   which overrides `build.generator`.
+//!   which overrides `build.generator`; without any, the library selects
+//!   `Ninja` on every host.
 //! - `--launcher <program>` selects `CMAKE_C_COMPILER_LAUNCHER` (for example,
 //!   `ccache` or `sccache`): `--launcher` > `$LLG_C_LAUNCHER` >
 //!   `build.launcher` > none.

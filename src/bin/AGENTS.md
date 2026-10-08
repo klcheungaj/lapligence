@@ -12,7 +12,8 @@ Keep reusable processing in the library. Bins import `llg::config`, `llg::core`,
 
 ## Simulator driver
 
-- `--generator <backend>` selects CMake `-G`; `--gen-only` writes model sources
+- `--generator <backend>` selects CMake `-G` (default `Ninja`; see
+  [sim](../sim/AGENTS.md)); `--gen-only` writes model sources
   and `CMakeLists.txt` only. CMake is the sole builder;
   [sim](../sim/AGENTS.md) owns compiler/flags/environment selection.
 - `--out-dir <dir>` (default `build`) places the model in `<dir>/sim/<design>`.

@@ -793,6 +793,78 @@ fn invalid_generator_error() {
     assert!(err.contains("cmake configure failed"), "error: {err}");
 }
 
+/// Program `name` on the current `PATH`, if any.
+#[cfg(unix)]
+fn find_on_path(name: &str) -> Option<std::path::PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
+}
+
+/// The default generator is Ninja. Without a `ninja` program the driver must
+/// fail at the first configure with an actionable message (install Ninja or
+/// select another generator) instead of retrying and reporting a generic
+/// configure failure. `PATH` holds only a recording cmake wrapper, so CMake
+/// cannot find `ninja`.
+#[cfg(unix)]
+#[test]
+fn missing_ninja_reports_an_actionable_error_without_a_retry() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let (Some(cmake), Some(cc)) = (find_on_path("cmake"), find_on_path("cc")) else {
+        eprintln!("SKIP: cmake or cc is not on PATH");
+        return;
+    };
+    let dir = fresh_dir("missing-ninja");
+    std::fs::write(dir.path().join("counter.sv"), COUNTER_SV).expect("write source");
+    let tools = dir.path().join("tools");
+    std::fs::create_dir(&tools).expect("create tool directory");
+    let log = dir.path().join("cmake-args.log");
+    let wrapper = tools.join("cmake");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexec '{}' \"$@\"\n",
+            log.display(),
+            cmake.display()
+        ),
+    )
+    .expect("write wrapper");
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
+        .expect("mark wrapper executable");
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+    command
+        .args(["--top", "tb", "--cc"])
+        .arg(&cc)
+        .arg("--runtime-cache")
+        .arg(dir.path().join("runtime-cache"))
+        .arg("counter.sv")
+        .env("PATH", &tools)
+        .env_remove("CMAKE_GENERATOR")
+        .env_remove("LLG_CMAKE")
+        .current_dir(dir.path());
+    let output =
+        sim_harness::run_command(&mut command, Duration::from_secs(60)).expect("llg should start");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "build without ninja must fail");
+    assert!(
+        stderr.contains("no build program for generator `Ninja`"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("install Ninja"), "{stderr}");
+    assert!(stderr.contains("CMAKE_GENERATOR"), "{stderr}");
+    let log = std::fs::read_to_string(&log).expect("wrapper log");
+    let configures: Vec<&str> = log.lines().filter(|line| line.starts_with("-S ")).collect();
+    assert_eq!(configures.len(), 1, "no from-scratch retry: {log}");
+    assert!(configures[0].contains("-G Ninja"), "{log}");
+}
+
 /// Driver default path: `llg` without flags must build through CMake and
 /// produce the exact simulation output with exit 0.
 #[test]

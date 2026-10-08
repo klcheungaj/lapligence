@@ -41,7 +41,7 @@ option that has an environment variable follows it:
 | C compiler | `--cc` | `$LLG_CC`, then `$CC` | `build.cc` | `cc` |
 | C flags | `--cflags` | `$LLG_CFLAGS` | `build.cflags` | none |
 | CMake program | `--cmake` | `$LLG_CMAKE` | `build.cmake` | `cmake` |
-| CMake generator | `--generator` | `$CMAKE_GENERATOR` | `build.generator` | CMake's own |
+| CMake generator | `--generator` | `$CMAKE_GENERATOR` | `build.generator` | `Ninja` (must be installed) |
 | C compiler launcher | `--launcher` | `$LLG_C_LAUNCHER` | `build.launcher` | none |
 | Build jobs | `--build-jobs` | `$CMAKE_BUILD_PARALLEL_LEVEL` | `build.jobs` | available CPUs |
 | Runtime cache | `--runtime-cache` | `$LLG_RUNTIME_CACHE_DIR` | `output.runtime_cache` | `<out-dir>/llg-runtime-cache` |

@@ -95,7 +95,7 @@ CMake is the only model builder: C11, Release by default, executable under
 `<build>/bin/`, and `m` linkage. The configure command retains:
 
 ```sh
-<cmake> -S <out_dir> -B <out_dir>/build [-G <generator>] [-DCMAKE_C_COMPILER_LAUNCHER=<launcher>] -DCMAKE_C_COMPILER=<cc|LLG_CC|$CC|cc> -DCMAKE_C_FLAGS:STRING="[cflags|$LLG_CFLAGS]" -DLLG_RUNTIME_LIBRARY=<cache>
+<cmake> -S <out_dir> -B <out_dir>/build -G <generator> [-DCMAKE_C_COMPILER_LAUNCHER=<launcher>] -DCMAKE_C_COMPILER=<cc|LLG_CC|$CC|cc> -DCMAKE_C_FLAGS:STRING="[cflags|$LLG_CFLAGS]" -DLLG_RUNTIME_LIBRARY=<cache>
 cmake --build <dir> --config Release --parallel <jobs> [--target llg_runtime]
 ```
 
@@ -131,8 +131,11 @@ Generated MSVC projects reserve the larger of that estimate and the 1 MiB
 Windows default with `/STACK`. Re-measure before changing either value; see
 `src/sim/rt/llg_rt.h`.
 
-`CmakeBuildOpts.generator`/`--generator` overrides `CMAKE_GENERATOR`, then host
-default. `launcher`/`--launcher` > `LLG_C_LAUNCHER` > none forwards
+`CmakeBuildOpts.generator`/`--generator` overrides a non-empty `CMAKE_GENERATOR`,
+then `DEFAULT_GENERATOR` (`Ninja`) on every host, never CMake's platform default,
+so caches and trees are uniform and MSBuild/Makefile overhead is avoided. A
+configure reporting no build program fails at once as `BuildProgramNotFound`
+(install Ninja or select a generator), skipping the clean retry. `launcher`/`--launcher` > `LLG_C_LAUNCHER` > none forwards
 `CMAKE_C_COMPILER_LAUNCHER` (`LLG_CC` must remain one program, so a launcher such as
 ccache needs this variable; an empty variable is none and an explicit empty library
 option suppresses it; the `llg` driver's order is CLI > `LLG_C_LAUNCHER` >

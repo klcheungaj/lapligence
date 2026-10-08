@@ -584,7 +584,8 @@ support; the corresponding execution tests must also pass.
 
 - Pinned Rust 1.98.0, initialized vendors, and
   `cargo install cargo-nextest --locked`.
-- CMake/C compiler for public conformance; run commands at repository root.
+- CMake, Ninja (the default model generator; set `CMAKE_GENERATOR` to use
+  another) and a C compiler for public conformance; run commands at repository root.
 - Cargo-launched runs get `LLG_RUNTIME_CACHE_DIR=<repo>/target/llg-runtime-cache`
   from `.cargo/config.toml` `[env]`, so CLI tests in temporary CWDs share it.
   An explicit value wins; use an absolute path, because `llg` resolves

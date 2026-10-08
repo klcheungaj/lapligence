@@ -188,6 +188,7 @@ Options:
       --                    Pass remaining arguments to the generated simulator
                               (replaces the llg.toml plusargs, even when empty)
       --generator <backend>  Select the CMake generator
+                              (default: $CMAKE_GENERATOR, build.generator, Ninja)
       --launcher <program>   Select the CMake C compiler launcher
                               (default: $LLG_C_LAUNCHER, build.launcher, none)
       --dpi-lib <path>       Link one explicit DPI-C library (repeatable)
