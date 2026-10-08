@@ -1805,8 +1805,14 @@ impl Codegen<'_> {
         };
         let right = self.lower_sequence_fragment(path, right, builder, role)?;
         if builder.match_items.len() != items_before {
+            let name = match op {
+                AssertionBinaryOp::And => "and",
+                AssertionBinaryOp::Intersect => "intersect",
+                AssertionBinaryOp::Throughout => "throughout",
+                _ => "within",
+            };
             return Err(format!(
-                "local variable assignments inside {op:?} operands are not supported in concurrent assertion {role} at {} ({path})",
+                "local variable assignments inside `{name}` operands are not supported in concurrent assertion {role} at {} ({path})",
                 self.source_location(node)
             ));
         }
