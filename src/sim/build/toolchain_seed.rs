@@ -28,11 +28,12 @@
 //! variables CMake or the MSVC/Apple toolchains read (including `PATH`, which
 //! selects tools such as `rc.exe`, `ar` and `ninja`), and the working
 //! directory when the compiler is a relative path. A compiler or CMake upgrade
-//! therefore selects a new entry. Seeds live beside the runtime archives under
-//! the runtime cache root and use the same per-entry lock file and
-//! exact-key ready marker; files are written before the marker is renamed into
-//! place and are never changed afterwards. `LLG_CMAKE_TOOLCHAIN_SEED=0`
-//! disables seeding.
+//! therefore selects a new entry. Seeds live in their own [`SEED_DIR`]
+//! subdirectory of the runtime cache root, so every other child of the root
+//! with a `ready` marker remains a runtime archive entry. They use the same
+//! per-entry lock file and exact-key ready marker as the archives; files are
+//! written before the marker is renamed into place and are never changed
+//! afterwards. `LLG_CMAKE_TOOLCHAIN_SEED=0` disables seeding.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -45,9 +46,13 @@ use super::RuntimeCacheLock;
 /// Environment switch: `0`, `off`, `false` or `no` disables seeding.
 pub const SEED_ENV: &str = "LLG_CMAKE_TOOLCHAIN_SEED";
 
+/// Subdirectory of the runtime cache root that holds every seed entry
+/// (`<root>/cmake-toolchain/<hash>/`) and its lock file.
+pub const SEED_DIR: &str = "cmake-toolchain";
+
 /// Bumped whenever the layout or the self-check changes, so older entries are
 /// never read by a newer llg.
-const FORMAT: &str = "llg-cmake-toolchain-seed-v1";
+const FORMAT: &str = "llg-cmake-toolchain-seed-v2";
 
 /// The text every generated project places before `project()`. Detection
 /// runs inside `project()`, so the policies in effect there must match the
@@ -146,14 +151,15 @@ pub(super) fn prepare(root: &Path, toolchain: &Toolchain<'_>) -> Option<Seed> {
     let key = key_text(toolchain, &version, cwd.as_deref(), |name| {
         std::env::var_os(name)
     });
-    let entry = root.join(entry_name(&key));
+    let seeds = root.join(SEED_DIR);
+    let entry = seeds.join(entry_name(&key));
     if let Some(seed) = load(&entry, &key) {
         return Some(seed);
     }
     if is_rejected(&entry, &key) {
         return None;
     }
-    std::fs::create_dir_all(root).ok()?;
+    std::fs::create_dir_all(&seeds).ok()?;
     let _lock = RuntimeCacheLock::try_acquire(&entry).ok()??;
     if let Some(seed) = load(&entry, &key) {
         return Some(seed);
@@ -235,7 +241,7 @@ fn entry_name(key: &str) -> String {
     let hash = key.bytes().fold(0xcbf29ce484222325u64, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
     });
-    format!("cmake-toolchain-{hash:016x}")
+    format!("{hash:016x}")
 }
 
 /// `cmake --version`, probed once per CMake program and process.

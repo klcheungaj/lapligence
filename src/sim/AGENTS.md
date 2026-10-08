@@ -157,8 +157,9 @@ Never bake build-machine paths (`CARGO_MANIFEST_DIR`) into runtime defaults;
 sources/incompatible partial builds and retry failed configuration once cleanly.
 
 Fresh trees (model and runtime archive) are seeded with cached toolchain
-detection (`build/toolchain_seed.rs`): `cmake-toolchain-<hash>` beside the runtime
-archives holds one probe's `CMakeFiles/<version>/*.cmake` plus the cache entries
+detection (`build/toolchain_seed.rs`): `<root>/cmake-toolchain/<hash>` (the one
+root child that is not a runtime entry; runtime entries are the children with a
+`ready` marker) holds one probe's `CMakeFiles/<version>/*.cmake` plus the cache entries
 detection creates, applied with `CMAKE_PLATFORM_INFO_INITIALIZED`, the state
 CMake itself re-configures from. The exact key covers CMake and its version,
 generator, compiler spelling/identity/target, flags, launcher, host and the

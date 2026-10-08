@@ -808,21 +808,15 @@ fn ran_compiler_detection(build: &std::path::Path) -> bool {
     platform_dir(build).join("CompilerIdC").exists()
 }
 
-/// Published toolchain seeds (`cmake-toolchain-*` with a `ready` marker)
-/// under a runtime cache root.
+/// Published toolchain seeds (entries with a `ready` marker) under a runtime
+/// cache root.
 fn published_seeds(cache: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let mut seeds: Vec<_> = std::fs::read_dir(cache)
+    let mut seeds: Vec<_> = std::fs::read_dir(cache.join(sim::build::TOOLCHAIN_SEED_DIR))
         .map(|entries| {
             entries
                 .flatten()
                 .map(|entry| entry.path())
-                .filter(|path| {
-                    path.is_dir()
-                        && path.file_name().is_some_and(|name| {
-                            name.to_string_lossy().starts_with("cmake-toolchain-")
-                        })
-                        && path.join("ready").is_file()
-                })
+                .filter(|path| path.is_dir() && path.join("ready").is_file())
                 .collect()
         })
         .unwrap_or_default();
@@ -878,14 +872,37 @@ fn fresh_model_trees_reuse_the_toolchain_detection_seed() {
     assert_eq!(seeds.len(), 1, "one toolchain, one seed: {seeds:?}");
     assert!(!seeds[0].join("rejected").exists());
     assert!(!seeds[0].join("probe").exists(), "probe trees are removed");
-    let runtime_builds: Vec<_> = std::fs::read_dir(&cache)
+    // Consumers enumerate runtime archives as the root's children with a
+    // `ready` marker; seeds must stay out of that set (they live under one
+    // `cmake-toolchain/` child without a marker).
+    let ready: Vec<_> = std::fs::read_dir(&cache)
         .unwrap()
         .flatten()
-        .map(|entry| entry.path().join("build"))
-        .filter(|build| build.join("CMakeCache.txt").is_file())
+        .map(|entry| entry.path())
+        .filter(|entry| entry.join("ready").is_file())
         .collect();
-    assert_eq!(runtime_builds.len(), 1, "{runtime_builds:?}");
-    assert!(!ran_compiler_detection(&runtime_builds[0]));
+    assert_eq!(
+        ready.len(),
+        1,
+        "only the runtime archive is ready: {ready:?}"
+    );
+    assert!(
+        ready[0].join("build").join("CMakeCache.txt").is_file(),
+        "{ready:?}"
+    );
+    let directories: Vec<_> = std::fs::read_dir(&cache)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+    assert!(
+        directories
+            .iter()
+            .all(|path| path == &ready[0] || path.ends_with(sim::build::TOOLCHAIN_SEED_DIR)),
+        "unexpected cache root children: {directories:?}"
+    );
+    assert!(!ran_compiler_detection(&ready[0].join("build")));
 
     // An existing compatible tree is reconfigured incrementally as before.
     let stdout = build_counter(dir.path(), &dir.path().join("first"), &opts)
@@ -1052,7 +1069,7 @@ fn missing_ninja_reports_an_actionable_error_without_a_retry() {
     // configured exactly once.
     let configures: Vec<&str> = log
         .lines()
-        .filter(|line| line.starts_with("-S ") && !line.contains("cmake-toolchain-"))
+        .filter(|line| line.starts_with("-S ") && !line.contains("/cmake-toolchain/"))
         .collect();
     assert_eq!(configures.len(), 1, "no from-scratch retry: {log}");
     assert!(configures[0].contains("-G Ninja"), "{log}");

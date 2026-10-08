@@ -65,9 +65,10 @@
 //! - `LLG_RUNTIME_CACHE_DIR` — shared static-runtime cache root; defaults to
 //!   `build/llg-runtime-cache` under the current directory. Relative values
 //!   resolve from the current directory; an empty value selects the default.
-//!   No path is fixed at compile time. The root also holds CMake
-//!   toolchain-detection seeds that fresh build trees reuse (see
-//!   `build/toolchain_seed.rs`).
+//!   No path is fixed at compile time. Each runtime archive entry is a child
+//!   directory with a `ready` marker; the [`TOOLCHAIN_SEED_DIR`] child
+//!   (`cmake-toolchain/`) instead holds the CMake toolchain-detection seeds
+//!   that fresh build trees reuse (see `build/toolchain_seed.rs`).
 //! - `LLG_CMAKE_TOOLCHAIN_SEED` ([`TOOLCHAIN_SEED_ENV`]) — `0`, `off`,
 //!   `false` or `no` makes every fresh configure run CMake's own toolchain
 //!   detection.
@@ -75,7 +76,7 @@
 mod toolchain_seed;
 mod value;
 
-pub use toolchain_seed::SEED_ENV as TOOLCHAIN_SEED_ENV;
+pub use toolchain_seed::{SEED_DIR as TOOLCHAIN_SEED_DIR, SEED_ENV as TOOLCHAIN_SEED_ENV};
 
 use std::error::Error;
 use std::fmt;
