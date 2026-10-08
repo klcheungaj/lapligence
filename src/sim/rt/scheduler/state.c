@@ -158,6 +158,29 @@ typedef struct llg_assertion_attempt {
     uint64_t due;
 } llg_assertion_attempt_t;
 
+/* One sequence clock event identity (time slot, cumulative tick, clock). */
+typedef struct {
+    uint64_t time, tick;
+    sv4_t* clock;
+    int edge;
+} llg_sequence_mark_t;
+
+/* Shared state of one forked join invocation. Each side is represented by
+ * one frame on its threads' scope chains; `alive[side]` is cleared when the
+ * last thread (or nested frame) of that side releases its frame. */
+typedef struct llg_sequence_join_instance {
+    struct llg_sequence_join_instance* next_free;
+    const llg_sequence_join_t* plan;
+    size_t refs;
+    uint8_t alive[2];
+    uint8_t matched[2];
+    uint8_t emitted;
+    llg_sequence_mark_t last[2];
+    llg_sequence_mark_t emitted_at;
+} llg_sequence_join_instance_t;
+
+/* A dynamic frame on a thread's chain: a first_match invocation scope
+ * (`join == NULL`) or one side of a join invocation. */
 typedef struct llg_sequence_scope {
     struct llg_sequence_scope* parent;
     size_t refs;
@@ -166,6 +189,8 @@ typedef struct llg_sequence_scope {
     uint64_t time, tick;
     sv4_t* clock;
     int edge;
+    llg_sequence_join_instance_t* join;
+    uint8_t side;
 } llg_sequence_scope_t;
 
 typedef struct llg_sequence_endpoint {
@@ -403,6 +428,20 @@ typedef struct {
     // set sends the time slot back around through Observed (SV 24.3.1).
     int assertion_edges_pending;
     llg_concurrent_assertion_t* assertion_tail;
+    // Sequence thread budget (LLG_SEQUENCE_THREAD_LIMIT) and the live count
+    // of pending tokens plus attempts it bounds.
+    uint64_t sequence_thread_limit;
+    uint64_t sequence_threads;
+    // Assertion whose sequences are being stepped, for budget diagnostics.
+    const llg_concurrent_assertion_t* sequence_current;
+    // Recycled sequence runtime nodes: steady-state stepping reuses them
+    // instead of allocating. Released by llg_rt_cleanup.
+    llg_sequence_token_t* sequence_token_pool;
+    llg_sequence_scope_t* sequence_scope_pool;
+    llg_sequence_join_instance_t* sequence_join_pool;
+    llg_sequence_endpoint_t* sequence_endpoint_pool;
+    llg_sequence_attempt_t* sequence_attempt_pool;
+    llg_assertion_clock_event_t* assertion_clock_event_pool;
     llg_deferred_trigger_t* deferred_triggers;
     llg_deferred_trigger_t* deferred_trigger_tail;
     llg_deferred_assertion_report_t* deferred_assertions;

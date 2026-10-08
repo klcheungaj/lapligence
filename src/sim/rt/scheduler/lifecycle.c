@@ -107,17 +107,35 @@ static void free_sampled_values(void) {
     g.sampled_edge_clocks = NULL;
 }
 
+/* Assertion clock events are recycled: every sequence assertion edge queues
+ * one event and one history entry, so a free list keeps the steady state
+ * allocation-free. The pool is released by free_sequence_pools(). */
+static llg_assertion_clock_event_t* assertion_clock_event_alloc(void) {
+    llg_assertion_clock_event_t* event = g.assertion_clock_event_pool;
+    if (!event)
+        return llg_checked_calloc(1, sizeof(*event), "concurrent assertion clock event");
+    g.assertion_clock_event_pool = event->next;
+    memset(event, 0, sizeof(*event));
+    return event;
+}
+
+static void assertion_clock_event_recycle(llg_assertion_clock_event_t* event) {
+    if (!event) return;
+    event->next = g.assertion_clock_event_pool;
+    g.assertion_clock_event_pool = event;
+}
+
 static void free_assertion_clock_events(llg_concurrent_assertion_t* assertion) {
     while (assertion && assertion->clock_events) {
         llg_assertion_clock_event_t* next = assertion->clock_events->next;
-        free(assertion->clock_events);
+        assertion_clock_event_recycle(assertion->clock_events);
         assertion->clock_events = next;
     }
     if (assertion) {
         assertion->clock_events_tail = NULL;
         while (assertion->clock_history) {
             llg_assertion_clock_event_t* next = assertion->clock_history->next;
-            free(assertion->clock_history);
+            assertion_clock_event_recycle(assertion->clock_history);
             assertion->clock_history = next;
         }
         assertion->clock_history_tail = NULL;
@@ -125,6 +143,7 @@ static void free_assertion_clock_events(llg_concurrent_assertion_t* assertion) {
 }
 
 static void sequence_attempt_discard(llg_sequence_attempt_t* attempt);
+static void free_sequence_pools(void);
 
 static void free_assertion_attempts(llg_concurrent_assertion_t* assertion) {
     free_assertion_clock_events(assertion);
@@ -274,6 +293,7 @@ void llg_rt_cleanup(void) {
     free_region_callbacks();
     free_sampled_values();
     free_assertions();
+    free_sequence_pools();
     free_clocking_edges();
     free_clocking_drives();
     free_q_queues();

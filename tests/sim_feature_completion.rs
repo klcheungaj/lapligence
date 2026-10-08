@@ -55,6 +55,9 @@ mod sim_033;
 #[path = "sim_feature_completion/sim_035.rs"]
 mod sim_035;
 
+#[path = "sim_feature_completion/sim_037.rs"]
+mod sim_037;
+
 #[path = "sim_feature_completion/ki_packed_range.rs"]
 mod ki_packed_range;
 

@@ -138,8 +138,7 @@ static int assertion_sequence_uses_clock(llg_concurrent_assertion_t* assertion,
 static void assertion_clock_event_append(llg_concurrent_assertion_t* assertion,
                                          sv4_t* signal, int edge,
                                          uint64_t order) {
-    llg_assertion_clock_event_t* event = (llg_assertion_clock_event_t*)llg_checked_calloc(
-        1, sizeof(*event), "concurrent assertion clock event");
+    llg_assertion_clock_event_t* event = assertion_clock_event_alloc();
     event->signal = signal;
     event->edge = edge;
     event->time = g.now;
@@ -153,12 +152,12 @@ static void assertion_clock_event_append(llg_concurrent_assertion_t* assertion,
     if (assertion->clock_history && assertion->clock_history->time != g.now) {
         while (assertion->clock_history) {
             llg_assertion_clock_event_t* next = assertion->clock_history->next;
-            free(assertion->clock_history);
+            assertion_clock_event_recycle(assertion->clock_history);
             assertion->clock_history = next;
         }
         assertion->clock_history_tail = NULL;
     }
-    llg_assertion_clock_event_t* saved = llg_checked_calloc(1, sizeof(*saved), "sequence clock history");
+    llg_assertion_clock_event_t* saved = assertion_clock_event_alloc();
     *saved = *event;
     saved->next = NULL;
     if (assertion->clock_history_tail) assertion->clock_history_tail->next = saved;
@@ -215,6 +214,7 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
                                              int event_edge, uint64_t event_time,
                                              uint64_t event_order,
                                              uint64_t event_tick, int root_event) {
+    g.sequence_current = assertion;
     llg_sequence_attempt_t** antecedent_link = &assertion->sequence_antecedents;
     while (*antecedent_link) {
         llg_sequence_attempt_t* attempt = *antecedent_link;
@@ -320,7 +320,7 @@ static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
                              event->edge == assertion->edge;
             uint64_t cycle = 0;
             if (!sequence_cycle_next(assertion, &cycle)) {
-                free(event);
+                assertion_clock_event_recycle(event);
                 return;
             }
             if (root_event && assertion->abort_condition &&
@@ -334,14 +334,14 @@ static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
                 if (!had_pending && assertion->enabled && !g.finish)
                     assertion_result(assertion, assertion->abort_reject ? 0 : 1,
                                      assertion->abort_reject ? 0 : 1);
-                free(event);
+                assertion_clock_event_recycle(event);
                 if (g.finish) return;
                 continue;
             }
             (void)run_sequence_concurrent_assertion(
                 assertion, cycle, event->signal, event->edge, event->time,
                 event->order, event->tick, root_event);
-            free(event);
+            assertion_clock_event_recycle(event);
             if (g.finish) return;
         }
         return;
@@ -546,8 +546,15 @@ static int valid_sequence_graph(const llg_sequence_graph_t* graph,
         graph->accept >= graph->states ||
         (graph->transition_count != 0 && !graph->transitions) ||
         graph->first_match_state_count != 0 ||
-        (graph->local_count != 0 && !graph->locals))
+        (graph->local_count != 0 && !graph->locals) ||
+        (graph->join_count != 0 && !graph->joins))
         return 0;
+    for (uint32_t index = 0; index < graph->join_count; index++) {
+        const llg_sequence_join_t* join = &graph->joins[index];
+        if ((join->kind != LLG_SEQUENCE_JOIN_AND && join->kind != LLG_SEQUENCE_JOIN_INTERSECT) ||
+            join->left_start >= graph->states || join->right_start >= graph->states)
+            return 0;
+    }
     for (uint32_t index = 0; index < graph->local_count; index++) {
         const llg_sequence_local_t* local = &graph->locals[index];
         if (local->width == 0 || local->width >= LLG_SUPPORTED_WIDTH_LIMIT ||
@@ -560,7 +567,9 @@ static int valid_sequence_graph(const llg_sequence_graph_t* graph,
         const llg_sequence_transition_t* transition = &graph->transitions[index];
         if (transition->from >= graph->states || transition->to >= graph->states ||
             transition->max_delay < transition->min_delay ||
-            (transition->atom != LLG_SEQUENCE_EPSILON && !graph->atom))
+            (transition->atom != LLG_SEQUENCE_EPSILON && !graph->atom) ||
+            transition->enter_join > graph->join_count ||
+            transition->exit_join > graph->join_count)
             return 0;
         if ((transition->clock && transition->edge != LLG_EV_POSEDGE &&
              transition->edge != LLG_EV_NEGEDGE) ||

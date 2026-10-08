@@ -119,6 +119,11 @@ static int load_limit(const char* name, uint64_t fallback, uint64_t* value,
 }
 
 static int configure_limits(void) {
+    int sequence_present = 0;
+    if (!load_limit("LLG_SEQUENCE_THREAD_LIMIT", (uint64_t)LLG_SEQUENCE_THREAD_LIMIT,
+                    &g.sequence_thread_limit, &sequence_present)) {
+        return 0;
+    }
     int zero_present = 0;
     if (!load_limit("LLG_ZERO_LOOP_LIMIT", (uint64_t)LLG_ZERO_LOOP_LIMIT,
                     &g.zero_loop_limit, &zero_present)) {

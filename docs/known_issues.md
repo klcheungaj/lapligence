@@ -608,6 +608,39 @@ already enumerates every opaque slot that can hold one).
 forks many short-lived children: the pinned handle count grows with the
 number of children until the model ends.
 
+## Overlapping unbounded sequence obligations cost one thread each per clock
+
+**Status:** open (SIM-037 follow-up).
+
+### Symptom
+
+An assertion such as `a |-> ##[1:$] b` with `a` high on every clock and `b`
+rarely high keeps one pending consequent attempt per clock since the last
+`b`. Each clock steps every pending attempt, so run time grows with the square
+of the gap length: 20,000 clocks with no `b` take about 23 s of model run time
+(quick-profile build; the same as before SIM-037). Memory
+stays bounded by `LLG_SEQUENCE_THREAD_LIMIT` (default 1,000,000 live threads),
+whose exhaustion stops the run with an error rather than dropping attempts.
+
+### Cause
+
+Every attempt is stepped separately so that each one reports its own pass or
+fail (§16.12). Attempts with the same automaton state are not merged, and
+deduplication inside one attempt scans that attempt's token list. Tokens with
+local variables still allocate their local arrays per copy.
+
+### Intended direction
+
+Group pending attempts of one assertion whose token sets differ only in their
+start tick and whose transitions are unbounded or already past their lower
+bound, stepping the group once and fanning results out per attempt; index the
+per-attempt deduplication by (state, edge).
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_037/budget.sv` with the loop bound
+raised to 20,000 and `LLG_SEQUENCE_THREAD_LIMIT` unset.
+
 ## Collected objects keep some runtime objects and defer collection
 
 **Status:** open (SIM-018 limits).

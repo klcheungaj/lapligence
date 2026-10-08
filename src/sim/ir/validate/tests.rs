@@ -1925,3 +1925,105 @@ fn sampled_calls_respect_retained_history_and_event_clocks() {
         assert!(error.detail().contains("event clock"), "{error}");
     }
 }
+
+#[test]
+fn sequence_joins_need_one_fork_an_exit_and_one_action_per_edge() {
+    use crate::sim::ir::{
+        IrSequence, IrSequenceJoin, IrSequenceJoinKind, IrSequenceRange, IrSequenceTransition,
+    };
+    let edge = |from, to, enter_join, exit_join| IrSequenceTransition {
+        from,
+        to,
+        delay: IrSequenceRange {
+            min: 0,
+            max: Some(0),
+        },
+        clock_signal: None,
+        clock_posedge: false,
+        atom: None,
+        match_start: None,
+        match_count: 0,
+        enter_scope: None,
+        exit_scope: None,
+        enter_join,
+        exit_join,
+    };
+    let join = IrSequenceJoin {
+        kind: IrSequenceJoinKind::Intersect,
+        left_start: 1,
+        right_start: 3,
+        left_empty: false,
+        right_empty: false,
+    };
+    let build = |transitions: Vec<IrSequenceTransition>, joins: Vec<IrSequenceJoin>| {
+        IrSequence::new(
+            6,
+            0,
+            5,
+            transitions,
+            Vec::new(),
+            false,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            false,
+            joins,
+            None,
+            true,
+            None,
+            true,
+        )
+    };
+    // 0 -fork-> 1 -> 2 -exit-> 5 and 3 -> 4 -exit-> 5.
+    let valid = vec![
+        edge(0, 1, Some(0), None),
+        edge(1, 2, None, None),
+        edge(2, 5, None, Some(0)),
+        edge(3, 4, None, None),
+        edge(4, 5, None, Some(0)),
+    ];
+    build(valid.clone(), vec![join]).expect("a forked and exited join validates");
+
+    let mut no_fork = valid.clone();
+    no_fork[0].enter_join = None;
+    assert!(build(no_fork, vec![join]).is_err(), "a join needs its fork");
+
+    let mut two_forks = valid.clone();
+    two_forks[1].enter_join = Some(0);
+    assert!(
+        build(two_forks, vec![join]).is_err(),
+        "a join has one fork edge"
+    );
+
+    let mut wrong_target = valid.clone();
+    wrong_target[0].to = 3;
+    assert!(
+        build(wrong_target, vec![join]).is_err(),
+        "the fork edge enters the left operand"
+    );
+
+    let mut two_actions = valid.clone();
+    two_actions[2].exit_scope = Some(1);
+    assert!(
+        build(two_actions, vec![join]).is_err(),
+        "an edge carries one scope or join action"
+    );
+
+    let mut out_of_bounds = valid.clone();
+    out_of_bounds[4].exit_join = Some(1);
+    assert!(
+        build(out_of_bounds, vec![join]).is_err(),
+        "join indices are bounded by the table"
+    );
+
+    let bad_start = IrSequenceJoin {
+        right_start: 6,
+        ..join
+    };
+    assert!(
+        build(valid, vec![bad_start]).is_err(),
+        "operand starts are states"
+    );
+}

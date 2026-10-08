@@ -1,3 +1,103 @@
+/* Sequence thread budget. Every pending token and every attempt counts as
+ * one live thread; crossing LLG_SEQUENCE_THREAD_LIMIT reports the assertion
+ * and stops the run, so no obligation is ever dropped silently. */
+static void sequence_thread_acquire(void) {
+    if (++g.sequence_threads == g.sequence_thread_limit + 1u) {
+        const llg_concurrent_assertion_t* assertion = g.sequence_current;
+        fprintf(stderr,
+                "llg: sequence thread budget exhausted: more than %llu live sequence threads"
+                " at time %llu (concurrent assertion %s at %s); raise LLG_SEQUENCE_THREAD_LIMIT\n",
+                (unsigned long long)g.sequence_thread_limit, (unsigned long long)g.now,
+                assertion && assertion->label && assertion->label[0] ? assertion->label : "<unnamed>",
+                assertion && assertion->location ? assertion->location : "<unknown>");
+        llg_last_failure = 1;
+        g.finish = 1;
+    }
+}
+
+static void sequence_thread_release(void) {
+    if (g.sequence_threads) g.sequence_threads--;
+}
+
+static llg_sequence_scope_t* sequence_scope_alloc(void) {
+    llg_sequence_scope_t* scope = g.sequence_scope_pool;
+    if (!scope) return llg_checked_calloc(1, sizeof(*scope), "sequence frame");
+    g.sequence_scope_pool = scope->parent;
+    memset(scope, 0, sizeof(*scope));
+    return scope;
+}
+
+static llg_sequence_join_instance_t* sequence_join_alloc(void) {
+    llg_sequence_join_instance_t* join = g.sequence_join_pool;
+    if (!join) return llg_checked_calloc(1, sizeof(*join), "sequence join");
+    g.sequence_join_pool = join->next_free;
+    memset(join, 0, sizeof(*join));
+    return join;
+}
+
+static llg_sequence_token_t* sequence_token_alloc(void) {
+    llg_sequence_token_t* token = g.sequence_token_pool;
+    if (token) {
+        g.sequence_token_pool = token->next;
+        memset(token, 0, sizeof(*token));
+    } else {
+        token = llg_checked_calloc(1, sizeof(*token), "sequence token");
+    }
+    sequence_thread_acquire();
+    return token;
+}
+
+static llg_sequence_endpoint_t* sequence_endpoint_alloc(void) {
+    llg_sequence_endpoint_t* endpoint = g.sequence_endpoint_pool;
+    if (!endpoint) return llg_checked_calloc(1, sizeof(*endpoint), "sequence endpoint");
+    g.sequence_endpoint_pool = endpoint->next;
+    memset(endpoint, 0, sizeof(*endpoint));
+    return endpoint;
+}
+
+static void sequence_endpoint_recycle(llg_sequence_endpoint_t* endpoint) {
+    sv4_destroy_array(endpoint->locals, endpoint->local_count);
+    free(endpoint->locals);
+    endpoint->locals = NULL;
+    endpoint->next = g.sequence_endpoint_pool;
+    g.sequence_endpoint_pool = endpoint;
+}
+
+static void free_sequence_pools(void) {
+    while (g.sequence_token_pool) {
+        llg_sequence_token_t* next = g.sequence_token_pool->next;
+        free(g.sequence_token_pool);
+        g.sequence_token_pool = next;
+    }
+    while (g.sequence_scope_pool) {
+        llg_sequence_scope_t* next = g.sequence_scope_pool->parent;
+        free(g.sequence_scope_pool);
+        g.sequence_scope_pool = next;
+    }
+    while (g.sequence_join_pool) {
+        llg_sequence_join_instance_t* next = g.sequence_join_pool->next_free;
+        free(g.sequence_join_pool);
+        g.sequence_join_pool = next;
+    }
+    while (g.sequence_endpoint_pool) {
+        llg_sequence_endpoint_t* next = g.sequence_endpoint_pool->next;
+        free(g.sequence_endpoint_pool);
+        g.sequence_endpoint_pool = next;
+    }
+    while (g.sequence_attempt_pool) {
+        llg_sequence_attempt_t* next = g.sequence_attempt_pool->next;
+        free(g.sequence_attempt_pool);
+        g.sequence_attempt_pool = next;
+    }
+    while (g.assertion_clock_event_pool) {
+        llg_assertion_clock_event_t* next = g.assertion_clock_event_pool->next;
+        free(g.assertion_clock_event_pool);
+        g.assertion_clock_event_pool = next;
+    }
+    g.sequence_threads = 0;
+    g.sequence_current = NULL;
+}
+
 
 static llg_sequence_attempt_t* sequence_attempt_from_data(void* data) {
     return (llg_sequence_attempt_t*)data;
@@ -70,9 +170,39 @@ static void sequence_scope_retain(llg_sequence_scope_t* scope) {
 static void sequence_scope_release(llg_sequence_scope_t* scope) {
     while (scope && --scope->refs == 0) {
         llg_sequence_scope_t* parent = scope->parent;
-        free(scope);
+        llg_sequence_join_instance_t* join = scope->join;
+        if (join) {
+            // The last thread of this side is gone: it can match no more.
+            join->alive[scope->side] = 0;
+            if (--join->refs == 0) {
+                join->next_free = g.sequence_join_pool;
+                g.sequence_join_pool = join;
+            }
+        }
+        scope->parent = g.sequence_scope_pool;
+        g.sequence_scope_pool = scope;
         scope = parent;
     }
+}
+
+static int sequence_mark_same(const llg_sequence_mark_t* a, const llg_sequence_mark_t* b) {
+    return a->time == b->time && a->tick == b->tick && a->clock == b->clock &&
+           a->edge == b->edge;
+}
+
+/* A pending thread is dead when an enclosing first_match invocation has
+ * closed, or when an enclosing join can no longer pair its endpoint: the
+ * other side has no live thread and, for AND, never matched. */
+static int sequence_scope_doomed(const llg_sequence_scope_t* scope) {
+    for (; scope; scope = scope->parent) {
+        if (scope->matched) return 1;
+        const llg_sequence_join_instance_t* join = scope->join;
+        if (!join) continue;
+        int other = !scope->side;
+        if (join->alive[other]) continue;
+        if (join->plan->kind == LLG_SEQUENCE_JOIN_INTERSECT || !join->matched[other]) return 1;
+    }
+    return 0;
 }
 
 static int sequence_scope_closed(const llg_sequence_scope_t* scope) {
@@ -95,7 +225,11 @@ static void sequence_token_free(llg_sequence_token_t* token) {
     sequence_scope_release(token->scope);
     sv4_destroy_array(token->locals, token->local_count);
     free(token->locals);
-    free(token);
+    token->locals = NULL;
+    token->scope = NULL;
+    token->next = g.sequence_token_pool;
+    g.sequence_token_pool = token;
+    sequence_thread_release();
 }
 
 static void sequence_tokens_free(llg_sequence_token_t* tokens) {
@@ -108,7 +242,7 @@ static void sequence_tokens_free(llg_sequence_token_t* tokens) {
 
 static llg_sequence_token_t* sequence_token_copy(
     const llg_sequence_graph_t* graph, const llg_sequence_token_t* source) {
-    llg_sequence_token_t* token = llg_checked_calloc(1, sizeof(*token), "sequence token");
+    llg_sequence_token_t* token = sequence_token_alloc();
     *token = *source;
     token->next = NULL;
     token->local_count = graph->local_count;
@@ -147,16 +281,14 @@ static void sequence_token_push(const llg_sequence_graph_t* graph,
 static void sequence_endpoints_free(llg_sequence_endpoint_t* endpoint) {
     while (endpoint) {
         llg_sequence_endpoint_t* next = endpoint->next;
-        sv4_destroy_array(endpoint->locals, endpoint->local_count);
-        free(endpoint->locals);
-        free(endpoint);
+        sequence_endpoint_recycle(endpoint);
         endpoint = next;
     }
 }
 
 static void sequence_endpoint_add(llg_sequence_attempt_t* attempt,
                                    const llg_sequence_token_t* token, int empty) {
-    llg_sequence_endpoint_t* endpoint = llg_checked_calloc(1, sizeof(*endpoint), "sequence endpoint");
+    llg_sequence_endpoint_t* endpoint = sequence_endpoint_alloc();
     endpoint->local_count = attempt->graph->local_count;
     endpoint->locals = sequence_locals_clone(attempt->graph, token->locals);
     endpoint->clock = token->entered_clock;
@@ -251,7 +383,14 @@ int llg_sequence_local_inherited(void* data, uint32_t slot) {
 static llg_sequence_attempt_t* sequence_attempt_new(
     const llg_sequence_graph_t* graph, uint64_t due_cycle,
     const llg_sequence_graph_t* source, const sv4_t* values) {
-    llg_sequence_attempt_t* attempt = llg_checked_calloc(1, sizeof(*attempt), "sequence attempt");
+    llg_sequence_attempt_t* attempt = g.sequence_attempt_pool;
+    if (attempt) {
+        g.sequence_attempt_pool = attempt->next;
+        memset(attempt, 0, sizeof(*attempt));
+    } else {
+        attempt = llg_checked_calloc(1, sizeof(*attempt), "sequence attempt");
+    }
+    sequence_thread_acquire();
     attempt->graph = graph;
     attempt->due_cycle = due_cycle;
     if (graph->local_count) {
@@ -392,8 +531,73 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
                 sequence_scope_release(scope);
             }
         }
+        if (matches && edge->exit_join) {
+            llg_sequence_scope_t* frame = destination->scope;
+            const llg_sequence_join_t* plan = edge->exit_join <= graph->join_count
+                ? &graph->joins[edge->exit_join - 1] : NULL;
+            if (!plan || !frame || !frame->join || frame->join->plan != plan) {
+                fprintf(stderr, "llg: unbalanced sequence join\n");
+                llg_last_failure = 1; g.finish = 1; matches = 0;
+            } else {
+                llg_sequence_join_instance_t* join = frame->join;
+                int side = frame->side;
+                int other = !side;
+                llg_sequence_mark_t mark = { .time = event.time, .tick = event.tick,
+                    .clock = event.signal, .edge = event.edge };
+                join->matched[side] = 1;
+                join->last[side] = mark;
+                int pair = plan->kind == LLG_SEQUENCE_JOIN_AND
+                    ? join->matched[other]
+                    : join->matched[other] && sequence_mark_same(&join->last[other], &mark);
+                // One continuation per join endpoint tick: the other side's
+                // threads ending on the same tick would only duplicate it.
+                if (!pair || (join->emitted && sequence_mark_same(&join->emitted_at, &mark))) {
+                    matches = 0;
+                } else {
+                    join->emitted = 1;
+                    join->emitted_at = mark;
+                    destination->scope = frame->parent;
+                    sequence_scope_retain(destination->scope);
+                    sequence_scope_release(frame);
+                }
+            }
+        }
+        llg_sequence_token_t* fork = NULL;
+        if (matches && edge->enter_join) {
+            const llg_sequence_join_t* plan = edge->enter_join <= graph->join_count
+                ? &graph->joins[edge->enter_join - 1] : NULL;
+            if (!plan) {
+                fprintf(stderr, "llg: invalid sequence join\n");
+                llg_last_failure = 1; g.finish = 1; matches = 0;
+            } else {
+                // Both operands start on this tick, each in its own thread
+                // with its own side frame and local-variable copy.
+                llg_sequence_join_instance_t* join = sequence_join_alloc();
+                join->plan = plan;
+                join->refs = 2;
+                join->alive[0] = join->alive[1] = 1;
+                if (plan->kind == LLG_SEQUENCE_JOIN_AND) {
+                    join->matched[0] = plan->left_empty;
+                    join->matched[1] = plan->right_empty;
+                }
+                fork = sequence_token_copy(graph, destination);
+                llg_sequence_scope_t* left = sequence_scope_alloc();
+                left->refs = 1;
+                left->join = join;
+                left->side = 0;
+                left->parent = destination->scope; // transfer the token's parent reference
+                destination->scope = left;
+                llg_sequence_scope_t* right = sequence_scope_alloc();
+                right->refs = 1;
+                right->join = join;
+                right->side = 1;
+                right->parent = fork->scope;
+                fork->scope = right;
+                fork->state = plan->right_start;
+            }
+        }
         if (matches && edge->enter_scope) {
-            llg_sequence_scope_t* scope = llg_checked_calloc(1, sizeof(*scope), "first_match invocation");
+            llg_sequence_scope_t* scope = sequence_scope_alloc();
             scope->refs = 1;
             scope->identity = edge->enter_scope;
             scope->parent = destination->scope; // transfer the token's parent reference
@@ -403,17 +607,28 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
         attempt->locals = NULL;
         if (matches && !g.finish) sequence_token_push(graph, &work, destination);
         else sequence_token_free(destination);
+        if (fork) {
+            if (!g.finish) sequence_token_push(graph, &work, fork);
+            else sequence_token_free(fork);
+        }
     }
     sequence_tokens_free(work);
     sequence_tokens_free(processed);
-    llg_sequence_token_t** link = &next;
-    while (*link) {
-        llg_sequence_token_t* token = *link;
-        if (sequence_scope_closed(token->scope) || (graph->first_match && attempt->endpoints)) {
-            *link = token->next;
-            sequence_token_free(token);
-        } else link = &token->next;
-    }
+    // Dropping a doomed thread can end a join side and doom further
+    // threads, so prune to a fixed point (bounded by the frame depth).
+    int pruned;
+    do {
+        pruned = 0;
+        llg_sequence_token_t** link = &next;
+        while (*link) {
+            llg_sequence_token_t* token = *link;
+            if (sequence_scope_doomed(token->scope) || (graph->first_match && attempt->endpoints)) {
+                *link = token->next;
+                sequence_token_free(token);
+                pruned = 1;
+            } else link = &token->next;
+        }
+    } while (pruned);
     attempt->tokens = next;
     *accepted = attempt->endpoints != NULL;
     return !g.finish && next != NULL;
@@ -434,7 +649,11 @@ static void sequence_attempt_discard(llg_sequence_attempt_t* attempt) {
     if (attempt->locals) sv4_destroy_array(attempt->locals, attempt->graph->local_count);
     free(attempt->locals);
     free(attempt->inherited);
-    free(attempt);
+    attempt->locals = NULL;
+    attempt->inherited = NULL;
+    attempt->next = g.sequence_attempt_pool;
+    g.sequence_attempt_pool = attempt;
+    sequence_thread_release();
 }
 
 static int sequence_cycle_next(llg_concurrent_assertion_t* assertion, uint64_t* cycle) {
@@ -466,9 +685,7 @@ static int sequence_spawn_consequents(llg_concurrent_assertion_t* assertion,
             sequence_attempt_append(&assertion->sequence_consequents,
                                     &assertion->sequence_consequents_tail, consequent);
         }
-        sv4_destroy_array(endpoint->locals, endpoint->local_count);
-        free(endpoint->locals);
-        free(endpoint);
+        sequence_endpoint_recycle(endpoint);
         endpoint = next;
     }
     return !g.finish;

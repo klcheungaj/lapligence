@@ -64,6 +64,9 @@ fn render_assertion_sequence(
     role: &str,
     sequence: &IrSequence,
 ) -> Result<String, String> {
+    if !sequence.joins().is_empty() {
+        return Err("the legacy model renderer does not support sequence joins".to_owned());
+    }
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,

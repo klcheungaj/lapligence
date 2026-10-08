@@ -252,6 +252,15 @@ in both optimizer modes on every backend; `complex_clocks` also runs at model
 `sim::ir::validate::tests::sampled_*` unit tests and the sampled-domain ring
 checks in `runtime_value_storage`'s `retention_probe.c`.
 
+SIM-037's sequence-composition fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_037::)'`. `exhaustive` compares
+36 sequences on all 1024 two-signal traces of length 5 with the test-side
+Annex F interpreter in `sim_037.rs`; the other positives are hand-derived match
+sets. All positives run in both optimizer modes on every backend, compared as
+sorted line multisets. `budget` also runs with a small
+`LLG_SEQUENCE_THREAD_LIMIT`. The component check is
+`sim::ir::validate::tests::sequence_joins_*`.
+
 SIM-006's container, record-element, handle-array and associative-default
 fixtures use `-E 'binary(sim_feature_completion) & test(sim_006::)'`. Positive
 fixtures run in both optimizer modes on every backend; fixtures without runtime warnings also run after Db

@@ -118,9 +118,12 @@ pub(super) fn render(
             .map(|value| format!("{value}u"))
             .unwrap_or_else(|| "0u".to_owned());
         out.push_str(&format!(
-            "    {{{}u, {}u, {}ULL, {max}, {clock}, {edge}, {atom}, {match_start}, {}u, {}u, {}u}},\n",
+            "    {{{}u, {}u, {}ULL, {max}, {clock}, {edge}, {atom}, {match_start}, {}u, {}u, {}u, {}u, {}u}},\n",
             transition.from, transition.to, transition.delay.min, transition.match_count,
             transition.enter_scope.unwrap_or(0), transition.exit_scope.unwrap_or(0),
+            // Join references are one-based so zero means "no join action".
+            transition.enter_join.map_or(0, |join| join + 1),
+            transition.exit_join.map_or(0, |join| join + 1),
         ));
     }
     out.push_str("};\n");
@@ -171,6 +174,27 @@ pub(super) fn render(
     } else {
         init_name
     };
+    let joins_name = format!("{sequence_name}_joins");
+    let joins_ptr = if sequence.joins().is_empty() {
+        "NULL".to_owned()
+    } else {
+        out.push_str(&format!(
+            "static const llg_sequence_join_t {joins_name}[{}] = {{\n",
+            sequence.joins().len()
+        ));
+        for join in sequence.joins() {
+            let kind = match join.kind {
+                crate::sim::ir::IrSequenceJoinKind::And => "LLG_SEQUENCE_JOIN_AND",
+                crate::sim::ir::IrSequenceJoinKind::Intersect => "LLG_SEQUENCE_JOIN_INTERSECT",
+            };
+            out.push_str(&format!(
+                "    {{{kind}, {}u, {}u, {}, {}}},\n",
+                join.left_start, join.right_start, join.left_empty as u8, join.right_empty as u8
+            ));
+        }
+        out.push_str("};\n");
+        joins_name
+    };
     let leading_clock = sequence
         .leading_clock
         .map(|signal| format!("&{}", registration::signal_name(model, signal)))
@@ -181,7 +205,7 @@ pub(super) fn render(
         "LLG_EV_NEGEDGE"
     };
     out.push_str(&format!(
-        "static const llg_sequence_graph_t {sequence_name} = {{ {}u, {}u, {}u, {}u, {transition_name}, {}u, {first_match_states_ptr}, {atom_name}, NULL, {init_ptr}, {}, {}u, {locals_ptr}, {}u, {match_ptr}, {}, {leading_clock}, {leading_edge} }};\n\n",
+        "static const llg_sequence_graph_t {sequence_name} = {{ {}u, {}u, {}u, {}u, {transition_name}, {}u, {first_match_states_ptr}, {atom_name}, NULL, {init_ptr}, {}, {}u, {locals_ptr}, {}u, {match_ptr}, {}, {leading_clock}, {leading_edge}, {}u, {joins_ptr} }};\n\n",
         sequence.states(),
         sequence.start(),
         sequence.accept(),
@@ -191,6 +215,7 @@ pub(super) fn render(
         sequence.locals().len(),
         sequence.match_items().len(),
         sequence.admits_empty as u8,
+        sequence.joins().len(),
     ));
     Ok(out)
 }
