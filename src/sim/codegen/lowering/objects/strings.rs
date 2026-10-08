@@ -296,6 +296,17 @@ impl Codegen<'_> {
             return Err("chandle cannot be converted to string".to_owned());
         }
         match self.kind(node) {
+            NodeKind::SysCall { name }
+                if matches!(
+                    name.as_str(),
+                    "$sampled" | "$past" | "$stable" | "$changed" | "$rose" | "$fell"
+                ) =>
+            {
+                Err(format!(
+                    "{name} of a string expression is illegal in `{path}`: sampled expressions \
+                     exclude string operands (SV 16.6.1)"
+                ))
+            }
             NodeKind::SysCall { name } if name == "$sformatf" => {
                 let args = self.call_argument_nodes(node);
                 let Some((format, values)) = args.split_first() else {

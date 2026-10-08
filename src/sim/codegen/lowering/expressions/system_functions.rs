@@ -3,6 +3,57 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
+    /// Classify a sampled-value argument by its declared type before it is
+    /// lowered, so a non-integral operand gets a specific diagnostic instead
+    /// of being coerced or failing in a generic reference path. SV 16.6.1
+    /// excludes string, event, chandle, class, associative and dynamic array
+    /// operands from sampled expressions; fixed unpacked arrays and unpacked
+    /// structures are legal but have no sampled storage yet.
+    fn check_sampled_argument_type(
+        &self,
+        scope_path: &str,
+        name: &str,
+        node: NodeId,
+    ) -> Result<(), String> {
+        use crate::core::db::{AggregateKind, ArrayKind, TypeShape};
+        let Some(descriptor) = self.query_descriptor(node) else {
+            return Ok(());
+        };
+        let illegal = |what: &str| {
+            Err(format!(
+                "{name} argument of type `{}` is illegal in `{scope_path}`: sampled expressions \
+                 exclude {what} operands (SV 16.6.1)",
+                descriptor.name
+            ))
+        };
+        let unsupported = |what: &str| {
+            Err(format!(
+                "{name} argument of type `{}` in `{scope_path}` is not supported: sampled \
+                 histories hold packed integral and real values, not {what}",
+                descriptor.name
+            ))
+        };
+        match &descriptor.shape {
+            TypeShape::String => illegal("string"),
+            TypeShape::Opaque { .. } => illegal("event, chandle, class and other handle"),
+            TypeShape::Container {
+                array: ArrayKind::Dynamic | ArrayKind::Associative(_),
+                ..
+            } => illegal("dynamic and associative array"),
+            TypeShape::Container { .. } => unsupported("queues"),
+            TypeShape::FixedArray { .. } => unsupported("unpacked arrays"),
+            TypeShape::Aggregate(layout)
+                if matches!(
+                    layout.kind,
+                    AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion
+                ) =>
+            {
+                unsupported("unpacked structures")
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn lower_sampled_func_expr(
         &mut self,
         scope_path: &str,
@@ -17,6 +68,7 @@ impl<'a> Codegen<'a> {
                     "$sampled requires exactly one argument in `{scope_path}`"
                 ));
             };
+            self.check_sampled_argument_type(scope_path, name, *argument)?;
             let argument = self.lower_expr(scope_path, *argument)?;
             if !super::super::assertions::sampled_compatible(&argument) {
                 return Err(format!(
@@ -81,6 +133,7 @@ impl<'a> Codegen<'a> {
                 "{name} has invalid argument count in `{scope_path}`"
             ));
         }
+        self.check_sampled_argument_type(scope_path, name, args[0])?;
         let argument = self.lower_expr(scope_path, args[0])?;
         if !super::super::assertions::sampled_compatible(&argument) {
             return Err(format!(

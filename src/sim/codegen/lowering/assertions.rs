@@ -1987,7 +1987,12 @@ pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
         IrExprKind::RealBin { a, b, .. } => sampled_compatible(a) && sampled_compatible(b),
         IrExprKind::RealUn { a, .. } | IrExprKind::CastToReal { a, .. } => sampled_compatible(a),
         IrExprKind::SysFunc(function) => match &**function {
-            crate::sim::ir::IrSysFunc::Sampled(call) => sampled_compatible(&call.argument),
+            // A history call reads its domain, whose sample expression was
+            // admitted when the domain was created (including a real
+            // argument's 64-bit image); only `$sampled` evaluates in place.
+            crate::sim::ir::IrSysFunc::Sampled(call) => {
+                call.domain.is_some() || sampled_compatible(&call.argument)
+            }
             _ => false,
         },
         _ => false,
