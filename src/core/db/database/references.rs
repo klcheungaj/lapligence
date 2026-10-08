@@ -417,7 +417,8 @@ pub(super) fn expression_reference_target(
 }
 
 /// Whether a member-access node selects, possibly through further member
-/// accesses, from a function call result (`f(x).m`, `f(x).s.m`).
+/// accesses, from a function or method call result (`f(x).m`, `f(x).s.m`,
+/// `q.pop_front().m`).
 pub(super) fn call_member_access(
     snapshot: &SlangSnapshot,
     ids: &SemanticIds,
@@ -435,7 +436,10 @@ pub(super) fn call_member_access(
         let Some(base) = snapshot.semantic_nodes.get(base.index()) else {
             return Ok(false);
         };
-        if base.kind == SemanticKind::FunctionCall {
+        if matches!(
+            base.kind,
+            SemanticKind::FunctionCall | SemanticKind::MethodCall
+        ) {
             return Ok(true);
         }
         current = base;

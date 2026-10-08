@@ -330,6 +330,12 @@ impl<'a> Codegen<'a> {
             if let Some(value) = self.fixed_reduction_index(scope_path, &args)? {
                 return Ok(value);
             }
+            if let Some(value) = args
+                .first()
+                .and_then(|receiver| self.inline_index_read(scope_path, *receiver))
+            {
+                return value;
+            }
             if let Some(iterator) = self.container_iterator {
                 let [receiver] = args.as_slice() else {
                     return Err(format!(

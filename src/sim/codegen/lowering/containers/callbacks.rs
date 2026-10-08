@@ -128,7 +128,7 @@ impl<'a> Codegen<'a> {
         path: &str,
         dst: usize,
         rhs: NodeId,
-    ) -> Result<Option<IrContainerStmt>, String> {
+    ) -> Result<Option<IrStmt>, String> {
         let rhs = self.p30_unwrap_cast(rhs);
         let (name, receiver) = match self.kind(rhs) {
             NodeKind::MethodCall {
@@ -161,6 +161,17 @@ impl<'a> Codegen<'a> {
             return Err(format!(
                 "array method `{name}` in `{path}` returns a queue and requires a queue destination"
             ));
+        }
+        if self.inline_method_needed(
+            path,
+            rhs,
+            receiver,
+            source.ir,
+            super::inline_methods::InlineUse::Result(method),
+        )? {
+            return self
+                .lower_inline_method_result(path, dst, rhs, receiver, source.ir, method)
+                .map(Some);
         }
         let real_source = self.model.containers[source.ir].element.is_real()
             && !matches!(
@@ -236,12 +247,14 @@ impl<'a> Codegen<'a> {
                 "array locator method `{name}` in `{path}` requires a with clause"
             ));
         }
-        Ok(Some(IrContainerStmt::MethodAssign {
-            dst,
-            src: source.ir,
-            method,
-            callback,
-        }))
+        Ok(Some(IrStmt::Container(Box::new(
+            IrContainerStmt::MethodAssign {
+                dst,
+                src: source.ir,
+                method,
+                callback,
+            },
+        ))))
     }
 
     pub(in super::super) fn lower_container_value(

@@ -95,6 +95,42 @@ pub(super) fn render(
             name(frame, *left)?,
             name(frame, *right)?
         ),
+        IrContainerStmt::Copy { dst, src }
+            if matches!(
+                (
+                    &ctx.model.containers[*dst].kind,
+                    &ctx.model.containers[*src].kind
+                ),
+                (IrContainerKind::Dynamic, IrContainerKind::Queue { .. })
+                    | (IrContainerKind::Queue { .. }, IrContainerKind::Dynamic)
+            ) =>
+        {
+            // Dynamic array <-> queue (SV 7.6): packed storage assigns the
+            // source's element array; recursive storage copies a view.
+            let to_dynamic = matches!(ctx.model.containers[*dst].kind, IrContainerKind::Dynamic);
+            let source = name(frame, *src)?;
+            if ctx.model.containers[*dst].element.is_packed() {
+                format!(
+                    "    {}(&{}, {source}.data, {source}.size);\n",
+                    if to_dynamic {
+                        "llg_dyn_assign_values"
+                    } else {
+                        "llg_queue_assign_values"
+                    },
+                    name(frame, *dst)?
+                )
+            } else {
+                format!(
+                    "    {}(&{}, &{source});\n",
+                    if to_dynamic {
+                        "llg_dyn_value_copy_from_queue"
+                    } else {
+                        "llg_queue_value_copy_from_dyn"
+                    },
+                    name(frame, *dst)?
+                )
+            }
+        }
         IrContainerStmt::Copy { dst, src } => {
             let generic = !ctx.model.containers[*dst].element.is_packed();
             let function = if generic {
@@ -152,6 +188,106 @@ pub(super) fn render(
                 name(frame, *src)?,
                 method_code(*method),
                 callback.as_deref().unwrap_or("NULL")
+            )
+        }
+        IrContainerStmt::Gather {
+            dst,
+            src,
+            positions,
+            keys,
+        } => {
+            let source = &ctx.model.containers[*src];
+            let generic = !source.element.is_packed();
+            let string_keys = matches!(
+                source.kind,
+                IrContainerKind::Associative {
+                    key: IrAssocKey::String
+                }
+            );
+            let (function, keys_argument) = match (&source.kind, *keys, generic) {
+                (IrContainerKind::Associative { .. }, true, _) if string_keys => (
+                    if generic {
+                        "llg_assoc_value_gather_string_keys"
+                    } else {
+                        "llg_assoc_gather_string_keys"
+                    },
+                    None,
+                ),
+                (IrContainerKind::Associative { .. }, true, true) => {
+                    ("llg_assoc_value_gather_keys", None)
+                }
+                (IrContainerKind::Associative { .. }, keys, false) => {
+                    ("llg_assoc_gather", Some(keys))
+                }
+                (IrContainerKind::Associative { .. }, false, true) => {
+                    ("llg_assoc_value_gather", None)
+                }
+                // Indices of a dynamic array or queue are the positions.
+                (IrContainerKind::Dynamic | IrContainerKind::Queue { .. }, true, _) => {
+                    ("llg_queue_gather", Some(true))
+                }
+                (IrContainerKind::Dynamic, false, false) => ("llg_dyn_gather", Some(false)),
+                (IrContainerKind::Queue { .. }, false, false) => ("llg_queue_gather", Some(false)),
+                (IrContainerKind::Dynamic, false, true) => ("llg_dyn_value_gather", None),
+                (IrContainerKind::Queue { .. }, false, true) => ("llg_queue_value_gather", None),
+            };
+            // An index result of a dynamic array or queue reads only the
+            // positions, so the source operand is the position queue itself.
+            let source_name = if *keys
+                && matches!(
+                    source.kind,
+                    IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+                ) {
+                name(frame, *positions)?
+            } else {
+                name(frame, *src)?
+            };
+            format!(
+                "    {function}(&{}, &{source_name}, &{}{});\n",
+                name(frame, *dst)?,
+                name(frame, *positions)?,
+                keys_argument
+                    .map(|keys| format!(", {}", u8::from(keys)))
+                    .unwrap_or_default()
+            )
+        }
+        IrContainerStmt::UniquePositions { positions, keys } => {
+            let function = if ctx.model.containers[*keys].element.is_packed() {
+                "llg_method_unique_positions"
+            } else {
+                "llg_method_unique_value_positions"
+            };
+            format!(
+                "    {function}(&{}, &{});\n",
+                name(frame, *positions)?,
+                name(frame, *keys)?
+            )
+        }
+        IrContainerStmt::SortByKeys {
+            container,
+            keys,
+            descending,
+        } => {
+            let target = &ctx.model.containers[*container];
+            let function = match (&target.kind, target.element.is_packed()) {
+                (IrContainerKind::Dynamic, true) => "llg_dyn_sort_by_keys",
+                (IrContainerKind::Queue { .. }, true) => "llg_queue_sort_by_keys",
+                (IrContainerKind::Dynamic, false) => "llg_dyn_value_sort_by_keys",
+                (IrContainerKind::Queue { .. }, false) => "llg_queue_value_sort_by_keys",
+                (IrContainerKind::Associative { .. }, _) => {
+                    return Err("keyed ordering cannot target an associative array".into())
+                }
+            };
+            let keys_name = name(frame, *keys)?;
+            let (packed, value) = if ctx.model.containers[*keys].element.is_packed() {
+                (format!("&{keys_name}"), "NULL".to_owned())
+            } else {
+                ("NULL".to_owned(), format!("&{keys_name}"))
+            };
+            format!(
+                "    {function}(&{}, {packed}, {value}, {});\n",
+                name(frame, *container)?,
+                u8::from(*descending)
             )
         }
         IrContainerStmt::Method {

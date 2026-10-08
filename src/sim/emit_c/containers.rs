@@ -343,7 +343,10 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
         | IrContainerStmt::Merge { .. }
         | IrContainerStmt::Nonblocking { .. }
         | IrContainerStmt::Declare(_)
-        | IrContainerStmt::SharedDeclare(_) => {
+        | IrContainerStmt::SharedDeclare(_)
+        | IrContainerStmt::Gather { .. }
+        | IrContainerStmt::UniquePositions { .. }
+        | IrContainerStmt::SortByKeys { .. } => {
             return Err("container record values require whole-model ownership emission".into())
         }
         IrContainerStmt::StreamAssign {
@@ -388,6 +391,12 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
                     .map(|index| format!("&{}", name(ctx, index)))
                     .unwrap_or_else(|| "NULL".to_owned())
             )
+        }
+        IrContainerStmt::Copy { dst, src }
+            if std::mem::discriminant(&ctx.model.containers[*dst].kind)
+                != std::mem::discriminant(&ctx.model.containers[*src].kind) =>
+        {
+            return Err("dynamic array and queue assignment requires whole-model emission".into())
         }
         IrContainerStmt::Copy { dst, src } => {
             let generic = !ctx.model.containers[*dst].element.is_packed();

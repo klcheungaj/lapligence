@@ -370,3 +370,31 @@ void llg_queue_value_pop_process_to(void** dst, llg_queue_value_array_t* queue,
     llg_value_handle_release(queue->element, previous);
     if (taken) llg_queue_value_pop_notify(queue);
 }
+
+/* Whole-array assignment between a dynamic array and a queue of one element
+ * type (SV 7.6). The source is read through a borrowed view of its element
+ * storage, so the copy rules (conversion, bounds, notification) are those of
+ * the destination's own copy. */
+void llg_dyn_value_copy_from_queue(llg_dyn_value_array_t* dst,
+                                   const llg_queue_value_array_t* src) {
+    if (!dst || !src) llg_container_fatal("null container assignment operand");
+    llg_dyn_value_array_t view;
+    memset(&view, 0, sizeof(view));
+    view.data = src->data;
+    view.size = src->size;
+    view.element = src->element;
+    llg_dyn_value_copy(dst, &view);
+}
+
+void llg_queue_value_copy_from_dyn(llg_queue_value_array_t* dst,
+                                   const llg_dyn_value_array_t* src) {
+    if (!dst || !src) llg_container_fatal("null container assignment operand");
+    llg_queue_value_array_t view;
+    memset(&view, 0, sizeof(view));
+    view.data = src->data;
+    view.size = src->size;
+    view.capacity = src->size;
+    view.limit = SIZE_MAX;
+    view.element = src->element;
+    llg_queue_value_copy(dst, &view);
+}

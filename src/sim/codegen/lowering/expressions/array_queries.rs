@@ -182,6 +182,56 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// A query of a dynamic-array or queue element of a container
+    /// (`$size(dd[i])`, SV 20.7): its outermost dimension runs from 0 to the
+    /// element's current size minus one, like a whole dynamic array; a
+    /// missing element has size 0.
+    fn nested_container_query(
+        &mut self,
+        path: &str,
+        name: &str,
+        node: NodeId,
+        dimension: Option<&NodeId>,
+    ) -> Result<Option<IrExpr>, String> {
+        let Some((container, indices)) = self.nested_container_receiver(node) else {
+            return Ok(None);
+        };
+        if let Some(dimension) = dimension {
+            if self.eval_bound_i128(*dimension).ok() != Some(1) {
+                return Err(format!(
+                    "{name} of a nested container element in `{path}` supports only its first dimension"
+                ));
+            }
+        }
+        let Some(crate::sim::ir::IrContainerElement::Container { kind, .. }) =
+            self.container_element_type(container, indices.len())
+        else {
+            return Ok(None);
+        };
+        if kind == "AssociativeArray" {
+            return Err(format!(
+                "{name} of a nested associative array element in `{path}` is not supported"
+            ));
+        }
+        let indices = self.lower_container_path_indices(path, container, indices)?;
+        let size = IrExpr::new(
+            IrExprKind::Container(Box::new(IrContainerExpr::NestedSize { container, indices })),
+            32,
+            true,
+            None,
+        );
+        Ok(Some(match name {
+            "$left" | "$low" => Self::query_integer(0),
+            "$increment" => Self::query_integer(-1),
+            "$size" => size,
+            _ => IrExpr::resize_to(
+                common_bin_expr(IrBinOp::Sub, size, Self::query_integer(1)),
+                32,
+                true,
+            ),
+        }))
+    }
+
     pub(super) fn lower_array_query(
         &mut self,
         path: &str,
@@ -193,6 +243,9 @@ impl<'a> Codegen<'a> {
         };
         if rest.len() > 1 {
             return Err(format!("{name} requires one or two arguments in `{path}`"));
+        }
+        if let Some(value) = self.nested_container_query(path, name, *first, rest.first())? {
+            return Ok(value);
         }
         let (target, dimensions) = self.query_target(path, *first)?;
         let dimension_node = rest.first().copied();

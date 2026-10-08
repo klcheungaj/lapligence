@@ -771,6 +771,11 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         h: NodeId,
     ) -> Result<IrExpr, String> {
+        // The iterator declaration of a generated method loop stands for its
+        // current element index or key (see `inline_element_path`).
+        if let Some(key) = self.inline_key_read(h) {
+            return Ok(key);
+        }
         if let Some(value) = self.overload_current_read(scope_path, h) {
             return value;
         }
@@ -1766,6 +1771,11 @@ impl<'a> Codegen<'a> {
                     None,
                 ));
             }
+        }
+        if self.inline_item(r).is_some() {
+            return self.lower_container_query(scope_path, r)?.ok_or_else(|| {
+                format!("array-method item in `{scope_path}` is not a packed or real value")
+            });
         }
         if let Some(target) = target {
             if let Some(binding) = self.assertion_local_binding(target)? {

@@ -17,6 +17,8 @@ mod fixed_receiver;
 mod fixed_reductions;
 mod indexing;
 mod initialization;
+mod inline_methods;
+pub(super) use inline_methods::InlineIterator;
 mod methods;
 mod nonblocking;
 mod patterns;

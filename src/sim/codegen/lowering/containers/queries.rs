@@ -278,6 +278,28 @@ impl<'a> Codegen<'a> {
         if let Some(value) = self.lower_container_flattened_select(path, node)? {
             return Ok(Some(value));
         }
+        // `item` of a generated loop over a string-keyed array.
+        if let Some((container, iterator, true)) = self.inline_element_path(node) {
+            let element = self.model.containers[container].element.clone();
+            let key = self.lower_string(path, iterator)?;
+            let (operation, width, signed) = if element.is_real() {
+                (IrContainerExpr::GetStringReal { container, key }, 0, false)
+            } else if element.is_packed() {
+                (
+                    IrContainerExpr::GetString { container, key },
+                    element.width(),
+                    element.signed(),
+                )
+            } else {
+                return Ok(None);
+            };
+            return Ok(Some(IrExpr::new(
+                IrExprKind::Container(Box::new(operation)),
+                width,
+                signed,
+                None,
+            )));
+        }
         if let Some((container, indices)) = self.container_element_path(node) {
             let element = self
                 .container_element_type(container, indices.len())
@@ -449,6 +471,31 @@ impl<'a> Codegen<'a> {
                 if matches!(name.as_str(), "sum" | "product" | "and" | "or" | "xor")
                     && self.db.method_call_has_with_clause(node)
                 {
+                    if self.inline_method_needed(
+                        path,
+                        node,
+                        *receiver,
+                        container.ir,
+                        super::inline_methods::InlineUse::Reduction,
+                    )? {
+                        let operation = match name.as_str() {
+                            "sum" => IrContainerReduction::Sum,
+                            "product" => IrContainerReduction::Product,
+                            "and" => IrContainerReduction::BitAnd,
+                            "or" => IrContainerReduction::BitOr,
+                            _ => IrContainerReduction::BitXor,
+                        };
+                        return self
+                            .lower_inline_reduction(
+                                path,
+                                node,
+                                *receiver,
+                                container.ir,
+                                operation,
+                                &name,
+                            )
+                            .map(Some);
+                    }
                     let Some((callback, result_width, result_signed, result_two_state)) =
                         self.lower_container_method_callback(path, node, *receiver, container.ir)?
                     else {

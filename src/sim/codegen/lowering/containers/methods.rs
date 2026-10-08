@@ -77,6 +77,19 @@ impl<'a> Codegen<'a> {
                     .map(Some);
             }
         }
+        if matches!(name.as_str(), "sort" | "rsort")
+            && self.inline_method_needed(
+                path,
+                node,
+                receiver,
+                container.ir,
+                super::inline_methods::InlineUse::Order,
+            )?
+        {
+            return self
+                .lower_inline_order(path, node, receiver, container.ir, name == "rsort", &name)
+                .map(Some);
+        }
         let operation = match (name.as_str(), args.as_slice()) {
             ("delete", []) => IrContainerStmt::Delete(container.ir),
             ("delete", [index]) => match self.model.containers[container.ir].kind {

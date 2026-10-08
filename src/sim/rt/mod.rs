@@ -249,6 +249,7 @@ pub fn container_sources() -> (&'static str, &'static str) {
             include_str!("container/associative_value_queries.c"),
             include_str!("container/value_elements.c"),
             include_str!("container/destinations.c"),
+            include_str!("container/method_gather.c"),
         ),
     )
 }

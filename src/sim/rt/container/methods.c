@@ -23,6 +23,9 @@ static int llg_method_is_first_only(int method) {
            method == LLG_CONTAINER_METHOD_FIND_LAST_INDEX;
 }
 
+static void llg_method_distinct_sv4(unsigned char* keep, const sv4_t* keys,
+                                    size_t count);
+
 static void llg_method_assign_values(llg_queue_t* dst, const sv4_t* values,
                                      const sv4_t* indices, size_t count,
                                      int method, llg_container_eval_fn eval,
@@ -93,34 +96,30 @@ static void llg_method_assign_values(llg_queue_t* dst, const sv4_t* values,
         }
     } else if (method == LLG_CONTAINER_METHOD_UNIQUE ||
                method == LLG_CONTAINER_METHOD_UNIQUE_INDEX) {
-        sv4_t* seen = llg_alloc_items(count, sizeof(*seen));
-        size_t seen_count = 0;
+        // Keys are evaluated once each in index order; the first position of
+        // every distinct key is kept, found by hashing in expected O(n).
+        sv4_t* keys = llg_alloc_items(count, sizeof(*keys));
+        unsigned char* keep = llg_alloc_items(count, sizeof(*keep));
+        if (count) memset(keep, 0, count);
         for (size_t index = 0; index < count; ++index) {
             sv4_t item_index = indices
                 ? sv4_clone(&indices[index])
                 : sv4_from_u64((uint64_t)index, 32, 1);
-            sv4_t key = llg_container_eval(
+            keys[index] = llg_container_eval(
                 eval, values[index], item_index, context);
-            int duplicate = 0;
-            for (size_t seen_index = 0; seen_index < seen_count; ++seen_index) {
-                if (sv4_same(seen[seen_index], key)) {
-                    duplicate = 1;
-                    break;
-                }
-            }
-            if (!duplicate) {
-                seen[seen_count++] = key; // move into the new slot
-                key = (sv4_t)SV4_EMPTY;
-                result[result_count++] = method == LLG_CONTAINER_METHOD_UNIQUE_INDEX
-                    ? (indices ? sv4_clone(&indices[index])
-                               : sv4_from_u64((uint64_t)index, 32, 1))
-                    : sv4_clone(&values[index]);
-            }
             sv4_destroy(&item_index);
-            sv4_destroy(&key);
         }
-        sv4_destroy_array(seen, seen_count);
-        free(seen);
+        llg_method_distinct_sv4(keep, keys, count);
+        for (size_t index = 0; index < count; ++index) {
+            if (!keep[index]) continue;
+            result[result_count++] = method == LLG_CONTAINER_METHOD_UNIQUE_INDEX
+                ? (indices ? sv4_clone(&indices[index])
+                           : sv4_from_u64((uint64_t)index, 32, 1))
+                : sv4_clone(&values[index]);
+        }
+        sv4_destroy_array(keys, count);
+        free(keys);
+        free(keep);
     } else {
         llg_container_fatal("invalid queue-valued array method");
     }

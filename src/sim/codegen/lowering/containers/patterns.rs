@@ -613,16 +613,18 @@ impl<'a> Codegen<'a> {
         value: NodeId,
         prelude: &mut Vec<IrStmt>,
     ) -> Result<usize, String> {
-        if let Some(source) = self.container_of(self.p30_unwrap_cast(value)) {
-            if matches!(
-                self.model.containers[source.ir].kind,
-                IrContainerKind::Dynamic
-            ) {
-                return Ok(source.ir);
+        let source_variable = self.container_of(self.p30_unwrap_cast(value));
+        if let Some(source) = &source_variable {
+            match self.model.containers[source.ir].kind {
+                IrContainerKind::Dynamic => return Ok(source.ir),
+                // A queue is copied into a dynamic temporary below (SV 7.6).
+                IrContainerKind::Queue { .. } => {}
+                IrContainerKind::Associative { .. } => {
+                    return Err(format!(
+                        "nested container write in `{path}` from an associative variable is not supported; use a dynamic array, queue, pattern or concatenation"
+                    ))
+                }
             }
-            return Err(format!(
-                "nested container write in `{path}` from a queue or associative variable is not supported; use a dynamic array, pattern or concatenation"
-            ));
         }
         let Some(IrContainerElement::Container { element, .. }) =
             self.container_element_type(container, depth)
@@ -644,6 +646,13 @@ impl<'a> Codegen<'a> {
         prelude.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
             temporary,
         ))));
+        if let Some(source) = source_variable {
+            prelude.push(IrStmt::Container(Box::new(IrContainerStmt::Copy {
+                dst: temporary,
+                src: source.ir,
+            })));
+            return Ok(temporary);
+        }
         let source = self.p30_unwrap_cast(value);
         let concat = match self.kind(source) {
             NodeKind::Expr(ExprKind::Operation {

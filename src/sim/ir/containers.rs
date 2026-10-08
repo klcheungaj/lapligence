@@ -528,6 +528,33 @@ pub enum IrContainerStmt {
         method: IrContainerMethod,
         callback: Option<String>,
     },
+    /// Replace queue `dst` with the elements of `src` (or, with `keys`, their
+    /// indices: positions of a dynamic array or queue, keys of an associative
+    /// array) at the ordinal positions held in the packed queue `positions`,
+    /// in that order (SIM-019). The positions were recorded by a generated
+    /// loop that evaluated the method's `with` expression once per element;
+    /// positions the receiver no longer holds are skipped.
+    Gather {
+        dst: usize,
+        src: usize,
+        positions: usize,
+        keys: bool,
+    },
+    /// Replace the packed position queue `positions` with the ascending
+    /// positions of the first element of each distinct key in the parallel
+    /// key queue `keys` (packed, real or string), for `unique`.
+    UniquePositions {
+        positions: usize,
+        keys: usize,
+    },
+    /// Stable sort (or, `descending`, rsort) of a dynamic array or queue by
+    /// the parallel key queue `keys` (packed, real or string), computed in
+    /// index order before the call (SV 7.12.2).
+    SortByKeys {
+        container: usize,
+        keys: usize,
+        descending: bool,
+    },
     /// Mutate a dynamic array or queue in place (sort/rsort/reverse/shuffle).
     Method {
         container: usize,
@@ -1411,10 +1438,13 @@ impl IrContainerStmt {
             Self::Copy { dst, src } => {
                 let dst = container_kind(model, *dst, None)?;
                 let src = container_kind(model, *src, None)?;
+                // A dynamic array and a queue assign to each other (SV 7.6).
                 let compatible_kind = matches!(
                     (&dst.kind, &src.kind),
-                    (IrContainerKind::Dynamic, IrContainerKind::Dynamic)
-                        | (IrContainerKind::Queue { .. }, IrContainerKind::Queue { .. })
+                    (
+                        IrContainerKind::Dynamic | IrContainerKind::Queue { .. },
+                        IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+                    )
                 ) || matches!(
                     (&dst.kind, &src.kind),
                     (
@@ -1654,6 +1684,61 @@ impl IrContainerStmt {
                     }
                 }
                 Ok(())
+            }
+            Self::Gather {
+                dst,
+                src,
+                positions,
+                keys,
+            } => {
+                let destination = container_kind(model, *dst, Some("queue"))?;
+                let source = container_kind(model, *src, None)?;
+                method_positions(model, *positions)?;
+                let valid = if *keys {
+                    match &source.kind {
+                        IrContainerKind::Dynamic | IrContainerKind::Queue { .. } => {
+                            destination.element.is_packed()
+                        }
+                        IrContainerKind::Associative {
+                            key: IrAssocKey::Integral { .. },
+                        } => destination.element.is_packed(),
+                        IrContainerKind::Associative {
+                            key: IrAssocKey::String,
+                        } => destination.element.is_string(),
+                        IrContainerKind::Associative {
+                            key: IrAssocKey::Wildcard,
+                        } => false,
+                    }
+                } else {
+                    destination.element.is_packed() == source.element.is_packed()
+                        && destination.element.compatible_with(&source.element)
+                };
+                if !valid {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "array-method gather requires a queue of the source element or index type",
+                    ));
+                }
+                Ok(())
+            }
+            Self::UniquePositions { positions, keys } => {
+                method_positions(model, *positions)?;
+                method_keys(model, *keys)
+            }
+            Self::SortByKeys {
+                container, keys, ..
+            } => {
+                let container = container_kind(model, *container, None)?;
+                if !matches!(
+                    container.kind,
+                    IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+                ) {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "keyed ordering requires a dynamic array or queue",
+                    ));
+                }
+                method_keys(model, *keys)
             }
             Self::Method {
                 container,
@@ -2395,6 +2480,9 @@ impl IrContainerStmt {
             Self::Copy { .. }
             | Self::Merge { .. }
             | Self::MethodAssign { .. }
+            | Self::Gather { .. }
+            | Self::UniquePositions { .. }
+            | Self::SortByKeys { .. }
             | Self::Method { .. }
             | Self::Delete(_)
             | Self::ResetDefault(_)
@@ -2508,6 +2596,9 @@ impl IrContainerStmt {
             Self::Copy { .. }
             | Self::Merge { .. }
             | Self::MethodAssign { .. }
+            | Self::Gather { .. }
+            | Self::UniquePositions { .. }
+            | Self::SortByKeys { .. }
             | Self::Method { .. }
             | Self::Delete(_)
             | Self::ResetDefault(_)
@@ -2518,6 +2609,30 @@ impl IrContainerStmt {
             }
         }
     }
+}
+
+/// The packed position queue of a generated array-method loop.
+fn method_positions(model: &super::IrModel, index: usize) -> Result<(), IrValidationError> {
+    let positions = container_kind(model, index, Some("queue"))?;
+    if !positions.element.is_packed() {
+        return Err(IrValidationError::new(
+            "container",
+            "array-method positions require a packed queue",
+        ));
+    }
+    Ok(())
+}
+
+/// The per-element key queue of a generated array-method loop.
+fn method_keys(model: &super::IrModel, index: usize) -> Result<(), IrValidationError> {
+    let keys = container_kind(model, index, Some("queue"))?;
+    if !(keys.element.is_packed() || keys.element.is_real() || keys.element.is_string()) {
+        return Err(IrValidationError::new(
+            "container",
+            "array-method keys must be packed, real or string",
+        ));
+    }
+    Ok(())
 }
 
 fn string_container(

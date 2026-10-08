@@ -1020,6 +1020,74 @@ void llg_assoc_value_get_nested_integral_string_to(llg_string_t* dst, const llg_
 void llg_assoc_value_get_string_to(llg_string_t* dst, const llg_assoc_value_t* array, const void* key, size_t key_length);
 void llg_assoc_value_get_string_string_to(llg_string_t* dst, const llg_assoc_value_t* array, const void* key, size_t key_length);
 
+/* Whole-array assignment between a dynamic array and a queue of one
+ * recursive element type (SV 7.6); packed arrays use the assign_values calls
+ * with the source's element storage. */
+void llg_dyn_value_copy_from_queue(llg_dyn_value_array_t* dst,
+                                   const llg_queue_value_array_t* src);
+void llg_queue_value_copy_from_dyn(llg_queue_value_array_t* dst,
+                                   const llg_dyn_value_array_t* src);
+
+/* Array-method results computed by generated loops (SIM-019). Generated code
+ * evaluates a `with` expression once per element in index or key order and
+ * records ordinal positions (int elements of a packed queue) or one key per
+ * element; these calls build the result without calling back into the model.
+ * Positions name elements by ordinal (associative entries in key order); an
+ * unknown, negative or out-of-range position is skipped. `gather` copies the
+ * selected elements into `dst`, or with `keys` their indices (dynamic arrays
+ * and queues: the positions; associative arrays: the integral keys);
+ * `gather_string_keys` copies string keys. Destinations are replaced like a
+ * queue assignment, so `dst` may alias `src`. */
+void llg_dyn_gather(llg_queue_t* dst, const llg_dyn_array_t* src,
+                    const llg_queue_t* positions, int keys);
+void llg_queue_gather(llg_queue_t* dst, const llg_queue_t* src,
+                      const llg_queue_t* positions, int keys);
+void llg_assoc_gather(llg_queue_t* dst, const llg_assoc_t* src,
+                      const llg_queue_t* positions, int keys);
+void llg_assoc_gather_string_keys(llg_queue_value_array_t* dst,
+                                  const llg_assoc_t* src,
+                                  const llg_queue_t* positions);
+void llg_dyn_value_gather(llg_queue_value_array_t* dst,
+                          const llg_dyn_value_array_t* src,
+                          const llg_queue_t* positions);
+void llg_queue_value_gather(llg_queue_value_array_t* dst,
+                            const llg_queue_value_array_t* src,
+                            const llg_queue_t* positions);
+void llg_assoc_value_gather(llg_queue_value_array_t* dst,
+                            const llg_assoc_value_t* src,
+                            const llg_queue_t* positions);
+void llg_assoc_value_gather_keys(llg_queue_t* dst, const llg_assoc_value_t* src,
+                                 const llg_queue_t* positions);
+void llg_assoc_value_gather_string_keys(llg_queue_value_array_t* dst,
+                                        const llg_assoc_value_t* src,
+                                        const llg_queue_t* positions);
+/* Replace `positions` with the ascending positions of the first element of
+ * each distinct key: packed keys compare with sv4_same, real keys
+ * numerically (NaN equals nothing) and string keys by bytes. Expected O(n)
+ * for packed and string keys, O(n log n) for real keys. */
+void llg_method_unique_positions(llg_queue_t* positions, const llg_queue_t* keys);
+void llg_method_unique_value_positions(llg_queue_t* positions,
+                                       const llg_queue_value_array_t* keys);
+/* Stable sort/rsort of a dynamic array or queue by one precomputed key per
+ * element: exactly one of `packed_keys` (packed relational order, unknown
+ * keys stay in place) and `value_keys` (real: numeric, NaN stays in place;
+ * string: byte order) is non-null. A key count that no longer matches the
+ * receiver leaves it unchanged with a warning. */
+void llg_dyn_sort_by_keys(llg_dyn_array_t* array, const llg_queue_t* packed_keys,
+                          const llg_queue_value_array_t* value_keys,
+                          int descending);
+void llg_queue_sort_by_keys(llg_queue_t* queue, const llg_queue_t* packed_keys,
+                            const llg_queue_value_array_t* value_keys,
+                            int descending);
+void llg_dyn_value_sort_by_keys(llg_dyn_value_array_t* array,
+                                const llg_queue_t* packed_keys,
+                                const llg_queue_value_array_t* value_keys,
+                                int descending);
+void llg_queue_value_sort_by_keys(llg_queue_value_array_t* queue,
+                                  const llg_queue_t* packed_keys,
+                                  const llg_queue_value_array_t* value_keys,
+                                  int descending);
+
 #ifdef __cplusplus
 }
 #endif

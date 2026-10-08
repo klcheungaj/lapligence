@@ -425,6 +425,11 @@ impl<'a> Codegen<'a> {
         &self,
         node: NodeId,
     ) -> Option<(usize, Vec<NodeId>)> {
+        // A generated method loop's `item` selects the element at the loop
+        // key; the iterator declaration stands for that index.
+        if let Some((container, iterator, string_key)) = self.inline_element_path(node) {
+            return (!string_key).then(|| (container, vec![iterator]));
+        }
         let (base, indices) = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, vec![*index]),
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if !indices.is_empty() => {
@@ -497,6 +502,9 @@ impl<'a> Codegen<'a> {
         &self,
         node: NodeId,
     ) -> Option<(usize, NodeId)> {
+        if let Some((container, iterator, true)) = self.inline_element_path(node) {
+            return Some((container, iterator));
+        }
         let (base, key) = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, *index),
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {

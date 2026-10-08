@@ -1532,7 +1532,11 @@ impl Codegen<'_> {
             members.push(AggregatePathPart::Member(member.clone()));
             current = *base;
         }
-        if members.is_empty() || !self.native_call_node(current) {
+        // A record popped from a queue (`q.pop_front().m`) is removed once
+        // into the temporary, like a call result (SIM-019).
+        if members.is_empty()
+            || !(self.native_call_node(current) || self.is_container_record(current))
+        {
             return Ok(None);
         }
         members.reverse();

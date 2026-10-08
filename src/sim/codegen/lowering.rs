@@ -1448,6 +1448,10 @@ struct Codegen<'a> {
     /// expression: declaration identity plus the packed source element and
     /// index types.
     container_iterator: Option<ContainerIterator>,
+    /// Iterator bindings of array-method loops lowered in the caller
+    /// (SIM-019), innermost last: `item` names the receiver element at the
+    /// loop's current key, so outer bindings stay visible to nested methods.
+    inline_iterators: Vec<containers::InlineIterator>,
     /// Real variables read by `$sampled` outside history domains; each gets
     /// a numeric Preponed snapshot registration at model initialization.
     sampled_real_signals: std::collections::BTreeSet<usize>,
@@ -1784,6 +1788,7 @@ impl<'a> Codegen<'a> {
             class_native_fields: HashMap::new(),
             receiver_native_values: HashMap::new(),
             container_iterator: None,
+            inline_iterators: Vec::new(),
             sampled_real_signals: std::collections::BTreeSet::new(),
             sampled_value_signals: std::collections::BTreeSet::new(),
             fixed_method_iterators: HashMap::new(),

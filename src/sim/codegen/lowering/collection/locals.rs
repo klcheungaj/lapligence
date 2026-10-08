@@ -845,7 +845,7 @@ impl<'a> Codegen<'a> {
 
     /// The subroutine string local that `target` reads, when an event
     /// evaluator must copy it into its context.
-    fn event_string_local(&self, target: NodeId) -> Option<String> {
+    pub(in crate::sim::codegen) fn event_string_local(&self, target: NodeId) -> Option<String> {
         match self.func.as_ref()?.string_read.get(&target)? {
             IrStringExpr::LocalRead(name) => Some(name.clone()),
             _ => None,
@@ -854,7 +854,7 @@ impl<'a> Codegen<'a> {
 
     /// The subroutine handle local that `target` reads, when an event
     /// evaluator must copy it into its context.
-    fn event_handle_local(&self, target: NodeId) -> Option<String> {
+    pub(in crate::sim::codegen) fn event_handle_local(&self, target: NodeId) -> Option<String> {
         match self.func.as_ref()?.chandle_read.get(&target)? {
             IrChandleExpr::LocalRead(name) => Some(name.clone()),
             _ => None,

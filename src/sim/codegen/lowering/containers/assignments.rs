@@ -349,6 +349,30 @@ impl<'a> Codegen<'a> {
         ) {
             return Ok(IrStmt::Container(Box::new(IrContainerStmt::Delete(dst.ir))));
         }
+        // A dynamic array and a queue of one element type assign to each
+        // other through an implicit conversion (SV 7.6), which is a whole
+        // copy, not a bit-stream cast.
+        if let Some(source) = self
+            .container_of(self.p30_unwrap_cast(rhs))
+            .filter(|source| source.ir != dst.ir)
+        {
+            let (target, origin) = (
+                &self.model.containers[dst.ir],
+                &self.model.containers[source.ir],
+            );
+            if matches!(
+                (&target.kind, &origin.kind),
+                (IrContainerKind::Dynamic, IrContainerKind::Queue { .. })
+                    | (IrContainerKind::Queue { .. }, IrContainerKind::Dynamic)
+            ) && target.element.compatible_with(&origin.element)
+                && target.element.is_packed() == origin.element.is_packed()
+            {
+                return Ok(IrStmt::Container(Box::new(IrContainerStmt::Copy {
+                    dst: dst.ir,
+                    src: source.ir,
+                })));
+            }
+        }
         if let Some(statement) =
             self.lower_bitstream_cast_container_assignment(path, type_node, rhs, &dst)?
         {
@@ -358,8 +382,8 @@ impl<'a> Codegen<'a> {
         if self.assignment_pattern_operands(path, rhs)?.is_some() {
             return self.lower_container_pattern(path, dst.ir, rhs, descriptor.as_ref());
         }
-        if let Some(operation) = self.container_method_result(path, dst.ir, rhs)? {
-            return Ok(IrStmt::Container(Box::new(operation)));
+        if let Some(statement) = self.container_method_result(path, dst.ir, rhs)? {
+            return Ok(statement);
         }
         let new_array = match self.kind(rhs) {
             NodeKind::Expr(ExprKind::NewArray { size, initializer }) => Some((*size, *initializer)),

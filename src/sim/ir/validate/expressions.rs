@@ -1479,14 +1479,29 @@ fn sequence_statement(statement: &IrStmt) -> bool {
                 | IrObjectStmt::StringAssignLocal(..)
                 | IrObjectStmt::ChandleAssignLocal(..)
         ),
-        // Whole-element copies into lexical temporaries (SIM-007).
+        // Whole-element copies into lexical temporaries (SIM-007) and the
+        // key queues of generated array-method loops (SIM-019).
         IrStmt::Container(operation) => matches!(
             operation.as_ref(),
             IrContainerStmt::Declare(_)
                 | IrContainerStmt::GetValue { .. }
                 | IrContainerStmt::ValueItemToContainer { .. }
+                | IrContainerStmt::QueuePushBack { .. }
+                | IrContainerStmt::QueuePushBackString { .. }
         ),
         IrStmt::Block(statements) => statements.iter().all(sequence_statement),
+        // Generated array-method loops: lexical locals and bounded loops
+        // whose bodies are themselves sequence statements.
+        IrStmt::DeclLocal { .. } | IrStmt::DeclString { .. } => true,
+        IrStmt::If { then_, els, .. } => {
+            then_.iter().all(sequence_statement)
+                && els
+                    .as_ref()
+                    .is_none_or(|statements| statements.iter().all(sequence_statement))
+        }
+        IrStmt::For {
+            init, incr, body, ..
+        } => init.iter().chain(incr).chain(body).all(sequence_statement),
         _ => false,
     }
 }
