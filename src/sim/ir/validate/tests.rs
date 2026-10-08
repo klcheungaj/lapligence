@@ -1809,3 +1809,119 @@ fn statement_sequences_admit_only_non_suspending_setup() {
         )
         .expect_err("a nonblocking assignment queues an update");
 }
+
+fn sampled_parts(clocks: Vec<IrSampledClock>, domains: Vec<IrSampledDomain>) -> IrModelParts {
+    IrModelParts {
+        signals: valid_model().signals,
+        sampled_clocks: clocks,
+        sampled_domains: domains,
+        ..IrModelParts::default()
+    }
+}
+
+#[test]
+fn sampled_clocks_and_domains_validate_their_indices() {
+    let edge = IrSampledClock::new(
+        IrSampledClockKind::Edge {
+            signal: 0,
+            posedge: true,
+        },
+        Some(packed_const(1, 1)),
+    );
+    let domain = IrSampledDomain::new(0, packed_const(1, 8), 3);
+    IrModel::from_parts(
+        "top".to_string(),
+        1,
+        sampled_parts(vec![edge.clone()], vec![domain.clone()]),
+    )
+    .expect("an edge clock on active packed storage with one domain is valid");
+
+    let missing_signal = IrSampledClock::new(
+        IrSampledClockKind::Edge {
+            signal: 7,
+            posedge: false,
+        },
+        None,
+    );
+    let error = IrModel::from_parts(
+        "top".to_string(),
+        1,
+        sampled_parts(vec![missing_signal], Vec::new()),
+    )
+    .unwrap_err();
+    assert!(error.detail().contains("sampled clock signal"), "{error}");
+
+    let error = IrModel::from_parts(
+        "top".to_string(),
+        1,
+        sampled_parts(
+            vec![edge],
+            vec![IrSampledDomain::new(4, packed_const(1, 8), 1)],
+        ),
+    )
+    .unwrap_err();
+    assert!(error.detail().contains("domain clock index"), "{error}");
+}
+
+#[test]
+fn sampled_calls_respect_retained_history_and_event_clocks() {
+    let model = IrModel::from_parts(
+        "top".to_string(),
+        1,
+        sampled_parts(
+            vec![
+                IrSampledClock::new(
+                    IrSampledClockKind::Edge {
+                        signal: 0,
+                        posedge: true,
+                    },
+                    None,
+                ),
+                IrSampledClock::new(IrSampledClockKind::Event, None),
+            ],
+            vec![
+                IrSampledDomain::new(0, packed_const(1, 8), 2),
+                // A domain no call reads any more is kept unregistered.
+                IrSampledDomain::new(1, packed_const(1, 8), 0),
+            ],
+        ),
+    )
+    .expect("valid sampled tables");
+    let call = |kind, domain, ticks, width| {
+        IrExpr::new(
+            IrExprKind::SysFunc(Box::new(IrSysFunc::Sampled(IrSampledCall::new(
+                kind,
+                packed_const(1, 8),
+                Some(domain),
+                ticks,
+            )))),
+            width,
+            false,
+            None,
+        )
+    };
+    model
+        .validate_expr(&call(IrSampledFunc::Past, 0, 2, 8), None)
+        .expect("$past within the retained depth");
+    let error = model
+        .validate_expr(&call(IrSampledFunc::Past, 0, 3, 8), None)
+        .unwrap_err();
+    assert!(
+        error.detail().contains("deeper than its domain retains"),
+        "{error}"
+    );
+    let error = model
+        .validate_expr(&call(IrSampledFunc::Changed, 1, 0, 1), None)
+        .unwrap_err();
+    assert!(error.detail().contains("valid domain"), "{error}");
+
+    model
+        .validate_stmt(&IrStmt::SampledClockTick { clock: 1 }, None)
+        .expect("an event clock receives ticks from its process");
+    for clock in [0, 5] {
+        let error = model
+            .validate_stmt(&IrStmt::SampledClockTick { clock }, None)
+            .unwrap_err();
+        assert!(error.detail().contains("event clock"), "{error}");
+    }
+}
