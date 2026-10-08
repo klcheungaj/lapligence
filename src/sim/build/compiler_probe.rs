@@ -17,8 +17,9 @@
 //!   environment variable the reported text can depend on ([`MEMO_ENVIRONMENT`]).
 //!   A replaced or upgraded compiler, another `PATH` hit or a changed developer
 //!   environment therefore probes again.
-//! - Across processes, the same key selects a `compiler-probe-<hash>` file under
-//!   the runtime cache root, but only for MSVC results. `cl.exe` reports its
+//! - Across processes, the same key selects a `compiler-probe/<hash>` file in
+//!   the runtime cache root's [`MEMO_DIR`], but only for MSVC results. Every
+//!   other direct child of the root stays a runtime archive entry. `cl.exe` reports its
 //!   version and target from its own binary, and every developer-shell input
 //!   that selects another toolset (`PATH`, `VCToolsVersion`, ...) is in the key.
 //!   GCC/Clang spellings are often wrappers whose real compiler can change while
@@ -41,6 +42,10 @@ use super::toolchain_seed::KEY_ENVIRONMENT;
 
 /// Bumped whenever the memo key or file layout changes.
 const FORMAT: &str = "llg-compiler-probe-v1";
+
+/// Subdirectory of the runtime cache root that holds the memo files, so the
+/// root's direct children remain runtime archive entries.
+pub(super) const MEMO_DIR: &str = "compiler-probe";
 
 /// Variables that can change the probed text beyond those CMake detection
 /// reads: message locales, the options `cl` prepends/appends from `CL` and
@@ -133,13 +138,14 @@ fn memo_facts(
     }) {
         return facts;
     }
-    let path = cache_root.join(file_name(key));
+    let memo_dir = cache_root.join(MEMO_DIR);
+    let path = memo_dir.join(file_name(key));
     let facts = match read_memo(&path, key) {
         Some(facts) => facts,
         None => {
             let probed = probe_facts(cc, run, env);
             if probed.msvc_banner {
-                write_memo(cache_root, &path, key, &probed.facts);
+                write_memo(&memo_dir, &path, key, &probed.facts);
             }
             probed.facts
         }
@@ -298,7 +304,7 @@ fn file_name(key: &str) -> String {
     let hash = key.bytes().fold(0xcbf29ce484222325u64, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
     });
-    format!("compiler-probe-{hash:016x}")
+    format!("{hash:016x}")
 }
 
 /// Memo file body: the format line, then each field as `<name> <byte length>`
@@ -340,9 +346,9 @@ fn read_memo(path: &Path, key: &str) -> Option<CompilerFacts> {
 
 /// Publish through a rename so concurrent readers see all or nothing; any
 /// failure only means the next process probes again.
-fn write_memo(cache_root: &Path, path: &Path, key: &str, facts: &CompilerFacts) {
+fn write_memo(memo_dir: &Path, path: &Path, key: &str, facts: &CompilerFacts) {
     let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
-    if std::fs::create_dir_all(cache_root).is_ok()
+    if std::fs::create_dir_all(memo_dir).is_ok()
         && std::fs::write(&temporary, encode(key, facts)).is_ok()
         && std::fs::rename(&temporary, path).is_err()
     {
@@ -721,6 +727,17 @@ mod tests {
         let second_process = Mutex::new(Vec::new());
         assert_eq!(lookup(&second_process, &msvc()), first);
         assert_eq!(spawns.get(), 2, "the disk memo answers a new process");
+        let root_children = std::fs::read_dir(&cache)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            root_children,
+            [MEMO_DIR],
+            "memo files stay in their own directory"
+        );
+        assert_eq!(std::fs::read_dir(cache.join(MEMO_DIR)).unwrap().count(), 1);
 
         // An upgraded compiler file is probed again.
         std::fs::write(&compiler, "fake cl, upgraded").unwrap();

@@ -176,7 +176,7 @@ Compiler self-reports (`--version`/`/Bv` identity, target) come from
 `build/compiler_probe.rs`: each argument spawns at most once per probe (an MSVC
 banner skips `-dumpmachine`), results are memoized per process by spelling,
 canonical executable path, size, mtime and the probe environment, and MSVC
-results also in `compiler-probe-<hash>` files under the cache root (GCC/Clang
+results also in `<cache root>/compiler-probe/<hash>` files (GCC/Clang
 spellings are often wrappers, so they stay per process). The text must equal an
 unmemoized probe's, keeping existing cache and seed keys valid.
 Root portable patch preparation accepts clean/fully-applied vendors and rejects
