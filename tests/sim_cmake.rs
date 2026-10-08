@@ -27,6 +27,8 @@ use std::time::Duration;
 use llg::core::compile;
 use llg::sim;
 
+#[path = "support/c_compiler.rs"]
+mod c_compiler;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -263,14 +265,9 @@ int main(void) { return 0; }
         "unexpected stale-model failure: {error}"
     );
 
-    let compiler = std::env::var("LLG_CC")
-        .or_else(|_| std::env::var("CC"))
-        .unwrap_or_else(|_| "cc".to_owned());
-    let available = Command::new(&compiler)
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success());
-    if !available {
+    let compiler = c_compiler::host_c_compiler();
+    let msvc = c_compiler::is_msvc(&compiler);
+    if !c_compiler::c_compiler_available(&compiler) {
         eprintln!("SKIP: C compiler `{compiler}` not available for mixed-link ABI probe");
         return;
     }
@@ -296,16 +293,25 @@ int main(void) { return 0; }
     )
     .expect("write current coroutine model");
 
-    let stale_object = link_dir.join("stale.o");
-    let model_object = link_dir.join("model.o");
+    let object = if msvc { "obj" } else { "o" };
+    let stale_object = link_dir.join(format!("stale.{object}"));
+    let model_object = link_dir.join(format!("model.{object}"));
     for (directory, source, output) in [
         (&stale_dir, "llg_co.c", &stale_object),
         (&link_dir, "model.c", &model_object),
     ] {
-        let result = Command::new(&compiler)
-            .current_dir(directory)
-            .args(["-std=c11", "-I.", "-c", source, "-o"])
-            .arg(output)
+        let mut command = Command::new(&compiler);
+        command.current_dir(directory);
+        if msvc {
+            command
+                .args(["/nologo", "/std:c11", "/I.", "/c", source])
+                .arg(format!("/Fo{}", output.display()));
+        } else {
+            command
+                .args(["-std=c11", "-I.", "-c", source, "-o"])
+                .arg(output);
+        }
+        let result = command
             .output()
             .expect("run C compiler for mixed-link ABI probe");
         assert!(
@@ -316,12 +322,16 @@ int main(void) { return 0; }
         );
     }
     let executable = link_dir.join(format!("mixed-abi{}", std::env::consts::EXE_SUFFIX));
-    let link = Command::new(&compiler)
-        .args([model_object.as_os_str(), stale_object.as_os_str()])
-        .arg("-o")
-        .arg(&executable)
-        .output()
-        .expect("link mixed coroutine ABI probe");
+    let mut link = Command::new(&compiler);
+    link.args([model_object.as_os_str(), stale_object.as_os_str()]);
+    if msvc {
+        // link.exe reports the unresolved symbol on stdout (LNK2019).
+        link.arg("/nologo")
+            .arg(format!("/Fe{}", executable.display()));
+    } else {
+        link.arg("-o").arg(&executable);
+    }
+    let link = link.output().expect("link mixed coroutine ABI probe");
     assert!(
         !link.status.success(),
         "a model requesting _abi1 unexpectedly linked to an _abi0 runtime"
@@ -878,7 +888,7 @@ fn driver_output_and_tool_flags_override_environment() {
         .args(["--top", "tb", "--out-dir", "out/run1", "--cmake", "cmake"])
         .args([
             "--cc",
-            "cc",
+            sim::build::DEFAULT_C_COMPILER,
             "--cflags",
             "",
             "--model-opt-level",

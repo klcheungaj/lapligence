@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use crate::c_compiler;
 use crate::sim_cli;
 use crate::sim_harness;
 
@@ -223,10 +224,17 @@ fn component_invalid_c_selectors_and_missing_gmp_are_rejected() {
     let dir = sim_harness::TempDir::new("value-invalid").unwrap();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/sim/rt");
     std::fs::write(dir.path().join("probe.c"), "#include \"llg_value.h\"\n").unwrap();
+    let compiler = c_compiler::host_c_compiler();
+    // MSVC: /Zs is syntax-only and /std:c11 selects the conforming preprocessor.
+    let syntax_only: &[&str] = if c_compiler::is_msvc(&compiler) {
+        &["/nologo", "/std:c11", "/Zs", "/I"]
+    } else {
+        &["-std=c11", "-fsyntax-only", "-I"]
+    };
     for name in ["LLG_SV4_USE_GMP", "LLG_SV4_GMP_KERNELS"] {
         for selector in ["2", "true", "00", "1u", "-1", "(1)"] {
-            let output = Command::new("cc")
-                .args(["-std=c11", "-fsyntax-only", "-I"])
+            let output = Command::new(&compiler)
+                .args(syntax_only)
                 .arg(&root)
                 .arg(format!("-D{name}={selector}"))
                 .arg(dir.path().join("probe.c"))

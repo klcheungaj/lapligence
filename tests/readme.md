@@ -703,7 +703,10 @@ the `llg` binary (`tests/support/sim.rs`, `tests/support/sim_cli.rs`,
 compile runtime C directly with `$LLG_CC`/`$CC` (`runtime_values`,
 `runtime_random`, `runtime_rng`, `runtime_containers`, `sim_dpi`, `sim_waveform`,
 `sim_feature_completion/sim_004`) run one compiler command each and do not use
-the launcher.
+the launcher. Without either variable they use the model default (MSVC `cl` on
+Windows); `tests/support/c_compiler.rs` (`host_c_compiler`,
+`strict_c11_executable`) translates their strict C11 build to `/W4 /WX` for
+MSVC. The DPI, VPI and FST-reader probes stay Unix-only.
 
 `LLG_CCACHE` now rejects invalid values or a missing requested executable instead
 of continuing uncached. Changing the launcher reconfigures the native CMake cache
