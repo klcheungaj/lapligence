@@ -38,7 +38,7 @@ option that has an environment variable follows it:
 
 | Option | Command line | Environment | Config key | Default |
 |---|---|---|---|---|
-| C compiler | `--cc` | `$LLG_CC`, then `$CC` | `build.cc` | `cc` |
+| C compiler | `--cc` | `$LLG_CC`, then `$CC` | `build.cc` | `cl` (MSVC) on Windows, `cc` elsewhere |
 | C flags | `--cflags` | `$LLG_CFLAGS` | `build.cflags` | none |
 | CMake program | `--cmake` | `$LLG_CMAKE` | `build.cmake` | `cmake` |
 | CMake generator | `--generator` | `$CMAKE_GENERATOR` | `build.generator` | CMake's own |

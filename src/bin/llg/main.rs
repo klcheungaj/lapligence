@@ -50,7 +50,8 @@
 //!   (`sim::build::build_model_cmake_with_opts`). Each tool option wins over
 //!   its environment fallback, which wins over the config file:
 //!   `--cmake` > `$LLG_CMAKE` > `build.cmake` > `cmake`;
-//!   `--cc` > `$LLG_CC` > `$CC` > `build.cc` > `cc`;
+//!   `--cc` > `$LLG_CC` > `$CC` > `build.cc` > `cl` on Windows, `cc` elsewhere
+//!   (`sim::build::DEFAULT_C_COMPILER`);
 //!   `--cflags` > `$LLG_CFLAGS` > `build.cflags`.
 //! - `--model-opt-level <O0|O1|O2|O3|Os>` selects model and runtime C
 //!   optimization. Extra flags follow it and can override it. Release adds
