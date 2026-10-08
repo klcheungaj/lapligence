@@ -204,6 +204,120 @@ typedef struct {
 // simulation thread; callers must not race this accessor with simulation.
 void llg_rt_co_cache_get_stats(llg_rt_co_cache_stats_t* stats);
 
+// ── Collected objects (SIM-018, IEEE 1800-2009 §8.27) ───────────────────────
+// Class objects live on a precise, non-moving mark-sweep heap. Collection runs
+// only at scheduler safe points (after a process turn or region callback has
+// returned, never inside a process turn or callback window) once enough
+// objects were allocated. Roots are enumerated exactly: registered root
+// producers, frame maps of suspended coroutines, handle cells, captured
+// frames, native roots, mailboxes, queued NBAs, wait subscriptions and pins.
+// A candidate handle is accepted only when it is the exact address of a live
+// object, so opaque slots holding other identities (mailboxes, events,
+// virtual interfaces, chandles) are ignored without being dereferenced.
+// Objects never move: handle equality and random streams are unaffected.
+
+// Objects allocated since the last collection before another is requested
+// (run-time override LLG_GC_THRESHOLD).
+#ifndef LLG_GC_DEFAULT_THRESHOLD
+#define LLG_GC_DEFAULT_THRESHOLD 4096u
+#endif
+// After a collection the threshold becomes max(threshold, live * this / 100)
+// (run-time override LLG_GC_GROWTH_PERCENT).
+#ifndef LLG_GC_DEFAULT_GROWTH_PERCENT
+#define LLG_GC_DEFAULT_GROWTH_PERCENT 100u
+#endif
+
+typedef struct llg_gc_tracer llg_gc_tracer_t;
+typedef struct llg_gc_type llg_gc_type_t;
+// First member of every collected object; owned by the collector.
+typedef struct llg_gc_header {
+    const llg_gc_type_t* type;
+    uint32_t mark;
+    uint32_t pins;
+} llg_gc_header_t;
+struct llg_gc_type {
+    const char* name;
+    // Visit every outgoing handle (llg_gc_visit and friends).
+    void (*trace)(void* object, llg_gc_tracer_t* tracer);
+    // Optional: nonzero when the object's own storage contains an address
+    // reported through llg_gc_visit_interior (see llg_gc_interior_hit).
+    int (*interior)(const void* object, const llg_gc_tracer_t* tracer);
+    // Release the object's fields; never follows handles or frees `object`.
+    void (*finalize)(void* object);
+    // Optional (LLG_GC_VERIFY): poison an unreachable object kept allocated so
+    // a later access through a missed root is reported, not undefined.
+    void (*condemn)(void* object);
+};
+typedef void (*llg_gc_root_fn)(llg_gc_tracer_t* tracer, void* context);
+typedef void (*llg_gc_payload_trace_fn)(const void* payload,
+                                        llg_gc_tracer_t* tracer);
+// One traced coroutine frame field: a handle (`void*`) or a pointer that may
+// point into an object's storage.
+enum { LLG_GC_FRAME_HANDLE = 0, LLG_GC_FRAME_INTERIOR = 1 };
+typedef struct {
+    uint32_t offset;
+    uint32_t kind;
+} llg_gc_frame_slot_t;
+// A frame suspended at resume state `s` (< n_states) holds live traced
+// fields slots[first[s]] .. slots[first[s] + count[s] - 1].
+typedef struct {
+    const llg_gc_frame_slot_t* slots;
+    const uint32_t* first;
+    const uint32_t* count;
+    uint32_t n_states;
+} llg_gc_frame_map_t;
+typedef struct {
+    uint64_t collections;
+    uint64_t failed_collections;
+    uint64_t allocated;
+    uint64_t freed;
+    uint64_t condemned;
+    uint64_t live;
+    uint64_t peak_live;
+    uint64_t pinned;
+    uint64_t last_marked;
+} llg_gc_stats_t;
+
+// Allocate a zeroed object of `size` bytes (>= sizeof(llg_gc_header_t)) whose
+// header is initialized with `type`. Allocation failure is fatal.
+void* llg_gc_alloc(size_t size, const llg_gc_type_t* type);
+// Whether `handle` is the exact address of a live collected object.
+int llg_gc_is_object(const void* handle);
+// Tracer callbacks, valid only inside trace/root/interior callbacks.
+void llg_gc_visit(llg_gc_tracer_t* tracer, const void* handle);
+void llg_gc_visit_interior(llg_gc_tracer_t* tracer, const void* address);
+void llg_gc_visit_value(llg_gc_tracer_t* tracer, const llg_value_t* value);
+// Trace a payload owned through destructor `drop` (registered payload tracers;
+// payloads without one hold no handles).
+void llg_gc_visit_payload(llg_gc_tracer_t* tracer, void (*drop)(void*),
+                          const void* payload);
+int llg_gc_interior_hit(const llg_gc_tracer_t* tracer, const void* address);
+// Root producers and tracers register after runtime initialization and stay
+// registered until the next initialization. Return 0 on allocation failure.
+int llg_gc_register_roots(llg_gc_root_fn fn, void* context);
+int llg_gc_register_payload_tracer(void (*drop)(void*),
+                                   llg_gc_payload_trace_fn trace);
+int llg_gc_register_frame_map(const llg_co_desc_t* desc,
+                              const llg_gc_frame_map_t* map);
+// Destructor tag of registered automatic handle cells (`void*` payloads).
+void llg_gc_handle_cell_drop(void* cell);
+// Payload tracers for descriptor-backed containers (dynamic arrays, queues,
+// associative arrays), for generated container destructors.
+void llg_gc_trace_dyn_values(const void* payload, llg_gc_tracer_t* tracer);
+void llg_gc_trace_queue_values(const void* payload, llg_gc_tracer_t* tracer);
+void llg_gc_trace_assoc_values(const void* payload, llg_gc_tracer_t* tracer);
+// Foreign retention: a pinned object is a root. Pin/unpin of a non-object
+// returns 0 and changes nothing; an unbalanced unpin is fatal.
+int llg_gc_pin(void* handle);
+int llg_gc_unpin(void* handle);
+// Collect now. Only the scheduler's safe points and embeddings without a
+// running process may call it.
+void llg_gc_collect(void);
+void llg_gc_get_stats(llg_gc_stats_t* stats);
+// Finalize and free every object (model close, after llg_rt_cleanup), print
+// statistics when requested and reset the collector.
+void llg_gc_teardown(void);
+
 // Typed display values. The runtime owns string members after a display call
 // or while a deferred monitor/strobe snapshot is live.
 enum {

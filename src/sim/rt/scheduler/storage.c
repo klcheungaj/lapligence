@@ -367,7 +367,12 @@ struct llg_frame {
     size_t refs;
     size_t nslots;
     llg_frame_slot_t* slots;
+    // Every live frame, for collector roots (SIM-018). Not part of `g`: a
+    // frame may be released after runtime cleanup by model storage.
+    struct llg_frame* all_next;
+    struct llg_frame** all_prev_link;
 };
+static llg_frame_t* all_frames;
 
 struct llg_activation {
     uint32_t declaration;
@@ -579,6 +584,10 @@ llg_frame_t* llg_frame_new(size_t slots) {
         1, sizeof(*frame), "activation frame");
     frame->refs = 1;
     frame->nslots = slots;
+    frame->all_next = all_frames;
+    if (all_frames) all_frames->all_prev_link = &frame->all_next;
+    frame->all_prev_link = &all_frames;
+    all_frames = frame;
     frame->slots = (llg_frame_slot_t*)llg_checked_calloc(
         slots, sizeof(*frame->slots), "activation frame slots");
     for (size_t i = 0; i < slots; i++) {
@@ -606,6 +615,8 @@ void llg_frame_release(llg_frame_t* frame) {
     }
     frame->refs--;
     if (frame->refs != 0) return;
+    *frame->all_prev_link = frame->all_next;
+    if (frame->all_next) frame->all_next->all_prev_link = frame->all_prev_link;
     for (size_t i = 0; i < frame->nslots; i++) frame_clear_alias(&frame->slots[i]);
     free(frame->slots);
     free(frame);
