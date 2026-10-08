@@ -62,7 +62,7 @@ add_executable(probe_exe probe_main.c)\n\
 target_link_libraries(probe_exe PRIVATE probe_lib)\n";
 
 /// Environment read by CMake's detection or by the compilers it runs.
-const KEY_ENVIRONMENT: [&str; 22] = [
+pub(super) const KEY_ENVIRONMENT: [&str; 22] = [
     "PATH",
     "CFLAGS",
     "CPPFLAGS",

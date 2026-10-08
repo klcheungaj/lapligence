@@ -68,11 +68,13 @@
 //!   resolve from the current directory; an empty value selects the default.
 //!   No path is fixed at compile time. The root also holds CMake
 //!   toolchain-detection seeds that fresh build trees reuse (see
-//!   `build/toolchain_seed.rs`).
+//!   `build/toolchain_seed.rs`) and the MSVC compiler self-report memo (see
+//!   `build/compiler_probe.rs`).
 //! - `LLG_CMAKE_TOOLCHAIN_SEED` ([`TOOLCHAIN_SEED_ENV`]) — `0`, `off`,
 //!   `false` or `no` makes every fresh configure run CMake's own toolchain
 //!   detection.
 
+mod compiler_probe;
 mod toolchain_seed;
 mod value;
 
@@ -523,7 +525,8 @@ pub fn build_model_cmake_with_opts(
     let jobs = build_jobs_for(opts);
     let generator = generator_for(opts);
     let launcher = resolve_launcher(opts);
-    let compiler = CompilerFacts::probe(&cc);
+    let cache_root = runtime_cache_root(opts)?;
+    let compiler = compiler_probe::facts(&cc, &cache_root);
     let toolchain = toolchain_seed::Toolchain {
         cmake: &cmake_prog,
         generator: &generator,
@@ -547,7 +550,7 @@ pub fn build_model_cmake_with_opts(
         &build_dir,
         &toolchain,
         &[runtime_library_arg],
-        &runtime_cache_root(opts)?,
+        &cache_root,
     )?;
     let launch_error = |source| BuildError::CmakeLaunch {
         program: cmake_prog.clone(),
@@ -815,22 +818,6 @@ fn run_configure(
         Ok(())
     } else {
         Err(configure_error(&configure, toolchain.generator, &output))
-    }
-}
-
-/// Compiler facts shared by the runtime cache key and the toolchain seed key,
-/// probed once per build.
-struct CompilerFacts {
-    identity: String,
-    target: String,
-}
-
-impl CompilerFacts {
-    fn probe(cc: &str) -> Self {
-        Self {
-            identity: compiler_identity(cc),
-            target: compiler_target(cc),
-        }
     }
 }
 
@@ -1132,9 +1119,16 @@ fn runtime_cache_key(
     cmake_prog: &str,
     opts: &CmakeBuildOpts,
 ) -> String {
-    let compiler = compiler_identity(cc);
-    let target = compiler_target(cc);
-    runtime_cache_key_with_compiler(waveform, cc, flags, cmake_prog, opts, &compiler, &target)
+    let compiler = compiler_probe::facts(cc, &std::env::temp_dir());
+    runtime_cache_key_with_compiler(
+        waveform,
+        cc,
+        flags,
+        cmake_prog,
+        opts,
+        &compiler.identity,
+        &compiler.target,
+    )
 }
 
 fn runtime_cache_key_with_compiler(
@@ -1211,83 +1205,6 @@ fn runtime_cache_key_with_compiler(
         opts.value_config.backend.abi(),
         u8::from(waveform)
     )
-}
-
-/// Version text that keys the runtime cache. GCC/Clang answer `--version`.
-/// MSVC `cl` has no version option: it prints its banner (version and target)
-/// on stderr and then fails for lack of a source file (D8003), which cannot
-/// block because `output()` closes stdin; the banner is captured either way.
-fn compiler_identity(cc: &str) -> String {
-    let mut identity = cc.to_owned();
-    for argument in ["--version", "/Bv"] {
-        if let Ok(output) = Command::new(cc).arg(argument).output() {
-            identity.push('\n');
-            identity.push_str(&String::from_utf8_lossy(&output.stdout));
-            identity.push_str(&String::from_utf8_lossy(&output.stderr));
-            if output.status.success() {
-                break;
-            }
-        }
-    }
-    if identity.contains("Microsoft") {
-        // The banner names the compiler version but not the toolset or SDK
-        // whose headers and libraries the developer environment selected.
-        for variable in ["VCToolsVersion", "WindowsSDKVersion", "VSCMD_ARG_TGT_ARCH"] {
-            if let Ok(value) = std::env::var(variable) {
-                identity.push_str(&format!("\n{variable}={value}"));
-            }
-        }
-    }
-    identity
-}
-
-fn compiler_target(cc: &str) -> String {
-    if let Ok(output) = Command::new(cc).arg("-dumpmachine").output() {
-        if output.status.success() {
-            let target = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            if !target.is_empty() {
-                return target;
-            }
-        }
-    }
-    for argument in ["--version", "/Bv"] {
-        if let Ok(output) = Command::new(cc).arg(argument).output() {
-            let text = format!(
-                "{}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            if let Some(target) = compiler_target_from_output(&text) {
-                return target;
-            }
-        }
-    }
-    format!(
-        "unreported-{}-{}",
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    )
-}
-
-fn compiler_target_from_output(output: &str) -> Option<String> {
-    for line in output.lines() {
-        let line = line.trim();
-        if let Some(target) = line.strip_prefix("Target:") {
-            let target = target.trim();
-            if !target.is_empty() {
-                return Some(target.to_owned());
-            }
-        }
-        if line.contains("Microsoft") {
-            if let Some((_, architecture)) = line.rsplit_once(" for ") {
-                let architecture = architecture.trim();
-                if !architecture.is_empty() && !architecture.contains(' ') {
-                    return Some(format!("msvc-{architecture}"));
-                }
-            }
-        }
-    }
-    None
 }
 
 fn find_runtime_library(build_dir: &Path) -> Option<PathBuf> {
@@ -2055,20 +1972,6 @@ mod tests {
                 "aarch64-pc-linux-gnu",
             ),
             "compiler-reported targets must select distinct runtime archives"
-        );
-    }
-
-    #[test]
-    fn compiler_target_parses_clang_and_msvc_reports() {
-        assert_eq!(
-            compiler_target_from_output("clang version 19\nTarget: aarch64-apple-darwin\n"),
-            Some("aarch64-apple-darwin".to_owned())
-        );
-        assert_eq!(
-            compiler_target_from_output(
-                "Microsoft (R) C/C++ Optimizing Compiler Version 19.44 for ARM64\n"
-            ),
-            Some("msvc-ARM64".to_owned())
         );
     }
 

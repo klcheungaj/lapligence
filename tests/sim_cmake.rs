@@ -991,6 +991,77 @@ fn a_failing_seed_falls_back_to_a_clean_configure_and_is_rejected() {
     assert!(ran_compiler_detection(&third.join("build")));
 }
 
+/// Compiler self-reports are probed once per toolchain and process: a second
+/// model build spawns no `--version`/`-dumpmachine` probe, and a replaced
+/// compiler file is probed again. The compiler is a counting wrapper script
+/// around the host `cc`; CMake's own compiler calls never pass one lone
+/// probe argument, so the log holds only llg's probes.
+#[cfg(unix)]
+#[test]
+fn compiler_probes_run_once_per_toolchain_and_process() {
+    use std::os::unix::fs::PermissionsExt;
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let Some(host_cc) = find_on_path("cc") else {
+        eprintln!("SKIP: cc is required");
+        return;
+    };
+    let dir = fresh_dir("compiler-probe-memo");
+    let log = dir.path().join("probes.log");
+    let wrapper = dir.path().join("counting-cc");
+    let write_wrapper = |revision: &str| {
+        std::fs::write(
+            &wrapper,
+            format!(
+                "#!/bin/sh\n# revision {revision}\nif [ $# -eq 1 ]; then case \"$1\" in --version|-dumpmachine|/Bv) echo \"$1\" >> '{}';; esac; fi\nexec '{}' \"$@\"\n",
+                log.display(),
+                host_cc.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    let probes = || {
+        std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    write_wrapper("1");
+    let opts = sim::build::CmakeBuildOpts {
+        runtime_cache_dir: Some(dir.path().join("runtime-cache")),
+        cc: Some(wrapper.to_string_lossy().into_owned()),
+        ..Default::default()
+    };
+
+    let stdout =
+        build_counter(dir.path(), &dir.path().join("first"), &opts).expect("first model runs");
+    assert_eq!(stdout, EXPECTED_STDOUT);
+    assert_eq!(probes(), ["--version", "-dumpmachine"], "one probe set");
+
+    let stdout =
+        build_counter(dir.path(), &dir.path().join("second"), &opts).expect("second model runs");
+    assert_eq!(stdout, EXPECTED_STDOUT);
+    assert_eq!(probes().len(), 2, "the second build reuses the probe");
+
+    // A replaced compiler file (other size and modification time) is probed
+    // again; its self-report is unchanged, so the runtime archive is reused.
+    std::thread::sleep(Duration::from_millis(20));
+    write_wrapper("2, upgraded");
+    let stdout =
+        build_counter(dir.path(), &dir.path().join("third"), &opts).expect("third model runs");
+    assert_eq!(stdout, EXPECTED_STDOUT);
+    assert_eq!(
+        probes(),
+        ["--version", "-dumpmachine", "--version", "-dumpmachine"],
+        "a changed compiler is re-probed"
+    );
+}
+
 /// Program `name` on the current `PATH`, if any.
 #[cfg(unix)]
 fn find_on_path(name: &str) -> Option<std::path::PathBuf> {
