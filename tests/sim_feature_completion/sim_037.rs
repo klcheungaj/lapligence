@@ -188,7 +188,7 @@ fn delayed(min: u32, max: Bound, right: &Seq, w: &Word, j: i64, fuse: bool) -> B
             continue;
         }
         let start = j + delay;
-        if start - 1 >= len {
+        if start > len {
             break;
         }
         out.extend(matches(right, w, start));
@@ -213,7 +213,7 @@ fn repeat(
     while count < min || max.is_some_and(|max| count < max) {
         let mut next = BTreeSet::new();
         for end in &current {
-            if end + 1 <= len {
+            if *end < len {
                 next.extend(one(end + 1));
             }
         }
