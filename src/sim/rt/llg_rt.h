@@ -1813,19 +1813,39 @@ int llg_sampled_copy(const sv4_t* signal, sv4_t* out);
 // unregistered real reports the same controlled diagnostic and yields 0.0.
 void llg_sampled_register_real(double* signal);
 double llg_sampled_real(const double* signal);
-/// One explicit sampled clock/history domain. The callback is evaluated at a
-/// matching clock edge using the immutable Preponed signal snapshots.
-/// `history_ticks` (at least 1) is the largest `$past` tick count read from
-/// the domain; status functions need 1. Older clock ticks are released, so
-/// a deeper read would see the initial value instead.
-typedef sv4_t (*llg_sampled_domain_eval_fn)(void* data);
-int llg_sampled_domain_register(uint64_t identity, sv4_t* clock, int edge,
-                                llg_sampled_domain_eval_fn value,
-                                llg_sampled_domain_eval_fn gate, void* data,
+/// Sampled-value clocks (IEEE 1800-2009 16.9.3). A clock owns the ticks
+/// shared by every history domain sampled on it; identities are dense small
+/// integers assigned by the generated model. An edge clock ticks when
+/// `signal` makes the `edge` transition (LLG_EV_POSEDGE or LLG_EV_NEGEDGE)
+/// and the optional `gate` (`iff` and the `$past` gating expression) is true
+/// in the current values at that moment, like an event control's `iff`. An
+/// event clock ticks only through llg_sampled_clock_tick, which a generated
+/// process calls after waiting on any other legal clocking event (event
+/// lists, `edge`, value changes, named and clocking-block events, expression
+/// edges); its `gate` is evaluated when the tick is reported. Repeated ticks
+/// in one time step count once.
+typedef int (*llg_sampled_gate_fn)(void* data);
+int llg_sampled_clock_register_edge(uint64_t clock, sv4_t* signal, int edge,
+                                    llg_sampled_gate_fn gate, void* data);
+int llg_sampled_clock_register_event(uint64_t clock, llg_sampled_gate_fn gate,
+                                     void* data);
+void llg_sampled_clock_tick(uint64_t clock);
+/// One sampled history domain: an expression sampled on one clock. The
+/// callback stores the expression's Preponed value into `out`, an
+/// initialized owner. `history_ticks` (at least 1) is the deepest `$past`
+/// tick count read from the domain; status functions need 1. The domain
+/// keeps at most that many earlier time steps plus the current one in a ring
+/// that grows only up to that bound, so recording a tick never allocates
+/// once the ring is full and memory never grows with simulated time.
+typedef void (*llg_sampled_domain_eval_fn)(void* data, sv4_t* out);
+int llg_sampled_domain_register(uint64_t identity, uint64_t clock,
+                                llg_sampled_domain_eval_fn value, void* data,
                                 uint64_t history_ticks);
 sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks);
-/// `kind`: 0 rose, 1 fell, 2 stable, 3 changed; 4 stable and 5 changed
-/// compare 64-bit real images numerically (`==` on the decoded reals).
+/// Compare the Preponed value of the calling time step with the value of the
+/// most recent strictly earlier tick (or the initial value). `kind`: 0 rose,
+/// 1 fell, 2 stable, 3 changed; 4 stable and 5 changed compare 64-bit real
+/// images numerically (`==` on the decoded reals).
 int llg_sampled_domain_status(uint64_t identity, int kind);
 // Clocking input copies. Each publishes a changed sample to its waiters.
 // llg_clocking_sample copies the Preponed (#1step) value; observed copies are

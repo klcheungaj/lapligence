@@ -985,6 +985,17 @@ impl Validator<'_> {
             IrStmt::EventTrigger { ev } | IrStmt::ClockingEventTrigger { ev } => {
                 self.validate_event_ref(ev, formals, path)?;
             }
+            IrStmt::SampledClockTick { clock } => {
+                if !matches!(
+                    self.model.sampled_clocks.get(*clock),
+                    Some(crate::sim::ir::IrSampledClock {
+                        kind: crate::sim::ir::IrSampledClockKind::Event,
+                        ..
+                    })
+                ) {
+                    return self.fail(path, "sampled clock tick must name an event clock");
+                }
+            }
             IrStmt::NonblockingEventTrigger { ev, ticks } => {
                 self.validate_event_ref(ev, formals, path)?;
                 if let Some(IrDelay::Runtime { value, .. }) = ticks {

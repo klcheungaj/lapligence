@@ -375,9 +375,15 @@ sample.
 history and no per-write lookup. `llg_sampled_register` adds Observed clocking
 copies; `llg_sampled_register_history` keeps the slots the deepest declared input
 skew can select (the newest at or before `now - ticks` and everything newer),
-promoting an earlier value-only entry. Sampled-value domains likewise keep only
-their registered `$past` depth plus the current step. Never retain history for
-an undeclared reader: memory must not grow with simulated time.
+promoting an earlier value-only entry. Sampled-value clocks and domains use
+dense model-assigned identities (O(1) lookup). An edge clock is matched at the
+signal write, its gate read with current values; an event clock ticks only
+through `llg_sampled_clock_tick` from a generated waiting process. Each domain
+keeps a ring of one sample per ticked time step (a repeated tick overwrites
+the step), growing up to its registered `$past` depth plus the current step and
+then reused in place; status functions compare a step-cached Preponed
+evaluation with the latest strictly earlier tick. Never retain history for an
+undeclared reader: memory must not grow with simulated time.
 
 Slot history retains any/positive/negative occurrence independently, so a later
 opposite edge cannot erase an earlier match. Time advance drops all entries except

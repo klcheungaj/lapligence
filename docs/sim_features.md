@@ -1801,18 +1801,31 @@ Match-item callees and shared/native captures must also satisfy §9's read-only
 rules; graph/lowering support alone is not executable acceptance.
 
 🟨 **Sampled functions** — `$sampled/$rose/$fell/$stable/$changed/$past` and
-2009 global-clock history/status forms support packed explicit/default edge
-domains, gated/initial history, Preponed reads and LSB/X/Z edge rules; `$past`
-counts only clock time steps strictly before its evaluation. Real arguments
-keep numeric samples: `$past` returns the exact sampled real and
-`$stable/$changed` compare with real `==`; `$rose/$fell` of a real are
-illegal. Outside any assertion, a procedural `$sampled` returns the
-Preponed value of every packed or real signal it reads, registered without
-per-slot history. Future global forms and complex clocks remain rejected. Future global
-functions are legal in SV2009 property/sequence contexts under §16.9.4, with
-global clocking, nonnesting and match-item restrictions and delayed assertion
-actions; their rejection is an implementation gap. Procedural and action-block
-uses remain illegal. SV §§16.9.3–16.9.4,
+2009 global-clock history/status forms support explicit, inferred, default and
+global clocking events of any legal form: single packed-signal edges and, via a
+synthetic waiting process, event lists, `edge`, value changes, expression edges,
+named and clocking-block events, `iff` clocks and complex default/global
+clocking. Calls that read one expression on one clock and gate share one
+bounded history ring sized by the deepest `$past`, reused in place, so memory
+is independent of simulated time. `$past` counts clock time steps strictly
+before its evaluation (repeated ticks in a step count once) and returns the
+initial value (declaration value or type default) before enough ticks; value
+change functions compare the calling step's Preponed value with the most
+recent strictly earlier tick, also between edges. `iff` and the `$past` gate
+read current values when the clock occurs. Real arguments keep numeric
+samples: `$past` returns the exact sampled real and `$stable/$changed` compare
+with real `==`, also inside assertions; `$rose/$fell` of a real are illegal.
+Outside any assertion, a procedural `$sampled` returns the Preponed value of
+every packed or real signal it reads, registered without per-slot history.
+String, event, chandle, class, dynamic and associative array arguments are
+diagnosed as illegal (§16.6.1); fixed unpacked arrays, unpacked structures,
+queues and unpacked element selections are explicit unsupported rejections
+([known issue](known_issues.md#sampled-value-arguments-without-sampled-storage),
+[SIM-035 fixtures](../tests/fixtures/sim/feature_completion/sim_035/readme.md)).
+Future global functions are legal in SV2009 property/sequence contexts under
+§16.9.4, with global clocking, nonnesting and match-item restrictions and
+delayed assertion actions; their rejection is an implementation gap (ADV-014).
+Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
 20.13 **[SV-2005]**.
 
 ### Foreign interfaces and missing infrastructure

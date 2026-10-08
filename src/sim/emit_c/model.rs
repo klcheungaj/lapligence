@@ -28,7 +28,7 @@ use classes::{
     render_class_decls, render_virtual_dispatch_bodies, render_virtual_dispatch_prototypes,
 };
 mod assertions;
-use assertions::{assertion_predicate_name, assertion_sequence_name, sampled_domain_callback_name};
+use assertions::{assertion_predicate_name, assertion_sequence_name};
 mod storage;
 use storage::{render_signal_decls, render_static_local_decls};
 mod vpi;

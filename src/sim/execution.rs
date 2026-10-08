@@ -731,6 +731,7 @@ fn collect_effects(
                 effects.push(ExecutionEffect::ImmediateStore);
                 effects.push(ExecutionEffect::RuntimeService);
             }
+            IrStmt::SampledClockTick { .. } => effects.push(ExecutionEffect::RuntimeService),
             IrStmt::PlusArg(_) | IrStmt::Stochastic(_) => {
                 effects.push(ExecutionEffect::ImmediateStore);
                 effects.push(ExecutionEffect::RuntimeService);
@@ -1154,7 +1155,8 @@ fn collect_statement_expression_effects(
         IrStmt::EventAssign { .. }
         | IrStmt::EventCapture { .. }
         | IrStmt::EventDeclare { .. }
-        | IrStmt::ClockingSample { .. } => {}
+        | IrStmt::ClockingSample { .. }
+        | IrStmt::SampledClockTick { .. } => {}
         IrStmt::PcaAssign { value, .. } | IrStmt::PcaDrive { value, .. } => {
             collect_expression_effects(ir, value, effects, visited_calls);
         }

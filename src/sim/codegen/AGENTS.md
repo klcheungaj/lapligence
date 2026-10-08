@@ -579,6 +579,16 @@ identity against the fixed catalog; omit waveform/libfst when unused, reject
 unsigned MSB-first byte vectors (empty is one zero byte), with normal pad/truncate;
 SystemVerilog strings remain separate native owners.
 
+Sampled-value functions intern one `IrSampledClock` per lowered clocking event
+and gate and one `IrSampledDomain` per (clock, sample expression), keeping the
+deepest `$past` depth, so overlapping calls share history. A single direct
+packed-signal edge is an `Edge` clock; any other legal event list is an `Event`
+clock ticked by a synthetic `WaitEvents` + `SampledClockTick` process spawned
+before other time-zero processes. `iff` and the `$past` gate read current
+values. Classify argument types from the Db before lowering: §16.6.1-excluded
+types are illegal, unpacked/queue values are explicit unsupported; never coerce
+a non-integral value into packed bits (reals use their exact 64-bit image).
+
 Concurrent assertions use dedicated instances, immutable sampled predicates,
 explicit clocks/disable/control metadata, per-attempt/thread locals and ordered
 match-item effects. Preserve Slang actual/default expansion; reject conflicting

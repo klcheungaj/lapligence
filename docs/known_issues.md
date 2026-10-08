@@ -1179,3 +1179,33 @@ Reproduce with
 [`neg_string_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_string_input.sv),
 [`neg_input_edge_skew.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_input_edge_skew.sv) and
 [`neg_vif_clocking_event.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_vif_clocking_event.sv).
+
+## Sampled-value arguments without sampled storage
+
+**Status:** open (SIM-035 boundary).
+
+Sampled-value functions keep a history of packed integral or real values.
+Fixed unpacked arrays, unpacked structures and unions, queues and unpacked
+array element selections (`$past(arr[i])`) are legal arguments (SV 16.6.1
+excludes only string, event, chandle, class, dynamic and associative array
+operands) but reject explicitly ("sampled histories hold packed integral and
+real values" or "must be a static packed or real expression") instead of being
+flattened. Sampling them needs Preponed snapshots of unpacked storage, which
+assertions also lack.
+
+The `$past` gating expression of a clock that ticks through a synthetic
+waiting process (event lists, named or clocking-block events, expression
+edges) is evaluated when that process runs in the event's time step, not at
+the instant of the event; a same-step write to the gate between the event and
+the process run is therefore seen. Direct packed-signal edges evaluate their
+`iff` and gate at the write itself.
+
+Concurrent assertions themselves still need one direct signal clock and a
+single-signal `disable iff` (SIM-038, ADV-013), so sampled-value functions in
+an assertion inherit those limits; explicit clocking-event arguments are not
+limited.
+
+Reproduce with
+[`neg_unpacked_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_arg.sv),
+[`neg_unpacked_struct_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_struct_arg.sv) and
+[`neg_queue_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_queue_arg.sv).

@@ -151,12 +151,11 @@ pub enum ExprKind {
         body: NodeId,
         bindings: Vec<AssertionBinding>,
     },
-    /// A direct signal event used as an explicit sampled-value clock. Complex
-    /// event lists and named events remain `Other` and fail closed in lowering.
+    /// The clocking event argument of a sampled-value function, captured as
+    /// the same event list an event control uses: edges (`edge` as both),
+    /// value changes, named and clocking-block events and `iff` qualifiers.
     ClockingEvent {
-        signal: NodeId,
-        posedge: bool,
-        gate: Option<NodeId>,
+        specs: Vec<super::EventSpec>,
     },
     Other,
 }

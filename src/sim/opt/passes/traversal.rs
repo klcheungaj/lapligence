@@ -828,11 +828,13 @@ pub(super) fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut 
             }
         }
     }
-    for domain in &mut model.sampled_domains {
-        walk_expr_mut(&mut domain.sample, f);
-        if let Some(gate) = &mut domain.gate {
+    for clock in &mut model.sampled_clocks {
+        if let Some(gate) = &mut clock.gate {
             walk_expr_mut(gate, f);
         }
+    }
+    for domain in &mut model.sampled_domains {
+        walk_expr_mut(&mut domain.sample, f);
     }
 }
 

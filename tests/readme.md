@@ -245,6 +245,13 @@ in both optimizer modes on every backend and, except the numeric-extremes fixtur
 `-O0`/`-O3`), after Db destruction. Component checks are the
 `sim::ir::validate::tests::real_values` unit tests.
 
+SIM-035's sampled-value fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_035::)'`. Positive fixtures run
+in both optimizer modes on every backend; `complex_clocks` also runs at model
+`-O0` and after Db destruction. Component checks are the
+`sim::ir::validate::tests::sampled_*` unit tests and the sampled-domain ring
+checks in `runtime_value_storage`'s `retention_probe.c`.
+
 SIM-006's container, record-element, handle-array and associative-default
 fixtures use `-E 'binary(sim_feature_completion) & test(sim_006::)'`. Positive
 fixtures run in both optimizer modes on every backend; fixtures without runtime warnings also run after Db
@@ -397,7 +404,7 @@ requirements above apply without repeating them for each suite.
 | Undefined behavior characterization | `sim_undefined_behavior` compares exact CLI stdout, stderr and status to checked-in [Q02 goldens](fixtures/sim/undefined_behavior/readme.md) in both optimizer modes and each legal edition. These are observations for later cross-simulator comparison, not independent conformance oracles. |
 | Verification and native objects | `sim_classes`, `sim_virtual_interfaces`, `sim_dpi`, [concurrent assertions](fixtures/sim/concurrent_assertions/readme.md): nominal identity, dispatch/casts, interface bindings, scalar native ABI, sampled/sequence/property behavior and explicit rejection boundaries. |
 | Build and safeguards | `sim_cmake`, `cli_info`, `sim_memory_guard`, `support_harness`, `emit_decoupling`, `generated_c_determinism`: CMake/generator failures, source cleanup, early CLI exits, memory limits, timeout trees, CWD recovery, frontend-independent emission and byte-identical generated source trees across separate processes. |
-| Native components | `runtime_values`, `runtime_random`, `runtime_file_io`, `runtime_boundaries`, `runtime_value_storage`: direct runtime probes, independent of HDL lowering. |
+| Native components | `runtime_values`, `runtime_random`, `runtime_file_io`, `runtime_boundaries`, `runtime_value_storage`, `runtime_gmp_closure`: direct runtime probes, independent of HDL lowering. |
 | Integrated selected profile | `sim_syn038_ledger`, pairwise suites and `sim_syn039_acceptance`; [ledger](syn038_coverage_ledger.md), [integrated fixtures](fixtures/sim/syn039_acceptance/readme.md). SYN-039 runs four runtime-stimulated compositions in both optimizer modes and preserves the sequential-UDP rejection. |
 | Compiler directives | `sim_directive_effects`, `sim_syn017_directive_effects`, `sim_edition` and `sim_syn038_ledger`; [SYN-017 matrix](fixtures/sim/syn017_directives/readme.md) covers both editions, both optimizer modes, preprocessing into execution, unit state and strict older-edition gates. |
 

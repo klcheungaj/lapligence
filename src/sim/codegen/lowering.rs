@@ -582,6 +582,8 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
             break;
         }
     }
+    // Sampled-value event clocks may be requested by any body lowered above.
+    let sampled_clock_processes = cg.emit_sampled_clock_processes();
     let mut model = std::mem::replace(
         &mut cg.model,
         IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
@@ -603,13 +605,22 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
             crate::sim::ir::IrProcessKind::Comb | crate::sim::ir::IrProcessKind::Latch
         )
     };
+    // Sampled-clock tick processes start first so their event controls are
+    // armed before any time-zero process can produce a clock event.
+    let sampled_clock_set = sampled_clock_processes
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
     model.spawns = startup_spawns(
-        model
-            .processes
-            .iter()
-            .filter(|process| !deferred(process))
-            .chain(model.processes.iter().filter(deferred))
-            .map(|process| process.c_name.as_str()),
+        sampled_clock_processes.iter().map(String::as_str).chain(
+            model
+                .processes
+                .iter()
+                .filter(|process| !deferred(process))
+                .chain(model.processes.iter().filter(deferred))
+                .map(|process| process.c_name.as_str())
+                .filter(|name| !sampled_clock_set.contains(name)),
+        ),
         &final_names,
         &assertion_action_procs,
     );
@@ -913,6 +924,23 @@ pub(super) struct SampledClock {
     pub(super) signal: usize,
     pub(super) posedge: bool,
     pub(super) gate: Option<NodeId>,
+}
+
+/// A sampled-value clock source resolved from an explicit, default, global
+/// or inferred clocking event: one direct packed-signal edge, or any other
+/// legal event list that a synthetic process waits on.
+#[derive(Clone)]
+pub(super) enum SampledClockSource {
+    Edge(SampledClock),
+    Events(Vec<EventSpec>),
+}
+
+/// An event-driven sampled clock awaiting its synthetic tick process.
+struct PendingSampledEventClock {
+    clock: usize,
+    path: String,
+    specs: Vec<(IrWaitSrc, IrEdge)>,
+    pre_fns: Vec<crate::sim::ir::IrPreFn>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -1591,6 +1619,13 @@ struct Codegen<'a> {
     assertion_action_procs: HashSet<String>,
     /// Clock inferred while lowering a property or its Reactive action.
     sampled_clock: Option<SampledClock>,
+    /// Interned sampled-value clocks and histories (`IrModel::sampled_clocks`
+    /// and `sampled_domains`), keyed by their lowered identity so every call
+    /// that reads one expression on one clock and gate shares one history.
+    sampled_clock_keys: HashMap<String, usize>,
+    sampled_domain_keys: HashMap<String, usize>,
+    /// Event clocks whose waiting tick process is emitted after lowering.
+    sampled_event_clocks: Vec<PendingSampledEventClock>,
     /// Slang-materialized local assertion declarations currently being
     /// lowered into one sequence graph. The map is scoped to the graph so
     /// every runtime attempt receives an independent slot set.
@@ -1804,6 +1839,9 @@ impl<'a> Codegen<'a> {
             final_procs: Vec::new(),
             assertion_action_procs: HashSet::new(),
             sampled_clock: None,
+            sampled_clock_keys: HashMap::new(),
+            sampled_domain_keys: HashMap::new(),
+            sampled_event_clocks: Vec::new(),
             assertion_local_bindings: None,
             assertion_formal_actuals: None,
             assertion_local_initializers: None,

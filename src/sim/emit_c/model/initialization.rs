@@ -281,27 +281,10 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
             ));
         }
     }
-    for (index, domain) in model.sampled_domains().iter().enumerate() {
-        let clock = model.signal(domain.clock_signal).c_name();
-        let edge = if domain.posedge {
-            "LLG_EV_POSEDGE"
-        } else {
-            "LLG_EV_NEGEDGE"
-        };
-        let gate = if domain.gate.is_some() {
-            sampled_domain_callback_name(index, "gate")
-        } else {
-            "NULL".to_owned()
-        };
-        out.push_str(&format!(
-            "    if (!llg_sampled_domain_register({}ULL, &{}, {}, {}, {}, NULL, {}ULL)) return 1;\n",
-            index,
-            clock,
-            edge,
-            sampled_domain_callback_name(index, "value"),
-            gate,
-            domain.history_ticks,
-        ));
+    // Sampled-value clocks and histories are registered by the owned model
+    // emitter only; this superseded renderer never represented them.
+    if !model.sampled_domains().is_empty() {
+        return Err("sampled-value histories require the owned model emitter".to_owned());
     }
     for (index, assertion) in model.assertions().iter().enumerate() {
         let clock = model.signal(assertion.clock_signal()).c_name();

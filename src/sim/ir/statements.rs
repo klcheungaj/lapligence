@@ -510,6 +510,11 @@ pub enum IrStmt {
     ClockingEventTrigger {
         ev: IrEventRef,
     },
+    /// Record one tick of an event-driven sampled-value clock (index into
+    /// [`IrModel::sampled_clocks`]) in every history domain sampled on it.
+    SampledClockTick {
+        clock: usize,
+    },
     /// `->> ev` — queue the named-event trigger in NBA without suspending
     /// the issuing process. An optional delay is evaluated at issue time.
     NonblockingEventTrigger {

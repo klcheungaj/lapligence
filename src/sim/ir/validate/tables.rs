@@ -686,35 +686,41 @@ impl Validator<'_> {
             }
         }
 
+        for (idx, clock) in self.model.sampled_clocks.iter().enumerate() {
+            let path = format!("sampled_clocks[{idx}]");
+            if let crate::sim::ir::IrSampledClockKind::Edge { signal, .. } = &clock.kind {
+                let Some(signal) = self.model.signals.get(*signal) else {
+                    return self.fail(
+                        format!("{path}.signal"),
+                        "sampled clock signal index is out of bounds",
+                    );
+                };
+                if signal.omit || signal.ty.width() == 0 {
+                    return self.fail(
+                        format!("{path}.signal"),
+                        "sampled clock must be an active packed signal",
+                    );
+                }
+            }
+            if let Some(gate) = &clock.gate {
+                self.validate_expr(gate, &[], &format!("{path}.gate"))?;
+                if gate.is_real() {
+                    return self.fail(format!("{path}.gate"), "sampled clock gate must be packed");
+                }
+            }
+        }
+
         for (idx, domain) in self.model.sampled_domains.iter().enumerate() {
             let path = format!("sampled_domains[{idx}]");
-            let Some(clock) = self.model.signals.get(domain.clock_signal) else {
+            if domain.clock >= self.model.sampled_clocks.len() {
                 return self.fail(
-                    format!("{path}.clock_signal"),
-                    "sampled clock signal index is out of bounds",
-                );
-            };
-            if clock.omit || clock.ty.width() == 0 {
-                return self.fail(
-                    format!("{path}.clock_signal"),
-                    "sampled clock must be an active packed signal",
-                );
-            }
-            if domain.history_ticks == 0 {
-                return self.fail(
-                    format!("{path}.history_ticks"),
-                    "sampled history must retain at least one clock tick",
+                    format!("{path}.clock"),
+                    "sampled domain clock index is out of bounds",
                 );
             }
             self.validate_expr(&domain.sample, &[], &format!("{path}.sample"))?;
             if domain.sample.is_real() {
                 return self.fail(format!("{path}.sample"), "sampled value must be packed");
-            }
-            if let Some(gate) = &domain.gate {
-                self.validate_expr(gate, &[], &format!("{path}.gate"))?;
-                if gate.is_real() {
-                    return self.fail(format!("{path}.gate"), "sampled gate must be packed");
-                }
             }
         }
 

@@ -81,18 +81,30 @@ static void free_sampled_values(void) {
         free(g.sampled);
         g.sampled = next;
     }
-    while (g.sampled_domains) {
-        llg_sampled_domain_t* next = g.sampled_domains->next;
-        while (g.sampled_domains->history) {
-            llg_sampled_domain_history_t* history = g.sampled_domains->history;
-            g.sampled_domains->history = history->next;
-            sv4_destroy(&history->value);
-            free(history);
-        }
-        sv4_destroy(&g.sampled_domains->initial);
-        free(g.sampled_domains);
-        g.sampled_domains = next;
+    for (size_t identity = 0; identity < g.sampled_domains_capacity; identity++) {
+        llg_sampled_domain_t* domain = g.sampled_domains[identity];
+        if (!domain) continue;
+        for (size_t index = 0; index < domain->capacity; index++)
+            sv4_destroy(&domain->samples[index]);
+        free(domain->samples);
+        free(domain->times);
+        sv4_destroy(&domain->initial);
+        sv4_destroy(&domain->current);
+        free(domain);
     }
+    free(g.sampled_domains);
+    g.sampled_domains = NULL;
+    g.sampled_domains_capacity = 0;
+    for (size_t identity = 0; identity < g.sampled_clocks_capacity; identity++) {
+        llg_sampled_clock_t* clock = g.sampled_clocks[identity];
+        if (!clock) continue;
+        free(clock->domains);
+        free(clock);
+    }
+    free(g.sampled_clocks);
+    g.sampled_clocks = NULL;
+    g.sampled_clocks_capacity = 0;
+    g.sampled_edge_clocks = NULL;
 }
 
 static void free_assertion_clock_events(llg_concurrent_assertion_t* assertion) {

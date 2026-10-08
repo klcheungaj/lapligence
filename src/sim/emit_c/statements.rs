@@ -826,6 +826,7 @@ fn render_stmt_scoped(
         IrStmt::ClockingEventTrigger { ev } => {
             format!("    (void)llg_clocking_event_observed({});\n", event_ref_code(ctx, ev)?)
         }
+        IrStmt::SampledClockTick { clock } => format!("    llg_sampled_clock_tick({clock}ULL);\n"),
         IrStmt::EventTrigger { ev } => {
             format!("    llg_event_trigger({});\n", event_ref_code(ctx, ev)?)
         }

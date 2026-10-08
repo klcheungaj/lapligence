@@ -17,8 +17,8 @@ use crate::core::db::{
 };
 use crate::sim::ir::{
     IrAssertion, IrBinOp, IrConcurrentAssertionKind, IrExpr, IrExprKind, IrLhs, IrProcess,
-    IrSampledDomain, IrSequence, IrSequenceLocal, IrSequenceRange, IrSequenceTransition, IrShape,
-    IrUnOp,
+    IrSampledClock, IrSampledClockKind, IrSampledDomain, IrSequence, IrSequenceLocal,
+    IrSequenceRange, IrSequenceTransition, IrShape, IrUnOp,
 };
 
 struct PropertyParts {
@@ -808,38 +808,72 @@ impl Codegen<'_> {
         Ok(condition)
     }
 
-    /// Lower a sampled-value clocking event. Only a direct signal event is
-    /// admitted; event lists, named events, and opaque timing controls remain
-    /// explicit unsupported input rather than being guessed as a clock.
+    /// Lower a sampled-value clocking event argument (SV 16.9.3). Any legal
+    /// event expression is admitted: a single edge of a direct packed signal
+    /// is detected at that signal's write, and every other event list
+    /// (`or`, `edge`, value changes, named or clocking-block events,
+    /// expression edges) becomes an event clock.
     pub(super) fn lower_sampled_clock_event(
         &mut self,
         path: &str,
         node: NodeId,
-    ) -> Result<SampledClock, String> {
-        let NodeKind::Expr(ExprKind::ClockingEvent {
-            signal,
-            posedge,
-            gate,
-        }) = self.kind(node)
-        else {
+    ) -> Result<SampledClockSource, String> {
+        let NodeKind::Expr(ExprKind::ClockingEvent { specs }) = self.kind(node) else {
             return Err(format!(
-                "sampled-value clock must be a direct `@(posedge/negedge signal)` event in `{path}`"
+                "sampled-value clock must be a clocking event in `{path}`"
             ));
         };
-        let signal = self.lower_assertion_signal(path, *signal, "sampled clock")?;
-        Ok(SampledClock {
-            signal,
-            posedge: *posedge,
-            gate: *gate,
-        })
+        let specs = specs.clone();
+        self.sampled_clock_source(path, specs)
+    }
+
+    fn sampled_clock_source(
+        &mut self,
+        path: &str,
+        specs: Vec<EventSpec>,
+    ) -> Result<SampledClockSource, String> {
+        if let [spec] = specs.as_slice() {
+            if let Some((event, posedge, gate)) = flatten_clock_spec(spec) {
+                if let Some(signal) = self.direct_sampled_clock_signal(path, event) {
+                    return Ok(SampledClockSource::Edge(SampledClock {
+                        signal,
+                        posedge,
+                        gate,
+                    }));
+                }
+            }
+        }
+        if specs.is_empty() {
+            return Err(format!("sampled-value clock has no event in `{path}`"));
+        }
+        Ok(SampledClockSource::Events(specs))
+    }
+
+    /// The active packed signal an edge names directly, if any; expression
+    /// edges and other storage are waited on through an event clock instead.
+    fn direct_sampled_clock_signal(&mut self, path: &str, event: NodeId) -> Option<usize> {
+        let expression = self.lower_expr(path, event).ok()?;
+        let IrExprKind::SigRead(signal) = expression.kind() else {
+            return None;
+        };
+        matches!(
+            self.model.signals.get(*signal),
+            Some(IrSignal {
+                fixed_default: None,
+                ty: IrType::Packed { .. },
+                omit: false,
+                ..
+            })
+        )
+        .then_some(*signal)
     }
 
     /// Resolve the single global clocking block used by the 2009 global
-    /// sampled-value functions. Ambiguous or non-edge clocks fail closed.
+    /// sampled-value functions.
     pub(super) fn lower_global_sampled_clock(
         &mut self,
         path: &str,
-    ) -> Result<SampledClock, String> {
+    ) -> Result<SampledClockSource, String> {
         let blocks = self
             .db
             .node_ids()
@@ -856,67 +890,41 @@ impl Codegen<'_> {
                 "global sampled-value function requires exactly one global clocking block in `{path}`"
             ));
         };
-        let Some(spec) = block.event_specs.first() else {
-            return Err(format!("global clocking block has no event in `{path}`"));
-        };
-        let (event, posedge, gate) = flatten_clock_spec(spec).ok_or_else(|| {
-            format!("global clocking block must use one direct edge event in `{path}`")
-        })?;
-        let signal = self.lower_assertion_signal(path, event, "global sampled clock")?;
-        Ok(SampledClock {
-            signal,
-            posedge,
-            gate,
-        })
+        let specs = block.event_specs.clone();
+        self.sampled_clock_source(path, specs)
     }
 
-    /// Resolve the default clocking block for the current elaborated
-    /// instance. Slang attaches a default clocking declaration to its
-    /// containing instance, so using that owner keeps identically named
-    /// blocks in sibling instances independent.
+    /// The default clocking event visible in the current elaborated instance:
+    /// a `default clocking` block or declaration of the nearest enclosing
+    /// scope (SV 14.12), so identically named blocks in sibling instances stay
+    /// independent.
+    pub(super) fn default_sampled_clock_source(
+        &mut self,
+        path: &str,
+    ) -> Result<Option<SampledClockSource>, String> {
+        let Some(block) = self.default_clocking_block(self.inst) else {
+            return Ok(None);
+        };
+        let Some(info) = self.db.clocking_block(block) else {
+            return Ok(None);
+        };
+        let specs = info.event_specs.clone();
+        self.sampled_clock_source(path, specs).map(Some)
+    }
+
+    /// The default clock of a concurrent assertion, which still needs one
+    /// direct signal edge.
     pub(super) fn lower_default_sampled_clock(
         &mut self,
         path: &str,
     ) -> Result<Option<SampledClock>, String> {
-        let mut blocks = Vec::new();
-        let mut scope = Some(self.inst);
-        while let Some(current) = scope {
-            for child in self.node(current).children.iter().copied() {
-                if let Some(info) = self.db.clocking_block(child).filter(|info| info.is_default) {
-                    blocks.push((child, info));
-                }
-            }
-            // A default clocking declaration is inherited from the nearest
-            // enclosing scope. Do not let a sibling module's declaration
-            // become visible merely because it has the same source name.
-            if !blocks.is_empty() {
-                break;
-            }
-            scope = self.node(current).parent;
+        match self.default_sampled_clock_source(path)? {
+            None => Ok(None),
+            Some(SampledClockSource::Edge(clock)) => Ok(Some(clock)),
+            Some(SampledClockSource::Events(_)) => Err(format!(
+                "concurrent assertion default clocking block must use one direct edge event in `{path}`"
+            )),
         }
-        let block = match blocks.as_slice() {
-            [] => return Ok(None),
-            [(_, block)] => *block,
-            _ => {
-                return Err(format!(
-                    "multiple default clocking blocks are visible in `{path}`"
-                ))
-            }
-        };
-        let Some(spec) = block.event_specs.first() else {
-            return Err(format!("default clocking block has no event in `{path}`"));
-        };
-        let Some((event, posedge, gate)) = flatten_clock_spec(spec) else {
-            return Err(format!(
-                "default clocking block must use one direct edge event in `{path}`"
-            ));
-        };
-        let signal = self.lower_assertion_signal(path, event, "default sampled clock")?;
-        Ok(Some(SampledClock {
-            signal,
-            posedge,
-            gate,
-        }))
     }
 
     /// Infer a sampled-value clock from one direct event-control spec. A
@@ -941,26 +949,132 @@ impl Codegen<'_> {
         }))
     }
 
-    pub(super) fn lower_sampled_domain(
+    /// Intern a sampled-value clock. `gate` is the `$past` gating
+    /// expression; an edge's own `iff` joins it, and both read current values
+    /// when the clock occurs (`ev iff expression2`, SV 16.9.3). Identical
+    /// clocks share one entry and therefore one set of ticks.
+    pub(super) fn intern_sampled_clock(
         &mut self,
         path: &str,
-        clock: SampledClock,
-        argument: IrExpr,
+        source: SampledClockSource,
         gate: Option<IrExpr>,
-        history_ticks: u64,
     ) -> Result<usize, String> {
-        if argument.is_real() {
-            return Err(format!("sampled-value argument must be packed in `{path}`"));
+        match source {
+            SampledClockSource::Edge(clock) => {
+                let mut gate = gate;
+                if let Some(node) = clock.gate {
+                    let iff = self.lower_boolean_expr(path, node)?;
+                    if iff.is_real() || !sampled_compatible(&iff) {
+                        return Err(format!(
+                            "sampled clock `iff` condition must be a static packed expression in `{path}`"
+                        ));
+                    }
+                    gate = Some(match gate {
+                        Some(gate) => IrExpr::new(
+                            IrExprKind::Bin {
+                                op: IrBinOp::LogAnd,
+                                a: Box::new(iff),
+                                b: Box::new(gate),
+                            },
+                            1,
+                            false,
+                            None,
+                        ),
+                        None => iff,
+                    });
+                }
+                let kind = IrSampledClockKind::Edge {
+                    signal: clock.signal,
+                    posedge: clock.posedge,
+                };
+                let key = format!("{kind:?} {gate:?}");
+                if let Some(index) = self.sampled_clock_keys.get(&key) {
+                    return Ok(*index);
+                }
+                let index = self.model.sampled_clocks.len();
+                self.model
+                    .sampled_clocks
+                    .push(IrSampledClock::new(kind, gate));
+                self.sampled_clock_keys.insert(key, index);
+                Ok(index)
+            }
+            SampledClockSource::Events(specs) => {
+                let inst = self.inst;
+                let (specs, pre_fns) = {
+                    let mut ctx = EmitCtx::new(self, path.to_owned(), inst, "0", None, None, false);
+                    let specs = ctx.lower_event_specs(&specs)?;
+                    (specs, std::mem::take(&mut ctx.pre_fns))
+                };
+                let key = format!("{specs:?} {gate:?}");
+                if let Some(index) = self.sampled_clock_keys.get(&key) {
+                    return Ok(*index);
+                }
+                let index = self.model.sampled_clocks.len();
+                self.model
+                    .sampled_clocks
+                    .push(IrSampledClock::new(IrSampledClockKind::Event, gate));
+                self.sampled_clock_keys.insert(key, index);
+                self.sampled_event_clocks.push(PendingSampledEventClock {
+                    clock: index,
+                    path: path.to_owned(),
+                    specs,
+                    pre_fns,
+                });
+                Ok(index)
+            }
         }
-        let domain = self.model.sampled_domains.len();
-        self.model.sampled_domains.push(IrSampledDomain::new(
-            clock.signal,
-            clock.posedge,
-            gate,
-            argument,
-            history_ticks.max(1),
-        ));
-        Ok(domain)
+    }
+
+    /// Intern the history of `sample` on `clock`, retaining the deepest
+    /// `$past` tick count any sharing call reads (at least 1 for the value
+    /// change functions).
+    pub(super) fn intern_sampled_domain(
+        &mut self,
+        clock: usize,
+        sample: IrExpr,
+        history_ticks: u64,
+    ) -> usize {
+        let history_ticks = history_ticks.max(1);
+        let key = format!("{clock} {sample:?}");
+        if let Some(index) = self.sampled_domain_keys.get(&key) {
+            let domain = &mut self.model.sampled_domains[*index];
+            domain.history_ticks = domain.history_ticks.max(history_ticks);
+            return *index;
+        }
+        let index = self.model.sampled_domains.len();
+        self.model
+            .sampled_domains
+            .push(IrSampledDomain::new(clock, sample, history_ticks));
+        self.sampled_domain_keys.insert(key, index);
+        index
+    }
+
+    /// One looping process per event clock: wait on the clocking event, then
+    /// record the tick. Returns the process names so they start first.
+    pub(super) fn emit_sampled_clock_processes(&mut self) -> Vec<String> {
+        let mut names = Vec::new();
+        for pending in std::mem::take(&mut self.sampled_event_clocks) {
+            let name = self.new_fn_name(&pending.path, &format!("sampled_clock_{}", pending.clock));
+            self.model.processes.push(IrProcess::new_with_origin(
+                name.clone(),
+                format!("{}.sampled_clock", pending.path),
+                IrShape::Loop,
+                pending.pre_fns,
+                vec![
+                    IrStmt::WaitEvents {
+                        specs: pending.specs,
+                    },
+                    IrStmt::SampledClockTick {
+                        clock: pending.clock,
+                    },
+                ],
+                crate::sim::semantic::Origin::Synthetic {
+                    reason: format!("sampled-value clock {} in {}", pending.clock, pending.path),
+                },
+            ));
+            names.push(name);
+        }
+        names
     }
 
     fn lower_assertion_signal(
@@ -1873,7 +1987,12 @@ pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
         IrExprKind::RealBin { a, b, .. } => sampled_compatible(a) && sampled_compatible(b),
         IrExprKind::RealUn { a, .. } | IrExprKind::CastToReal { a, .. } => sampled_compatible(a),
         IrExprKind::SysFunc(function) => match &**function {
-            crate::sim::ir::IrSysFunc::Sampled(call) => sampled_compatible(&call.argument),
+            // A history call reads its domain, whose sample expression was
+            // admitted when the domain was created (including a real
+            // argument's 64-bit image); only `$sampled` evaluates in place.
+            crate::sim::ir::IrSysFunc::Sampled(call) => {
+                call.domain.is_some() || sampled_compatible(&call.argument)
+            }
             _ => false,
         },
         _ => false,

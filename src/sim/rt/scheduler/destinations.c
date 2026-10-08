@@ -29,9 +29,6 @@ void llg_system_to(sv4_t* dst, llg_string_t* command, int has_command) {
 void llg_frame_read_value_to(sv4_t* dst, const llg_frame_t* frame, size_t slot) {
     sv4_replace(dst, llg_frame_read_value(frame, slot));
 }
-void llg_sampled_domain_past_to(sv4_t* dst, uint64_t identity, uint64_t ticks) {
-    sv4_replace(dst, llg_sampled_domain_past(identity, ticks));
-}
 void llg_rt_ref_read_to(sv4_t* dst, const llg_ref_t* ref) {
     sv4_replace(dst, llg_rt_ref_read(ref));
 }

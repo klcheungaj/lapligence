@@ -74,6 +74,7 @@ pub fn bundled_gmp_sources() -> &'static [(&'static str, &'static str)] {
         mpn_file!("com"),
         mpn_file!("compute_powtab"),
         mpn_file!("dcpi1_div_qr"),
+        mpn_file!("dcpi1_divappr_q"),
         mpn_file!("dive_1"),
         mpn_file!("divrem_1"),
         mpn_file!("divrem_2"),

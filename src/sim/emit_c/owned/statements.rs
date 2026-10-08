@@ -539,6 +539,9 @@ impl Frame<'_, '_> {
                 let event = self.event_address(ev)?;
                 self.line(format!("(void)llg_clocking_event_observed({event});"));
             }
+            IrStmt::SampledClockTick { clock } => {
+                self.line(format!("llg_sampled_clock_tick({clock}ULL);"));
+            }
             IrStmt::ClockingDrive {
                 lhs,
                 rhs,

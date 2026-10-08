@@ -99,6 +99,10 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+/// Build type of every generated model and runtime configure (and `--config`
+/// of its build).
+const BUILD_TYPE: &str = "Release";
+
 /// The generated project file. Cached builds compile only the model sources;
 /// self-contained `--gen-only` output retains the runtime sources.
 const CMAKELISTS_TEMPLATE: &str = r#"cmake_minimum_required(VERSION 3.16)
@@ -381,7 +385,7 @@ fn build_command(cmake_prog: &str, build_dir: &Path, jobs: usize, target: Option
         .arg("--build")
         .arg(build_dir)
         .arg("--config")
-        .arg("Release")
+        .arg(BUILD_TYPE)
         .arg("--parallel")
         .arg(jobs.to_string());
     if let Some(target) = target {
@@ -770,6 +774,35 @@ fn remove_incompatible_build_dir(build_dir: &Path, generator: &str) {
     }
 }
 
+/// The first-configure command. The build type is always explicit: on MSVC
+/// CMake initializes `CMAKE_BUILD_TYPE` to Debug for single-config generators
+/// (Windows-MSVC.cmake), which the generated projects' `if(NOT CMAKE_BUILD_TYPE)`
+/// default then respects, giving `/Od` and Debug linker flags under Ninja.
+fn configure_command(
+    source: &Path,
+    build_dir: &Path,
+    toolchain: &toolchain_seed::Toolchain<'_>,
+    extra: &[String],
+    seed_args: &[String],
+) -> Command {
+    let mut command = Command::new(toolchain.cmake);
+    command
+        .arg("-S")
+        .arg(source)
+        .arg("-B")
+        .arg(build_dir)
+        .args(toolchain_seed::toolchain_args(
+            toolchain.generator,
+            toolchain.launcher,
+            toolchain.cc,
+            toolchain.flags,
+        ))
+        .arg(format!("-DCMAKE_BUILD_TYPE={BUILD_TYPE}"))
+        .args(extra)
+        .args(seed_args);
+    command
+}
+
 /// Configure `source` into `build_dir` with `toolchain` plus `extra`
 /// definitions. A fresh tree is first seeded with the toolchain detection
 /// results under `seed_root` (see [`toolchain_seed`]). A failed configure
@@ -785,23 +818,8 @@ fn run_configure(
     extra: &[String],
     seed_root: &Path,
 ) -> Result<(), BuildError> {
-    let command = |seed_args: &[String]| {
-        let mut command = Command::new(toolchain.cmake);
-        command
-            .arg("-S")
-            .arg(source)
-            .arg("-B")
-            .arg(build_dir)
-            .args(toolchain_seed::toolchain_args(
-                toolchain.generator,
-                toolchain.launcher,
-                toolchain.cc,
-                toolchain.flags,
-            ))
-            .args(extra)
-            .args(seed_args);
-        command
-    };
+    let command =
+        |seed_args: &[String]| configure_command(source, build_dir, toolchain, extra, seed_args);
     let launch_error = |source| BuildError::CmakeLaunch {
         program: toolchain.cmake.to_owned(),
         source,
@@ -1181,6 +1199,7 @@ fn runtime_cache_key_with_compiler(
         cc,
         flags,
         cmake_prog,
+        BUILD_TYPE,
         compiler,
         target,
         &generator,
@@ -1897,6 +1916,56 @@ mod tests {
             assert!(rest.starts_with("project("), "{rest}");
             assert!(rest.lines().next().unwrap().ends_with(" C)"));
         }
+    }
+
+    #[test]
+    fn every_configure_names_the_release_build_type() {
+        // MSVC's platform default is Debug for single-config generators, so a
+        // configure without the argument would compile models with /Od and
+        // link them with /debug under Ninja.
+        let toolchain = toolchain_seed::Toolchain {
+            cmake: "cmake",
+            generator: "Ninja",
+            cc: "cl",
+            flags: "",
+            launcher: "",
+            compiler_identity: "id",
+            compiler_target: "x64",
+        };
+        for seed_args in [
+            vec![],
+            vec!["-DCMAKE_PLATFORM_INFO_INITIALIZED:INTERNAL=1".to_owned()],
+        ] {
+            let command = configure_command(
+                Path::new("src"),
+                Path::new("build"),
+                &toolchain,
+                &["-DLLG_RUNTIME_LIBRARY=x".to_owned()],
+                &seed_args,
+            );
+            let args: Vec<_> = command
+                .get_args()
+                .map(|arg| arg.to_string_lossy())
+                .collect();
+            assert_eq!(
+                args.iter()
+                    .filter(|arg| arg.starts_with("-DCMAKE_BUILD_TYPE"))
+                    .count(),
+                1,
+                "{args:?}"
+            );
+            assert!(
+                args.iter().any(|arg| arg == "-DCMAKE_BUILD_TYPE=Release"),
+                "{args:?}"
+            );
+        }
+        assert_eq!(
+            build_command("cmake", Path::new("b"), 1, None)
+                .get_args()
+                .nth(3)
+                .unwrap(),
+            "Release"
+        );
     }
 
     #[test]

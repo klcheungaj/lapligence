@@ -171,6 +171,7 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
         events: Vec::new(),
         funcs: Vec::new(),
         assertions: Vec::new(),
+        sampled_clocks: Vec::new(),
         sampled_domains: Vec::new(),
         virtual_interfaces: Vec::new(),
         processes: vec![IrProcess {

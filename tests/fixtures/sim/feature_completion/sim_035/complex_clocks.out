@@ -1,0 +1,13 @@
+or 2 1 0 1
+real 2.50 0.25 1
+expr 1 0
+change 2 0
+edge 3 1
+event 3 0
+cb 5 4 0
+cbiff 5 0
+iff 5 0 5 0
+gated-list 5 0
+gclk 2 1
+D 5 4 1 1
+K 5 4
