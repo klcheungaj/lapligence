@@ -154,6 +154,9 @@ _Noreturn void llg_rt_co_bad_state(const struct llg_co_frame* co,
                                    const char* fn);
 #define LLG_CO_OOM(bytes) llg_rt_co_oom(bytes)
 #define LLG_CO_BAD_STATE(co, fn) llg_rt_co_bad_state((co), (fn))
+// The handler above is _Noreturn: lets the coroutine dispatch drop its
+// unreachable fallback return on MSVC (C4702 at /W4).
+#define LLG_CO_BAD_STATE_NORETURN 1
 #include "llg_co.h"
 
 // Startup is mandatory even for models without arena calls. Separate debug
