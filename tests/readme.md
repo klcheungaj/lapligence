@@ -695,7 +695,9 @@ wrapper build, which only reads `LLG_CCACHE`. Test directories are unique per
 process, so ccache needs `CCACHE_BASEDIR` set to a common parent of those
 directories (the test scratch root, `LLG_TEST_BUILD_DIR`/`--test-work-dir`, or
 the temp dir) and `CCACHE_NOHASHDIR=1`; without them paths enter the hash and
-every build misses. Harness paths that build a model through `sim::build` or
+every build misses. Test directories are canonicalized, so the base directory
+must match their resolved spelling (Windows long names rather than 8.3 short
+names, macOS `/private/var`); ccache 4.12+ accepts a `;`/`:` list of both. Harness paths that build a model through `sim::build` or
 the `llg` binary (`tests/support/sim.rs`, `tests/support/sim_cli.rs`,
 `sim_cmake`) and the `runtime_value_storage` CMake probes honour it. Probes that
 compile runtime C directly with `$LLG_CC`/`$CC` (`runtime_values`,
