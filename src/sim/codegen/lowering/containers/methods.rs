@@ -37,6 +37,28 @@ impl<'a> Codegen<'a> {
                 return Ok(Some(statement));
             }
         }
+        if name == "shuffle" && !self.db.method_call_has_with_clause(node) {
+            // Shuffle a stored packed or real fixed array through a queue copy
+            // and store the permutation back in declared order.
+            if let Some(copy) = self.fixed_method_copy(receiver)? {
+                if !self
+                    .container_method_arguments(path, node, receiver)?
+                    .is_empty()
+                {
+                    return Err(format!(
+                        "array method `shuffle` in `{path}` takes no arguments"
+                    ));
+                }
+                let mut statements = copy.statements.clone();
+                statements.push(IrStmt::Container(Box::new(IrContainerStmt::Method {
+                    container: copy.queue,
+                    method: IrContainerMethod::Shuffle,
+                    callback: None,
+                })));
+                statements.extend(self.fixed_method_store(&copy));
+                return Ok(Some(IrStmt::Block(statements)));
+            }
+        }
         if self.nested_container_receiver(receiver).is_some() {
             return Err(format!(
                 "method `{name}` of a nested container element in `{path}` is not supported"

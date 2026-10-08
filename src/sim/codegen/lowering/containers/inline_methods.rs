@@ -40,6 +40,8 @@ pub(in crate::sim::codegen) struct InlineIterator {
     /// 32-bit signed ordinal of the current element in traversal order.
     position: String,
     key: InlineKey,
+    /// Declared range of a fixed-array receiver copied into `container`.
+    range: Option<(i32, i32)>,
 }
 
 /// One per-element value of a `with` expression or of the element itself.
@@ -60,7 +62,7 @@ pub(super) enum InlineUse {
     Order,
 }
 
-fn index_result(method: IrContainerMethod) -> bool {
+pub(super) fn index_result(method: IrContainerMethod) -> bool {
     matches!(
         method,
         IrContainerMethod::FindIndex
@@ -127,6 +129,24 @@ fn not(value: IrExpr) -> IrExpr {
         1,
         false,
         None,
+    )
+}
+
+/// The declared index of the element at `position` of a fixed array copied
+/// in left-to-right order.
+fn fixed_index_of(position: IrExpr, left: i32, right: i32) -> IrExpr {
+    IrExpr::resize_to(
+        common_bin_expr(
+            if left <= right {
+                IrBinOp::Add
+            } else {
+                IrBinOp::Sub
+            },
+            int_const(i128::from(left), 32, true),
+            position,
+        ),
+        32,
+        true,
     )
 }
 
@@ -358,6 +378,13 @@ impl Codegen<'_> {
         receiver: NodeId,
     ) -> Option<Result<IrExpr, String>> {
         let iterator = self.inline_item(receiver)?;
+        if let Some((left, right)) = iterator.range {
+            return Some(Ok(fixed_index_of(
+                local_read(&iterator.position, 32, true),
+                left,
+                right,
+            )));
+        }
         Some(Self::inline_key_expr(iterator).ok_or_else(|| {
             format!("string array-method iterator index in `{path}` is not an integral value")
         }))
@@ -658,6 +685,7 @@ impl Codegen<'_> {
             container,
             position: position.clone(),
             key: key.clone(),
+            range: self.inline_fixed_ranges.get(&container).copied(),
         };
         self.inline_iterators.push(binding.clone());
         let lowered = body(self, &binding);
@@ -1130,5 +1158,247 @@ impl Codegen<'_> {
             signed,
             None,
         ))
+    }
+}
+
+/// A packed or real one-dimensional fixed array copied into an activation
+/// queue so the dynamic-receiver methods apply to it (SIM-019).
+pub(super) struct FixedMethodCopy {
+    pub(super) queue: usize,
+    pub(super) statements: Vec<IrStmt>,
+    array: usize,
+    range: (i32, i32),
+    real: bool,
+    width: u32,
+    signed: bool,
+}
+
+impl Codegen<'_> {
+    /// Copy a stored packed or real fixed array receiver, element by element
+    /// in left-to-right order, into a fresh activation queue. Native fixed
+    /// arrays (string, handle, record elements) are already containers and
+    /// return `None`, as do receivers that are not a whole stored array.
+    pub(super) fn fixed_method_copy(
+        &mut self,
+        receiver: NodeId,
+    ) -> Result<Option<FixedMethodCopy>, String> {
+        if !matches!(
+            self.kind(receiver),
+            NodeKind::Array { .. }
+                | NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
+        ) || self.container_of(receiver).is_some()
+        {
+            return Ok(None);
+        }
+        let Some(array) = self
+            .array_of(receiver)
+            .filter(|array| array.dims.len() == 1)
+        else {
+            return Ok(None);
+        };
+        let (array_ir, range, real, shortreal, width, signed) = (
+            array.ir,
+            array.dims[0],
+            array.real,
+            array.shortreal,
+            if array.real { 0 } else { array.elem_width },
+            array.signed,
+        );
+        let array = self.reference_array(array_ir);
+        let element = if real {
+            IrContainerElement::Real { shortreal }
+        } else {
+            IrContainerElement::Packed {
+                width,
+                signed,
+                two_state: self.model.arrays[array].two_state,
+            }
+        };
+        let (queue, declare) = self.inline_queue(element);
+        self.inline_fixed_ranges.insert(queue, range);
+        let count = i128::from(range.0.abs_diff(range.1)) + 1;
+        let position = self.inline_name("fpos");
+        let read = || local_read(&position, 32, true);
+        let value = IrExpr::new(
+            IrExprKind::ArrayRead {
+                arr: array,
+                indices: vec![fixed_index_of(read(), range.0, range.1)],
+                elem_sel: IrElemSel::Whole,
+            },
+            width,
+            signed,
+            None,
+        );
+        let statements = vec![
+            declare,
+            IrStmt::DeclLocal {
+                name: position.clone(),
+                width: 32,
+                signed: true,
+                init: None,
+                two_state: true,
+            },
+            IrStmt::For {
+                init: vec![assign(
+                    local_lhs(&position, 32, true, true),
+                    int_const(0, 32, true),
+                )],
+                cond: cmp_expr_ir(IrBinOp::Lt, read(), int_const(count, 32, true)),
+                incr: vec![assign(
+                    local_lhs(&position, 32, true, true),
+                    IrExpr::resize_to(
+                        common_bin_expr(IrBinOp::Add, read(), int_const(1, 32, true)),
+                        32,
+                        true,
+                    ),
+                )],
+                body: vec![IrStmt::Container(Box::new(
+                    IrContainerStmt::QueuePushBack {
+                        container: queue,
+                        value,
+                    },
+                ))],
+            },
+        ];
+        Ok(Some(FixedMethodCopy {
+            queue,
+            statements,
+            array,
+            range,
+            real,
+            width,
+            signed,
+        }))
+    }
+
+    /// Statements that store the copied queue back into the fixed array, in
+    /// the same order it was read (after an in-place reordering method).
+    pub(super) fn fixed_method_store(&mut self, copy: &FixedMethodCopy) -> Vec<IrStmt> {
+        let position = self.inline_name("fpos");
+        let read = || local_read(&position, 32, true);
+        let index = Box::new(read());
+        let value = IrExpr::new(
+            IrExprKind::Container(Box::new(if copy.real {
+                IrContainerExpr::GetReal {
+                    container: copy.queue,
+                    index,
+                }
+            } else {
+                IrContainerExpr::Get {
+                    container: copy.queue,
+                    index,
+                }
+            })),
+            copy.width,
+            copy.signed,
+            None,
+        );
+        let count = i128::from(copy.range.0.abs_diff(copy.range.1)) + 1;
+        vec![
+            IrStmt::DeclLocal {
+                name: position.clone(),
+                width: 32,
+                signed: true,
+                init: None,
+                two_state: true,
+            },
+            IrStmt::For {
+                init: vec![assign(
+                    local_lhs(&position, 32, true, true),
+                    int_const(0, 32, true),
+                )],
+                cond: cmp_expr_ir(IrBinOp::Lt, read(), int_const(count, 32, true)),
+                incr: vec![assign(
+                    local_lhs(&position, 32, true, true),
+                    IrExpr::resize_to(
+                        common_bin_expr(IrBinOp::Add, read(), int_const(1, 32, true)),
+                        32,
+                        true,
+                    ),
+                )],
+                body: vec![assign(
+                    IrLhs::ArrayElem {
+                        arr: copy.array,
+                        indices: vec![fixed_index_of(read(), copy.range.0, copy.range.1)],
+                        elem_sel: IrElemSel::Whole,
+                    },
+                    value,
+                )],
+            },
+        ]
+    }
+
+    /// Rewrite each copied-queue position in an index-result queue as the
+    /// declared fixed-array index.
+    pub(super) fn fixed_method_indices(
+        &mut self,
+        copy: &FixedMethodCopy,
+        dst: usize,
+    ) -> Result<Vec<IrStmt>, String> {
+        let IrContainerElement::Packed {
+            width,
+            signed,
+            two_state,
+        } = self.model.containers[dst].element
+        else {
+            return Err("fixed-array index method requires an integral result queue".to_owned());
+        };
+        let position = self.inline_name("fidx");
+        let read = || local_read(&position, 32, true);
+        let size = IrExpr::new(
+            IrExprKind::Container(Box::new(IrContainerExpr::Size(dst))),
+            32,
+            true,
+            None,
+        );
+        let current = IrExpr::convert_to(
+            IrExpr::new(
+                IrExprKind::Container(Box::new(IrContainerExpr::Get {
+                    container: dst,
+                    index: Box::new(read()),
+                })),
+                width,
+                signed,
+                None,
+            ),
+            32,
+            true,
+        );
+        let index = fixed_index_of(current, copy.range.0, copy.range.1);
+        let value = ir_to_storage(
+            IrExpr::convert_to(index, width, signed),
+            width,
+            signed,
+            two_state,
+        )?;
+        Ok(vec![
+            IrStmt::DeclLocal {
+                name: position.clone(),
+                width: 32,
+                signed: true,
+                init: None,
+                two_state: true,
+            },
+            IrStmt::For {
+                init: vec![assign(
+                    local_lhs(&position, 32, true, true),
+                    int_const(0, 32, true),
+                )],
+                cond: cmp_expr_ir(IrBinOp::Lt, read(), size),
+                incr: vec![assign(
+                    local_lhs(&position, 32, true, true),
+                    IrExpr::resize_to(
+                        common_bin_expr(IrBinOp::Add, read(), int_const(1, 32, true)),
+                        32,
+                        true,
+                    ),
+                )],
+                body: vec![IrStmt::Container(Box::new(IrContainerStmt::Set {
+                    container: dst,
+                    index: read(),
+                    value,
+                }))],
+            },
+        ])
     }
 }

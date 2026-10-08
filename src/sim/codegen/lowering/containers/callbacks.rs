@@ -138,9 +138,7 @@ impl<'a> Codegen<'a> {
             } => (name.clone(), *receiver),
             _ => return Ok(None),
         };
-        let Some(source) = self.container_of(receiver) else {
-            return Ok(None);
-        };
+        let source = self.container_of(receiver);
         let method = match name.as_str() {
             "find" => IrContainerMethod::Find,
             "find_index" => IrContainerMethod::FindIndex,
@@ -162,6 +160,21 @@ impl<'a> Codegen<'a> {
                 "array method `{name}` in `{path}` returns a queue and requires a queue destination"
             ));
         }
+        let Some(source) = source else {
+            // A stored packed or real fixed array is copied once into a
+            // queue; the generated loop then reports declared indices.
+            let Some(copy) = self.fixed_method_copy(receiver)? else {
+                return Ok(None);
+            };
+            let mut statements = copy.statements.clone();
+            statements.push(
+                self.lower_inline_method_result(path, dst, rhs, receiver, copy.queue, method)?,
+            );
+            if super::inline_methods::index_result(method) {
+                statements.extend(self.fixed_method_indices(&copy, dst)?);
+            }
+            return Ok(Some(IrStmt::Block(statements)));
+        };
         if self.inline_method_needed(
             path,
             rhs,

@@ -1452,6 +1452,10 @@ struct Codegen<'a> {
     /// (SIM-019), innermost last: `item` names the receiver element at the
     /// loop's current key, so outer bindings stay visible to nested methods.
     inline_iterators: Vec<containers::InlineIterator>,
+    /// Declared `(left, right)` range of a packed fixed array copied into a
+    /// generated-loop temporary, keyed by that temporary, so `item.index`
+    /// and index results name declared indices (SIM-019).
+    inline_fixed_ranges: HashMap<usize, (i32, i32)>,
     /// Real variables read by `$sampled` outside history domains; each gets
     /// a numeric Preponed snapshot registration at model initialization.
     sampled_real_signals: std::collections::BTreeSet<usize>,
@@ -1789,6 +1793,7 @@ impl<'a> Codegen<'a> {
             receiver_native_values: HashMap::new(),
             container_iterator: None,
             inline_iterators: Vec::new(),
+            inline_fixed_ranges: HashMap::new(),
             sampled_real_signals: std::collections::BTreeSet::new(),
             sampled_value_signals: std::collections::BTreeSet::new(),
             fixed_method_iterators: HashMap::new(),

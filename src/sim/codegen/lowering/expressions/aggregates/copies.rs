@@ -58,6 +58,24 @@ pub(super) fn equivalent_copy_shape(left: &TypeDescriptor, right: &TypeDescripto
             left == right
         }
         (TypeShape::String, TypeShape::String) => true,
+        // Queue, dynamic and associative members of one nominal record type
+        // copy whole (SV 7.6).
+        (
+            TypeShape::Container {
+                kind: left_kind,
+                element: left_element,
+                array: left_array,
+            },
+            TypeShape::Container {
+                kind: right_kind,
+                element: right_element,
+                array: right_array,
+            },
+        ) => {
+            left_kind == right_kind
+                && left_array == right_array
+                && equivalent_copy_shape(left_element, right_element)
+        }
         (TypeShape::Opaque { kind: left }, TypeShape::Opaque { kind: right }) => {
             // Void tagged-union members carry no value but keep the shape.
             left == right && (left == "Chandle" || left == "Void")
@@ -178,6 +196,23 @@ impl Codegen<'_> {
                 "_agg_copy_{}_{}_{sequence}_{position}",
                 lhs.root.0, rhs.root.0
             );
+            if let (Some(lhs_container), Some(rhs_container)) = (&left.container, &right.container)
+            {
+                // Each container member is its own storage, so no other leaf
+                // write of this copy can change the source.
+                if nba {
+                    return Err(format!(
+                        "nonblocking assignment of a record with a container member in `{path}` is not supported"
+                    ));
+                }
+                if lhs_container.ir != rhs_container.ir {
+                    assignments.push(IrStmt::Container(Box::new(IrContainerStmt::Copy {
+                        dst: lhs_container.ir,
+                        src: rhs_container.ir,
+                    })));
+                }
+                continue;
+            }
             if let (Some(lhs_object), Some(rhs_object)) = (left.object, right.object) {
                 let lhs_object = self.reference_object(lhs_object);
                 let rhs_object = self.reference_object(rhs_object);
