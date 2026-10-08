@@ -67,11 +67,12 @@
 //!   `build/llg-runtime-cache` under the current directory. Relative values
 //!   resolve from the current directory; an empty value selects the default.
 //!   No path is fixed at compile time. Each runtime archive entry is a child
-//!   directory with a `ready` marker; the [`TOOLCHAIN_SEED_DIR`] child
-//!   (`cmake-toolchain/`) instead holds the CMake toolchain-detection seeds
-//!   that fresh build trees reuse (see `build/toolchain_seed.rs`), and the
-//!   `compiler-probe/` child the MSVC compiler self-report memo (see
-//!   `build/compiler_probe.rs`).
+//!   directory with a `ready` marker. The only other children are the
+//!   auxiliary directories in [`RUNTIME_CACHE_AUX_DIRS`]: [`TOOLCHAIN_SEED_DIR`]
+//!   (`cmake-toolchain/`) holds the CMake toolchain-detection seeds that fresh
+//!   build trees reuse (see `build/toolchain_seed.rs`), and
+//!   [`COMPILER_PROBE_DIR`] (`compiler-probe/`) the MSVC compiler self-report
+//!   memo (see `build/compiler_probe.rs`).
 //! - `LLG_CMAKE_TOOLCHAIN_SEED` ([`TOOLCHAIN_SEED_ENV`]) — `0`, `off`,
 //!   `false` or `no` makes every fresh configure run CMake's own toolchain
 //!   detection.
@@ -80,8 +81,14 @@ mod compiler_probe;
 mod toolchain_seed;
 mod value;
 
+pub use compiler_probe::MEMO_DIR as COMPILER_PROBE_DIR;
 pub use toolchain_seed::{SEED_DIR as TOOLCHAIN_SEED_DIR, SEED_ENV as TOOLCHAIN_SEED_ENV};
 
+/// The runtime cache root's children that are not runtime archive entries.
+/// Every other child is one archive entry (a directory that is ready once it
+/// holds a `ready` marker); code that enumerates or prunes the root skips
+/// these names.
+pub const RUNTIME_CACHE_AUX_DIRS: [&str; 2] = [TOOLCHAIN_SEED_DIR, COMPILER_PROBE_DIR];
 
 use std::error::Error;
 use std::fmt;

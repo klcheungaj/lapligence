@@ -148,7 +148,12 @@ fn component_selected_exports_build_and_wrong_backend_archives_fail() {
             .unwrap()
             .flatten()
             .map(|entry| entry.path())
-            .filter(|entry| entry.join("ready").is_file())
+            .filter(|entry| {
+                !build::RUNTIME_CACHE_AUX_DIRS
+                    .iter()
+                    .any(|aux| entry.file_name() == Some(std::ffi::OsStr::new(aux)))
+                    && entry.join("ready").is_file()
+            })
             .collect::<Vec<_>>();
         let entry = entries
             .iter()

@@ -45,7 +45,7 @@ const FORMAT: &str = "llg-compiler-probe-v1";
 
 /// Subdirectory of the runtime cache root that holds the memo files, so the
 /// root's direct children remain runtime archive entries.
-pub(super) const MEMO_DIR: &str = "compiler-probe";
+pub const MEMO_DIR: &str = "compiler-probe";
 
 /// Variables that can change the probed text beyond those CMake detection
 /// reads: message locales, the options `cl` prepends/appends from `CL` and

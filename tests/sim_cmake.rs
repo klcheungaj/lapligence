@@ -818,6 +818,15 @@ fn ran_compiler_detection(build: &std::path::Path) -> bool {
     platform_dir(build).join("CompilerIdC").exists()
 }
 
+/// Whether `path` is one of the runtime cache root's auxiliary children.
+fn is_aux_dir(path: &std::path::Path) -> bool {
+    path.file_name().is_some_and(|name| {
+        sim::build::RUNTIME_CACHE_AUX_DIRS
+            .iter()
+            .any(|aux| name == std::ffi::OsStr::new(aux))
+    })
+}
+
 /// Published toolchain seeds (entries with a `ready` marker) under a runtime
 /// cache root.
 fn published_seeds(cache: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -883,8 +892,8 @@ fn fresh_model_trees_reuse_the_toolchain_detection_seed() {
     assert!(!seeds[0].join("rejected").exists());
     assert!(!seeds[0].join("probe").exists(), "probe trees are removed");
     // Consumers enumerate runtime archives as the root's children with a
-    // `ready` marker; seeds must stay out of that set (they live under one
-    // `cmake-toolchain/` child without a marker).
+    // `ready` marker; seeds and probe memos must stay out of that set (they
+    // live under the auxiliary children without a marker).
     let ready: Vec<_> = std::fs::read_dir(&cache)
         .unwrap()
         .flatten()
@@ -909,7 +918,7 @@ fn fresh_model_trees_reuse_the_toolchain_detection_seed() {
     assert!(
         directories
             .iter()
-            .all(|path| path == &ready[0] || path.ends_with(sim::build::TOOLCHAIN_SEED_DIR)),
+            .all(|path| path == &ready[0] || is_aux_dir(path)),
         "unexpected cache root children: {directories:?}"
     );
     assert!(!ran_compiler_detection(&ready[0].join("build")));

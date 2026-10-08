@@ -158,11 +158,14 @@ driver passes `<out-dir>/llg-runtime-cache`); relative paths resolve from the CW
 Never bake build-machine paths (`CARGO_MANIFEST_DIR`) into runtime defaults;
 `.cargo/config.toml` `[env]` points Cargo-launched runs at the repo cache. Prune stale
 sources/incompatible partial builds and retry failed configuration once cleanly.
+Root children are runtime archive entries (ready once they hold a `ready`
+marker) except the auxiliary directories listed once in
+`sim::build::RUNTIME_CACHE_AUX_DIRS`: `cmake-toolchain/` (seeds) and
+`compiler-probe/` (MSVC probe memos). Code that enumerates or prunes the root
+skips those names; add any new auxiliary directory to that list.
 
 Fresh trees (model and runtime archive) are seeded with cached toolchain
-detection (`build/toolchain_seed.rs`): `<root>/cmake-toolchain/<hash>` (the one
-root child that is not a runtime entry; runtime entries are the children with a
-`ready` marker) holds one probe's `CMakeFiles/<version>/*.cmake` plus the cache entries
+detection (`build/toolchain_seed.rs`): `<root>/cmake-toolchain/<hash>` holds one probe's `CMakeFiles/<version>/*.cmake` plus the cache entries
 detection creates, applied with `CMAKE_PLATFORM_INFO_INITIALIZED`, the state
 CMake itself re-configures from. The exact key covers CMake and its version,
 generator, compiler spelling/identity/target, flags, launcher, host and the
