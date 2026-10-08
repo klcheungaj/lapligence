@@ -245,6 +245,13 @@ in both optimizer modes on every backend and, except the numeric-extremes fixtur
 `-O0`/`-O3`), after Db destruction. Component checks are the
 `sim::ir::validate::tests::real_values` unit tests.
 
+SIM-035's sampled-value fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_035::)'`. Positive fixtures run
+in both optimizer modes on every backend; `complex_clocks` also runs at model
+`-O0` and after Db destruction. Component checks are the
+`sim::ir::validate::tests::sampled_*` unit tests and the sampled-domain ring
+checks in `runtime_value_storage`'s `retention_probe.c`.
+
 SIM-006's container, record-element, handle-array and associative-default
 fixtures use `-E 'binary(sim_feature_completion) & test(sim_006::)'`. Positive
 fixtures run in both optimizer modes on every backend; fixtures without runtime warnings also run after Db
