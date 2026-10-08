@@ -279,7 +279,7 @@ foreach(mode IN ITEMS short multi-short negative-remaining plus-overflow minus-o
   set_tests_properties(stream_reject_${mode} PROPERTIES TIMEOUT 60)
 endforeach()
 
-foreach(probe IN ITEMS value_ownership container_ownership container_values native_value_descriptors four_state udp)
+foreach(probe IN ITEMS value_ownership container_ownership container_values method_gather native_value_descriptors four_state udp)
   add_executable(${probe}_probe ${probe}_probe.c)
   target_link_libraries(${probe}_probe PRIVATE tracked_value)
   strict_c(${probe}_probe)

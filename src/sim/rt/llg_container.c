@@ -16,3 +16,4 @@
 #include "container/associative_value_queries.c"
 #include "container/value_elements.c"
 #include "container/destinations.c"
+#include "container/method_gather.c"

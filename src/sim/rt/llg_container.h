@@ -1038,6 +1038,10 @@ void llg_queue_value_copy_from_dyn(llg_queue_value_array_t* dst,
  * and queues: the positions; associative arrays: the integral keys);
  * `gather_string_keys` copies string keys. Destinations are replaced like a
  * queue assignment, so `dst` may alias `src`. */
+/* Index results of a dynamic array or queue of `count` elements: the valid
+ * positions themselves. */
+void llg_method_gather_positions(llg_queue_t* dst, const llg_queue_t* positions,
+                                 size_t count);
 void llg_dyn_gather(llg_queue_t* dst, const llg_dyn_array_t* src,
                     const llg_queue_t* positions, int keys);
 void llg_queue_gather(llg_queue_t* dst, const llg_queue_t* src,

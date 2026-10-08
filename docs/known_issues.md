@@ -544,8 +544,11 @@ statement (`f()[i]`, `f().size()`); a container argument in expression
 position that is neither a variable of the formal's type nor a packed/real
 assignment pattern; event controls and monitors on subroutine or object
 containers; mutating methods of a nested container element (`q[i].push_back`;
-`q[i].size()` works); a nested element written from a queue or associative
-variable; `foreach` over a container of containers; and compound or nonblocking writes to a record element. Reads of a
+`q[i].size()` and `$size(q[i])` work), and other methods of a nested element
+(`q[i].sum()`, `q[i].find(...)`); a whole nested element read into a
+container (`row = q[i]`); a nested element written from an associative
+variable; `foreach` with an omitted slot over a container of containers; and
+compound or nonblocking writes to a record element. Reads of a
 missing nested associative element return the default without the SV 7.8.6
 warning.
 
@@ -762,8 +765,7 @@ element of a real queue, dynamic array or associative array
 operand, equality or conditional arm that is a function call inside an
 expression other than a whole-array assignment or another real-array input
 (assign it to a variable first); a conditional real-array arm or row selector
-that is not a plain variable read or constant; keyed (`with`) `min/max/unique`
-and `sort/rsort` over real elements; and element-wise real-array expressions
+that is not a plain variable read or constant; and element-wise real-array expressions
 above 4,096 elements (`REAL_ARRAY_ELEMENTWISE_LIMIT`). Whole-array storage
 operands of any size pass by block copy.
 

@@ -348,6 +348,19 @@ selected rows, dense arrays above `FIXED_CELL_UNROLL_LIMIT`) lower to one
 `IrStmt::FixedArrayOrder`; selected-row reductions and `inside` items over stored
 cells use `IrFixedArrayCells`. Never expand those receivers per element.
 
+Resizable-container methods the packed/real callback runtime cannot express
+(`containers/inline_methods.rs`: non-packed items, real/string keys, `with`
+expressions that read activation state or call subroutines, string-keyed
+index results) lower to one loop in the calling frame. Bind the iterator by
+pushing an `InlineIterator`; element, key and `index` hooks consult it before
+any other path, and pop it even on failure. Evaluate the `with` expression
+exactly once per element in index/key order, record positions or keys in
+activation queues and finish with `Gather`, `UniquePositions` or
+`SortByKeys`; reductions are an `IrExprKind::Sequence` with an
+identity-seeded accumulator. Stored one-dimensional packed/real fixed arrays
+copy once into a queue (`fixed_method_copy`) whose declared range maps
+positions to indices.
+
 ## Events, predicates and streams
 
 Register event or-lists atomically with `llg_wait_any_events`, never sequential

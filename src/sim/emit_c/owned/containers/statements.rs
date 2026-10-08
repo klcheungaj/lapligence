@@ -224,24 +224,25 @@ pub(super) fn render(
                 }
                 // Indices of a dynamic array or queue are the positions.
                 (IrContainerKind::Dynamic | IrContainerKind::Queue { .. }, true, _) => {
-                    ("llg_queue_gather", Some(true))
+                    let size = match (&source.kind, generic) {
+                        (IrContainerKind::Dynamic, false) => "llg_dyn_size",
+                        (IrContainerKind::Dynamic, true) => "llg_dyn_value_size",
+                        (_, false) => "llg_queue_size",
+                        (_, true) => "llg_queue_value_size",
+                    };
+                    return Ok(format!(
+                        "    llg_method_gather_positions(&{}, &{}, {size}(&{}));\n",
+                        name(frame, *dst)?,
+                        name(frame, *positions)?,
+                        name(frame, *src)?
+                    ));
                 }
                 (IrContainerKind::Dynamic, false, false) => ("llg_dyn_gather", Some(false)),
                 (IrContainerKind::Queue { .. }, false, false) => ("llg_queue_gather", Some(false)),
                 (IrContainerKind::Dynamic, false, true) => ("llg_dyn_value_gather", None),
                 (IrContainerKind::Queue { .. }, false, true) => ("llg_queue_value_gather", None),
             };
-            // An index result of a dynamic array or queue reads only the
-            // positions, so the source operand is the position queue itself.
-            let source_name = if *keys
-                && matches!(
-                    source.kind,
-                    IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
-                ) {
-                name(frame, *positions)?
-            } else {
-                name(frame, *src)?
-            };
+            let source_name = name(frame, *src)?;
             format!(
                 "    {function}(&{}, &{source_name}, &{}{});\n",
                 name(frame, *dst)?,

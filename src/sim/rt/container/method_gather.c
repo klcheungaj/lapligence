@@ -30,15 +30,18 @@ static void llg_method_gather_sv4(llg_queue_t* dst, const sv4_t* data,
     size_t used = 0;
     for (size_t slot = 0; slot < selected; ++slot) {
         size_t position;
-        if (keys) {
-            values[used++] = sv4_clone(&positions->data[slot]);
-        } else if (llg_method_position(positions, slot, count, &position)) {
-            values[used++] = sv4_clone(&data[position]);
-        }
+        if (!llg_method_position(positions, slot, count, &position)) continue;
+        values[used++] = keys ? sv4_clone(&positions->data[slot])
+                              : sv4_clone(&data[position]);
     }
     llg_queue_assign_values(dst, values, used);
     sv4_destroy_array(values, used);
     free(values);
+}
+
+void llg_method_gather_positions(llg_queue_t* dst, const llg_queue_t* positions,
+                                 size_t count) {
+    llg_method_gather_sv4(dst, NULL, count, positions, 1);
 }
 
 void llg_dyn_gather(llg_queue_t* dst, const llg_dyn_array_t* src,

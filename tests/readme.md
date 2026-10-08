@@ -270,6 +270,12 @@ and deep-list fixtures. The component check is `gc_probe.c`
 (`runtime_object_collector`) in `runtime_value_storage`, which also covers
 injected collector allocation failures.
 
+SIM-019's container-method fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_019::)'`. Positive fixtures run
+in both optimizer modes on both backends; the negative fixtures check the
+frontend diagnostics of illegal methods, reductions and arguments. The
+component check is `method_gather_probe.c` in `runtime_value_storage`.
+
 RTL-016's tagged-union, pattern and Q03 fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_016::)'`. Positive fixtures and
 the run-time error fixtures run in both optimizer modes on both backends. Run-time error fixtures print their

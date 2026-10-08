@@ -134,6 +134,18 @@ owns a deep copy of its payload from issue to commit or cancellation.
 queue or dynamic-array member between its nested slot in a value (null when
 empty) and a standalone container; they never notify the slot's owner.
 
+Method result helpers (SIM-019, `container/method_gather.c`) never call back
+into the model. `llg_*_gather` copy the elements (or keys) at a queue of
+ordinal positions into a typed result queue; positions out of range are
+skipped. `llg_method_unique_positions` and `..._value_positions` keep the
+first position of each distinct key in one hashed pass (packed keys hash
+consistently with `sv4_same`; real keys drop NaNs and keep the first of each
+equal run). `llg_*_sort_by_keys` order a receiver by one precomputed key per
+element (packed, real or string), stable and O(n log n), applying the
+permutation in place by cycles; a key count that differs from the receiver
+size warns and leaves the receiver unchanged. `llg_{dyn,queue}_value_copy_from_*`
+copy between a descriptor-backed dynamic array and queue.
+
 ## Scheduler, process and event invariants
 
 ### Frame-resident cells

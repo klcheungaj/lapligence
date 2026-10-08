@@ -463,6 +463,12 @@ Macros, includes and their edition-specific behavior are counted in §11.
   invalid-key writes warn and do nothing; one element accepts compound
   assignment and `++`/`--`
   ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md)).
+  Dynamic arrays and queues assign to each other whole, and records holding
+  queue, dynamic or associative members copy them whole, also into a selected
+  record member (`w.inner = src`)
+  ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
+  Whole reads of a nested container element (`row = qq[0]`) and methods on
+  nested elements reject.
   `ref` formals of queue, dynamic and associative type alias the caller's
   container variable, including from timed tasks and fork branches
   ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
@@ -816,8 +822,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   bounds and signed endpoint guards, including descriptor-backed arrays (to 16M
   cells) traversed in place. Iterators are automatic, lexical and
   read-only. Dynamic/queue and integral/string-keyed associative traversal have
-  separate paths. Nested resizable traversal, string/shared/native captures and
-  illegal iterator writes remain rejected. SV §§12.7.1, 12.7.3 **[SV-2005]**.
+  separate paths. Queues and dynamic arrays of queues or dynamic arrays iterate
+  one or several dimensions, each bounded by the size of the element its outer
+  variables select
+  ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
+  Omitted slots in nested resizable traversal, associative nesting,
+  string/shared/native captures and illegal iterator writes remain rejected. SV §§12.7.1, 12.7.3 **[SV-2005]**.
 - 🟨 **Procedural assign/deassign** — Whole packed/real/shortreal variables and
   admitted packed concatenations use replaceable live RHS bindings. `deassign`
   retains the last value; ordinary writes cannot override an active binding.
@@ -1053,9 +1063,15 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   singleton arrays, zero-time function calls and selected automatic/formal rows
   in both optimizer modes; SV2001 rejects fixed ordering. Repeated-key stability
   and X/Z key order are unspecified. Reverse `with`,
-  const-ref receivers, record sorting without a key, fixed shuffle/locators,
-  native/string elements and incompatible maps are outside this fixed
-  integral profile and reject. Stored real/shortreal arrays and rows
+  const-ref receivers, record sorting without a key and incompatible maps
+  are outside this fixed integral profile and reject. Stored one-dimensional
+  packed and real fixed arrays copy once into a queue for `find*`,
+  `min/max`, `unique*` and `shuffle`; index results and `item.index` report
+  declared indices, and shuffle stores the permutation back in declaration
+  order. Fixed arrays of string, record or handle elements are containers and
+  use the resizable-container methods
+  ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
+  Multi-dimensional receivers and selected rows reject these methods. Stored real/shortreal arrays and rows
   `sort`/`rsort`/`reverse` in place by one numeric runtime reorder (stable;
   NaN keys keep their positions); a real `with` key rejects (SIM-005).
   SV §7.12.2 **[SV-2009]**.
@@ -1063,12 +1079,20 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   locators, min/max/unique result queues, sort/rsort/reverse/shuffle are present.
   Queue/dynamic `sort`/`rsort` evaluate each `with` key once in index order, then
   stable merge-sort in O(n log n); elements with an X/Z key stay in place.
-  Callbacks require packed or real items and cannot capture automatic
-  locals/formals. Real queues and dynamic arrays sort/rsort/reverse/shuffle in
-  place and support `find*` with a `with` clause plus unkeyed
-  `min/max/unique/unique_index`, comparing numerically (SIM-005); other
-  generic leaf storage does not remove method/result limits. Shuffle uses its
-  container seed API, not full process/object RNG integration.
+  Where the packed/real callback runtime cannot express a method (string,
+  record, handle or nested-container items, real or string keys, `with`
+  expressions that read automatic state or call subroutines, string-keyed
+  index results), locators, `min/max`, `unique*`, keyed `sort/rsort` and
+  reductions run as one loop in the calling frame: the `with` expression is
+  evaluated once per element in index or key order, results are gathered by
+  position into typed queues (string queues for string keys), `unique` hashes
+  its keys in one pass and keyed sorts are O(n log n). Real keys compare
+  numerically, strings lexically and handles by identity
+  ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
+  Generated loops over wildcard-index arrays, methods on nested container
+  elements and member selection of a popped class handle (`q.pop_front().v`)
+  reject. Shuffle uses its container seed API, not full process/object RNG
+  integration.
   SV §7.12 **[SV-2005]**.
 - 🟨 **Bit-stream casts and streaming** — Fixed arrays/nested records, selected
   rows/members, call results and admitted ref/const-ref projections preserve
@@ -1533,7 +1557,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   use represented packed, fixed-array, dynamic/queue, associative-integral and
   string metadata. Fixed queries cover selected rows, declared formal bounds and
   descriptor-backed arrays; an out-of-range or unknown dimension yields X.
-  Nested runtime dimensions remain unsupported. Associative
+  `$size/$left/$right/$low/$high/$increment` of a nested dynamic or queue
+  element (`qq[i]`) read its runtime size
+  ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md));
+  nested associative elements and deeper dimensions reject. Associative
   dimension bounds require integral index types; string/wildcard bounds are
   prohibited by SV §20.7. SV §§20.6–20.7 **[SV-2005]**.
 - 🟦 **Bit and math helpers** — `$onehot/$onehot0/$countones/$isunknown` use
