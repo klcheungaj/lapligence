@@ -215,6 +215,7 @@ not convert is an error naming the override.
 | Read-only helper inlining | At most 32 nested callback calls; deeper emission receives an explicit diagnostic. |
 | Scheduler region passes | Default 10,000,000 per time slot; `LLG_ZERO_LOOP_LIMIT` accepts a positive decimal `uint64`. Exhaustion diagnoses a zero-delay loop. |
 | Process back-edges | Default 10,000,000 per process; `LLG_PROCESS_STEP_LIMIT` overrides the `LLG_NONCONVERGENCE_LIMIT` alias. An explicitly set region limit also supplies the process limit when neither process variable is set. Both require positive decimal `uint64` values. |
+| Concurrent-assertion sequence threads | Default 1,000,000 live pending sequence threads plus attempts across the model; `LLG_SEQUENCE_THREAD_LIMIT` accepts a positive decimal `uint64`. Exhaustion stops the run with an error naming the assertion and time; no attempt is dropped ([SIM-037](../tests/sim_feature_completion/sim_037.rs)). Sequence automata are limited to 1,048,576 states per assertion graph (repetition bodies unroll once per literal bound). |
 | Driver, alias, process, final, event-waiter, procedural-driver and force registries | Size to the design or grow with checked allocation; the former 16-driver and 256-alias ceilings do not apply. |
 
 The required capacity lane executes 16,777,216-element storage in both editions
@@ -1775,13 +1776,15 @@ These are bounded implementations, not full verification-infrastructure support.
 | --- | --- |
 | Attempts and actions | Preponed packed sampling, Observed resolution, overlapping attempts, vacuity accounting and Reactive actions. |
 | Clock/disable flow | Nearest default-clock inheritance, compatible declaration/call-site clocks, legal multiclock `##0`/`##1` boundaries, asynchronous single-signal `disable iff`, bounded `accept_on/reject_on` and synchronous variants. |
-| Sequences | `##` concatenation/ranges; consecutive/nonconsecutive/goto repetition with unbounded endpoints; `or`; direct one-cycle `and/intersect/throughout/within`; `first_match`. |
+| Sequences | Single-clock composition under Annex F: nested `##` concatenation with fixed, ranged and unbounded delays; consecutive repetition of Booleans and of whole sequences (`[*m:n]`, `[*]`, `[+]`, empty-admitting bodies) and nonconsecutive/goto repetition; empty matches; `or`; multi-cycle `and`, `intersect`, `throughout` and `within` (runtime joins that pair operand endpoints and drop threads that can no longer pair); `first_match`. Live sequence threads are bounded by `LLG_SEQUENCE_THREAD_LIMIT` (default 1,000,000); exhaustion is a reported execution error. |
 | Properties and instances | One-cycle `not/and/or/iff/implies` and `if/else` forms; named sequence/property instances with positional/named/default arguments. |
 | Locals and match items | Per-attempt local input capture/defaults, ordered assignment/increment/subroutine-call items and isolated local snapshots for overlapping/branching threads. |
 | Control | Bounded blocking `expect`, sequence `.matched`, `$asserton/$assertoff/$assertkill` and hierarchy selectors. Internal post-2009 level-0 ON/OFF/KILL `$assertcontrol` support is not admitted by either target edition. |
 
 Output/inout/ref formal copy-out, delayed/nested local-formal calls, selected-local
-lvalues, repeated match-item bodies, unsupported expanded bodies, conflicting
+lvalues, repeated match-item bodies, local-variable assignments inside
+`and`/`intersect`/`throughout`/`within` operands, differently clocked operands of
+those operators, unsupported expanded bodies, conflicting
 clock/disable metadata, nested `disable iff` or nested `accept_on/reject_on`
 controls, conditional properties without an `else`, other temporal/cross-clock
 combinators, pass/fail/vacuity action controls, `.triggered` and invalid

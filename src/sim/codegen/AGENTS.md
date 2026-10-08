@@ -592,7 +592,14 @@ a non-integral value into packed bits (reals use their exact 64-bit image).
 Concurrent assertions use dedicated instances, immutable sampled predicates,
 explicit clocks/disable/control metadata, per-attempt/thread locals and ordered
 match-item effects. Preserve Slang actual/default expansion; reject conflicting
-clocks, unsupported temporal/cross-clock forms or unrepresented copy-out. Deferred
+clocks, unsupported temporal/cross-clock forms or unrepresented copy-out.
+Sequence composition chooses its mechanism per site: one-cycle operands of
+`and`/`intersect`/`throughout`/`within` stay one sampled `&&` atom; multi-cycle
+operands become an `IrSequenceJoin`. Repeated non-Boolean sequences re-lower
+their body per literal copy (an unbounded bound loops the last copy), within
+`SEQUENCE_STATE_BUDGET`; never introduce a fixed unroll depth for `$`.
+Assignments to locals inside join operands and differently clocked join
+operands stay explicit rejections (SIM-039, ADV-013). Deferred
 assertions retain issue-time values and Reactive actions under the single-call
 contract, rejecting unowned automatic/dynamic refs or timing/control actions.
 Mailboxes preserve typed copy/identity semantics and delegate waits/cancellation to

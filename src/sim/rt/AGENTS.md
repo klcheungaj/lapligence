@@ -386,6 +386,19 @@ later time; retain current-slot edge history for all consumers. Callback order i
 only a replay guard, never elapsed cross-clock time. Explicit action choice must
 not erase assertion failure accounting.
 
+Sequence joins (`and`/`intersect`, and `throughout`/`within` reduced to
+`intersect`) are static graph tables: the enter edge forks one thread per
+operand with its own side frame on the scope chain; exit edges pair endpoints
+(intersect: same tick; and: the later tick, an empty-admitting operand counts as
+matched at the fork) and emit at most one continuation per tick. A side's
+liveness is its frame refcount; after every step prune threads whose join can no
+longer pair, to a fixed point, so impossible obligations fail instead of pending.
+Tokens, frames, joins, endpoints, attempts and assertion clock events are
+recycled through `g` free lists released by `llg_rt_cleanup`; keep steady-state
+stepping allocation-free. Live tokens plus attempts count against
+`LLG_SEQUENCE_THREAD_LIMIT`; exhaustion is a reported failure, never a dropped
+attempt.
+
 ## I/O, VPI and waveform
 
 Keep hosted C descriptor namespaces separate: FD bit 31 with preopened standard
