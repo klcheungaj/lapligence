@@ -111,28 +111,41 @@ typedef struct llg_sampled_history {
     sv4_t value;
 } llg_sampled_history_t;
 
-typedef struct llg_sampled_domain_history {
-    struct llg_sampled_domain_history* next; // older
-    struct llg_sampled_domain_history* prev; // newer
-    uint64_t time;
-    uint64_t sequence;
-    sv4_t value;
-} llg_sampled_domain_history_t;
-
+/* One sampled history domain (IEEE 1800-2009 16.9.3): an expression sampled
+ * on one clock. `samples`/`times` form a ring with one entry per time step in
+ * which the clock ticked, newest at `newest`. It grows up to `limit` (the
+ * deepest `$past` read plus the current step) and is then reused in place. */
 typedef struct llg_sampled_domain {
-    struct llg_sampled_domain* next;
-    uint64_t identity;
-    sv4_t* clock;
-    int edge;
+    struct llg_sampled_clock* clock;
     llg_sampled_domain_eval_fn value;
-    llg_sampled_domain_eval_fn gate;
     void* data;
     sv4_t initial;
-    llg_sampled_domain_history_t* history; // newest first
-    llg_sampled_domain_history_t* history_tail;
-    uint64_t history_groups;   // distinct time steps in the history
-    uint64_t retained_groups;  // deepest read: $past ticks plus the current step
+    sv4_t* samples;
+    uint64_t* times;
+    size_t capacity;
+    size_t limit;
+    size_t count;
+    size_t newest;
+    // Preponed value of `current_time` for status calls in a step without a
+    // tick; Preponed values cannot change within the step.
+    sv4_t current;
+    uint64_t current_time;
+    int current_valid;
 } llg_sampled_domain_t;
+
+/* Ticks shared by every domain sampled on one clocking event and gate. Edge
+ * clocks are found by the signal write hook; event clocks tick from their
+ * generated waiting process. */
+typedef struct llg_sampled_clock {
+    struct llg_sampled_clock* next_edge;
+    sv4_t* signal;
+    int edge;
+    llg_sampled_gate_fn gate;
+    void* data;
+    llg_sampled_domain_t** domains;
+    size_t n_domains;
+    size_t domains_capacity;
+} llg_sampled_clock_t;
 
 static llg_sampled_value_t* find_sampled_value(const sv4_t* signal);
 static void sampled_record_write(sv4_t* signal);
@@ -369,8 +382,12 @@ typedef struct {
     llg_sampled_value_t* sampled;
     llg_sampled_value_t* sampled_values; // Preponed value only, no history
     llg_sampled_real_t* sampled_reals;
-    llg_sampled_domain_t* sampled_domains;
-    uint64_t sampled_domain_sequence;
+    // Dense identity tables owned by the runtime; entries are owners.
+    llg_sampled_clock_t** sampled_clocks;
+    size_t sampled_clocks_capacity;
+    llg_sampled_clock_t* sampled_edge_clocks;
+    llg_sampled_domain_t** sampled_domains;
+    size_t sampled_domains_capacity;
     llg_clocking_edge_t* clocking_edges;
     llg_clocking_edge_t** clocking_index;
     size_t clocking_capacity;

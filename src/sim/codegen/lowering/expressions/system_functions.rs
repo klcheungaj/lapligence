@@ -148,58 +148,29 @@ impl<'a> Codegen<'a> {
             ticks = 1;
         }
 
-        let mut clock = if global {
+        let source = if global {
             self.lower_global_sampled_clock(scope_path)?
         } else if let Some(node) = explicit_clock {
             self.lower_sampled_clock_event(scope_path, node)?
+        } else if let Some(clock) = self.sampled_clock {
+            SampledClockSource::Edge(clock)
         } else {
-            self.sampled_clock
-                .or(self.lower_default_sampled_clock(scope_path)?)
+            self.default_sampled_clock_source(scope_path)?
                 .ok_or_else(|| {
                     format!(
                         "{name} requires an explicit clocking event outside a clocked assertion in `{scope_path}`"
                     )
                 })?
         };
-        if let Some(event_gate) = clock.gate.take() {
-            let event_gate = self.lower_boolean_expr(scope_path, event_gate)?;
-            if !super::super::assertions::sampled_compatible(&event_gate) {
-                return Err(format!(
-                    "sampled clock gate must be a static packed expression in `{scope_path}`"
-                ));
-            }
-            gate = Some(match gate {
-                Some(gate) => IrExpr::new(
-                    IrExprKind::Bin {
-                        op: IrBinOp::LogAnd,
-                        a: Box::new(gate),
-                        b: Box::new(event_gate),
-                    },
-                    1,
-                    false,
-                    None,
-                ),
-                None => event_gate,
-            });
-        }
         if let Some(gate) = &gate {
-            if !super::super::assertions::sampled_compatible(gate) {
+            if gate.is_real() || !super::super::assertions::sampled_compatible(gate) {
                 return Err(format!(
                     "$past gate must be a static packed expression in `{scope_path}`"
                 ));
             }
         }
-        let domain = self.lower_sampled_domain(
-            scope_path,
-            SampledClock {
-                signal: clock.signal,
-                posedge: clock.posedge,
-                gate: None,
-            },
-            argument.clone(),
-            gate,
-            ticks,
-        )?;
+        let clock = self.intern_sampled_clock(scope_path, source, gate)?;
+        let domain = self.intern_sampled_domain(clock, argument.clone(), ticks);
         let (width, signed) = if kind == IrSampledFunc::Past {
             (argument.width, argument.signed)
         } else {

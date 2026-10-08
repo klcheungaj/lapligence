@@ -235,49 +235,6 @@ fn render_assertion_sequence(
 }
 
 #[allow(dead_code)] // legacy model renderer superseded by owned::assertions
-pub(super) fn sampled_domain_callback_name(index: usize, role: &str) -> String {
-    format!("llg_sampled_domain_{index}_{role}")
-}
-
-#[allow(dead_code)] // legacy model renderer superseded by owned::assertions
-pub(super) fn render_sampled_domain_callbacks(model: &IrModel) -> Result<String, String> {
-    let mut out = String::new();
-    for (index, domain) in model.sampled_domains().iter().enumerate() {
-        let ctx = RCtx {
-            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
-            model,
-            func: None,
-            sampled: true,
-            activation_label: None,
-            constants: None,
-        };
-        let value = super::super::expressions::render_expr_impl(&ctx, &domain.sample)?;
-        if value.width == 0 {
-            return Err(format!(
-                "sampled domain {index} callback must return a packed expression"
-            ));
-        }
-        out.push_str(&format!(
-            "static sv4_t {}(void* data) {{\n    (void)data;\n    return {};\n}}\n\n",
-            sampled_domain_callback_name(index, "value"),
-            value.code
-        ));
-        if let Some(gate) = &domain.gate {
-            let gate = super::super::expressions::render_expr_impl(&ctx, gate)?;
-            if gate.width == 0 {
-                return Err(format!("sampled domain {index} gate must be packed"));
-            }
-            out.push_str(&format!(
-                "static sv4_t {}(void* data) {{\n    (void)data;\n    return {};\n}}\n\n",
-                sampled_domain_callback_name(index, "gate"),
-                gate.code
-            ));
-        }
-    }
-    Ok(out)
-}
-
-#[allow(dead_code)] // legacy model renderer superseded by owned::assertions
 pub(super) fn render_assertion_callbacks(model: &IrModel) -> Result<String, String> {
     let mut out = String::new();
     for (index, assertion) in model.assertions().iter().enumerate() {

@@ -10,8 +10,11 @@ fn assertion_predicate_name(index: usize, role: &str) -> String {
 fn assertion_sequence_name(index: usize, role: &str) -> String {
     format!("llg_assertion_sequence_{index}_{role}")
 }
-fn sampled_domain_callback_name(index: usize, role: &str) -> String {
-    format!("llg_sampled_domain_{index}_{role}")
+fn sampled_domain_callback_name(index: usize) -> String {
+    format!("llg_sampled_domain_{index}_value")
+}
+fn sampled_clock_gate_name(index: usize) -> String {
+    format!("llg_sampled_clock_{index}_gate")
 }
 
 fn callback_frame<'a, 'm>(ctx: &'a RCtx<'m>) -> Frame<'a, 'm> {
@@ -75,6 +78,7 @@ fn predicate(
     ))
 }
 
+/// Store a history domain's Preponed sample into the runtime-owned slot.
 fn sampled_value(
     model: &IrModel,
     constants: &super::super::constants::PackedConstants,
@@ -95,13 +99,44 @@ fn sampled_value(
     if value.width == 0 {
         return Err("sampled domain must return a packed value".to_owned());
     }
-    frame.line("sv4_t result = SV4_EMPTY;");
-    frame.line(format!("sv4_move(&result, &{});", value.code));
+    frame.line(format!("sv4_move(out, &{});", value.code));
     frame.discard(value);
     frame.line("llg_value_scopes_end_since(_llg_frame_base);");
-    frame.line("return result;");
     Ok(format!(
-        "static sv4_t {name}(void* data) {{\n{}{}\n}}\n\n",
+        "static void {name}(void* data, sv4_t* out) {{\n{}{}\n}}\n\n",
+        frame.prologue(),
+        frame.body()
+    ))
+}
+
+/// A sampled clock's gate reads current values when the clock occurs, like
+/// the `iff` of an event control (SV 9.4.2.3, 16.9.3).
+fn sampled_clock_gate(
+    model: &IrModel,
+    constants: &super::super::constants::PackedConstants,
+    backend: crate::sim::value_backend::ValueBackend,
+    name: &str,
+    expression: &IrExpr,
+) -> Result<String, String> {
+    let ctx = RCtx {
+        value_backend: backend,
+        model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+        constants: Some(constants),
+    };
+    let mut frame = callback_frame(&ctx);
+    let value = frame.expression(expression)?;
+    if value.width == 0 {
+        return Err("sampled clock gate must be packed".to_owned());
+    }
+    let result = frame.scalar("int", value.truth());
+    frame.discard(value);
+    frame.line("llg_value_scopes_end_since(_llg_frame_base);");
+    frame.line(format!("return {result};"));
+    Ok(format!(
+        "static int {name}(void* data) {{\n{}{}\n}}\n\n",
         frame.prologue(),
         frame.body()
     ))
@@ -113,23 +148,28 @@ pub(in crate::sim::emit_c) fn callbacks(
     backend: crate::sim::value_backend::ValueBackend,
 ) -> Result<String, String> {
     let mut out = String::new();
+    for (index, clock) in model.sampled_clocks().iter().enumerate() {
+        if let Some(gate) = &clock.gate {
+            out.push_str(&sampled_clock_gate(
+                model,
+                constants,
+                backend,
+                &sampled_clock_gate_name(index),
+                gate,
+            )?);
+        }
+    }
     for (index, domain) in model.sampled_domains().iter().enumerate() {
+        if domain.history_ticks == 0 {
+            continue;
+        }
         out.push_str(&sampled_value(
             model,
             constants,
             backend,
-            &sampled_domain_callback_name(index, "value"),
+            &sampled_domain_callback_name(index),
             &domain.sample,
         )?);
-        if let Some(gate) = &domain.gate {
-            out.push_str(&sampled_value(
-                model,
-                constants,
-                backend,
-                &sampled_domain_callback_name(index, "gate"),
-                gate,
-            )?);
-        }
     }
     for (index, assertion) in model.assertions().iter().enumerate() {
         for (role, expression, sampled) in [

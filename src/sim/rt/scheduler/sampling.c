@@ -161,129 +161,238 @@ static int sampled_real_image_equal(sv4_t left, sv4_t right) {
     return sv4_bitstoreal(left) == sv4_bitstoreal(right);
 }
 
-static llg_sampled_domain_t* find_sampled_domain(uint64_t identity) {
-    for (llg_sampled_domain_t* domain = g.sampled_domains; domain;
-         domain = domain->next) {
-        if (domain->identity == identity) return domain;
-    }
-    return NULL;
-}
-
-static void report_missing_sampled_domain(uint64_t identity) {
-    fprintf(stderr, "llg: sampled-value domain %llu is not registered\n",
-            (unsigned long long)identity);
+static void report_sampled_failure(const char* message, uint64_t identity) {
+    fprintf(stderr, "llg: %s %llu\n", message, (unsigned long long)identity);
     llg_last_failure = 1;
     g.finish = 1;
 }
 
-int llg_sampled_domain_register(uint64_t identity, sv4_t* clock, int edge,
-                                llg_sampled_domain_eval_fn value,
-                                llg_sampled_domain_eval_fn gate, void* data,
-                                uint64_t history_ticks) {
-    if (!clock || !value || history_ticks == 0 ||
-        (edge != LLG_EV_POSEDGE && edge != LLG_EV_NEGEDGE)) {
-        fprintf(stderr, "llg: invalid sampled-value domain registration\n");
-        llg_last_failure = 1;
-        g.finish = 1;
+static llg_sampled_clock_t* find_sampled_clock(uint64_t identity) {
+    return identity < g.sampled_clocks_capacity ? g.sampled_clocks[identity] : NULL;
+}
+
+static llg_sampled_domain_t* find_sampled_domain(uint64_t identity) {
+    return identity < g.sampled_domains_capacity ? g.sampled_domains[identity]
+                                                 : NULL;
+}
+
+// Capacity of a dense identity table that `identity` indexes; doubling keeps
+// registration linear in the number of identities.
+static size_t sampled_table_capacity(size_t capacity, uint64_t identity,
+                                     const char* what) {
+    if (identity >= SIZE_MAX / 2 / sizeof(void*)) llg_fatal_allocation(what, SIZE_MAX, 1);
+    size_t grown = capacity ? capacity : 8;
+    while (grown <= identity) grown *= 2;
+    return grown;
+}
+
+static void sampled_clocks_reserve(uint64_t identity) {
+    if (identity < g.sampled_clocks_capacity) return;
+    size_t grown = sampled_table_capacity(g.sampled_clocks_capacity, identity,
+                                          "sampled-value clocks");
+    llg_sampled_clock_t** table = (llg_sampled_clock_t**)llg_checked_calloc(
+        grown, sizeof(*table), "sampled-value clocks");
+    for (size_t index = 0; index < g.sampled_clocks_capacity; index++)
+        table[index] = g.sampled_clocks[index];
+    free(g.sampled_clocks);
+    g.sampled_clocks = table;
+    g.sampled_clocks_capacity = grown;
+}
+
+static void sampled_domains_reserve(uint64_t identity) {
+    if (identity < g.sampled_domains_capacity) return;
+    size_t grown = sampled_table_capacity(g.sampled_domains_capacity, identity,
+                                          "sampled-value domains");
+    llg_sampled_domain_t** table = (llg_sampled_domain_t**)llg_checked_calloc(
+        grown, sizeof(*table), "sampled-value domains");
+    for (size_t index = 0; index < g.sampled_domains_capacity; index++)
+        table[index] = g.sampled_domains[index];
+    free(g.sampled_domains);
+    g.sampled_domains = table;
+    g.sampled_domains_capacity = grown;
+}
+
+static llg_sampled_clock_t* sampled_clock_new(uint64_t identity) {
+    if (find_sampled_clock(identity)) {
+        report_sampled_failure("duplicate sampled-value clock", identity);
+        return NULL;
+    }
+    sampled_clocks_reserve(identity);
+    llg_sampled_clock_t* clock = (llg_sampled_clock_t*)llg_checked_calloc(
+        1, sizeof(*clock), "sampled-value clock");
+    g.sampled_clocks[identity] = clock;
+    return clock;
+}
+
+int llg_sampled_clock_register_edge(uint64_t identity, sv4_t* signal, int edge,
+                                    llg_sampled_gate_fn gate, void* data) {
+    if (!signal || (edge != LLG_EV_POSEDGE && edge != LLG_EV_NEGEDGE)) {
+        report_sampled_failure("invalid sampled-value clock", identity);
         return 0;
     }
-    if (find_sampled_domain(identity)) {
-        fprintf(stderr, "llg: duplicate sampled-value domain %llu\n",
-                (unsigned long long)identity);
-        llg_last_failure = 1;
-        g.finish = 1;
-        return 0;
-    }
-    llg_sampled_domain_t* domain = (llg_sampled_domain_t*)llg_checked_malloc(
-        1, sizeof(*domain), "sampled-value domain");
-    domain->identity = identity;
-    domain->clock = clock;
-    domain->edge = edge;
-    domain->value = value;
-    domain->gate = gate;
-    domain->data = data;
-    domain->initial = value(data);
-    domain->history = NULL;
-    domain->history_tail = NULL;
-    domain->history_groups = 0;
-    // `$past(e, n)` may skip the current time step and then n - 1 earlier
-    // ones; rose/fell/stable/changed read the two newest entries.
-    domain->retained_groups =
-        history_ticks == UINT64_MAX ? UINT64_MAX : history_ticks + 1;
-    domain->next = g.sampled_domains;
-    g.sampled_domains = domain;
+    llg_sampled_clock_t* clock = sampled_clock_new(identity);
+    if (!clock) return 0;
+    clock->signal = signal;
+    clock->edge = edge;
+    clock->gate = gate;
+    clock->data = data;
+    clock->next_edge = g.sampled_edge_clocks;
+    g.sampled_edge_clocks = clock;
     return 1;
 }
 
-// Prepend the newest sample and drop whole time steps older than any
-// registered read can reach, so a domain's memory is independent of
-// simulated time.
-static void sampled_domain_history_push(llg_sampled_domain_t* domain,
-                                        llg_sampled_domain_history_t* history) {
-    llg_sampled_domain_history_t* head = domain->history;
-    if (!head || head->time != history->time) domain->history_groups++;
-    history->prev = NULL;
-    history->next = head;
-    if (head) head->prev = history;
-    else domain->history_tail = history;
-    domain->history = history;
-    while (domain->history_groups > domain->retained_groups) {
-        const uint64_t time = domain->history_tail->time;
-        while (domain->history_tail && domain->history_tail->time == time) {
-            llg_sampled_domain_history_t* oldest = domain->history_tail;
-            domain->history_tail = oldest->prev;
-            if (domain->history_tail) domain->history_tail->next = NULL;
-            else domain->history = NULL;
-            sv4_destroy(&oldest->value);
-            free(oldest);
-        }
-        domain->history_groups--;
+int llg_sampled_clock_register_event(uint64_t identity, llg_sampled_gate_fn gate,
+                                     void* data) {
+    llg_sampled_clock_t* clock = sampled_clock_new(identity);
+    if (!clock) return 0;
+    clock->gate = gate;
+    clock->data = data;
+    return 1;
+}
+
+int llg_sampled_domain_register(uint64_t identity, uint64_t clock_identity,
+                                llg_sampled_domain_eval_fn value, void* data,
+                                uint64_t history_ticks) {
+    llg_sampled_clock_t* clock = find_sampled_clock(clock_identity);
+    if (!clock || !value || history_ticks == 0) {
+        report_sampled_failure("invalid sampled-value domain", identity);
+        return 0;
     }
+    if (find_sampled_domain(identity)) {
+        report_sampled_failure("duplicate sampled-value domain", identity);
+        return 0;
+    }
+    sampled_domains_reserve(identity);
+    llg_sampled_domain_t* domain = (llg_sampled_domain_t*)llg_checked_calloc(
+        1, sizeof(*domain), "sampled-value domain");
+    domain->clock = clock;
+    domain->value = value;
+    domain->data = data;
+    // Registration precedes process startup, so the Preponed snapshots still
+    // hold every variable's declaration or default value: the initial value
+    // that $past and the value change functions use before enough ticks.
+    const sv4_t empty = SV4_EMPTY;
+    domain->initial = empty;
+    value(data, &domain->initial);
+    domain->current = empty;
+    // `$past(e, n)` may skip the current time step and then n - 1 earlier
+    // ones; a ring larger than memory can hold is never reached in practice
+    // because it grows only as ticks occur.
+    domain->limit = history_ticks >= SIZE_MAX ? SIZE_MAX : (size_t)history_ticks + 1;
+    if (clock->n_domains == clock->domains_capacity) {
+        size_t grown = clock->domains_capacity ? clock->domains_capacity * 2 : 4;
+        llg_sampled_domain_t** domains = (llg_sampled_domain_t**)llg_checked_malloc(
+            grown, sizeof(*domains), "sampled-value clock domains");
+        for (size_t index = 0; index < clock->n_domains; index++)
+            domains[index] = clock->domains[index];
+        free(clock->domains);
+        clock->domains = domains;
+        clock->domains_capacity = grown;
+    }
+    clock->domains[clock->n_domains++] = domain;
+    g.sampled_domains[identity] = domain;
+    return 1;
+}
+
+// Make room for one more time step, oldest first in the new storage. Growth
+// doubles up to the domain's limit, so steady-state ticks reuse slots.
+static void sampled_domain_grow(llg_sampled_domain_t* domain) {
+    size_t grown = domain->capacity == 0              ? 4
+                   : domain->capacity > domain->limit / 2 ? domain->limit
+                                                          : domain->capacity * 2;
+    if (grown > domain->limit) grown = domain->limit;
+    sv4_t* samples = (sv4_t*)llg_checked_malloc(grown, sizeof(*samples),
+                                                "sampled-value history");
+    uint64_t* times = (uint64_t*)llg_checked_malloc(grown, sizeof(*times),
+                                                    "sampled-value history");
+    size_t oldest = domain->count
+                        ? (domain->newest + domain->capacity + 1 - domain->count) %
+                              domain->capacity
+                        : 0;
+    for (size_t index = 0; index < domain->count; index++) {
+        size_t from = (oldest + index) % domain->capacity;
+        samples[index] = domain->samples[from];
+        times[index] = domain->times[from];
+    }
+    const sv4_t empty = SV4_EMPTY;
+    for (size_t index = domain->count; index < grown; index++) samples[index] = empty;
+    free(domain->samples);
+    free(domain->times);
+    domain->samples = samples;
+    domain->times = times;
+    domain->capacity = grown;
+    domain->newest = domain->count ? domain->count - 1 : 0;
+}
+
+// Record the clock's tick in every domain on it. A tick repeated within a
+// time step overwrites that step's sample, so each step counts once.
+static void sampled_clock_record(llg_sampled_clock_t* clock) {
+    for (size_t index = 0; index < clock->n_domains; index++) {
+        llg_sampled_domain_t* domain = clock->domains[index];
+        if (domain->count == 0 || domain->times[domain->newest] != g.now) {
+            if (domain->count == domain->capacity && domain->capacity < domain->limit)
+                sampled_domain_grow(domain);
+            domain->newest = domain->count ? (domain->newest + 1) % domain->capacity : 0;
+            if (domain->count < domain->capacity) domain->count++;
+            domain->times[domain->newest] = g.now;
+        }
+        domain->value(domain->data, &domain->samples[domain->newest]);
+    }
+}
+
+void llg_sampled_clock_tick(uint64_t identity) {
+    llg_sampled_clock_t* clock = find_sampled_clock(identity);
+    if (!clock || clock->signal) {
+        report_sampled_failure("sampled-value clock is not an event clock", identity);
+        return;
+    }
+    if (clock->gate && !clock->gate(clock->data)) return;
+    sampled_clock_record(clock);
 }
 
 static void sampled_domain_clock_signal_changed(sv4_t* signal, sv4_t old,
                                                 sv4_t value) {
-    if (!signal) return;
-    for (llg_sampled_domain_t* domain = g.sampled_domains; domain;
-         domain = domain->next) {
-        if (domain->clock != signal ||
-            !ev_matches_changed(old, value, domain->edge))
+    for (llg_sampled_clock_t* clock = g.sampled_edge_clocks; clock;
+         clock = clock->next_edge) {
+        if (clock->signal != signal || !ev_matches_changed(old, value, clock->edge))
             continue;
-        if (domain->gate) {
-            sv4_t gate = domain->gate(domain->data);
-            int enabled = sv4_to_bool(gate);
-            sv4_destroy(&gate);
-            if (!enabled) continue;
-        }
-        llg_sampled_domain_history_t* history =
-            (llg_sampled_domain_history_t*)llg_checked_malloc(
-                1, sizeof(*history), "sampled-value domain history");
-        history->time = g.now;
-        history->sequence = g.sampled_domain_sequence++;
-        history->value = domain->value(domain->data);
-        sampled_domain_history_push(domain, history);
+        if (clock->gate && !clock->gate(clock->data)) continue;
+        sampled_clock_record(clock);
     }
+}
+
+// The k-th time step strictly before the current one in which the clock
+// ticked (IEEE 1800-2009 16.9.3), or NULL when fewer ticks exist. A tick in
+// the current step is not one of them, but the latest tick before it is, as
+// when procedural code evaluates between clock edges.
+static const sv4_t* sampled_domain_prior(const llg_sampled_domain_t* domain,
+                                         uint64_t ticks) {
+    size_t skip = domain->count && domain->times[domain->newest] == g.now ? 1 : 0;
+    if (ticks == 0 || ticks > domain->count - skip) return NULL;
+    size_t back = skip + (size_t)ticks - 1;
+    return &domain->samples[(domain->newest + domain->capacity - back) % domain->capacity];
 }
 
 sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks) {
     llg_sampled_domain_t* domain = find_sampled_domain(identity);
     if (!domain) {
-        report_missing_sampled_domain(identity);
+        report_sampled_failure("sampled-value domain is not registered", identity);
         return sv4_x(1, 0);
     }
     if (ticks == 0) return sv4_clone(&domain->initial);
-    // $past counts time steps strictly before the evaluating one in which
-    // the clocking event occurred (IEEE 1800-2009 §16.9.3). A tick in the
-    // current time step is not one of them, but the latest tick before it is,
-    // as when procedural code evaluates $past between clock edges. Repeated
-    // edges in one time step count once.
-    llg_sampled_domain_history_t* history = domain->history;
-    while (history && history->time == g.now) history = history->next;
-    for (uint64_t index = 1; history && index < ticks; index++) {
-        uint64_t time = history->time;
-        while (history && history->time == time) history = history->next;
+    const sv4_t* prior = sampled_domain_prior(domain, ticks);
+    return sv4_clone(prior ? prior : &domain->initial);
+}
+
+void llg_sampled_domain_past_to(sv4_t* dst, uint64_t identity, uint64_t ticks) {
+    llg_sampled_domain_t* domain = find_sampled_domain(identity);
+    if (!domain) {
+        report_sampled_failure("sampled-value domain is not registered", identity);
+        sv4_replace(dst, sv4_x(1, 0));
+        return;
     }
-    return sv4_clone(history ? &history->value : &domain->initial);
+    const sv4_t* prior = ticks ? sampled_domain_prior(domain, ticks) : NULL;
+    sv4_copy(dst, prior ? prior : &domain->initial);
 }
 
 static int sampled_domain_lsb_one(sv4_t value) {
@@ -296,16 +405,31 @@ static int sampled_domain_lsb_zero(sv4_t value) {
     return (llg_sv4_word(value, 0, LLG_SV4_BITS) & 1ULL) == 0;
 }
 
+// The Preponed value of the calling time step: the tick sample when the clock
+// ticked in this step, otherwise one evaluation cached for the step.
+static const sv4_t* sampled_domain_current(llg_sampled_domain_t* domain) {
+    if (domain->count && domain->times[domain->newest] == g.now)
+        return &domain->samples[domain->newest];
+    if (!domain->current_valid || domain->current_time != g.now) {
+        domain->value(domain->data, &domain->current);
+        domain->current_time = g.now;
+        domain->current_valid = 1;
+    }
+    return &domain->current;
+}
+
 int llg_sampled_domain_status(uint64_t identity, int kind) {
     llg_sampled_domain_t* domain = find_sampled_domain(identity);
     if (!domain) {
-        report_missing_sampled_domain(identity);
+        report_sampled_failure("sampled-value domain is not registered", identity);
         return 0;
     }
-    sv4_t current = domain->history ? domain->history->value : domain->initial;
-    sv4_t previous = domain->history && domain->history->next
-                         ? domain->history->next->value
-                         : domain->initial;
+    // Value change functions compare the current step's Preponed value with
+    // the most recent strictly prior tick, or with the initial value at or
+    // before the first tick (16.9.3).
+    sv4_t current = *sampled_domain_current(domain);
+    const sv4_t* prior = sampled_domain_prior(domain, 1);
+    sv4_t previous = prior ? *prior : domain->initial;
     switch (kind) {
         case 0: return sampled_domain_lsb_one(current) && !sampled_domain_lsb_one(previous);
         case 1: return sampled_domain_lsb_zero(current) && !sampled_domain_lsb_zero(previous);

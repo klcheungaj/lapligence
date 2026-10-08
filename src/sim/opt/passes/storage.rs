@@ -160,11 +160,17 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
             }
         }
     }
-    for domain in &model.sampled_domains {
-        rw.read(domain.clock_signal);
-        collect_expr_reads(&domain.sample, model, &mut rw);
-        if let Some(gate) = &domain.gate {
+    for clock in &model.sampled_clocks {
+        if let crate::sim::ir::IrSampledClockKind::Edge { signal, .. } = clock.kind {
+            rw.read(signal);
+        }
+        if let Some(gate) = &clock.gate {
             collect_expr_reads(gate, model, &mut rw);
+        }
+    }
+    for domain in &model.sampled_domains {
+        if domain.history_ticks != 0 {
+            collect_expr_reads(&domain.sample, model, &mut rw);
         }
     }
     for dependency in &sens {

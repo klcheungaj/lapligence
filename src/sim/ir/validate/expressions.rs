@@ -1353,7 +1353,13 @@ impl Validator<'_> {
                         | IrSampledFunc::Changed
                         | IrSampledFunc::RealStable
                         | IrSampledFunc::RealChanged => {
-                            if call.domain.is_none() || call.ticks != 0 {
+                            if !call.domain.is_some_and(|domain| {
+                                self.model
+                                    .sampled_domains
+                                    .get(domain)
+                                    .is_some_and(|domain| domain.history_ticks != 0)
+                            }) || call.ticks != 0
+                            {
                                 return self.fail(path, "sampled status requires a valid domain");
                             }
                             if expr.width != 1 || expr.signed {

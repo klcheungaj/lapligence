@@ -853,9 +853,8 @@ fn expression_refs(expression: &ExprKind, refs: &mut Vec<NodeId>) {
                     .flat_map(|binding| [binding.formal, binding.actual]),
             );
         }
-        ExprKind::ClockingEvent { signal, gate, .. } => {
-            refs.push(*signal);
-            refs.extend(*gate);
+        ExprKind::ClockingEvent { specs } => {
+            specs.iter().for_each(|spec| spec.referenced_nodes(refs));
         }
         ExprKind::Streaming { streams, .. } => {
             for stream in streams {

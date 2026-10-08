@@ -70,8 +70,8 @@ pub use expressions::{
     IrEnumQuery, IrExpr, IrExprKind, IrFileInput, IrFileInputTarget, IrFileReadTarget, IrMathFunc,
     IrMutationExpr, IrNativeBinding, IrPatternCheck, IrPatternExpr, IrPatternMatchKind,
     IrPlusArgTarget, IrPlusArgText, IrRandomFunc, IrRealBinOp, IrRealUnOp, IrRuntimeQuery,
-    IrSampledCall, IrSampledDomain, IrSampledFunc, IrSequenceExpr, IrSysFunc, IrTaggedMemberGuard,
-    IrTaggedSelectStep, IrTimeKind, IrUnOp,
+    IrSampledCall, IrSampledClock, IrSampledClockKind, IrSampledDomain, IrSampledFunc,
+    IrSequenceExpr, IrSysFunc, IrTaggedMemberGuard, IrTaggedSelectStep, IrTimeKind, IrUnOp,
 };
 mod lvalues;
 pub use lvalues::{
@@ -487,7 +487,8 @@ pub struct IrModel {
     pub(in crate::sim) funcs: Vec<IrFunc>,
     /// Concurrent assertion instances, kept outside ordinary process IR.
     pub(in crate::sim) assertions: Vec<IrAssertion>,
-    /// Explicit sampled-value clock/history domains used by system functions.
+    /// Sampled-value clocks and the expression histories sampled on them.
+    pub(in crate::sim) sampled_clocks: Vec<IrSampledClock>,
     pub(in crate::sim) sampled_domains: Vec<IrSampledDomain>,
     /// Comb drivers, then links, then always/initial processes — push order
     /// equals spawn order.
@@ -533,6 +534,7 @@ pub struct IrModelParts {
     pub events: Vec<IrEvent>,
     pub funcs: Vec<IrFunc>,
     pub assertions: Vec<IrAssertion>,
+    pub sampled_clocks: Vec<IrSampledClock>,
     pub sampled_domains: Vec<IrSampledDomain>,
     pub processes: Vec<IrProcess>,
     pub init_steps: Vec<IrInitStep>,
@@ -578,6 +580,7 @@ impl IrModel {
             events: parts.events,
             funcs: parts.funcs,
             assertions: parts.assertions,
+            sampled_clocks: parts.sampled_clocks,
             sampled_domains: parts.sampled_domains,
             processes: parts.processes,
             init_steps: parts.init_steps,
@@ -634,6 +637,9 @@ impl IrModel {
     }
     pub fn sampled_domains(&self) -> &[IrSampledDomain] {
         &self.sampled_domains
+    }
+    pub fn sampled_clocks(&self) -> &[IrSampledClock] {
+        &self.sampled_clocks
     }
     pub fn processes(&self) -> &[IrProcess] {
         &self.processes

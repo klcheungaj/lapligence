@@ -30,25 +30,38 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
             }
         }
     }
-    for (index, domain) in model.sampled_domains().iter().enumerate() {
-        let clock = signal_name(model, domain.clock_signal);
-        let edge = if domain.posedge {
-            "LLG_EV_POSEDGE"
-        } else {
-            "LLG_EV_NEGEDGE"
-        };
-        let gate = if domain.gate.is_some() {
-            sampled_domain_callback_name(index, "gate")
+    // Clocks precede the domains sampled on them; identities are IR indices.
+    for (index, clock) in model.sampled_clocks().iter().enumerate() {
+        let gate = if clock.gate.is_some() {
+            sampled_clock_gate_name(index)
         } else {
             "NULL".to_owned()
         };
+        match &clock.kind {
+            IrSampledClockKind::Edge { signal, posedge } => {
+                let edge = if *posedge {
+                    "LLG_EV_POSEDGE"
+                } else {
+                    "LLG_EV_NEGEDGE"
+                };
+                out.push_str(&format!(
+                    "    if (!llg_sampled_clock_register_edge({index}ULL, &{}, {edge}, {gate}, NULL)) return 0;\n",
+                    signal_name(model, *signal),
+                ));
+            }
+            IrSampledClockKind::Event => out.push_str(&format!(
+                "    if (!llg_sampled_clock_register_event({index}ULL, {gate}, NULL)) return 0;\n"
+            )),
+        }
+    }
+    for (index, domain) in model.sampled_domains().iter().enumerate() {
+        if domain.history_ticks == 0 {
+            continue;
+        }
         out.push_str(&format!(
-            "    if (!llg_sampled_domain_register({}ULL, &{}, {}, {}, {}, NULL, {}ULL)) return 0;\n",
-            index,
-            clock,
-            edge,
-            sampled_domain_callback_name(index, "value"),
-            gate,
+            "    if (!llg_sampled_domain_register({index}ULL, {}ULL, {}, NULL, {}ULL)) return 0;\n",
+            domain.clock,
+            sampled_domain_callback_name(index),
             domain.history_ticks,
         ));
     }

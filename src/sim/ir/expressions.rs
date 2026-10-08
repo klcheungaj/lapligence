@@ -716,31 +716,49 @@ impl IrSampledCall {
     }
 }
 
-/// One explicit sampled clock and its gated expression history. The callback
-/// expression is rendered in a Preponed context by the C backend.
+/// The clocking event of sampled history domains (SV 16.9.3). Domains that
+/// share a clock share its ticks; the gate is part of the clock's identity.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrSampledClockKind {
+    /// One posedge/negedge of an active packed signal, detected at its write.
+    Edge { signal: usize, posedge: bool },
+    /// Any other legal clocking event. A synthetic process waits on the event
+    /// control and executes [`super::IrStmt::SampledClockTick`].
+    Event,
+}
+
+/// One sampled-value clock. `gate` combines an edge's `iff` condition with
+/// the `$past` gating expression (`ev iff expression2`); like an event
+/// control's `iff`, it reads current values when the clock occurs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrSampledClock {
+    pub(in crate::sim) kind: IrSampledClockKind,
+    pub(in crate::sim) gate: Option<IrExpr>,
+}
+
+impl IrSampledClock {
+    pub(in crate::sim) fn new(kind: IrSampledClockKind, gate: Option<IrExpr>) -> Self {
+        Self { kind, gate }
+    }
+}
+
+/// One expression's sampled history on one clock, shared by every call that
+/// reads that expression on that clock. The sample expression is rendered in
+/// a Preponed context by the C backend.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrSampledDomain {
-    pub(in crate::sim) clock_signal: usize,
-    pub(in crate::sim) posedge: bool,
-    pub(in crate::sim) gate: Option<IrExpr>,
+    pub(in crate::sim) clock: usize,
     pub(in crate::sim) sample: IrExpr,
     /// Deepest clock tick any call reads (`$past` ticks; 1 for status
-    /// functions). The runtime retains only that much history.
+    /// functions). The runtime retains only that much history. Zero marks a
+    /// domain no call reads any more: it is not registered.
     pub(in crate::sim) history_ticks: u64,
 }
 
 impl IrSampledDomain {
-    pub(in crate::sim) fn new(
-        clock_signal: usize,
-        posedge: bool,
-        gate: Option<IrExpr>,
-        sample: IrExpr,
-        history_ticks: u64,
-    ) -> Self {
+    pub(in crate::sim) fn new(clock: usize, sample: IrExpr, history_ticks: u64) -> Self {
         Self {
-            clock_signal,
-            posedge,
-            gate,
+            clock,
             sample,
             history_ticks,
         }

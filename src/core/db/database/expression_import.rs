@@ -238,27 +238,11 @@ pub(super) fn expression_from_slang(
                 .ok_or_else(|| {
                     DbError::InvalidSnapshot("clocking event control is missing".into())
                 })?;
-            if timing.kind != SemanticKind::TimingControl
-                || timing.subkind != 113
-                || (!timing.is_posedge() && !timing.is_negedge())
-            {
+            if timing.kind != SemanticKind::TimingControl || !matches!(timing.subkind, 113 | 114) {
                 ExprKind::Other
             } else {
-                let timing_edges = semantic_edges(snapshot, timing)?;
-                let signal =
-                    edge_target(ids, timing_edges, SemanticEdgeRole::Event)?.ok_or_else(|| {
-                        DbError::InvalidSnapshot("clocking event has no signal".into())
-                    })?;
-                if is_named_event_expression(snapshot, ids, signal)? {
-                    ExprKind::Other
-                } else {
-                    let gate = edge_target(ids, timing_edges, SemanticEdgeRole::Condition)?;
-                    ExprKind::ClockingEvent {
-                        signal,
-                        posedge: timing.is_posedge(),
-                        gate,
-                    }
-                }
+                let (specs, _) = event_specs(snapshot, timing, ids)?;
+                ExprKind::ClockingEvent { specs }
             }
         }
         81..=84 => {

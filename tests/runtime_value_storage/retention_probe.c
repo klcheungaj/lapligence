@@ -98,9 +98,9 @@ static void completed_parent_waits_for_join_none_child(void) {
 static sv4_t domain_clock;
 static uint64_t domain_sample;
 
-static sv4_t domain_value(void* data) {
+static void domain_value(void* data, sv4_t* out) {
     (void)data;
-    return sv4_from_u64(domain_sample, 16, 0);
+    sv4_replace(out, sv4_from_u64(domain_sample, 16, 0));
 }
 
 // The newest sample of step `step`; every seventh step has a second edge.
@@ -119,10 +119,11 @@ static void sampled_domain_history_is_bounded(void) {
     g.current_region = LLG_REGION_ACTIVE;
     domain_clock = sv4_zero(1, 0);
     domain_sample = 0;
-    CHECK(llg_sampled_domain_register(7, &domain_clock, LLG_EV_POSEDGE, domain_value,
-                                      NULL, NULL, DOMAIN_TICKS));
+    CHECK(llg_sampled_clock_register_edge(3, &domain_clock, LLG_EV_POSEDGE, NULL, NULL));
+    CHECK(llg_sampled_domain_register(7, 3, domain_value, NULL, DOMAIN_TICKS));
     llg_sampled_domain_t* domain = find_sampled_domain(7);
     CHECK(domain != NULL);
+    sv4_t* storage = NULL;
     for (uint64_t step = 1; step <= DOMAIN_STEPS; step++) {
         g.now = step;
         domain_sample = step * 10u;
@@ -139,12 +140,14 @@ static void sampled_domain_history_is_bounded(void) {
                           step > ticks ? sample_at(step - ticks) : 0);
         CHECK(llg_sampled_domain_status(7, 3) == 1); // $changed
         drive_clock(0);
-        size_t entries = 0;
-        for (llg_sampled_domain_history_t* history = domain->history; history;
-             history = history->next)
-            entries++;
-        CHECK(domain->history_groups <= DOMAIN_TICKS + 1);
-        CHECK(entries <= 2u * (DOMAIN_TICKS + 1));
+        // One slot per time step, at most the deepest read plus the current
+        // step; once full, the ring storage is reused rather than reallocated.
+        CHECK(domain->count <= DOMAIN_TICKS + 1);
+        CHECK(domain->capacity <= DOMAIN_TICKS + 1);
+        if (domain->capacity == DOMAIN_TICKS + 1) {
+            if (!storage) storage = domain->samples;
+            CHECK(domain->samples == storage);
+        }
     }
     llg_rt_cleanup();
     sv4_destroy(&domain_clock);
