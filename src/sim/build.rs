@@ -65,9 +65,17 @@
 //! - `LLG_RUNTIME_CACHE_DIR` — shared static-runtime cache root; defaults to
 //!   `build/llg-runtime-cache` under the current directory. Relative values
 //!   resolve from the current directory; an empty value selects the default.
-//!   No path is fixed at compile time.
+//!   No path is fixed at compile time. The root also holds CMake
+//!   toolchain-detection seeds that fresh build trees reuse (see
+//!   `build/toolchain_seed.rs`).
+//! - `LLG_CMAKE_TOOLCHAIN_SEED` ([`TOOLCHAIN_SEED_ENV`]) — `0`, `off`,
+//!   `false` or `no` makes every fresh configure run CMake's own toolchain
+//!   detection.
 
+mod toolchain_seed;
 mod value;
+
+pub use toolchain_seed::SEED_ENV as TOOLCHAIN_SEED_ENV;
 
 use std::error::Error;
 use std::fmt;
@@ -512,7 +520,18 @@ pub fn build_model_cmake_with_opts(
     let waveform = waveform_enabled(extra);
     let jobs = build_jobs_for(opts);
     let generator = generator_for(opts);
-    let runtime_library = prepare_runtime_cache(waveform, &cc, &flags, &cmake_prog, jobs, opts)?;
+    let launcher = resolve_launcher(opts);
+    let compiler = CompilerFacts::probe(&cc);
+    let toolchain = toolchain_seed::Toolchain {
+        cmake: &cmake_prog,
+        generator: &generator,
+        cc: &cc,
+        flags: &flags,
+        launcher: &launcher,
+        compiler_identity: &compiler.identity,
+        compiler_target: &compiler.target,
+    };
+    let runtime_library = prepare_runtime_cache(waveform, &toolchain, jobs, opts)?;
 
     // Drop an incompatible CMake build tree so configure starts clean: no
     // cache means a previous configure died midway; a generator mismatch
@@ -520,30 +539,18 @@ pub fn build_model_cmake_with_opts(
     // kept — reconfigure + build are incremental.
     remove_incompatible_build_dir(&build_dir, &generator);
 
-    let mut configure = Command::new(&cmake_prog);
-    configure
-        .arg("-S")
-        .arg(out_dir)
-        .arg("-B")
-        .arg(&build_dir)
-        .arg("-G")
-        .arg(&generator);
-    configure.arg(format!(
-        "-DCMAKE_C_COMPILER_LAUNCHER={}",
-        resolve_launcher(opts)
-    ));
-    configure
-        .arg(format!("-DCMAKE_C_COMPILER={cc}"))
-        .arg(format!("-DCMAKE_C_FLAGS:STRING={flags}"))
-        .arg(format!(
-            "-DLLG_RUNTIME_LIBRARY={}",
-            runtime_library.display()
-        ));
+    let runtime_library_arg = format!("-DLLG_RUNTIME_LIBRARY={}", runtime_library.display());
+    run_configure(
+        out_dir,
+        &build_dir,
+        &toolchain,
+        &[runtime_library_arg],
+        &runtime_cache_root(opts)?,
+    )?;
     let launch_error = |source| BuildError::CmakeLaunch {
         program: cmake_prog.clone(),
         source,
     };
-    run_configure(&mut configure, &cmake_prog, &build_dir, &generator)?;
 
     // Build.
     let mut build_cmd = build_command(&cmake_prog, &build_dir, jobs, None);
@@ -748,29 +755,80 @@ fn remove_incompatible_build_dir(build_dir: &Path, generator: &str) {
     }
 }
 
-/// Run `configure`. A failed configure leaves the tree unusable no matter the
-/// cause (poisoned/stale cache, half-written state, changed toolchain), so it
-/// is retried exactly once from scratch, except when CMake found no build
-/// program for `generator`, which a retry cannot fix.
+/// Configure `source` into `build_dir` with `toolchain` plus `extra`
+/// definitions. A fresh tree is first seeded with the toolchain detection
+/// results under `seed_root` (see [`toolchain_seed`]). A failed configure
+/// leaves the tree unusable no matter the cause (poisoned/stale cache,
+/// half-written state, changed toolchain, a bad seed), so it is retried
+/// exactly once from scratch without a seed, except when CMake found no build
+/// program for the generator, which a retry cannot fix. A seed whose configure
+/// failed where the clean retry succeeded is rejected for later builds.
 fn run_configure(
-    configure: &mut Command,
-    cmake_prog: &str,
+    source: &Path,
     build_dir: &Path,
-    generator: &str,
+    toolchain: &toolchain_seed::Toolchain<'_>,
+    extra: &[String],
+    seed_root: &Path,
 ) -> Result<(), BuildError> {
+    let command = |seed_args: &[String]| {
+        let mut command = Command::new(toolchain.cmake);
+        command
+            .arg("-S")
+            .arg(source)
+            .arg("-B")
+            .arg(build_dir)
+            .args(toolchain_seed::toolchain_args(
+                toolchain.generator,
+                toolchain.launcher,
+                toolchain.cc,
+                toolchain.flags,
+            ))
+            .args(extra)
+            .args(seed_args);
+        command
+    };
     let launch_error = |source| BuildError::CmakeLaunch {
-        program: cmake_prog.to_owned(),
+        program: toolchain.cmake.to_owned(),
         source,
     };
+    let seed = if build_dir.exists() {
+        None
+    } else {
+        toolchain_seed::prepare(seed_root, toolchain)
+    };
+    let seed_args = seed.as_ref().and_then(|seed| seed.apply(build_dir));
+    let mut configure = command(seed_args.as_deref().unwrap_or_default());
     let mut output = configure.output().map_err(launch_error)?;
     if !output.status.success() && !missing_build_program(&output) {
         remove_dir_all_quiet(build_dir);
+        configure = command(&[]);
         output = configure.output().map_err(launch_error)?;
+        if output.status.success() && seed_args.is_some() {
+            if let Some(seed) = &seed {
+                seed.reject("a seeded configure failed where a clean configure succeeded");
+            }
+        }
     }
     if output.status.success() {
         Ok(())
     } else {
-        Err(configure_error(configure, generator, &output))
+        Err(configure_error(&configure, toolchain.generator, &output))
+    }
+}
+
+/// Compiler facts shared by the runtime cache key and the toolchain seed key,
+/// probed once per build.
+struct CompilerFacts {
+    identity: String,
+    target: String,
+}
+
+impl CompilerFacts {
+    fn probe(cc: &str) -> Self {
+        Self {
+            identity: compiler_identity(cc),
+            target: compiler_target(cc),
+        }
     }
 }
 
@@ -893,15 +951,22 @@ fn dpi_link_setup(opts: &CmakeBuildOpts) -> Result<String, BuildError> {
 /// layout or the cache key.
 fn prepare_runtime_cache(
     waveform: bool,
-    cc: &str,
-    flags: &str,
-    cmake_prog: &str,
+    toolchain: &toolchain_seed::Toolchain<'_>,
     jobs: usize,
     opts: &CmakeBuildOpts,
 ) -> Result<PathBuf, BuildError> {
+    let cmake_prog = toolchain.cmake;
     let key = format!(
         "{}-{}",
-        runtime_cache_key(waveform, cc, flags, cmake_prog, opts),
+        runtime_cache_key_with_compiler(
+            waveform,
+            toolchain.cc,
+            toolchain.flags,
+            cmake_prog,
+            opts,
+            toolchain.compiler_identity,
+            toolchain.compiler_target,
+        ),
         value::identity(opts)?
     );
     let cache_root = runtime_cache_root(opts)?;
@@ -975,29 +1040,12 @@ fn prepare_runtime_cache(
     })?;
 
     let build_dir = entry.join("build");
-    let generator = generator_for(opts);
-    remove_incompatible_build_dir(&build_dir, &generator);
-
-    let mut configure = Command::new(cmake_prog);
-    configure
-        .arg("-S")
-        .arg(&entry)
-        .arg("-B")
-        .arg(&build_dir)
-        .arg("-G")
-        .arg(&generator);
-    configure
-        .arg(format!("-DCMAKE_C_COMPILER={cc}"))
-        .arg(format!("-DCMAKE_C_FLAGS:STRING={flags}"))
-        .arg(format!(
-            "-DCMAKE_C_COMPILER_LAUNCHER={}",
-            resolve_launcher(opts)
-        ));
+    remove_incompatible_build_dir(&build_dir, toolchain.generator);
+    run_configure(&entry, &build_dir, toolchain, &[], &cache_root)?;
     let launch_error = |source| BuildError::CmakeLaunch {
         program: cmake_prog.to_owned(),
         source,
     };
-    run_configure(&mut configure, cmake_prog, &build_dir, &generator)?;
 
     let mut build = build_command(cmake_prog, &build_dir, jobs, Some("llg_runtime"));
     let output = build.output().map_err(launch_error)?;
@@ -1074,6 +1122,7 @@ fn runtime_cache_root_with_override(base: &Path, override_root: Option<PathBuf>)
     }
 }
 
+#[cfg(test)]
 fn runtime_cache_key(
     waveform: bool,
     cc: &str,
@@ -1250,18 +1299,7 @@ struct RuntimeCacheLock {
 
 impl RuntimeCacheLock {
     fn acquire(entry: &Path) -> Result<Self, BuildError> {
-        let path = entry.with_extension("lock");
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)
-            .map_err(|source| BuildError::Io {
-                action: "open runtime cache lock",
-                path: path.clone(),
-                source,
-            })?;
+        let (path, file) = Self::open(entry)?;
         let started = Instant::now();
         loop {
             match file.try_lock() {
@@ -1283,6 +1321,36 @@ impl RuntimeCacheLock {
                 }
             }
         }
+    }
+
+    /// The lock when it is free now; `None` while another process holds it.
+    fn try_acquire(entry: &Path) -> Result<Option<Self>, BuildError> {
+        let (path, file) = Self::open(entry)?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(Self { _file: file })),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(source)) => Err(BuildError::Io {
+                action: "lock runtime cache",
+                path,
+                source,
+            }),
+        }
+    }
+
+    fn open(entry: &Path) -> Result<(PathBuf, File), BuildError> {
+        let path = entry.with_extension("lock");
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|source| BuildError::Io {
+                action: "open runtime cache lock",
+                path: path.clone(),
+                source,
+            })?;
+        Ok((path, file))
     }
 }
 
@@ -1857,6 +1925,19 @@ mod tests {
         );
         assert_eq!(generator_from(None, Some("")), DEFAULT_GENERATOR);
         assert_eq!(generator_from(None, None), "Ninja");
+    }
+
+    #[test]
+    fn generated_projects_detect_the_toolchain_like_the_seed_probe() {
+        // Detection runs in project(); the seed is only valid for projects
+        // whose preamble (and so policy state) matches the probe's.
+        for template in [CMAKELISTS_TEMPLATE, RUNTIME_CMAKELISTS_TEMPLATE] {
+            let rest = template
+                .strip_prefix(toolchain_seed::PROJECT_PREAMBLE)
+                .expect("generated project starts with the seed preamble");
+            assert!(rest.starts_with("project("), "{rest}");
+            assert!(rest.lines().next().unwrap().ends_with(" C)"));
+        }
     }
 
     #[test]

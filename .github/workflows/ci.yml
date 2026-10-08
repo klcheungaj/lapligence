@@ -598,6 +598,19 @@ jobs:
           --archive-file "$RUNNER_TEMP/nextest-archive/nextest-archive.tar.zst"
           --workspace-remap "$GITHUB_WORKSPACE" --extract-to "$GITHUB_WORKSPACE"
 
+      # Whether fresh model trees reused CMake toolchain detection: each seed
+      # prints its CMake version (ready) or why it was refused (rejected).
+      - name: Report CMake toolchain seeds
+        if: always()
+        shell: bash
+        run: |
+          find target -maxdepth 3 -type d -name 'cmake-toolchain-*' | while read -r seed; do
+            for marker in ready rejected; do
+              [ -f "$seed/$marker" ] && echo "$seed $marker: $(head -n 1 "$seed/$marker")"
+            done
+          done
+          true
+
       - name: Report runner resources
         if: always()
         shell: bash

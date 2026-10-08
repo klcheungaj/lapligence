@@ -155,6 +155,20 @@ driver passes `<out-dir>/llg-runtime-cache`); relative paths resolve from the CW
 Never bake build-machine paths (`CARGO_MANIFEST_DIR`) into runtime defaults;
 `.cargo/config.toml` `[env]` points Cargo-launched runs at the repo cache. Prune stale
 sources/incompatible partial builds and retry failed configuration once cleanly.
+
+Fresh trees (model and runtime archive) are seeded with cached toolchain
+detection (`build/toolchain_seed.rs`): `cmake-toolchain-<hash>` beside the runtime
+archives holds one probe's `CMakeFiles/<version>/*.cmake` plus the cache entries
+detection creates, applied with `CMAKE_PLATFORM_INFO_INITIALIZED`, the state
+CMake itself re-configures from. The exact key covers CMake and its version,
+generator, compiler spelling/identity/target, flags, launcher, host and the
+detection environment (`PATH`, `INCLUDE`, `LIB`, `SDKROOT`, ...). Publication
+needs a self-check (clean + re-configure vs seeded probe build files equal
+modulo tree paths and CMake module lists) under a non-blocking entry lock;
+otherwise a `rejected` marker stops probing. A seeded configure that fails is
+retried clean and rejects the seed. Published files never change; ready/rejected
+markers are renamed into place with the exact key. Projects keep the shared
+`PROJECT_PREAMBLE` before `project()`. `LLG_CMAKE_TOOLCHAIN_SEED=0` disables it.
 Root portable patch preparation accepts clean/fully-applied vendors and rejects
 partial/mismatched edits; retain upstream-base gitlinks.
 

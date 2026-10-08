@@ -754,7 +754,7 @@ Omitting it preserves existing settings and defaults; `/build` is never assumed.
 | --- | --- |
 | Generated model sources, CMake trees, objects and simulators | `PATH/lapligence/worktrees/<worktree-hash>/run.<unique>/tests/` |
 | Temporary files from tests/tools honoring Unix `TMPDIR` | The same run's `tmp/` |
-| Compatible simulation runtime archives | Shared `PATH/lapligence/runtime-cache/` |
+| Compatible simulation runtime archives and CMake toolchain-detection seeds | Shared `PATH/lapligence/runtime-cache/` |
 | Cargo targets and intermediate build artifacts | Each worktree's `target/` on its existing filesystem |
 | Native Slang CMake build | Each worktree's existing `target/slang/` |
 | Cargo downloads and optional compiler caches | Existing persistent locations |
@@ -763,6 +763,9 @@ The hash uses the canonical worktree path, and each invocation receives a fresh
 run directory even within the same worktree. All agents can use the same command;
 no manual agent number is needed. Runtime entries are keyed by sources, ABI,
 toolchain, flags and build options, with process locks for cache population.
+Toolchain seeds (`cmake-toolchain-*`, see [sim](../src/sim/AGENTS.md)) are keyed by
+CMake, generator, compiler, flags, launcher and detection environment; tests that
+inspect configure behaviour can disable them with `LLG_CMAKE_TOOLCHAIN_SEED=0`.
 Do not share mutable model/CMake/Cargo build directories between worktrees or
 pass `--target-dir` to override the runner's worktree-local Cargo location.
 

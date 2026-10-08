@@ -321,7 +321,8 @@ Model build (`llg`):
 
 | Variable | Effect |
 | --- | --- |
-| `LLG_RUNTIME_CACHE_DIR` | Runtime cache when `--runtime-cache` is not given. |
+| `LLG_RUNTIME_CACHE_DIR` | Runtime cache when `--runtime-cache` is not given. It also keeps CMake toolchain-detection results so fresh model directories skip compiler detection. |
+| `LLG_CMAKE_TOOLCHAIN_SEED` | `0` (or `off`) makes every fresh model configure detect the toolchain itself instead of reusing a cached detection. |
 | `LLG_CC`, then `CC` | C compiler when `--cc` is not given. |
 | `LLG_CFLAGS` | Extra C flags when `--cflags` is not given. |
 | `LLG_C_LAUNCHER` | C compiler launcher (for example `ccache`) when `--launcher` is not given (it beats `build.launcher`); `LLG_CC` must stay a single program. Empty means unset. |
