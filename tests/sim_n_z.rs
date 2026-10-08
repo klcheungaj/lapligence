@@ -5,6 +5,8 @@
 //! instead of once per file. Register a new suite here; the
 //! `test_layout` suite rejects unregistered files. See `tests/readme.md`.
 
+#[path = "support/c_compiler.rs"]
+mod c_compiler;
 #[path = "support/sim_cli.rs"]
 mod sim_cli;
 #[path = "support/sim.rs"]

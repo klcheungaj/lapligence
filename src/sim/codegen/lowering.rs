@@ -887,8 +887,23 @@ struct SignalInfo {
 
 #[derive(Clone)]
 struct ClockingSampleInfo {
-    source: NodeId,
+    /// Packed storage the sampler reads: the clocking signal itself, or the
+    /// hidden image an expression-backed or real clockvar maintains.
+    source: SignalInfo,
     sample: SignalInfo,
+}
+
+/// A clockvar whose clocking signal is not one whole packed signal (a select,
+/// concatenation, computed or real expression, SV §14.5). A synthetic
+/// continuous evaluation keeps `image` equal to the expression, so the
+/// ordinary Preponed, Observed and skew-history machinery samples it; a real
+/// value is held as its 64-bit `$realtobits` image.
+#[derive(Clone)]
+struct ClockingExpressionSource {
+    variable: NodeId,
+    expression: NodeId,
+    image: SignalInfo,
+    real: bool,
 }
 
 /// Clock inferred from an enclosing property or supplied as a sampled-value
@@ -1227,6 +1242,9 @@ struct Codegen<'a> {
     sig_global_by_ir: HashMap<usize, BTreeMap<usize, NodeId>>,
     /// Clocking block variable → synthesized sampled storage and source.
     clocking_samples: HashMap<NodeId, ClockingSampleInfo>,
+    /// Expression-backed clockvars whose images are evaluated by synthetic
+    /// processes, in declaration order.
+    clocking_expression_sources: Vec<ClockingExpressionSource>,
     /// Clocking source signal → largest input skew read from its history.
     clocking_history_ticks: HashMap<usize, u64>,
     /// Canonical lvalues for module `ref` port storage.  A target may be a
@@ -1304,6 +1322,11 @@ struct Codegen<'a> {
     /// lowered, open only for statements that evaluate their operands once
     /// (assignments and system-task calls).
     container_call_prelude: Option<Vec<IrStmt>>,
+    /// Statements that run an expression-form `try_put`/`try_get` of an
+    /// aggregate or selected operand before the statement being lowered
+    /// (SIM-017); open only for statements that evaluate it once
+    /// (assignments, system-task calls and `if` conditions).
+    mailbox_statement_prelude: Option<Vec<IrStmt>>,
     /// Queue and dynamic-array members of container record elements named
     /// by the statement being lowered, by element node and member path
     /// suffix → the lexical container staging each
@@ -1665,6 +1688,7 @@ impl<'a> Codegen<'a> {
             sig_globals: HashMap::new(),
             sig_global_by_ir: HashMap::new(),
             clocking_samples: HashMap::new(),
+            clocking_expression_sources: Vec::new(),
             clocking_history_ticks: HashMap::new(),
             reference_signals: HashMap::new(),
             reference_arrays: HashMap::new(),
@@ -1694,6 +1718,7 @@ impl<'a> Codegen<'a> {
             subroutine_containers: HashMap::new(),
             container_result_call: false,
             container_call_prelude: None,
+            mailbox_statement_prelude: None,
             staged_element_members: HashMap::new(),
             container_types_like: HashMap::new(),
             native_tagged_bypass: HashSet::new(),

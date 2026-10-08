@@ -584,7 +584,8 @@ support; the corresponding execution tests must also pass.
 
 - Pinned Rust 1.98.0, initialized vendors, and
   `cargo install cargo-nextest --locked`.
-- CMake/C compiler for public conformance; run commands at repository root.
+- CMake, Ninja (the default model generator; set `CMAKE_GENERATOR` to use
+  another) and a C compiler for public conformance; run commands at repository root.
 - Cargo-launched runs get `LLG_RUNTIME_CACHE_DIR=<repo>/target/llg-runtime-cache`
   from `.cargo/config.toml` `[env]`, so CLI tests in temporary CWDs share it.
   An explicit value wins; use an absolute path, because `llg` resolves
@@ -695,13 +696,18 @@ wrapper build, which only reads `LLG_CCACHE`. Test directories are unique per
 process, so ccache needs `CCACHE_BASEDIR` set to a common parent of those
 directories (the test scratch root, `LLG_TEST_BUILD_DIR`/`--test-work-dir`, or
 the temp dir) and `CCACHE_NOHASHDIR=1`; without them paths enter the hash and
-every build misses. Harness paths that build a model through `sim::build` or
+every build misses. Test directories are canonicalized, so the base directory
+must match their resolved spelling (Windows long names rather than 8.3 short
+names, macOS `/private/var`); ccache 4.12+ accepts a `;`/`:` list of both. Harness paths that build a model through `sim::build` or
 the `llg` binary (`tests/support/sim.rs`, `tests/support/sim_cli.rs`,
 `sim_cmake`) and the `runtime_value_storage` CMake probes honour it. Probes that
 compile runtime C directly with `$LLG_CC`/`$CC` (`runtime_values`,
 `runtime_random`, `runtime_rng`, `runtime_containers`, `sim_dpi`, `sim_waveform`,
 `sim_feature_completion/sim_004`) run one compiler command each and do not use
-the launcher.
+the launcher. Without either variable they use the model default (MSVC `cl` on
+Windows); `tests/support/c_compiler.rs` (`host_c_compiler`,
+`strict_c11_executable`) translates their strict C11 build to `/W4 /WX` for
+MSVC. The DPI, VPI and FST-reader probes stay Unix-only.
 
 `LLG_CCACHE` now rejects invalid values or a missing requested executable instead
 of continuing uncached. Changing the launcher reconfigures the native CMake cache
@@ -753,7 +759,7 @@ Omitting it preserves existing settings and defaults; `/build` is never assumed.
 | --- | --- |
 | Generated model sources, CMake trees, objects and simulators | `PATH/lapligence/worktrees/<worktree-hash>/run.<unique>/tests/` |
 | Temporary files from tests/tools honoring Unix `TMPDIR` | The same run's `tmp/` |
-| Compatible simulation runtime archives | Shared `PATH/lapligence/runtime-cache/` |
+| Compatible simulation runtime archives and CMake toolchain-detection seeds | Shared `PATH/lapligence/runtime-cache/` |
 | Cargo targets and intermediate build artifacts | Each worktree's `target/` on its existing filesystem |
 | Native Slang CMake build | Each worktree's existing `target/slang/` |
 | Cargo downloads and optional compiler caches | Existing persistent locations |
@@ -762,6 +768,12 @@ The hash uses the canonical worktree path, and each invocation receives a fresh
 run directory even within the same worktree. All agents can use the same command;
 no manual agent number is needed. Runtime entries are keyed by sources, ABI,
 toolchain, flags and build options, with process locks for cache population.
+Toolchain seeds (`<cache>/cmake-toolchain/<hash>/`) and MSVC compiler probe memos
+(`<cache>/compiler-probe/<hash>`) live in the auxiliary directories named by
+`sim::build::RUNTIME_CACHE_AUX_DIRS` (see [sim](../src/sim/AGENTS.md)); every other
+root child is a runtime entry with a `ready` marker. Seeds are keyed by
+CMake, generator, compiler, flags, launcher and detection environment; tests that
+inspect configure behaviour can disable them with `LLG_CMAKE_TOOLCHAIN_SEED=0`.
 Do not share mutable model/CMake/Cargo build directories between worktrees or
 pass `--target-dir` to override the runner's worktree-local Cargo location.
 

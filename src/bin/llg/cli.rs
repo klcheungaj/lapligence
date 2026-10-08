@@ -188,10 +188,12 @@ Options:
       --                    Pass remaining arguments to the generated simulator
                               (replaces the llg.toml plusargs, even when empty)
       --generator <backend>  Select the CMake generator
+                              (default: $CMAKE_GENERATOR, build.generator, Ninja)
       --launcher <program>   Select the CMake C compiler launcher
                               (default: $LLG_C_LAUNCHER, build.launcher, none)
       --dpi-lib <path>       Link one explicit DPI-C library (repeatable)
-      --cc <program>         C compiler for the model (default: $LLG_CC, $CC, cc)
+      --cc <program>         C compiler for the model
+                              (default: $LLG_CC, $CC, {default_cc})
       --cflags <flags>       Extra C compiler flags (default: $LLG_CFLAGS)
                               Appended after the model optimization level
       --model-opt-level <O0|O1|O2|O3|Os>
@@ -204,6 +206,7 @@ Options:
                               (default: build)
       --runtime-cache <dir>  Runtime archive cache (default: $LLG_RUNTIME_CACHE_DIR,
                               <out-dir>/llg-runtime-cache)",
+                    default_cc = sim::build::DEFAULT_C_COMPILER,
                     model_opt_default = sim::build::DEFAULT_MODEL_OPT_LEVEL
                         .gnu_flag()
                         .trim_start_matches('-'),

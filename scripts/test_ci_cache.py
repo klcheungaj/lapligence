@@ -2,6 +2,7 @@ import contextlib
 import io
 import os
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -155,6 +156,14 @@ class PruneTests(unittest.TestCase):
         self.assertNotIn("llg", names)
 
 
+def ccache_version():
+    found = shutil.which("ccache")
+    if not found:
+        return ()
+    first = subprocess.run([found, "--version"], stdout=subprocess.PIPE, text=True).stdout.split("\n")[0]
+    return tuple(int(part) for part in first.rsplit(" ", 1)[-1].split(".")[:2] if part.isdigit())
+
+
 class CcacheTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="llg-ccache-test-"))
@@ -259,6 +268,46 @@ class CcacheTests(unittest.TestCase):
             ci_ccache.ccache_environment = original
         self.assertIsNotNone(failure)
         self.assertIn("not a cache hit", failure)
+        self.assertIn("hash input diff (a -> b):", failure)
+        self.assertRegex(failure, r"\[a\] compile: .*check\.c")
+        self.assertRegex(failure, r"\[b\] ccache log excerpt:")
+        self.assertLessEqual(len(failure), ci_ccache.DIAGNOSTIC_LIMIT + 1100)
+
+    def test_self_check_compiler_follows_the_generated_model_precedence(self):
+        self.assertEqual(ci_ccache.model_compiler({"LLG_CC": "a", "CC": "b"}, "Linux"), "a")
+        self.assertEqual(ci_ccache.model_compiler({"LLG_CC": "", "CC": "b"}, "Windows"), "b")
+        self.assertEqual(ci_ccache.model_compiler({"CC": ""}, "Windows"), "cl")
+        self.assertEqual(ci_ccache.model_compiler({}, "Darwin"), "cc")
+
+    def test_base_dir_lists_the_given_and_the_resolved_spelling(self):
+        real = self.tmp / "real"
+        real.mkdir()
+        link = self.tmp / "link"
+        try:
+            link.symlink_to(real, target_is_directory=True)
+        except OSError:
+            self.skipTest("symbolic links are unavailable")
+        resolved = os.path.realpath(real)
+        self.assertEqual(ci_ccache.base_dir_spellings(real), [str(real)] if str(real) == resolved else [str(real), resolved])
+        self.assertEqual(ci_ccache.base_dir_spellings(link), [str(link), resolved])
+        env = ci_ccache.ccache_environment(self.tmp / "cache", link, "1M")
+        self.assertEqual(env["CCACHE_BASEDIR"], os.pathsep.join([str(link), resolved]))
+
+    @unittest.skipUnless(
+        shutil.which("ccache") and shutil.which("cmake") and shutil.which("cc") and ccache_version() >= (4, 12),
+        "needs ccache 4.12+ (base_dir lists), cmake and a C compiler",
+    )
+    def test_self_check_hits_through_an_unresolved_base_dir(self):
+        real = self.tmp / "real"
+        real.mkdir()
+        link = self.tmp / "link"
+        try:
+            link.symlink_to(real, target_is_directory=True)
+        except OSError:
+            self.skipTest("symbolic links are unavailable")
+        with contextlib.redirect_stdout(io.StringIO()):
+            failure = ci_ccache.self_check(shutil.which("ccache"), link, "cc")
+        self.assertIsNone(failure)
 
 
 if __name__ == "__main__":

@@ -121,8 +121,9 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
   initializing a `uint32_t` from an enum ternary is narrowing (C2397); cast.
   MSVC's `<chrono>` warning C4530 without `/EHsc` is harmless.
 - MSVC at `/W4` reports a statement after a call to a `__declspec(noreturn)`
-  function as unreachable (C4702); GCC/Clang do not. `llg_co.h` omits such
-  defensive returns only for MSVC with its default noreturn handler.
+  or `_Noreturn` function as unreachable (C4702); GCC/Clang do not. `llg_co.h`
+  omits such defensive returns only for MSVC with its default noreturn handler
+  or an override that defines `LLG_CO_BAD_STATE_NORETURN` (as `llg_rt.h` does).
 - Without zlib's configure step `Z_HAVE_UNISTD_H` is unset, so its `gz*` code
   calls undeclared `read`/`write`/`lseek`/`close`, which GCC 14 and Clang reject;
   the bundled zlib defines it outside Windows.

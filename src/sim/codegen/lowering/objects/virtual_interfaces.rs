@@ -88,10 +88,22 @@ impl Codegen<'_> {
             .get(&(descriptor, member.clone()))
             .copied()
             .ok_or_else(|| {
-                // A view port without interface storage of its own is a
-                // modport expression port (SV 25.5.4); its expression is
-                // not evaluated per bound instance at run time.
-                if view_port {
+                // A clocking block has no member storage of its own, only
+                // its clockvars (`cb.x`); its event would need a
+                // per-instance event object in the descriptor.
+                let prefix = format!("{member}.");
+                if self
+                    .virtual_interface_members
+                    .keys()
+                    .any(|(owner, name)| *owner == descriptor && name.starts_with(&prefix))
+                {
+                    format!(
+                        "clocking block event `{member}` is not supported through virtual interface `{spelling}` in `{path}`; read its clockvars or wait on its clocking event instead"
+                    )
+                } else if view_port {
+                    // A view port without interface storage of its own is a
+                    // modport expression port (SV 25.5.4); its expression is
+                    // not evaluated per bound instance at run time.
                     format!(
                         "modport expression port `{member}` is not supported through virtual interface view `{spelling}` in `{path}`"
                     )
@@ -110,6 +122,7 @@ impl Codegen<'_> {
         let width = metadata.width;
         let signed = metadata.signed;
         let two_state = metadata.two_state;
+        let shortreal = metadata.shortreal;
         // A handle held in a record or class member (`r.v.x`) is the value
         // of the member access expression, not of its declaration.
         let handle = if position > 0 {
@@ -119,7 +132,9 @@ impl Codegen<'_> {
             handle
         };
         let handle = self.lower_chandle(path, handle)?;
-        Ok(Some((handle, descriptor, slot, width, signed, two_state)))
+        Ok(Some((
+            handle, descriptor, slot, width, signed, two_state, shortreal,
+        )))
     }
 
     /// The nested member access of `node` whose path has `length` components.
@@ -150,7 +165,7 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
-        let Some((handle, descriptor, slot, width, signed, _two_state)) =
+        let Some((handle, descriptor, slot, width, signed, _two_state, _shortreal)) =
             self.virtual_interface_access(path, node, false)?
         else {
             return Ok(None);
@@ -177,7 +192,7 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrLhs>, String> {
-        let Some((handle, descriptor, slot, width, signed, two_state)) =
+        let Some((handle, descriptor, slot, width, signed, two_state, shortreal)) =
             self.virtual_interface_access(path, node, true)?
         else {
             return Ok(None);
@@ -196,7 +211,7 @@ impl Codegen<'_> {
             width,
             signed,
             two_state,
-            shortreal: false,
+            shortreal,
         }))
     }
 }

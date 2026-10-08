@@ -346,10 +346,17 @@ pub struct ClockingBlockInfo {
 }
 
 /// Owned source and skew metadata for one clocking block variable.
+///
+/// `expression` is the typed clocking signal expression (the implicit name or
+/// the `= expression` of SV §14.5). `source` names the declaration that
+/// expression designates when it is a whole signal reference; a select,
+/// concatenation or computed expression has no single source, so consumers
+/// must lower `expression` instead of substituting a signal.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClockingVarInfo {
     pub block: NodeId,
-    pub source: NodeId,
+    pub source: Option<NodeId>,
+    pub expression: NodeId,
     pub direction: Direction,
     pub input: ClockingSkew,
     pub output: ClockingSkew,

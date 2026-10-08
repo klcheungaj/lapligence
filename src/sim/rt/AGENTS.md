@@ -312,8 +312,14 @@ waiters without an extra put; do not grant during an incomplete cancellation bat
 or teardown. Mailboxes retain bounded/unbounded FIFO/peek rules and nominal typed
 identity (including null handles), packed width/sign/state and real precision.
 Mismatched try calls return -1 without assignment/consumption; blocking mismatches
-fail. Remove consumed nodes before callbacks, clone peek values and register
-ref targets/delivery snapshots through reentrant publication.
+fail. A blocked get is serviced by type check, then removal (a peek clones) into
+the waiter's `mailbox_delivery`, then wake; the waiter writes its destination when
+it resumes (`llg_mailbox_delivery_take`). A waiter killed first hands a consumed
+message back to the head of its mailbox (a peek copy is dropped) and the mailbox is
+re-serviced after the cancellation batch, like a semaphore grant. `LLG_MAILBOX_VALUE`
+messages own a descriptor-backed `llg_value_t` matched by the model's static
+equivalence key; `llg_mailbox_trace` enumerates queued, blocked-put and pending
+messages for tracing roots (SIM-018).
 
 Clocking input samples complete before the Observed block event. Output captures
 publish Re-NBA with constant skew; off-event drives wait for the next event and
@@ -326,6 +332,12 @@ but native runtime callers can pass any live packed owner to the borrowed-source
 APIs. Globally filtering that storage class would change accepted runtime behavior.
 Ordinary waits use their own snapshots, input skew sampling uses
 `sampling.c`, and named-event `.triggered` uses event-object state.
+`llg_clocking_sample*` store a clockvar's sample and publish it through
+`sig_write`/`real_write` while `clocking_sample_publication` is set, the one
+exception to the read-only Observed region, so `@(cb.x)` and edges on clockvars
+wake. A real or shortreal input bound to an expression samples its 64-bit
+`$realtobits` image signal; the `_real` variants decode it into the `double`
+sample.
 `llg_sampled_register_value` keeps only a signal's Preponed value (procedural
 `$sampled`, every concurrent-assertion read) in a separate list, so it adds no
 history and no per-write lookup. `llg_sampled_register` adds Observed clocking

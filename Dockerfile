@@ -29,6 +29,7 @@ FROM alpine:3.20 AS toolchain
 # Build toolchain and Slang's non-Rust dependencies:
 #   build-base   – gcc, g++, make, binutils (all target musl natively on Alpine)
 #   cmake        – CMake ≥ 3.20 is provided by Alpine 3.20
+#   ninja        – default CMake generator for generated simulation models
 #   python3      – required by Slang's syntax and diagnostic generators
 #   curl         – used by the Rust installer
 #   patch        – applies vendored fixes even when submodule Git metadata is
@@ -37,6 +38,7 @@ RUN apk update
 RUN apk add --no-cache \
         build-base \
         cmake \
+        ninja \
         python3 \
         libstdc++-dev \
         curl \

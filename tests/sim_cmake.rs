@@ -27,6 +27,8 @@ use std::time::Duration;
 use llg::core::compile;
 use llg::sim;
 
+#[path = "support/c_compiler.rs"]
+mod c_compiler;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -263,14 +265,9 @@ int main(void) { return 0; }
         "unexpected stale-model failure: {error}"
     );
 
-    let compiler = std::env::var("LLG_CC")
-        .or_else(|_| std::env::var("CC"))
-        .unwrap_or_else(|_| "cc".to_owned());
-    let available = Command::new(&compiler)
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success());
-    if !available {
+    let compiler = c_compiler::host_c_compiler();
+    let msvc = c_compiler::is_msvc(&compiler);
+    if !c_compiler::c_compiler_available(&compiler) {
         eprintln!("SKIP: C compiler `{compiler}` not available for mixed-link ABI probe");
         return;
     }
@@ -296,16 +293,25 @@ int main(void) { return 0; }
     )
     .expect("write current coroutine model");
 
-    let stale_object = link_dir.join("stale.o");
-    let model_object = link_dir.join("model.o");
+    let object = if msvc { "obj" } else { "o" };
+    let stale_object = link_dir.join(format!("stale.{object}"));
+    let model_object = link_dir.join(format!("model.{object}"));
     for (directory, source, output) in [
         (&stale_dir, "llg_co.c", &stale_object),
         (&link_dir, "model.c", &model_object),
     ] {
-        let result = Command::new(&compiler)
-            .current_dir(directory)
-            .args(["-std=c11", "-I.", "-c", source, "-o"])
-            .arg(output)
+        let mut command = Command::new(&compiler);
+        command.current_dir(directory);
+        if msvc {
+            command
+                .args(["/nologo", "/std:c11", "/I.", "/c", source])
+                .arg(format!("/Fo{}", output.display()));
+        } else {
+            command
+                .args(["-std=c11", "-I.", "-c", source, "-o"])
+                .arg(output);
+        }
+        let result = command
             .output()
             .expect("run C compiler for mixed-link ABI probe");
         assert!(
@@ -316,12 +322,16 @@ int main(void) { return 0; }
         );
     }
     let executable = link_dir.join(format!("mixed-abi{}", std::env::consts::EXE_SUFFIX));
-    let link = Command::new(&compiler)
-        .args([model_object.as_os_str(), stale_object.as_os_str()])
-        .arg("-o")
-        .arg(&executable)
-        .output()
-        .expect("link mixed coroutine ABI probe");
+    let mut link = Command::new(&compiler);
+    link.args([model_object.as_os_str(), stale_object.as_os_str()]);
+    if msvc {
+        // link.exe reports the unresolved symbol on stdout (LNK2019).
+        link.arg("/nologo")
+            .arg(format!("/Fe{}", executable.display()));
+    } else {
+        link.arg("-o").arg(&executable);
+    }
+    let link = link.output().expect("link mixed coroutine ABI probe");
     assert!(
         !link.status.success(),
         "a model requesting _abi1 unexpectedly linked to an _abi0 runtime"
@@ -793,6 +803,368 @@ fn invalid_generator_error() {
     assert!(err.contains("cmake configure failed"), "error: {err}");
 }
 
+/// The `CMakeFiles/<version>` platform directory of a configured tree.
+fn platform_dir(build: &std::path::Path) -> std::path::PathBuf {
+    std::fs::read_dir(build.join("CMakeFiles"))
+        .expect("configured tree has CMakeFiles")
+        .map(|entry| entry.expect("read CMakeFiles").path())
+        .find(|path| path.join("CMakeSystem.cmake").is_file())
+        .expect("configured tree has a platform directory")
+}
+
+/// Whether CMake identified the compiler in this tree instead of reusing a
+/// seed: detection leaves its `CompilerIdC` scratch project behind.
+fn ran_compiler_detection(build: &std::path::Path) -> bool {
+    platform_dir(build).join("CompilerIdC").exists()
+}
+
+/// Whether `path` is one of the runtime cache root's auxiliary children.
+fn is_aux_dir(path: &std::path::Path) -> bool {
+    path.file_name().is_some_and(|name| {
+        sim::build::RUNTIME_CACHE_AUX_DIRS
+            .iter()
+            .any(|aux| name == std::ffi::OsStr::new(aux))
+    })
+}
+
+/// Published toolchain seeds (entries with a `ready` marker) under a runtime
+/// cache root.
+fn published_seeds(cache: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut seeds: Vec<_> = std::fs::read_dir(cache.join(sim::build::TOOLCHAIN_SEED_DIR))
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.is_dir() && path.join("ready").is_file())
+                .collect()
+        })
+        .unwrap_or_default();
+    seeds.sort();
+    seeds
+}
+
+/// Build the counter in `model_dir` with `opts` and return its output.
+fn build_counter(
+    dir: &std::path::Path,
+    model_dir: &std::path::Path,
+    opts: &sim::build::CmakeBuildOpts,
+) -> Result<String, String> {
+    std::fs::create_dir_all(model_dir).map_err(|error| error.to_string())?;
+    sim_harness::with_cwd(dir, || {
+        let generated = compile_counter(model_dir)?;
+        let exe = sim::build::build_model_cmake_with_opts(
+            model_dir,
+            &[("model.c", generated.model_c.as_str())],
+            opts,
+        )
+        .map_err(|error| format!("cmake build: {error}"))?;
+        run_sim(&exe)
+    })
+}
+
+/// Fresh model trees reuse one published toolchain detection: the runtime
+/// archive and both models build and run correctly, and none of their trees
+/// identifies the compiler again (the probe that published the seed did).
+#[test]
+fn fresh_model_trees_reuse_the_toolchain_detection_seed() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = fresh_dir("toolchain-seed");
+    let cache = dir.path().join("runtime-cache");
+    let opts = sim::build::CmakeBuildOpts {
+        runtime_cache_dir: Some(cache.clone()),
+        ..Default::default()
+    };
+    for model in ["first", "second"] {
+        let model_dir = dir.path().join(model);
+        let stdout = build_counter(dir.path(), &model_dir, &opts).expect("seeded model runs");
+        assert_eq!(stdout, EXPECTED_STDOUT, "{model}");
+        assert!(
+            !ran_compiler_detection(&model_dir.join("build")),
+            "{model} model tree identified the compiler again"
+        );
+    }
+    let seeds = published_seeds(&cache);
+    assert_eq!(seeds.len(), 1, "one toolchain, one seed: {seeds:?}");
+    assert!(!seeds[0].join("rejected").exists());
+    assert!(!seeds[0].join("probe").exists(), "probe trees are removed");
+    // Consumers enumerate runtime archives as the root's children with a
+    // `ready` marker; seeds and probe memos must stay out of that set (they
+    // live under the auxiliary children without a marker).
+    let ready: Vec<_> = std::fs::read_dir(&cache)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|entry| entry.join("ready").is_file())
+        .collect();
+    assert_eq!(
+        ready.len(),
+        1,
+        "only the runtime archive is ready: {ready:?}"
+    );
+    assert!(
+        ready[0].join("build").join("CMakeCache.txt").is_file(),
+        "{ready:?}"
+    );
+    let directories: Vec<_> = std::fs::read_dir(&cache)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+    assert!(
+        directories
+            .iter()
+            .all(|path| path == &ready[0] || is_aux_dir(path)),
+        "unexpected cache root children: {directories:?}"
+    );
+    assert!(!ran_compiler_detection(&ready[0].join("build")));
+
+    // An existing compatible tree is reconfigured incrementally as before.
+    let stdout = build_counter(dir.path(), &dir.path().join("first"), &opts)
+        .expect("incremental rebuild runs");
+    assert_eq!(stdout, EXPECTED_STDOUT);
+}
+
+/// A different compiler is a different key: its fresh tree never reuses the
+/// first compiler's detection, and records its own compiler.
+#[cfg(unix)]
+#[test]
+fn a_changed_compiler_does_not_reuse_another_toolchain_seed() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let (Some(gcc), Some(clang)) = (find_on_path("gcc"), find_on_path("clang")) else {
+        eprintln!("SKIP: gcc and clang are both required");
+        return;
+    };
+    let dir = fresh_dir("toolchain-seed-compilers");
+    let cache = dir.path().join("runtime-cache");
+    for (name, compiler, id) in [("gcc", &gcc, "GNU"), ("clang", &clang, "Clang")] {
+        let opts = sim::build::CmakeBuildOpts {
+            runtime_cache_dir: Some(cache.clone()),
+            cc: Some(compiler.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+        let model_dir = dir.path().join(name);
+        let stdout = build_counter(dir.path(), &model_dir, &opts).expect("model runs");
+        assert_eq!(stdout, EXPECTED_STDOUT, "{name}");
+        let build = model_dir.join("build");
+        assert!(!ran_compiler_detection(&build), "{name}");
+        let compiler_file =
+            std::fs::read_to_string(platform_dir(&build).join("CMakeCCompiler.cmake")).unwrap();
+        assert!(
+            compiler_file.contains(&format!("set(CMAKE_C_COMPILER_ID \"{id}\")")),
+            "{name} tree must record its own compiler: {compiler_file}"
+        );
+    }
+    assert_eq!(published_seeds(&cache).len(), 2, "one seed per compiler");
+}
+
+/// A seed that breaks configuration is not trusted again: the build retries
+/// from scratch without it, succeeds, and the key is marked rejected so later
+/// fresh trees configure unseeded.
+#[test]
+fn a_failing_seed_falls_back_to_a_clean_configure_and_is_rejected() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = fresh_dir("toolchain-seed-stale");
+    let cache = dir.path().join("runtime-cache");
+    let opts = sim::build::CmakeBuildOpts {
+        runtime_cache_dir: Some(cache.clone()),
+        ..Default::default()
+    };
+    let stdout = build_counter(dir.path(), &dir.path().join("first"), &opts).expect("first model");
+    assert_eq!(stdout, EXPECTED_STDOUT);
+    let seeds = published_seeds(&cache);
+    assert_eq!(seeds.len(), 1, "{seeds:?}");
+    let platform = std::fs::read_dir(seeds[0].join("platform"))
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .next()
+        .expect("published platform directory");
+    std::fs::write(
+        platform.join("CMakeCCompiler.cmake"),
+        "message(FATAL_ERROR \"corrupt llg toolchain seed\")\n",
+    )
+    .unwrap();
+
+    let second = dir.path().join("second");
+    let stdout = build_counter(dir.path(), &second, &opts).expect("clean retry builds");
+    assert_eq!(stdout, EXPECTED_STDOUT);
+    assert!(
+        ran_compiler_detection(&second.join("build")),
+        "the retry configures from scratch"
+    );
+    let rejected = std::fs::read_to_string(seeds[0].join("rejected")).expect("seed rejected");
+    assert!(
+        rejected.starts_with("a seeded configure failed"),
+        "{rejected}"
+    );
+
+    let third = dir.path().join("third");
+    let stdout = build_counter(dir.path(), &third, &opts).expect("unseeded model");
+    assert_eq!(stdout, EXPECTED_STDOUT);
+    assert!(ran_compiler_detection(&third.join("build")));
+}
+
+/// Compiler self-reports are probed once per toolchain and process: a second
+/// model build spawns no `--version`/`-dumpmachine` probe, and a replaced
+/// compiler file is probed again. The compiler is a counting wrapper script
+/// around the host `cc`; CMake's own compiler calls never pass one lone
+/// probe argument, so the log holds only llg's probes.
+#[cfg(unix)]
+#[test]
+fn compiler_probes_run_once_per_toolchain_and_process() {
+    use std::os::unix::fs::PermissionsExt;
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let Some(host_cc) = find_on_path("cc") else {
+        eprintln!("SKIP: cc is required");
+        return;
+    };
+    let dir = fresh_dir("compiler-probe-memo");
+    let log = dir.path().join("probes.log");
+    let wrapper = dir.path().join("counting-cc");
+    let write_wrapper = |revision: &str| {
+        std::fs::write(
+            &wrapper,
+            format!(
+                "#!/bin/sh\n# revision {revision}\nif [ $# -eq 1 ]; then case \"$1\" in --version|-dumpmachine|/Bv) echo \"$1\" >> '{}';; esac; fi\nexec '{}' \"$@\"\n",
+                log.display(),
+                host_cc.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    let probes = || {
+        std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    write_wrapper("1");
+    let opts = sim::build::CmakeBuildOpts {
+        runtime_cache_dir: Some(dir.path().join("runtime-cache")),
+        cc: Some(wrapper.to_string_lossy().into_owned()),
+        ..Default::default()
+    };
+
+    let stdout =
+        build_counter(dir.path(), &dir.path().join("first"), &opts).expect("first model runs");
+    assert_eq!(stdout, EXPECTED_STDOUT);
+    assert_eq!(probes(), ["--version", "-dumpmachine"], "one probe set");
+
+    let stdout =
+        build_counter(dir.path(), &dir.path().join("second"), &opts).expect("second model runs");
+    assert_eq!(stdout, EXPECTED_STDOUT);
+    assert_eq!(probes().len(), 2, "the second build reuses the probe");
+
+    // A replaced compiler file (other size and modification time) is probed
+    // again; its self-report is unchanged, so the runtime archive is reused.
+    std::thread::sleep(Duration::from_millis(20));
+    write_wrapper("2, upgraded");
+    let stdout =
+        build_counter(dir.path(), &dir.path().join("third"), &opts).expect("third model runs");
+    assert_eq!(stdout, EXPECTED_STDOUT);
+    assert_eq!(
+        probes(),
+        ["--version", "-dumpmachine", "--version", "-dumpmachine"],
+        "a changed compiler is re-probed"
+    );
+}
+
+/// Program `name` on the current `PATH`, if any.
+#[cfg(unix)]
+fn find_on_path(name: &str) -> Option<std::path::PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
+}
+
+/// The default generator is Ninja. Without a `ninja` program the driver must
+/// fail at the first configure with an actionable message (install Ninja or
+/// select another generator) instead of retrying and reporting a generic
+/// configure failure. `PATH` holds only a recording cmake wrapper, so CMake
+/// cannot find `ninja`.
+#[cfg(unix)]
+#[test]
+fn missing_ninja_reports_an_actionable_error_without_a_retry() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let (Some(cmake), Some(cc)) = (find_on_path("cmake"), find_on_path("cc")) else {
+        eprintln!("SKIP: cmake or cc is not on PATH");
+        return;
+    };
+    let dir = fresh_dir("missing-ninja");
+    std::fs::write(dir.path().join("counter.sv"), COUNTER_SV).expect("write source");
+    let tools = dir.path().join("tools");
+    std::fs::create_dir(&tools).expect("create tool directory");
+    let log = dir.path().join("cmake-args.log");
+    let wrapper = tools.join("cmake");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexec '{}' \"$@\"\n",
+            log.display(),
+            cmake.display()
+        ),
+    )
+    .expect("write wrapper");
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
+        .expect("mark wrapper executable");
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+    command
+        .args(["--top", "tb", "--cc"])
+        .arg(&cc)
+        .arg("--runtime-cache")
+        .arg(dir.path().join("runtime-cache"))
+        .arg("counter.sv")
+        .env("PATH", &tools)
+        .env_remove("CMAKE_GENERATOR")
+        .env_remove("LLG_CMAKE")
+        .current_dir(dir.path());
+    let output =
+        sim_harness::run_command(&mut command, Duration::from_secs(60)).expect("llg should start");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "build without ninja must fail");
+    assert!(
+        stderr.contains("no build program for generator `Ninja`"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("install Ninja"), "{stderr}");
+    assert!(stderr.contains("CMAKE_GENERATOR"), "{stderr}");
+    let log = std::fs::read_to_string(&log).expect("wrapper log");
+    // The toolchain-seed probe may try first; the runtime project itself is
+    // configured exactly once.
+    let configures: Vec<&str> = log
+        .lines()
+        .filter(|line| line.starts_with("-S ") && !line.contains("/cmake-toolchain/"))
+        .collect();
+    assert_eq!(configures.len(), 1, "no from-scratch retry: {log}");
+    assert!(configures[0].contains("-G Ninja"), "{log}");
+}
+
 /// Driver default path: `llg` without flags must build through CMake and
 /// produce the exact simulation output with exit 0.
 #[test]
@@ -878,7 +1250,7 @@ fn driver_output_and_tool_flags_override_environment() {
         .args(["--top", "tb", "--out-dir", "out/run1", "--cmake", "cmake"])
         .args([
             "--cc",
-            "cc",
+            sim::build::DEFAULT_C_COMPILER,
             "--cflags",
             "",
             "--model-opt-level",

@@ -276,8 +276,13 @@ executable, nextest archive or runtime cache is saved.
   checksum-verified ccache (`scripts/ci_ccache.py`), restores its directory with
   `actions/cache` (key per job/target/distro and ISO week, 300 MB limit; a full local suite needs about 110 MB), proves a
   cross-directory hit with the compiler and generator the tests use, then exports
-  `LLG_C_LAUNCHER` and `CCACHE_*` (`CCACHE_BASEDIR` = temp dir, `CCACHE_NOHASHDIR`).
-  A failed install or self-check leaves the launcher unset (uncached run, warning).
+  `LLG_C_LAUNCHER` and `CCACHE_*` (`CCACHE_BASEDIR` = temp dir as given plus its
+  resolved spelling, since test model directories are canonical: Windows 8.3
+  `RUNNER~1` vs long names, macOS `/private/var`; a path list needs ccache 4.12+;
+  `CCACHE_NOHASHDIR`). The self-check builds in resolved directories like the tests.
+  A failed install or self-check leaves the launcher unset (uncached run, warning);
+  a missed self-check prints both compile lines, ccache settings, the diff of the
+  two `ccache-input-text` hash inputs and the second compile's log excerpt.
   Used by lint, sanitizers (flags are in the hash), Windows/macOS `test` and
   `linux-test` (installed on the runner, activated inside the container).
   `ccache-finish` prints `ccache -sv` and, on master only, saves when the week's

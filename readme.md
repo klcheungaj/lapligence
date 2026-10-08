@@ -70,6 +70,9 @@ All platforms require:
 - Rust and Cargo 1.98.0 from [rustup](https://rustup.rs/), as pinned in
   [`rust-toolchain.toml`](rust-toolchain.toml).
 - CMake 3.20 or newer.
+- [Ninja](https://ninja-build.org/) on `PATH` to build simulation models:
+  `llg` configures generated models with `-G Ninja` unless `--generator`,
+  `CMAKE_GENERATOR` or `build.generator` selects another CMake generator.
 - A C and C++ compiler with the platform's standard build tools.
 - Python 3 for Slang's syntax and diagnostic generators.
 - `patch`, or Git with `git apply` support.
@@ -93,7 +96,7 @@ On Ubuntu or Debian, install the native prerequisites:
 
 ```sh
 sudo apt-get update
-sudo apt-get install build-essential cmake patch python3
+sudo apt-get install build-essential cmake ninja-build patch python3
 ```
 
 Build both programs:
@@ -121,7 +124,8 @@ host user; repair root-owned output with
 ### macOS arm64
 
 - Install Xcode Command Line Tools: `xcode-select --install`.
-- Install CMake and Python 3 with your package manager.
+- Install CMake, Ninja and Python 3 with your package manager (for example
+  `brew install cmake ninja python`).
 - Add and build the Rust target:
 
 ```sh
@@ -133,7 +137,8 @@ cargo build --locked --release --bin llg --bin llg_ls \
 ### Windows
 
 - Install Visual Studio Build Tools with the **Desktop development with C++**
-  workload and the Windows SDK.
+  workload and the Windows SDK. Its **C++ CMake tools for Windows** component
+  puts Ninja on the Developer PowerShell's `PATH`; a standalone Ninja works too.
 - Install CMake, Python 3, Git, and Rust 1.98.0.
 - Run the build from a matching MSVC Developer PowerShell.
 
@@ -239,7 +244,9 @@ Common options:
 - `--build-jobs <N>`: parallel model/runtime compile jobs (positive integer;
   otherwise `CMAKE_BUILD_PARALLEL_LEVEL`, then available CPUs).
 - `--cmake <program>`: CMake program (default `cmake`).
-- `--generator <name>`: choose a CMake generator, such as `Ninja`.
+- `--generator <name>`: choose a CMake generator, such as `"Unix Makefiles"`
+  (default `CMAKE_GENERATOR`, then `build.generator`, then `Ninja`; a missing
+  `ninja` fails the build with an install hint).
 - `--launcher <program>`: optionally set CMake's C compiler launcher, such as
   `ccache` or `sccache` (default `$LLG_C_LAUNCHER`, then `build.launcher`; none when all are unset).
 - `--`: pass the remaining arguments to the generated simulator for
@@ -314,12 +321,13 @@ Model build (`llg`):
 
 | Variable | Effect |
 | --- | --- |
-| `LLG_RUNTIME_CACHE_DIR` | Runtime cache when `--runtime-cache` is not given. |
+| `LLG_RUNTIME_CACHE_DIR` | Runtime cache when `--runtime-cache` is not given. It also keeps CMake toolchain-detection results so fresh model directories skip compiler detection. |
+| `LLG_CMAKE_TOOLCHAIN_SEED` | `0` (or `off`) makes every fresh model configure detect the toolchain itself instead of reusing a cached detection. |
 | `LLG_CC`, then `CC` | C compiler when `--cc` is not given. |
 | `LLG_CFLAGS` | Extra C flags when `--cflags` is not given. |
 | `LLG_C_LAUNCHER` | C compiler launcher (for example `ccache`) when `--launcher` is not given (it beats `build.launcher`); `LLG_CC` must stay a single program. Empty means unset. |
 | `LLG_CMAKE` | CMake program when `--cmake` is not given. |
-| `CMAKE_GENERATOR` | CMake generator when `--generator` is not given. |
+| `CMAKE_GENERATOR` | CMake generator when `--generator` is not given (default `Ninja`). |
 
 Simulation run time (read by the simulator executable; `llg` passes its
 environment through):

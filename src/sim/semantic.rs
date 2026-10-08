@@ -806,7 +806,13 @@ fn mailbox_reference(db: &Db, id: NodeId) -> bool {
                     })
                 });
             }
-            _ => return false,
+            // A record member, class property or other expression of
+            // mailbox type (SIM-017).
+            _ => {
+                return db
+                    .type_descriptor(current)
+                    .is_some_and(|descriptor| descriptor.name.starts_with("mailbox#("))
+            }
         }
     }
     false
@@ -1188,6 +1194,8 @@ fn is_declaration_only_unknown(detail: Option<&str>) -> bool {
                 | "LocalAssertionVar"
                 | "ClockingBlock"
                 | "ClockingBlockPort"
+                // `modport m(clocking cb)` only exports the interface's block.
+                | "ModportClocking"
                 | "Constraint"
                 | "ExplicitImport"
                 | "Export"

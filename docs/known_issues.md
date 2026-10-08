@@ -603,6 +603,44 @@ class properties and native record leaves counted handle slots.
 forks many short-lived children: the pinned handle count grows with the
 number of children until the model ends.
 
+## Mailbox message forms without a nested value
+
+**Status:** open (SIM-017).
+
+### Symptom
+
+These mailbox forms stop compilation with a SIM-017 diagnostic:
+
+- a message whose type is, or has a member that is, an associative array;
+- a whole unpacked fixed-array variable as a `put` source or a `get`
+  destination (assignment patterns and record members of array type work);
+- `try_put`/`try_get`/`try_peek` with a record, array or selected operand used
+  in a loop condition, or in another expression that is not a statement, an
+  assignment, a system-task argument or an `if` condition.
+
+At run time, a message handed back by a killed receiver returns to the head
+of a bounded mailbox even when a sender filled the freed slot meanwhile, so
+`num()` can exceed the bound until the next `get`.
+
+### Cause
+
+An aggregate message is one descriptor-backed runtime value. The runtime
+nests queues and dynamic arrays in such values but has no nested associative
+form, and a whole fixed-array variable has no leaf transfer to or from a
+lexical native value. The aggregate copy-in and copy-out are statements, which
+the lowering hoists only for the statement contexts listed above.
+
+### Intended direction
+
+Add a nested associative value form, give fixed-array variables the leaf
+transfer that record members already have, and hoist the copy statements into
+loop conditions.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_017/neg_assoc_message.sv`,
+`neg_array_variable.sv` and `neg_loop_condition.sv`.
+
 ## Suspended event-control waits keep a wake that arrives while suspended
 
 **Status:** open (SIM-015).
@@ -843,10 +881,16 @@ A wait on a property selected through a class handle property (`@(n.next.v)`,
 rebinds that property (`n.next = m`). Other writers of a handle property (task
 or function output copy-out, mailbox `get`/`peek` into the property, task-form
 `$cast`) store without toggling the object's handle marker, so such a wait
-keeps observing the previous object until another dependency changes. Waits
-on handle variables, handle array elements and the property itself are not
-affected. Direction: route every class handle-property store through
-`llg_class_handle_store`. Reproduce: replace `n.next = new;` in
+keeps observing the previous object until another dependency changes. A
+mailbox retrieval stores through the raw slot address frozen at the call,
+when the receiver resumes (`llg_mailbox_delivery_take`, SIM-017). For the
+same reason a mailbox `get`/`peek` into a module class handle variable does
+not wake `@(h)` on that variable. Other waits on handle variables, handle
+array elements and the property itself are not affected. Direction: route
+every class handle-property store through `llg_class_handle_store`; for
+mailboxes, give the handle target the object's (or variable's) change marker
+so the delivery toggles it while keeping the frozen slot. Reproduce: replace
+`n.next = new;` in
 `tests/fixtures/sim/feature_completion/sim_013/class_handles.sv` with a task
 call whose `output Node` formal is bound to `n.next`.
 
@@ -1069,3 +1113,33 @@ the element into a tagged-union variable first.
 
 Reproduce with `typedef union tagged packed { logic [3:0] a, b; } t_t;
 t_t [1:0] tp; initial $display("%h", tp[0].a);`.
+
+## Clocking input forms outside the sampled storage model
+
+**Status:** open (SIM-033 boundary).
+
+Clocking inputs sample into one static storage cell per clockvar, sized from
+its packed, real or shortreal type. Four legal forms reject explicitly instead
+of sampling:
+
+- unpacked, string, class and event clockvar types ("sampled clockvars are
+  limited to packed integral, real and shortreal values"), which would need
+  typed whole-value sample copies (and, for strings and handles, ownership);
+- edge-qualified input skews (`input negedge x`), whose sample point SV 14.3
+  does not define; they are not silently treated as `#1step`;
+- `@(vif.cb)` through a virtual interface handle or view ("clocking block
+  event `cb` is not supported through virtual interface"): a descriptor has
+  member slots for clockvars but no per-instance clocking-block event object.
+  Wait on the clocking event (`@(posedge vif.clk)`) or use the concrete
+  instance; `vif.cb.x` reads work.
+
+Separately, `#0` (Observed) samples allocate one small callback record per
+sample event, and positive-skew history keeps one heap node per source write
+within the skew window. Both predate SIM-033; a preallocated per-clockvar slot
+would remove the per-edge allocation.
+
+Reproduce with
+[`neg_unpacked_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_unpacked_input.sv),
+[`neg_string_input.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_string_input.sv),
+[`neg_input_edge_skew.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_input_edge_skew.sv) and
+[`neg_vif_clocking_event.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_vif_clocking_event.sv).

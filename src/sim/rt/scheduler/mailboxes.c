@@ -6,7 +6,24 @@ static void mailbox_value_destroy(llg_mailbox_value_t* value) {
     if (value->kind == LLG_MAILBOX_PACKED) sv4_destroy(&value->value.packed);
     if (value->kind == LLG_MAILBOX_STRING)
         llg_string_destroy(&value->value.string);
+    if (value->kind == LLG_MAILBOX_VALUE)
+        llg_native_value_destroy(&value->value.native);
     memset(value, 0, sizeof(*value));
+}
+
+// An independent copy of a message: value leaves are cloned, identity
+// handles shared.
+static llg_mailbox_value_t mailbox_value_clone(const llg_mailbox_value_t* value) {
+    llg_mailbox_value_t copy = *value;
+    if (value->kind == LLG_MAILBOX_PACKED)
+        copy.value.packed = sv4_clone(&value->value.packed);
+    else if (value->kind == LLG_MAILBOX_STRING)
+        copy.value.string = llg_string_clone(&value->value.string);
+    else if (value->kind == LLG_MAILBOX_VALUE) {
+        memset(&copy.value, 0, sizeof(copy.value));
+        llg_native_value_clone(&copy.value.native, &value->value.native);
+    }
+    return copy;
 }
 
 llg_mailbox_value_t llg_mailbox_typed_value(llg_mailbox_value_t value, uint64_t type_id) {
@@ -64,6 +81,24 @@ llg_mailbox_value_t llg_mailbox_value_handle(void* value) {
     return result;
 }
 
+llg_mailbox_value_t llg_mailbox_value_native(const llg_value_t* value,
+                                             uint64_t type_id) {
+    llg_mailbox_value_t result = {0};
+    result.kind = LLG_MAILBOX_VALUE;
+    result.type_id = type_id;
+    llg_native_value_clone(&result.value.native, value);
+    return result;
+}
+
+llg_mailbox_target_t llg_mailbox_target_native(llg_value_t* target,
+                                               uint64_t type_id) {
+    llg_mailbox_target_t result = {0};
+    result.kind = LLG_MAILBOX_VALUE;
+    result.type_id = type_id;
+    result.target.native = target;
+    return result;
+}
+
 llg_mailbox_target_t llg_mailbox_target_packed(sv4_t* target, uint32_t width,
                                                 int is_signed, int two_state) {
     llg_mailbox_target_t result = {0};
@@ -112,6 +147,8 @@ static int mailbox_message_kind_matches(const llg_mailbox_t* mailbox,
     case LLG_MAILBOX_STRING:
     case LLG_MAILBOX_HANDLE:
         return 1;
+    case LLG_MAILBOX_VALUE:
+        return mailbox->type_id == value->type_id;
     default:
         return 0;
     }
@@ -133,6 +170,10 @@ static int mailbox_target_matches(const llg_mailbox_value_t* value,
     case LLG_MAILBOX_HANDLE:
         // The declared nominal type was checked above, even for null values.
         return 1;
+    case LLG_MAILBOX_VALUE:
+        // Equal equivalence classes (checked above) have compatible
+        // descriptors; the destination must be an initialized value.
+        return target->target.native && target->target.native->desc;
     default:
         return 0;
     }
@@ -141,6 +182,10 @@ static int mailbox_target_matches(const llg_mailbox_value_t* value,
 static void mailbox_deliver(const llg_mailbox_value_t* value,
                             const llg_mailbox_target_t* target) {
     if (!mailbox_target_matches(value, target)) return;
+    if (target->kind == LLG_MAILBOX_VALUE) {
+        llg_native_value_copy(target->target.native, &value->value.native);
+        return;
+    }
     if (!target->target.packed && !target->reference && target->kind == LLG_MAILBOX_PACKED) return;
     if (!target->target.real && target->kind == LLG_MAILBOX_REAL) return;
     if (!target->target.string && target->kind == LLG_MAILBOX_STRING) return;
@@ -173,51 +218,72 @@ static void mailbox_deliver(const llg_mailbox_value_t* value,
     }
 }
 
-static void mailbox_message_append(llg_mailbox_t* mailbox,
-                                   llg_mailbox_value_t value) {
+// Deliver a message the caller owns: strings and same-descriptor values
+// move into the destination; everything else converts as mailbox_deliver.
+static void mailbox_deliver_owned(llg_mailbox_value_t* value,
+                                  const llg_mailbox_target_t* target) {
+    if (mailbox_target_matches(value, target)) {
+        if (target->kind == LLG_MAILBOX_STRING && target->target.string) {
+            llg_string_move(target->target.string, value->value.string);
+            memset(&value->value.string, 0, sizeof(value->value.string));
+        } else if (target->kind == LLG_MAILBOX_VALUE &&
+                   target->target.native->desc == value->value.native.desc) {
+            llg_native_value_destroy(target->target.native);
+            *target->target.native = value->value.native; // ownership transfer
+            memset(&value->value.native, 0, sizeof(value->value.native));
+        } else {
+            mailbox_deliver(value, target);
+        }
+    }
+    mailbox_value_destroy(value);
+}
+
+static llg_mailbox_message_t* mailbox_message_new(llg_mailbox_value_t value) {
     llg_mailbox_message_t* message = (llg_mailbox_message_t*)llg_checked_calloc(
         1, sizeof(*message), "mailbox message");
     message->value = value;
+    return message;
+}
+
+static void mailbox_message_free(llg_mailbox_message_t* message) {
+    if (!message) return;
+    mailbox_value_destroy(&message->value);
+    free(message);
+}
+
+static void mailbox_message_link(llg_mailbox_t* mailbox,
+                                 llg_mailbox_message_t* message) {
+    message->link.next = NULL;
     if (mailbox->tail)
-        mailbox->tail->next = message;
+        mailbox->tail->link.next = message;
     else
         mailbox->head = message;
     mailbox->tail = message;
     mailbox->length++;
 }
 
+static void mailbox_message_append(llg_mailbox_t* mailbox,
+                                   llg_mailbox_value_t value) {
+    mailbox_message_link(mailbox, mailbox_message_new(value));
+}
+
 static llg_mailbox_message_t* mailbox_message_pop(llg_mailbox_t* mailbox) {
     llg_mailbox_message_t* message = mailbox->head;
     if (!message) return NULL;
-    mailbox->head = message->next;
+    mailbox->head = message->link.next;
     if (!mailbox->head) mailbox->tail = NULL;
-    message->next = NULL;
+    message->link.next = NULL;
     mailbox->length--;
     return message;
 }
 
-static void mailbox_snapshot_destroy(void* payload) {
-    mailbox_value_destroy((llg_mailbox_value_t*)payload);
-}
-
-/* Freeze a successful delivery before publishing to HDL. A peek needs an
- * independent copy because a reentrant get can destroy the queue's head. */
-static llg_value_scope_t* mailbox_snapshot(llg_mailbox_t* mailbox, int peek) {
-    llg_value_scope_t* owner = llg_value_scope_begin_object(
-        sizeof(llg_mailbox_value_t), mailbox_snapshot_destroy);
-    llg_mailbox_value_t* value = llg_value_scope_object(owner);
-    llg_mailbox_message_t* message = peek ? mailbox->head : mailbox_message_pop(mailbox);
-    *value = message->value;
-    if (peek) {
-        if (value->kind == LLG_MAILBOX_PACKED)
-            value->value.packed = sv4_clone(&message->value.value.packed);
-        else if (value->kind == LLG_MAILBOX_STRING)
-            value->value.string = llg_string_clone(&message->value.value.string);
-    } else {
-        memset(&message->value, 0, sizeof(message->value));
-        free(message);
-    }
-    return owner;
+/* Take the head for one successful retrieval: a get removes it, a peek
+ * copies it, so a reentrant get during delivery cannot free what is being
+ * written. The caller owns the returned message. */
+static llg_mailbox_message_t* mailbox_message_take(llg_mailbox_t* mailbox,
+                                                   int peek) {
+    if (!peek) return mailbox_message_pop(mailbox);
+    return mailbox_message_new(mailbox_value_clone(&mailbox->head->value));
 }
 
 static void mailbox_unlink_wait(llg_wait_t* wait) {
@@ -304,6 +370,35 @@ static void mailbox_remove_and_wake(llg_wait_t* wait) {
     wake_proc(wait->proc);
 }
 
+// A process killed after a message was delivered to it but before it resumed
+// never took it: a consumed message goes back to the head of its mailbox
+// (where it was taken from) and the mailbox's waiters are serviced after the
+// cancellation batch; a peek copy is dropped. A returned message may exceed
+// the bound until a get removes it, as a semaphore's returned keys may.
+static void mailbox_return_delivery(llg_proc_t* proc) {
+    llg_mailbox_message_t* message = proc ? proc->mailbox_delivery : NULL;
+    if (!message) return;
+    proc->mailbox_delivery = NULL;
+    llg_mailbox_t* owner = message->link.owner;
+    if (!owner) {
+        mailbox_message_free(message);
+        return;
+    }
+    message->link.next = owner->head;
+    owner->head = message;
+    if (!owner->tail) owner->tail = message;
+    owner->length++;
+    owner->returned_delivery = 1;
+}
+
+void llg_mailbox_delivery_take(llg_proc_t* self, llg_mailbox_target_t target) {
+    llg_mailbox_message_t* message = self ? self->mailbox_delivery : NULL;
+    if (!message) return;
+    self->mailbox_delivery = NULL;
+    mailbox_deliver_owned(&message->value, &target);
+    free(message);
+}
+
 // Service only FIFO heads. Unlinking/granting cannot execute a resumed
 // continuation inline, so list ownership stays with this service loop.
 static void mailbox_service_waiters(llg_mailbox_t* mailbox) {
@@ -317,13 +412,15 @@ static void mailbox_service_waiters(llg_mailbox_t* mailbox) {
                 mailbox_type_error();
                 return;
             }
-            llg_mailbox_target_t target = payload->target;
-            llg_value_scope_t* owner = mailbox_snapshot(mailbox, payload->peek);
-            /* wake_proc queues, but never runs, the continuation. Copy the
-             * destination before wakeup clears the wait record. */
+            // Consume (or copy) before the wake; the waiter writes its
+            // destination when it resumes (llg_mailbox_delivery_take).
+            int peek = payload->peek;
+            llg_proc_t* proc = get->proc;
+            llg_mailbox_message_t* delivery = mailbox_message_take(mailbox, peek);
+            delivery->link.owner = peek ? NULL : mailbox;
+            mailbox_message_free(proc->mailbox_delivery);
+            proc->mailbox_delivery = delivery;
             mailbox_remove_and_wake(get);
-            mailbox_deliver(llg_value_scope_object(owner), &target);
-            llg_value_scope_end(owner);
             continue;
         }
         if (mailbox->put_head &&
@@ -337,6 +434,44 @@ static void mailbox_service_waiters(llg_mailbox_t* mailbox) {
             continue;
         }
         break;
+    }
+}
+
+// Run after a cancellation batch, like semaphore grants: servicing while
+// the batch is still killing siblings could hand a returned message to a
+// waiter that is about to die.
+static void mailbox_service_returned_deliveries(void) {
+    if (g.finish) return;
+    for (llg_mailbox_t* mailbox = g.mailboxes; mailbox; mailbox = mailbox->next) {
+        if (!mailbox->returned_delivery) continue;
+        mailbox->returned_delivery = 0;
+        mailbox_service_waiters(mailbox);
+    }
+}
+
+static void mailbox_trace_value(const llg_mailbox_value_t* value,
+                                llg_value_visit_fn visit, void* context) {
+    if (value->kind == LLG_MAILBOX_HANDLE && value->value.handle)
+        visit((void* const*)&value->value.handle, NULL, context);
+    else if (value->kind == LLG_MAILBOX_VALUE)
+        llg_value_trace(&value->value.native, visit, context);
+}
+
+void llg_mailbox_trace(llg_value_visit_fn visit, void* context) {
+    if (!visit) return;
+    for (llg_mailbox_t* mailbox = g.mailboxes; mailbox; mailbox = mailbox->next) {
+        for (llg_mailbox_message_t* message = mailbox->head; message;
+             message = message->link.next)
+            mailbox_trace_value(&message->value, visit, context);
+        for (llg_wait_t* put = mailbox->put_head; put;
+             put = put->payload.rare->mailbox_put.next)
+            mailbox_trace_value(&put->payload.rare->mailbox_put.value, visit,
+                                context);
+    }
+    for (int i = 0; i < g.n_procs; ++i) {
+        llg_proc_t* proc = g.all_procs[i];
+        if (proc && proc->mailbox_delivery)
+            mailbox_trace_value(&proc->mailbox_delivery->value, visit, context);
     }
 }
 
@@ -389,6 +524,14 @@ llg_mailbox_t* llg_mailbox_new(sv4_t bound, int kind, uint32_t width,
     mailbox->shortreal = (int8_t)shortreal;
     mailbox->next = g.mailboxes;
     g.mailboxes = mailbox;
+    return mailbox;
+}
+
+llg_mailbox_t* llg_mailbox_new_value(sv4_t bound, uint64_t type_id) {
+    llg_mailbox_t* mailbox = llg_mailbox_new(bound, LLG_MAILBOX_UNTYPED, 0, 0, 0, 0);
+    if (!mailbox) return NULL;
+    mailbox->kind = LLG_MAILBOX_VALUE;
+    mailbox->type_id = type_id;
     return mailbox;
 }
 
@@ -466,9 +609,9 @@ static int mailbox_take_value(llg_mailbox_t* mailbox,
                               llg_mailbox_target_t target, int peek) {
     if (!mailbox || !mailbox->head) return 0;
     if (!mailbox_target_matches(&mailbox->head->value, &target)) return -1;
-    llg_value_scope_t* owner = mailbox_snapshot(mailbox, peek);
-    mailbox_deliver(llg_value_scope_object(owner), &target);
-    llg_value_scope_end(owner);
+    llg_mailbox_message_t* message = mailbox_message_take(mailbox, peek);
+    mailbox_deliver_owned(&message->value, &target);
+    free(message);
     mailbox_service_waiters(mailbox);
     return 1;
 }

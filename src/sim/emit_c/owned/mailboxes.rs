@@ -30,6 +30,14 @@ impl Frame<'_, '_> {
                     IrMailboxElement::Real { shortreal } => (1, 0, false, false, *shortreal),
                     IrMailboxElement::String => (2, 0, false, false, false),
                     IrMailboxElement::Handle => (3, 0, false, false, false),
+                    IrMailboxElement::Value { type_id } => {
+                        let handle = self.scalar(
+                            "void*",
+                            format!("llg_mailbox_new_value({}, UINT64_C({type_id}))", bound.code),
+                        );
+                        self.discard(bound);
+                        return Ok(handle);
+                    }
                 };
                 let handle = self.scalar(
                     "void*",
@@ -93,6 +101,10 @@ impl Frame<'_, '_> {
             IrMailboxValue::Handle(value) => {
                 format!("llg_mailbox_value_handle({})", self.chandle(value)?)
             }
+            IrMailboxValue::Native { value, type_id } => format!(
+                "llg_mailbox_value_native({}, UINT64_C({type_id}))",
+                self.native_value_address(*value)?
+            ),
         };
         Ok(message)
     }
@@ -150,6 +162,10 @@ impl Frame<'_, '_> {
             IrMailboxTarget::Handle { addr } => format!(
                 "llg_mailbox_target_handle({})",
                 self.native_address(addr, NativeKind::Chandle)?.address
+            ),
+            IrMailboxTarget::Native { value, type_id } => format!(
+                "llg_mailbox_target_native({}, UINT64_C({type_id}))",
+                self.native_value_address(*value)?
             ),
         })
     }
@@ -217,11 +233,14 @@ impl Frame<'_, '_> {
             }
             _ => return Err(pending("object query ownership contract")),
         };
-        let result = self.value(
-            format!("sv4_from_i64((int64_t)({code}), {})", expression.width),
-            expression.width,
-            expression.signed,
-        );
+        // Identity comparisons are one-bit unsigned; method statuses are
+        // signed `int` (Annex G.4). The value carries the expression's sign.
+        let code = if expression.signed {
+            format!("sv4_from_i64((int64_t)({code}), {})", expression.width)
+        } else {
+            format!("sv4_from_u64((uint64_t)({code}), {}, 0)", expression.width)
+        };
+        let result = self.value(code, expression.width, expression.signed);
         self.cancellation_check_covering(cancellation_mark)?;
         Ok(result)
     }
@@ -291,6 +310,9 @@ impl Frame<'_, '_> {
                             u8::from(*peek)
                         ),
                     )?;
+                    // A suspended get writes its destination on resume, so
+                    // the write lands in live storage (SIM-017).
+                    self.line(format!("llg_mailbox_delivery_take(self, {target});"));
                 }
             }
             _ => return Err(pending("object statement ownership contract")),

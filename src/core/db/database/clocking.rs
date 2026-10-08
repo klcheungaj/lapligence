@@ -170,6 +170,8 @@ pub(super) fn clocking_block_from_expression(
         .map(|value| value.flatten())
 }
 
+/// The declaration a clocking signal expression designates as a whole, or
+/// `None` for a select, conversion, concatenation or computed expression.
 pub(super) fn clocking_source_from_expression(
     snapshot: &SlangSnapshot,
     ids: &SemanticIds,
@@ -185,7 +187,14 @@ pub(super) fn clocking_source_from_expression(
         .semantic_nodes
         .get(expression.index())
         .ok_or_else(|| DbError::InvalidSnapshot("clocking source expression is missing".into()))?;
-    if let Some(target) = expression_reference_target(snapshot, ids, node)? {
+    // Selects and member accesses also carry a symbol target (their root or
+    // member declaration), so only a plain value reference names a source.
+    let plain_reference = node.kind != SemanticKind::Expression || node.subkind == 65;
+    if let Some(target) = plain_reference
+        .then(|| expression_reference_target(snapshot, ids, node))
+        .transpose()?
+        .flatten()
+    {
         let target_node = snapshot
             .semantic_nodes
             .get(target.index())
@@ -225,16 +234,9 @@ pub(super) fn clocking_source_from_expression(
             }
         }
     }
-    let edges = semantic_edges(snapshot, node)?;
-    let role = match node.subkind {
-        72 => SemanticEdgeRole::Operand,
-        73..=75 => SemanticEdgeRole::Base,
-        _ => return Ok(None),
-    };
-    edge_target(ids, edges, role)?
-        .map(|base| clocking_source_from_expression(snapshot, ids, base, depth + 1))
-        .transpose()
-        .map(|value| value.flatten())
+    // A conversion, select or member access names only part (or a converted
+    // image) of its base; the caller lowers the whole expression instead.
+    Ok(None)
 }
 
 fn clocking_edge(code: u64) -> Result<ClockingEdge, DbError> {

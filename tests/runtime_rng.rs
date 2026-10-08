@@ -1,9 +1,8 @@
 //! Standalone coverage for the scheduler-independent random-stream service.
 
-use std::process::Command;
 use std::time::Duration;
 
-use crate::sim_harness;
+use crate::{c_compiler, sim_harness};
 
 const RANDOM_PROBE: &str = r#"
 #include "llg_rng.h"
@@ -132,10 +131,8 @@ int main(void) {
 
 #[test]
 fn random_runtime_compiles_and_runs_without_scheduler() {
-    let compiler = std::env::var("LLG_CC")
-        .or_else(|_| std::env::var("CC"))
-        .unwrap_or_else(|_| "cc".to_owned());
-    if Command::new(&compiler).arg("--version").output().is_err() {
+    let compiler = c_compiler::host_c_compiler();
+    if !c_compiler::c_compiler_available(&compiler) {
         eprintln!("SKIP: C compiler `{compiler}` not available");
         return;
     }
@@ -157,24 +154,18 @@ fn random_runtime_compiles_and_runs_without_scheduler() {
         std::fs::write(dir.path().join(name), contents).expect("write runtime source");
     }
 
-    let executable = dir.path().join("runtime_random_probe");
-    let mut command = Command::new(&compiler);
-    command
-        .current_dir(dir.path())
-        .args(["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I."]);
-    if let Ok(flags) = std::env::var("LLG_CFLAGS") {
-        command.args(flags.split_whitespace());
-    }
-    command
-        .args([
+    let (mut command, executable) = c_compiler::strict_c11_executable(
+        &compiler,
+        dir.path(),
+        c_compiler::Optimize::Speed,
+        &[
             "llg_value.c",
             "llg_rng.c",
             "llg_string.c",
             "runtime_random_probe.c",
-            "-lm",
-            "-o",
-        ])
-        .arg(&executable);
+        ],
+        "runtime_random_probe",
+    );
     let compiled = sim_harness::run_command(&mut command, Duration::from_secs(60))
         .unwrap_or_else(|error| panic!("run C compiler `{compiler}`: {error}"));
     assert!(

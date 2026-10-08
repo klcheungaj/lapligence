@@ -21,7 +21,11 @@
 //!   clean-from-scratch retry before the error is reported.
 //!
 //! Generator selection: [`CmakeBuildOpts::generator`] > `$CMAKE_GENERATOR` >
-//! none (cmake picks its default generator for the host). The optional
+//! [`DEFAULT_GENERATOR`] (`Ninja`) on every host; empty values count as
+//! unset. A configure that finds no build program for the generator (Ninja
+//! not installed) fails at once with [`BuildError::BuildProgramNotFound`]
+//! instead of the clean retry. A tree configured with another generator is
+//! rebuilt from scratch once, so changing the generator never loops. The optional
 //! [`CmakeBuildOpts::launcher`] > `$LLG_C_LAUNCHER` > none is forwarded as
 //! `CMAKE_C_COMPILER_LAUNCHER` without selecting a default. (The `llg` driver
 //! layers `llg.toml` below the variable before it fills the option: command
@@ -42,7 +46,8 @@
 //! [`CmakeBuildOpts`] field, which wins when set):
 //!
 //! - `LLG_CC` / `CC` — C compiler handed to CMake as `-DCMAKE_C_COMPILER`;
-//!   falls back to `cc`.
+//!   empty values are unset. Falls back to [`DEFAULT_C_COMPILER`]: MSVC `cl`
+//!   on Windows, `cc` elsewhere.
 //! - `LLG_C_LAUNCHER` — C compiler launcher (for example `ccache`) handed to
 //!   CMake as `-DCMAKE_C_COMPILER_LAUNCHER` for the runtime archive and the
 //!   model; `LLG_CC` must stay one program, so a launcher needs its own
@@ -61,9 +66,29 @@
 //! - `LLG_RUNTIME_CACHE_DIR` — shared static-runtime cache root; defaults to
 //!   `build/llg-runtime-cache` under the current directory. Relative values
 //!   resolve from the current directory; an empty value selects the default.
-//!   No path is fixed at compile time.
+//!   No path is fixed at compile time. Each runtime archive entry is a child
+//!   directory with a `ready` marker. The only other children are the
+//!   auxiliary directories in [`RUNTIME_CACHE_AUX_DIRS`]: [`TOOLCHAIN_SEED_DIR`]
+//!   (`cmake-toolchain/`) holds the CMake toolchain-detection seeds that fresh
+//!   build trees reuse (see `build/toolchain_seed.rs`), and
+//!   [`COMPILER_PROBE_DIR`] (`compiler-probe/`) the MSVC compiler self-report
+//!   memo (see `build/compiler_probe.rs`).
+//! - `LLG_CMAKE_TOOLCHAIN_SEED` ([`TOOLCHAIN_SEED_ENV`]) — `0`, `off`,
+//!   `false` or `no` makes every fresh configure run CMake's own toolchain
+//!   detection.
 
+mod compiler_probe;
+mod toolchain_seed;
 mod value;
+
+pub use compiler_probe::MEMO_DIR as COMPILER_PROBE_DIR;
+pub use toolchain_seed::{SEED_DIR as TOOLCHAIN_SEED_DIR, SEED_ENV as TOOLCHAIN_SEED_ENV};
+
+/// The runtime cache root's children that are not runtime archive entries.
+/// Every other child is one archive entry (a directory that is ready once it
+/// holds a `ready` marker); code that enumerates or prunes the root skips
+/// these names.
+pub const RUNTIME_CACHE_AUX_DIRS: [&str; 2] = [TOOLCHAIN_SEED_DIR, COMPILER_PROBE_DIR];
 
 use std::error::Error;
 use std::fmt;
@@ -271,8 +296,8 @@ const RUNTIME_CACHE_LOCK_POLL: Duration = Duration::from_millis(25);
 pub struct CmakeBuildOpts {
     /// Explicit cmake `-G` generator backend (e.g. `"Ninja"`,
     /// `"Unix Makefiles"`).  Takes precedence over `$CMAKE_GENERATOR`; when
-    /// `None`, `$CMAKE_GENERATOR` is forwarded if set and otherwise cmake
-    /// chooses its host default.
+    /// `None` (or empty), a non-empty `$CMAKE_GENERATOR` is used, then
+    /// [`DEFAULT_GENERATOR`].
     pub generator: Option<String>,
     /// Must match the configuration used by the emitter.
     pub value_config: super::value_backend::ValueConfig,
@@ -291,7 +316,8 @@ pub struct CmakeBuildOpts {
     /// `build/llg-runtime-cache` under the current directory. Relative paths
     /// resolve from the current directory.
     pub runtime_cache_dir: Option<PathBuf>,
-    /// C compiler. `None` uses `$LLG_CC`, then `$CC`, then `cc`.
+    /// C compiler. `None` uses `$LLG_CC`, then `$CC` (empty values are
+    /// unset), then [`DEFAULT_C_COMPILER`].
     pub cc: Option<String>,
     /// Extra whitespace-separated C flags. `None` uses `$LLG_CFLAGS`; an
     /// explicit value replaces it rather than appending.
@@ -398,6 +424,9 @@ pub enum BuildError {
     CmakeLaunch { program: String, source: io::Error },
     /// CMake configuration failed after one clean retry.
     Configure { command: String, output: String },
+    /// CMake found no build program for the selected generator (for the
+    /// default [`DEFAULT_GENERATOR`], Ninja is not installed).
+    BuildProgramNotFound { generator: String, output: String },
     /// Compilation of the generated C project failed.
     Compile { output: String },
     /// CMake succeeded but no simulator executable was produced.
@@ -442,6 +471,15 @@ impl fmt::Display for BuildError {
             Self::Configure { command, output } => {
                 write!(f, "cmake configure failed ({command}):\n{output}")
             }
+            Self::BuildProgramNotFound { generator, output } => write!(
+                f,
+                "cmake found no build program for generator `{generator}`; {}, or select another generator with --generator or CMAKE_GENERATOR:\n{output}",
+                if generator.starts_with("Ninja") {
+                    "install Ninja (https://ninja-build.org; for example the `ninja-build` package, `brew install ninja`, or the Visual Studio C++ CMake tools) so `ninja` is on PATH"
+                } else {
+                    "install that generator's build tool"
+                }
+            ),
             Self::Compile { output } => write!(f, "cmake build failed:\n{output}"),
             Self::ExecutableNotFound { directory, listing } => write!(
                 f,
@@ -495,57 +533,39 @@ pub fn build_model_cmake_with_opts(
     let cmake_prog = resolve_cmake(opts);
     let waveform = waveform_enabled(extra);
     let jobs = build_jobs_for(opts);
-    let runtime_library = prepare_runtime_cache(waveform, &cc, &flags, &cmake_prog, jobs, opts)?;
+    let generator = generator_for(opts);
+    let launcher = resolve_launcher(opts);
+    let cache_root = runtime_cache_root(opts)?;
+    let compiler = compiler_probe::facts(&cc, &cache_root);
+    let toolchain = toolchain_seed::Toolchain {
+        cmake: &cmake_prog,
+        generator: &generator,
+        cc: &cc,
+        flags: &flags,
+        launcher: &launcher,
+        compiler_identity: &compiler.identity,
+        compiler_target: &compiler.target,
+    };
+    let runtime_library = prepare_runtime_cache(waveform, &toolchain, jobs, opts)?;
 
     // Drop an incompatible CMake build tree so configure starts clean: no
     // cache means a previous configure died midway; a generator mismatch
     // would make cmake refuse the directory outright.  A compatible tree is
     // kept — reconfigure + build are incremental.
-    if build_dir.exists() {
-        match cached_generator(&build_dir) {
-            None => remove_dir_all_quiet(&build_dir),
-            Some(cached) => {
-                if generator_for(opts).is_some_and(|req| req != cached) {
-                    remove_dir_all_quiet(&build_dir);
-                }
-            }
-        }
-    }
+    remove_incompatible_build_dir(&build_dir, &generator);
 
-    // Configure.  A failed configure leaves the tree unusable no matter the
-    // cause (poisoned/stale cache, half-written state, changed toolchain), so
-    // retry exactly once from scratch before reporting the error.
-    let mut configure = Command::new(&cmake_prog);
-    configure.arg("-S").arg(out_dir).arg("-B").arg(&build_dir);
-    if let Some(generator) = generator_for(opts) {
-        configure.arg("-G").arg(generator);
-    }
-    configure.arg(format!(
-        "-DCMAKE_C_COMPILER_LAUNCHER={}",
-        resolve_launcher(opts)
-    ));
-    configure
-        .arg(format!("-DCMAKE_C_COMPILER={cc}"))
-        .arg(format!("-DCMAKE_C_FLAGS:STRING={flags}"))
-        .arg(format!(
-            "-DLLG_RUNTIME_LIBRARY={}",
-            runtime_library.display()
-        ));
+    let runtime_library_arg = format!("-DLLG_RUNTIME_LIBRARY={}", runtime_library.display());
+    run_configure(
+        out_dir,
+        &build_dir,
+        &toolchain,
+        &[runtime_library_arg],
+        &cache_root,
+    )?;
     let launch_error = |source| BuildError::CmakeLaunch {
         program: cmake_prog.clone(),
         source,
     };
-    let mut output = configure.output().map_err(&launch_error)?;
-    if !output.status.success() {
-        remove_dir_all_quiet(&build_dir);
-        output = configure.output().map_err(&launch_error)?;
-    }
-    if !output.status.success() {
-        return Err(BuildError::Configure {
-            command: format!("{configure:?}"),
-            output: output_tail(&output),
-        });
-    }
 
     // Build.
     let mut build_cmd = build_command(&cmake_prog, &build_dir, jobs, None);
@@ -740,6 +760,77 @@ fn cached_generator(build_dir: &Path) -> Option<String> {
     None
 }
 
+/// Remove `build_dir` unless it holds a readable cache for `generator`: a
+/// missing cache means an earlier configure died midway, and CMake refuses a
+/// tree configured with another generator. A tree from an older default
+/// generator is therefore rebuilt once and then matches.
+fn remove_incompatible_build_dir(build_dir: &Path, generator: &str) {
+    if build_dir.exists() && cached_generator(build_dir).as_deref() != Some(generator) {
+        remove_dir_all_quiet(build_dir);
+    }
+}
+
+/// Configure `source` into `build_dir` with `toolchain` plus `extra`
+/// definitions. A fresh tree is first seeded with the toolchain detection
+/// results under `seed_root` (see [`toolchain_seed`]). A failed configure
+/// leaves the tree unusable no matter the cause (poisoned/stale cache,
+/// half-written state, changed toolchain, a bad seed), so it is retried
+/// exactly once from scratch without a seed, except when CMake found no build
+/// program for the generator, which a retry cannot fix. A seed whose configure
+/// failed where the clean retry succeeded is rejected for later builds.
+fn run_configure(
+    source: &Path,
+    build_dir: &Path,
+    toolchain: &toolchain_seed::Toolchain<'_>,
+    extra: &[String],
+    seed_root: &Path,
+) -> Result<(), BuildError> {
+    let command = |seed_args: &[String]| {
+        let mut command = Command::new(toolchain.cmake);
+        command
+            .arg("-S")
+            .arg(source)
+            .arg("-B")
+            .arg(build_dir)
+            .args(toolchain_seed::toolchain_args(
+                toolchain.generator,
+                toolchain.launcher,
+                toolchain.cc,
+                toolchain.flags,
+            ))
+            .args(extra)
+            .args(seed_args);
+        command
+    };
+    let launch_error = |source| BuildError::CmakeLaunch {
+        program: toolchain.cmake.to_owned(),
+        source,
+    };
+    let seed = if build_dir.exists() {
+        None
+    } else {
+        toolchain_seed::prepare(seed_root, toolchain)
+    };
+    let seed_args = seed.as_ref().and_then(|seed| seed.apply(build_dir));
+    let mut configure = command(seed_args.as_deref().unwrap_or_default());
+    let mut output = configure.output().map_err(launch_error)?;
+    if !output.status.success() && !missing_build_program(&output) {
+        remove_dir_all_quiet(build_dir);
+        configure = command(&[]);
+        output = configure.output().map_err(launch_error)?;
+        if output.status.success() && seed_args.is_some() {
+            if let Some(seed) = &seed {
+                seed.reject("a seeded configure failed where a clean configure succeeded");
+            }
+        }
+    }
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(configure_error(&configure, toolchain.generator, &output))
+    }
+}
+
 fn remove_dir_all_quiet(dir: &Path) {
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -859,15 +950,22 @@ fn dpi_link_setup(opts: &CmakeBuildOpts) -> Result<String, BuildError> {
 /// layout or the cache key.
 fn prepare_runtime_cache(
     waveform: bool,
-    cc: &str,
-    flags: &str,
-    cmake_prog: &str,
+    toolchain: &toolchain_seed::Toolchain<'_>,
     jobs: usize,
     opts: &CmakeBuildOpts,
 ) -> Result<PathBuf, BuildError> {
+    let cmake_prog = toolchain.cmake;
     let key = format!(
         "{}-{}",
-        runtime_cache_key(waveform, cc, flags, cmake_prog, opts),
+        runtime_cache_key_with_compiler(
+            waveform,
+            toolchain.cc,
+            toolchain.flags,
+            cmake_prog,
+            opts,
+            toolchain.compiler_identity,
+            toolchain.compiler_target,
+        ),
         value::identity(opts)?
     );
     let cache_root = runtime_cache_root(opts)?;
@@ -941,44 +1039,12 @@ fn prepare_runtime_cache(
     })?;
 
     let build_dir = entry.join("build");
-    if build_dir.exists() {
-        match cached_generator(&build_dir) {
-            None => remove_dir_all_quiet(&build_dir),
-            Some(cached) => {
-                if generator_for(opts).is_some_and(|requested| requested != cached) {
-                    remove_dir_all_quiet(&build_dir);
-                }
-            }
-        }
-    }
-
-    let mut configure = Command::new(cmake_prog);
-    configure.arg("-S").arg(&entry).arg("-B").arg(&build_dir);
-    if let Some(generator) = generator_for(opts) {
-        configure.arg("-G").arg(generator);
-    }
-    configure
-        .arg(format!("-DCMAKE_C_COMPILER={cc}"))
-        .arg(format!("-DCMAKE_C_FLAGS:STRING={flags}"))
-        .arg(format!(
-            "-DCMAKE_C_COMPILER_LAUNCHER={}",
-            resolve_launcher(opts)
-        ));
+    remove_incompatible_build_dir(&build_dir, toolchain.generator);
+    run_configure(&entry, &build_dir, toolchain, &[], &cache_root)?;
     let launch_error = |source| BuildError::CmakeLaunch {
         program: cmake_prog.to_owned(),
         source,
     };
-    let mut output = configure.output().map_err(&launch_error)?;
-    if !output.status.success() {
-        remove_dir_all_quiet(&build_dir);
-        output = configure.output().map_err(&launch_error)?;
-    }
-    if !output.status.success() {
-        return Err(BuildError::Configure {
-            command: format!("{configure:?}"),
-            output: output_tail(&output),
-        });
-    }
 
     let mut build = build_command(cmake_prog, &build_dir, jobs, Some("llg_runtime"));
     let output = build.output().map_err(launch_error)?;
@@ -1055,6 +1121,7 @@ fn runtime_cache_root_with_override(base: &Path, override_root: Option<PathBuf>)
     }
 }
 
+#[cfg(test)]
 fn runtime_cache_key(
     waveform: bool,
     cc: &str,
@@ -1062,9 +1129,16 @@ fn runtime_cache_key(
     cmake_prog: &str,
     opts: &CmakeBuildOpts,
 ) -> String {
-    let compiler = compiler_identity(cc);
-    let target = compiler_target(cc);
-    runtime_cache_key_with_compiler(waveform, cc, flags, cmake_prog, opts, &compiler, &target)
+    let compiler = compiler_probe::facts(cc, &std::env::temp_dir());
+    runtime_cache_key_with_compiler(
+        waveform,
+        cc,
+        flags,
+        cmake_prog,
+        opts,
+        &compiler.identity,
+        &compiler.target,
+    )
 }
 
 fn runtime_cache_key_with_compiler(
@@ -1077,7 +1151,7 @@ fn runtime_cache_key_with_compiler(
     target: &str,
 ) -> String {
     let mut hash = 0xcbf29ce484222325u64;
-    let generator = generator_for(opts).unwrap_or_default();
+    let generator = generator_for(opts);
     let launcher = resolve_launcher(opts);
     for text in [
         RUNTIME_CMAKELISTS_TEMPLATE,
@@ -1143,70 +1217,6 @@ fn runtime_cache_key_with_compiler(
     )
 }
 
-fn compiler_identity(cc: &str) -> String {
-    let mut identity = cc.to_owned();
-    for argument in ["--version", "/Bv"] {
-        if let Ok(output) = Command::new(cc).arg(argument).output() {
-            identity.push('\n');
-            identity.push_str(&String::from_utf8_lossy(&output.stdout));
-            identity.push_str(&String::from_utf8_lossy(&output.stderr));
-            if output.status.success() {
-                break;
-            }
-        }
-    }
-    identity
-}
-
-fn compiler_target(cc: &str) -> String {
-    if let Ok(output) = Command::new(cc).arg("-dumpmachine").output() {
-        if output.status.success() {
-            let target = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            if !target.is_empty() {
-                return target;
-            }
-        }
-    }
-    for argument in ["--version", "/Bv"] {
-        if let Ok(output) = Command::new(cc).arg(argument).output() {
-            let text = format!(
-                "{}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            if let Some(target) = compiler_target_from_output(&text) {
-                return target;
-            }
-        }
-    }
-    format!(
-        "unreported-{}-{}",
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    )
-}
-
-fn compiler_target_from_output(output: &str) -> Option<String> {
-    for line in output.lines() {
-        let line = line.trim();
-        if let Some(target) = line.strip_prefix("Target:") {
-            let target = target.trim();
-            if !target.is_empty() {
-                return Some(target.to_owned());
-            }
-        }
-        if line.contains("Microsoft") {
-            if let Some((_, architecture)) = line.rsplit_once(" for ") {
-                let architecture = architecture.trim();
-                if !architecture.is_empty() && !architecture.contains(' ') {
-                    return Some(format!("msvc-{architecture}"));
-                }
-            }
-        }
-    }
-    None
-}
-
 fn find_runtime_library(build_dir: &Path) -> Option<PathBuf> {
     let mut found = Vec::new();
     collect_named_files(build_dir, "libllg_runtime.a", &mut found);
@@ -1231,18 +1241,7 @@ struct RuntimeCacheLock {
 
 impl RuntimeCacheLock {
     fn acquire(entry: &Path) -> Result<Self, BuildError> {
-        let path = entry.with_extension("lock");
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)
-            .map_err(|source| BuildError::Io {
-                action: "open runtime cache lock",
-                path: path.clone(),
-                source,
-            })?;
+        let (path, file) = Self::open(entry)?;
         let started = Instant::now();
         loop {
             match file.try_lock() {
@@ -1264,6 +1263,36 @@ impl RuntimeCacheLock {
                 }
             }
         }
+    }
+
+    /// The lock when it is free now; `None` while another process holds it.
+    fn try_acquire(entry: &Path) -> Result<Option<Self>, BuildError> {
+        let (path, file) = Self::open(entry)?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(Self { _file: file })),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(source)) => Err(BuildError::Io {
+                action: "lock runtime cache",
+                path,
+                source,
+            }),
+        }
+    }
+
+    fn open(entry: &Path) -> Result<(PathBuf, File), BuildError> {
+        let path = entry.with_extension("lock");
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|source| BuildError::Io {
+                action: "open runtime cache lock",
+                path: path.clone(),
+                source,
+            })?;
+        Ok((path, file))
     }
 }
 
@@ -1369,11 +1398,58 @@ pub fn cmake_available() -> bool {
     })
 }
 
-/// `-G` value: explicit option > `$CMAKE_GENERATOR` > none.
-fn generator_for(opts: &CmakeBuildOpts) -> Option<String> {
-    opts.generator
-        .clone()
-        .or_else(|| std::env::var("CMAKE_GENERATOR").ok())
+/// Generator used when neither [`CmakeBuildOpts::generator`] nor
+/// `$CMAKE_GENERATOR` names one, on every host. Ninja builds the many small
+/// model and runtime translation units with less per-invocation overhead
+/// than Makefiles or MSBuild, and one default keeps cache keys and build
+/// trees uniform across platforms. Model builds therefore require Ninja
+/// unless another generator is selected explicitly.
+pub const DEFAULT_GENERATOR: &str = "Ninja";
+
+/// `-G` value: explicit option > `$CMAKE_GENERATOR` > [`DEFAULT_GENERATOR`].
+fn generator_for(opts: &CmakeBuildOpts) -> String {
+    generator_from(
+        opts.generator.as_deref(),
+        std::env::var("CMAKE_GENERATOR").ok().as_deref(),
+    )
+}
+
+/// Pure generator precedence; empty values count as unset.
+fn generator_from(explicit: Option<&str>, env_value: Option<&str>) -> String {
+    explicit
+        .filter(|name| !name.is_empty())
+        .or(env_value.filter(|name| !name.is_empty()))
+        .unwrap_or(DEFAULT_GENERATOR)
+        .to_owned()
+}
+
+/// Whether configure output reports that CMake found no build program for
+/// the selected generator (for Ninja: `ninja` is not installed). Retrying
+/// from scratch cannot fix that, so the caller reports it directly.
+fn missing_build_program(output: &std::process::Output) -> bool {
+    [&output.stderr, &output.stdout].iter().any(|bytes| {
+        let text = String::from_utf8_lossy(bytes);
+        text.contains("CMAKE_MAKE_PROGRAM is not set")
+            || text.contains("unable to find a build program corresponding to")
+    })
+}
+
+/// Error for a configure that failed with `output`.
+fn configure_error(
+    command: &Command,
+    generator: &str,
+    output: &std::process::Output,
+) -> BuildError {
+    if missing_build_program(output) {
+        return BuildError::BuildProgramNotFound {
+            generator: generator.to_owned(),
+            output: output_tail(output),
+        };
+    }
+    BuildError::Configure {
+        command: format!("{command:?}"),
+        output: output_tail(output),
+    }
 }
 
 /// Launcher precedence shared by the environment fallback and the tests:
@@ -1394,13 +1470,30 @@ fn resolve_launcher(opts: &CmakeBuildOpts) -> String {
     )
 }
 
-/// Explicit option, else `$LLG_CC`, else `$CC`, else `cc`.
+/// C compiler for generated models when neither an option nor `$LLG_CC`/`$CC`
+/// selects one. Models are built and run on the host that runs `llg`, so the
+/// host platform's native compiler is the default: MSVC `cl` on Windows (no
+/// `cc` exists there unless a GCC distribution happens to be on `PATH`, and
+/// CMake itself defaults to MSVC), `cc` elsewhere.
+pub const DEFAULT_C_COMPILER: &str = if cfg!(windows) { "cl" } else { "cc" };
+
+/// Explicit option, else `$LLG_CC`, else `$CC`, else [`DEFAULT_C_COMPILER`].
 fn resolve_cc(opts: &CmakeBuildOpts) -> String {
-    opts.cc
-        .clone()
-        .or_else(|| std::env::var("LLG_CC").ok())
-        .or_else(|| std::env::var("CC").ok())
-        .unwrap_or_else(|| "cc".to_string())
+    select_cc(
+        opts.cc.as_deref(),
+        std::env::var("LLG_CC").ok().as_deref(),
+        std::env::var("CC").ok().as_deref(),
+    )
+}
+
+/// The compiler precedence of [`resolve_cc`] without the environment. Empty
+/// variables count as unset, as in the `llg` driver.
+fn select_cc(explicit: Option<&str>, llg_cc: Option<&str>, cc: Option<&str>) -> String {
+    explicit
+        .or(llg_cc.filter(|value| !value.is_empty()))
+        .or(cc.filter(|value| !value.is_empty()))
+        .unwrap_or(DEFAULT_C_COMPILER)
+        .to_owned()
 }
 
 /// Explicit option, else `$LLG_CMAKE`, else `cmake`.
@@ -1775,6 +1868,71 @@ mod tests {
     }
 
     #[test]
+    fn generator_precedence_is_option_then_environment_then_ninja() {
+        assert_eq!(
+            generator_from(Some("Unix Makefiles"), Some("Ninja Multi-Config")),
+            "Unix Makefiles"
+        );
+        assert_eq!(
+            generator_from(None, Some("Unix Makefiles")),
+            "Unix Makefiles"
+        );
+        assert_eq!(
+            generator_from(Some(""), Some("Unix Makefiles")),
+            "Unix Makefiles",
+            "an empty option counts as unset"
+        );
+        assert_eq!(generator_from(None, Some("")), DEFAULT_GENERATOR);
+        assert_eq!(generator_from(None, None), "Ninja");
+    }
+
+    #[test]
+    fn generated_projects_detect_the_toolchain_like_the_seed_probe() {
+        // Detection runs in project(); the seed is only valid for projects
+        // whose preamble (and so policy state) matches the probe's.
+        for template in [CMAKELISTS_TEMPLATE, RUNTIME_CMAKELISTS_TEMPLATE] {
+            let rest = template
+                .strip_prefix(toolchain_seed::PROJECT_PREAMBLE)
+                .expect("generated project starts with the seed preamble");
+            assert!(rest.starts_with("project("), "{rest}");
+            assert!(rest.lines().next().unwrap().ends_with(" C)"));
+        }
+    }
+
+    #[test]
+    fn missing_build_program_is_reported_without_a_retry_hint() {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+        // CMake 3.16-3.31 wording when `-G Ninja` finds no `ninja`.
+        let stderr = b"CMake Error: CMake was unable to find a build program corresponding to \"Ninja\".  CMAKE_MAKE_PROGRAM is not set.  You probably need to select a different build tool.\nCMake Error: CMAKE_C_COMPILER not set, after EnableLanguage\n-- Configuring incomplete, errors occurred!\n";
+        let missing = std::process::Output {
+            status: std::process::ExitStatus::from_raw(1),
+            stdout: Vec::new(),
+            stderr: stderr.to_vec(),
+        };
+        assert!(missing_build_program(&missing));
+        let command = Command::new("cmake");
+        let error = configure_error(&command, "Ninja", &missing);
+        assert!(matches!(error, BuildError::BuildProgramNotFound { .. }));
+        let message = error.to_string();
+        assert!(message.contains("install Ninja"), "{message}");
+        assert!(message.contains("CMAKE_GENERATOR"), "{message}");
+        assert!(message.contains("--generator"), "{message}");
+
+        let other = std::process::Output {
+            stderr: b"CMake Error at CMakeLists.txt:1 (project): bad\n".to_vec(),
+            ..missing
+        };
+        assert!(!missing_build_program(&other));
+        assert!(matches!(
+            configure_error(&command, "Ninja", &other),
+            BuildError::Configure { .. }
+        ));
+    }
+
+    #[test]
     fn runtime_cache_key_varies_with_toolchain_and_waveforms_not_model_width() {
         let defaults = CmakeBuildOpts::default();
         let base = runtime_cache_key(false, "cc", "-O2", "cmake", &defaults);
@@ -1786,6 +1944,15 @@ mod tests {
         assert_ne!(
             base,
             runtime_cache_key(true, "cc", "-O2", "cmake", &defaults)
+        );
+        let generator = |name: &str| CmakeBuildOpts {
+            generator: Some(name.to_owned()),
+            ..Default::default()
+        };
+        assert_ne!(
+            runtime_cache_key(false, "cc", "-O2", "cmake", &generator("Ninja")),
+            runtime_cache_key(false, "cc", "-O2", "cmake", &generator("Unix Makefiles")),
+            "the effective generator selects distinct runtime archives"
         );
         let launched = CmakeBuildOpts {
             launcher: Some("ccache".to_owned()),
@@ -1815,20 +1982,6 @@ mod tests {
                 "aarch64-pc-linux-gnu",
             ),
             "compiler-reported targets must select distinct runtime archives"
-        );
-    }
-
-    #[test]
-    fn compiler_target_parses_clang_and_msvc_reports() {
-        assert_eq!(
-            compiler_target_from_output("clang version 19\nTarget: aarch64-apple-darwin\n"),
-            Some("aarch64-apple-darwin".to_owned())
-        );
-        assert_eq!(
-            compiler_target_from_output(
-                "Microsoft (R) C/C++ Optimizing Compiler Version 19.44 for ARM64\n"
-            ),
-            Some("msvc-ARM64".to_owned())
         );
     }
 
@@ -1911,6 +2064,15 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(resolve_cc(&opts), "explicit-cc");
+        assert_eq!(
+            select_cc(Some("explicit-cc"), Some("llg-cc"), Some("cc-env")),
+            "explicit-cc"
+        );
+        assert_eq!(select_cc(None, Some("llg-cc"), Some("cc-env")), "llg-cc");
+        assert_eq!(select_cc(None, Some(""), Some("cc-env")), "cc-env");
+        assert_eq!(select_cc(None, None, Some("")), DEFAULT_C_COMPILER);
+        assert_eq!(select_cc(None, None, None), DEFAULT_C_COMPILER);
+        assert_eq!(DEFAULT_C_COMPILER, if cfg!(windows) { "cl" } else { "cc" });
         assert_eq!(resolve_cmake(&opts), "explicit-cmake");
         let flags = c_flags(&opts).unwrap();
         assert_eq!(flags, "-g -DX=1");

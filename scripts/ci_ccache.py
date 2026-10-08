@@ -13,9 +13,11 @@ fails the launcher is simply not exported and tests run uncached.
 """
 
 import argparse
+import difflib
 import hashlib
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -147,10 +149,19 @@ def cache_hits(stats):
     return stats.get("direct_cache_hit", 0) + stats.get("preprocessed_cache_hit", 0)
 
 
+def base_dir_spellings(base_dir):
+    given = os.path.abspath(str(base_dir))
+    resolved = os.path.realpath(given)
+    spellings = [given]
+    if os.path.normcase(resolved) != os.path.normcase(given):
+        spellings.append(resolved)
+    return spellings
+
+
 def ccache_environment(cache_dir, base_dir, max_size):
     return {
         "CCACHE_DIR": str(cache_dir),
-        "CCACHE_BASEDIR": str(base_dir),
+        "CCACHE_BASEDIR": os.pathsep.join(base_dir_spellings(base_dir)),
         # Model directories are unique per test; neither the build directory
         # nor the (rewritten) absolute source path may enter the hash.
         "CCACHE_NOHASHDIR": "1",
@@ -160,8 +171,65 @@ def ccache_environment(cache_dir, base_dir, max_size):
 
 def run(command, env, cwd=None):
     return subprocess.run(
-        command, env=env, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        command, env=env, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        errors="replace",
     )
+
+
+DIAGNOSTIC_LIMIT = 8000
+
+
+def bounded(text, limit=DIAGNOSTIC_LIMIT):
+    return text if len(text) <= limit else text[: limit // 2] + "\n[...]\n" + text[-limit // 2 :]
+
+
+def compile_lines(build_output):
+    return [line.strip() for line in build_output.splitlines()
+            if "check.c" in line and re.search(r"(^|\s)[-/]c\s", line)]
+
+
+def debug_files(build_dir, suffix):
+    return sorted(Path(build_dir).rglob(f"*.{suffix}"))
+
+
+def input_text_diff(first, second):
+    left = first.read_text(errors="replace").splitlines()
+    right = second.read_text(errors="replace").splitlines()
+    diff = difflib.unified_diff(left, right, str(first.name), str(second.name), n=1, lineterm="")
+    return "\n".join(diff) or "(identical hash inputs)"
+
+
+LOG_MESSAGES = ("Config: (environment)", "Command line:", "Working directory:", "Compiler type:", "Source file:",
+                "Executing", "Result:", "Unsupported", "Failed", "Disabling")
+
+
+def log_excerpt(log, limit=30, width=600):
+    lines = []
+    for line in log.read_text(errors="replace").splitlines():
+        message = line.split("] ", 1)[-1]
+        if message.startswith(LOG_MESSAGES):
+            lines.append(message[:width])
+    return "\n".join(lines[:limit])
+
+
+def miss_diagnostics(ccache, env, work, builds):
+    parts = [f"base_dir spellings: {env.get('CCACHE_BASEDIR', '(unset)')}", f"scratch: {work}"]
+    config = run([str(ccache), "--show-config"], env)
+    wanted = {"base_dir", "hash_dir", "compiler", "compiler_type", "direct_mode", "depend_mode", "sloppiness"}
+    parts.append("\n".join(line for line in config.stdout.splitlines()
+                           if line.split(")", 1)[-1].split("=", 1)[0].strip() in wanted))
+    for name, output in builds:
+        parts.append(f"[{name}] compile: " + " | ".join(compile_lines(output)))
+    inputs = [debug_files(work / name / "build", "ccache-input-text") for name, _ in builds]
+    if all(inputs):
+        parts.append("hash input diff (a -> b):\n" + input_text_diff(inputs[0][-1], inputs[1][-1]))
+    else:
+        parts.append(f"no ccache-input-text files: {[len(found) for found in inputs]}")
+    name = builds[-1][0]
+    logs = debug_files(work / name / "build", "ccache-log")
+    if logs:
+        parts.append(f"[{name}] ccache log excerpt:\n{log_excerpt(logs[-1])}")
+    return bounded("\n".join(parts))
 
 
 def self_check(ccache, base_dir, compiler, generator=None):
@@ -172,10 +240,12 @@ def self_check(ccache, base_dir, compiler, generator=None):
     try:
         env = dict(os.environ)
         env.update(ccache_environment(work / "cache", base_dir, "50M"))
+        env["CCACHE_DEBUG"] = "1"
         env.pop("CMAKE_C_COMPILER_LAUNCHER", None)
         launcher = str(ccache).replace("\\", "/")
+        builds = []
         for name in ("a", "b"):
-            project = work / name
+            project = Path(os.path.realpath(work / name))
             project.mkdir()
             (project / "check.c").write_text(CHECK_C)
             (project / "CMakeLists.txt").write_text(CHECK_CMAKE)
@@ -185,15 +255,18 @@ def self_check(ccache, base_dir, compiler, generator=None):
             configure += ["-DCMAKE_BUILD_TYPE=Release", f"-DCMAKE_C_COMPILER_LAUNCHER={launcher}"]
             if compiler:
                 configure.append(f"-DCMAKE_C_COMPILER={compiler}")
-            for step in (configure, ["cmake", "--build", str(project / "build")]):
+            for step in (configure, ["cmake", "--build", str(project / "build"), "--verbose"]):
                 result = run(step, env)
                 if result.returncode != 0:
                     return f"{' '.join(step)} failed:\n{result.stdout[-2000:]}"
+            builds.append((name, result.stdout))
+        print(f"self-check compile ({builds[0][0]}): " + " | ".join(compile_lines(builds[0][1]))[:1000])
         stats = run([str(ccache), "--print-stats"], env)
         if stats.returncode != 0:
             return f"ccache --print-stats failed:\n{stats.stdout[-1000:]}"
         if cache_hits(parse_print_stats(stats.stdout)) < 1:
-            return f"the second identical build was not a cache hit:\n{stats.stdout[-1000:]}"
+            return (f"the second identical build was not a cache hit:\n{stats.stdout[-1000:]}\n"
+                    f"{miss_diagnostics(ccache, env, work, builds)}")
         return None
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -220,11 +293,16 @@ def default_path(name, fallback):
     return Path(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()) / fallback
 
 
+def model_compiler(environ=None, system=None):
+    environ = os.environ if environ is None else environ
+    default = "cl" if (system or platform.system()).lower() == "windows" else "cc"
+    return environ.get("LLG_CC") or environ.get("CC") or default
+
+
 def activate(args):
     cache_dir = default_path(args.ccache_dir, "ccache")
     base_dir = Path(args.base_dir or tempfile.gettempdir())
-    # The same resolution sim::build applies when LLG_CC and CC are both unset.
-    compiler = args.compiler or os.environ.get("LLG_CC") or os.environ.get("CC") or "cc"
+    compiler = args.compiler or model_compiler()
     try:
         if args.ccache:
             ccache = Path(args.ccache)
@@ -275,7 +353,9 @@ def main(argv=None):
     act.add_argument("--ccache-dir", help="cache directory (default $RUNNER_TEMP/ccache)")
     act.add_argument("--max-size", default="300M")
     act.add_argument("--base-dir", help="common parent of model directories (default: temp dir)")
-    act.add_argument("--compiler", help="C compiler for the self-check (default LLG_CC, CC, cc)")
+    act.add_argument(
+        "--compiler", help="C compiler for the self-check (default LLG_CC, CC, then cl on Windows, cc elsewhere)"
+    )
     act.add_argument("--env-file", help="append NAME=VALUE lines here (for GITHUB_ENV)")
     act.add_argument("--env-format", choices=("github", "shell"), default="github")
     act.add_argument("--install-only", action="store_true", help="download and verify only")

@@ -73,9 +73,11 @@ trailing-hole trimming are amortized constant time per registration/removal;
 ordinary slot removal uses the process's stored position. Cancellation traversals
 that can remove other records restart as before.
 
-On 64-bit hosts the process record is 432 bytes, including a 128-byte wait
-record and the pointer to a granted semaphore request that the process has
-not resumed to take (its keys return if the process is killed first). Heap-path dependency memberships add 32 bytes each; a single narrow
+On 64-bit hosts the process record is 440 bytes, including a 128-byte wait
+record, the pointer to a granted semaphore request that the process has
+not resumed to take (its keys return if the process is killed first) and the
+pointer to a mailbox delivery it has not resumed to take (the message returns
+to its mailbox if the process is killed first). Heap-path dependency memberships add 32 bytes each; a single narrow
 signal wait embeds its membership. Each live source row adds 32 bytes, and each
 hash bucket 8 bytes (geometric capacity at 75% load). Temporary key sorting uses
 pointer integer representations, while

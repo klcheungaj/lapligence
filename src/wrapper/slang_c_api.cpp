@@ -3278,6 +3278,15 @@ private:
       if (const Expression* initializer = symbol.getInitializer())
         capture.semanticRole(id, initializer, LLG_SLANG_EDGE_INITIALIZER);
     }
+    if constexpr (std::same_as<T, InstanceBodySymbol>) {
+      // The default clocking in effect for this instance, including one named
+      // by a `default clocking id;` item (IEEE 1800-2009 14.12). Slang keeps
+      // that reference only in its compilation; the edge is appended, never
+      // converted from the block's own child edge.
+      if (const Symbol* clocking = symbol.getCompilation().getDefaultClocking(symbol))
+        capture.semanticEdge(id, LLG_SLANG_EDGE_CLOCKING,
+                             capture.ensureSemantic(clocking));
+    }
     if constexpr (std::same_as<T, ClockingBlockSymbol>) {
       capture.semanticRole(id, &symbol.getEvent(), LLG_SLANG_EDGE_EVENT);
       const ClockingSkew input = symbol.getDefaultInputSkew();

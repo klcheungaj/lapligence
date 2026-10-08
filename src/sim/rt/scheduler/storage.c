@@ -279,7 +279,13 @@ struct llg_semaphore {
 };
 
 typedef struct llg_mailbox_message {
-    struct llg_mailbox_message* next;
+    union {
+        // Queue link while the message is queued.
+        struct llg_mailbox_message* next;
+        // While it is a pending delivery: the mailbox it was taken from (a
+        // consumed message), or NULL for a peek copy.
+        struct llg_mailbox* owner;
+    } link;
     llg_mailbox_value_t value;
 } llg_mailbox_message_t;
 
@@ -290,6 +296,10 @@ struct llg_mailbox {
     int8_t is_signed;
     int8_t two_state;
     int8_t shortreal;
+    // A killed getter handed a consumed message back; service its waiters
+    // once the cancellation batch is complete.
+    int8_t returned_delivery;
+    uint64_t type_id;            // LLG_MAILBOX_VALUE equivalence class
     uint64_t length;
     llg_mailbox_message_t* head;
     llg_mailbox_message_t* tail;
@@ -435,6 +445,9 @@ struct llg_proc {
     // resumed to take yet; its keys return to the semaphore if the process
     // dies first (SV 15.3). Generated code releases it after the get.
     llg_semaphore_wait_t* granted_request;
+    // A mailbox message delivered to this blocked getter that it has not
+    // resumed to take yet (SIM-017); handed back if the process dies first.
+    struct llg_mailbox_message* mailbox_delivery;
     // Resume-hot fields are packed next to the chain and appended root frame.
     llg_value_scope_t* value_scopes;
     llg_activation_t* activation_top;
@@ -465,7 +478,7 @@ _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) -
 _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) ==
                    sizeof(llg_proc_t),
                "coroutine chain must remain the process record's last member");
-_Static_assert(sizeof(llg_proc_t) == 432,
+_Static_assert(sizeof(llg_proc_t) == 440,
                "64-bit process record size changed; update the layout contract");
 #endif
 
@@ -509,6 +522,8 @@ static void wake_proc(llg_proc_t* p);
 static void wake_assertion_waiter(uint64_t identity);
 static void semaphore_waiter_unlink(llg_wait_t* wait);
 static void semaphore_return_grant(llg_proc_t* proc);
+static void mailbox_return_delivery(llg_proc_t* proc);
+static void mailbox_service_returned_deliveries(void);
 static void semaphore_wake_available(llg_semaphore_t* semaphore);
 static void llg_kill_proc_tree(llg_proc_t* p);
 static void llg_kill_proc_tree_internal(llg_proc_t* p, int notify_parent);

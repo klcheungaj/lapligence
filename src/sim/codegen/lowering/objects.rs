@@ -20,7 +20,9 @@ mod queries;
 mod strings;
 mod virtual_interfaces;
 
-type VirtualInterfaceAccess = (IrChandleExpr, usize, usize, u32, bool, bool);
+/// Handle, descriptor, member slot, width (0 for a real member), signedness,
+/// two-state domain and shortreal flag of one virtual-interface member access.
+type VirtualInterfaceAccess = (IrChandleExpr, usize, usize, u32, bool, bool, bool);
 
 pub(super) fn object_query(query: IrObjectQuery, width: u32, signed: bool) -> IrExpr {
     IrExpr::new(

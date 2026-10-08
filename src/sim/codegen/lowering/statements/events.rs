@@ -861,7 +861,7 @@ impl EmitCtx<'_, '_> {
             NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
         );
         // Member paths share aggregate storage, so event waits must compare the selected value.
-        let selected_aggregate_member = self.cg.packed_member_info(expression).is_some()
+        let selected_aggregate_member = self.cg.packed_member_read_info(expression).is_some()
             || self.cg.unpacked_member_info(expression).is_some()
             || self.cg.packed_element_member_select(expression).is_some();
         // A `ref` formal of a typed body that no specialization or expansion

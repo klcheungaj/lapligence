@@ -42,15 +42,18 @@ pub struct IrClassField {
     pub(in crate::sim) native_value: Option<usize>,
 }
 
-/// One packed member exposed by a virtual-interface view. The member index is
-/// shared by every elaborated interface instance of the same specialization;
-/// each instance supplies the concrete signal address at that slot.
+/// One packed or real member exposed by a virtual-interface view. The member
+/// index is shared by every elaborated interface instance of the same
+/// specialization; each instance supplies the concrete signal address at that
+/// slot. A real member has width 0 and `double` storage.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IrVirtualInterfaceMember {
     pub(in crate::sim) name: String,
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
     pub(in crate::sim) two_state: bool,
+    pub(in crate::sim) real: bool,
+    pub(in crate::sim) shortreal: bool,
 }
 
 /// One concrete interface instance reachable through a virtual-interface
@@ -409,6 +412,11 @@ pub enum IrMailboxElement {
     },
     String,
     Handle,
+    /// An aggregate message type (record, unpacked array, queue or dynamic
+    /// array) identified by its model-wide equivalence class (SIM-017).
+    Value {
+        type_id: u64,
+    },
 }
 
 /// A value copied into a mailbox. Strings are lowered as owned expressions;
@@ -432,6 +440,12 @@ pub enum IrMailboxValue {
     },
     String(IrStringExpr),
     Handle(IrChandleExpr),
+    /// A deep copy of lexical native value `value`, an aggregate of the
+    /// equivalence class `type_id` (SIM-017).
+    Native {
+        value: usize,
+        type_id: u64,
+    },
 }
 
 /// A writable mailbox destination. The address is complete C lvalue syntax
@@ -460,6 +474,13 @@ pub enum IrMailboxTarget {
     },
     Handle {
         addr: String,
+    },
+    /// Lexical native value `value` receiving an aggregate message of the
+    /// equivalence class `type_id`; the lowering copies it to the source
+    /// destination afterwards (SIM-017).
+    Native {
+        value: usize,
+        type_id: u64,
     },
 }
 
@@ -1166,6 +1187,15 @@ impl IrMailboxValue {
             Self::Real { .. } => Ok(()),
             Self::String(value) => value.validate(model, string_return),
             Self::Handle(value) => value.validate(model, formals, chandle_return),
+            Self::Native { value, type_id } => {
+                if *type_id == 0 || *value >= model.native_values.len() {
+                    return Err(super::IrValidationError::new(
+                        "mailbox value",
+                        "aggregate message needs a native value and a nonzero type",
+                    ));
+                }
+                Ok(())
+            }
             Self::Typed { type_id, value } => {
                 if *type_id == 0 {
                     return Err(super::IrValidationError::new(
@@ -1184,6 +1214,7 @@ impl IrMailboxValue {
             Self::String(value) => value.expressions(visit),
             Self::Handle(value) => value.expressions(visit),
             Self::Typed { value, .. } => value.expressions(visit),
+            Self::Native { .. } => {}
         }
     }
 
@@ -1193,6 +1224,7 @@ impl IrMailboxValue {
             Self::String(value) => value.expressions_mut(visit),
             Self::Handle(value) => value.expressions_mut(visit),
             Self::Typed { value, .. } => value.expressions_mut(visit),
+            Self::Native { .. } => {}
         }
     }
 }
@@ -1208,10 +1240,19 @@ impl IrMailboxTarget {
             }
             return target.validate();
         }
+        if let Self::Native { type_id, .. } = self {
+            if *type_id == 0 {
+                return Err(super::IrValidationError::new(
+                    "mailbox target",
+                    "aggregate message type must be nonzero",
+                ));
+            }
+            return Ok(());
+        }
         let (addr, width) = match self {
             Self::Packed { addr, width, .. } => (addr, Some(*width)),
             Self::Ref { addr } => (addr, None),
-            Self::Typed { .. } => unreachable!("handled above"),
+            Self::Typed { .. } | Self::Native { .. } => unreachable!("handled above"),
             Self::Real { addr, .. } | Self::String { addr } | Self::Handle { addr } => (addr, None),
         };
         if addr.is_empty() || width == Some(0) {

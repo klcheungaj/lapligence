@@ -11,7 +11,7 @@
 //! - zero writes *and* zero reads → "never used" (dead declaration);
 //! - zero reads but at least one write → "never read" (driven but unconsumed).
 
-use crate::core::db::{Db, NodeId, NodeKind};
+use crate::core::db::{Db, Direction, NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
     collect_reads, collect_writes, is_signal, iter_instances, port_connected_signals,
     signal_scope_path,
@@ -102,6 +102,21 @@ fn instance_activity(db: &Db, scope: NodeId) -> (Vec<NodeId>, Vec<NodeId>, Vec<N
                     cont_writes.extend(collect_writes(db, *c));
                 }
                 NodeKind::GenScopeArray | NodeKind::GenScope => stack.push(*c),
+                // A clocking block reads its clock and samples every input
+                // and inout signal at each clocking event (SV §14.13),
+                // whether or not a process reads the clockvar.
+                _ if db.is_clocking_block(*c) => {
+                    if let Some(block) = db.clocking_block(*c) {
+                        reads.extend(collect_reads(db, block.event));
+                    }
+                    for variable in &db.node(*c).children {
+                        if let Some(info) = db.clocking_var(*variable).filter(|info| {
+                            matches!(info.direction, Direction::Input | Direction::Inout)
+                        }) {
+                            reads.extend(collect_reads(db, info.expression));
+                        }
+                    }
+                }
                 _ => {}
             }
         }

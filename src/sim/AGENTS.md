@@ -95,7 +95,7 @@ CMake is the only model builder: C11, Release by default, executable under
 `<build>/bin/`, and `m` linkage. The configure command retains:
 
 ```sh
-<cmake> -S <out_dir> -B <out_dir>/build [-G <generator>] [-DCMAKE_C_COMPILER_LAUNCHER=<launcher>] -DCMAKE_C_COMPILER=<cc|LLG_CC|$CC|cc> -DCMAKE_C_FLAGS:STRING="[cflags|$LLG_CFLAGS]" -DLLG_RUNTIME_LIBRARY=<cache>
+<cmake> -S <out_dir> -B <out_dir>/build -G <generator> [-DCMAKE_C_COMPILER_LAUNCHER=<launcher>] -DCMAKE_C_COMPILER=<cc|LLG_CC|$CC|cl on Windows, cc elsewhere> -DCMAKE_C_FLAGS:STRING="[cflags|$LLG_CFLAGS]" -DLLG_RUNTIME_LIBRARY=<cache>
 cmake --build <dir> --config Release --parallel <jobs> [--target llg_runtime]
 ```
 
@@ -131,8 +131,11 @@ Generated MSVC projects reserve the larger of that estimate and the 1 MiB
 Windows default with `/STACK`. Re-measure before changing either value; see
 `src/sim/rt/llg_rt.h`.
 
-`CmakeBuildOpts.generator`/`--generator` overrides `CMAKE_GENERATOR`, then host
-default. `launcher`/`--launcher` > `LLG_C_LAUNCHER` > none forwards
+`CmakeBuildOpts.generator`/`--generator` overrides a non-empty `CMAKE_GENERATOR`,
+then `DEFAULT_GENERATOR` (`Ninja`) on every host, never CMake's platform default,
+so caches and trees are uniform and MSBuild/Makefile overhead is avoided. A
+configure reporting no build program fails at once as `BuildProgramNotFound`
+(install Ninja or select a generator), skipping the clean retry. `launcher`/`--launcher` > `LLG_C_LAUNCHER` > none forwards
 `CMAKE_C_COMPILER_LAUNCHER` (`LLG_CC` must remain one program, so a launcher such as
 ccache needs this variable; an empty variable is none and an explicit empty library
 option suppresses it; the `llg` driver's order is CLI > `LLG_C_LAUNCHER` >
@@ -141,7 +144,10 @@ runtime cache key, and never touches the root `build.rs` Slang build (`LLG_CCACH
 files; include `svdpi.h` in generated output. `generate_model_sources`/`--gen-only`
 writes sources/CMake without building. `CmakeBuildOpts` `cmake`/`cc`/`cflags`
 (`--cmake`/`--cc`/`--cflags`) win over `LLG_CMAKE`, `LLG_CC`/`CC` and
-`LLG_CFLAGS`; explicit flags replace, not append to, `LLG_CFLAGS`. Reject double quotes in flags;
+`LLG_CFLAGS`; without a compiler selection `DEFAULT_C_COMPILER` is MSVC `cl` on
+Windows (models run on the host; CMake's own default) and `cc` elsewhere, and
+the runtime cache key records `cl`'s stderr banner plus `VCToolsVersion`,
+`WindowsSDKVersion` and `VSCMD_ARG_TGT_ARCH`; explicit flags replace, not append to, `LLG_CFLAGS`. Reject double quotes in flags;
 missing-CMake errors include installation guidance. Probe availability once.
 
 Cache by ownership ABI, runtime content, compiler-reported target, toolchain,
@@ -152,6 +158,31 @@ driver passes `<out-dir>/llg-runtime-cache`); relative paths resolve from the CW
 Never bake build-machine paths (`CARGO_MANIFEST_DIR`) into runtime defaults;
 `.cargo/config.toml` `[env]` points Cargo-launched runs at the repo cache. Prune stale
 sources/incompatible partial builds and retry failed configuration once cleanly.
+Root children are runtime archive entries (ready once they hold a `ready`
+marker) except the auxiliary directories listed once in
+`sim::build::RUNTIME_CACHE_AUX_DIRS`: `cmake-toolchain/` (seeds) and
+`compiler-probe/` (MSVC probe memos). Code that enumerates or prunes the root
+skips those names; add any new auxiliary directory to that list.
+
+Fresh trees (model and runtime archive) are seeded with cached toolchain
+detection (`build/toolchain_seed.rs`): `<root>/cmake-toolchain/<hash>` holds one probe's `CMakeFiles/<version>/*.cmake` plus the cache entries
+detection creates, applied with `CMAKE_PLATFORM_INFO_INITIALIZED`, the state
+CMake itself re-configures from. The exact key covers CMake and its version,
+generator, compiler spelling/identity/target, flags, launcher, host and the
+detection environment (`PATH`, `INCLUDE`, `LIB`, `SDKROOT`, ...). Publication
+needs a self-check (clean + re-configure vs seeded probe build files equal
+modulo tree paths and CMake module lists) under a non-blocking entry lock;
+otherwise a `rejected` marker stops probing. A seeded configure that fails is
+retried clean and rejects the seed. Published files never change; ready/rejected
+markers are renamed into place with the exact key. Projects keep the shared
+`PROJECT_PREAMBLE` before `project()`. `LLG_CMAKE_TOOLCHAIN_SEED=0` disables it.
+Compiler self-reports (`--version`/`/Bv` identity, target) come from
+`build/compiler_probe.rs`: each argument spawns at most once per probe (an MSVC
+banner skips `-dumpmachine`), results are memoized per process by spelling,
+canonical executable path, size, mtime and the probe environment, and MSVC
+results also in `<cache root>/compiler-probe/<hash>` files (GCC/Clang
+spellings are often wrappers, so they stay per process). The text must equal an
+unmemoized probe's, keeping existing cache and seed keys valid.
 Root portable patch preparation accepts clean/fully-applied vendors and rejects
 partial/mismatched edits; retain upstream-base gitlinks.
 

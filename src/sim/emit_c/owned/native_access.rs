@@ -77,19 +77,30 @@ impl Frame<'_, '_> {
             IrNativeAccessKind::InterfaceMember { interface, member } => {
                 let metadata = &self.ctx.model.virtual_interfaces[interface].members[member];
                 let site = access.site.as_deref().unwrap_or(name);
+                let kind = if metadata.real {
+                    "real_member"
+                } else {
+                    "member"
+                };
                 (
                     if self.quiet_receivers {
-                        format!("llg_vif_member_quiet({receiver}, {interface}, {member})")
+                        format!("llg_vif_{kind}_quiet({receiver}, {interface}, {member})")
                     } else {
                         format!(
-                            "llg_vif_member({receiver}, {interface}, {member}, {})",
+                            "llg_vif_{kind}({receiver}, {interface}, {member}, {})",
                             c_string_literal(site)
                         )
                     },
-                    IrClassFieldType::Packed {
-                        width: metadata.width,
-                        signed: metadata.signed,
-                        two_state: metadata.two_state,
+                    if metadata.real {
+                        IrClassFieldType::Real {
+                            shortreal: metadata.shortreal,
+                        }
+                    } else {
+                        IrClassFieldType::Packed {
+                            width: metadata.width,
+                            signed: metadata.signed,
+                            two_state: metadata.two_state,
+                        }
                     },
                 )
             }

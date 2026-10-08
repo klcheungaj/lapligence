@@ -803,17 +803,22 @@ fn render_stmt_scoped(
             sample,
             mode,
         } => {
+            let real = matches!(ctx.model.signal(*sample).ty, IrType::Real { .. });
             let source = &ctx.model.signal(*source).c_name;
             let sample = &ctx.model.signal(*sample).c_name;
+            let suffix = if real { "_real" } else { "" };
             match mode {
+                IrClockingSampleMode::OneStep if real => {
+                    format!("    (void)llg_clocking_sample_real(&{source}, &{sample});\n")
+                }
                 IrClockingSampleMode::OneStep => {
-                    format!("    (void)llg_sampled_copy(&{source}, &{sample});\n")
+                    format!("    (void)llg_clocking_sample(&{source}, &{sample});\n")
                 }
-                IrClockingSampleMode::Observed => {
-                    format!("    (void)llg_clocking_sample_observed(&{source}, &{sample});\n")
-                }
+                IrClockingSampleMode::Observed => format!(
+                    "    (void)llg_clocking_sample_observed{suffix}(&{source}, &{sample});\n"
+                ),
                 IrClockingSampleMode::History(ticks) => format!(
-                    "    (void)llg_clocking_sample_history(&{source}, &{sample}, {ticks}ULL);\n"
+                    "    (void)llg_clocking_sample_history{suffix}(&{source}, &{sample}, {ticks}ULL);\n"
                 ),
             }
         }

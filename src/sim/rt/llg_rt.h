@@ -51,6 +51,7 @@
 #include "llg_value.h"
 #include "llg_string.h"
 #include "llg_rng.h"
+#include "llg_container.h"
 
 typedef struct llg_fixed_cell llg_fixed_cell_t;
 typedef struct llg_fixed_image llg_fixed_image_t;
@@ -154,6 +155,9 @@ _Noreturn void llg_rt_co_bad_state(const struct llg_co_frame* co,
                                    const char* fn);
 #define LLG_CO_OOM(bytes) llg_rt_co_oom(bytes)
 #define LLG_CO_BAD_STATE(co, fn) llg_rt_co_bad_state((co), (fn))
+// The handler above is _Noreturn: lets the coroutine dispatch drop its
+// unreachable fallback return on MSVC (C4702 at /W4).
+#define LLG_CO_BAD_STATE_NORETURN 1
 #include "llg_co.h"
 
 // Startup is mandatory even for models without arena calls. Separate debug
@@ -440,17 +444,24 @@ typedef struct {
 // string in a message descriptor is owned by the descriptor until the
 // runtime either queues/delivers it or destroys it on a failed try operation;
 // packed and handle values are copied by value/identity respectively.
+// LLG_MAILBOX_VALUE messages (SIM-017) own a recursive descriptor-backed
+// value: records, unpacked arrays and whole queues/dynamic arrays. Their
+// copies are deep except for identity handles, exactly as llg_value_t.
 enum {
     LLG_MAILBOX_PACKED = 0,
     LLG_MAILBOX_REAL = 1,
     LLG_MAILBOX_STRING = 2,
     LLG_MAILBOX_HANDLE = 3,
     LLG_MAILBOX_UNTYPED = 4,
+    LLG_MAILBOX_VALUE = 5,
 };
 
 typedef struct {
     int kind;
-    uint64_t type_id; // zero: structural scalar; otherwise canonical nominal type
+    // Zero: structural scalar. Otherwise the canonical nominal type (enums,
+    // classes) or, for LLG_MAILBOX_VALUE, the model's equivalence class of
+    // the aggregate type (SV 6.22.2), decided when the model was generated.
+    uint64_t type_id;
     uint32_t width;
     int8_t is_signed;
     int8_t two_state;
@@ -460,12 +471,13 @@ typedef struct {
         double real;
         llg_string_t string;
         void* handle;
+        llg_value_t native;
     } value;
 } llg_mailbox_value_t;
 
 typedef struct {
     int kind;
-    uint64_t type_id; // zero: structural scalar; otherwise canonical nominal type
+    uint64_t type_id; // as llg_mailbox_value_t.type_id
     uint32_t width;
     int8_t is_signed;
     int8_t two_state;
@@ -476,6 +488,7 @@ typedef struct {
         double* real;
         llg_string_t* string;
         void** handle;
+        llg_value_t* native; // an initialized value of an equivalent type
     } target;
 } llg_mailbox_target_t;
 
@@ -492,14 +505,30 @@ llg_mailbox_target_t llg_mailbox_target_packed(sv4_t* target, uint32_t width,
 llg_mailbox_target_t llg_mailbox_target_real(double* target, int shortreal);
 llg_mailbox_target_t llg_mailbox_target_string(llg_string_t* target);
 llg_mailbox_target_t llg_mailbox_target_handle(void** target);
+// Deep copy of `value` (borrowed) as a message of aggregate type `type_id`.
+llg_mailbox_value_t llg_mailbox_value_native(const llg_value_t* value,
+                                             uint64_t type_id);
+llg_mailbox_target_t llg_mailbox_target_native(llg_value_t* target,
+                                               uint64_t type_id);
 llg_mailbox_t* llg_mailbox_new(sv4_t bound, int kind, uint32_t width,
                                int is_signed, int two_state, int shortreal);
+// A typed mailbox of an aggregate message type (LLG_MAILBOX_VALUE).
+llg_mailbox_t* llg_mailbox_new_value(sv4_t bound, uint64_t type_id);
 uint64_t llg_mailbox_num(const llg_mailbox_t* mailbox);
 // Blocking put/get are one-shot arms. READY means the transfer completed
-// synchronously; SUSPEND means the runtime owns the queued value or retained
-// destination until wake/cancellation; EXIT means a blocking type/null error
-// requested LLG_EXIT_COMPLETE. A suspended target address must name a frame
-// field or another registered stable cell.
+// synchronously; SUSPEND means the runtime owns the queued value until
+// wake/cancellation; EXIT means a blocking type/null error requested
+// LLG_EXIT_COMPLETE.
+//
+// A blocked get completes in one defined order (SIM-017): when a message
+// arrives, the runtime checks its type against the waiter's destination,
+// removes it from the queue (a peek copies it) into the waiter's pending
+// delivery, and wakes the waiter. The waiter writes its destination only
+// when it resumes, through llg_mailbox_delivery_take with the same
+// destination descriptor, so the write always lands in live storage. A
+// waiter killed, disabled or torn down before it resumes hands a consumed
+// message back to the head of its mailbox (a peek copy is dropped), so no
+// message is lost, duplicated or written into dead storage.
 llg_co_arm_t llg_arm_mailbox_put_value(llg_proc_t* self,
                                        llg_mailbox_t* mailbox,
                                        llg_mailbox_value_t value);
@@ -510,6 +539,15 @@ llg_co_arm_t llg_arm_mailbox_get_value(llg_proc_t* self,
                                        llg_mailbox_target_t target, int peek);
 int llg_mailbox_try_get_value(llg_mailbox_t* mailbox,
                               llg_mailbox_target_t target, int peek);
+// Called after a blocking get/peek arm: writes a pending delivery (if the
+// arm suspended) into `target`. A no-op when the arm completed synchronously.
+void llg_mailbox_delivery_take(llg_proc_t* self, llg_mailbox_target_t target);
+// Tracing roots for a collector (SIM-018): visit every identity-handle slot
+// held by queued messages, blocked putters' messages and pending deliveries.
+// Handle-kind messages pass a NULL descriptor (an opaque identity whose
+// class the mailbox does not record); value messages are traced through
+// llg_value_trace. The callback must not mutate mailbox state.
+void llg_mailbox_trace(llg_value_visit_fn visit, void* context);
 
 // Execution regions, in reference-algorithm order. PLI control points are
 // explicit even when no public VPI registration has been lowered yet. The
@@ -1675,13 +1713,22 @@ sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks);
 /// `kind`: 0 rose, 1 fell, 2 stable, 3 changed; 4 stable and 5 changed
 /// compare 64-bit real images numerically (`==` on the decoded reals).
 int llg_sampled_domain_status(uint64_t identity, int kind);
-// Clocking input copies. Observed copies are queued into the current time
-// slot's observed region; history copies read the preponed sample at or before
-// `ticks` simulation ticks in the past, where `ticks` must not exceed the
-// source's llg_sampled_register_history depth.
+// Clocking input copies. Each publishes a changed sample to its waiters.
+// llg_clocking_sample copies the Preponed (#1step) value; observed copies are
+// queued into the current time slot's observed region; history copies read the
+// preponed sample at or before `ticks` simulation ticks in the past, where
+// `ticks` must not exceed the source's llg_sampled_register_history depth.
+int llg_clocking_sample(const sv4_t* source, sv4_t* sample);
 int llg_clocking_sample_observed(sv4_t* source, sv4_t* sample);
 int llg_clocking_sample_history(sv4_t* source, sv4_t* sample,
                                 uint64_t ticks);
+// Real clockvar samples: `source` is the packed 64-bit `$realtobits` image
+// of the clocking expression, registered like a packed source; the selected
+// image is decoded into the real sample.
+int llg_clocking_sample_real(const sv4_t* source, double* sample);
+int llg_clocking_sample_observed_real(sv4_t* source, double* sample);
+int llg_clocking_sample_history_real(sv4_t* source, double* sample,
+                                     uint64_t ticks);
 
 // Forget clocking history before freeing/reusing an externally owned packed
 // descriptor that received runtime writes. Registered packed value scopes do
