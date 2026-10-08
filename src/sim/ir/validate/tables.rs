@@ -529,6 +529,13 @@ impl Validator<'_> {
                 if entries != exits {
                     return self.fail(format!("{path}.{name}.scope"), "unpaired first_match scope");
                 }
+                if let Err(error) = crate::sim::ir::assertions::validate_sequence_joins(
+                    sequence.states,
+                    &sequence.transitions,
+                    &sequence.joins,
+                ) {
+                    return Err(error);
+                }
                 for (transition_index, transition) in sequence.transitions.iter().enumerate() {
                     if transition.from >= sequence.states || transition.to >= sequence.states {
                         return self.fail(

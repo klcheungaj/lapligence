@@ -83,6 +83,35 @@ pub struct IrSequenceTransition {
     /// zero is reserved by the runtime ABI. At most one action occurs per edge.
     pub enter_scope: Option<u32>,
     pub exit_scope: Option<u32>,
+    /// Fork into, or leave one side of, a sequence join (index into
+    /// [`IrSequence::joins`]). An edge carries at most one scope or join
+    /// action.
+    pub enter_join: Option<u32>,
+    pub exit_join: Option<u32>,
+}
+
+/// Endpoint rule of one two-operand sequence join.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrSequenceJoinKind {
+    /// `and`: a match ends at the later endpoint of one match per operand.
+    And,
+    /// `intersect` (and the `throughout`/`within` reductions): both operands
+    /// end on the same clock tick.
+    Intersect,
+}
+
+/// One immutable join plan. The enter edge forks a token into
+/// `left_start` and `right_start` with per-side frames; each operand's
+/// accept edge carries the matching `exit_join`. `*_empty` records whether
+/// an operand admits the empty word, which for `and` counts as an operand
+/// match ending before the fork tick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrSequenceJoin {
+    pub kind: IrSequenceJoinKind,
+    pub left_start: u32,
+    pub right_start: u32,
+    pub left_empty: bool,
+    pub right_empty: bool,
 }
 
 /// Shape metadata for one local assertion variable. Storage is allocated per
@@ -117,6 +146,7 @@ pub struct IrSequence {
     pub(in crate::sim) initializers: Vec<IrExpr>,
     pub(in crate::sim) initializer_slots: Vec<u32>,
     pub(in crate::sim) admits_empty: bool,
+    pub(in crate::sim) joins: Vec<IrSequenceJoin>,
     pub(in crate::sim) leading_clock: Option<usize>,
     pub(in crate::sim) leading_posedge: bool,
     pub(in crate::sim) trailing_clock: Option<usize>,
@@ -141,11 +171,13 @@ impl IrSequence {
         initializers: Vec<IrExpr>,
         initializer_slots: Vec<u32>,
         admits_empty: bool,
+        joins: Vec<IrSequenceJoin>,
         leading_clock: Option<usize>,
         leading_posedge: bool,
         trailing_clock: Option<usize>,
         trailing_posedge: bool,
     ) -> Result<Self, IrValidationError> {
+        validate_sequence_joins(states, &transitions, &joins)?;
         if states == 0 || start >= states || accept >= states {
             return Err(IrValidationError::new(
                 "sequence.states",
@@ -271,6 +303,7 @@ impl IrSequence {
         Ok(Self {
             initializer_slots,
             admits_empty,
+            joins,
             leading_clock,
             leading_posedge,
             trailing_clock,
@@ -327,6 +360,75 @@ impl IrSequence {
     pub fn initializers(&self) -> &[IrExpr] {
         &self.initializers
     }
+
+    pub fn joins(&self) -> &[IrSequenceJoin] {
+        &self.joins
+    }
+}
+
+/// Check the join table against the transition list: every join is forked by
+/// exactly one edge, left by at least one edge, names in-bounds operand
+/// starts, and no edge carries more than one scope/join action.
+pub(in crate::sim) fn validate_sequence_joins(
+    states: u32,
+    transitions: &[IrSequenceTransition],
+    joins: &[IrSequenceJoin],
+) -> Result<(), IrValidationError> {
+    let mut entered = vec![0u32; joins.len()];
+    let mut exited = vec![false; joins.len()];
+    for (index, transition) in transitions.iter().enumerate() {
+        let actions = [
+            transition.enter_scope.is_some(),
+            transition.exit_scope.is_some(),
+            transition.enter_join.is_some(),
+            transition.exit_join.is_some(),
+        ];
+        if actions.iter().filter(|action| **action).count() > 1 {
+            return Err(IrValidationError::new(
+                format!("sequence.transitions[{index}]"),
+                "one sequence edge carries more than one scope or join action",
+            ));
+        }
+        for (join, enter) in [(transition.enter_join, true), (transition.exit_join, false)] {
+            let Some(join) = join else { continue };
+            let Some(slot) = joins.get(join as usize) else {
+                return Err(IrValidationError::new(
+                    format!("sequence.transitions[{index}].join"),
+                    "sequence join index is out of bounds",
+                ));
+            };
+            if enter {
+                if transition.to != slot.left_start
+                    || transition.atom.is_some()
+                    || transition.delay.min != 0
+                    || transition.delay.max != Some(0)
+                {
+                    return Err(IrValidationError::new(
+                        format!("sequence.transitions[{index}].enter_join"),
+                        "a join fork must be a zero-delay epsilon edge into its left operand",
+                    ));
+                }
+                entered[join as usize] += 1;
+            } else {
+                exited[join as usize] = true;
+            }
+        }
+    }
+    for (index, join) in joins.iter().enumerate() {
+        if join.left_start >= states || join.right_start >= states {
+            return Err(IrValidationError::new(
+                format!("sequence.joins[{index}]"),
+                "sequence join operand state is out of bounds",
+            ));
+        }
+        if entered[index] != 1 || !exited[index] {
+            return Err(IrValidationError::new(
+                format!("sequence.joins[{index}]"),
+                "sequence join must have exactly one fork and an exit",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// One lowered concurrent assertion instance.

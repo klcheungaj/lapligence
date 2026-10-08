@@ -95,7 +95,8 @@ pub use events::{
 mod assertions;
 pub use assertions::{
     IrAssertion, IrAssertionControlKind, IrConcurrentAssertionKind, IrImmediateAssertionKind,
-    IrSequence, IrSequenceLocal, IrSequenceRange, IrSequenceTransition, IrSeverityLevel,
+    IrSequence, IrSequenceJoin, IrSequenceJoinKind, IrSequenceLocal, IrSequenceRange,
+    IrSequenceTransition, IrSeverityLevel,
 };
 mod processes;
 pub use processes::{IrPreFn, IrProcess, IrProcessKind, IrShape};

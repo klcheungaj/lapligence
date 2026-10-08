@@ -76,6 +76,14 @@ typedef struct llg_fixed_array {
 #define LLG_PROCESS_STEP_LIMIT LLG_ZERO_LOOP_LIMIT
 #endif
 
+// Live concurrent-assertion sequence threads (pending tokens plus attempts)
+// across the model. Exhaustion is a reported execution error, never a
+// silently dropped attempt. The LLG_SEQUENCE_THREAD_LIMIT environment
+// variable (positive decimal uint64) overrides the default at run time.
+#ifndef LLG_SEQUENCE_THREAD_LIMIT
+#define LLG_SEQUENCE_THREAD_LIMIT 1000000ULL
+#endif
+
 // Native host stack of a generated model: scheduler entry, one polled
 // coroutine segment, a plain-function chain as deep as the generated 256-call
 // guard allows, and the runtime helpers (formatting, wide arithmetic including
@@ -836,7 +844,23 @@ typedef struct {
     uint32_t match_count;
     uint32_t enter_scope;
     uint32_t exit_scope;
+    /* One-based index into the graph's join table; zero means no action. */
+    uint32_t enter_join;
+    uint32_t exit_join;
 } llg_sequence_transition_t;
+/* A join forks one thread into each operand at its enter edge and pairs the
+ * operand endpoints at the exit edges: AND ends at the later operand
+ * endpoint, INTERSECT needs both operands to end on the same clock tick.
+ * An operand admitting the empty word counts as matched at the fork for AND. */
+#define LLG_SEQUENCE_JOIN_AND 1u
+#define LLG_SEQUENCE_JOIN_INTERSECT 2u
+typedef struct {
+    uint32_t kind;
+    uint32_t left_start;
+    uint32_t right_start;
+    uint8_t left_empty;
+    uint8_t right_empty;
+} llg_sequence_join_t;
 typedef struct {
     uint32_t states;
     uint32_t start;
@@ -856,6 +880,8 @@ typedef struct {
     int admits_empty;
     sv4_t* leading_clock;
     int leading_edge;
+    uint32_t join_count;
+    const llg_sequence_join_t* joins;
 } llg_sequence_graph_t;
 typedef struct llg_sequence_local {
     uint32_t width;

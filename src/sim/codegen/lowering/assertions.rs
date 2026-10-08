@@ -17,9 +17,15 @@ use crate::core::db::{
 };
 use crate::sim::ir::{
     IrAssertion, IrBinOp, IrConcurrentAssertionKind, IrExpr, IrExprKind, IrLhs, IrProcess,
-    IrSampledClock, IrSampledClockKind, IrSampledDomain, IrSequence, IrSequenceLocal,
-    IrSequenceRange, IrSequenceTransition, IrShape, IrUnOp,
+    IrSampledClock, IrSampledClockKind, IrSampledDomain, IrSequence, IrSequenceJoin,
+    IrSequenceJoinKind, IrSequenceLocal, IrSequenceRange, IrSequenceTransition, IrShape, IrUnOp,
 };
+
+/// Upper bound on automaton states for one lowered sequence graph. Literal
+/// repetition bounds (`s[*1000]`) unroll their body once per iteration;
+/// unbounded forms never unroll beyond their lower bound. Exceeding the
+/// budget is an explicit lowering error rather than an unbounded C table.
+const SEQUENCE_STATE_BUDGET: u32 = 1 << 20;
 
 struct PropertyParts {
     clock_signal: usize,
@@ -43,8 +49,10 @@ struct SequenceBuilder {
     first_match: bool,
     first_match_states: Vec<u32>,
     match_items: Vec<IrExpr>,
+    joins: Vec<IrSequenceJoin>,
 }
 
+#[derive(Clone, Copy)]
 struct SequenceFragment {
     /// Empty-word alternative, separate from the nonempty NFA paths.
     empty: bool,
@@ -64,11 +72,17 @@ impl SequenceBuilder {
             first_match: false,
             first_match_states: Vec::new(),
             match_items: Vec::new(),
+            joins: Vec::new(),
         }
     }
 
     fn state(&mut self) -> Result<u32, String> {
         let state = self.next_state;
+        if state >= SEQUENCE_STATE_BUDGET {
+            return Err(format!(
+                "sequence automaton exceeds the {SEQUENCE_STATE_BUDGET}-state lowering budget"
+            ));
+        }
         self.next_state = self
             .next_state
             .checked_add(1)
@@ -106,6 +120,8 @@ impl SequenceBuilder {
             match_count: 0,
             enter_scope: None,
             exit_scope: None,
+            enter_join: None,
+            exit_join: None,
         });
         Ok(())
     }
@@ -187,6 +203,7 @@ impl SequenceBuilder {
             initializers,
             initializer_slots,
             fragment.empty,
+            self.joins,
             fragment.leading_clock.map(|clock| clock.signal),
             fragment.leading_clock.is_some_and(|clock| clock.posedge),
             fragment.trailing_clock.map(|clock| clock.signal),
@@ -280,6 +297,79 @@ impl SequenceBuilder {
             trailing_clock: inner.trailing_clock,
         })
     }
+
+    /// Join two operands that start on the same tick. The runtime forks one
+    /// thread per operand at the enter edge and pairs operand endpoints at
+    /// the exit edges by `kind`; operand empty words are part of the plan so
+    /// `and` can treat them as already matched.
+    fn join(
+        &mut self,
+        kind: IrSequenceJoinKind,
+        left: SequenceFragment,
+        right: SequenceFragment,
+    ) -> Result<SequenceFragment, String> {
+        let clocks_differ = |a: Option<SampledClock>, b: Option<SampledClock>| matches!((a, b), (Some(a), Some(b)) if a.signal != b.signal || a.posedge != b.posedge);
+        if clocks_differ(left.leading_clock, right.leading_clock)
+            || clocks_differ(left.trailing_clock, right.trailing_clock)
+            || clocks_differ(left.leading_clock, left.trailing_clock)
+            || clocks_differ(right.leading_clock, right.trailing_clock)
+        {
+            return Err(
+                "and/intersect/within/throughout operands must share one clock; multiclocked \
+                 operands are not supported"
+                    .to_owned(),
+            );
+        }
+        let index = u32::try_from(self.joins.len())
+            .map_err(|_| "sequence has too many joins".to_owned())?;
+        let start = self.state()?;
+        let accept = self.state()?;
+        self.joins.push(IrSequenceJoin {
+            kind,
+            left_start: left.start,
+            right_start: right.start,
+            left_empty: left.empty,
+            right_empty: right.empty,
+        });
+        self.epsilon_with_clock(start, left.start, zero_range(), left.leading_clock)?;
+        self.transitions.last_mut().unwrap().enter_join = Some(index);
+        self.epsilon_with_clock(left.accept, accept, zero_range(), left.trailing_clock)?;
+        self.transitions.last_mut().unwrap().exit_join = Some(index);
+        self.epsilon_with_clock(right.accept, accept, zero_range(), right.trailing_clock)?;
+        self.transitions.last_mut().unwrap().exit_join = Some(index);
+        Ok(SequenceFragment {
+            empty: left.empty && right.empty,
+            start,
+            accept,
+            leading_clock: left.leading_clock.or(right.leading_clock),
+            trailing_clock: left.trailing_clock.or(right.trailing_clock),
+        })
+    }
+}
+
+fn unbounded_star() -> AssertionRepetition {
+    AssertionRepetition {
+        kind: AssertionRepetitionKind::Consecutive,
+        range: AssertionRange { min: 0, max: None },
+    }
+}
+
+/// The constant `1'b1` sequence atom used by the `within` padding.
+fn true_atom() -> IrExpr {
+    IrExpr::new(
+        IrExprKind::Const(crate::sim::ir::IrConst {
+            bits: vec![1],
+            x: vec![0],
+            z: vec![0],
+            width: 1,
+            signed: false,
+            real: None,
+            fill: None,
+        }),
+        1,
+        false,
+        None,
+    )
 }
 
 fn zero_range() -> AssertionRange {
@@ -1289,6 +1379,28 @@ impl Codegen<'_> {
                         return Ok(result);
                     }
                 }
+                if let (Some(repetition), NodeKind::Expr(ExprKind::AssertionInstance { body, .. })) =
+                    (repetition, self.kind(*expr))
+                {
+                    if !self.one_cycle_form(*body) {
+                        // A repeated multi-cycle named sequence instance.
+                        let instance = *expr;
+                        let mut lower_copy = |this: &mut Self, builder: &mut SequenceBuilder| {
+                            this.lower_assertion_instance(instance, false, |this, body| {
+                                this.lower_sequence_fragment(path, body, builder, role)
+                            })?
+                            .ok_or_else(|| "assertion instance body is missing".to_owned())
+                        };
+                        let first = lower_copy(self, builder)?;
+                        return self.lower_sequence_repetition(
+                            path,
+                            builder,
+                            first,
+                            repetition,
+                            &mut lower_copy,
+                        );
+                    }
+                }
                 let atom = self.lower_sequence_atom(path, *expr, role)?;
                 if let Some(repetition) = repetition {
                     if !*repeated {
@@ -1389,12 +1501,25 @@ impl Codegen<'_> {
                     // A sequence-with-match repetition is represented by a
                     // direct repeated body in Slang's owned graph. Match
                     // items run when the enclosing graph reaches its endpoint.
-                    let atom = self.sequence_fragment_atom(builder, &fragment)?;
-                    self.lower_repetition(
+                    // A single-atom body keeps the Boolean repetition
+                    // automaton; any other body is repeated as a sequence.
+                    if let Ok(atom) = self.sequence_fragment_atom(builder, &fragment) {
+                        return self.lower_repetition(
+                            builder,
+                            atom,
+                            repetition,
+                            fragment.trailing_clock.or(self.sampled_clock),
+                        );
+                    }
+                    let body = *expr;
+                    self.lower_sequence_repetition(
+                        path,
                         builder,
-                        atom,
+                        fragment,
                         repetition,
-                        fragment.trailing_clock.or(self.sampled_clock),
+                        &mut |this, builder| {
+                            this.lower_sequence_fragment(path, body, builder, role)
+                        },
                     )
                 } else {
                     Ok(fragment)
@@ -1514,7 +1639,12 @@ impl Codegen<'_> {
                     AssertionBinaryOp::And
                     | AssertionBinaryOp::Intersect
                     | AssertionBinaryOp::Throughout
-                    | AssertionBinaryOp::Within => {
+                    | AssertionBinaryOp::Within
+                        if self.one_cycle_form(*left) && self.one_cycle_form(*right) =>
+                    {
+                        // Every match of a one-cycle operand has length one,
+                        // so all four operators reduce to one sampled `&&`
+                        // atom with no runtime join.
                         let left = self.lower_one_cycle_assertion(path, *left, role)?;
                         let right = self.lower_one_cycle_assertion(path, *right, role)?;
                         let atom = IrExpr::new(
@@ -1538,6 +1668,14 @@ impl Codegen<'_> {
                             leading_clock: clock,
                             trailing_clock: clock,
                         })
+                    }
+                    AssertionBinaryOp::And
+                    | AssertionBinaryOp::Intersect
+                    | AssertionBinaryOp::Throughout
+                    | AssertionBinaryOp::Within => {
+                        let op = *op;
+                        let (left, right) = (*left, *right);
+                        self.lower_sequence_join(path, node, op, left, right, builder, role)
                     }
                     AssertionBinaryOp::Iff | AssertionBinaryOp::Implies => {
                         let atom = self.lower_one_cycle_assertion(path, node, role)?;
@@ -1583,6 +1721,187 @@ impl Codegen<'_> {
                 "concurrent assertion {role} is not a sequence expression at {path}"
             )),
         }
+    }
+
+    /// Whether every match of `node` has length one, so that it can be
+    /// lowered as one sampled Boolean by [`Self::lower_one_cycle_assertion`].
+    /// This is a static per-site choice: such operands never need a runtime
+    /// join thread.
+    fn one_cycle_form(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::AssertionExpr(AssertionExprKind::Simple {
+                expr,
+                repeated: false,
+                repetition: None,
+            }) => match self.kind(*expr) {
+                NodeKind::Expr(ExprKind::AssertionInstance { body, .. }) => {
+                    self.one_cycle_form(*body)
+                }
+                NodeKind::MethodCall { name, .. } if name == "matched" => false,
+                _ => true,
+            },
+            NodeKind::AssertionExpr(AssertionExprKind::Clocking { expr, .. }) => {
+                self.one_cycle_form(*expr)
+            }
+            NodeKind::AssertionExpr(AssertionExprKind::Unary {
+                op: AssertionUnaryOp::Not,
+                expr,
+                ranged: false,
+                range: None,
+            }) => self.one_cycle_form(*expr),
+            NodeKind::AssertionExpr(AssertionExprKind::Binary { op, left, right }) => {
+                matches!(
+                    op,
+                    AssertionBinaryOp::And
+                        | AssertionBinaryOp::Or
+                        | AssertionBinaryOp::Iff
+                        | AssertionBinaryOp::Implies
+                ) && self.one_cycle_form(*left)
+                    && self.one_cycle_form(*right)
+            }
+            NodeKind::AssertionExpr(AssertionExprKind::Conditional {
+                if_expr,
+                else_expr: Some(else_expr),
+                ..
+            }) => self.one_cycle_form(*if_expr) && self.one_cycle_form(*else_expr),
+            _ => false,
+        }
+    }
+
+    /// Lower `and`, `intersect`, `throughout` and `within` with multi-cycle
+    /// operands to one runtime join (IEEE 1800-2009 16.9.5-16.9.10 and the
+    /// Annex F reductions `e throughout s = e[*0:$] intersect s` and
+    /// `s1 within s2 = (1[*0:$] ##1 s1 ##1 1[*0:$]) intersect s2`).
+    #[allow(clippy::too_many_arguments)]
+    fn lower_sequence_join(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        op: AssertionBinaryOp,
+        left: NodeId,
+        right: NodeId,
+        builder: &mut SequenceBuilder,
+        role: &str,
+    ) -> Result<SequenceFragment, String> {
+        let items_before = builder.match_items.len();
+        let clock = self.sampled_clock;
+        let left = match op {
+            AssertionBinaryOp::Throughout => {
+                let atom = self.lower_one_cycle_assertion(path, left, role)?;
+                self.lower_repetition(builder, atom, &unbounded_star(), clock)?
+            }
+            AssertionBinaryOp::Within => {
+                let inner = self.lower_sequence_fragment(path, left, builder, role)?;
+                let unit = AssertionRange {
+                    min: 1,
+                    max: Some(1),
+                };
+                let lead = self.lower_repetition(builder, true_atom(), &unbounded_star(), clock)?;
+                let lead = builder.concatenate(lead, inner, unit.clone())?;
+                let tail = self.lower_repetition(builder, true_atom(), &unbounded_star(), clock)?;
+                builder.concatenate(lead, tail, unit)?
+            }
+            _ => self.lower_sequence_fragment(path, left, builder, role)?,
+        };
+        let right = self.lower_sequence_fragment(path, right, builder, role)?;
+        if builder.match_items.len() != items_before {
+            return Err(format!(
+                "local variable assignments inside {op:?} operands are not supported in concurrent assertion {role} at {} ({path})",
+                self.source_location(node)
+            ));
+        }
+        let kind = if op == AssertionBinaryOp::And {
+            IrSequenceJoinKind::And
+        } else {
+            IrSequenceJoinKind::Intersect
+        };
+        builder.join(kind, left, right).map_err(|error| {
+            format!(
+                "{error} in concurrent assertion {role} at {} ({path})",
+                self.source_location(node)
+            )
+        })
+    }
+
+    /// Consecutive repetition of a general sequence. The body is lowered
+    /// once per required copy (`first` is the already-lowered first copy);
+    /// copies are chained with `##1`, copies from the lower bound on may
+    /// end the repetition, and an unbounded upper bound loops the last copy
+    /// back with `##1`. A body admitting the empty word lets every copy end
+    /// the repetition, because empty iterations collapse (Annex F `R[*0]`).
+    fn lower_sequence_repetition(
+        &mut self,
+        path: &str,
+        builder: &mut SequenceBuilder,
+        first: SequenceFragment,
+        repetition: &AssertionRepetition,
+        relower: &mut dyn FnMut(
+            &mut Self,
+            &mut SequenceBuilder,
+        ) -> Result<SequenceFragment, String>,
+    ) -> Result<SequenceFragment, String> {
+        if repetition.kind != AssertionRepetitionKind::Consecutive {
+            return Err(format!(
+                "goto and nonconsecutive repetition apply only to Boolean operands at {path}"
+            ));
+        }
+        let min = repetition.range.min;
+        let max = repetition.range.max;
+        if max.is_some_and(|max| max < min) {
+            return Err("sequence repetition range is inverted".to_owned());
+        }
+        let start = builder.state()?;
+        let accept = builder.state()?;
+        let copies = max.unwrap_or(min.max(1));
+        let unit = AssertionRange {
+            min: 1,
+            max: Some(1),
+        };
+        let mut previous: Option<SequenceFragment> = None;
+        let mut current = first;
+        for copy in 1..=copies {
+            if copy > 1 {
+                current = relower(self, builder)?;
+            }
+            match previous {
+                None => builder.epsilon_with_clock(
+                    start,
+                    current.start,
+                    zero_range(),
+                    current.leading_clock,
+                )?,
+                Some(previous) => builder.epsilon_with_clock(
+                    previous.accept,
+                    current.start,
+                    unit.clone(),
+                    current.leading_clock.or(previous.trailing_clock),
+                )?,
+            }
+            if copy >= min || first.empty {
+                builder.epsilon_with_clock(
+                    current.accept,
+                    accept,
+                    zero_range(),
+                    current.trailing_clock,
+                )?;
+            }
+            previous = Some(current);
+        }
+        if max.is_none() {
+            builder.epsilon_with_clock(
+                current.accept,
+                current.start,
+                unit,
+                current.trailing_clock,
+            )?;
+        }
+        Ok(SequenceFragment {
+            empty: min == 0 || first.empty,
+            start,
+            accept,
+            leading_clock: first.leading_clock,
+            trailing_clock: first.trailing_clock,
+        })
     }
 
     fn lower_sequence_atom(
