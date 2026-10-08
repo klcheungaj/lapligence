@@ -231,6 +231,7 @@ static void free_mailboxes(void) {
 }
 
 void llg_rt_cleanup(void) {
+    gc_release_registrations();
     value_scopes_unwind(NULL);
     for (int i = 0; i < g.pca_count; ++i) sv4_destroy(&g.pca_table[i].value);
     while (root_reference_top) llg_ref_scope_end(root_reference_top);
@@ -400,7 +401,8 @@ void llg_rt_init_with_args_and_precision(int argc, char** argv,
         return;
     }
     llg_timeformat_defaults(precision_fs);
-    if (!configure_limits() || !configure_stop_policy() || !configure_output_files()) {
+    if (!configure_limits() || !configure_stop_policy() || !configure_output_files() ||
+        !gc_runtime_init()) {
         llg_last_failure = 1;
         llg_last_config_error = 1;
         g.config_error = 1;

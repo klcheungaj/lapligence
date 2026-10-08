@@ -19,7 +19,8 @@ impl NativeKind {
     fn destructor(self) -> &'static str {
         match self {
             Self::String => "llg_owned_string_drop",
-            Self::Chandle => "NULL",
+            // Collector roots recognise automatic handle cells by this tag.
+            Self::Chandle => "llg_gc_handle_cell_drop",
             Self::Process => "llg_owned_process_drop",
         }
     }

@@ -297,6 +297,38 @@ ceilings; preserve stable identities across growth, reset grown event storage,
 and reject `INT_MAX`/memory exhaustion without stale row pointers. `LLG_MAX_PROCS`
 is only the standalone self-test's iteration base, not a scheduling ceiling.
 
+## Collected objects (SIM-018)
+
+`gc/collector.c` owns a precise, non-moving mark-sweep heap for class objects
+(`llg_gc_alloc`); `gc/roots.c` enumerates scheduler-owned roots. Collection
+runs only at the safe points in `run_region_queue` (after a process turn has
+returned or a region callback finished, `!g.current && !g.process_turn_active`)
+or from an explicit `llg_gc_collect` with no running process; never collect
+inside a turn, callback window or during cleanup. A candidate is followed only
+when it is the exact address of a live object in the identity index, so untyped
+`void*`/opaque slots that hold mailboxes, events, virtual interfaces or DPI
+chandles are never dereferenced. Every new runtime structure that can hold a
+class handle across a safe point must be enumerated: add it to
+`gc_scheduler_roots` (queued NBAs, wait subscription keys, value scopes and
+handle cells tagged by `llg_gc_handle_cell_drop`, captured frames, native
+roots, mailboxes, suspended coroutine frames through registered frame maps) or
+register a root producer/payload tracer (`llg_gc_register_*`, also the hook
+for future coverage objects). Addresses that may point into object storage
+are reported with `llg_gc_visit_interior`.
+
+Finalizers release fields only and never follow handles, so cycles and order
+do not matter. A collector allocation failure abandons the whole collection
+before anything is finalized, counts it and doubles the threshold.
+Registrations are released by `llg_rt_cleanup` and re-made after
+`llg_rt_init`; objects are model storage freed by `llg_gc_teardown` at model
+close. Policy is read at init (`LLG_GC`, `LLG_GC_THRESHOLD`,
+`LLG_GC_GROWTH_PERCENT`, `LLG_GC_STRESS`, `LLG_GC_VERIFY`, `LLG_GC_STATS`;
+invalid values are configuration errors). Verify mode keeps unreachable
+objects allocated but condemned so an access through a missed root is a
+located fatal error; use `LLG_GC_STRESS=1 LLG_GC_VERIFY=1` when adding a root
+source. Mailboxes, semaphores, events and pinned process handles stay
+model-lifetime ([known issue](../../../docs/known_issues.md#collected-objects-keep-some-runtime-objects-and-defer-collection)).
+
 ## Stop, synchronization and assertions
 
 `$finish`/deadlock end the scheduler. `$stop` instead yields a live suspended
@@ -319,7 +351,7 @@ message back to the head of its mailbox (a peek copy is dropped) and the mailbox
 re-serviced after the cancellation batch, like a semaphore grant. `LLG_MAILBOX_VALUE`
 messages own a descriptor-backed `llg_value_t` matched by the model's static
 equivalence key; `llg_mailbox_trace` enumerates queued, blocked-put and pending
-messages for tracing roots (SIM-018).
+messages for the collector's roots (SIM-018).
 
 Clocking input samples complete before the Observed block event. Output captures
 publish Re-NBA with constant skew; off-event drives wait for the next event and

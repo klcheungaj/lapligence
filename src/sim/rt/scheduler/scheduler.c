@@ -52,6 +52,7 @@ static int run_region_queue(llg_region_t region) {
             void* data = callback->data;
             free(callback);
             fn(data);
+            if (LLG_CO_UNLIKELY(llg_gc_pending)) gc_safe_point();
         } else {
             g.last_process_name = process->name;
             process->region = region;
@@ -77,6 +78,7 @@ static int run_region_queue(llg_region_t region) {
                 g.suspended = 1;
             }
             reap_retired_procs();
+            if (LLG_CO_UNLIKELY(llg_gc_pending)) gc_safe_point();
         }
         if (g.suspended) {
             if (g.stop_policy == LLG_STOP_POLICY_RESUME) {

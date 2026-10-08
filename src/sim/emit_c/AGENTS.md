@@ -316,8 +316,18 @@ Container operations evaluate operands in order, register borrowed string keys a
 item snapshots, compute all mapped results before publishing, and destroy consumed
 intermediates before notifications. Detach consumed keys only at final use. Class
 receivers evaluate once before arguments; use typed nominal headers, never casts
-between unrelated structures. Model registries retain cyclic objects until close;
-this is not garbage collection.
+between unrelated structures. Class objects are collected (SIM-018): allocate them only
+through `llg_gc_alloc`, keep `llg_gc_header_t` first in `llg_class_object_t`,
+and make the class type's trace visit every handle, chandle, container and
+native-record property. `llg_model_gc_register` (called right after runtime
+initialization) registers static handle and container roots, payload tracers
+for every container drop type and per-descriptor frame maps. A frame map lists,
+per resume state, the `void*` handle fields and object-addressing pointer
+fields declared on the live block path before that state
+(`FrameLayout::compute_gc_map`); every new resume form must go through
+`owned.rs` `resume_state` so its state is recorded. Recursive function
+coroutines run synchronously inside a turn and need no frame map. Automatic chandle cells use
+the `llg_gc_handle_cell_drop` destructor tag so value scopes trace them.
 
 Mailbox payload capture follows all user operand effects. Remove a consumed node
 before callbacks; peek clones. A blocking get emits `llg_mailbox_delivery_take`

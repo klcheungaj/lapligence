@@ -574,7 +574,8 @@ receivers computed by element selects or calls, retained element cells for
 
 ## Process handles in plain handle storage stay allocated until teardown
 
-**Status:** open (SIM-015; reclamation belongs to SIM-018).
+**Status:** open (SIM-015). The SIM-018 collector reclaims class objects but
+not the process handle records their properties pin.
 
 ### Symptom
 
@@ -594,8 +595,9 @@ never observe a recycled identity (SV 9.7).
 
 ### Intended direction
 
-Reclaim pinned handles with the object reachability work of SIM-018, or give
-class properties and native record leaves counted handle slots.
+Give class properties and native record leaves counted handle slots, or make
+process handle records collected objects traced like class objects (SIM-018
+already enumerates every opaque slot that can hold one).
 
 ### Reproduce
 
@@ -635,6 +637,40 @@ per-attempt deduplication by (state, edge).
 
 `tests/fixtures/sim/feature_completion/sim_037/budget.sv` with the loop bound
 raised to 20,000 and `LLG_SEQUENCE_THREAD_LIMIT` unset.
+
+## Collected objects keep some runtime objects and defer collection
+
+**Status:** open (SIM-018 limits).
+
+### Symptom
+
+Class objects are reclaimed when unreachable, but mailboxes, semaphores,
+named events and pinned process handle records stay allocated until the
+model closes, even when no handle names them. A process that allocates many
+objects without suspending (one long zero-time loop) is not interrupted:
+collection waits for its turn to end, so its live peak is everything it
+allocated in that turn.
+
+### Cause
+
+Mailboxes, semaphores and events are runtime objects with their own
+lifetimes (blocked waiters, message queues); the collector treats them as
+roots for what they contain rather than as collectable objects. Collection
+runs only at scheduler safe points, where no generated code is on the C stack
+and every live handle is in storage the collector can enumerate exactly
+(frame maps describe suspended frames only).
+
+### Intended direction
+
+Allocate mailbox, semaphore and process handle records on the collected heap
+with tracers for their waiter queues; add allocation-site safe points for
+long-running turns, which needs frame maps for the running frame.
+
+### Reproduce
+
+`repeat (100000) begin mailbox m = new; end` grows memory until the model
+ends; `repeat (100000) begin c = new; end` with no delay reaches its full
+peak before the first collection (`LLG_GC_STATS=1` reports `peak`).
 
 ## Mailbox message forms without a nested value
 

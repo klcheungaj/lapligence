@@ -17,16 +17,20 @@ typedef struct {
     union { sv4_t packed; double real; llg_string_t string; void* handle; } value;
     void (*drop)(void*);
 } llg_class_field_t;
+/* Objects live on the runtime's collected heap (SIM-018): the header comes
+ * first, so a class handle is also the collector's object identity. */
 typedef struct llg_class_object {
+    llg_gc_header_t gc;
     uint32_t class_id;
     size_t count;
     llg_class_field_t* fields;
-    struct llg_class_object* next;
     /* Change marker of the object's handle properties, allocated when a wait
      * first observes a property selected through one of them. */
     sv4_t* handle_dependency;
 } llg_class_object_t;
-static llg_class_object_t* llg_class_objects;
+/* LLG_GC_VERIFY keeps unreachable objects allocated with this class id, so
+ * an access through a missed collector root is reported. */
+#define LLG_CLASS_RECLAIMED UINT32_MAX
 /* A null handle is a run-time error (SV 8.4). The first check of a failing
  * statement reports at its source site; checks the same process reaches
  * while it is exiting stay quiet. */
@@ -39,24 +43,64 @@ static void* llg_class_require(void* object, const char* site) {
     return object;
 }
 static uint32_t llg_class_id(void* object) {
-    return ((llg_class_object_t*)llg_class_require(object, "class dispatch"))->class_id;
-}
-static void llg_class_storage_destroy(void) {
-    while (llg_class_objects) {
-        llg_class_object_t* object = llg_class_objects;
-        llg_class_objects = object->next;
-        for (size_t i = 0; i < object->count; ++i) {
-            if (object->fields[i].kind == 0) sv4_destroy(&object->fields[i].value.packed);
-            else if (object->fields[i].kind == 2) llg_string_destroy(&object->fields[i].value.string);
-            else if (object->fields[i].kind == 4) { object->fields[i].drop(object->fields[i].value.handle); free(object->fields[i].value.handle); }
-        }
-        if (object->handle_dependency) {
-            sv4_destroy(object->handle_dependency);
-            free(object->handle_dependency);
-        }
-        free(object->fields);
-        free(object);
+    uint32_t id = ((llg_class_object_t*)llg_class_require(object, "class dispatch"))->class_id;
+    if (id == LLG_CLASS_RECLAIMED) {
+        fprintf(stderr, "llg: access to a reclaimed class object (missing collector root)\n");
+        abort();
     }
+    return id;
+}
+/* Edges: handle properties and owned containers/records (kind 4) through
+ * the payload tracer registered for their destructor. */
+static void llg_class_gc_trace(void* handle, llg_gc_tracer_t* tracer) {
+    llg_class_object_t* object = (llg_class_object_t*)handle;
+    for (size_t i = 0; i < object->count; ++i) {
+        llg_class_field_t* field = &object->fields[i];
+        if (field->kind == 3) llg_gc_visit(tracer, field->value.handle);
+        else if (field->kind == 4) llg_gc_visit_payload(tracer, field->drop, field->value.handle);
+    }
+}
+/* Queued writes, waits and suspended callers address field storage, an
+ * owned payload or the handle marker directly. */
+static int llg_class_gc_interior(const void* handle, const llg_gc_tracer_t* tracer) {
+    const llg_class_object_t* object = (const llg_class_object_t*)handle;
+    if (object->handle_dependency && llg_gc_interior_hit(tracer, object->handle_dependency)) return 1;
+    for (size_t i = 0; i < object->count; ++i) {
+        const llg_class_field_t* field = &object->fields[i];
+        if (llg_gc_interior_hit(tracer, &field->value)) return 1;
+        if (field->kind == 4 && llg_gc_interior_hit(tracer, field->value.handle)) return 1;
+    }
+    return 0;
+}
+/* Release fields only; handles are never followed, so cycles need no order.
+ * Written packed descriptors leave the clocking edge history first. */
+static void llg_class_gc_finalize(void* handle) {
+    llg_class_object_t* object = (llg_class_object_t*)handle;
+    for (size_t i = 0; i < object->count; ++i) {
+        if (object->fields[i].kind == 0) {
+            llg_clocking_forget_signal(&object->fields[i].value.packed);
+            sv4_destroy(&object->fields[i].value.packed);
+        }
+        else if (object->fields[i].kind == 2) llg_string_destroy(&object->fields[i].value.string);
+        else if (object->fields[i].kind == 4) { object->fields[i].drop(object->fields[i].value.handle); free(object->fields[i].value.handle); }
+    }
+    if (object->handle_dependency) {
+        llg_clocking_forget_signal(object->handle_dependency);
+        sv4_destroy(object->handle_dependency);
+        free(object->handle_dependency);
+    }
+    free(object->fields);
+}
+static void llg_class_gc_condemn(void* handle) {
+    ((llg_class_object_t*)handle)->class_id = LLG_CLASS_RECLAIMED;
+}
+static const llg_gc_type_t llg_class_gc_type = {
+    "class", llg_class_gc_trace, llg_class_gc_interior, llg_class_gc_finalize, llg_class_gc_condemn
+};
+/* Model close: every object, including unreachable cycles and objects kept
+ * by LLG_GC_VERIFY, after runtime cleanup. */
+static void llg_class_storage_destroy(void) {
+    llg_gc_teardown();
 }
 "#);
     out.push_str("static int llg_class_is_a(void* object, uint32_t expected) {\n    if (!object) return 0;\n    uint32_t id = llg_class_id(object);\n    for (;;) {\n        if (id == expected) return 1;\n        switch (id) {\n");
@@ -124,14 +168,13 @@ static void llg_class_handle_store(void* handle, uint32_t expected, size_t index
 }
 "#);
     for (index, class) in model.classes.iter().enumerate() {
-        out.push_str(&format!("static void* llg_class_new_{index}(void) {{\n    llg_class_object_t* object = (llg_class_object_t*)calloc(1, sizeof(*object));\n    if (!object) abort();\n    object->class_id = {index};\n    object->count = {};\n", class.fields.len()));
+        out.push_str(&format!("static void* llg_class_new_{index}(void) {{\n    llg_class_object_t* object = (llg_class_object_t*)llg_gc_alloc(sizeof(*object), &llg_class_gc_type);\n    object->class_id = {index};\n    object->count = {};\n", class.fields.len()));
         if !class.fields.is_empty() {
             out.push_str("    object->fields = (llg_class_field_t*)calloc(object->count, sizeof(*object->fields));\n    if (!object->fields) { free(object); abort(); }\n");
         }
-        // Register before running any constructor/default expression. The
-        // registry owns live HDL objects (including cyclic handle graphs), not
-        // expression temporaries, and is drained after runtime callback teardown.
-        out.push_str("    object->next = llg_class_objects; llg_class_objects = object;\n");
+        // The collected heap owns the object from allocation; no collection
+        // can run before the caller stores the handle (safe points lie
+        // outside process turns), so constructors and defaults may follow.
         for (field_index, field) in class.fields.iter().enumerate() {
             use crate::sim::ir::IrClassFieldType;
             if let Some(container) = field
@@ -172,10 +215,11 @@ static void llg_class_handle_store(void* handle, uint32_t expected, size_t index
                 .native_value
                 .and_then(|index| model.native_values.get(index))
             {
-                // Kind 4: an owned native record value (SIM-011).
+                // Kind 4: an owned native record value (SIM-011). It is not a
+                // registered native root: the object traces it (SIM-018).
                 let slot = format!("object->fields[{field_index}]");
                 out.push_str(&format!(
-                    "    {slot}.kind = 4; {slot}.drop = llg_native_root_destroy; {slot}.value.handle = malloc(sizeof(llg_native_root_t));\n    if (!{slot}.value.handle) abort();\n    llg_native_root_init((llg_native_root_t*){slot}.value.handle, &{});\n",
+                    "    {slot}.kind = 4; {slot}.drop = llg_native_value_destroy; {slot}.value.handle = calloc(1, sizeof(llg_native_root_t));\n    if (!{slot}.value.handle) abort();\n    llg_native_value_init(&((llg_native_root_t*){slot}.value.handle)->value, &{});\n",
                     super::super::owned::native_values::native_type_descriptor(value.ty)
                 ));
                 continue;
@@ -350,4 +394,77 @@ pub(super) fn render_virtual_dispatch_bodies(
         }
         out.push_str("}\n\n");
     }
+}
+
+/// Whether container elements of this type can hold a class handle.
+fn element_may_hold_object(element: &crate::sim::ir::IrContainerElement) -> bool {
+    use crate::sim::ir::IrContainerElement as E;
+    match element {
+        E::Opaque { kind, .. } => kind != crate::sim::ir::PROCESS_ELEMENT_KIND,
+        E::Aggregate { members, .. } | E::Union { members, .. } => members
+            .iter()
+            .any(|member| element_may_hold_object(&member.element)),
+        E::FixedArray { element, .. } | E::Container { element, .. } => {
+            element_may_hold_object(element)
+        }
+        _ => false,
+    }
+}
+
+/// Static collector roots (SIM-018): every model-global handle variable
+/// (module, package, static subroutine and class-static storage), global
+/// containers whose elements can hold handles, and the failed-access scratch
+/// handle. Emitted only for models with classes, the only collected objects.
+pub(super) fn render_gc_roots(model: &IrModel, out: &mut String) {
+    if model.classes.is_empty() {
+        return;
+    }
+    out.push_str(
+        "static void llg_model_gc_roots(llg_gc_tracer_t* tracer, void* context) {\n    (void)context;\n",
+    );
+    for object in &model.objects {
+        if object.ty == crate::sim::ir::IrObjectType::Chandle {
+            out.push_str(&format!("    llg_gc_visit(tracer, {});\n", object.c_name));
+        }
+    }
+    for container in model
+        .containers
+        .iter()
+        .filter(|container| container.is_global_storage())
+        .filter(|container| element_may_hold_object(&container.element))
+    {
+        let function = match container.kind {
+            crate::sim::ir::IrContainerKind::Dynamic => "llg_gc_trace_dyn_values",
+            crate::sim::ir::IrContainerKind::Queue { .. } => "llg_gc_trace_queue_values",
+            crate::sim::ir::IrContainerKind::Associative { .. } => "llg_gc_trace_assoc_values",
+        };
+        out.push_str(&format!("    {function}(&{}, tracer);\n", container.c_name));
+    }
+    out.push_str("    llg_gc_visit(tracer, llg_class_field_invalid[3].value.handle);\n}\n");
+}
+
+/// Register the model's collector roots, the payload tracers of its owned
+/// container adapters and the frame maps of its coroutines. Called once after
+/// runtime initialization, before any object can be allocated.
+pub(super) fn render_gc_register(model: &IrModel, frame_maps: &str, out: &mut String) {
+    if model.classes.is_empty() {
+        return;
+    }
+    out.push_str(frame_maps);
+    out.push_str("static int llg_model_gc_register(void) {\n    if (!llg_gc_register_roots(llg_model_gc_roots, NULL)) return 0;\n");
+    for ty in super::super::containers::activation_drop_types(model) {
+        let trace = match ty {
+            "llg_dyn_value_array_t" => "llg_gc_trace_dyn_values",
+            "llg_queue_value_array_t" => "llg_gc_trace_queue_values",
+            "llg_assoc_value_t" => "llg_gc_trace_assoc_values",
+            _ => continue,
+        };
+        out.push_str(&format!(
+            "    if (!llg_gc_register_payload_tracer(llg_owned_drop_{ty}, {trace})) return 0;\n"
+        ));
+    }
+    if !frame_maps.is_empty() {
+        out.push_str("    for (size_t i = 0; i < sizeof(llg_model_gc_frames) / sizeof(llg_model_gc_frames[0]); ++i)\n        if (!llg_gc_register_frame_map(llg_model_gc_frames[i].desc, llg_model_gc_frames[i].map)) return 0;\n");
+    }
+    out.push_str("    return 1;\n}\n");
 }

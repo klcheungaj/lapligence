@@ -21,7 +21,7 @@ class InventoryTests(unittest.TestCase):
 
     def test_original_fixtures_follow_enabled_runtime_components(self):
         scheduler = {"coroutine_chunk_cache", "port_net_collapse_values", "port_net_collapse_publication", "vpi_ownership", "scheduler_ownership", "generated_scope_patterns",
-                     "scope_address_index", "scheduler_lists", "runtime_retention", "wait_inline_storage", "clocking_history_index", "runtime_value_vectors", "event_array_selection",
+                     "scope_address_index", "scheduler_lists", "runtime_retention", "runtime_object_collector", "wait_inline_storage", "clocking_history_index", "runtime_value_vectors", "event_array_selection",
                      "frame_value_cells", "frame_value_cells_reject_escape",
                      "file_input_isolation", "file_output_isolation", "memory_image", "native_value_scopes", "native_reference_scopes", "review_native_index_and_reference_bits",
                      "packed_selection_nba", "packed_selection_input", "packed_formal_owner_contracts"}

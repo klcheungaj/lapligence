@@ -22,6 +22,45 @@ struct Field {
     align: usize,
     hot: bool,
     always_frame: bool,
+    /// Registration order, compared with resume points (SIM-018 frame maps).
+    seq: usize,
+}
+
+/// A numbered resume point: the frame is suspended there with `state` in its
+/// header while `block` and its ancestors are live and the first `seq`
+/// declarations have executed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ResumeState {
+    state: u32,
+    block: usize,
+    seq: usize,
+}
+
+/// One traced field of a suspended frame (see `FrameLayout::gc_map`).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct GcFrameSlot {
+    pub(super) path: String,
+    /// `LLG_GC_FRAME_HANDLE` (0) or `LLG_GC_FRAME_INTERIOR` (1).
+    pub(super) kind: u32,
+}
+
+/// Collector kind of a frame field's C type: object handles are `void*`;
+/// typed pointers may address an object's field storage or owned payload.
+fn gc_slot_kind(ty: &str) -> Option<u32> {
+    let compact = ty.replace(' ', "");
+    match compact.as_str() {
+        "void*" => Some(0),
+        "sv4_t*"
+        | "double*"
+        | "void**"
+        | "llg_string_t*"
+        | "llg_value_t*"
+        | "llg_native_root_t*"
+        | "llg_dyn_value_array_t*"
+        | "llg_queue_value_array_t*"
+        | "llg_assoc_value_t*" => Some(1),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,6 +99,9 @@ pub(super) struct FrameLayout {
     accesses: BTreeMap<String, String>,
     calls: Vec<CallSlot>,
     paths_finalized: bool,
+    next_seq: usize,
+    resume_states: Vec<ResumeState>,
+    gc_map: Vec<(u32, Vec<GcFrameSlot>)>,
 }
 
 impl FrameLayout {
@@ -73,6 +115,9 @@ impl FrameLayout {
             accesses: BTreeMap::new(),
             calls: Vec::new(),
             paths_finalized: false,
+            next_seq: 0,
+            resume_states: Vec::new(),
+            gc_map: Vec::new(),
         }
     }
 
@@ -181,6 +226,20 @@ impl FrameLayout {
         }
     }
 
+    /// Record numbered resume point `state` in the active block (see
+    /// `mark_resume`) for the collector's frame map.
+    pub(super) fn mark_resume_state(&mut self, state: u32) {
+        if self.storage == FrameStorage::CStack {
+            return;
+        }
+        self.mark_resume();
+        self.resume_states.push(ResumeState {
+            state,
+            block: self.current,
+            seq: self.next_seq,
+        });
+    }
+
     /// Register one typed declaration and return the expression used to access it.
     pub(super) fn declare(&mut self, ty: &str, name: &str) -> Result<String, String> {
         self.register_field(ty, name, false)
@@ -216,7 +275,9 @@ impl FrameLayout {
             align,
             hot: false,
             always_frame,
+            seq: self.next_seq,
         });
+        self.next_seq += 1;
         Ok(format!("F->{name}"))
     }
 
@@ -307,6 +368,54 @@ impl FrameLayout {
         Ok(changed)
     }
 
+    /// Compute the collector frame map once paths are final (SIM-018). At a
+    /// resume point the live frame fields are those of the resume block and
+    /// its ancestors that were declared before it: each is assigned at its
+    /// declaration, and fields of other blocks may be overlaid or stale.
+    /// Only handle (`void*`) and object-addressing pointer fields are listed.
+    pub(super) fn compute_gc_map(&mut self) {
+        let mut map = BTreeMap::new();
+        for resume in &self.resume_states {
+            let mut slots = Vec::new();
+            let mut block = Some(resume.block);
+            while let Some(index) = block {
+                for field in &self.blocks[index].fields {
+                    // Emitter-owned pointers into registered scope storage
+                    // (temporaries, packed locals, native cells) never
+                    // address an object.
+                    if field.seq >= resume.seq
+                        || field.name == "_llg_t"
+                        || field.name.starts_with("_llg_local_")
+                        || field.name.starts_with("_llg_native_")
+                    {
+                        continue;
+                    }
+                    let (Some(kind), Some(path)) =
+                        (gc_slot_kind(&field.ty), self.accesses.get(&field.name))
+                    else {
+                        continue;
+                    };
+                    slots.push(GcFrameSlot {
+                        path: path.clone(),
+                        kind,
+                    });
+                }
+                block = self.blocks[index].parent;
+            }
+            slots.sort();
+            map.insert(resume.state, slots);
+        }
+        self.gc_map = map
+            .into_iter()
+            .filter(|(_, slots)| !slots.is_empty())
+            .collect();
+    }
+
+    /// Traced fields per numbered resume state; states without any are absent.
+    pub(super) fn gc_map(&self) -> &[(u32, Vec<GcFrameSlot>)] {
+        &self.gc_map
+    }
+
     /// Drop the emission-only name and access indexes once the body is
     /// final. Later stages (frame-type grouping, body sharing and metadata)
     /// read only the block tree, fields and call slots, and every rendered
@@ -321,6 +430,7 @@ impl FrameLayout {
             block.children.shrink_to_fit();
         }
         self.calls.shrink_to_fit();
+        self.resume_states = Vec::new();
     }
 
     /// Conservative LP64 size used for D19. Every embedded call is counted as
@@ -739,6 +849,64 @@ mod tests {
         layout.mark_resume();
         let rendered = layout.render_typedef("p_frame_t").unwrap();
         assert!(rendered.starts_with("typedef struct {\n    llg_co_frame_t co;\n"));
+    }
+
+    #[test]
+    fn gc_map_lists_live_path_fields_declared_before_each_resume() {
+        let mut layout = FrameLayout::new(FrameStorage::CoFrame);
+        layout.declare_required("void*", "_this").unwrap();
+        layout.declare("int", "count").unwrap();
+        layout.declare("void *", "root_handle").unwrap();
+        // A sibling block whose handle is overlaid and dead at later resumes.
+        layout.begin_block();
+        layout.declare("void*", "dead_handle").unwrap();
+        layout.mark_resume_state(1);
+        layout.end_block().unwrap();
+        layout.begin_block();
+        layout.declare("sv4_t*", "field_address").unwrap();
+        layout.declare("sv4_t*", "_llg_local_3").unwrap();
+        layout.mark_resume_state(2);
+        // Declared after resume 2: never initialized when suspended there.
+        layout.declare("void*", "later_handle").unwrap();
+        layout.mark_resume_state(3);
+        layout.end_block().unwrap();
+        layout.finalize_paths().unwrap();
+        layout.compute_gc_map();
+        let map = layout
+            .gc_map()
+            .iter()
+            .map(|(state, slots)| {
+                let slots = slots
+                    .iter()
+                    .map(|slot| (slot.path.as_str(), slot.kind))
+                    .collect::<Vec<_>>();
+                (*state, slots)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            map,
+            vec![
+                (
+                    1,
+                    vec![("_this", 0), ("root_handle", 0), ("u0.b1.dead_handle", 0)]
+                ),
+                (
+                    2,
+                    vec![("_this", 0), ("root_handle", 0), ("u0.b2.field_address", 1)]
+                ),
+                (
+                    3,
+                    vec![
+                        ("_this", 0),
+                        ("root_handle", 0),
+                        ("u0.b2.field_address", 1),
+                        ("u0.b2.later_handle", 0)
+                    ]
+                ),
+            ]
+        );
+        layout.release_emission_state();
+        assert_eq!(layout.gc_map().len(), 3);
     }
 
     #[test]
