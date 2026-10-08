@@ -768,7 +768,8 @@ The hash uses the canonical worktree path, and each invocation receives a fresh
 run directory even within the same worktree. All agents can use the same command;
 no manual agent number is needed. Runtime entries are keyed by sources, ABI,
 toolchain, flags and build options, with process locks for cache population.
-Toolchain seeds (`cmake-toolchain-*`, see [sim](../src/sim/AGENTS.md)) are keyed by
+Toolchain seeds (`<cache>/cmake-toolchain/<hash>/`, see [sim](../src/sim/AGENTS.md);
+runtime entries are the other root children, each with a `ready` marker) are keyed by
 CMake, generator, compiler, flags, launcher and detection environment; tests that
 inspect configure behaviour can disable them with `LLG_CMAKE_TOOLCHAIN_SEED=0`.
 Do not share mutable model/CMake/Cargo build directories between worktrees or
