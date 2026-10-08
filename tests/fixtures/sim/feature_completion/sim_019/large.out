@@ -1,0 +1,6 @@
+int-unique 1000
+int-capture 1000
+string-unique 3000
+string-sort k10000 k10001 k12999
+string-key 99
+record-sort 0 19999 r3871

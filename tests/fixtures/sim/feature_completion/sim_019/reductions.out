@@ -1,0 +1,10 @@
+byte-wrap 44
+byte-wide 300
+nibble 0 f 9 8
+strings 6 24
+real 12 -162
+records 15 -13
+class 10000
+class-narrow 16
+assoc 25 12
+empty 0 0

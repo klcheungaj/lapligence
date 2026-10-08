@@ -240,6 +240,10 @@ impl Codegen<'_> {
         if self.native_leaf_kind(node) == Some(IrClassFieldType::String) {
             return true;
         }
+        // `item.index` of a generated method loop over a string-keyed array.
+        if self.inline_string_index_read(node).is_some() {
+            return true;
+        }
         if matches!(
             self.kind(node),
             NodeKind::Expr(ExprKind::MemberSelect { .. })

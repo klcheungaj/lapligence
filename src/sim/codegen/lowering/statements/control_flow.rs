@@ -779,6 +779,115 @@ impl EmitCtx<'_, '_> {
         }
     }
 
+    /// `foreach (q[i, j, ...])` over a dynamic array or queue whose elements
+    /// are dynamic arrays or queues (SV 12.7.3): one counted loop per
+    /// dimension, each bounded by the size of the element its outer loop
+    /// variables select, re-read at every test.
+    fn lower_nested_container_foreach(
+        &mut self,
+        array: NodeId,
+        container: usize,
+        vars: &[Option<NodeId>],
+        body: NodeId,
+    ) -> Result<Vec<IrStmt>, String> {
+        let local_decl = |info: &ProcLocalInfo| IrStmt::DeclLocal {
+            name: info.c_name.clone(),
+            width: info.width,
+            signed: info.signed,
+            two_state: info.two_state,
+            init: default_real_local_initializer(info.width),
+        };
+        let local_read = |info: &ProcLocalInfo| {
+            IrExpr::new(
+                IrExprKind::LocalRead(info.c_name.clone()),
+                info.width,
+                info.signed,
+                None,
+            )
+        };
+        let local_lhs = |info: &ProcLocalInfo| IrLhs::WholeRef {
+            addr: format!("&{}", info.c_name),
+            width: info.width,
+            signed: info.signed,
+            two_state: info.two_state,
+            shortreal: false,
+        };
+        let name = self.cg.node(array).name.clone();
+        let outer_ok = matches!(
+            self.cg.model.containers[container].kind,
+            IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+        );
+        let nested_ok = (1..vars.len()).all(|depth| {
+            matches!(
+                self.cg.container_element_type(container, depth),
+                Some(IrContainerElement::Container { ref kind, .. }) if kind != "AssociativeArray"
+            )
+        });
+        if !outer_ok || !nested_ok {
+            return Err(format!(
+                "`foreach` over resizable container `{name}` in `{}` supports several dimensions only for nested dynamic arrays and queues",
+                self.path
+            ));
+        }
+        let mut locals = Vec::with_capacity(vars.len());
+        for variable in vars {
+            let Some(variable) = variable else {
+                return Err(format!(
+                    "`foreach` over nested container `{name}` in `{}` cannot omit a dimension",
+                    self.path
+                ));
+            };
+            let local = self.cg.collect_loop_var(&self.path, *variable)?;
+            if local.width == 0 {
+                return Err(format!(
+                    "`foreach` iterator `{}` in `{}` must be an integral key",
+                    self.cg.node(*variable).name,
+                    self.path
+                ));
+            }
+            locals.push(local);
+        }
+        let mut declarations: Vec<IrStmt> = locals.iter().map(local_decl).collect();
+        let (mut nested, brk) = self.lower_loop_body(body)?;
+        for depth in (0..locals.len()).rev() {
+            let local = &locals[depth];
+            let read = || local_read(local);
+            let size = if depth == 0 {
+                IrContainerExpr::Size(container)
+            } else {
+                IrContainerExpr::NestedSize {
+                    container,
+                    indices: locals[..depth]
+                        .iter()
+                        .map(|outer| IrExpr::resize_to(local_read(outer), 32, true))
+                        .collect(),
+                }
+            };
+            let size = IrExpr::new(IrExprKind::Container(Box::new(size)), 32, true, None);
+            nested = vec![IrStmt::For {
+                init: vec![IrStmt::Assign {
+                    lhs: local_lhs(local),
+                    rhs: IrExpr::resize_to(loop_index_expr(0), local.width, local.signed),
+                    nba: false,
+                }],
+                cond: common_bin_expr(IrBinOp::Lt, read(), size),
+                incr: vec![IrStmt::Assign {
+                    lhs: local_lhs(local),
+                    rhs: IrExpr::resize_to(
+                        common_bin_expr(IrBinOp::Add, read(), loop_index_expr(1)),
+                        local.width,
+                        local.signed,
+                    ),
+                    nba: false,
+                }],
+                body: nested,
+            }];
+        }
+        declarations.extend(nested);
+        declarations.extend(brk);
+        Ok(vec![IrStmt::Block(declarations)])
+    }
+
     pub(super) fn lower_foreach(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
         let (array, vars, dimensions, body) = match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::Foreach {
@@ -921,6 +1030,9 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         };
+        if vars.len() > 1 {
+            return self.lower_nested_container_foreach(array, container.ir, &vars, body);
+        }
         if vars.len() != 1 {
             return Err(format!(
                 "`foreach` over resizable container `{}` in `{}` supports one dimension",
@@ -933,7 +1045,6 @@ impl EmitCtx<'_, '_> {
             // traversed dimension and its body is not executed.
             return Ok(Vec::new());
         };
-        let element = self.cg.model.containers[container.ir].element.clone();
         let kind = self.cg.model.containers[container.ir].kind.clone();
         let is_associative = matches!(&kind, IrContainerKind::Associative { .. });
         if is_associative
@@ -968,13 +1079,6 @@ impl EmitCtx<'_, '_> {
             ) {
                 return Err(format!(
                     "`foreach` target `{}` in `{}` has an unsupported container kind",
-                    self.cg.node(array).name,
-                    self.path
-                ));
-            }
-            if matches!(element, IrContainerElement::Container { .. }) {
-                return Err(format!(
-                    "nested resizable container foreach target `{}` in `{}` is not supported",
                     self.cg.node(array).name,
                     self.path
                 ));

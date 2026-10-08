@@ -1,0 +1,16 @@
+sort Alpha bravo charlie delta
+rsort-len charlie 5
+real 3.25 0.50 0.00 -2.00
+real-key 0.00 3.25
+records bob cat ann
+records-name cat ann
+pop cat ann 40 1
+class 0 2 4
+class-pop 4 4
+string-pop two 1
+shuffle 36 36 40320
+shuffle-desc 100 40
+dyn-queue 4 4 9
+dyn-queue-string 3 w y
+nested 4 3 2 -1 0
+record-queue bag 2 3 3 7
