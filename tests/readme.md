@@ -253,6 +253,16 @@ stderr exactly. Component checks are `container_values_probe.c` in
 `runtime_value_storage` and the
 `sim::ir::validate::tests::subroutine_containers` unit tests.
 
+SIM-018's collector fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_018::)'`. Positive fixtures run
+in both optimizer modes on both backends, once with the default policy and once
+with `LLG_GC_STRESS=1 LLG_GC_VERIFY=1` (collect at every safe point, poison
+instead of free), so a missed root fails with a located diagnostic.
+`LLG_GC_STATS=1` statistics are the live-memory oracle of the plateau, container
+and deep-list fixtures. The component check is `gc_probe.c`
+(`runtime_object_collector`) in `runtime_value_storage`, which also covers
+injected collector allocation failures.
+
 RTL-016's tagged-union, pattern and Q03 fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_016::)'`. Positive fixtures and
 the run-time error fixtures run in both optimizer modes on both backends. Run-time error fixtures print their

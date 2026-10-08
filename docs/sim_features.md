@@ -508,7 +508,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 | Fork-join_none capture | SIM-010 | SIM-010 | n/a | n/a | n/a | SIM-010 |
 | Unpacked array element, slice | one-dimensional fixed array: yes ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); multidimensional: rejected | yes, elements, constant/indexed slices, patterns, conditional merges, untimed NBAs | yes, element-wise | yes | SIM-008 | owner scope or model close |
 | Queue/dynamic/associative element | yes (missing: default), including queue and dynamic-array members ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); associative members: rejected | yes, whole element and push/insert/pop | yes, element-wise, including container members (whole associative arrays of records: rejected, [known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | constant and run-time element index: yes; container members in assignment, call and system-task statements | SIM-008 | delete, resize, container close |
-| Class property | instance property: yes, one value per object with member defaults and a per-object initializer, through `this`, handles and handle chains ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)); static, or with container members: rejected | yes | yes | constant: yes | SIM-011 | SIM-018 |
+| Class property | instance property: yes, one value per object with member defaults and a per-object initializer, through `this`, handles and handle chains ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)); static, or with container members: rejected | yes | yes | constant: yes | SIM-011 | with its object, when the collector reclaims it or at model close ([sim_018](../tests/fixtures/sim/feature_completion/sim_018/readme.md)) |
 | DPI argument | SIM-040 | SIM-040 | n/a | n/a | n/a | n/a |
 | Process-block local (static or automatic) | yes, including container members, member defaults and call initializers ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); automatic record that a `join_any`/`join_none` fork running again can keep live: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | yes | yes, including nested records and member arrays | constant and run-time index (at most 64 elements): yes | `ref`/`const ref` actual, whole or a constant selection: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)) | model close; automatic leaves reset at the next entry |
 
@@ -1663,8 +1663,18 @@ These are bounded implementations, not full verification-infrastructure support.
   keep naming the same objects. A null receiver, property access or copy
   source is a run-time error at its source position
   ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)).
-  Objects, including unreachable cycles, remain until model close; there is
-  no garbage collector (SIM-018). Static record properties with string, real
+  Unreachable objects, including cycles through handle, container and record
+  properties, are reclaimed at scheduler safe points (after a process turn or
+  region callback) once enough objects were allocated; objects reachable from
+  module and static storage, suspended processes and their fork branches,
+  method receivers, mailbox messages and pending deliveries, queued
+  nonblocking updates and waits stay alive, and reclamation never changes
+  handle identity or random streams (SV 8.27,
+  [sim_018](../tests/fixtures/sim/feature_completion/sim_018/readme.md)).
+  `LLG_GC_THRESHOLD`, `LLG_GC_GROWTH_PERCENT`, `LLG_GC=0` and `LLG_GC_STATS=1`
+  tune, disable or report collection; limits are listed under
+  [collector limits](known_issues.md#collected-objects-keep-some-runtime-objects-and-defer-collection).
+  Static record properties with string, real
   or handle members, record properties with container members,
   multidimensional fixed-array properties, container
   properties selected through other handle expressions or outside procedural

@@ -103,7 +103,8 @@ paths remain gated until their retention contracts are migrated.
 | Inertial drivers / force state | Deep-copy scheduled value/mask/current/baseline | Replacement, canceled update, commit, driver/force cleanup |
 | Waits and sampling history | Deep-copy snapshots | Wake/rearm, process cancellation, history expiry, cleanup |
 | Activation frame / registered value scope | Owned initialized cells or explicit reference aliases | Frame release, lexical scope end, completion/cancellation/cleanup |
-| Native record roots (`llg_native_root_t`) | Default construction or deep copy from a descriptor; chandles borrowed | Activation: registered scope object (lexical end, cancellation, cleanup). Persistent: model close |
+| Native record roots (`llg_native_root_t`) | Default construction or deep copy from a descriptor; chandles borrowed | Activation: registered scope object (lexical end, cancellation, cleanup). Persistent: model close. Class-property records are not registered: their object owns them (`llg_native_value_destroy`) |
+| Class objects (`llg_gc_alloc`) | Zeroed, typed header first; fields initialized by the model | Collector finalization when unreachable at a safe point, or `llg_gc_teardown` at model close; finalizers never follow handles |
 | Sequence attempts, tokens, endpoints | Deep-copy inherited local values | Dedup/discard, attempt/endpoint destruction |
 | Mailboxes | Tagged payload construction/transfer | Consume, failed/canceled put, mailbox/runtime destruction |
 | Dynamic arrays, queues and associative entries | Deep-copy packed/recursive elements, keys/defaults | Replacement, resize/delete/pop, container destruction |
@@ -173,8 +174,9 @@ storage identity: packed, real, string, aggregate, fixed-array and container
 values copy DEEP into independent owners; event and opaque handles (class,
 process, semaphore, mailbox, virtual interface) copy their IDENTITY; chandles
 are BORROWED foreign pointers that copies share and the value runtime never
-frees. `llg_value_trace` visits only identity slots, so a future collector
-(SIM-018) can treat them as edges without scanning payloads.
+frees. `llg_value_trace` visits only identity slots, so the object collector
+(SIM-018) treats them as edges without scanning payloads; it follows an opaque
+slot only when it names a live collected object.
 
 Generated models check every emitted root descriptor once at startup with
 `llg_value_desc_check` (known kinds, nonzero nominal identity, consistent
@@ -185,8 +187,9 @@ destination: an item-array allocation failure returns 0, releases the partial
 copy and leaves the destination unchanged. The non-`try` forms report that
 failure as fatal; leaf payload allocators keep their own fatal policy.
 
-Every live native value is one `llg_native_root_t` linked into a per-process
-registry. Activation storage (formals, locals, results and call temporaries)
+Every live native value outside class objects is one `llg_native_root_t`
+linked into a per-process registry; a class-property record is owned and
+traced by its object. Activation storage (formals, locals, results and call temporaries)
 is a registered value-scope object whose destructor is
 `llg_native_root_destroy`, so lexical exit, disable/kill and model close
 unlink it. Persistent (static subroutine) storage is a model global initialized
