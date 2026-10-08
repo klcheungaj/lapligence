@@ -293,11 +293,16 @@ def default_path(name, fallback):
     return Path(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()) / fallback
 
 
+def model_compiler(environ=None, system=None):
+    environ = os.environ if environ is None else environ
+    default = "cl" if (system or platform.system()).lower() == "windows" else "cc"
+    return environ.get("LLG_CC") or environ.get("CC") or default
+
+
 def activate(args):
     cache_dir = default_path(args.ccache_dir, "ccache")
     base_dir = Path(args.base_dir or tempfile.gettempdir())
-    # The same resolution sim::build applies when LLG_CC and CC are both unset.
-    compiler = args.compiler or os.environ.get("LLG_CC") or os.environ.get("CC") or "cc"
+    compiler = args.compiler or model_compiler()
     try:
         if args.ccache:
             ccache = Path(args.ccache)
@@ -348,7 +353,9 @@ def main(argv=None):
     act.add_argument("--ccache-dir", help="cache directory (default $RUNNER_TEMP/ccache)")
     act.add_argument("--max-size", default="300M")
     act.add_argument("--base-dir", help="common parent of model directories (default: temp dir)")
-    act.add_argument("--compiler", help="C compiler for the self-check (default LLG_CC, CC, cc)")
+    act.add_argument(
+        "--compiler", help="C compiler for the self-check (default LLG_CC, CC, then cl on Windows, cc elsewhere)"
+    )
     act.add_argument("--env-file", help="append NAME=VALUE lines here (for GITHUB_ENV)")
     act.add_argument("--env-format", choices=("github", "shell"), default="github")
     act.add_argument("--install-only", action="store_true", help="download and verify only")

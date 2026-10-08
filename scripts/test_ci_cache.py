@@ -273,6 +273,12 @@ class CcacheTests(unittest.TestCase):
         self.assertRegex(failure, r"\[b\] ccache log excerpt:")
         self.assertLessEqual(len(failure), ci_ccache.DIAGNOSTIC_LIMIT + 1100)
 
+    def test_self_check_compiler_follows_the_generated_model_precedence(self):
+        self.assertEqual(ci_ccache.model_compiler({"LLG_CC": "a", "CC": "b"}, "Linux"), "a")
+        self.assertEqual(ci_ccache.model_compiler({"LLG_CC": "", "CC": "b"}, "Windows"), "b")
+        self.assertEqual(ci_ccache.model_compiler({"CC": ""}, "Windows"), "cl")
+        self.assertEqual(ci_ccache.model_compiler({}, "Darwin"), "cc")
+
     def test_base_dir_lists_the_given_and_the_resolved_spelling(self):
         real = self.tmp / "real"
         real.mkdir()
