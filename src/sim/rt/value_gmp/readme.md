@@ -168,8 +168,10 @@ where `unsigned long` is 32-bit, as on Windows; `static __inline` copies of
 externally in every object) and compiles the OBJECT library `llg_gmp` into the
 runtime archive. The archive is keyed by the bundle's content
 hash, so GMP compiles once per runtime cache entry. Moving the submodule needs the
-tables regenerated and the `LLG_GMP_MPN_SOURCES` closure rechecked: the Debug
-storage probes and Release models fail to link when it is incomplete. The
+tables regenerated and the `LLG_GMP_MPN_SOURCES` closure rechecked:
+`tests/runtime_gmp_closure.rs` links an unoptimized executable against every
+`mpn`/`gmp` name the preprocessed sources contain, which also covers calls
+that GCC/Clang fold away but MSVC `/Od` keeps. The
 subset is portable C (no assembly `mpn` kernels), so an asm-tuned installation
 can be faster for very wide operands.
 
