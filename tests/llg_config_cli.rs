@@ -388,6 +388,8 @@ plusargs = ["+cfg"]
 fn environment_overrides_the_config_and_the_command_line_overrides_both() {
     let project = Project::new();
     let missing = "llg-test-no-such-compiler";
+    // The platform's model compiler (MSVC `cl` on Windows).
+    let valid = llg::sim::build::DEFAULT_C_COMPILER;
     let args = ["--top", "tb", "-I", "inc_a", "rtl/tb.sv"];
     let with_config = |cc: &str| {
         project.write(
@@ -397,10 +399,10 @@ fn environment_overrides_the_config_and_the_command_line_overrides_both() {
     };
 
     // Config only: a valid compiler works, a missing one fails the build.
-    with_config("cc");
+    with_config(valid);
     let mut command = vec!["--config", "llg.toml"];
     command.extend(args);
-    let output = project.run_env(&command, &[("LLG_CC", "cc"), ("CC", "cc")]);
+    let output = project.run_env(&command, &[("LLG_CC", valid), ("CC", valid)]);
     assert_prints(&output, "mode=slow depth=4 inc=1\n");
 
     // $LLG_CC (missing) beats build.cc (valid): the build fails.
@@ -410,7 +412,7 @@ fn environment_overrides_the_config_and_the_command_line_overrides_both() {
 
     // $LLG_CC (valid) beats build.cc (missing): the build works.
     with_config(missing);
-    let output = project.run_env(&command, &[("LLG_CC", "cc")]);
+    let output = project.run_env(&command, &[("LLG_CC", valid)]);
     assert_prints(&output, "mode=slow depth=4 inc=1\n");
 
     // With only the config naming the missing compiler, the build fails.
@@ -420,7 +422,7 @@ fn environment_overrides_the_config_and_the_command_line_overrides_both() {
 
     // --cc beats both the environment (missing) and the config (missing).
     let mut with_cli = command.clone();
-    with_cli.extend(["--cc", "cc"]);
+    with_cli.extend(["--cc", valid]);
     let output = project.run_env(&with_cli, &[("LLG_CC", missing)]);
     assert_prints(&output, "mode=slow depth=4 inc=1\n");
 }

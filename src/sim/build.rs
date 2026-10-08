@@ -46,7 +46,8 @@
 //! [`CmakeBuildOpts`] field, which wins when set):
 //!
 //! - `LLG_CC` / `CC` — C compiler handed to CMake as `-DCMAKE_C_COMPILER`;
-//!   falls back to `cc`.
+//!   empty values are unset. Falls back to [`DEFAULT_C_COMPILER`]: MSVC `cl`
+//!   on Windows, `cc` elsewhere.
 //! - `LLG_C_LAUNCHER` — C compiler launcher (for example `ccache`) handed to
 //!   CMake as `-DCMAKE_C_COMPILER_LAUNCHER` for the runtime archive and the
 //!   model; `LLG_CC` must stay one program, so a launcher needs its own
@@ -303,7 +304,8 @@ pub struct CmakeBuildOpts {
     /// `build/llg-runtime-cache` under the current directory. Relative paths
     /// resolve from the current directory.
     pub runtime_cache_dir: Option<PathBuf>,
-    /// C compiler. `None` uses `$LLG_CC`, then `$CC`, then `cc`.
+    /// C compiler. `None` uses `$LLG_CC`, then `$CC` (empty values are
+    /// unset), then [`DEFAULT_C_COMPILER`].
     pub cc: Option<String>,
     /// Extra whitespace-separated C flags. `None` uses `$LLG_CFLAGS`; an
     /// explicit value replaces it rather than appending.
@@ -1211,6 +1213,10 @@ fn runtime_cache_key_with_compiler(
     )
 }
 
+/// Version text that keys the runtime cache. GCC/Clang answer `--version`.
+/// MSVC `cl` has no version option: it prints its banner (version and target)
+/// on stderr and then fails for lack of a source file (D8003), which cannot
+/// block because `output()` closes stdin; the banner is captured either way.
 fn compiler_identity(cc: &str) -> String {
     let mut identity = cc.to_owned();
     for argument in ["--version", "/Bv"] {
@@ -1220,6 +1226,15 @@ fn compiler_identity(cc: &str) -> String {
             identity.push_str(&String::from_utf8_lossy(&output.stderr));
             if output.status.success() {
                 break;
+            }
+        }
+    }
+    if identity.contains("Microsoft") {
+        // The banner names the compiler version but not the toolset or SDK
+        // whose headers and libraries the developer environment selected.
+        for variable in ["VCToolsVersion", "WindowsSDKVersion", "VSCMD_ARG_TGT_ARCH"] {
+            if let Ok(value) = std::env::var(variable) {
+                identity.push_str(&format!("\n{variable}={value}"));
             }
         }
     }
@@ -1528,13 +1543,30 @@ fn resolve_launcher(opts: &CmakeBuildOpts) -> String {
     )
 }
 
-/// Explicit option, else `$LLG_CC`, else `$CC`, else `cc`.
+/// C compiler for generated models when neither an option nor `$LLG_CC`/`$CC`
+/// selects one. Models are built and run on the host that runs `llg`, so the
+/// host platform's native compiler is the default: MSVC `cl` on Windows (no
+/// `cc` exists there unless a GCC distribution happens to be on `PATH`, and
+/// CMake itself defaults to MSVC), `cc` elsewhere.
+pub const DEFAULT_C_COMPILER: &str = if cfg!(windows) { "cl" } else { "cc" };
+
+/// Explicit option, else `$LLG_CC`, else `$CC`, else [`DEFAULT_C_COMPILER`].
 fn resolve_cc(opts: &CmakeBuildOpts) -> String {
-    opts.cc
-        .clone()
-        .or_else(|| std::env::var("LLG_CC").ok())
-        .or_else(|| std::env::var("CC").ok())
-        .unwrap_or_else(|| "cc".to_string())
+    select_cc(
+        opts.cc.as_deref(),
+        std::env::var("LLG_CC").ok().as_deref(),
+        std::env::var("CC").ok().as_deref(),
+    )
+}
+
+/// The compiler precedence of [`resolve_cc`] without the environment. Empty
+/// variables count as unset, as in the `llg` driver.
+fn select_cc(explicit: Option<&str>, llg_cc: Option<&str>, cc: Option<&str>) -> String {
+    explicit
+        .or(llg_cc.filter(|value| !value.is_empty()))
+        .or(cc.filter(|value| !value.is_empty()))
+        .unwrap_or(DEFAULT_C_COMPILER)
+        .to_owned()
 }
 
 /// Explicit option, else `$LLG_CMAKE`, else `cmake`.
@@ -2119,6 +2151,15 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(resolve_cc(&opts), "explicit-cc");
+        assert_eq!(
+            select_cc(Some("explicit-cc"), Some("llg-cc"), Some("cc-env")),
+            "explicit-cc"
+        );
+        assert_eq!(select_cc(None, Some("llg-cc"), Some("cc-env")), "llg-cc");
+        assert_eq!(select_cc(None, Some(""), Some("cc-env")), "cc-env");
+        assert_eq!(select_cc(None, None, Some("")), DEFAULT_C_COMPILER);
+        assert_eq!(select_cc(None, None, None), DEFAULT_C_COMPILER);
+        assert_eq!(DEFAULT_C_COMPILER, if cfg!(windows) { "cl" } else { "cc" });
         assert_eq!(resolve_cmake(&opts), "explicit-cmake");
         let flags = c_flags(&opts).unwrap();
         assert_eq!(flags, "-g -DX=1");

@@ -379,6 +379,29 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "generated simulator failed with $LASTEXITCODE" }
           if ($modelOutput -ne "1007") { throw "unexpected generated-model output: $modelOutput" }
 
+      # Without --cc, LLG_CC or CC, llg compiles models with MSVC cl on Windows.
+      - name: Run a generated model with llg's default Windows compiler
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        env:
+          CMAKE_GENERATOR: Ninja
+        run: |
+          Remove-Item Env:LLG_CC, Env:CC, Env:LLG_RUNTIME_CACHE_DIR -ErrorAction SilentlyContinue
+          $root = Join-Path $env:RUNNER_TEMP "llg-default-compiler-model"
+          $llg = "target/${{ matrix.target }}/release/llg.exe"
+          $modelOutput = (& $llg --top tb --out-dir $root tests/fixtures/sim/dynamic_ownership/numeric_loop.sv | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "llg default-compiler run failed with $LASTEXITCODE" }
+          if ($modelOutput -ne "1007") { throw "unexpected default-compiler model output: $modelOutput" }
+          # The model and the runtime archive (cached under the out dir) both.
+          $caches = @(Get-ChildItem -LiteralPath $root -Recurse -Filter CMakeCache.txt)
+          if ($caches.Count -lt 2) { throw "expected model and runtime CMake caches under $root" }
+          foreach ($cache in $caches) {
+              $compiler = Select-String -LiteralPath $cache.FullName -Pattern '^CMAKE_C_COMPILER:[A-Z]+=(.*)$' | Select-Object -First 1
+              if (-not $compiler -or $compiler.Matches[0].Groups[1].Value -notmatch '(?i)(^|[\\/])cl(\.exe)?$') {
+                  throw "$($cache.FullName) does not use MSVC cl: $compiler"
+              }
+          }
+
       - name: Verify Windows architecture and static runtime linkage
         if: matrix.platform == 'windows'
         shell: pwsh
@@ -557,8 +580,8 @@ jobs:
 
       - uses: taiki-e/install-action@nextest
 
-      # Generated models are compiled with the C compiler on PATH, as in the
-      # build job.
+      # Generated models are compiled with MSVC cl, llg's Windows default when
+      # LLG_CC and CC are unset, as in the build job.
       - name: Select MSVC target tools
         if: matrix.platform == 'windows'
         uses: ilammy/msvc-dev-cmd@v1

@@ -181,7 +181,9 @@ struct llg_co_desc {
 #define LLG_CO_FRAME_LIVE 0x4C495645u
 
 /* Corrupted resume state or debug check failure. The runtime may define this
- * to a diagnostic naming the C function `fn` (a string); it must not return. */
+ * to a diagnostic naming the C function `fn` (a string); it must not return.
+ * An override whose handler is declared noreturn may also define
+ * LLG_CO_BAD_STATE_NORETURN (see LLG_CO_DISPATCH_END). */
 #ifndef LLG_CO_BAD_STATE
 #define LLG_CO_BAD_STATE(co, fn) llg_co_bad_state((co), (fn))
 #define LLG_CO_BAD_STATE_DEFAULT_ 1
@@ -412,11 +414,13 @@ size_t llg_co_backtrace(const llg_co_chain_t* ch, llg_co_visit_fn visit,
         goto llg_co_resume_##n;
 /* LLG_CO_BAD_STATE must not return, but the dispatch still returns after it
  * so a runtime override without a noreturn attribute can never fall through
- * into resume code. Only the default handler on MSVC omits that return: it is
- * __declspec(noreturn), so MSVC reports the return as unreachable (C4702 at
- * /W4). Overrides keep the return; a noreturn override compiled by MSVC at /W4
- * may therefore see C4702, which generated models (built at /W3) do not. */
-#if defined(_MSC_VER) && !defined(__clang__) && defined(LLG_CO_BAD_STATE_DEFAULT_)
+ * into resume code. MSVC reports that return as unreachable (C4702 at /W4)
+ * when the handler is declared noreturn, so it is omitted there for the
+ * default handler (__declspec(noreturn)) and for an override that also
+ * defines LLG_CO_BAD_STATE_NORETURN to promise a noreturn declaration (the
+ * runtime's _Noreturn llg_rt_co_bad_state does). Other compilers keep it. */
+#if defined(_MSC_VER) && !defined(__clang__) && \
+    (defined(LLG_CO_BAD_STATE_DEFAULT_) || defined(LLG_CO_BAD_STATE_NORETURN))
 #define LLG_CO_BAD_STATE_RETURN_
 #else
 #define LLG_CO_BAD_STATE_RETURN_ return LLG_CO_EXIT;

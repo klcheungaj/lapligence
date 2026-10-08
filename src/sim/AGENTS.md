@@ -95,7 +95,7 @@ CMake is the only model builder: C11, Release by default, executable under
 `<build>/bin/`, and `m` linkage. The configure command retains:
 
 ```sh
-<cmake> -S <out_dir> -B <out_dir>/build -G <generator> [-DCMAKE_C_COMPILER_LAUNCHER=<launcher>] -DCMAKE_C_COMPILER=<cc|LLG_CC|$CC|cc> -DCMAKE_C_FLAGS:STRING="[cflags|$LLG_CFLAGS]" -DLLG_RUNTIME_LIBRARY=<cache>
+<cmake> -S <out_dir> -B <out_dir>/build -G <generator> [-DCMAKE_C_COMPILER_LAUNCHER=<launcher>] -DCMAKE_C_COMPILER=<cc|LLG_CC|$CC|cl on Windows, cc elsewhere> -DCMAKE_C_FLAGS:STRING="[cflags|$LLG_CFLAGS]" -DLLG_RUNTIME_LIBRARY=<cache>
 cmake --build <dir> --config Release --parallel <jobs> [--target llg_runtime]
 ```
 
@@ -144,7 +144,10 @@ runtime cache key, and never touches the root `build.rs` Slang build (`LLG_CCACH
 files; include `svdpi.h` in generated output. `generate_model_sources`/`--gen-only`
 writes sources/CMake without building. `CmakeBuildOpts` `cmake`/`cc`/`cflags`
 (`--cmake`/`--cc`/`--cflags`) win over `LLG_CMAKE`, `LLG_CC`/`CC` and
-`LLG_CFLAGS`; explicit flags replace, not append to, `LLG_CFLAGS`. Reject double quotes in flags;
+`LLG_CFLAGS`; without a compiler selection `DEFAULT_C_COMPILER` is MSVC `cl` on
+Windows (models run on the host; CMake's own default) and `cc` elsewhere, and
+the runtime cache key records `cl`'s stderr banner plus `VCToolsVersion`,
+`WindowsSDKVersion` and `VSCMD_ARG_TGT_ARCH`; explicit flags replace, not append to, `LLG_CFLAGS`. Reject double quotes in flags;
 missing-CMake errors include installation guidance. Probe availability once.
 
 Cache by ownership ABI, runtime content, compiler-reported target, toolchain,

@@ -1,8 +1,7 @@
 //! Standalone tests for the IEEE Annex N legacy random runtime.
 
-use crate::sim_harness;
+use crate::{c_compiler, sim_harness};
 
-use std::process::Command;
 use std::time::Duration;
 
 const RANDOM_PROBE: &str = r#"
@@ -88,16 +87,17 @@ int main(void) {
 
 #[test]
 fn random_runtime_vectors_and_boundaries_are_stable_at_both_optimization_levels() {
-    let compiler = std::env::var("LLG_CC")
-        .or_else(|_| std::env::var("CC"))
-        .unwrap_or_else(|_| "cc".to_owned());
-    if Command::new(&compiler).arg("--version").output().is_err() {
+    let compiler = c_compiler::host_c_compiler();
+    if !c_compiler::c_compiler_available(&compiler) {
         eprintln!("SKIP: C compiler `{compiler}` not available");
         return;
     }
 
     let (header, implementation) = llg::sim::rt::random_sources();
-    for optimization in ["-O2", "-O0"] {
+    for (optimization, level) in [
+        ("-O2", c_compiler::Optimize::Speed),
+        ("-O0", c_compiler::Optimize::None),
+    ] {
         let dir = sim_harness::TempDir::new(&format!("runtime-random-{optimization}"))
             .expect("create random runtime directory");
         std::fs::write(dir.path().join("llg_random.h"), header).expect("write random header");
@@ -105,22 +105,13 @@ fn random_runtime_vectors_and_boundaries_are_stable_at_both_optimization_levels(
             .expect("write random implementation");
         std::fs::write(dir.path().join("random_probe.c"), RANDOM_PROBE)
             .expect("write random probe");
-        let executable = dir.path().join("random_probe");
-        let mut command = Command::new(&compiler);
-        command.current_dir(dir.path()).args([
-            "-std=c11",
-            optimization,
-            "-Wall",
-            "-Wextra",
-            "-Werror",
-            "-I.",
-        ]);
-        if let Ok(flags) = std::env::var("LLG_CFLAGS") {
-            command.args(flags.split_whitespace());
-        }
-        command
-            .args(["llg_random.c", "random_probe.c", "-lm", "-o"])
-            .arg(&executable);
+        let (mut command, executable) = c_compiler::strict_c11_executable(
+            &compiler,
+            dir.path(),
+            level,
+            &["llg_random.c", "random_probe.c"],
+            "random_probe",
+        );
         let output = sim_harness::run_command(&mut command, Duration::from_secs(60))
             .unwrap_or_else(|error| panic!("compile random runtime at {optimization}: {error}"));
         assert!(
