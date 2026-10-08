@@ -96,18 +96,20 @@ configure_file("${LLG_GMP_GENERATED_DIR}/config.h.new" "${LLG_GMP_GENERATED_DIR}
 
 # The link closure of the five kernel entry points in GMP's generic-C build,
 # including the out-of-line copies of gmp.h's inline mpn functions (add,
-# add_1, cmp, neg, sub, sub_1, zero_p) and the paths -O0 builds keep
-# (toom4_sqr). Recompute it when the submodule moves: the compact GMP storage
-# probes (Debug) and generated models (Release) fail to link when it is
-# incomplete.
+# add_1, cmp, neg, sub, sub_1, zero_p) and the calls that unoptimized builds
+# keep (toom4_sqr; dcpi1_divappr_q behind invertappr's constant-folded
+# `! MAYBE_dcpi1_divappr || ...`, which MSVC /Od does not fold). The list covers
+# every call the preprocessed sources contain, not only those GCC/Clang keep
+# at -O0. Recompute it when the submodule moves: tests/runtime_gmp_closure.rs
+# links the subset against every such reference.
 set(LLG_GMP_MPN_SOURCES
   add add_1 add_n addmul_1 bdiv_dbm1c bdiv_q_1 cmp com compute_powtab
-  dcpi1_div_qr dive_1 divrem_1 divrem_2 get_str invertappr lshift lshiftc
-  mod_34lsub1 mu_div_qr mul mul_1 mul_basecase mul_fft mul_n mulmod_bknp1
-  mulmod_bnm1 neg nussbaumer_mul pre_divrem_1 rshift sbpi1_div_qr
-  sbpi1_divappr_q sqr sqr_basecase sqrmod_bnm1 sub sub_1 sub_n submul_1
-  tdiv_qr toom22_mul toom2_sqr toom32_mul toom33_mul toom3_sqr toom42_mul
-  toom43_mul toom44_mul toom4_sqr toom53_mul toom63_mul toom6_sqr toom6h_mul
+  dcpi1_div_qr dcpi1_divappr_q dive_1 divrem_1 divrem_2 get_str invertappr
+  lshift lshiftc mod_34lsub1 mu_div_qr mul mul_1 mul_basecase mul_fft mul_n
+  mulmod_bknp1 mulmod_bnm1 neg nussbaumer_mul pre_divrem_1 rshift
+  sbpi1_div_qr sbpi1_divappr_q sqr sqr_basecase sqrmod_bnm1 sub sub_1 sub_n
+  submul_1 tdiv_qr toom22_mul toom2_sqr toom32_mul toom33_mul toom3_sqr
+  toom42_mul toom43_mul toom44_mul toom4_sqr toom53_mul toom63_mul toom6_sqr toom6h_mul
   toom8_sqr toom8h_mul toom_couple_handling toom_eval_dgr3_pm1
   toom_eval_dgr3_pm2 toom_eval_pm1 toom_eval_pm2 toom_eval_pm2exp
   toom_eval_pm2rexp toom_interpolate_12pts toom_interpolate_16pts
