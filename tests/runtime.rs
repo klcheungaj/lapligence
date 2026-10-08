@@ -14,6 +14,7 @@ mod runtime_boundaries;
 mod runtime_containers;
 mod runtime_coroutine_library;
 mod runtime_file_io;
+mod runtime_gmp_closure;
 mod runtime_random;
 mod runtime_regions;
 mod runtime_review_batch3;
