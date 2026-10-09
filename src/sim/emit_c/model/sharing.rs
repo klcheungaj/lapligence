@@ -427,9 +427,6 @@ fn normalize(
                     | "llg_nba_net_selected_after" => *arg == 1,
                     "llg_activation_enter" => *arg < 2,
                     "llg_disable_target" | "llg_fork_group_new_target" => (1..=2).contains(arg),
-                    "llg_pca_assign" | "llg_pca_assign_d" | "llg_pca_drive" | "llg_pca_drive_d" => {
-                        *arg == 2
-                    }
                     _ => false,
                 });
             if identity {
@@ -494,7 +491,7 @@ struct Candidate {
 }
 
 pub(super) struct AdditionalOperands<'a> {
-    pub pca_tables: &'a [(String, String, String)],
+    pub net_tables: &'a [(String, String, String)],
     pub constants: &'a super::super::constants::PackedConstants,
 }
 
@@ -553,7 +550,7 @@ pub(super) fn share(
             (name, operand)
         })
         .collect::<HashMap<_, _>>();
-    for (name, ty, shape) in additional.pca_tables {
+    for (name, ty, shape) in additional.net_tables {
         registry.insert(
             name.clone(),
             Operand::new(
@@ -605,11 +602,7 @@ pub(super) fn share(
         ) {
             let shape = artifact.layout.render_typedef("llg_key_frame")?;
             let shape = rewrite_identifiers(&shape, |name| frame_names.get(name).cloned());
-            let provenance = if artifact.pca_driver {
-                "owned PCA driver"
-            } else {
-                &artifact.location
-            };
+            let provenance = &artifact.location;
             let key = format!(
                 "{:?}:{provenance}:{shape}:{}",
                 std::mem::discriminant(&artifact.owner),

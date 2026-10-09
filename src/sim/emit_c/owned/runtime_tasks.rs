@@ -296,39 +296,4 @@ impl Frame<'_, '_> {
         }
         Ok(())
     }
-
-    pub(super) fn pca_task(&mut self, statement: &IrStmt) -> Result<(), String> {
-        let (sig, enable, site, expression, operation) = match statement {
-            IrStmt::PcaAssign {
-                sig,
-                enable,
-                site,
-                value,
-            } => (*sig, *enable, *site, value, "assign"),
-            IrStmt::PcaDrive {
-                sig,
-                enable,
-                site,
-                value,
-            } => (*sig, *enable, *site, value, "drive"),
-            _ => return Err("expected a procedural continuous assignment".to_owned()),
-        };
-        let signal = self.ctx.model.signal(sig);
-        let enable = &self.ctx.model.signal(enable).c_name;
-        let value = self.expression(expression)?;
-        let value = self.convert(
-            value,
-            signal.ty.width(),
-            signal.ty.signed(),
-            signal.ty.two_state(),
-            matches!(signal.ty, IrType::Real { shortreal: true }),
-        );
-        let suffix = if signal.ty.width() == 0 { "_d" } else { "" };
-        self.line(format!(
-            "llg_pca_{operation}{suffix}(&{}, &{enable}, {site}ULL, {});",
-            signal.c_name, value.code
-        ));
-        self.discard(value);
-        Ok(())
-    }
 }

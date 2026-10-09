@@ -292,6 +292,12 @@ fn run(options: DriverOptions) -> i32 {
     );
     let gen = match generated {
         Ok(g) => g,
+        Err(e) if e.is_legacy_unsupported() => {
+            for line in e.detail().lines() {
+                eprintln!("error: {line}");
+            }
+            return 1;
+        }
         Err(e) => {
             eprintln!("llg: codegen error: {e}");
             return 1;

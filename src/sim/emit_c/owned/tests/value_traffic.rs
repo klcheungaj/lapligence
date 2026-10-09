@@ -371,35 +371,6 @@ fn borrowed_local_materializes_using_its_registered_address() {
 }
 
 #[test]
-fn batched_pca_helpers_share_the_models_wide_index_constant() {
-    let constants = super::super::super::constants::PackedConstants::default();
-    let shape = super::super::super::statements::pca_batches::Shape {
-        expression: IrExpr::new(
-            IrExprKind::BitSel {
-                base: Box::new(read()),
-                idx: Box::new(number(1, 65)),
-            },
-            1,
-            false,
-            None,
-        ),
-        source_type: IrType::packed(65, false).unwrap(),
-        target_type: IrType::packed(1, false).unwrap(),
-    };
-    for _ in 0..2 {
-        let (body, _) = super::super::pca_batches::helper_body(
-            &shape,
-            Some(&constants),
-            crate::sim::value_backend::ValueBackend::Legacy,
-        )
-        .unwrap();
-        assert!(!body.contains("sv4_from_limbs"));
-        assert!(body.contains("llg_constant_"));
-    }
-    assert_eq!(constants.lifecycle().matches("sv4_from_limbs").count(), 1);
-}
-
-#[test]
 fn pure_short_circuit_and_mux_selectors_borrow_without_changing_branches() {
     let model = numeric_model();
     let ctx = RCtx {

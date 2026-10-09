@@ -117,6 +117,9 @@ forced_alias = {
     "var_type": "variable_type",
 }
 forced_excluded = {
+    "procedural_continuous_assignment": "SYN038-EX-04: ADV-001 unsupported by design; every procedural assign/deassign stops the simulator with the ADV-032 diagnostic",
+    "procedural_continuous_assignment(s)": "SYN038-EX-04: ADV-001 unsupported by design; every procedural assign/deassign stops the simulator with the ADV-032 diagnostic",
+    "procedural_continuous_assignments": "SYN038-EX-04: ADV-001 unsupported by design; every procedural assign/deassign stops the simulator with the ADV-032 diagnostic",
     "assertion_variable_declaration": "SYN-034 assertion verification profile",
     "block_event_expression": "SYN-034 covergroup event profile",
     "class_constraint": "SYN-034 class/constraint verification profile",
@@ -324,17 +327,6 @@ assign_outside(
     "tests/sim_events.rs::sim_events_hierarchical_reference",
     "**Named-event operations**",
     "outside Core named-event hierarchy; old group 31",
-)
-assign_outside(
-    {
-        "procedural_continuous_assignment",
-        "procedural_continuous_assignments",
-        "procedural_continuous_assignment(s)",
-    },
-    "tests/sim_procedural_assign.rs::procedural_assign_supports_real_targets_and_force_release",
-    "**Procedural assign/deassign**",
-    "SYN-034(4) excludes legacy assign/deassign and force from Core synthesis",
-    "tests/fixtures/sim/procedural_assign/real.sv",
 )
 assign_outside(
     {"virtual_interface_declaration", "list_of_virtual_interface_decl"},

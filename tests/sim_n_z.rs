@@ -28,7 +28,6 @@ mod sim_partial_features;
 mod sim_physical_time;
 mod sim_plusargs;
 mod sim_port_net_types;
-mod sim_procedural_assign;
 mod sim_procedural_control;
 mod sim_process_control;
 mod sim_process_semantics;

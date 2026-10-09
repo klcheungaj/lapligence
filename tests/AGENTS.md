@@ -249,8 +249,8 @@ time disk/memory telemetry. Generated C sanitizer flags remain separate.
 The 180-minute generated-runtime-sanitizers job runs runtime_values, runtime_random,
 runtime_boundaries, sim_counter, sim_data_types, sim_data_types_next,
 sim_data_types_completion, sim_type_conformance, sim_partial_features,
-sim_net_resolution, sim_net_defaults, sim_function, sim_loops and
-sim_procedural_assign with GCC ASan/UBSan; this is not LSP admission coverage.
+sim_net_resolution, sim_net_defaults, sim_function and sim_loops with
+GCC ASan/UBSan; this is not LSP admission coverage.
 The 15-minute dependency-audit runs cargo audit on those triggers and Mondays
 04:17 UTC. Reports stay in workflow logs, not uploaded artifacts.
 

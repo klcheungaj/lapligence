@@ -6,6 +6,7 @@ it is not a Rust runtime dependency.
 
 | Component | Responsibility |
 | --- | --- |
+| `legacy_unsupported.rs` | Stable rejections for legacy constructs unsupported by design (MOS, trireg, charge directives, `$dumpports*`, PLA, inspection tasks, PLI 1.0 TF/ACC, every procedural `assign`/`deassign`, rejected `$q_*` forms). |
 | `semantic/` | Frontend-neutral model, source origins, synthesis classification and executable-node coverage. |
 | `codegen/` | Typed lowering of declarations, values, processes, links and scheduling. |
 | `ir/` | Shared typed storage/value/statement tables and validation. |

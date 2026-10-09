@@ -155,7 +155,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
         },
         IrSignal {
             fixed_default: None,
-            c_name: "llg_pca_en_0".to_string(),
+            c_name: "llg_synthetic_0".to_string(),
             hdl_name: None,
             ty: IrType::Packed {
                 width: 1,
@@ -232,7 +232,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
     assert!(c.contains("\"top\\037g[0]\\037value\", &G_top_g_0__value, 12"));
     assert!(c.contains("\"top\\037alias\", &g_net_0.resolved, 1"));
     assert!(c.contains("\"top\\037r\", &D_top_r"));
-    assert!(!c.contains("\"llg_pca_en_0\""));
+    assert!(!c.contains("\"llg_synthetic_0\""));
     assert!(c.contains("\"top\\037mem[3]\", &G_top_mem[0], 8"));
     assert!(c.contains("\"top\\037mem[2]\", &G_top_mem[1], 8"));
     assert!(c.contains("llg_spawn_final(llg_wave_capture_final_time"));

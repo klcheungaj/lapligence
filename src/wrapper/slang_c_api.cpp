@@ -48,6 +48,7 @@
 #include "slang/diagnostics/DeclarationsDiags.h"
 #include "slang/diagnostics/DiagnosticEngine.h"
 #include "slang/diagnostics/DiagnosticClient.h"
+#include "slang/diagnostics/StatementsDiags.h"
 #include "slang/driver/UserDefinedSubroutine.h"
 #include "slang/numeric/ConstantValue.h"
 #include "slang/parsing/Parser.h"
@@ -5912,6 +5913,12 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   // illegal; the frontend only warns by default. Neither edition admits it
   // (1364-2001 has no `ref`).
   engine.setSeverity(diag::RefArgAutomaticFunc, DiagnosticSeverity::Error);
+  // IEEE 1364-2001 9.3.2 and 1800-2009 10.6.2 admit only nets, whole
+  // variables, constant net selects and their concatenations as force/release
+  // targets. The frontend only warns (other tools' compatibility) but still
+  // drops the statement, which would otherwise surface as an unlocated
+  // lowering failure.
+  engine.setSeverity(diag::BadProceduralForce, DiagnosticSeverity::Error);
   Diagnostics pragmaDiagnostics = engine.setMappingsFromPragmas();
   for (const Diagnostic& diagnostic : pragmaDiagnostics)
     compilationClient->issue(engine, diagnostic);

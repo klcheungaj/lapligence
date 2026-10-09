@@ -234,7 +234,7 @@ total for the stage.
 
 Normalize each body for sharing as soon as it is rendered and drop
 duplicate members' text, reconstructing it exactly only for groups below the
-sharing threshold; this requires abstracting frame-type and PCA helper names
+sharing threshold; this requires abstracting frame-type names
 that are resolved after rendering. Stream the final text to `model.c` only if
 the generated-model API stops returning it in memory. Generated `model.c` must
 stay byte-identical, including both optimizer modes and the exact sharing
@@ -1082,7 +1082,7 @@ Reproduce with `mux3 m[4095:0] (y, sel, a, b);` over 4,096-bit vectors and
 
 The intended direction is one shared process body per array declaration,
 parameterized by the element's bit offsets, like the table-driven
-procedural-continuous-assignment batches.
+net-contribution batches.
 
 ## Release does not restore a variable's continuous driver
 
@@ -1257,3 +1257,40 @@ Reproduce with
 [`neg_unpacked_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_arg.sv),
 [`neg_unpacked_struct_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_struct_arg.sv) and
 [`neg_queue_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_queue_arg.sv).
+
+## Legacy constructs unsupported by design
+
+**Status:** decided 2026-10-08; not planned. The rows are marked 🚫 in
+[the feature checklist](sim_features.md).
+
+### Symptom
+
+Procedural `assign`/`deassign` in every form (local or hierarchical target;
+decided 2026-10-09), MOS and resistive switch primitives, `trireg` nets,
+the `` `default_decay_time``, `` `default_trireg_strength`` and `` `delay_mode_*``
+directives, `$dumpports*`, `$q_*` outputs that are not whole integer variables,
+the PLA tasks, `$countdrivers/$getpattern/$scale/$scope/$showscopes/$showvars`
+and the PLI 1.0 `tf_*`/`acc_*` interface stop the run with
+`error: <file>:<line>:<col>: unsupported: <construct> (<family>) is not
+supported by llg` before C generation.
+
+### Cause
+
+`sim::legacy_unsupported::scan` finds the constructs the owned database exposes
+(primitives, nets, procedural `assign`/`deassign` statements, system calls and
+directives) and lowering rejects the remaining forms with the same message
+shape. Hierarchical continuous assignments and force/release are supported and
+not part of this list. The PLI 1.0 check cannot be
+exact: `--dpi-lib` libraries are scanned for the symbol strings `veriusertfs`
+and the `tf_*`/`acc_*` routine names, so a library that does not spell them
+(an obfuscated or runtime-computed name), an unlinked source that only includes
+`veriuser.h` or `acc_user.h`, or a defining-only library that exports a user
+function with one of those names is judged by the scan alone. Slang's own
+errors for `assign` to a net, select or streaming target are kept as they are.
+The scan matches system calls by name only; whether a VPI task registered under
+one of the rejected built-in names is distinguished was not checked.
+
+### Direction
+
+None: the decision is to reject. Reproduce with the files in
+[adv_032](../tests/fixtures/sim/feature_completion/adv_032/readme.md).

@@ -410,26 +410,6 @@ pub enum IrStmt {
     EventDeclare {
         name: String,
     },
-    /// Activate or replace one procedural continuous-assignment binding and
-    /// immediately drive its target.
-    PcaAssign {
-        sig: usize,
-        enable: usize,
-        site: usize,
-        value: IrExpr,
-    },
-    /// Re-evaluate an active procedural continuous-assignment binding.
-    PcaDrive {
-        sig: usize,
-        enable: usize,
-        site: usize,
-        value: IrExpr,
-    },
-    /// Remove the active procedural continuous-assignment binding while
-    /// retaining the target's last driven value.
-    PcaDeassign {
-        sig: usize,
-    },
     If {
         cond: IrExpr,
         then_: Vec<IrStmt>,

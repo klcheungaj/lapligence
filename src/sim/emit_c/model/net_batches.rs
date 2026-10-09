@@ -1,11 +1,15 @@
 //! Model-level electrical contribution tables and sharing operands.
 use super::*;
 
-pub(super) fn collect(
-    model: &IrModel,
-    processes: &[Option<CoroutineArtifact>],
-) -> pca_batches::Tables {
-    let mut tables = pca_batches::Tables {
+/// File-scope table declarations and their sharing operands
+/// `(name, row type, shape)`.
+pub(super) struct Tables {
+    pub declarations: String,
+    pub operands: Vec<(String, String, String)>,
+}
+
+pub(super) fn collect(model: &IrModel, processes: &[Option<CoroutineArtifact>]) -> Tables {
+    let mut tables = Tables {
         declarations: String::new(),
         operands: Vec::new(),
     };

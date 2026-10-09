@@ -32,6 +32,8 @@ mod dependencies;
 mod diagnostics;
 #[path = "lsp_stdio/hover_completion.rs"]
 mod hover_completion;
+#[path = "lsp_stdio/legacy_constructs.rs"]
+mod legacy_constructs;
 #[path = "lsp_stdio/lifecycle.rs"]
 mod lifecycle;
 #[path = "lsp_stdio/limits.rs"]

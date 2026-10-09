@@ -14,7 +14,6 @@ and payloads; escaping or unproven cells retain stable heap owners. Feature guar
 | `expressions.rs`, `control.rs`, `system.rs` | Expressions, branches and system operations. |
 | `repeated_values.rs` | Typed repeated concatenation appends with per-iteration evaluation and cleanup. |
 | `stores.rs`, `statements.rs` | Captured lvalues/masks, writes and lexical/loop cleanup. |
-| `pca_batches.rs` | Adjacent typed PCA assignment runs, registered helper temporaries and ordered table loops; contracts in the [emitter guide](../AGENTS.md#procedural-continuous-assignment-batches). |
 | `calls.rs`, `pure_calls.rs`, `events.rs`, `formatting.rs` | Call/result/address ownership, callback inlining, events and output. |
 | `cached_fields.rs` | C-local mirrors of resume-stable frame fields, reloaded after every suspension. |
 | `captures.rs`, `event_waits.rs`, `model/callbacks.rs` | Activation frames, wait contexts and evaluator callbacks. |

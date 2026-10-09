@@ -42,7 +42,6 @@ mod processes;
 use processes::process_runtime_name;
 mod initialization;
 mod net_batches;
-mod pca_batches;
 mod recursion;
 mod sharing;
 
@@ -200,12 +199,7 @@ struct CoroutineArtifact {
     owner: CoroutineId,
     root: bool,
     shared_entry: Option<String>,
-    pca_batches: Vec<super::statements::pca_batches::Batch>,
     net_batches: Vec<super::owned::net_batches::NetBatch>,
-    /// A process whose operations include a conditional PCA drive; sharing
-    /// keys it by driver shape instead of source location. Recorded at
-    /// rendering because the operations may be released afterwards.
-    pca_driver: bool,
     /// Resume points of a recursive subprogram's coroutine, numbered during
     /// emission; other coroutines take their sites from the analysis.
     recursive_sites: Option<usize>,
@@ -267,9 +261,7 @@ fn render_coroutine_functions(
                 owner: CoroutineId::Function(index),
                 root: false,
                 shared_entry: None,
-                pca_batches: Vec::new(),
                 net_batches: Vec::new(),
-                pca_driver: false,
                 recursive_sites: None,
             },
         );
@@ -312,9 +304,7 @@ fn render_recursive_functions(
                 owner: CoroutineId::Function(index),
                 root: false,
                 shared_entry: None,
-                pca_batches: Vec::new(),
                 net_batches: Vec::new(),
-                pca_driver: false,
                 recursive_sites: Some(sites),
             },
         );
@@ -367,7 +357,7 @@ fn render_coroutine_process(
     if process.kind() == IrProcessKind::Final {
         return Ok(None);
     }
-    let (source, layout, pca_batches, net_batches) = super::owned::model::coroutine_process(
+    let (source, layout, net_batches) = super::owned::model::coroutine_process(
         &ctx,
         process,
         index,
@@ -375,12 +365,6 @@ fn render_coroutine_process(
         execution.analysis(),
         upper_bounds,
     )?;
-    let pca_driver = executable.blocks.iter().any(|block| {
-        block.operations.iter().any(|statement| {
-            matches!(statement, crate::sim::ir::IrStmt::If { then_, .. }
-                if then_.iter().any(|statement| matches!(statement, crate::sim::ir::IrStmt::PcaDrive { .. })))
-        })
-    });
     Ok(Some(CoroutineArtifact {
         source: retained(source),
         layout,
@@ -391,9 +375,7 @@ fn render_coroutine_process(
         owner: CoroutineId::Process(index),
         root: true,
         shared_entry: None,
-        pca_batches,
         net_batches,
-        pca_driver,
         recursive_sites: None,
     }))
 }
@@ -452,9 +434,7 @@ fn render_coroutine_branches(
                     owner,
                     root: true,
                     shared_entry: None,
-                    pca_batches: Vec::new(),
                     net_batches: Vec::new(),
-                    pca_driver: false,
                     recursive_sites: None,
                 },
             );
@@ -486,9 +466,7 @@ fn render_coroutine_branches(
                     owner,
                     root: true,
                     shared_entry: None,
-                    pca_batches: Vec::new(),
                     net_batches: Vec::new(),
-                    pca_driver: false,
                     recursive_sites: None,
                 },
             );
@@ -853,11 +831,7 @@ fn render_model(
             );
         }
     }
-    let mut pca_tables =
-        pca_batches::collect(model, &constants, config.backend, &mut coroutine_processes)?;
     let net_tables = net_batches::collect(model, &coroutine_processes);
-    pca_tables.declarations.push_str(&net_tables.declarations);
-    pca_tables.operands.extend(net_tables.operands);
     drop(artifact_stage);
     let sharing_stage = crate::profile::Stage::new("render.sharing");
     let sharing = sharing::share(
@@ -868,7 +842,7 @@ fn render_model(
         &mut plain_functions,
         threshold,
         sharing::AdditionalOperands {
-            pca_tables: &pca_tables.operands,
+            net_tables: &net_tables.operands,
             constants: &constants,
         },
     )?;
@@ -1136,7 +1110,7 @@ fn render_model(
             out.push_str(&func_prototype(f)?);
         }
     }
-    out.push_str(&pca_tables.declarations);
+    out.push_str(&net_tables.declarations);
     out.push_str(&sharing.declarations);
     out.push_str(&sharing.prototypes);
     out.push_str(&coroutine_metadata);

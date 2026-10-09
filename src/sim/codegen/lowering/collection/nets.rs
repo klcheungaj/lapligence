@@ -2395,25 +2395,6 @@ impl<'a> Codegen<'a> {
                             ));
                         }
                     }
-                    NodeKind::Stmt(StmtKind::ProcContAssign { lhs, .. }) => {
-                        if self.nested_member_target(*lhs, &member_set).is_some() {
-                            if matches!(kind, crate::sim::ir::IrNetKind::Wire) {
-                                return Err(format!(
-                                    "procedural continuous assignment targets variables only; resolved net `{shown}` is not supported"
-                                ));
-                            }
-                            return Err(format!(
-                                "procedural continuous assignment to wired net `{shown}` is not supported"
-                            ));
-                        }
-                    }
-                    NodeKind::Stmt(StmtKind::Deassign { lhs }) => {
-                        if self.nested_member_target(*lhs, &member_set).is_some() {
-                            return Err(format!(
-                                "procedural deassign of wired net `{shown}` is not supported"
-                            ));
-                        }
-                    }
                     NodeKind::Stmt(StmtKind::Force { .. })
                     | NodeKind::Stmt(StmtKind::Release { .. }) => {}
                     NodeKind::Gate {

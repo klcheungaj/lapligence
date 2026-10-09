@@ -634,6 +634,48 @@ pub(crate) fn reject_case_with_exact_stderr(
     }
 }
 
+/// Reject a fixture with exactly the expected source-located
+/// `error: <fixture path>:<suffix>` lines (the stable `unsupported:`
+/// diagnostics of by-design rejections), in both optimizer modes. The run must
+/// exit 1 with an empty stdout, report no generic codegen failure, and leave
+/// its `--out-dir` empty: nothing reached C generation.
+pub(crate) fn reject_case_with_error_lines(
+    suite: &str,
+    fixture: &str,
+    suffixes: &[String],
+    args: &[&str],
+) {
+    let source = sim_harness::source_display(&fixture_path(suite, fixture));
+    let expected: Vec<String> = suffixes
+        .iter()
+        .map(|suffix| format!("error: {source}:{suffix}"))
+        .collect();
+    for optimized in [false, true] {
+        let out_dir = sim_harness::TempDir::new("reject-out").expect("output directory");
+        let out = out_dir.path().to_string_lossy().into_owned();
+        let mut full_args: Vec<&str> = args.to_vec();
+        full_args.extend(["--out-dir", out.as_str()]);
+        let output = invoke_with_args(suite, fixture, optimized, &full_args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let label = format!("{suite}/{fixture}, optimized={optimized}, args={args:?}");
+        assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
+        assert!(output.stdout.is_empty(), "{label}: ran: {output:?}");
+        let errors: Vec<&str> = stderr
+            .lines()
+            .filter(|line| line.starts_with("error: "))
+            .collect();
+        assert_eq!(errors, expected, "{label}: {stderr}");
+        assert!(
+            !stderr.contains("codegen error") && !stderr.contains("panicked"),
+            "{label}: generic failure: {stderr}"
+        );
+        assert!(
+            std::fs::read_dir(out_dir.path()).unwrap().next().is_none(),
+            "{label}: C generation started"
+        );
+    }
+}
+
 pub(crate) fn reject_case_with_runtime_args(
     suite: &str,
     fixture: &str,

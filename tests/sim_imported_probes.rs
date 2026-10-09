@@ -15,15 +15,27 @@ fn femtosecond_delay_uses_local_picosecond_units() {
     );
 }
 
+/// Procedural assign/deassign is unsupported by design (ADV-001, user
+/// decision 2026-10-09): both supplied probes stop at every statement.
 #[test]
-fn replacement_assign_follows_only_new_rhs() {
-    sim_cli::run_case(
-        SUITE,
-        "Procedural_Assign_Replacement",
-        "CHECK: first=0\nCHECK: second=1\nCHECK: follows=0\n",
-        "",
-        &[],
-    );
+fn procedural_assign_probes_are_rejected_as_unsupported() {
+    let family = "(legacy procedural assign/deassign form) is not supported by llg";
+    for (fixture, sites) in [
+        (
+            "Procedural_Assign_Replacement.sv",
+            &[(6, "assign"), (8, "assign"), (12, "deassign")][..],
+        ),
+        (
+            "Procedural_Assign_Priority.sv",
+            &[(6, "assign"), (11, "deassign")][..],
+        ),
+    ] {
+        let lines: Vec<String> = sites
+            .iter()
+            .map(|(line, stmt)| format!("{line}:5: unsupported: procedural `{stmt}` {family}"))
+            .collect();
+        sim_cli::reject_case_with_error_lines(SUITE, fixture, &lines, &[]);
+    }
 }
 
 #[test]

@@ -233,7 +233,6 @@ static void free_mailboxes(void) {
 void llg_rt_cleanup(void) {
     gc_release_registrations();
     value_scopes_unwind(NULL);
-    for (int i = 0; i < g.pca_count; ++i) sv4_destroy(&g.pca_table[i].value);
     while (root_reference_top) llg_ref_scope_end(root_reference_top);
     for (int i = 0; i < g.force_count; i++) force_free_entry(&g.force_table[i]);
     while (g.inertial_drivers) {
@@ -311,12 +310,6 @@ void llg_rt_cleanup(void) {
     free(g.force_table);
     g.force_table = NULL;
     g.force_capacity = 0;
-    free(g.pca_table);
-    g.pca_table = NULL;
-    g.pca_capacity = 0;
-    free(g.pca_real_table);
-    g.pca_real_table = NULL;
-    g.pca_real_capacity = 0;
     free_mailboxes();
     // Containers owned by the model may still name these objects; they only
     // drop handles at model close and never dereference them. The handle

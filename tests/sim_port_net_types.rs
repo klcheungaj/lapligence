@@ -203,7 +203,7 @@ fn port_net_type_trireg_remains_explicitly_unsupported() {
     sim_cli::reject_case_with_args(
         "port_net_types",
         "bad_trireg",
-        "unsupported net type",
+        "unsupported: `trireg` net `",
         &["--edition", "v2001"],
     );
 }

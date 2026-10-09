@@ -216,6 +216,7 @@ impl Db {
             }
         }
         let source_map = super::super::SourceMap::from_slang(snapshot)?;
+        let legacy_directives = legacy_directives(snapshot, &mut source_positions)?;
         let unconnected_drives = snapshot
             .semantic_nodes
             .iter()
@@ -1148,6 +1149,7 @@ impl Db {
             source_libraries,
             declaration_time_scales,
             source_map,
+            legacy_directives,
             tops,
             flat_modules,
             packages,
@@ -1194,6 +1196,46 @@ impl Db {
         db.validate().map_err(DbError::InvalidDatabase)?;
         Ok(db)
     }
+}
+
+/// Optional charge and delay-mode directives (IEEE 1364-2001 Annex D, IEEE
+/// 1800-2009 Annex E). Slang consumes them without effect, so their tokens
+/// are the only record that the source used them.
+const LEGACY_DIRECTIVES: [&str; 6] = [
+    "default_decay_time",
+    "default_trireg_strength",
+    "delay_mode_distributed",
+    "delay_mode_path",
+    "delay_mode_unit",
+    "delay_mode_zero",
+];
+
+fn legacy_directives(
+    snapshot: &SlangSnapshot,
+    positions: &mut SourcePositions<'_>,
+) -> Result<Vec<LegacyDirective>, DbError> {
+    let mut directives = Vec::new();
+    for token in &snapshot.lexical_tokens {
+        if !token.is_directive || token.is_skipped || token.is_missing {
+            continue;
+        }
+        let Some(name) = token
+            .text
+            .strip_prefix('`')
+            .filter(|name| LEGACY_DIRECTIVES.contains(name))
+        else {
+            continue;
+        };
+        let Some(range) = token.range else { continue };
+        let (file, line, column, _, _) = positions.range_position(range)?;
+        directives.push(LegacyDirective {
+            name: name.to_owned(),
+            file: file.map(|file| file.to_string()).unwrap_or_default(),
+            line,
+            column,
+        });
+    }
+    Ok(directives)
 }
 
 #[cfg(test)]

@@ -81,6 +81,7 @@
 //!   (see `build/timings.rs`); unset or empty records nothing.
 
 mod compiler_probe;
+mod legacy_pli;
 mod timings;
 mod toolchain_seed;
 mod value;
@@ -944,7 +945,30 @@ fn write_cmakelists(
 
 fn validate_dpi_libraries(opts: &CmakeBuildOpts) -> Result<(), BuildError> {
     for path in &opts.dpi_libraries {
-        canonical_dpi_library(path)?;
+        let canonical = canonical_dpi_library(path)?;
+        // PLI 1.0 TF/ACC is unsupported by design: name it here rather than
+        // fail later with an unresolved `tf_*`/`acc_*` symbol or a table
+        // that is never read.
+        match legacy_pli::find_legacy_pli_symbol(&canonical) {
+            Ok(None) => {}
+            Ok(Some(symbol)) => {
+                return Err(BuildError::InvalidDpiLibrary {
+                    path: path.to_path_buf(),
+                    reason: format!(
+                        "unsupported: the PLI 1.0 TF/ACC interface (`{symbol}`) is not supported \
+                         by llg; llg ships no veriuser.h or acc_user.h, no veriusertfs \
+                         registration and no tf_*/acc_* routines, so port the library to VPI \
+                         (vlog_startup_routines) or DPI-C"
+                    ),
+                });
+            }
+            Err(error) => {
+                return Err(BuildError::InvalidDpiLibrary {
+                    path: path.to_path_buf(),
+                    reason: format!("cannot read library: {error}"),
+                });
+            }
+        }
     }
     Ok(())
 }

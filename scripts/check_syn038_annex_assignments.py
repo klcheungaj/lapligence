@@ -45,13 +45,16 @@ SELECTED_METHOD = {
 OUTSIDE_IMPLEMENTED = {
     "event_declaration", "event_identifier", "list_of_event_identifiers",
     "event_trigger", "hierarchical_event_identifier",
-    "procedural_continuous_assignment",
-    "procedural_continuous_assignments",
-    "procedural_continuous_assignment(s)",
     "virtual_interface_declaration", "list_of_virtual_interface_decl",
     "class_declaration", "program_declaration", "clocking_declaration",
     "assertion_item", "dynamic_array_variable_identifier",
     "dynamic_array_new", "associative_dimension", "queue_dimension",
+}
+
+UNSUPPORTED_BY_DESIGN = {
+    "procedural_continuous_assignment",
+    "procedural_continuous_assignments",
+    "procedural_continuous_assignment(s)",
 }
 
 
@@ -241,6 +244,8 @@ def check_manifest(manifest: dict, ledger: str, inventory, pdf_root: Path | None
             fail("zero_or_one is an Annex A.7.5.3 timing descriptor, not a UDP table symbol")
         if name in OUTSIDE_IMPLEMENTED and disposition != "OUTSIDE_CORE_IMPLEMENTED":
             fail(f"{name} must retain its implemented outside-Core evidence")
+        if name in UNSUPPORTED_BY_DESIGN and disposition != "EXCLUDED":
+            fail(f"{name} is unsupported by design (ADV-001) and must stay EXCLUDED")
         counts[disposition] += 1
         sources = sorted(label for label in SOURCE_LABELS if name in source_names[label])
         if item.get("sources") != sources:

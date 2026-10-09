@@ -82,7 +82,9 @@ override value's `<command-line>` buffer map rewritten text back.
   SourceManager's `getLineNumber`/`getFileName` there, so the values match the
   preprocessor's `` `__LINE__``/`` `__FILE__``. A directive on the last line
   maps nothing. Promote `RefArgAutomaticFunc` (ref formal of a static
-  subroutine, IEEE 1800-2009 13.5.2) to an error before issuing diagnostics.
+  subroutine, IEEE 1800-2009 13.5.2) and `BadProceduralForce` (force/release
+  of a variable select, IEEE 1364-2001 9.3.2, 1800-2009 10.6.2) to errors
+  before issuing diagnostics.
 - A Verilog-2001 compile runs `Verilog2001SyntaxProfile` over every syntax
   tree after lexical capture. It is closed: a syntax kind absent from its
   IEEE 1364-2001 Annex A allowlist is a finding (not descended into), and

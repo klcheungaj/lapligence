@@ -107,8 +107,8 @@ endmodule
     .err()
     .expect("unsupported trireg declaration must be rejected");
     assert!(
-        net_class_error.contains("unsupported net type")
-            && net_class_error.contains("outside the standalone subset"),
+        net_class_error.contains("unsupported: `trireg` net `value` (trireg charge storage)")
+            && net_class_error.contains("is not supported by llg"),
         "unexpected net-class rejection: {net_class_error}"
     );
 }

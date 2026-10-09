@@ -18,7 +18,7 @@
 #define LLG_COMPILER_MSVC 0
 #endif
 
-// Shared instance bodies and batched PCA rows are called from many sites. Keep
+// Shared instance bodies and batched table rows are called from many sites. Keep
 // each one out of line, and on GCC out of interprocedural cloning too, so the
 // sharing that saved code size is not undone by the optimizer.
 #if defined(__GNUC__) && !defined(__clang__)

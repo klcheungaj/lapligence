@@ -129,7 +129,7 @@ void llg_sequence_local_write(sv4_t* target, sv4_t value) {
         return;
     }
     /* Local assertion storage is private to one attempt. It has no signal
-     * waiters, force/PCA drivers, or scheduler-visible notifications, so the
+     * waiters, force drivers, or scheduler-visible notifications, so the
      * match-item write is intentionally a direct value replacement even while
      * the enclosing assertion is being resolved in Observed. */
     sv4_copy(target, &value);

@@ -275,10 +275,11 @@ original deadlines, changed values cancel, return to current value cancels witho
 replacement. Preserve full single/rise-fall/three-way delays and choose each
 changed bit's delay, taking minimum applicable endpoints for ambiguous transitions.
 Force overlays visible storage while ordinary writes/driver slots remain live;
-release retains variable value, resumes PCA or recomputes current net resolution.
+release retains variable value or recomputes current net resolution.
 Re-force replaces a matching entry. Keep typed constant-selected/concat targets;
 reject unsupported variable selects, automatic/local captures and arrays.
-Procedural assign uses pre-scanned enable-guarded sites; deassign retains value.
+Procedural `assign`/`deassign` is unsupported by design: `legacy_unsupported::scan`
+rejects every reachable statement before lowering and dispatch rejects the rest.
 No subroutine/captured RHS admission without an owned activation environment.
 
 ## Calls, loops and callbacks

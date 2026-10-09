@@ -285,6 +285,22 @@ in both optimizer modes on both backends; the negative fixtures check the
 frontend diagnostics of illegal methods, reductions and arguments. The
 component check is `method_gather_probe.c` in `runtime_value_storage`.
 
+ADV-032's unsupported-construct fixtures use
+`-E 'binary(sim_feature_completion) & test(adv_032::)'`. Each negative fixture
+asserts the exact `error: <file>:<line>:<col>: unsupported: <construct>
+(<family>) is not supported by llg` lines, exit status 1, an empty stdout and
+an empty `--out-dir` (no C generation) in both optimizer modes and in both
+editions where the syntax exists. Procedural `assign`/`deassign` is rejected in
+every form (`assign_forms`, `assign_hierarchical*`); `queue_supported` pins the
+supported `$q_*` subset, and `hier_continuous_assign*` and `hier_force_release`
+pin hierarchical continuous assignment and force/release on all value backends
+and optimizer modes, each paired with a nearest-illegal located language error. The
+PLI 1.0 cases refuse a `--dpi-lib` that names `veriusertfs` or a `tf_*`/`acc_*`
+routine (tool-free stand-in libraries, plus shared objects built with the
+host C compiler on Unix, reported as `SKIP` without one). The language-server
+side is `-E 'binary(general) & test(legacy_constructs)'`: the server must serve
+these files without error diagnostics.
+
 RTL-016's tagged-union, pattern and Q03 fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_016::)'`. Positive fixtures and
 the run-time error fixtures run in both optimizer modes on both backends. Run-time error fixtures print their
@@ -411,7 +427,7 @@ requirements above apply without repeating them for each suite.
 | Arrays and projections | `sim_fixed_array_reductions`, `sim_syn026_iterator_indices`, `sim_array_conditional_assignments`, `sim_fixed_ordering_review`, `sim_syn027_fixed_reverse`, `sim_syn028_fixed_sort`, `sim_group1_repairs`, `sim_group1_formal_repairs`: [reductions](fixtures/sim/fixed_array_reductions/readme.md), [iterator indices](fixtures/sim/syn026_iterator_indices/readme.md), [conditional assignments](fixtures/sim/array_conditional_assignments/readme.md), [fixed reverse](fixtures/sim/syn027_fixed_reverse/readme.md), fixed sort/rsort maps and permutation, activation isolation, signed member conversion, captured outputs and const/NBA negatives. |
 | Expressions | `sim_fill_literals`, `sim_wildcard_eq`, `sim_bit_queries`, `sim_packed_strings`, `sim_sequential_predicates`, `sim_syn022_primitive_patterns`, `sim_syn023_structure_patterns`, `sim_syn024_tagged_patterns`, `sim_syn025_pattern_cases`, `sim_audit_a1_packed_constant_patterns`: fills, wildcard equality/inside, queries, [ordered predicates/patterns](fixtures/sim/sequential_predicates/readme.md), [primitive pattern scope/edition checks](fixtures/sim/syn022_primitive_patterns/readme.md), [recursive fixed structure patterns](fixtures/sim/syn023_structure_patterns/readme.md), [tagged pattern modes and bindings](fixtures/sim/syn024_tagged_patterns/readme.md), [pattern-case qualifier, control and rejection checks](fixtures/sim/syn025_pattern_cases/readme.md), and [packed integral constant-pattern acceptance and nonintegral rejection](fixtures/sim/audit_a1_packed_constant_patterns/readme.md). |
 | Processes and loops | [Always-family](fixtures/sim/process_semantics/readme.md), [loops](fixtures/sim/loops/readme.md), `sim_loops`, `sim_syn014_process_contexts`: source-loop exits, omissions/bounds, aggregate sensitivity, legal disjoint writers and illegal writer/event controls. |
-| Scheduling and synchronization | `sim_coroutine_semantics`, `sim_process_control`, `sim_semaphore`, `sim_mailboxes`, `sim_procedural_assign`, `sim_force`; [coroutine migration oracles](fixtures/sim/coroutine_semantics/readme.md), [processes](fixtures/sim/process_control/readme.md), [semaphores](fixtures/sim/semaphore/readme.md), [mailboxes](fixtures/sim/mailboxes/readme.md), [nonconvergence](fixtures/sim/nonconvergence/readme.md). |
+| Scheduling and synchronization | `sim_coroutine_semantics`, `sim_process_control`, `sim_semaphore`, `sim_mailboxes`, `sim_force`; [coroutine migration oracles](fixtures/sim/coroutine_semantics/readme.md), [processes](fixtures/sim/process_control/readme.md), [semaphores](fixtures/sim/semaphore/readme.md), [mailboxes](fixtures/sim/mailboxes/readme.md), [nonconvergence](fixtures/sim/nonconvergence/readme.md). |
 | Generated coroutine storage | `sim_frame_hoisting`, `generated_c_frame_lint`: narrowed/flattened frame shape, deep-block strict-C compile/run and warning-clean C checks plus a six-way sweep of every independently generatable simulation fixture in optimized and unoptimized modes. The reusable lint permits local addresses only when the declaring block is resume-free, and rejects stack addresses in resume-bearing scopes, exact generated-name lookalikes and overlay paths used outside their emitted C block. |
 | Instance body sharing | `sim_instance_sharing`, [instance identities](fixtures/sim/instance_sharing/readme.md): shared module/task and generate bodies preserve `%m`, named events, external disable isolation and net contribution slots in both optimizer modes. Render tests cover thresholds, width/parameter splits, PCA sites and deterministic records; the frame lint recognizes shared entries and model-lifetime record addresses. |
 | Time and numeric services | `sim_delay`, `sim_time_literals`, `sim_time_values`, `sim_physical_time`, `sim_real`, `sim_real_conversions`, `sim_random`, `sim_random_streams`: exact units/rounding, overflow, real precision, Annex N vectors and child-stream isolation. |
@@ -932,7 +948,7 @@ LLG_CC=gcc \
 LLG_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
 ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1:log_path=/tmp/llg-asan-model' \
 UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=1' \
-cargo nextest run -E 'test(/^(sim_partial_features|sim_type_conformance|sim_procedural_assign|runtime_values|runtime_random)::/)' --locked
+cargo nextest run -E 'test(/^(sim_partial_features|sim_type_conformance|runtime_values|runtime_random)::/)' --locked
 ```
 
 Inspect every `/tmp/llg-asan-model.*` file for errors. Stackless coroutine frames

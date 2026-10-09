@@ -176,7 +176,7 @@ excludes the following retainers or supplies the indicated cleanup:
 | Wait snapshots, R2 subscriptions, expression/iff contexts and `wait_order` delivery | Local wait dependencies and context-free evaluator reads remain heap-backed; captured evaluator/qualifier contexts are unproven. Existing wake/cancel paths remove subscriptions before scope unwind. |
 | R1 `dependencies.c` clock history | Every final scope release forgets the exact packed descriptor before reuse; publication without a waiter is still recorded. |
 | Clocking sources, sampled histories, concurrent assertions, sequence clocks/local scopes | Clocking/sampled/assertion forms fail the proof; external owners retain their documented lifetime obligations. |
-| `nets.c` inertial handles/targets, `force.c` targets/evaluators, PCA bindings | These registrations fail the proof; model-lifetime sources keep their existing path. |
+| `nets.c` inertial handles/targets, `force.c` targets/evaluators | These registrations fail the proof; model-lifetime sources keep their existing path. |
 | `mailboxes.c` delayed delivery, pinned targets and reentrant publication snapshots | Mailbox/native service operations fail the proof. |
 | VPI catalog/callback/call handles, DPI/foreign pointers and dynamic dispatch | These operations fail the proof; no frame cell is exposed through them. |
 | Monitor/strobe/output callbacks and deferred assertion reports/action frames | Deferred readers/capture graphs fail the proof; legal persistent sources remain model-owned. |

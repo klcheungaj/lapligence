@@ -28,6 +28,12 @@ CMake build → execution. [Lowering](codegen/AGENTS.md),
 - Simulator Rust has no unsafe/native/FFI calls. The emitter has no DB/FFI/VPI
   dependencies; preserve `G_`/`p_`/`D_` names and the first `model.c` header line.
   `tests/emit_decoupling.rs` enforces this boundary.
+- Legacy constructs unsupported by design (user decision 2026-10-08; listed in
+  `legacy_unsupported.rs` and the 🚫 rows of `docs/sim_features.md`) stop the
+  run before lowering through `legacy_unsupported::scan`, or at their target
+  classification in lowering, with the one `diagnostic` message shape. Reuse
+  that shape for a new by-design rejection; never leave such a construct to a
+  generic lowering failure, a VPI fallback or a no-op.
 - Whole models use `emit_c/owned/` with registered values/scopes and explicit
   startup/teardown. Unrepresented storage/captures/callbacks produce specific
   errors, never legacy-fragment fallbacks. Detached string-only APIs cannot
