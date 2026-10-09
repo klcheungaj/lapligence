@@ -1,0 +1,314 @@
+# Static musl release build (Alpine container) and the full release-profile
+# suite on Ubuntu and Rocky Linux containers for one Linux architecture.
+# Called once per architecture from ci.yml so that an architecture's `test`
+# jobs wait only for that architecture's `build` job.
+#
+# See ci.yml for the CACHING POLICY (binding). A called workflow does not
+# inherit the caller's top-level `env`, so NEXTEST_PROFILE is set here.
+name: Linux platform build and test
+
+on:
+  workflow_call:
+    inputs:
+      arch:
+        description: x86_64 or arm64.
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+      package_arch:
+        type: string
+        required: true
+      target:
+        description: Rust musl target triple.
+        type: string
+        required: true
+      nextest_platform:
+        description: get.nexte.st platform for the static nextest binary.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  # Run one nextest test per available logical CPU (.config/nextest.toml).
+  NEXTEST_PROFILE: ci
+
+jobs:
+  build:
+    name: build
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Linux verification tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils file
+
+      # Compiled registry dependencies of the container build (target/<triple>
+      # release plus the host build-script artifacts, about 0.2 to 0.4 GB) and
+      # the Cargo registry mounted into it. There is no rust-cache here, so
+      # this restores explicitly and saves after the pruning step below. The
+      # key names the toolchain image because compiled artifacts depend on it.
+      - name: Restore compiled dependencies
+        id: cargo-deps
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            target
+            ${{ runner.temp }}/cargo-registry
+          key: cargo-deps-v1-${{ inputs.target }}-release-rust1.98.0-alpine-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml') }}
+          restore-keys: |
+            cargo-deps-v1-${{ inputs.target }}-release-rust1.98.0-alpine-
+
+      - name: Phase 1 llg_co compile gate with GCC and Clang
+        shell: bash
+        run: scripts/llg-co-compile-gate.sh gcc clang
+
+      # The official Alpine Rust image follows the native runner architecture.
+      # It supplies a musl C/C++ toolchain and static system archives without
+      # QEMU or a separately downloaded cross compiler. It builds the static
+      # musl executables and archives the release-profile test binaries for
+      # the test jobs. The checkout is mounted at /workspace here and in
+      # every test container because tests embed compile-time paths
+      # (CARGO_MANIFEST_DIR, CARGO_BIN_EXE_*).
+      - name: Build static musl executables and release test archive
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/cargo-registry"
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --volume "$RUNNER_TEMP/cargo-registry:/usr/local/cargo/registry" \
+            --workdir /workspace \
+            --env CMAKE_GENERATOR=Ninja \
+            --env LLG_TARGET="${{ inputs.target }}" \
+            rust:1.98.0-alpine sh -euxc '
+              apk add --no-cache build-base cmake curl git linux-headers ninja python3
+              git config --global --add safe.directory /workspace
+              git config --global --add safe.directory /workspace/vendor/slang
+              rustup target add "$LLG_TARGET"
+              export CC=gcc CXX=g++
+              case "$LLG_TARGET" in
+                x86_64-unknown-linux-musl)
+                  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=gcc
+                  nextest_platform=linux-musl
+                  ;;
+                aarch64-unknown-linux-musl)
+                  export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=gcc
+                  nextest_platform=linux-arm-musl
+                  ;;
+                *)
+                  echo "unsupported native Linux target: $LLG_TARGET" >&2
+                  exit 1
+                  ;;
+              esac
+              cargo build --locked --release --bin llg_ls --bin llg --target "$LLG_TARGET"
+              # A small test harness exposes accidental dynamic libc links
+              # that larger frontend binaries can mask by pulling libc.a first.
+              cargo test --locked --release --test cli_info --target "$LLG_TARGET" -- --list --format terse
+              nextest=target/nextest-bin
+              mkdir -p "$nextest"
+              curl -LsSf "https://get.nexte.st/latest/$nextest_platform" | tar -xzf - -C "$nextest"
+              "$nextest/cargo-nextest" nextest archive --locked --all-features --cargo-profile release \
+                --target "$LLG_TARGET" --archive-file target/nextest-archive.tar.zst
+            '
+
+      - name: Upload release test archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-archive-${{ inputs.target }}
+          if-no-files-found: error
+          # The archive is already zstd-compressed.
+          compression-level: 0
+          retention-days: 1
+          path: target/nextest-archive.tar.zst
+
+      - name: Verify Linux architecture and fully static linkage
+        shell: bash
+        run: |
+          scripts/verify-linux-release.sh "${{ inputs.arch }}" \
+            "target/${{ inputs.target }}/release/llg_ls" \
+            "target/${{ inputs.target }}/release/llg"
+
+      - name: Smoke-test Linux executable
+        shell: bash
+        run: |
+          executable="target/${{ inputs.target }}/release/llg"
+          set +e
+          "$executable"
+          status=$?
+          set -e
+          test "$status" -eq 2
+
+      - name: Report runner resources
+        if: always()
+        shell: bash
+        run: |
+          echo "logical CPUs: $(nproc)"
+          df -h
+          du -sh target || true
+
+      - name: Package Linux executables
+        if: github.event_name == 'release'
+        shell: bash
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          archive="lapligence-$version-linux-${{ inputs.package_arch }}.tar.gz"
+          mkdir -p dist/package
+          install -m 755 "target/${{ inputs.target }}/release/llg_ls" dist/package/llg_ls
+          install -m 755 "target/${{ inputs.target }}/release/llg" dist/package/llg
+          install -m 644 LICENSE readme.md dist/package/
+          tar -C dist/package -czf "dist/$archive" llg_ls llg LICENSE readme.md
+          (cd dist && sha256sum "$archive" > "$archive.sha256")
+
+      - name: Upload packaged executables
+        if: github.event_name == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lapligence-linux-${{ inputs.package_arch }}
+          if-no-files-found: error
+          # Packaged archives are already compressed; expire downloads promptly.
+          compression-level: 0
+          retention-days: 1
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+
+      # After every step that reads target/: keep only third-party dependency
+      # artifacts (no llg, no target/slang, no test executables or archives).
+      # The container ran as root, so the files need sudo to delete.
+      - name: Keep only third-party dependencies in target/
+        if: always()
+        shell: bash
+        run: sudo python3 scripts/ci_prune_cargo_cache.py --target-dir target
+
+      # Only the default branch saves; a successful build is required.
+      - name: Save compiled dependencies
+        if: ${{ success() && github.ref == 'refs/heads/master' && steps.cargo-deps.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            target
+            ${{ runner.temp }}/cargo-registry
+          key: ${{ steps.cargo-deps.outputs.cache-primary-key }}
+
+  # Each distribution runs the full release-profile suite from the static musl
+  # test archive on its own runner, in parallel with the other distribution.
+  # Neither needs a Rust toolchain; the release job requires every combination
+  # to pass.
+  test:
+    name: test (${{ matrix.distro }})
+    needs: build
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [ubuntu-24.04, rocky-9]
+        include:
+          - distro: ubuntu-24.04
+            image: ubuntu:24.04
+            install: >-
+              export DEBIAN_FRONTEND=noninteractive &&
+              apt-get update &&
+              apt-get install -y --no-install-recommends
+              build-essential clang cmake git ninja-build procps python3
+          - distro: rocky-9
+            image: rockylinux/rockylinux:9
+            # ninja-build ships in the CodeReady Builder (crb) repository.
+            install: >-
+              dnf install -y --setopt=install_weak_deps=False --enablerepo=crb
+              clang cmake gcc gcc-c++ git make ninja-build procps-ng python3 util-linux
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Download release test archive
+        uses: actions/download-artifact@v4
+        with:
+          name: nextest-archive-${{ inputs.target }}
+          path: ${{ runner.temp }}/nextest-archive
+
+      # The static musl nextest binary also runs on the glibc distributions.
+      - name: Install nextest
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/nextest-bin"
+          curl -LsSf "https://get.nexte.st/latest/${{ inputs.nextest_platform }}" \
+            | tar -xzf - -C "$RUNNER_TEMP/nextest-bin"
+
+      # Downloads and verifies the pinned static ccache on the runner (the
+      # minimal containers have no CA bundle guarantee) and restores the cache
+      # directory; the container activates it below, where the compiler is.
+      - name: Download ccache and restore its cache
+        id: ccache
+        uses: ./.github/actions/ccache-setup
+        with:
+          key: linux-${{ inputs.arch }}-${{ matrix.distro }}
+          activate: "false"
+
+      # The archive carries no build script run, so this fresh checkout still
+      # holds the pristine vendor/libfst; the standalone CMake probes need the
+      # patched sources the build script applies in place elsewhere.
+      - name: Apply the libfst patch
+        shell: bash
+        run: git apply --whitespace=nowarn --directory=vendor/libfst patches/libfst/libfst-local-changes.patch
+
+      # Extracting into /workspace restores target/ at the build container's
+      # compile-time paths. ccache activation self-checks with the container's
+      # cc and degrades to an uncached run on failure; statistics print at the
+      # end whatever the suite's status was.
+      - name: Run release suite
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/ccache" "$RUNNER_TEMP/ccache-bin"
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --volume "$RUNNER_TEMP/nextest-archive:/nextest-archive:ro" \
+            --volume "$RUNNER_TEMP/nextest-bin:/nextest-bin:ro" \
+            --volume "$RUNNER_TEMP/ccache:/ccache" \
+            --volume "$RUNNER_TEMP/ccache-bin:/ccache-bin:ro" \
+            --workdir /workspace \
+            --env NEXTEST_PROFILE \
+            --env LLG_BUILD_TIMINGS=/workspace/target/llg-build-timings.tsv \
+            --env LLG_INSTALL="${{ matrix.install }}" \
+            "${{ matrix.image }}" sh -euxc '
+              eval "$LLG_INSTALL"
+              touch /tmp/llg-ccache.env
+              python3 scripts/ci_ccache.py activate --ccache /ccache-bin/ccache \
+                --ccache-dir /ccache --env-format shell --env-file /tmp/llg-ccache.env
+              set -a
+              . /tmp/llg-ccache.env
+              set +a
+              status=0
+              /nextest-bin/cargo-nextest nextest run --no-fail-fast \
+                --archive-file /nextest-archive/nextest-archive.tar.zst \
+                --workspace-remap /workspace --extract-to /workspace || status=$?
+              python3 scripts/ci_ccache.py stats
+              python3 scripts/ci_build_timings.py "$LLG_BUILD_TIMINGS" || true
+              exit $status
+            '
+
+      - name: Report runner resources
+        if: always()
+        shell: bash
+        run: |
+          echo "logical CPUs: $(nproc)"
+          df -h
+          free -h
+
+      - name: Save the compiler cache
+        if: always()
+        uses: ./.github/actions/ccache-finish
+        with:
+          key: ${{ steps.ccache.outputs.key }}
+          cache-hit: ${{ steps.ccache.outputs.cache-hit }}
+          stats: "false"

@@ -1,0 +1,419 @@
+# Release build and full release-profile suite of one Windows or macOS target.
+# Called once per platform from ci.yml so that a platform's `test` job waits
+# only for that platform's `build` job, never for another platform's build.
+#
+# See ci.yml for the CACHING POLICY (binding): compiled third-party Cargo
+# dependencies are cached; nothing built from this repository is. A called
+# workflow does not inherit the caller's top-level `env`, so NEXTEST_PROFILE is
+# set here.
+name: Native platform build and test
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        required: true
+      platform:
+        description: windows or macos.
+        type: string
+        required: true
+      arch:
+        description: Architecture name checked by the release audit.
+        type: string
+        required: true
+      package_arch:
+        type: string
+        required: true
+      python_arch:
+        type: string
+        required: true
+      msvc_arch:
+        description: ilammy/msvc-dev-cmd architecture; empty on macOS.
+        type: string
+        required: false
+        default: ""
+      target:
+        description: Rust target triple.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  # Run one nextest test per available logical CPU (.config/nextest.toml).
+  NEXTEST_PROFILE: ci
+
+jobs:
+  build:
+    name: build
+    runs-on: ${{ inputs.runner }}
+    # Release build, platform audits and the release-profile test archive; the
+    # suite itself runs in the parallel `test` job below.
+    timeout-minutes: 240
+    env:
+      CMAKE_GENERATOR: Ninja
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Rust target
+        uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: ${{ inputs.target }}
+
+      # Compiled registry dependencies for target/<triple>/release plus the
+      # host build-script/proc-macro artifacts, about 0.1 to 0.4 GB per target
+      # (the nextest archive builds dev-dependencies too). One entry per target.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: deps-v1
+          shared-key: release-${{ inputs.target }}
+          cache-targets: "true"
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+
+      # Slang's syntax and diagnostic generators execute during its CMake build.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          architecture: ${{ inputs.python_arch }}
+
+      - uses: taiki-e/install-action@nextest
+
+      - name: Select MSVC target tools
+        if: inputs.platform == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ inputs.msvc_arch }}
+
+      - name: Pin the MSVC linker for Git Bash steps
+        if: inputs.platform == 'windows'
+        uses: ./.github/actions/msvc-linker
+        with:
+          target: ${{ inputs.target }}
+
+      - name: Phase 1 llg_co compile gate with AppleClang
+        if: inputs.platform == 'macos'
+        shell: bash
+        run: scripts/llg-co-compile-gate.sh clang
+
+      - name: Phase 1 llg_co compile gate with MSVC C11
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          $gate = Join-Path $env:RUNNER_TEMP "llg-co-gate"
+          New-Item -ItemType Directory -Force -Path $gate | Out-Null
+          $variants = @(
+              @{ Name = "plain"; Definitions = @() },
+              @{ Name = "debug"; Definitions = @("/DLLG_CO_DEBUG") },
+              @{ Name = "host"; Definitions = @("/DLLG_CO_HOST_ALLOC") },
+              @{ Name = "debug-host"; Definitions = @("/DLLG_CO_DEBUG", "/DLLG_CO_HOST_ALLOC") }
+          )
+          foreach ($variant in $variants) {
+              $definitions = @($variant.Definitions)
+              $libraryObject = Join-Path $gate "$($variant.Name)-library.obj"
+              $includeObject = Join-Path $gate "$($variant.Name)-include.obj"
+              & cl.exe /nologo /std:c11 /W4 /WX /c src/sim/rt/llg_co.c "/Isrc/sim/rt" @definitions "/Fo$libraryObject"
+              if ($LASTEXITCODE -ne 0) { throw "llg_co.c $($variant.Name) compile failed" }
+              & cl.exe /nologo /std:c11 /W4 /WX /c tests/runtime_value_storage/llg_co_include_only.c "/Isrc/sim/rt" @definitions "/Fo$includeObject"
+              if ($LASTEXITCODE -ne 0) { throw "include-only $($variant.Name) compile failed" }
+          }
+
+      - name: Build release executables
+        run: cargo build --locked --release --bin llg_ls --bin llg --target ${{ inputs.target }}
+
+      - name: Build and run generated model with MSVC
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "llg-msvc-generated-model"
+          $llg = "target/${{ inputs.target }}/release/llg.exe"
+          & $llg --top tb --gen-only --out-dir $root tests/fixtures/sim/dynamic_ownership/numeric_loop.sv
+          if ($LASTEXITCODE -ne 0) { throw "llg generated-model export failed" }
+          $project = Join-Path $root "sim/tb"
+          $build = Join-Path $project "build"
+          & cmake -S $project -B $build -G Ninja -DCMAKE_C_COMPILER=cl.exe -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE -ne 0) { throw "MSVC generated-model configure failed" }
+          & cmake --build $build --config Release
+          if ($LASTEXITCODE -ne 0) { throw "MSVC generated-model build failed" }
+          $sim = Join-Path $build "bin/sim.exe"
+          if (-not (Test-Path -LiteralPath $sim)) {
+              $sim = Join-Path $build "bin/Release/sim.exe"
+          }
+          if (-not (Test-Path -LiteralPath $sim)) { throw "generated simulator was not found" }
+          $modelOutput = (& $sim | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "generated simulator failed with $LASTEXITCODE" }
+          if ($modelOutput -ne "1007") { throw "unexpected generated-model output: $modelOutput" }
+
+      # Without --cc, LLG_CC or CC, llg compiles models with MSVC cl on Windows.
+      - name: Run a generated model with llg's default Windows compiler
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        env:
+          CMAKE_GENERATOR: Ninja
+        run: |
+          Remove-Item Env:LLG_CC, Env:CC, Env:LLG_RUNTIME_CACHE_DIR -ErrorAction SilentlyContinue
+          $root = Join-Path $env:RUNNER_TEMP "llg-default-compiler-model"
+          $llg = "target/${{ inputs.target }}/release/llg.exe"
+          $modelOutput = (& $llg --top tb --out-dir $root tests/fixtures/sim/dynamic_ownership/numeric_loop.sv | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "llg default-compiler run failed with $LASTEXITCODE" }
+          if ($modelOutput -ne "1007") { throw "unexpected default-compiler model output: $modelOutput" }
+          # The model and the runtime archive (cached under the out dir) both.
+          $caches = @(Get-ChildItem -LiteralPath $root -Recurse -Filter CMakeCache.txt)
+          if ($caches.Count -lt 2) { throw "expected model and runtime CMake caches under $root" }
+          foreach ($cache in $caches) {
+              $compiler = Select-String -LiteralPath $cache.FullName -Pattern '^CMAKE_C_COMPILER:[A-Z]+=(.*)$' | Select-Object -First 1
+              if (-not $compiler -or $compiler.Matches[0].Groups[1].Value -notmatch '(?i)(^|[\\/])cl(\.exe)?$') {
+                  throw "$($cache.FullName) does not use MSVC cl: $compiler"
+              }
+          }
+
+      - name: Verify Windows architecture and static runtime linkage
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          $binaries = @(
+              "target/${{ inputs.target }}/release/llg_ls.exe",
+              "target/${{ inputs.target }}/release/llg.exe"
+          )
+          & scripts/verify-windows-release.ps1 -Architecture "${{ inputs.arch }}" -Binary $binaries
+
+      - name: Smoke-test Windows executable
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          & "target/${{ inputs.target }}/release/llg.exe"
+          if ($LASTEXITCODE -ne 2) {
+              throw "llg usage smoke test returned $LASTEXITCODE instead of 2"
+          }
+          # GitHub's pwsh wrapper otherwise propagates the expected exit code 2.
+          exit 0
+
+      - name: Verify macOS architecture and system-only dynamic linkage
+        if: inputs.platform == 'macos'
+        shell: bash
+        run: |
+          scripts/verify-macos-release.sh \
+            "target/${{ inputs.target }}/release/llg_ls" \
+            "target/${{ inputs.target }}/release/llg"
+
+      - name: Smoke-test macOS executable
+        if: inputs.platform == 'macos'
+        shell: bash
+        run: |
+          set +e
+          "target/${{ inputs.target }}/release/llg"
+          status=$?
+          set -e
+          test "$status" -eq 2
+
+      # Compile every test executable in the release profile (reusing the
+      # release build above) and archive it for the `test` job, which runs the
+      # whole suite on a second runner of the same kind. The checkout path and
+      # target directory are identical on both runners, so compile-time paths
+      # embedded in the test binaries (CARGO_MANIFEST_DIR, CARGO_BIN_EXE_*)
+      # resolve after extraction.
+      - name: Archive release-profile test binaries
+        shell: bash
+        run: >-
+          cargo nextest archive --locked --all-features --cargo-profile release
+          --target ${{ inputs.target }}
+          --archive-file target/nextest-archive.tar.zst
+
+      - name: Upload release test archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-archive-${{ inputs.target }}
+          if-no-files-found: error
+          # The archive is already zstd-compressed.
+          compression-level: 0
+          retention-days: 1
+          path: target/nextest-archive.tar.zst
+
+      - name: Report runner resources
+        if: always()
+        shell: bash
+        run: |
+          echo "logical CPUs: $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo "$NUMBER_OF_PROCESSORS")"
+          df -h
+          du -sh target || true
+
+      - name: Package macOS executables
+        if: github.event_name == 'release' && inputs.platform == 'macos'
+        shell: bash
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          archive="lapligence-$version-${{ inputs.platform }}-${{ inputs.package_arch }}.tar.gz"
+          mkdir -p dist/package
+          install -m 755 "target/${{ inputs.target }}/release/llg_ls" dist/package/llg_ls
+          install -m 755 "target/${{ inputs.target }}/release/llg" dist/package/llg
+          install -m 644 LICENSE readme.md dist/package/
+          tar -C dist/package -czf "dist/$archive" llg_ls llg LICENSE readme.md
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum "$archive" > "$archive.sha256")
+          else
+            (cd dist && shasum -a 256 "$archive" > "$archive.sha256")
+          fi
+
+      - name: Package Windows executables
+        if: github.event_name == 'release' && inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $archive = "lapligence-$version-windows-${{ inputs.package_arch }}.zip"
+          New-Item -ItemType Directory -Force -Path dist/package | Out-Null
+          Copy-Item -LiteralPath "target/${{ inputs.target }}/release/llg_ls.exe" -Destination dist/package/
+          Copy-Item -LiteralPath "target/${{ inputs.target }}/release/llg.exe" -Destination dist/package/
+          Copy-Item -LiteralPath LICENSE, readme.md -Destination dist/package/
+          Compress-Archive -Path dist/package/* -DestinationPath "dist/$archive"
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "dist/$archive").Hash.ToLowerInvariant()
+          "$hash  $archive" | Set-Content -Encoding ascii "dist/$archive.sha256"
+
+      - name: Upload packaged executables
+        if: github.event_name == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lapligence-${{ inputs.platform }}-${{ inputs.package_arch }}
+          if-no-files-found: error
+          # Packaged archives are already compressed; expire downloads promptly.
+          compression-level: 0
+          retention-days: 1
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+
+      # Last step, after every step that reads target/: drop llg, target/slang,
+      # the nextest archive and test executables before the cache is saved.
+      - name: Keep only third-party dependencies in target/
+        if: always()
+        shell: bash
+        run: python scripts/ci_prune_cargo_cache.py --target-dir target
+
+  # The full release-profile suite runs from the archive built above on a
+  # fresh runner of the same kind, so the build job does not hold its runner
+  # while tests run and a test failure leaves the executable audits and
+  # packages unaffected. Any failure still blocks the release job. No Rust
+  # toolchain is needed to run an archive.
+  test:
+    name: test
+    needs: build
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 300
+    env:
+      # Generated-model tests configure CMake with this generator.
+      CMAKE_GENERATOR: Ninja
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Download release test archive
+        uses: actions/download-artifact@v4
+        with:
+          name: nextest-archive-${{ inputs.target }}
+          path: ${{ runner.temp }}/nextest-archive
+
+      # Tests run python3 helper scripts.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          architecture: ${{ inputs.python_arch }}
+
+      - uses: taiki-e/install-action@nextest
+
+      # Generated models are compiled with MSVC cl, llg's Windows default when
+      # LLG_CC and CC are unset, as in the build job.
+      - name: Select MSVC target tools
+        if: inputs.platform == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ inputs.msvc_arch }}
+
+      - name: Pin the MSVC linker for Git Bash steps
+        if: inputs.platform == 'windows'
+        uses: ./.github/actions/msvc-linker
+        with:
+          target: ${{ inputs.target }}
+
+      # Generated-model C compiles go through ccache (LLG_C_LAUNCHER). The
+      # setup runs after the MSVC environment because it self-checks with the
+      # compiler and generator the tests will use (CMAKE_GENERATOR=Ninja, the
+      # compiler on PATH) and silently disables itself if that does not hit.
+      - name: Set up the generated-model compiler cache
+        id: ccache
+        uses: ./.github/actions/ccache-setup
+        with:
+          key: test-${{ inputs.target }}
+          python: python
+
+      # The archive carries no build script run, so this fresh checkout still
+      # holds the pristine vendor/libfst; the standalone CMake probes need the
+      # patched sources the build script applies in place elsewhere.
+      - name: Apply the libfst patch
+        shell: bash
+        run: git apply --whitespace=nowarn --directory=vendor/libfst patches/libfst/libfst-local-changes.patch
+
+      # Extracting into the checkout restores target/ at the build job's
+      # compile-time paths. Every model build appends its phase timings to
+      # LLG_BUILD_TIMINGS (src/sim/build/timings.rs), summarized below.
+      - name: Run release suite
+        shell: bash
+        env:
+          LLG_BUILD_TIMINGS: ${{ runner.temp }}/llg-build-timings.tsv
+        run: >-
+          cargo nextest run --no-fail-fast
+          --archive-file "$RUNNER_TEMP/nextest-archive/nextest-archive.tar.zst"
+          --workspace-remap "$GITHUB_WORKSPACE" --extract-to "$GITHUB_WORKSPACE"
+
+      # Whether fresh model trees reused CMake toolchain detection: each seed
+      # prints its CMake version (ready) or why it was refused (rejected).
+      # A diagnostic only: it never fails the job.
+      - name: Report CMake toolchain seeds
+        if: always()
+        shell: bash
+        run: |
+          find target -mindepth 2 -maxdepth 4 -type d -path '*/cmake-toolchain/*' 2>/dev/null | while read -r seed; do
+            for marker in ready rejected; do
+              if [ -f "$seed/$marker" ]; then
+                echo "$seed $marker: $(head -n 1 "$seed/$marker")"
+              fi
+            done
+          done || true
+
+      # Where model-build time went: per-phase sums and medians, and how often
+      # the runtime archive and toolchain seed were reused.
+      - name: Report model build timings
+        if: always()
+        shell: bash
+        run: python scripts/ci_build_timings.py "$RUNNER_TEMP/llg-build-timings.tsv" || true
+
+      # Real-time scanning of build trees would slow every compile; record the
+      # runner's Defender state so a slow run can be checked against it.
+      - name: Report Windows Defender state
+        if: always() && inputs.platform == 'windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Get-MpComputerStatus | Format-List RealTimeProtectionEnabled, AntivirusEnabled, AMRunningMode
+          (Get-MpPreference).ExclusionPath
+
+      - name: Report runner resources
+        if: always()
+        shell: bash
+        run: |
+          echo "logical CPUs: $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo "$NUMBER_OF_PROCESSORS")"
+          df -h
+
+      - name: Compiler cache statistics and save
+        if: always()
+        uses: ./.github/actions/ccache-finish
+        with:
+          key: ${{ steps.ccache.outputs.key }}
+          cache-hit: ${{ steps.ccache.outputs.cache-hit }}
+          python: python
