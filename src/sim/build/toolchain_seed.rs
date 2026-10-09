@@ -52,7 +52,7 @@ pub const SEED_DIR: &str = "cmake-toolchain";
 
 /// Bumped whenever the layout or the self-check changes, so older entries are
 /// never read by a newer llg.
-const FORMAT: &str = "llg-cmake-toolchain-seed-v2";
+const FORMAT: &str = "llg-cmake-toolchain-seed-v3";
 
 /// The text every generated project places before `project()`. Detection
 /// runs inside `project()`, so the policies in effect there must match the
@@ -474,9 +474,11 @@ fn run_probe(
         .unwrap_or_default();
     let reference = generated_tree(&full, &version_dir, &cmake_root)?;
     let candidate = generated_tree(&check, &version_dir, &cmake_root)?;
-    if let Some(difference) = first_difference(&reference, &candidate) {
+    let differences = differences(&reference, &candidate);
+    if !differences.is_empty() {
         return Err(ProbeError::Rejected(format!(
-            "seeded build files differ from a clean configure: {difference}"
+            "seeded build files differ from a clean configure: {}",
+            differences.join("; ")
         )));
     }
 
@@ -568,6 +570,17 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
             .any(|window| window == needle)
 }
 
+/// Detection scratch directories under `CMakeFiles/`: CMake writes them only
+/// while it detects a toolchain, so a seeded tree never has them, and nothing
+/// generated reads them back. `ShowIncludes/` holds the sources MSVC-like
+/// compilers compile to find the `/showIncludes` prefix, whose result is kept
+/// in `CMake<LANG>Compiler.cmake` (`CMAKE_<LANG>_CL_SHOWINCLUDES_PREFIX`).
+const DETECTION_SCRATCH: [&str; 3] = [
+    "CMakeFiles/CMakeScratch/",
+    "CMakeFiles/pkgRedirects/",
+    "CMakeFiles/ShowIncludes/",
+];
+
 /// Generated files of `build` relative to it, with the tree's own path
 /// replaced and lines naming CMake's modules dropped. Detection outputs,
 /// logs and the cache itself are not build rules and are skipped.
@@ -594,8 +607,9 @@ fn generated_tree(
             .replace('\\', "/");
         if relative == "CMakeCache.txt"
             || relative.starts_with(&platform_prefix)
-            || relative.starts_with("CMakeFiles/CMakeScratch/")
-            || relative.starts_with("CMakeFiles/pkgRedirects/")
+            || DETECTION_SCRATCH
+                .iter()
+                .any(|scratch| relative.starts_with(scratch))
             || matches!(
                 relative.as_str(),
                 "CMakeFiles/CMakeConfigureLog.yaml"
@@ -629,13 +643,21 @@ fn normalize(bytes: Vec<u8>, tree_spellings: &[String], module_spellings: &[Stri
         .into_bytes()
 }
 
-fn first_difference(
+/// At most this many differing files are named in a rejection, so one
+/// rejected probe reports every cause a CI log needs without unbounded text.
+const MAX_REPORTED_DIFFERENCES: usize = 8;
+
+/// The differing files between two generated trees (missing, changed with
+/// their first differing line, unexpected), at most
+/// [`MAX_REPORTED_DIFFERENCES`] of them plus a count of the rest.
+fn differences(
     reference: &BTreeMap<String, Vec<u8>>,
     candidate: &BTreeMap<String, Vec<u8>>,
-) -> Option<String> {
+) -> Vec<String> {
+    let mut found = Vec::new();
     for (path, bytes) in reference {
         match candidate.get(path) {
-            None => return Some(format!("{path} missing")),
+            None => found.push(format!("{path} missing")),
             Some(other) if other != bytes => {
                 let line = String::from_utf8_lossy(bytes)
                     .lines()
@@ -643,15 +665,23 @@ fn first_difference(
                     .find(|(left, right)| left != right)
                     .map(|(left, right)| format!(": `{left}` vs `{right}`"))
                     .unwrap_or_default();
-                return Some(format!("{path}{line}"));
+                found.push(format!("{path}{line}"));
             }
             Some(_) => {}
         }
     }
-    candidate
-        .keys()
-        .find(|path| !reference.contains_key(*path))
-        .map(|path| format!("{path} unexpected"))
+    found.extend(
+        candidate
+            .keys()
+            .filter(|path| !reference.contains_key(*path))
+            .map(|path| format!("{path} unexpected")),
+    );
+    if found.len() > MAX_REPORTED_DIFFERENCES {
+        let rest = found.len() - MAX_REPORTED_DIFFERENCES;
+        found.truncate(MAX_REPORTED_DIFFERENCES);
+        found.push(format!("{rest} more"));
+    }
+    found
 }
 
 #[cfg(test)]
@@ -858,10 +888,57 @@ mod tests {
         let flags = normalize(b"cmd -O2 /b/check/x.o\n".to_vec(), &other, &modules);
         let reference = BTreeMap::from([("build.ninja".to_owned(), left)]);
         let candidate = BTreeMap::from([("build.ninja".to_owned(), flags)]);
-        let difference = first_difference(&reference, &candidate).unwrap();
-        assert!(difference.contains("build.ninja"), "{difference}");
-        assert!(first_difference(&reference, &BTreeMap::new())
-            .unwrap()
-            .contains("missing"));
+        let found = differences(&reference, &candidate);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("build.ninja"), "{found:?}");
+        assert_eq!(
+            differences(&reference, &BTreeMap::new()),
+            ["build.ninja missing"]
+        );
+        assert!(differences(&reference, &reference).is_empty());
+    }
+
+    #[test]
+    fn rejections_name_every_difference_up_to_a_bound() {
+        let reference: BTreeMap<String, Vec<u8>> = (0..12)
+            .map(|index| (format!("f{index:02}"), b"a".to_vec()))
+            .collect();
+        let mut candidate = reference.clone();
+        candidate.remove("f00");
+        candidate.insert("f01".to_owned(), b"b".to_vec());
+        candidate.insert("z".to_owned(), Vec::new());
+        assert_eq!(
+            differences(&reference, &candidate),
+            ["f00 missing", "f01: `a` vs `b`", "z unexpected"]
+        );
+        let all_missing = differences(&reference, &BTreeMap::new());
+        assert_eq!(all_missing.len(), MAX_REPORTED_DIFFERENCES + 1);
+        assert_eq!(all_missing.last().unwrap(), "4 more");
+    }
+
+    /// MSVC-like compilers leave `CMakeFiles/ShowIncludes/` behind only in a
+    /// tree that ran detection; a seeded tree without it is still equivalent.
+    #[test]
+    fn detection_scratch_is_not_part_of_the_compared_tree() {
+        let dir = std::env::temp_dir().join(format!(
+            "llg-seed-scratch-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let write = |relative: &str, text: &str| {
+            let path = dir.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("build.ninja", "rule cc\n");
+        write("CMakeFiles/ShowIncludes/foo.h", "\n");
+        write("CMakeFiles/ShowIncludes/main.c", "#include \"foo.h\"\n");
+        write("CMakeFiles/CMakeScratch/TryCompile-1/a.c", "");
+        write("CMakeFiles/3.31.6/CMakeCCompiler.cmake", "set(X 1)\n");
+        write("CMakeCache.txt", "X:STRING=1\n");
+        let tree = generated_tree(&dir, "3.31.6", "").unwrap();
+        assert_eq!(tree.keys().collect::<Vec<_>>(), ["build.ninja"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
