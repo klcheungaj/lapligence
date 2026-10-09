@@ -25,6 +25,14 @@ Selected observers materialize stable cells. Model arrays are destroyed after
 scheduler cleanup; lexical descriptors are registered objects drained on scope
 exit or cancellation. All payload operations use the public value facade.
 
+Typed display formatting (`scheduler/formatting.c`) formats ordinary packed
+scalars in frame scratch without heap allocation. `%p` text comes from
+`scheduler/patterns.c`, which walks a value read-only through the model's
+`llg_pattern_types` table and registered class layouts: cycles print
+`(cycle)`, objects deeper than `LLG_PATTERN_MAX_DEPTH` print `(...)`,
+reclaimed objects print `(reclaimed)` and output stops at
+`LLG_PATTERN_OUTPUT_LIMIT` with a warning.
+
 ## Components
 
 | Source pair / directory | Responsibility |
