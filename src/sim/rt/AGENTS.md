@@ -290,7 +290,12 @@ Waiters own snapshots/dependency lists. A suspended process's event-control
 wait (`W_EVENTS*`, `W_EVENT`, `W_MIXED`, `W_EXPR`, and `W_DEPS` armed by
 `llg_arm_event_dependencies`) withholds occurrences (`wait_held_by_suspension`)
 while its snapshots stay current, so `resume()` resensitizes it (SV 9.7); wait
-conditions, delays and other blocking calls keep a pending wake. A
+conditions, delays and other blocking calls keep a pending wake. Semaphore
+and mailbox get/peek/put waiters are withdrawn from their FIFO on `suspend()`
+(`wait_queue_withdraw`) so keys, messages and space stay with other waiters,
+and `resume()` re-queues them at the tail and services the queue
+(`wait_queue_rejoin`); the registration and payload stay live for kill and
+teardown. A
 process-evaluated plan marks its wait with `llg_wait_refresh_on_resume`, and a
 withheld occurrence wakes it on resume with `llg_wait_refreshed()` set so it
 re-arms its values without detecting a change. Packed edges use LSB, including 0→X/Z and

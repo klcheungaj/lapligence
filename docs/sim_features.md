@@ -1822,7 +1822,10 @@ These are bounded implementations, not full verification-infrastructure support.
   Methods through a null handle and `await` on the current process end the
   simulation with an error. `resume()` resensitizes a process suspended on an
   event control (an occurrence while it is suspended is not delivered), and
-  completes a wait condition that became true or a delay that transpired
+  completes a wait condition that became true or a delay that transpired.
+  A process suspended in semaphore `get` or mailbox `get`/`peek`/`put` is not
+  a candidate for keys, messages or space; `resume()` re-queues it at the
+  FIFO tail
   ([ki_lrm_audit_b](../tests/fixtures/sim/feature_completion/ki_lrm_audit_b/readme.md)).
   Handles in plain storage stay allocated until
   teardown, and `status()` in wait or sensitivity expressions, `ref` formals

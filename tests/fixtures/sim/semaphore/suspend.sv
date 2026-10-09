@@ -1,7 +1,7 @@
 // llg-test-fixture: tests/fixtures/sim/semaphore/suspend.sv
 // IEEE 1800-2009 §§9.7 and 15.3: a process suspended while blocked in a
-// semaphore get keeps its waiter; a matching put records a pending wake until
-// resume lets the process continue.
+// semaphore get is not a candidate for keys, so a put leaves the key
+// available; resume re-queues the request, which then takes the key.
 module tb;
     timeunit 1ns;
     timeprecision 1ns;

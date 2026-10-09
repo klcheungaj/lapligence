@@ -79,3 +79,12 @@ fn every_handle_writer_publishes_its_change() {
     sim_cli::run_case_backend_parity(SUITE, "handle_writers", expected, &[], &[]);
     sim_cli::run_case_after_db_drop(SUITE, "handle_writers", expected);
 }
+
+#[test]
+fn suspended_waiters_are_not_queue_candidates() {
+    let expected = include_str!(
+        "../fixtures/sim/feature_completion/ki_lrm_audit_b/suspended_queue_waiters.out"
+    );
+    sim_cli::run_case_backend_parity(SUITE, "suspended_queue_waiters", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "suspended_queue_waiters", expected);
+}

@@ -74,7 +74,7 @@ fn semaphore_static_procedural_initializers_run_once() {
 }
 
 #[test]
-fn semaphore_wake_waits_for_a_suspended_process_to_resume() {
+fn suspended_semaphore_waiter_takes_keys_only_after_resume() {
     sim_cli::run_case(
         "semaphore",
         "suspend",

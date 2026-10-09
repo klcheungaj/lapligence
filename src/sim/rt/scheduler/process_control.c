@@ -303,6 +303,62 @@ void llg_process_kill(llg_proc_t* self, llg_process_handle_t* handle) {
         self->chain.exiting = LLG_EXIT_COMPLETE;
 }
 
+/* SV 9.7 (N1): a suspended process is not a candidate for semaphore keys,
+ * mailbox messages or mailbox space. Suspension withdraws its request from
+ * the FIFO, so keys and messages stay available to other waiters; resume
+ * re-queues the request at the tail (it waits again as a new request, the
+ * natural reading of "resensitize ... to wait for the wait condition") and
+ * services the queue, which may satisfy it in the same time step. The wait
+ * registration and its payload stay live, so kill and teardown still find
+ * the request (unlinking a node that is not queued is a no-op). */
+static void wait_queue_withdraw(llg_proc_t* p) {
+    llg_wait_t* w = &p->wait;
+    if (!w->payload.rare) return;
+    if (w->kind == W_SEMAPHORE) {
+        llg_wait_semaphore_payload_t* payload = &w->payload.rare->semaphore;
+        llg_semaphore_wait_t* node = payload->waiter;
+        llg_semaphore_t* semaphore = payload->semaphore;
+        if (!node || !semaphore) return;
+        llg_semaphore_wait_t** slot = &semaphore->wait_head;
+        while (*slot && *slot != node) slot = &(*slot)->next;
+        if (*slot != node) return;
+        *slot = node->next;
+        node->next = NULL;
+        semaphore->wait_tail = NULL;
+        for (llg_semaphore_wait_t* item = semaphore->wait_head; item; item = item->next)
+            semaphore->wait_tail = item;
+        // A withdrawn head no longer blocks smaller requests behind it.
+        semaphore_wake_available(semaphore);
+    } else if (w->kind == W_MAILBOX_GET || w->kind == W_MAILBOX_PUT) {
+        mailbox_unlink_wait(w);
+    }
+}
+
+static void wait_queue_rejoin(llg_proc_t* p) {
+    llg_wait_t* w = &p->wait;
+    if (!w->payload.rare) return;
+    if (w->kind == W_SEMAPHORE) {
+        llg_wait_semaphore_payload_t* payload = &w->payload.rare->semaphore;
+        llg_semaphore_wait_t* node = payload->waiter;
+        llg_semaphore_t* semaphore = payload->semaphore;
+        if (!node || !semaphore) return;
+        node->next = NULL;
+        if (semaphore->wait_tail)
+            semaphore->wait_tail->next = node;
+        else
+            semaphore->wait_head = node;
+        semaphore->wait_tail = node;
+        semaphore_wake_available(semaphore);
+    } else if (w->kind == W_MAILBOX_GET || w->kind == W_MAILBOX_PUT) {
+        int put = w->kind == W_MAILBOX_PUT;
+        llg_mailbox_t* mailbox = put ? w->payload.rare->mailbox_put.mailbox
+                                     : w->payload.rare->mailbox_get.mailbox;
+        if (!mailbox) return;
+        mailbox_append_wait(mailbox, w, put);
+        mailbox_service_waiters(mailbox);
+    }
+}
+
 llg_co_arm_t llg_arm_process_suspend(llg_proc_t* self,
                                      llg_process_handle_t* handle) {
     llg_runtime_service_enter(self, "process::suspend");
@@ -319,6 +375,7 @@ llg_co_arm_t llg_arm_process_suspend(llg_proc_t* self,
     target->wake_pending = 0;
     remove_region_entry(target);
     process_status_set(target, LLG_PROCESS_SUSPENDED);
+    if (target->wait.kind != W_NONE) wait_queue_withdraw(target);
     if (target == self) {
         // Suspending is a blocking control for join_none eligibility, but the
         // wait itself is represented by the stable handle state rather than a
@@ -340,6 +397,9 @@ void llg_process_resume(llg_proc_t* self, llg_process_handle_t* handle) {
     if (!target->suspended || target->killed || target->completed) return;
     target->suspended = 0;
     if (target->wait.kind != W_NONE) {
+        wait_queue_rejoin(target);
+        // The rejoined request was satisfied at once: wake_proc scheduled it.
+        if (target->wait.kind == W_NONE) return;
         // SV 9.7: the process is resensitized to its event expression or
         // keeps waiting for its condition; the registration is still live.
         // A process that evaluates its event expression itself must take
