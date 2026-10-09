@@ -1,5 +1,5 @@
 // llg-test-fixture: tests/fixtures/sim/feature_completion/sim_037/match_sets.sv
-// SIM-037 A02: exact match sets of unequal-length branches, empty
+// SIM-037 A02: exact matches, with multiplicity, of unequal-length branches, empty
 // repetitions, intersect endpoints, first_match ties, `and`/`within`/
 // `throughout` endpoints and overlapping attempts (IEEE 1800-2009
 // 16.9.2-16.9.10). Every line is one match end; see readme.md.

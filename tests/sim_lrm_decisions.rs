@@ -55,3 +55,11 @@ fn aa_d4_leading_range_empty() {
         include_str!("fixtures/sim/lrm_decisions/AA-D4_leading_range_empty.out"),
     );
 }
+
+#[test]
+fn aa_d5_match_multiplicity() {
+    run_decision(
+        "AA-D5_match_multiplicity",
+        include_str!("fixtures/sim/lrm_decisions/AA-D5_match_multiplicity.out"),
+    );
+}

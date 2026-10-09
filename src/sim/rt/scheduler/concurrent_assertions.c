@@ -332,11 +332,15 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
             attempt, assertion, cycle, event_clock, event_edge, event_time, event_order,
             event_tick, &accepted);
         if (assertion->cover_sequence) {
-            // Sequence coverage reports every nonempty match of the attempt
-            // as it completes and keeps the attempt until no thread remains.
+            // Sequence coverage reports every nonempty match of the attempt,
+            // with multiplicity, as it completes and keeps the attempt until
+            // no thread remains.
             for (const llg_sequence_endpoint_t* endpoint = attempt->endpoints;
-                 accepted && endpoint && !g.finish; endpoint = endpoint->next)
-                if (!endpoint->empty) assertion_result(assertion, 1, 0);
+                 accepted && endpoint && !g.finish; endpoint = endpoint->next) {
+                if (endpoint->empty || !sequence_mult_enumerable(endpoint->mult)) continue;
+                for (uint64_t match = 0; match < endpoint->mult && !g.finish; match++)
+                    assertion_result(assertion, 1, 0);
+            }
             if (alive) {
                 consequent_link = &attempt->next;
             } else {
@@ -726,6 +730,8 @@ int llg_assertion_register_sequence_control(
     assertion->expect_active = 0;
     assertion->antecedent_sequence = antecedent;
     assertion->consequent_sequence = consequent;
+    assertion->antecedent_rank = antecedent ? sequence_graph_rank(antecedent) : NULL;
+    assertion->consequent_rank = sequence_graph_rank(consequent);
     /* Registration precedes execution. Only sequence consumers need ticks
      * across slots, including explicit clocks in either transition graph. */
     clocking_edge_get(clock)->keep_ticks = 1;

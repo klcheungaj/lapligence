@@ -174,9 +174,11 @@ typedef struct llg_sequence_join_instance {
     size_t refs;
     uint8_t alive[2];
     uint8_t matched[2];
-    uint8_t emitted;
     llg_sequence_mark_t last[2];
-    llg_sequence_mark_t emitted_at;
+    /* Match multiplicity per side: every match so far (`and` pairs a new
+     * match with all of them) and the matches at `last` (`intersect`). */
+    uint64_t total[2];
+    uint64_t at_last[2];
 } llg_sequence_join_instance_t;
 
 /* A dynamic frame on a thread's chain: a first_match invocation scope
@@ -201,6 +203,8 @@ typedef struct llg_sequence_endpoint {
     int edge;
     uint64_t time, order, tick;
     int empty;
+    /* Number of distinct matches this endpoint stands for (16.9.5-16.9.8). */
+    uint64_t mult;
 } llg_sequence_endpoint_t;
 
 typedef struct llg_sequence_token {
@@ -216,6 +220,10 @@ typedef struct llg_sequence_token {
     uint64_t entered_tick;
     sv4_t* entered_clock;
     int entered_edge;
+    /* Number of distinct paths (ways of matching) merged into this thread.
+     * Paths that no match item or local variable distinguishes are counted,
+     * not enumerated, so `(a or a)[*n]` stays one thread. */
+    uint64_t mult;
     /* A sequence thread carries its own local assertion state.  Keeping this
      * on the token prevents `or`/repetition joins from merging distinct
      * match-item histories merely because their automaton state is equal. */
@@ -296,6 +304,10 @@ typedef struct llg_concurrent_assertion {
     llg_assertion_attempt_t* attempts_tail;
     const llg_sequence_graph_t* antecedent_sequence;
     const llg_sequence_graph_t* consequent_sequence;
+    /* Per-state processing rank of each graph (zero-delay topological
+     * order), so every path into a state is merged before it expands. */
+    uint32_t* antecedent_rank;
+    uint32_t* consequent_rank;
     llg_sequence_attempt_t* sequence_antecedents;
     llg_sequence_attempt_t* sequence_antecedents_tail;
     llg_sequence_attempt_t* sequence_consequents;

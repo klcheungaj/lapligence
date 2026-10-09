@@ -626,7 +626,8 @@ whose exhaustion stops the run with an error rather than dropping attempts.
 
 Every attempt is stepped separately so that each one reports its own pass or
 fail (§16.12). Attempts with the same automaton state are not merged, and
-deduplication inside one attempt scans that attempt's token list. Tokens with
+merging equal tokens (adding their match multiplicity) inside one attempt
+scans that attempt's token list. Tokens with
 local variables still allocate their local arrays per copy.
 
 ### Intended direction
@@ -634,7 +635,7 @@ local variables still allocate their local arrays per copy.
 Group pending attempts of one assertion whose token sets differ only in their
 start tick and whose transitions are unbounded or already past their lower
 bound, stepping the group once and fanning results out per attempt; index the
-per-attempt deduplication by (state, edge).
+per-attempt token merging by (state, edge).
 
 ### Reproduce
 

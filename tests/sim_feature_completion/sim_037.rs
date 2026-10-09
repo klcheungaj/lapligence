@@ -3,15 +3,16 @@
 //! interpreter written from the Annex F tight-satisfaction rules; the other
 //! oracles are derived by hand in the fixture readme.
 use super::sim_cli;
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 const SUITE: &str = "feature_completion/sim_037";
 
 // ---------------------------------------------------------------------------
 // Annex F trace interpreter (test side only; shares nothing with the NFA).
 //
-// `matches(s, w, i)` is the set of positions `j` such that `s` tightly
-// satisfies the finite word `w[i..=j]`; `j == i - 1` is the empty word.
+// `matches(s, w, i)` maps each position `j` such that `s` tightly satisfies
+// the finite word `w[i..=j]` to the number of distinct matches ending there;
+// `j == i - 1` is the empty word.
 // Letters past the end of `w` do not exist, so no atom matches there.
 // ---------------------------------------------------------------------------
 
@@ -92,34 +93,61 @@ fn negate(atom: Atom) -> Atom {
 
 type Word = [(bool, bool)];
 
-fn matches(seq: &Seq, w: &Word, i: i64) -> BTreeSet<i64> {
+/// Match ends with their multiplicity (number of distinct matches).
+type Ends = BTreeMap<i64, u64>;
+
+fn add(out: &mut Ends, end: i64, count: u64) {
+    if count > 0 {
+        *out.entry(end).or_insert(0) += count;
+    }
+}
+
+fn add_all(out: &mut Ends, ends: &Ends, factor: u64) {
+    for (end, count) in ends {
+        add(out, *end, count * factor);
+    }
+}
+
+/// Matches of `seq` started at position `i`. Every distinct way of matching
+/// counts (§16.9.5 pairs every operand match, §16.9.7 counts each `or`
+/// operand, §16.9.8 keeps all earliest matches); an empty match consumes no
+/// clock tick, so all ways of matching the empty word are one match.
+fn matches(seq: &Seq, w: &Word, i: i64) -> Ends {
+    let mut out = matches_raw(seq, w, i);
+    if let Some(empty) = out.get_mut(&(i - 1)) {
+        *empty = 1;
+    }
+    out
+}
+
+fn matches_raw(seq: &Seq, w: &Word, i: i64) -> Ends {
     let len = w.len() as i64;
     match seq {
         Bool(atom) => {
+            let mut out = Ends::new();
             if i < len && atom.holds(w[i as usize]) {
-                BTreeSet::from([i])
-            } else {
-                BTreeSet::new()
+                add(&mut out, i, 1);
             }
+            out
         }
         Cat(left, min, max, right) => {
-            let mut out = BTreeSet::new();
-            for j in matches(left, w, i) {
-                out.extend(delayed(*min, *max, right, w, j, j >= i));
+            let mut out = Ends::new();
+            for (j, count) in matches(left, w, i) {
+                add_all(&mut out, &delayed(*min, *max, right, w, j, j >= i), count);
             }
             out
         }
         Lead(min, max, right) => {
             // `1[*k] ##1 r` for each k in [m:n]: k true letters starting at
             // i, which must exist, then `r` from i + k (with k = 0 this is `r`
-            // itself, including its empty match).
-            let mut out = BTreeSet::new();
+            // itself, including its empty match). Each k is a distinct way.
+            let mut out = Ends::new();
             let top = max.map_or(len + 1, i64::from);
             for k in i64::from(*min)..=top {
                 if k > 0 && i + k - 1 >= len {
                     break;
                 }
-                out.extend(matches(right, w, i + k));
+                add_all(&mut out, &matches(right, w, i + k), 1);
             }
             out
         }
@@ -132,65 +160,82 @@ fn matches(seq: &Seq, w: &Word, i: i64) -> BTreeSet<i64> {
             repeat(&one, *min, *max, i, len)
         }
         Noncons(atom, min, max) => {
-            let mut out = BTreeSet::new();
-            for j in matches(&Goto(*atom, *min, *max), w, i) {
+            let mut out = Ends::new();
+            for (j, count) in matches(&Goto(*atom, *min, *max), w, i) {
                 // `##1 !b[*0:$]` after the last occurrence.
-                out.extend(repeat(
+                let tail = repeat(
                     &|start| matches(&Bool(negate(*atom)), w, start),
                     0,
                     None,
                     j + 1,
                     len,
-                ));
+                );
+                add_all(&mut out, &tail, count);
             }
             out
         }
         Or(left, right) => {
             let mut out = matches(left, w, i);
-            out.extend(matches(right, w, i));
+            add_all(&mut out, &matches(right, w, i), 1);
             out
         }
         And(left, right) => {
-            let left = matches(left, w, i);
             let right = matches(right, w, i);
-            left.iter()
-                .flat_map(|l| right.iter().map(move |r| *l.max(r)))
-                .collect()
+            let mut out = Ends::new();
+            for (l, lc) in matches(left, w, i) {
+                for (r, rc) in &right {
+                    add(&mut out, l.max(*r), lc * rc);
+                }
+            }
+            out
         }
-        Intersect(left, right) => matches(left, w, i)
-            .intersection(&matches(right, w, i))
-            .copied()
-            .collect(),
+        Intersect(left, right) => intersect(&matches(left, w, i), &matches(right, w, i)),
         Throughout(atom, right) => {
             let left = repeat(&|start| matches(&Bool(*atom), w, start), 0, None, i, len);
-            left.intersection(&matches(right, w, i)).copied().collect()
+            intersect(&left, &matches(right, w, i))
         }
         Within(inner, outer) => {
             let pad =
                 |start: i64| repeat(&|p| matches(&Bool(Atom::True), w, p), 0, None, start, len);
-            let mut left = BTreeSet::new();
-            for lead_end in pad(i) {
-                for inner_end in matches(inner, w, lead_end + 1) {
-                    left.extend(pad(inner_end + 1));
+            let mut left = Ends::new();
+            for (lead_end, lead) in pad(i) {
+                for (inner_end, count) in matches(inner, w, lead_end + 1) {
+                    add_all(&mut left, &pad(inner_end + 1), lead * count);
                 }
             }
-            left.intersection(&matches(outer, w, i)).copied().collect()
+            intersect(&left, &matches(outer, w, i))
         }
         FirstMatch(inner) => matches(inner, w, i).into_iter().take(1).collect(),
     }
 }
 
+/// Pairs of equal ends; each pair is one match.
+fn intersect(left: &Ends, right: &Ends) -> Ends {
+    let mut out = Ends::new();
+    for (end, count) in left {
+        if let Some(other) = right.get(end) {
+            add(&mut out, *end, count * other);
+        }
+    }
+    out
+}
+
 /// Matches of `right` after a left endpoint `j` with `##[min:max]`. `##0`
 /// fuses with a nonempty left match only and needs a nonempty right match;
-/// `##k` (k >= 1) pads `k - 1` true letters, which must exist.
-fn delayed(min: u32, max: Bound, right: &Seq, w: &Word, j: i64, fuse: bool) -> BTreeSet<i64> {
+/// `##k` (k >= 1) pads `k - 1` true letters, which must exist. Each delay is
+/// a distinct way.
+fn delayed(min: u32, max: Bound, right: &Seq, w: &Word, j: i64, fuse: bool) -> Ends {
     let len = w.len() as i64;
-    let mut out = BTreeSet::new();
+    let mut out = Ends::new();
     let top = max.map_or(len + 1, i64::from);
     for delay in i64::from(min)..=top {
         if delay == 0 {
             if fuse {
-                out.extend(matches(right, w, j).into_iter().filter(|end| *end >= j));
+                for (end, count) in matches(right, w, j) {
+                    if end >= j {
+                        add(&mut out, end, count);
+                    }
+                }
             }
             continue;
         }
@@ -198,55 +243,41 @@ fn delayed(min: u32, max: Bound, right: &Seq, w: &Word, j: i64, fuse: bool) -> B
         if start > len {
             break;
         }
-        out.extend(matches(right, w, start));
+        add_all(&mut out, &matches(right, w, start), 1);
     }
     out
 }
 
-/// `R[*m:n]` with `R[*0]` = empty and `R[*k+1]` = `R[*k] ##1 R`.
-fn repeat(
-    one: &dyn Fn(i64) -> BTreeSet<i64>,
-    min: u32,
-    max: Bound,
-    i: i64,
-    len: i64,
-) -> BTreeSet<i64> {
-    let mut current = BTreeSet::from([i - 1]);
-    let mut out = BTreeSet::new();
-    if min == 0 {
-        out.extend(current.iter().copied());
+/// `R[*m:n]` with `R[*0]` = empty and `R[*k+1]` = `R[*k] ##1 R`. A match is a
+/// chain of k nonempty matches of `R`; when `R` admits the empty match, the
+/// remaining iterations are empty and consume no clock tick, so they add no
+/// distinct match (and `[*0:$]` stays finite). Such a chain counts for any k
+/// up to `n`; otherwise k must also reach `m`.
+fn repeat(one: &dyn Fn(i64) -> Ends, min: u32, max: Bound, i: i64, len: i64) -> Ends {
+    let body_empty = one(i).contains_key(&(i - 1));
+    let mut out = Ends::new();
+    if min == 0 || body_empty {
+        add(&mut out, i - 1, 1);
     }
+    let mut current = Ends::from([(i - 1, 1)]);
     let mut count = 0u32;
-    while count < min || max.is_some_and(|max| count < max) {
-        let mut next = BTreeSet::new();
-        for end in &current {
-            if *end < len {
-                next.extend(one(end + 1));
-            }
-        }
-        count += 1;
-        if count >= min {
-            out.extend(next.iter().copied());
-        }
-        current = next;
-        if current.is_empty() {
-            return out;
-        }
-    }
-    if max.is_none() {
-        let mut seen = current.clone();
-        let mut queue: Vec<i64> = current.into_iter().collect();
-        while let Some(end) = queue.pop() {
-            if end + 1 > len {
+    while !current.is_empty() && max.is_none_or(|max| count < max) {
+        let mut next = Ends::new();
+        for (end, ways) in &current {
+            if *end >= len {
                 continue;
             }
-            for next in one(end + 1) {
-                if seen.insert(next) {
-                    queue.push(next);
-                    out.insert(next);
+            for (e, c) in one(end + 1) {
+                if e > *end {
+                    add(&mut next, e, ways * c);
                 }
             }
         }
+        count += 1;
+        if count >= min || body_empty {
+            add_all(&mut out, &next, 1);
+        }
+        current = next;
     }
     out
 }
@@ -383,8 +414,10 @@ fn bounded_sequences_match_the_annex_f_interpreter_on_every_trace() {
                 .collect();
             // Position p of the word is tick p + 1; an empty match ends at
             // the `go` tick 0.
-            for end in matches(seq, &word, 0) {
-                expected.push(format!("{index:02} {trace} {}", end + 1));
+            for (end, count) in matches(seq, &word, 0) {
+                for _ in 0..count {
+                    expected.push(format!("{index:02} {trace} {}", end + 1));
+                }
             }
         }
     }
@@ -411,6 +444,10 @@ fn bounded_sequences_match_the_annex_f_interpreter_on_every_trace() {
     });
 }
 
+fn ends(pairs: &[(i64, u64)]) -> Ends {
+    pairs.iter().copied().collect()
+}
+
 #[test]
 fn interpreter_follows_the_annex_f_empty_match_rules() {
     // Hand-checked anchors for the interpreter itself (16.9.2.1): with
@@ -420,23 +457,46 @@ fn interpreter_follows_the_annex_f_empty_match_rules() {
     let empty_fuse = Cat(bx(Rep(b(Atom::A), 0, Some(0))), 0, Some(0), b(Atom::B));
     assert!(matches(&empty_fuse, &word, 0).is_empty());
     let empty_cat = Cat(bx(Rep(b(Atom::A), 0, Some(0))), 1, Some(1), b(Atom::B));
-    assert_eq!(matches(&empty_cat, &word, 0), BTreeSet::from([0]));
+    assert_eq!(matches(&empty_cat, &word, 0), ends(&[(0, 1)]));
     let trailing = Cat(b(Atom::B), 1, Some(1), bx(Rep(b(Atom::A), 0, Some(0))));
-    assert_eq!(matches(&trailing, &word, 0), BTreeSet::from([0]));
+    assert_eq!(matches(&trailing, &word, 0), ends(&[(0, 1)]));
     assert_eq!(
         matches(&Rep(b(Atom::A), 0, Some(1)), &word, 0),
-        BTreeSet::from([-1, 0])
+        ends(&[(-1, 1), (0, 1)])
     );
     // `and` ends at the later endpoint; `intersect` needs equal endpoints.
     let and = And(b(Atom::A), bx(Rep(b(Atom::A), 1, Some(2))));
-    assert_eq!(matches(&and, &word, 0), BTreeSet::from([0, 1]));
+    assert_eq!(matches(&and, &word, 0), ends(&[(0, 1), (1, 1)]));
     let intersect = Intersect(b(Atom::A), bx(Rep(b(Atom::A), 2, Some(2))));
     assert!(matches(&intersect, &word, 0).is_empty());
     // `##[0:1] r` = `r or (1 ##1 r)` keeps the empty match of `r` like
-    // `##0 r` (F.3.4.2.2): `##[0:1] b[*0:1]` ends at -1 (empty) and at 0
-    // (`b` on letter 0, or `1` followed by the empty `b[*0]`).
+    // `##0 r` (F.3.4.2.2): `##[0:1] b[*0:1]` ends at -1 (empty) and twice at
+    // 0 (`b` on letter 0, and `1` followed by the empty `b[*0]`).
     let lead = Lead(0, Some(1), bx(Rep(b(Atom::B), 0, Some(1))));
-    assert_eq!(matches(&lead, &word, 0), BTreeSet::from([-1, 0]));
+    assert_eq!(matches(&lead, &word, 0), ends(&[(-1, 1), (0, 2)]));
+}
+
+#[test]
+fn interpreter_counts_each_distinct_match() {
+    let word = [(true, true), (true, false)];
+    // 16.9.7: each `or` operand match is a match of the composite.
+    let or = Or(
+        bx(Cat(b(Atom::A), 1, Some(1), b(Atom::A))),
+        bx(Cat(b(Atom::B), 1, Some(1), b(Atom::A))),
+    );
+    assert_eq!(matches(&or, &word, 0), ends(&[(1, 2)]));
+    // 16.9.5: every pair of operand matches is a match; the empty left match
+    // and the match at 0 both pair with the right match at 1.
+    let and = And(
+        bx(Rep(b(Atom::A), 0, Some(1))),
+        bx(Cat(b(Atom::B), 1, Some(1), b(Atom::A))),
+    );
+    assert_eq!(matches(&and, &word, 0), ends(&[(1, 2)]));
+    // 16.9.8: first_match keeps every match at the earliest end.
+    assert_eq!(matches(&FirstMatch(bx(or)), &word, 0), ends(&[(1, 2)]));
+    // Empty iterations of an empty-admitting body add no distinct match.
+    let rep = Rep(bx(Rep(b(Atom::A), 0, Some(1))), 1, Some(2));
+    assert_eq!(matches(&rep, &word, 0), ends(&[(-1, 1), (0, 1), (1, 1)]));
 }
 
 fn assert_sorted_output(label: &str, output: &std::process::Output, expected: &str) {
@@ -509,6 +569,59 @@ fn sequence_thread_budget_reports_exhaustion() {
                 "llg: invalid LLG_SEQUENCE_THREAD_LIMIT (must be a positive decimal uint64)"
             ),
             "optimized={optimized}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn match_items_run_once_per_counted_path() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_037/multiplicity_paths.out");
+    sim_cli::run_case_checked_matrix(SUITE, "multiplicity_paths", &[], &|label, output| {
+        assert_sorted_output(label, output, expected)
+    });
+}
+
+#[test]
+fn match_multiplicity_limits_are_reported_errors() {
+    sim_cli::run_case_checked_matrix(SUITE, "multiplicity_budget", &[], &|label, output| {
+        assert_sorted_output(label, output, "done hits=4096\n")
+    });
+    for optimized in [false, true] {
+        let limited = sim_cli::invoke_with_env(
+            SUITE,
+            "multiplicity_budget",
+            optimized,
+            &[],
+            &[("LLG_SEQUENCE_THREAD_LIMIT", "50")],
+            &[],
+        );
+        let stderr = String::from_utf8_lossy(&limited.stderr);
+        assert!(!limited.status.success(), "optimized={optimized}: {stderr}");
+        assert!(
+            stderr.contains(
+                "llg: sequence thread budget exhausted: 4096 matches must each run match items or a pass statement at time "
+            ) && stderr.contains("(concurrent assertion p at "),
+            "optimized={optimized}: {stderr}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&limited.stdout).contains("done"),
+            "optimized={optimized}: the run must stop at the budget"
+        );
+        let overflow =
+            sim_cli::invoke_with_env(SUITE, "multiplicity_overflow", optimized, &[], &[], &[]);
+        let stderr = String::from_utf8_lossy(&overflow.stderr);
+        assert!(
+            !overflow.status.success(),
+            "optimized={optimized}: {stderr}"
+        );
+        assert!(
+            stderr.contains("llg: sequence match multiplicity overflow at time 635000 (concurrent assertion p at "),
+            "optimized={optimized}: {stderr}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&overflow.stdout).contains("done"),
+            "optimized={optimized}: the run must stop at the overflow"
         );
     }
 }

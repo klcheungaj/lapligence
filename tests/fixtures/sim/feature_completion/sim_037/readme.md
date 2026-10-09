@@ -22,15 +22,32 @@ tick `s - 1`. Rules used throughout (§16.9.2.1, Annex F):
   the empty match of `r` exactly like `##0 r` (§16.7 L21795: "##0 a // means
   a"). `s35` (`##[0:1] (a)[*0:1]` after `go ##1`) therefore also ends on the
   `go` tick 0 for every trace.
-- `r1 or r2`: the union of the match sets; one line per distinct end tick
-  (an attempt has a set of matches, not a list).
-- `r1 and r2`: both start on the same tick; a match ends at the later of one
-  end of each operand. An empty operand match ends before the start, so it
-  never moves the end.
-- `r1 intersect r2`: both start on the same tick and end on the same tick.
+- Multiplicity: every distinct way of matching is one match, so lines are
+  counted, not deduplicated. §16.9.7 (`SystemVerilog-1800-2009.txt`
+  L23414-23416): "the first operand sequence matches at clock ticks 9, 10,
+  11, 12, and 13, while the second operand matches at clock tick 12. The
+  composite sequence, therefore, has one match at each of clock ticks 9, 10,
+  11, and 13 and has two matches at clock tick 12." §16.9.5 (L23159-23163):
+  "Each match of the first operand sequence is combined with the single match
+  of the second operand sequence [...] The result of this computation is five
+  matches of the composite sequence, four of them ending at clock tick 12".
+  The text is silent on empty iterations; an empty match consumes no clock
+  tick and evaluates nothing, so all ways of matching the empty word (empty
+  iterations of `r[*m:n]` with an empty-admitting `r`, or several
+  empty-admitting operands) are one match. Read literally, `r[*0:$]` with an
+  empty-admitting `r` would have infinitely many matches.
+- `r1 or r2`: every match of either operand; equal ends count twice.
+- `r1 and r2`: both start on the same tick; every pair of one match of each
+  operand is a match, ending at the later of the two ends. An empty operand
+  match ends before the start, so it never moves the end.
+- `r1 intersect r2`: both start on the same tick; every pair of operand
+  matches with the same end is a match.
 - `e throughout r` is `e[*0:$] intersect r`; `r1 within r2` is
   `(1[*0:$] ##1 r1 ##1 1[*0:$]) intersect r2`.
-- `first_match(r)`: only the earliest end tick of the attempt, once.
+- `first_match(r)`: every match of `r` at the earliest end tick of the
+  attempt. §16.9.8 (L23475-23476): "If there are multiple matches of seq
+  with the same ending clock tick as the earliest one, then all those matches
+  are matches of first_match (seq)."
 - `cover sequence (go ##1 (r))` prints one line per match of `r` started on
   the tick after `go`. IEEE 1800-2009 16.15.3
   (`SystemVerilog-1800-2009.txt` L26590-26592): "for sequence coverage, all
@@ -67,10 +84,12 @@ on ticks 1-3 (`m12` starts one attempt per tick there). Stimulus:
 | b | 0 | 1 | 1 | 1 | 0 | 1 | 1 | 0 |
 | c | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 |
 
+Single ends below are one line each unless a count is given.
+
 - `m01` unequal-length branches `(a ##1 b) or (a ##2 c) or b`: `a`@1 `b`@2
   gives `[1,2]`; `a`@1 `c`@3 gives `[1,3]`; `b`@1 is 0. Ends {2, 3}.
-- `m02` equal-length branches `(a ##1 b) or (a ##1 a)`: both end at 2, which
-  is one match. Ends {2}.
+- `m02` equal-length branches `(a ##1 b) or (a ##1 a)`: both end at 2, two
+  matches (one per operand, §16.9.7). Lines 2, 2.
 - `m03` empty repetition on the left `a[*0:2] ##1 b`: the empty `a[*0]` makes
   it `b` at 1 (0); `a`@1 `b`@2 gives 2; `a`@1-2 `b`@3 gives 3. Ends {2, 3}.
 - `m04` empty repetition on the right `c ##1 a[*0:1]`: `c`@1 with `a[*0]` is
@@ -81,16 +100,19 @@ on ticks 1-3 (`m12` starts one attempt per tick there). Stimulus:
   is 0). Common ends {1, 3}.
 - `m07` first_match tie `first_match((a ##1 b) or (a ##1 a) or (c ##2 c))`:
   the first two branches both end at 2 and the third at 3; the earliest end is
-  2, reported once. Ends {2}.
+  2, and both matches there are matches of `first_match` (§16.9.8). Lines
+  2, 2.
 - `m08` `(a ##1 a) and (c ##2 c)`: left ends 2, right ends 3; the later is 3.
   Ends {3}.
 - `m09` `(b ##1 b) within (a ##[1:3] c)`: the outer ends at 3 (`c`@3) and 4
   (`c`@4) (`c`@2 is 0). `b ##1 b` matches `[2,3]` and `[3,4]`; `[2,3]` lies in
-  `[1,3]` and `[1,4]`. Ends {3, 4}.
+  `[1,3]` and `[1,4]`, `[3,4]` only in `[1,4]`. Each placement of the inner
+  match is a distinct match. Lines 3, 4, 4.
 - `m10` `a throughout (c ##[1:3] b)`: `c`@1, `b` at 2, 3, 4; `a` holds on
   1-3 but not on 4. Ends {2, 3}.
 - `m11` `a[*0:1] and (c ##2 c)`: the left ends at 0 (empty) or 1, the right
-  at 3, so the later end is 3 for both pairs, one match. Ends {3}.
+  at 3, so the later end is 3 for both pairs: two matches (§16.9.5 pairs
+  every operand match). Lines 3, 3.
 - `m12` overlapping attempts of `a ##[1:2] b` on ticks 1, 2 and 3: start 1
   ends 2 and 3; start 2 ends 3 and 4; start 3 ends 4 (`b`@5 is 0). Lines
   2, 3, 3, 4, 4.
@@ -127,6 +149,27 @@ printed (weak obligations pending at the end produce no result). With
 `llg: sequence thread budget exhausted: more than 50 live sequence threads
 at time ...` naming assertion `p`, before `done` is printed; no attempt is
 dropped silently. An invalid limit (`0`) is rejected at startup.
+
+## Multiplicity `multiplicity_paths`, `multiplicity_budget`, `multiplicity_overflow`
+
+- `multiplicity_paths`: `(a or a) ##1 ((a or a), x = x + 1) ##0 (1'b1, note(x))`
+  started on tick 1 with `a` always 1 has 2 x 2 = 4 matches on tick 2
+  (§16.9.7). §16.11 (L24156-24157): subroutines "can be called at the end of
+  a successful non-empty match of a sequence", so `note` runs four times.
+  §16.10 (L24104-24105): "Each thread for an operand of an or that matches its
+  operand sequence continues as a separate thread, carrying with it its own
+  latest assignments to the local variables", so each path increments its own
+  `x` and every call sees `x = 2`; the cover counts four matches (§16.15.3
+  "with multiplicity").
+- `multiplicity_budget`: `(a or a)[*12]` with an attached call has 2^12 =
+  4096 matches on tick 12; the default run makes all 4096 calls and prints
+  `done hits=4096`. With `LLG_SEQUENCE_THREAD_LIMIT=50` the run stops with
+  exit status 1 and `llg: sequence thread budget exhausted: 4096 matches must
+  each run match items or a pass statement at time ...` naming `p`.
+- `multiplicity_overflow`: `(a or a)[*70]` would reach 2^64 matches on tick
+  64 (time 635000); the run stops with `llg: sequence match multiplicity
+  overflow at time 635000 (concurrent assertion p at ...)` instead of a wrong
+  count.
 
 ## Negatives
 

@@ -442,9 +442,18 @@ Sequence joins (`and`/`intersect`, and `throughout`/`within` reduced to
 `intersect`) are static graph tables: the enter edge forks one thread per
 operand with its own side frame on the scope chain; exit edges pair endpoints
 (intersect: same tick; and: the later tick, an empty-admitting operand counts as
-matched at the fork) and emit at most one continuation per tick. A side's
+one match at the fork) and continue with the arriving thread's multiplicity
+times its partner count, each pair counted by its later arrival. A side's
 liveness is its frame refcount; after every step prune threads whose join can no
 longer pair, to a fixed point, so impossible obligations fail instead of pending.
+Match multiplicity (IEEE 1800-2009 16.9.5-16.9.8): a token and an endpoint
+carry `mult`, the number of distinct paths they stand for; equal tokens merge
+by adding it. Same-step work runs in the per-graph zero-delay topological
+rank computed at registration, so a state expands only once all its
+same-step paths have merged. Ways of matching the empty word count once.
+Match items and `cover sequence` pass statements run once per path, which is
+enumerated only there and only within `LLG_SEQUENCE_THREAD_LIMIT`; an
+exhausted budget or a count above 2^64 - 1 is a reported error.
 Tokens, frames, joins, endpoints, attempts and assertion clock events are
 recycled through `g` free lists released by `llg_rt_cleanup`; keep steady-state
 stepping allocation-free. Live tokens plus attempts count against
