@@ -158,6 +158,7 @@ pub(super) fn assertion_expr_from_slang(
                 control,
                 signal,
                 posedge: timing.is_posedge(),
+                gate: edge_target(ids, timing_edges, SemanticEdgeRole::Condition)?,
                 expr: required(SemanticEdgeRole::Body, "clocked assertion body")?,
             }
         }

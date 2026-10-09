@@ -133,6 +133,8 @@ pub enum AssertionExprKind {
         control: NodeId,
         signal: NodeId,
         posedge: bool,
+        /// `iff` condition of the clocking event (`@(posedge clk iff en)`).
+        gate: Option<NodeId>,
         expr: NodeId,
     },
     StrongWeak {
@@ -185,9 +187,13 @@ impl AssertionExprKind {
             Self::Clocking {
                 control,
                 signal,
+                gate,
                 expr,
                 ..
-            } => nodes.extend([*control, *signal, *expr]),
+            } => {
+                nodes.extend([*control, *signal, *expr]);
+                nodes.extend(gate);
+            }
             Self::Abort {
                 condition, expr, ..
             } => nodes.extend([*condition, *expr]),

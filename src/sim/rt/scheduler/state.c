@@ -278,6 +278,11 @@ typedef struct llg_concurrent_assertion {
     struct llg_concurrent_assertion* next;
     sv4_t* clock;
     int edge;
+    /* `iff` condition of the leading clocking event, or NULL. A gated clock
+     * counts its own ticks: an edge with the condition false is no tick, so
+     * `##n` delays count only gated edges. */
+    llg_sampled_gate_fn clock_gate;
+    uint64_t gated_ticks;
     sv4_t* disable;
     llg_concurrent_assertion_predicate_fn antecedent;
     llg_concurrent_assertion_predicate_fn consequent;

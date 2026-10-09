@@ -1600,6 +1600,9 @@ struct Codegen<'a> {
     assertion_action_procs: HashSet<String>,
     /// Clock inferred while lowering a property or its Reactive action.
     sampled_clock: Option<SampledClock>,
+    /// Leading clock of the concurrent assertion being lowered, with its
+    /// `iff` gate; nested sequence clocks are checked against it.
+    assertion_leading_clock: Option<SampledClock>,
     /// Interned sampled-value clocks and histories (`IrModel::sampled_clocks`
     /// and `sampled_domains`), keyed by their lowered identity so every call
     /// that reads one expression on one clock and gate shares one history.
@@ -1821,6 +1824,7 @@ impl<'a> Codegen<'a> {
             final_procs: Vec::new(),
             assertion_action_procs: HashSet::new(),
             sampled_clock: None,
+            assertion_leading_clock: None,
             sampled_clock_keys: HashMap::new(),
             sampled_domain_keys: HashMap::new(),
             sampled_event_clocks: Vec::new(),

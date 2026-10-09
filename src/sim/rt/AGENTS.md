@@ -437,6 +437,9 @@ result (IEEE 1800-2009 16.13.6): failure when a consequent fails, success when
 remaining threads; abort/disable paths report an attempt once. `cover sequence`
 registers as `LLG_ASSERTION_COVER_SEQUENCE` and reports every nonempty match
 (16.15.3). An armed `expect` starts exactly one attempt (16.18).
+`llg_assertion_gate_clock` attaches a leading clock's `iff` gate (current values
+at the clock write, 9.4.2.3); a gated-off edge appends no clock event, and the
+assertion counts gated ticks itself so `##n` delays skip gated-off edges.
 
 Sequence joins (`and`/`intersect`, and `throughout`/`within` reduced to
 `intersect`) are static graph tables: the enter edge forks one thread per

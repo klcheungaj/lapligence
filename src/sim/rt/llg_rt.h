@@ -1955,6 +1955,11 @@ double llg_sampled_real(const double* signal);
 typedef int (*llg_sampled_gate_fn)(void* data);
 int llg_sampled_clock_register_edge(uint64_t clock, sv4_t* signal, int edge,
                                     llg_sampled_gate_fn gate, void* data);
+/* Gate the leading clock of the concurrent assertion just registered with
+ * `identity`: its clocking event `@(edge clk iff cond)` occurs only when
+ * `gate` (reading current values, called with NULL) is true at the clock
+ * write (IEEE 1800-2009 9.4.2.3). Call after the registration, before run. */
+int llg_assertion_gate_clock(uint64_t identity, llg_sampled_gate_fn gate);
 int llg_sampled_clock_register_event(uint64_t clock, llg_sampled_gate_fn gate,
                                      void* data);
 void llg_sampled_clock_tick(uint64_t clock);

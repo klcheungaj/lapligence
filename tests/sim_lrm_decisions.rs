@@ -63,3 +63,11 @@ fn aa_d5_match_multiplicity() {
         include_str!("fixtures/sim/lrm_decisions/AA-D5_match_multiplicity.out"),
     );
 }
+
+#[test]
+fn aa_d2_default_clocking_iff() {
+    run_decision(
+        "AA-D2_default_clocking_iff",
+        include_str!("fixtures/sim/lrm_decisions/AA-D2_default_clocking_iff.out"),
+    );
+}

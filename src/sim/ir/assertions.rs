@@ -463,6 +463,9 @@ pub struct IrAssertion {
     pub(in crate::sim) abort_condition: Option<IrExpr>,
     pub(in crate::sim) abort_reject: bool,
     pub(in crate::sim) abort_sync: bool,
+    /// Sampled clock whose gate is the leading clock's `iff` condition; the
+    /// leading clock ticks only while it holds (IEEE 1800-2009 9.4.2.3).
+    pub(in crate::sim) clock_gate: Option<usize>,
     pub(in crate::sim) pass_action: Option<String>,
     pub(in crate::sim) fail_action: Option<String>,
 }
@@ -499,6 +502,7 @@ impl IrAssertion {
             consequent_sequence: None,
             overlapped,
             abort_condition: None,
+            clock_gate: None,
             abort_reject: false,
             abort_sync: false,
             pass_action,
@@ -537,6 +541,7 @@ impl IrAssertion {
             consequent_sequence: Some(consequent),
             overlapped,
             abort_condition: None,
+            clock_gate: None,
             abort_reject: false,
             abort_sync: false,
             pass_action,
@@ -620,6 +625,17 @@ impl IrAssertion {
         self.abort_condition = Some(condition);
         self.abort_reject = reject;
         self.abort_sync = sync;
+        self
+    }
+
+    pub fn clock_gate(&self) -> Option<usize> {
+        self.clock_gate
+    }
+
+    /// Gate the leading clock by the `iff` condition interned as sampled
+    /// clock `clock`, whose gate callback reads current values at the edge.
+    pub(in crate::sim) fn with_clock_gate(mut self, clock: usize) -> Self {
+        self.clock_gate = Some(clock);
         self
     }
 

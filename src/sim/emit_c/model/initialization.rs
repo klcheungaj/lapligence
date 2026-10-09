@@ -286,6 +286,13 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
     if !model.sampled_domains().is_empty() {
         return Err("sampled-value histories require the owned model emitter".to_owned());
     }
+    if model
+        .assertions()
+        .iter()
+        .any(|assertion| assertion.clock_gate().is_some())
+    {
+        return Err("`iff`-gated assertion clocks require the owned model emitter".to_owned());
+    }
     for (index, assertion) in model.assertions().iter().enumerate() {
         let clock = model.signal(assertion.clock_signal()).c_name();
         let disable = assertion

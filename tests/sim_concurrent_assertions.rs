@@ -235,6 +235,26 @@ fn concurrent_assertions_expect_runs_one_attempt_from_an_expect_only_block() {
 }
 
 #[test]
+fn concurrent_assertions_gate_their_clock_by_iff() {
+    sim_cli::run_case(
+        "concurrent_assertions",
+        "clock_iff",
+        "LATE 20000\nEXPLICIT 30000\nLATE 30000\nSAMPLED 30000\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn concurrent_assertions_reject_nested_iff_clocks() {
+    sim_cli::reject_case(
+        "concurrent_assertions",
+        "neg_nested_clock_iff",
+        "an `iff`-qualified clock inside a concurrent assertion sequence is not supported unless it is the leading clocking event",
+    );
+}
+
+#[test]
 fn concurrent_assertions_expose_sequence_matched_endpoint() {
     sim_cli::run_case(
         "concurrent_assertions",

@@ -194,6 +194,13 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
                 ));
             }
         }
+        if let Some(clock) = assertion.clock_gate() {
+            out.push_str(&format!(
+                "    if (!llg_assertion_gate_clock({}ULL, {})) return 0;\n",
+                assertion.identity(),
+                sampled_clock_gate_name(clock),
+            ));
+        }
     }
     out.push_str("    return !llg_rt_failed();\n}\n\n");
     Ok(out)
