@@ -538,6 +538,13 @@ impl<'a> SourcePositions<'a> {
         let Some(range) = node.range else {
             return Ok((None, 0, 0, 0, 0));
         };
+        self.range_position(range)
+    }
+
+    pub(super) fn range_position(
+        &mut self,
+        range: crate::ffi::slang::SourceRange,
+    ) -> Result<SourcePosition, DbError> {
         let file = self
             .files
             .get_mut(&range.file_id)

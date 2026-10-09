@@ -1,6 +1,7 @@
 //! Design.
 
 use super::*;
+use crate::sim::legacy_unsupported::LegacyFamily;
 
 fn contains_unpacked_union(descriptor: &TypeDescriptor) -> bool {
     match &descriptor.shape {
@@ -28,9 +29,13 @@ impl<'a> Codegen<'a> {
                 _ => None,
             };
             if net_type == Some(NetType::TriReg) {
-                return Err(format!(
-                    "unsupported net type TriReg: trireg charge storage is not supported for `{}`; outside the standalone subset",
-                    self.display_name(node)
+                // `legacy_unsupported::scan` reports every reachable trireg
+                // first; this keeps a direct lowering entry fail-closed.
+                return Err(self.legacy_unsupported_at(
+                    "",
+                    node,
+                    &format!("`trireg` net `{}`", self.display_name(node)),
+                    LegacyFamily::TriregCharge,
                 ));
             }
             if net_type.is_some()

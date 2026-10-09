@@ -3,6 +3,7 @@
 use super::super::collection::EventEvaluation;
 use super::*;
 use crate::sim::ir::IrRuntimeQuery;
+use crate::sim::legacy_unsupported::LegacyFamily;
 
 impl EmitCtx<'_, '_> {
     /// Lower `force lhs = rhs;` into a live runtime binding. The target keeps
@@ -303,6 +304,27 @@ impl EmitCtx<'_, '_> {
         }
     }
 
+    /// Source-located rejection of a form beyond the supported procedural
+    /// `assign`/`deassign` subset (whole packed/real/shortreal variables and
+    /// ordinary concatenations of packed variables).
+    pub(super) fn legacy_unsupported(
+        &self,
+        node: NodeId,
+        construct: &str,
+        family: LegacyFamily,
+    ) -> String {
+        self.cg
+            .legacy_unsupported_at(&self.path, node, construct, family)
+    }
+
+    fn pca_unsupported(&self, node: NodeId, stmt: &str, form: &str) -> String {
+        self.legacy_unsupported(
+            node,
+            &format!("procedural `{stmt}` {form}"),
+            LegacyFamily::ProceduralAssign,
+        )
+    }
+
     /// Collect the plain source nodes that make up a legal ordinary packed
     /// concatenation target. Streaming targets are a different language
     /// construct and remain outside procedural continuous assignment support.
@@ -323,11 +345,9 @@ impl EmitCtx<'_, '_> {
                 }
                 Ok(())
             }
-            NodeKind::Expr(ExprKind::Streaming { .. }) => Err(format!(
-                "procedural continuous assignment on a streaming target in `{}` is not \
-                 supported",
-                self.path
-            )),
+            NodeKind::Expr(ExprKind::Streaming { .. }) => {
+                Err(self.pca_unsupported(lhs, "assign", "on a streaming target"))
+            }
             _ => {
                 out.push(lhs);
                 Ok(())
@@ -335,20 +355,22 @@ impl EmitCtx<'_, '_> {
         }
     }
 
-    fn pca_lhs_parts(&self, lhs: &IrLhs, out: &mut Vec<usize>, stmt: &str) -> Result<(), String> {
+    fn pca_lhs_parts(
+        &self,
+        at: NodeId,
+        lhs: &IrLhs,
+        out: &mut Vec<usize>,
+        stmt: &str,
+    ) -> Result<(), String> {
         match lhs {
             IrLhs::Whole(index) => out.push(*index),
             IrLhs::Stream { parts, .. } => {
                 for (part, _) in parts {
-                    self.pca_lhs_parts(part, out, stmt)?;
+                    self.pca_lhs_parts(at, part, out, stmt)?;
                 }
             }
             _ => {
-                return Err(format!(
-                    "procedural continuous `{stmt}` on a select in `{}` is not supported \
-                     (whole variables and ordinary concatenations only)",
-                    self.path
-                ));
+                return Err(self.pca_unsupported(at, stmt, "on a select or aggregate target"));
             }
         }
         Ok(())
@@ -367,11 +389,7 @@ impl EmitCtx<'_, '_> {
                 self.cg.kind(*source),
                 NodeKind::Expr(ExprKind::HierPath { .. })
             ) {
-                return Err(format!(
-                    "procedural continuous `{stmt}` on a hierarchical target in `{}` is not \
-                     supported (variables of the current scope only)",
-                    self.path
-                ));
+                return Err(self.pca_unsupported(lhs, stmt, "on a hierarchical target"));
             }
             // Net targets: the elaborated ref normally binds the declaration,
             // so the net/var distinction is read straight off the arena node.
@@ -383,11 +401,10 @@ impl EmitCtx<'_, '_> {
             {
                 if let NodeKind::Net { net_type, .. } = self.cg.kind(*target) {
                     if *net_type != NetType::Reg {
-                        return Err(format!(
-                            "procedural continuous `{stmt}` on net `{}` in `{}` is not supported \
-                             (variables only)",
-                            self.cg.node(*target).name,
-                            self.path
+                        return Err(self.pca_unsupported(
+                            lhs,
+                            stmt,
+                            &format!("on net `{}`", self.cg.node(*target).name),
                         ));
                     }
                 }
@@ -396,22 +413,24 @@ impl EmitCtx<'_, '_> {
                 self.cg.kind(*source),
                 NodeKind::Var { .. } | NodeKind::Expr(ExprKind::Ref { .. })
             ) {
-                return Err(format!(
-                    "procedural continuous `{stmt}` on a select in `{}` is not supported \
-                     (whole variables and ordinary concatenations only)",
-                    self.path
-                ));
+                return Err(self.pca_unsupported(lhs, stmt, "on a select or aggregate target"));
             }
         }
 
-        let lowered = self.cg.lower_lhs(&self.path, lhs)?;
-        let mut indices = Vec::new();
-        self.pca_lhs_parts(&lowered, &mut indices, stmt)?;
-        if indices.len() != source_nodes.len() {
-            return Err(format!(
-                "procedural continuous `{stmt}` target shape in `{}` is not supported",
-                self.path
+        // A target that is not a lowerable packed or real variable (a string,
+        // class handle or dynamic container) is outside the supported subset
+        // however the lvalue lowering words its failure.
+        let Ok(lowered) = self.cg.lower_lhs(&self.path, lhs) else {
+            return Err(self.pca_unsupported(
+                lhs,
+                stmt,
+                "on a target that is not a packed, real or shortreal variable",
             ));
+        };
+        let mut indices = Vec::new();
+        self.pca_lhs_parts(lhs, &lowered, &mut indices, stmt)?;
+        if indices.len() != source_nodes.len() {
+            return Err(self.pca_unsupported(lhs, stmt, "with an unsupported target shape"));
         }
         let mut targets = Vec::with_capacity(indices.len());
         for sig_idx in indices {
@@ -422,20 +441,19 @@ impl EmitCtx<'_, '_> {
                 .find(|info| info.ir == sig_idx)
                 .cloned()
                 .ok_or_else(|| {
-                    format!(
-                        "cannot collect `{}` in `{}` as a procedural continuous assignment \
-                         target (whole variables of the current scope only)",
-                        self.cg.node(lhs).name,
-                        self.path
+                    self.pca_unsupported(
+                        lhs,
+                        stmt,
+                        "on a target that is not a whole variable of the current scope",
                     )
                 })?;
             targets.push((sig_idx, info));
         }
         if targets.len() > 1 && targets.iter().any(|(_, info)| info.real) {
-            return Err(format!(
-                "procedural continuous `{stmt}` concatenation in `{}` must contain only \
-                 packed variables",
-                self.path
+            return Err(self.pca_unsupported(
+                lhs,
+                stmt,
+                "on a concatenation that mixes real and packed variables",
             ));
         }
         Ok(targets)
@@ -503,16 +521,20 @@ impl EmitCtx<'_, '_> {
         };
         let (lhs, rhs) = (*lhs, *rhs);
         if self.func.is_some() || self.inline.is_some() {
-            return Err(format!(
-                "procedural continuous assignment in `{}` cannot escape a function or task activation",
-                self.path
+            return Err(self.pca_unsupported(
+                lhs,
+                "assign",
+                "inside a function or task activation",
             ));
         }
         if let Some(target) = self.cg.nested_capture_ref(rhs) {
-            return Err(format!(
-                "procedural continuous assignment in `{}` cannot capture activation storage `{}`",
-                self.path,
-                self.cg.node(target).name
+            return Err(self.pca_unsupported(
+                lhs,
+                "assign",
+                &format!(
+                    "capturing activation storage `{}`",
+                    self.cg.node(target).name
+                ),
             ));
         }
         let targets = self.pca_targets(lhs, "assign")?;
@@ -533,9 +555,10 @@ impl EmitCtx<'_, '_> {
         let rhs_ir = self.cg.lower_expr(&self.path, rhs)?;
         let values = if first_info.real {
             if targets.len() != 1 {
-                return Err(format!(
-                    "procedural continuous assignment target in `{}` mixes real and packed values",
-                    self.path
+                return Err(self.pca_unsupported(
+                    lhs,
+                    "assign",
+                    "on a concatenation that mixes real and packed variables",
                 ));
             }
             vec![(first_sig, rhs_ir)]

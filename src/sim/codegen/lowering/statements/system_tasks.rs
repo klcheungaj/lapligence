@@ -2,6 +2,7 @@
 
 use super::super::collection::PostponedEvaluation;
 use super::*;
+use crate::sim::legacy_unsupported::{unsupported_system_task_family, LegacyFamily};
 
 #[derive(Clone, Copy)]
 enum MemorySliceNodes {
@@ -14,15 +15,6 @@ enum MemorySliceNodes {
         width: NodeId,
         descending: bool,
     },
-}
-
-fn is_pla_system_task(name: &str) -> bool {
-    let mut parts = name.split('$');
-    parts.next() == Some("")
-        && matches!(parts.next(), Some("async" | "sync"))
-        && matches!(parts.next(), Some("and" | "nand" | "or" | "nor"))
-        && matches!(parts.next(), Some("array" | "plane"))
-        && parts.next().is_none()
 }
 
 impl EmitCtx<'_, '_> {
@@ -680,11 +672,10 @@ impl EmitCtx<'_, '_> {
 
     pub(super) fn lower_sys_call(&mut self, h: NodeId, name: &str) -> Result<Vec<IrStmt>, String> {
         let args: Vec<NodeId> = self.cg.node(h).children.clone();
-        if is_pla_system_task(name) {
-            return Err(format!(
-                "unsupported PLA system task `{name}` in `{}`: no legacy PLA target is selected",
-                self.path
-            ));
+        if let Some(family) = unsupported_system_task_family(name) {
+            // `legacy_unsupported::scan` reports these before lowering; this
+            // keeps a direct lowering entry from running them as VPI calls.
+            return Err(self.legacy_unsupported(h, &format!("system task `{name}`"), family));
         }
         if let Some(level) = severity_task_variant(name) {
             let first_is_string = match args.first().copied() {
@@ -1226,9 +1217,11 @@ impl EmitCtx<'_, '_> {
     fn lower_stochastic_input(&mut self, node: NodeId, label: &str) -> Result<IrExpr, String> {
         let value = self.cg.lower_expr(&self.path, node)?;
         if value.is_real() {
-            return Err(format!(
-                "{label} must be a packed integer expression in `{}`",
-                self.path
+            let (task, argument) = label.split_once(' ').unwrap_or((label, "input"));
+            return Err(self.legacy_unsupported(
+                node,
+                &format!("`{task}` {argument} that is not a packed integer expression"),
+                LegacyFamily::StochasticQueue,
             ));
         }
         Ok(value)
@@ -1292,25 +1285,6 @@ impl EmitCtx<'_, '_> {
                 })))
             }
             _ => Err(format!("unsupported system task {name} in `{}`", self.path)),
-        }
-    }
-}
-
-#[cfg(test)]
-mod pla_tests {
-    use super::is_pla_system_task;
-
-    #[test]
-    fn only_the_sixteen_standard_pla_task_names_are_excluded() {
-        for timing in ["async", "sync"] {
-            for gate in ["and", "nand", "or", "nor"] {
-                for form in ["array", "plane"] {
-                    assert!(is_pla_system_task(&format!("${timing}${gate}${form}")));
-                }
-            }
-        }
-        for other in ["$async$and$other", "$sync$and$array$extra", "$display"] {
-            assert!(!is_pla_system_task(other));
         }
     }
 }

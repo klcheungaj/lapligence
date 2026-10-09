@@ -18,10 +18,11 @@ pub use database::{
     ConcurrentAssertionKind, ConditionalPatternInfo, ConditionalPatternKind, ConditionalPredicate,
     ConstantSource, Db, DbError, DpiImportInfo, DriverDelay, ElaboratedTypeRanges, EnumMember,
     EnumTypeMetadata, EventSpec, EventTriggerTiming, ExprKind, GateTerm, ImmediateAssertionKind,
-    IntraControl, Node, NodeId, NodeKind, PackedMember, PackedRange, PredicateClause, PrimClass,
-    ProcessKind, StmtKind, StreamOperand, StreamingDirection, TimeLiteralScale, TimeUnit,
-    TypeDescriptor, TypeId, TypeShape, UdpRow, UdpTable, ValueCopySemantics, ValueDefaultSemantics,
-    ValueDestroySemantics, ValueEqualitySemantics, VariableLifetime, VariableLifetimeQualifier,
+    IntraControl, LegacyDirective, Node, NodeId, NodeKind, PackedMember, PackedRange,
+    PredicateClause, PrimClass, ProcessKind, StmtKind, StreamOperand, StreamingDirection,
+    TimeLiteralScale, TimeUnit, TypeDescriptor, TypeId, TypeShape, UdpRow, UdpTable,
+    ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics, ValueEqualitySemantics,
+    VariableLifetime, VariableLifetimeQualifier,
 };
 pub use domain::{
     AlwaysKind, CapturedSemanticKind, CaseKind, ConstantType, Direction, JoinKind, NetType,

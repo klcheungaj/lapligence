@@ -1,6 +1,7 @@
 //! System functions.
 
 use super::*;
+use crate::sim::legacy_unsupported::{self, LegacyFamily};
 
 /// Explain why a lowered sampled-value argument has no sampled storage. A
 /// read of automatic storage (a procedural local or formal) is illegal (SV
@@ -1182,6 +1183,16 @@ impl<'a> Codegen<'a> {
         // operand is the caller's storage (the second is a frontend-only
         // converted placeholder). Match ordinary output-formal binding and
         // lower the actual itself as the direct runtime destination.
+        let original = node;
+        let (task, argument) = label.split_once(' ').unwrap_or((label, "output"));
+        let unsupported = |cg: &Self| {
+            cg.legacy_unsupported_at(
+                path,
+                original,
+                &format!("`{task}` {argument} output that is not a whole packed integer variable"),
+                LegacyFamily::StochasticQueue,
+            )
+        };
         let node = match self.kind(node) {
             NodeKind::Expr(ExprKind::Operation { op, operands, .. })
                 if *op == Operation::Assignment =>
@@ -1193,41 +1204,40 @@ impl<'a> Codegen<'a> {
             }
             _ => node,
         };
-        let lhs = self.lower_lhs(path, node).map_err(|error| {
-            let children = self
-                .node(node)
-                .children
-                .iter()
-                .map(|child| format!("{child:?}={:?}", self.kind(*child)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "{label} has an unsupported target ({:?}) children=[{children}] in `{path}`: {error}",
-                self.kind(node)
-            )
-        })?;
+        let lhs = self.lower_lhs(path, node).map_err(|_| unsupported(self))?;
         match &lhs {
             IrLhs::Whole(index) => {
                 let signal = self.model.signal(*index);
                 if signal.net_driver.is_some() || !matches!(signal.ty, IrType::Packed { .. }) {
-                    return Err(format!(
-                        "{label} must name a whole packed integer variable, not a net, in `{path}`"
-                    ));
+                    return Err(unsupported(self));
                 }
             }
             IrLhs::WholeRef { width, .. } if *width != 0 => {}
             IrLhs::WholeRef { .. } => {
-                return Err(format!(
-                    "{label} must name a whole packed integer variable in `{path}`"
-                ));
+                return Err(unsupported(self));
             }
             _ => {
-                return Err(format!(
-                    "{label} must name a whole packed integer variable in `{path}`"
-                ));
+                return Err(unsupported(self));
             }
         }
         Ok(lhs)
+    }
+
+    /// Source-located rejection of a legacy construct at `node`; `path` is the
+    /// fallback location for nodes without a source position.
+    pub(in super::super) fn legacy_unsupported_at(
+        &self,
+        path: &str,
+        node: NodeId,
+        construct: &str,
+        family: LegacyFamily,
+    ) -> String {
+        let source = self.node(node);
+        let location = match source.file.as_deref() {
+            Some(file) if source.line > 0 => format!("{file}:{}:{}", source.line, source.col),
+            _ => path.to_owned(),
+        };
+        legacy_unsupported::diagnostic(&location, construct, family)
     }
 
     fn legacy_random_kind(name: &str) -> Option<crate::sim::ir::IrRandomFunc> {

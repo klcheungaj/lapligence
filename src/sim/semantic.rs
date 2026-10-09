@@ -401,7 +401,7 @@ impl<'db> SemanticModel<'db> {
         placeholders
     }
 
-    fn simulation_reachability(&self) -> Vec<bool> {
+    pub(crate) fn simulation_reachability(&self) -> Vec<bool> {
         let mut reachable = vec![false; self.db.nodes().len()];
         let mut pending = self.db.tops().to_vec();
         while let Some(id) = pending.pop() {

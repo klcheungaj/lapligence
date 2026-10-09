@@ -155,6 +155,18 @@ impl From<String> for DbError {
     }
 }
 
+/// One active optional compiler directive the frontend accepts without
+/// giving it semantics (IEEE 1364-2001 Annex D, IEEE 1800-2009 Annex E).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegacyDirective {
+    /// Directive name without the leading backtick.
+    pub name: String,
+    pub file: String,
+    /// One-based line and UTF-16 column of the directive token.
+    pub line: u32,
+    pub column: u32,
+}
+
 #[derive(Debug)]
 pub struct Db {
     nodes: Vec<Node>,
@@ -196,6 +208,10 @@ pub struct Db {
     /// Logical `` `line`` positions, kept apart from the physical node
     /// positions that remain the diagnostic identity.
     source_map: super::SourceMap,
+    /// Active optional charge/delay compatibility directives. The frontend
+    /// consumes them without any semantic effect, so the owned database keeps
+    /// their positions for consumers that must not accept them silently.
+    legacy_directives: Vec<LegacyDirective>,
     tops: Vec<NodeId>,
     flat_modules: Vec<NodeId>,
     packages: Vec<NodeId>,
@@ -308,6 +324,7 @@ impl Db {
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             source_map: super::SourceMap::default(),
+            legacy_directives: Vec::new(),
             tops: Vec::new(),
             flat_modules: Vec::new(),
             packages: Vec::new(),
@@ -377,6 +394,7 @@ impl Db {
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             source_map: super::SourceMap::default(),
+            legacy_directives: Vec::new(),
             tops,
             flat_modules: Vec::new(),
             packages: Vec::new(),
@@ -502,6 +520,12 @@ impl Db {
     /// for it or for the scope that declares the class.
     pub fn declaration_time_scale(&self, id: NodeId) -> Option<(i32, i32)> {
         self.declaration_time_scales.get(&id).copied()
+    }
+
+    /// Active `` `default_decay_time``, `` `default_trireg_strength`` and
+    /// `` `delay_mode_*`` directives in source order per file.
+    pub fn legacy_directives(&self) -> &[LegacyDirective] {
+        &self.legacy_directives
     }
 
     /// Logical (`` `line``-mapped) positions of admitted source lines.

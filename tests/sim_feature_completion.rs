@@ -5,6 +5,9 @@ mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
+#[path = "sim_feature_completion/adv_032.rs"]
+mod adv_032;
+
 #[path = "sim_feature_completion/fnd_003.rs"]
 mod fnd_003;
 

@@ -473,6 +473,12 @@ struct LoweredModel {
 fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredModel, String> {
     let semantic_stage = crate::profile::Stage::new("semantic");
     let semantic = crate::sim::semantic::SemanticModel::from_db(db);
+    // Constructs rejected by design report first and together, ahead of the
+    // first generic coverage issue that one of them may also cause.
+    let legacy = crate::sim::legacy_unsupported::scan(&semantic);
+    if !legacy.is_empty() {
+        return Err(legacy.join("\n"));
+    }
     if let Err(issues) = semantic.validate_simulation() {
         if let Some(issue) = issues.into_iter().next() {
             return Err(issue.diagnostic(&semantic));

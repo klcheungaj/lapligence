@@ -1427,7 +1427,7 @@ fn review_and_extended_links_name_real_owners_and_keep_open_cells_visible() {
         .lines()
         .find(|line| line.starts_with("| SYN038-LINK-SYN-035 |"))
         .expect("SYN-035 link");
-    assert!(pla.contains("EXCLUDED") && pla.contains("unsupported PLA system task"));
+    assert!(pla.contains("EXCLUDED") && pla.contains("unsupported: system task"));
     let capacity = links
         .lines()
         .find(|line| line.starts_with("| SYN038-LINK-SYN-036 |"))
