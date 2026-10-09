@@ -64,7 +64,7 @@ files named, nothing rewritten when already applied. Digests come from
 (`waveform_sources()`) and the standalone CMake probes read `vendor/libfst`
 directly; the probes only verify the applied digests
 (`tests/runtime_value_storage/libfst.cmake`) and ask for `cargo build` otherwise.
-CI jobs without a Rust build (`dynamic-owners`, the `linux-test` archive runs)
+CI jobs without a Rust build (`dynamic-owners`, the Linux `test` archive runs)
 apply the patch first with `git apply --whitespace=nowarn
 --directory=vendor/libfst patches/libfst/libfst-local-changes.patch` from the
 repository root, which yields the identical files.

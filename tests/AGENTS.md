@@ -220,11 +220,20 @@ builds on master pushes, manual dispatch and published Releases (including
 prereleases), not draft saves or standalone tag pushes. Every platform splits
 building from testing: `build` jobs compile the executables, run the platform
 audits and package, and `cargo nextest archive` the release-profile test
-binaries; parallel `test` jobs (Windows/macOS) and `linux-test` jobs (Linux)
-download that archive and run the full suite with `cargo nextest run
---archive-file` (`--no-fail-fast`) before release. Linux builds only in the
-static-musl Alpine container (`linux-build`); its `linux-test` jobs run the
-archive on Ubuntu 24.04 and Rocky Linux 9 containers per architecture. Windows
+binaries; `test` jobs download that archive and run the full suite with `cargo
+nextest run --archive-file` (`--no-fail-fast`) before release. Each platform is
+an independent pipeline: `ci.yml` has one caller job per platform
+(`windows-x86_64`, `windows-arm64`, `macos-arm64`, `linux-x86_64`,
+`linux-arm64`, shown as "<platform> / build" and "<platform> / test") that
+calls the reusable `native-platform.yml` (Windows/macOS) or `linux-platform.yml`
+(Linux). Inside it `test` needs only that platform's `build`, so another
+platform's slow or failing build never delays or blocks its tests; the
+`release` job needs all five callers plus lint, sanitizers and audit. Reusable
+workflows do not inherit the caller's top-level `env`, so each sets
+`NEXTEST_PROFILE`; the nextest archive artifact is `nextest-archive-<target>`
+and the release package `lapligence-<os>-<arch>`, unique per platform. Linux
+builds only in the static-musl Alpine container; its `test` jobs run the
+archive on Ubuntu 24.04 and Rocky Linux 9 containers. Windows
 and macOS test jobs run on the build job's runner kind with the checkout
 extracted over the same path, so compile-time paths (`CARGO_MANIFEST_DIR`,
 `CARGO_BIN_EXE_*`) resolve; they install nextest, Python and (Windows) the MSVC
@@ -260,10 +269,10 @@ models, never anything built from this repository. No
 sccache/ccache wraps llg or the native Slang/fmt/wrapper build (leave `LLG_CCACHE`
 and `CMAKE_C_COMPILER_LAUNCHER` unset in CI), and no llg, `target/slang`, test
 executable, nextest archive or runtime cache is saved.
-- Rust jobs (lint, sanitizers, `build` matrix, manual full-host) use
+- Rust jobs (lint, sanitizers, the Windows/macOS `build` jobs, manual full-host) use
   `Swatinem/rust-cache@v2` with `cache-targets: "true"`, `prefix-key: deps-v1`, a
   distinct `shared-key` per job/target/profile and `save-if` master. The musl
-  `linux-build` has no such action: it restores/saves `target` and the mounted Cargo
+  Linux `build` job has no such action: it restores/saves `target` and the mounted Cargo
   registry with `actions/cache/{restore,save}` keyed on target, image and
   `Cargo.lock`/toolchain/config hashes. Every Rust job ends with
   `scripts/ci_prune_cargo_cache.py` (`sudo` for the root-owned container tree)
@@ -283,11 +292,11 @@ executable, nextest archive or runtime cache is saved.
   A failed install or self-check leaves the launcher unset (uncached run, warning);
   a missed self-check prints both compile lines, ccache settings, the diff of the
   two `ccache-input-text` hash inputs and the second compile's log excerpt.
-  Used by lint, sanitizers (flags are in the hash), Windows/macOS `test` and
-  `linux-test` (installed on the runner, activated inside the container).
+  Used by lint, sanitizers (flags are in the hash), Windows/macOS and Linux
+  `test` jobs (installed on the runner, activated inside the container).
   `ccache-finish` prints `ccache -sv` and, on master only, saves when the week's
-  key is new. Hit rates are in each job's statistics step. `release`, `build`,
-  `linux-build` and dependency-audit run no generated models.
+  key is new. Hit rates are in each job's statistics step. `release`, every `build` job
+  and dependency-audit run no generated models.
 Only release events upload Actions
 packages, retained one day; pushes/manual builds upload none. Retention does not
 cap the documented account-wide 500 MB artifact allowance across concurrent runs/
