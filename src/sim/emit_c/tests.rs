@@ -78,7 +78,7 @@ fn executable_sensitivity_blocks_drive_process_emission() {
 
     assert_eq!(rendered.matches("llg_rt_finish();").count(), 1);
     let loop_start = rendered.find("_llg_exec_0_b0: ;").unwrap();
-    let wait = rendered.find("llg_arm_any").unwrap();
+    let wait = rendered.find("llg_arm_event_dependencies").unwrap();
     let finish = rendered.find("llg_rt_finish();").unwrap();
     assert!(loop_start < finish && finish < wait);
 }
