@@ -285,6 +285,19 @@ in both optimizer modes on both backends; the negative fixtures check the
 frontend diagnostics of illegal methods, reductions and arguments. The
 component check is `method_gather_probe.c` in `runtime_value_storage`.
 
+ADV-032's unsupported-construct fixtures use
+`-E 'binary(sim_feature_completion) & test(adv_032::)'`. Each negative fixture
+asserts the exact `error: <file>:<line>:<col>: unsupported: <construct>
+(<family>) is not supported by llg` lines, exit status 1, an empty stdout and
+an empty `--out-dir` (no C generation) in both optimizer modes and in both
+editions where the syntax exists; `assign_supported` and `queue_supported` pin
+the supported `assign`/`deassign` and `$q_*` subsets on the same boundary. The
+PLI 1.0 cases refuse a `--dpi-lib` that names `veriusertfs` or a `tf_*`/`acc_*`
+routine (tool-free stand-in libraries, plus shared objects built with the
+host C compiler on Unix, reported as `SKIP` without one). The language-server
+side is `-E 'binary(general) & test(legacy_constructs)'`: the server must serve
+these files without error diagnostics.
+
 RTL-016's tagged-union, pattern and Q03 fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_016::)'`. Positive fixtures and
 the run-time error fixtures run in both optimizer modes on both backends. Run-time error fixtures print their

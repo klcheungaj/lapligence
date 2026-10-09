@@ -26,6 +26,12 @@ per physical file name, built once from the snapshot's sorted records with one
 pass over each mapped file; `Db::logical_position` derives a node's logical
 file and line on demand. Files without a directive cost nothing per node.
 
+`Db::legacy_directives` lists the active `` `default_decay_time``,
+`` `default_trireg_strength`` and `` `delay_mode_*`` directives with their file,
+line and column. Slang consumes them without effect, and an inactive
+conditional branch contributes nothing, so this table is the only owned record
+that lets the simulator reject them instead of accepting and ignoring them.
+
 Projection normalizes implicit instance bodies and expands concrete instance-array
 entries without losing source indices or explicit statement scopes. Packed ranges
 use declaration IDs rather than names. Assignment-pattern nodes also retain their immediate packed element descriptor,

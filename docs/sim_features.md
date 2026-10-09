@@ -28,6 +28,7 @@ parity tests only. See [the facade contract](../src/sim/rt/value/facade.md).
 | 🟦 Source-implemented | A source implementation exists for the explicitly stated scope; not a claim of full family or IEEE conformance. |
 | 🟨 Partial | Some forms execute, but context, lifetime, representation or known behavior gaps are identified. |
 | ❌ Not implemented / rejected | No supported built-in execution path for the named scope; language-illegal forms are identified separately. |
+| 🚫 Unsupported by design | Legal legacy construct that `llg` deliberately does not simulate (user decision 2026-10-08). The run stops before C generation with `error: <file>:<line>:<col>: unsupported: <construct> (<family>) is not supported by llg`; it is never ignored, run as a no-op or reported as a generic failure. The row names the family and the construct. |
 | ⬜ Out of scope | Unimplemented advanced forms outside the current scope. |
 | ✅ Accepted | Reserved for a specific scope with matching post-change HDL execution evidence, not a whole-family claim. |
 | ⚠️ Undefined behavior (Qxx) | Owner-directed provisional disposition for a named interaction whose recorded result lacks a settled conformance oracle under the supplied references. This is not an IEEE designation for the whole feature. |
@@ -52,21 +53,21 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 
 <!-- Capability counts: one marker + bold feature heading in sections 1-12.
      Do not count legend entries, paragraphs, test cases or Annex productions. -->
-| Section | 🟦 Source | 🟨 Partial | ❌ Missing | ⬜ Out of scope | ✅ Accepted | Total |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1. Lexical/literals | 4 | 0 | 0 | 0 | 0 | 4 |
-| 2. Data types | 3 | 10 | 0 | 0 | 0 | 13 |
-| 3. Modules/ports/elaboration | 4 | 5 | 0 | 0 | 0 | 9 |
-| 4. Scheduling/processes | 4 | 3 | 0 | 0 | 1 | 8 |
-| 5. Procedural statements | 5 | 8 | 0 | 0 | 0 | 13 |
-| 6. Timing controls | 0 | 7 | 0 | 0 | 0 | 7 |
-| 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 17 |
-| 8. Continuous/structural | 3 | 6 | 3 | 0 | 0 | 12 |
-| 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 7 |
-| 10. System tasks/functions | 10 | 10 | 3 | 0 | 0 | 23 |
-| 11. Compiler directives | 6 | 1 | 0 | 0 | 0 | 7 |
-| 12. Verification/foreign interfaces | 1 | 12 | 0 | 3 | 0 | 16 |
-| **Total** | **45** | **80** | **7** | **3** | **1** | **136** |
+| Section | 🟦 Source | 🟨 Partial | ❌ Missing | 🚫 Unsupported by design | ⬜ Out of scope | ✅ Accepted | Total |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1. Lexical/literals | 4 | 0 | 0 | 0 | 0 | 0 | 4 |
+| 2. Data types | 3 | 10 | 0 | 0 | 0 | 0 | 13 |
+| 3. Modules/ports/elaboration | 4 | 5 | 0 | 0 | 0 | 0 | 9 |
+| 4. Scheduling/processes | 4 | 3 | 0 | 0 | 0 | 1 | 8 |
+| 5. Procedural statements | 5 | 8 | 0 | 1 | 0 | 0 | 14 |
+| 6. Timing controls | 0 | 7 | 0 | 0 | 0 | 0 | 7 |
+| 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 0 | 17 |
+| 8. Continuous/structural | 3 | 6 | 3 | 1 | 0 | 0 | 13 |
+| 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 0 | 7 |
+| 10. System tasks/functions | 10 | 10 | 2 | 4 | 0 | 0 | 26 |
+| 11. Compiler directives | 6 | 1 | 0 | 1 | 0 | 0 | 8 |
+| 12. Verification/foreign interfaces | 1 | 12 | 0 | 1 | 3 | 0 | 17 |
+| **Total** | **45** | **80** | **6** | **8** | **3** | **1** | **143** |
 
 **126 rows have some source implementation; 80 of those remain partial and one
 is accepted.** The accepted row (`always_ff` and writer rules) carries
@@ -129,9 +130,9 @@ are not independent conformance oracles.
 The six SYN-034 optional target uses remain outside this selected profile:
 elaboration-only static class methods/constant objects; operator overloading;
 elaboration-only fixed-input locator results; legacy procedural assign/deassign
-or static-initialization force; module-body specparams; and finite
+beyond the supported whole-variable subset or static-initialization force; module-body specparams; and finite
 assertion/monitor synthesis. Profile exclusion does not negate separately
-implemented simulator behavior. PLA tasks remain explicitly unsupported (§10).
+implemented simulator behavior. PLA tasks are unsupported by design (§10).
 
 ## Target language editions
 
@@ -829,12 +830,20 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
   Omitted slots in nested resizable traversal, associative nesting,
   string/shared/native captures and illegal iterator writes remain rejected. SV §§12.7.1, 12.7.3 **[SV-2005]**.
-- 🟨 **Procedural assign/deassign** — Whole packed/real/shortreal variables and
-  admitted packed concatenations use replaceable live RHS bindings. `deassign`
-  retains the last value; ordinary writes cannot override an active binding.
-  `force` wins, and release resumes the latest live RHS. Net, selected, array,
-  hierarchical, streaming and recursive aggregate targets reject.
-  V §9.3.1 **[1995]**.
+- 🟨 **Procedural assign/deassign** — Whole packed/real/shortreal variables
+  (including a hierarchical reference that names one) and admitted packed
+  concatenations use replaceable live RHS bindings. `deassign` retains the last
+  value; ordinary writes cannot override an active binding. `force` wins, and
+  release resumes the latest live RHS. Pinned by
+  [adv_032](../tests/fixtures/sim/feature_completion/adv_032/readme.md)
+  `assign_supported`. Every other form is the next row. V §9.3.1 **[1995]**.
+- 🚫 **Procedural assign/deassign — remaining forms** — Net, selected and
+  part-selected targets, streaming targets, unpacked array and structure
+  targets, string, queue, dynamic and class-handle targets, and `assign` inside
+  a function or task activation stop the run with `unsupported: procedural
+  `assign` … (legacy procedural assign/deassign form) is not supported by llg`
+  (Slang already rejects nets, selects and streams in this context with its
+  own error). V §9.3.1 **[1995]**.
 - 🟨 **Force/release** — Persistent packed/real variables and admitted constant-selected, concatenated, resolved-net and canonical alias targets support live
   RHS dependencies and wakeups. Release restores net resolution; variables retain
   the forced value unless a procedural continuous assignment resumes. Dynamic
@@ -1207,7 +1216,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   editions. Explicit continuous strengths on vectors, selected vector bits and
   supply nets reject; gate instance arrays keep per-instance strengths. Delayed
   enable gates still drive X for an unknown enable; VPI strength values,
-  charge/resistive contexts (ADV-005/006) remain outside this row.
+  charge and resistive contexts are outside this row (`trireg` and the resistive
+  MOS primitives are unsupported by design).
   V §§3.4, 3.7, 6.1, 7.9–7.13, 17.1.1.5; SV §§10.3.4, 21.2.1.5 **[1995]**.
 - 🟨 **Dissimilar inout collapse** — Admitted whole/selected/concatenated packed
   and fixed net-array row/cell connections use the directional port-type table
@@ -1217,9 +1227,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   edge winners reduce to the types no other winner strictly dominates, and a
   same-depth warning-only tie selects the first in Table 23-1 column order with
   a located warning. A uwire actual, concatenated uwire actual or `inout
-  uwire` formal collapses with one driver per bit (SV §6.6.2). `trireg` (ADV-006),
-  pass switches (ADV-005) and net-array declaration delays (ADV-002) remain
-  unsupported; oversized net arrays still expand per cell (known issue).
+  uwire` formal collapses with one driver per bit (SV §6.6.2). `trireg` (unsupported by
+  design), pass switches (ADV-005) and net-array declaration delays (ADV-002)
+  remain unsupported; oversized net arrays still expand per cell (known issue).
   V §12.3.10 / Table 45; SV §§23.3.3.6–23.3.3.7 / Table 23-1 **[1995]**.
 - 🟨 **True aliases** — Same-declared-net-type packed networks, fully indexed
   fixed net-array elements, multidimensional/static indexed projections and
@@ -1274,9 +1284,16 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   [UDP regression sources](../tests/sim_udp.rs) retain explicit sequential/edge
   rejection checks; combinational UDP support does not imply sequential support.
   V §8.3; SV §§29.5–29.6 **[1995]**.
-- ❌ **Switches and charge storage** — MOS/CMOS/resistive forms
-  (`nmos/pmos/cmos/rnmos/rpmos/rcmos`), bidirectional `tran/tranif/rtran` families,
-  `trireg`, charge strength, decay and sharing. V §§3.7.3, 7.5–7.7 **[1995]**.
+- 🚫 **MOS switches and charge storage** — The MOS/CMOS/resistive primitives
+  `nmos/pmos/cmos/rnmos/rpmos/rcmos`, every `trireg` net (including charge
+  strengths, decay delays and `trireg` ports) stop the run with `unsupported:
+  `nmos` primitive (MOS and resistive switch primitives) is not supported by
+  llg` or `unsupported: `trireg` net `t` (trireg charge storage) is not
+  supported by llg`. V §§3.7.3, 7.5–7.7, 7.13–7.14 **[1995]**.
+- ❌ **Bidirectional switches** — `tran/tranif0/tranif1` and
+  `rtran/rtranif0/rtranif1` have no simulator path; a design using one stops
+  with the generic `unsupported executable node` diagnostic. V §§7.5–7.6
+  **[1995]**.
 - ❌ **Specify, timing checks and SDF** — `specparam`, module/state/edge paths,
   `PATHPULSE$`, notifiers, timing-check `&&&`, `$setup/$hold/$setuphold`,
   `$recovery/$removal/$recrem`, `$skew/$timeskew/$fullskew`, `$period/$width/$nochange` and `$sdf_annotate` delay/check application are not implemented.
@@ -1580,12 +1597,19 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Stochastic queues** — `$q_initialize/$q_add/$q_remove/$q_full/$q_exam`
   support ID-indexed FIFO/LIFO state, job/information IDs, status codes,
   precision-tick arrivals and six statistics. Outputs must be whole packed
-  integers; selected/real targets reject. V §17.6; SV §20.16 **[1995]**.
-- ❌ **PLA tasks** — No legacy PLA target is selected. All synchronous/asynchronous
-  AND/NAND/OR/NOR array/plane families (such as `$async$and$array`) lack
-  simulator lowering. A call receives an explicit unsupported-PLA diagnostic;
-  it does not execute as a no-op. V §17.5;
-  SV §20.17 **[1995]**.
+  integer variables. Pinned by
+  [adv_032](../tests/fixtures/sim/feature_completion/adv_032/readme.md)
+  `queue_supported`. V §17.6; SV §20.16 **[1995]**.
+- 🚫 **Stochastic queue output forms** — A selected, array-element or net
+  output argument stops the run with `unsupported: `$q_add` status output that
+  is not a whole packed integer variable (stochastic queue form) is not
+  supported by llg` (a real argument is already a Slang type error). V §17.6;
+  SV §20.16 **[1995]**.
+- 🚫 **PLA tasks** — All sixteen synchronous/asynchronous AND/NAND/OR/NOR
+  array/plane forms (such as `$async$and$array`) are unsupported by design.
+  A call stops the run with `unsupported: system task `$async$and$array`
+  (legacy PLA tasks) is not supported by llg`; it never executes as a no-op.
+  V §17.5; SV §20.17 **[1995]**.
 - 🟦 **Plusargs** — Arguments after `--` reach `$test$plusargs/$value$plusargs`.
   Leading-`+` prefix matching, first repeated match, literal `%%`,
   `%d/%h/%x/%o/%b/%f/%e/%g/%s`, wide four-state values and unchanged destinations
@@ -1598,9 +1622,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   calls return raw host status. Embedded NUL rejects; shell/status behavior is
   platform-specific. SV §20.18 **[SV-2009]**.
 
+- 🚫 **Driver, pattern, scale and scope inspection** — `$countdrivers`,
+  `$getpattern`, `$scale` and `$scope/$showscopes/$showvars` are unsupported by
+  design and stop the run with `unsupported: system task `$scope` (legacy
+  driver and scope inspection tasks) is not supported by llg`. V Annex C; SV
+  Annex D **[1995]**.
 - ❌ **Unimplemented legacy system services** — No built-in paths were found
-  for `$countdrivers`, `$getpattern`, `$scale`, `$scope/$showscopes/$showvars`,
-  `$list/$input/$key/$nokey/$log/$nolog`, or
+  for `$list/$input/$key/$nokey/$log/$nolog`, or
   `$save/$incsave/$restart/$reset/$reset_count/$reset_value`. Their presence in
   the [edition allowlist](../src/core/compile/editions.rs) is not implementation
   evidence. An admitted call can reach generic VPI dispatch; without a matching
@@ -1614,9 +1642,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   scope and variables before the fixed header. Packed values, array elements
   with declared bounds, real values, X/Z, aliases, hierarchy and femtosecond
   timestamps are represented. `$dumpon/$dumpoff/$dumplimit`, `$dumpall`
-  snapshots and synchronous `$dumpflush` are supported. Extended VCD
-  `$dumpports` and its related controls remain unsupported.
+  snapshots and synchronous `$dumpflush` are supported.
   V ch.18 **[1995/2001]**.
+- 🚫 **Extended VCD port dumping** — `$dumpports` and `$dumpportsoff/on/all/
+  limit/flush` are unsupported by design and stop the run with `unsupported:
+  system task `$dumpports` (extended VCD port dumping) is not supported by
+  llg`. V §18.3–18.4; SV §21.7.3–21.7.4 **[1995/2001]**.
 
 ## 11. Compiler directives affecting simulation
 
@@ -1642,6 +1673,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `vectored/scalared` and standard attributes are accepted as simulation-neutral
   metadata, with packed values unchanged. V §§2.8, 3.3.2, 19.1;
   SV §22.11 **[1995/SV-2009]**.
+- 🚫 **Charge and delay-mode directives** — `` `default_decay_time``,
+  `` `default_trireg_strength``, `` `delay_mode_distributed``,
+  `` `delay_mode_path``, `` `delay_mode_unit`` and `` `delay_mode_zero`` are
+  optional compatibility directives that `llg` does not honor. Each active
+  occurrence stops the run with `unsupported: directive `` `delay_mode_path``
+  (charge and delay-mode directives) is not supported by llg` instead of being
+  accepted and ignored; one inside an inactive `` `ifdef`` branch is not
+  reported. V Annex D; SV Annex E **[1995]**.
 - 🟨 **`` `unconnected_drive `` / `` `nounconnected_drive ``** — An omitted
   input net formal, including a net-array formal, receives a pull0/pull1
   contribution that competes with the formal's internal drivers and net type
@@ -1867,10 +1906,22 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   are unsupported. DPI ref directions and event/class signature types are
   prohibited by SV §§35.5.1.2, 35.5.6; they remain negative legality cases.
   SV ch.35 **[SV-2005]**.
+- 🚫 **PLI 1.0 TF/ACC** — The legacy `tf_*` and `acc_*` routines, the
+  `veriusertfs` registration table and the `veriuser.h` / `acc_user.h` headers
+  are unsupported by design; `llg` ships none of them. A DPI/VPI library given
+  to `--dpi-lib` that names `veriusertfs` or a PLI 1.0 `tf_*`/`acc_*` routine
+  fails the model build with `invalid DPI-C library <path>: unsupported: the PLI
+  1.0 TF/ACC interface (`tf_getp`) is not supported by llg`. The check scans
+  the library's symbol strings, so it cannot see a library that spells the
+  names only in a form the scan does not recognize (an obfuscated or
+  runtime-computed name), a source file that merely includes the old headers
+  without being linked, or a user system task that was never registered (the
+  frontend already rejects an unknown `$name`). Use VPI (`vlog_startup_routines`)
+  or DPI-C instead. V ch.20–23, Annex E–F.
 - 🟨 **PLI/VPI bridge** — Generated metadata, registration,
   `compiletf/sizetf/calltf`, scalar/vector/real values, hierarchy lookup/iteration,
   plugin startup and start/end callbacks have paths; arguments use registered
-  snapshots. Full `tf_/acc_/vpi_`, arbitrary properties/iterators/regions/control
+  snapshots. Full `vpi_`, arbitrary properties/iterators/regions/control
   remain unsupported. Registered packed/real system-function calls have direct
   expression-evaluation paths; foreign calls nested in proven read-only HDL
   helpers remain unsupported. Direct calls do not establish those helper paths.

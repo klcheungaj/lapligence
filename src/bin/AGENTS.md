@@ -32,7 +32,11 @@ Keep reusable processing in the library. Bins import `llg::config`, `llg::core`,
   select the references for parity tests; never document them for users. The
   emitter and builder receive the same configuration.
 - Repeated `--dpi-lib <path>` validates explicit DPI-C libraries before CMake and
-  retains them in source-only output. `--no-opt` disables normally enabled IR
+  retains them in source-only output. A library naming `veriusertfs` or a PLI 1.0
+  `tf_*`/`acc_*` routine is refused (unsupported by design).
+- A codegen failure that is a list of `unsupported: <construct> (<family>) is not
+  supported by llg` rejections (`CodegenError::is_legacy_unsupported`) prints one
+  `error: <file>:<line>:<col>: ...` line each, not `llg: codegen error:`. `--no-opt` disables normally enabled IR
   passes; conformance fixtures exercise both modes.
 - `--include-dir`/`-I` admits bounded canonical files under source/configured
   include roots and is also the module-definition search path (core compile
