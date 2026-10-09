@@ -1429,8 +1429,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   convert to real. String literals in argument lists start format segments;
   empty arguments print a space. `%m` names the enclosing named block,
   subroutine or generate block. `%p` prints arrays (declared order), queues,
-  dynamic and associative arrays, structures, packed unions, enums (names),
-  quoted strings, shortest-round-trip reals, class objects (properties, cycle
+  dynamic and associative arrays, unpacked and packed structures (named
+  members), packed unions, enums (names), quoted strings, other singular
+  values as unformatted display text (SV §21.2.1.7), class objects (properties, cycle
   and depth-64 markers), and `null`/`chandle`/`event`/`interface`/`process`
   for other handles; output is capped at 1 MiB with a warning
   ([sim_024](../tests/fixtures/sim/feature_completion/sim_024/readme.md)).

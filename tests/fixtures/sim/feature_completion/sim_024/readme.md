@@ -44,16 +44,40 @@ Section numbers refer to IEEE 1800-2009.
   octal escape (`\001`, `\377`).
 - A `\0` in a string literal assigned to a string is dropped (6.16): `"a\000b"`
   is `ab` with length 2.
-- `%f`/`%e`/`%g` follow C `printf` with default precision 6; `%p` of a real
-  prints the shortest text that reads back as the same value (`0.1`,
-  `1e+300`, `-0`, `0.3333333333333333`).
+- `%f`/`%e`/`%g` follow C `printf` with default precision 6. `%p` of a real
+  prints it as an unformatted real argument displays (see the `%p` rule
+  below), i.e. the default `%f` text: `3.141593`, `2.500000`, `0.100000`,
+  `1000000.000000`, `-0.000000`, `0.333333`.
 - A format held in a string variable is interpreted when the call runs
   (21.3.3); `$sformat` with a literal format and `$swrite` argument lists use
   the same conversions.
 
 ## Unpacked aggregates (`aggregates`)
 
-`%p` prints an assignment pattern (21.2.1.7, 10.9):
+`%p` prints an assignment pattern (21.2.1.7, 10.9). The clause text that
+derives every expectation below:
+
+> For unpacked structure data types, it shall print the value as an
+> assignment pattern with named elements. For unions, only the first
+> declared elements shall be printed. [...] The use of white space is
+> implementation dependent; however the output shall be a legal
+> interpretation of the assignment pattern syntax (see 10.8).
+>
+> An unpacked data type is traversed until reaching a singular data type.
+> Each element that is a singular type shall print its value as follows:
+> — A packed structure data type shall print its value as an assignment
+> pattern with named elements. Each element shall be printed under one of
+> these rules.
+> — An enumerated data type shall print its value as an enumeration name if
+> the value is valid for that type. Otherwise the value shall print
+> according to the base type of the enumeration.
+> — A string data type or string literal shall print its value as a string
+> enclosed in quotes.
+> — A chandle, class handle, event, or virtual interface shall print its
+> value in an implementation dependent format, except that a null handle
+> value shall print the word null.
+> — All other singular data types shall print their values as they would
+> unformatted.
 
 - Arrays list elements in declared order, left index first, whatever the
   direction (`int rv [2:0]` assigned `'{7, 8, 9}` prints `'{7, 8, 9}`);
@@ -61,13 +85,19 @@ Section numbers refer to IEEE 1800-2009.
 - Unpacked structures print `member:value` pairs; `%0p` drops the names and
   the spaces after commas. Nested records, arrays and containers inside
   records nest the same way.
-- Enumerations print the member name; a value that is no member prints as a
-  sized literal (`2'b11`). `%d` of an enumeration still prints its number.
-- Packed scalars print as the frontend's sized literal of the value
-  (`4'b0010`, `8'd52`; plain `int` values print as `5`); a packed structure
-  prints its members, a packed union its first member's view
-  (`bytes_u` → `8'd52`). X/Z elements keep their exact digits (`4'bx01z`;
-  an unassigned 4-state element prints `4'bxxxx`).
+- Enumerations print the member name; a value that is no member prints by
+  its base type, unformatted (`color_e'(3)` → `3`). `%d` of an enumeration
+  still prints its number.
+- Other integral singular values (including packed arrays) print as an
+  unformatted `$display` argument would: decimal with the X/Z digit rules
+  of 21.2.1.4 (`'{2, 1, 0}`; `4'bx01z` → `X`, all-x → `x`; a signed 4-bit
+  -2 → `-2`; `logic [1:0][3:0]` 8'h21 → `33`). The automatic field's
+  leading spaces are dropped under the white-space allowance.
+- Packed structures print named members by the same rules, also as array
+  elements and as members of packed or unpacked structures (`R`, `S`, `T`:
+  `'{c:GREEN, n:'{hi:3, lo:12}, s:-2}`). A packed union prints its first
+  declared member (`bytes_u` → `raw` → `52`).
+- Reals print as unformatted reals (`1.500000`).
 - Queues and dynamic arrays print their elements, empty ones `'{}`;
   associative arrays print `key:value` in key order (numeric keys signed,
   string keys quoted).

@@ -17,7 +17,7 @@ module tb;
     sr = 2.5;
     $display("F|%f|%e|%g|%.3f|%10.2f|%-10.2f|%010.2f|", r, r, r, r, r, r, r);
     $display("G|%p|%p|%0p|", r, sr, 0.1);
-    $display("H|%p|%p|%p|", 1.0e300, -0.0, 1.0 / 3.0);
+    $display("H|%p|%p|%p|%0p|", 1.0e6, -0.0, 1.0 / 3.0, 2.5);
     f = "%0d-%s";
     $display("I|%s|", $sformatf(f, 42, "x"));
     $sformat(t, "%h:%0d", 8'h5a, 8'h5a);

@@ -8,6 +8,8 @@ module tb;
   typedef struct { int x; string s; real r; } rec_t;
   typedef struct { rec_t inner; int arr [2]; color_e c; } nest_t;
   typedef struct { int q [$]; string tag; } qrec_t;
+  typedef struct packed { color_e c; nib_t n; logic signed [3:0] s; } pk_t;
+  typedef struct { pk_t p; logic [1:0][3:0] pa; } hold_t;
   int a [3];
   int rv [2:0];
   logic [3:0] m [0:1][2:0];
@@ -30,6 +32,8 @@ module tb;
   rec_t rq [$];
   int qq [$][$];
   int t [$];
+  pk_t pks [2];
+  hold_t hd;
   initial begin
     a = '{1, 2, 3};
     rv = '{7, 8, 9};
@@ -85,6 +89,13 @@ module tb;
     $display("O|%p|%0p|", qq, qq);
     $display("P|%s|", $sformatf("%p", a));
     $display("Q|%0d|%0d|%p|", q.size(), ai.num(), a);
+    pks[0] = '{GREEN, '{4'h3, 4'hc}, -4'sd2};
+    pks[1] = '{RED, '{4'h0, 4'h1}, 4'sd7};
+    hd.p = pks[0];
+    hd.pa = 8'h21;
+    $display("R|%p|", pks);
+    $display("S|%p|%0p|", hd, hd);
+    $display("T|%p|%p|", pks[1], hd.pa);
     $finish(0);
   end
 endmodule

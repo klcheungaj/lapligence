@@ -470,45 +470,18 @@ static sv4_t llg_string_to_display_packed(const llg_string_t* value) {
     return llg_string_to_packed(llg_string_clone(value), width, 0);
 }
 
+static size_t llg_format_integral(char conversion, sv4_t value,
+                                  const llg_fmt_spec_t* spec, char* raw,
+                                  size_t cap);
+
+// `%p` of an integral singular value prints it "as it would unformatted"
+// (SV 21.2.1.7): the default decimal conversion with its X/Z digit rules
+// (21.2.1.3, 21.2.1.4). Pattern white space is implementation dependent, so
+// the automatic field's leading spaces are dropped.
 static size_t llg_format_pattern_packed(sv4_t value, char* raw, size_t cap) {
-    size_t digits_cap = (size_t)llg_sv4_width(value) + 3u;
-    char* digits = llg_checked_malloc(digits_cap, 1, "pattern digits");
-    int has_unknown = sv4_is_unknown(value);
-    int all_x = has_unknown;
-    int all_z = has_unknown;
-    for (int i = 0; i < llg_sv4_nlimbs(llg_sv4_width(value)); i++) {
-        uint64_t mask = llg_sv4_limb_mask(llg_sv4_width(value), i);
-        all_x &= (llg_sv4_word(value, i, LLG_SV4_X) & mask) == mask;
-        all_z &= (llg_sv4_word(value, i, LLG_SV4_Z) & mask) == mask;
-    }
-    int base;
-    if ((llg_sv4_width(value) < 8u && !llg_sv4_signed(value)) ||
-        (has_unknown && llg_sv4_width(value) <= 64u && !all_x && !all_z)) {
-        base = 'b';
-    } else if (llg_sv4_width(value) <= 32u || llg_sv4_signed(value) || all_x || all_z) {
-        base = 'd';
-    } else {
-        base = 'h';
-    }
-    sv4_format((char)base, value, digits, digits_cap);
-    size_t digits_len = strlen(digits);
-    size_t len = 0;
-    const char* digit_text = digits;
-    int include_base = !(base == 'd' && llg_sv4_width(value) == 32u && llg_sv4_signed(value) && !has_unknown);
-    if (digits_len && digits[0] == '-') {
-        llg_append(raw, cap, &len, '-');
-        digit_text++;
-        digits_len--;
-    }
-    if (include_base) {
-        char prefix[64];
-        int written = snprintf(prefix, sizeof(prefix), "%u'%s%c", llg_sv4_width(value),
-                               llg_sv4_signed(value) ? "s" : "", base);
-        if (written > 0) llg_append_text(raw, cap, &len, prefix, (size_t)written);
-    }
-    llg_append_text(raw, cap, &len, digit_text, digits_len);
-    free(digits);
-    return len;
+    llg_fmt_spec_t spec;
+    memset(&spec, 0, sizeof(spec));
+    return llg_format_integral('d', value, &spec, raw, cap);
 }
 
 // Frame scratch for one conversion's text; larger results allocate.
@@ -631,14 +604,10 @@ static size_t llg_format_pattern_string(const char* data, size_t length,
     return len;
 }
 
-// The shortest decimal text that reads back as the same double, as Slang's
-// ConstantValue formats a real; nonfinite values use C's spelling.
+// `%p` of a real prints it as an unformatted real argument displays: the
+// default `%f` conversion (SV 21.2.1.7).
 static size_t llg_format_pattern_real(double value, char* raw, size_t cap) {
-    int written = 0;
-    for (int precision = 1; precision <= 17; ++precision) {
-        written = snprintf(raw, cap, "%.*g", precision, value);
-        if (written < 0 || !isfinite(value) || strtod(raw, NULL) == value) break;
-    }
+    int written = snprintf(raw, cap, "%f", value);
     if (written < 0) return 0;
     return (size_t)written < cap ? (size_t)written : cap - 1;
 }
@@ -836,11 +805,8 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
         } else if (conversion == 'v' && arg->kind == LLG_FMT_STRENGTH) {
             raw_len = llg_format_strength_view(arg->value.packed, raw, raw_cap);
         } else if (conversion == 'p' && arg->kind == LLG_FMT_PACKED) {
-            // Aggregate pattern formatting is rejected by lowering until the
-            // owned aggregate representation is available.  A packed scalar
-            // follows ConstantValue::toString's base-selection and literal
-            // prefix rules, which is the scalar case of Slang's pattern
-            // visitor.
+            // A packed scalar prints as it would unformatted (SV 21.2.1.7);
+            // aggregates arrive as LLG_FMT_TEXT from the pattern walker.
             raw_len = llg_format_pattern_packed(arg->value.packed, raw, raw_cap);
         } else if (strchr("feg", conversion) &&
                    (arg->kind == LLG_FMT_REAL || arg->kind == LLG_FMT_PACKED)) {
