@@ -791,9 +791,83 @@ impl EmitCtx<'_, '_> {
         spec: &EventSpec,
         condition: Option<NodeId>,
     ) -> Result<(IrWaitSrc, IrEdge), String> {
+        if let EventSpec::Qualified { event, condition } = spec {
+            return self.lower_event_spec(event, Some(*condition));
+        }
+        let condition = condition
+            .map(|expression| {
+                self.event_evaluator(expression).and_then(|(name, real)| {
+                    if real {
+                        Err(format!(
+                            "real-valued event qualifiers are not supported in `{}`",
+                            self.path
+                        ))
+                    } else {
+                        Ok(name)
+                    }
+                })
+            })
+            .transpose()?;
+        self.lower_event_spec_qualified(spec, condition)
+    }
+
+    /// Lower the event specs of a sampled-value event clock whose `$past`
+    /// gate must hold when the event occurs (`ev iff expression2`, IEEE
+    /// 1800-2009 16.9.3; 9.4.2.3 evaluates a qualifier "when a changes"):
+    /// the gate joins each item's own `iff`, so the wait checks both at the
+    /// triggering instant instead of after the waiting process resumes.
+    pub(in super::super) fn lower_event_specs_gated(
+        &mut self,
+        specs: &[EventSpec],
+        gate: &IrExpr,
+    ) -> Result<Vec<(IrWaitSrc, IrEdge)>, String> {
+        specs
+            .iter()
+            .map(|spec| {
+                let (event, iff) = match spec {
+                    EventSpec::Qualified { event, condition } => (event.as_ref(), Some(*condition)),
+                    event => (event, None),
+                };
+                let condition = match iff {
+                    Some(node) => {
+                        let iff = self.cg.lower_boolean_expr(&self.path, node)?;
+                        IrExpr::new(
+                            IrExprKind::Bin {
+                                op: IrBinOp::LogAnd,
+                                a: Box::new(iff),
+                                b: Box::new(gate.clone()),
+                            },
+                            1,
+                            false,
+                            None,
+                        )
+                    }
+                    None => gate.clone(),
+                };
+                let name = self.cg.new_fn_name(&self.path, "event_eval");
+                self.pre_fns.push(crate::sim::ir::IrPreFn::MonEval {
+                    c_name: name.clone(),
+                    args: vec![condition],
+                    context: None,
+                    item: false,
+                    real_item: false,
+                });
+                self.lower_event_spec_qualified(event, Some(name))
+            })
+            .collect()
+    }
+
+    fn lower_event_spec_qualified(
+        &mut self,
+        spec: &EventSpec,
+        condition: Option<String>,
+    ) -> Result<(IrWaitSrc, IrEdge), String> {
         let (expression, edge, event) = match spec {
-            EventSpec::Qualified { event, condition } => {
-                return self.lower_event_spec(event, Some(*condition))
+            EventSpec::Qualified { .. } => {
+                return Err(format!(
+                    "nested event qualifiers are not supported in `{}`",
+                    self.path
+                ))
             }
             EventSpec::Named(event) => {
                 let target = self.cg.event_target_of(*event).ok_or_else(|| {
@@ -825,20 +899,6 @@ impl EmitCtx<'_, '_> {
                 )
             }
         };
-        let condition = condition
-            .map(|expression| {
-                self.event_evaluator(expression).and_then(|(name, real)| {
-                    if real {
-                        Err(format!(
-                            "real-valued event qualifiers are not supported in `{}`",
-                            self.path
-                        ))
-                    } else {
-                        Ok(name)
-                    }
-                })
-            })
-            .transpose()?;
         if let Some(event) = event {
             let event = self.cg.event_ref_of(&event, &self.path)?;
             return Ok((

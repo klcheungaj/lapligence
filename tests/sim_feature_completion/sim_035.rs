@@ -47,6 +47,13 @@ fn overlapping_assertions_and_actions_share_sampled_histories() {
     sim_cli::run_case_backend_parity(SUITE, "assertion_history", expected, &[], &[]);
 }
 
+#[test]
+fn event_clock_gates_are_read_when_the_event_occurs() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_035/event_gate_instant.out");
+    sim_cli::run_case_backend_parity(SUITE, "event_gate_instant", expected, &[], &[]);
+}
+
 // FND-002 witnesses, adopted with a reviewed oracle.
 
 #[test]

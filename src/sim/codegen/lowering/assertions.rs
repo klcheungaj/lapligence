@@ -1120,20 +1120,26 @@ impl Codegen<'_> {
                 Ok(index)
             }
             SampledClockSource::Events(specs) => {
-                let inst = self.inst;
-                let (specs, pre_fns) = {
-                    let mut ctx = EmitCtx::new(self, path.to_owned(), inst, "0", None, None, false);
-                    let specs = ctx.lower_event_specs(&specs)?;
-                    (specs, std::mem::take(&mut ctx.pre_fns))
-                };
-                let key = format!("{specs:?} {gate:?}");
+                let key = format!("events {specs:?} {gate:?}");
                 if let Some(index) = self.sampled_clock_keys.get(&key) {
                     return Ok(*index);
                 }
+                let inst = self.inst;
+                let (specs, pre_fns) = {
+                    let mut ctx = EmitCtx::new(self, path.to_owned(), inst, "0", None, None, false);
+                    // The gate joins every event's qualifier, so the waiting
+                    // process wakes only for events whose gate held when they
+                    // occurred; the tick itself is then ungated.
+                    let specs = match &gate {
+                        Some(gate) => ctx.lower_event_specs_gated(&specs, gate)?,
+                        None => ctx.lower_event_specs(&specs)?,
+                    };
+                    (specs, std::mem::take(&mut ctx.pre_fns))
+                };
                 let index = self.model.sampled_clocks.len();
                 self.model
                     .sampled_clocks
-                    .push(IrSampledClock::new(IrSampledClockKind::Event, gate));
+                    .push(IrSampledClock::new(IrSampledClockKind::Event, None));
                 self.sampled_clock_keys.insert(key, index);
                 self.sampled_event_clocks.push(PendingSampledEventClock {
                     clock: index,

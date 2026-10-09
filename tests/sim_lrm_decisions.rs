@@ -71,3 +71,11 @@ fn aa_d2_default_clocking_iff() {
         include_str!("fixtures/sim/lrm_decisions/AA-D2_default_clocking_iff.out"),
     );
 }
+
+#[test]
+fn aa_d6_event_clock_gate_instant() {
+    run_decision(
+        "AA-D6_event_clock_gate_instant",
+        include_str!("fixtures/sim/lrm_decisions/AA-D6_event_clock_gate_instant.out"),
+    );
+}

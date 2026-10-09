@@ -1242,13 +1242,6 @@ real values" or "must be a static packed or real expression") instead of being
 flattened. Sampling them needs Preponed snapshots of unpacked storage, which
 assertions also lack.
 
-The `$past` gating expression of a clock that ticks through a synthetic
-waiting process (event lists, named or clocking-block events, expression
-edges) is evaluated when that process runs in the event's time step, not at
-the instant of the event; a same-step write to the gate between the event and
-the process run is therefore seen. Direct packed-signal edges evaluate their
-`iff` and gate at the write itself.
-
 Concurrent assertions themselves still need one direct signal clock and a
 single-signal `disable iff` (SIM-038, ADV-013), so sampled-value functions in
 an assertion inherit those limits; explicit clocking-event arguments are not

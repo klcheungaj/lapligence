@@ -97,6 +97,22 @@ history of depth 3.
 - `a4`: `$changed(r)` compares 0.0 with the initial 0.0 at 5 and fails once.
 - `a5` is disabled while `rst` is 1 (until 12) and passes afterwards.
 
+### `event_gate_instant` (`$past` gate of a waiting-process clock)
+
+§16.9.3 (`SystemVerilog-1800-2009.txt` L22767-22768): "the particular time
+step is the kth strictly prior time step in which the event ev iff
+expression2 occurred"; §9.4.2.3 (L11988): the qualifier "is evaluated when a
+changes and not when enable changes". Each event below is raised while `g` is
+1 and `g` is cleared later in the same statement sequence, before the clock's
+waiting process can run.
+
+- `L` at 4: `posedge a` at 2 (g = 1 when `a` rises) is a tick of the event
+  list `posedge a or posedge b`, whose sample of `v` at 2 is 2. `posedge
+  (a & c)` has not occurred (c = 0), so it returns the initial 1. `L 2 1`.
+- `N` at 8: `->ev` at 6 and the rise of `a & c` at 6 (c set before g is
+  cleared) are both ticks; the sample of `v` at 6 is 5. `N 5 5`.
+- `G` at 10: `->ev` at 9 after `g = 1` ticks with the sample 7. `G 7`.
+
 ### Witnesses
 
 - `expression_clock_witness` (FND-002 L-F12-11-02, source unchanged except
