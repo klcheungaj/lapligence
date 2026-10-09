@@ -120,3 +120,11 @@ fn ab_n2_always_comb_class_reference() {
         include_str!("fixtures/sim/lrm_decisions/AB-N2_always_comb_class_reference.out"),
     );
 }
+
+#[test]
+fn ab_n3_disable_branch_status() {
+    check(
+        "AB-N3_disable_branch_status",
+        include_str!("fixtures/sim/lrm_decisions/AB-N3_disable_branch_status.out"),
+    );
+}

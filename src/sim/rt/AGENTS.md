@@ -295,7 +295,9 @@ and mailbox get/peek/put waiters are withdrawn from their FIFO on `suspend()`
 (`wait_queue_withdraw`) so keys, messages and space stay with other waiters,
 and `resume()` re-queues them at the tail and services the queue
 (`wait_queue_rejoin`); the registration and payload stay live for kill and
-teardown. A
+teardown. A fork branch whose whole body is one named block exits it with
+`llg_activation_exit_terminal`; if a disable ended the block, `proc_complete`
+records `KILLED` instead of `FINISHED` (`disabled_whole`, SV 9.7). A
 process-evaluated plan marks its wait with `llg_wait_refresh_on_resume`, and a
 withheld occurrence wakes it on resume with `llg_wait_refreshed()` set so it
 re-arms its values without detecting a change. Packed edges use LSB, including 0→X/Z and

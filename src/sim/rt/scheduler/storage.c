@@ -452,6 +452,9 @@ struct llg_proc {
     uint8_t next_wait_event;
     uint8_t next_wait_refresh;
     uint8_t wait_refreshed;
+    // A disable ended the named block that is this fork branch's whole body
+    // (llg_activation_exit_terminal): the process ends KILLED (SV 9.7).
+    uint8_t disabled_whole;
     llg_process_handle_t* handle;
     llg_process_local_ref_t* process_locals;
     llg_proc_t* next_retired;

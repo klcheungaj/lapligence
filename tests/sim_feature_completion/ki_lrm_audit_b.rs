@@ -88,3 +88,11 @@ fn suspended_waiters_are_not_queue_candidates() {
     sim_cli::run_case_backend_parity(SUITE, "suspended_queue_waiters", expected, &[], &[]);
     sim_cli::run_case_after_db_drop(SUITE, "suspended_queue_waiters", expected);
 }
+
+#[test]
+fn disabling_a_whole_branch_block_kills_the_branch() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_lrm_audit_b/disable_branch_status.out");
+    sim_cli::run_case_backend_parity(SUITE, "disable_branch_status", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "disable_branch_status", expected);
+}

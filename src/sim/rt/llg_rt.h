@@ -1650,6 +1650,9 @@ void llg_disable_fork(llg_proc_t* self);
 llg_activation_t* llg_activation_enter(uint32_t declaration,
                                        uint32_t instance);
 void llg_activation_exit(llg_activation_t* activation);
+// Exit of the named block that is a fork branch's whole body: when a disable
+// ended it, the branch process terminates KILLED rather than FINISHED (SV 9.7).
+void llg_activation_exit_terminal(llg_activation_t* activation);
 int llg_activation_cancelled(void);
 // Disabling an activation that reaches `self` completes cancellation
 // bookkeeping, sets LLG_EXIT_ABANDON, and returns for immediate propagation.

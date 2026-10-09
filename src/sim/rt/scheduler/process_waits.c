@@ -110,8 +110,12 @@ static void proc_complete(llg_proc_t* self) {
     // and frame; their copied captures remain retained by the child process.
     start_pending_fork_children(self);
     self->completed = 1;
-    process_status_set(self, LLG_PROCESS_FINISHED);
-    process_handle_terminal(self, LLG_PROCESS_FINISHED);
+    // SV 9.7: "KILLED means the process was forcibly killed (via kill or
+    // disable)"; a disabled whole-branch block leaves nothing to resume at.
+    int terminal =
+        self->disabled_whole ? LLG_PROCESS_KILLED : LLG_PROCESS_FINISHED;
+    process_status_set(self, terminal);
+    process_handle_terminal(self, terminal);
     value_scopes_unwind(self);
     activation_unwind_proc(self);
     llg_frame_release(self->frame);

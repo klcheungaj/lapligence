@@ -1827,7 +1827,9 @@ These are bounded implementations, not full verification-infrastructure support.
   completes a wait condition that became true or a delay that transpired.
   A process suspended in semaphore `get` or mailbox `get`/`peek`/`put` is not
   a candidate for keys, messages or space; `resume()` re-queues it at the
-  FIFO tail
+  FIFO tail. Disabling the named block that forms a whole fork branch ends
+  that process `KILLED`; a disabled block followed by more statements does not
+  end its process
   ([ki_lrm_audit_b](../tests/fixtures/sim/feature_completion/ki_lrm_audit_b/readme.md)).
   Handles in plain storage stay allocated until
   teardown, and `status()` in wait or sensitivity expressions, `ref` formals
