@@ -48,11 +48,11 @@ pub(in super::super) enum NativeEndpoint {
 /// container members, in companion order.
 type NativeInputLeaves = (Vec<IrNativeLeafValue>, Vec<usize>);
 /// Every leaf value of a record operand with its path, in declaration order.
-type LeafReads = Vec<(Vec<AggregatePathPart>, LeafValue)>;
+pub(in super::super) type LeafReads = Vec<(Vec<AggregatePathPart>, LeafValue)>;
 
 /// One captured leaf value of a transfer.
 #[derive(Clone)]
-enum LeafValue {
+pub(in super::super) enum LeafValue {
     Packed(IrExpr),
     Real(IrExpr),
     String(IrStringExpr),
@@ -2176,7 +2176,7 @@ impl Codegen<'_> {
 
     /// Every leaf of a record operand in declaration order: a native value,
     /// a module native record or a whole record element of a container.
-    fn record_leaf_reads(
+    pub(in super::super) fn record_leaf_reads(
         &mut self,
         path: &str,
         node: NodeId,

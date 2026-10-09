@@ -749,7 +749,7 @@ impl EmitCtx<'_, '_> {
                 level,
                 fmt,
                 args: severity_args,
-                scope: self.cg.display_path(&self.path).to_owned(),
+                scope: self.cg.format_scope(&self.path, h),
                 location: self.finish_location(h),
                 fatal_finish_number,
                 runtime_failure: false,
@@ -778,7 +778,7 @@ impl EmitCtx<'_, '_> {
                     return Ok(vec![IrStmt::DisplayTyped {
                         fmt,
                         args: display_args,
-                        scope: self.cg.display_path(&self.path).to_owned(),
+                        scope: self.cg.format_scope(&self.path, h),
                         newline,
                         default_radix,
                         descriptor,
@@ -871,7 +871,7 @@ impl EmitCtx<'_, '_> {
                         n_args: display_args.len(),
                         reads,
                         default_radix,
-                        scope: self.cg.display_path(&self.path).to_owned(),
+                        scope: self.cg.format_scope(&self.path, h),
                         descriptor: descriptor.map(Box::new),
                     }]);
                 }
@@ -915,6 +915,7 @@ impl EmitCtx<'_, '_> {
                     return Err(format!("{name} requires a destination in `{}`", self.path));
                 };
                 let value = self.lower_string_output_format(
+                    *target,
                     name,
                     values,
                     match name {

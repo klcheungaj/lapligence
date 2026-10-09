@@ -58,6 +58,10 @@ pub(super) fn render_typed_display(
                 "_display_args[{index}].kind = LLG_FMT_STRING;\n        _display_args[{index}].value.string = {};",
                 super::super::objects::string(ctx, value)?
             ),
+            IrDisplayArg::Text(value) => format!(
+                "_display_args[{index}].kind = LLG_FMT_TEXT;\n        _display_args[{index}].value.string = {};",
+                super::super::objects::string(ctx, value)?
+            ),
         };
         assignments.push(assignment);
     }
@@ -137,6 +141,10 @@ pub(super) fn render_severity(
             ),
             IrDisplayArg::String(value) => format!(
                 "_severity_args[{index}].kind = LLG_FMT_STRING;\n        _severity_args[{index}].value.string = {};",
+                super::super::objects::string(ctx, value)?
+            ),
+            IrDisplayArg::Text(value) => format!(
+                "_severity_args[{index}].kind = LLG_FMT_TEXT;\n        _severity_args[{index}].value.string = {};",
                 super::super::objects::string(ctx, value)?
             ),
         };

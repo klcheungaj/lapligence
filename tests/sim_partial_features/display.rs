@@ -16,12 +16,12 @@ fn monitor_re_evaluates_real_and_string_arguments() {
     );
 }
 
+/// A real argument of an integral conversion is converted to a 64-bit
+/// signed integer, so `%d` prints it in that type's 21-column decimal field
+/// (SV 6.12.2, 21.2.1.3); the frontend only warns about it.
 #[test]
-fn display_rejects_real_for_integral_conversion() {
-    reject_case(
-        "display_formatting_invalid",
-        "requires a packed or string argument",
-    );
+fn display_converts_real_for_integral_conversion() {
+    run_case("display_real_integral", "                    1\n");
 }
 
 #[test]

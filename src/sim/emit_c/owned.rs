@@ -41,6 +41,7 @@ pub(super) mod native_values;
 pub(super) mod net_batches;
 mod objects;
 mod operands;
+pub(super) mod patterns;
 pub(super) mod pca_batches;
 mod pure_calls;
 mod qualifiers;

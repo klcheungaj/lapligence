@@ -99,7 +99,8 @@ static void llg_print_array(const char* fmt, const sv4_t* args, int n) {
 static void llg_fmt_args_destroy(llg_fmt_arg_t* args, int n) {
     if (!args) return;
     for (int i = 0; i < n; i++) {
-        if (args[i].kind == LLG_FMT_STRING) llg_string_destroy(&args[i].value.string);
+        if (args[i].kind == LLG_FMT_STRING || args[i].kind == LLG_FMT_TEXT)
+            llg_string_destroy(&args[i].value.string);
         else if (args[i].kind == LLG_FMT_PACKED || args[i].kind == LLG_FMT_STRENGTH)
             sv4_destroy(&args[i].value.packed);
         memset(&args[i], 0, sizeof(args[i]));
@@ -108,7 +109,7 @@ static void llg_fmt_args_destroy(llg_fmt_arg_t* args, int n) {
 
 static llg_fmt_arg_t llg_fmt_arg_clone(const llg_fmt_arg_t* value) {
     llg_fmt_arg_t result = *value;
-    if (value->kind == LLG_FMT_STRING)
+    if (value->kind == LLG_FMT_STRING || value->kind == LLG_FMT_TEXT)
         result.value.string = llg_string_clone(&value->value.string);
     else if (value->kind == LLG_FMT_PACKED || value->kind == LLG_FMT_STRENGTH)
         result.value.packed = sv4_clone(&value->value.packed);
@@ -510,12 +511,147 @@ static size_t llg_format_pattern_packed(sv4_t value, char* raw, size_t cap) {
     return len;
 }
 
+// Frame scratch for one conversion's text; larger results allocate.
+#define LLG_FORMAT_INLINE_SCRATCH 1024u
+#define LLG_FORMAT_INLINE_FIELD 256u
+
+// Slang SFormat::formatInt: an unsized decimal field holds the largest value
+// of `width` bits, ceil(width / log2(10)) digits, plus one for a signed sign.
+static int llg_decimal_field_width(uint32_t width, int is_signed) {
+    if (width == 0) return 0;
+    int digits = (int)ceil((double)width / 3.32192809488736234787);
+    return digits + (is_signed ? 1 : 0);
+}
+
+// The packed operand of an integral conversion: the argument itself, or an
+// owner in `converted` for a string (8 bits per byte) or a real (rounded to a
+// signed 64-bit value, as Slang's evaluator converts it).
+static const sv4_t* llg_fmt_integral_operand(const llg_fmt_arg_t* arg,
+                                             sv4_t* converted) {
+    if (arg->kind == LLG_FMT_STRING) {
+        *converted = llg_string_to_display_packed(&arg->value.string);
+        return converted;
+    }
+    if (arg->kind == LLG_FMT_REAL) {
+        *converted = sv4_from_real(arg->value.real, 64u, 1);
+        return converted;
+    }
+    return &arg->value.packed;
+}
+
+// Digits of an integral conversion. Non-decimal results keep every digit of
+// the value's width (automatic size); an explicit width, including `%0`,
+// first drops leading zero digits and the field is then padded back to the
+// width with zeroes (SV 21.2.1.3).
+// Digits of a known value of at most 64 bits, written without the value
+// backend's general (allocating) formatter. Returns 0 when not applicable.
+static size_t llg_format_word(char conversion, sv4_t value, char* raw,
+                              size_t cap) {
+    uint32_t width = llg_sv4_width(value);
+    if (width == 0 || width > 64u || cap < 72u) return 0;
+    uint64_t mask = width == 64u ? UINT64_MAX : (UINT64_C(1) << width) - 1u;
+    if ((llg_sv4_word(value, 0, LLG_SV4_X) | llg_sv4_word(value, 0, LLG_SV4_Z)) & mask)
+        return 0;
+    uint64_t bits = llg_sv4_word(value, 0, LLG_SV4_BITS) & mask;
+    int written;
+    switch (conversion) {
+    case 'd':
+        if (llg_sv4_signed(value) && ((bits >> (width - 1u)) & 1u))
+            written = snprintf(raw, cap, "-%llu",
+                               (unsigned long long)((~bits + 1u) & mask));
+        else
+            written = snprintf(raw, cap, "%llu", (unsigned long long)bits);
+        break;
+    case 'h':
+        written = snprintf(raw, cap, "%0*llx", (int)((width + 3u) / 4u),
+                           (unsigned long long)bits);
+        break;
+    case 'o':
+        written = snprintf(raw, cap, "%0*llo", (int)((width + 2u) / 3u),
+                           (unsigned long long)bits);
+        break;
+    case 'b':
+        for (uint32_t bit = width; bit > 0; --bit)
+            raw[width - bit] = (char)('0' + ((bits >> (bit - 1u)) & 1u));
+        raw[width] = 0;
+        written = (int)width;
+        break;
+    default:
+        return 0;
+    }
+    return written > 0 ? (size_t)written : 0;
+}
+
+static size_t llg_format_integral(char conversion, sv4_t value,
+                                  const llg_fmt_spec_t* spec, char* raw,
+                                  size_t cap) {
+    size_t len = llg_format_word(conversion, value, raw, cap);
+    if (!len) {
+        sv4_format(conversion, value, raw, cap);
+        len = strlen(raw);
+    }
+    if (conversion != 'd' && (spec->has_width || spec->zero)) {
+        size_t skip = 0;
+        while (skip + 1 < len && raw[skip] == '0') skip++;
+        if (skip) {
+            memmove(raw, raw + skip, len - skip + 1);
+            len -= skip;
+        }
+    }
+    return len;
+}
+
+// SV string literal text of a string value: printable bytes verbatim, `"`
+// and `\` escaped, and every other byte as a three-digit octal escape, so
+// the pattern stays a legal literal (SV 5.9, 21.2.1.7).
+static size_t llg_format_pattern_string(const char* data, size_t length,
+                                        char* raw, size_t cap) {
+    size_t len = 0;
+    llg_append(raw, cap, &len, '"');
+    for (size_t i = 0; i < length; ++i) {
+        unsigned char byte = (unsigned char)data[i];
+        if (byte == '"' || byte == '\\') {
+            llg_append(raw, cap, &len, '\\');
+            llg_append(raw, cap, &len, (char)byte);
+        } else if (byte == '\n') {
+            llg_append_text(raw, cap, &len, "\\n", 2);
+        } else if (byte == '\t') {
+            llg_append_text(raw, cap, &len, "\\t", 2);
+        } else if (byte >= 0x20u && byte < 0x7fu) {
+            llg_append(raw, cap, &len, (char)byte);
+        } else {
+            char escape[5] = {'\\', (char)('0' + (byte >> 6)),
+                              (char)('0' + ((byte >> 3) & 7u)),
+                              (char)('0' + (byte & 7u)), 0};
+            llg_append_text(raw, cap, &len, escape, 4);
+        }
+    }
+    llg_append(raw, cap, &len, '"');
+    raw[len < cap ? len : cap - 1] = 0;
+    return len;
+}
+
+// The shortest decimal text that reads back as the same double, as Slang's
+// ConstantValue formats a real; nonfinite values use C's spelling.
+static size_t llg_format_pattern_real(double value, char* raw, size_t cap) {
+    int written = 0;
+    for (int precision = 1; precision <= 17; ++precision) {
+        written = snprintf(raw, cap, "%.*g", precision, value);
+        if (written < 0 || !isfinite(value) || strtod(raw, NULL) == value) break;
+    }
+    if (written < 0) return 0;
+    return (size_t)written < cap ? (size_t)written : cap - 1;
+}
+
 static void llg_emit_field(char* out, size_t cap, size_t* len,
                             const char* value, size_t value_len,
                             llg_fmt_spec_t spec, char conversion) {
     size_t field_cap = llg_format_size_add(value_len, (size_t)spec.precision);
     field_cap = llg_format_size_add(field_cap, 8u);
-    char* field = llg_checked_malloc(field_cap, 1, "formatted field");
+    char inline_field[LLG_FORMAT_INLINE_FIELD];
+    char* field = field_cap <= sizeof(inline_field)
+                      ? inline_field
+                      : llg_checked_malloc(field_cap, 1, "formatted field");
     size_t n = value_len;
     if (n > field_cap - 1) n = field_cap - 1;
     memcpy(field, value, n);
@@ -558,9 +694,8 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
     }
     size_t pad = spec.width > 0 && (size_t)spec.width > n
                    ? (size_t)spec.width - n : 0;
-    // Slang's integral formatter pads non-decimal bases with zeroes whenever
-    // a width is present; decimal and textual values use spaces.  `%0d`
-    // without a width still gets the natural decimal width and no padding.
+    // Non-decimal bases pad with zeroes and decimal and textual values with
+    // spaces (SV 21.2.1.3). A `%0` field has width zero and no padding.
     char pad_char = ' ';
     if (strchr("hbox", conversion) != NULL) pad_char = '0';
     // The zero flag is meaningful for host floating-point formatting.  The
@@ -573,14 +708,16 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
             llg_append_text(out, cap, len, field, prefix);
             for (size_t i = 0; i < pad; i++) llg_append(out, cap, len, '0');
             llg_append_text(out, cap, len, field + prefix, n - prefix);
-            free(field);
+            if (field != inline_field) free(field);
             return;
         }
     }
     if (!spec.left) for (size_t i = 0; i < pad; i++) llg_append(out, cap, len, pad_char);
     llg_append_text(out, cap, len, field, n);
-    if (spec.left) for (size_t i = 0; i < pad; i++) llg_append(out, cap, len, pad_char);
-    free(field);
+    // Trailing zeroes would read as more digits, so a left-justified field
+    // is always completed with spaces.
+    if (spec.left) for (size_t i = 0; i < pad; i++) llg_append(out, cap, len, ' ');
+    if (field != inline_field) free(field);
 
 }
 
@@ -622,6 +759,17 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
             continue;
         }
         if (!conversion || argi >= n) {
+            // Only run-time format strings reach here: literal formats are
+            // checked against their arguments during lowering. The
+            // specification is printed as written and reported once.
+            static int reported_missing_argument;
+            if (conversion && !reported_missing_argument) {
+                reported_missing_argument = 1;
+                fprintf(stderr,
+                        "llg: warning: format specification `%.*s` has no "
+                        "argument; printed as written\n",
+                        (int)(p - start), start);
+            }
             llg_append_text(out, cap, &len, start, (size_t)(p - start));
             continue;
         }
@@ -629,24 +777,35 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
         size_t payload = 0;
         if (arg->kind == LLG_FMT_PACKED || arg->kind == LLG_FMT_STRENGTH)
             payload = (size_t)llg_sv4_width(arg->value.packed) * 4u;
-        else if (arg->kind == LLG_FMT_STRING) {
+        else if (arg->kind == LLG_FMT_STRING || arg->kind == LLG_FMT_TEXT) {
             if (arg->value.string.len > SIZE_MAX / 8u)
                 llg_fatal_allocation("string display", arg->value.string.len, 8u);
             payload = arg->value.string.len * 8u;
         }
         size_t raw_cap = llg_format_scratch_size(payload, (size_t)spec.precision);
         raw_cap = llg_format_size_add(raw_cap, (size_t)spec.width);
-        char* raw = llg_checked_malloc(raw_cap, 1, "typed format");
+        // Ordinary packed scalars format in frame scratch; only wide values,
+        // long strings or large widths/precisions allocate.
+        char inline_raw[LLG_FORMAT_INLINE_SCRATCH];
+        char* raw = raw_cap <= sizeof(inline_raw)
+                        ? inline_raw
+                        : llg_checked_malloc(raw_cap, 1, "typed format");
         size_t raw_len = 0;
-        if (strchr("dhbox", conversion) && arg->kind == LLG_FMT_PACKED) {
-            sv4_format(conversion == 'x' ? 'h' : conversion, arg->value.packed,
-                       raw, raw_cap);
-            raw_len = strlen(raw);
-        } else if (strchr("dhbox", conversion) && arg->kind == LLG_FMT_STRING) {
-            sv4_t packed = llg_string_to_display_packed(&arg->value.string);
-            sv4_format(conversion == 'x' ? 'h' : conversion, packed, raw, raw_cap);
-            raw_len = strlen(raw);
-            sv4_destroy(&packed);
+        if (strchr("dhbox", conversion) &&
+            (arg->kind == LLG_FMT_PACKED || arg->kind == LLG_FMT_STRING ||
+             arg->kind == LLG_FMT_REAL)) {
+            sv4_t converted = SV4_EMPTY;
+            const sv4_t* value = llg_fmt_integral_operand(arg, &converted);
+            raw_len = llg_format_integral(conversion == 'x' ? 'h' : conversion,
+                                          *value, &spec, raw, raw_cap);
+            if (conversion == 'd' && !spec.has_width && !spec.zero) {
+                // An unsized `%d` field is as wide as the largest value of
+                // the argument's width (SV 21.2.1.3).
+                spec.width = llg_decimal_field_width(llg_sv4_width(*value),
+                                                     llg_sv4_signed(*value));
+                spec.has_width = 1;
+            }
+            sv4_destroy(&converted);
         } else if (conversion == 't' && arg->kind == LLG_FMT_PACKED) {
             raw_len = llg_format_time_integer(arg->value.packed,
                                               arg->time_unit_fs, raw, raw_cap);
@@ -661,12 +820,13 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
                 spec.width = g.time_format.minimum_field_width;
                 spec.has_width = spec.width > 0;
             }
-        } else if (conversion == 'c' && arg->kind == LLG_FMT_PACKED) {
-            raw_len = llg_format_char(arg->value.packed, raw, raw_cap);
-        } else if (conversion == 'c' && arg->kind == LLG_FMT_STRING) {
-            sv4_t packed = llg_string_to_display_packed(&arg->value.string);
-            raw_len = llg_format_char(packed, raw, raw_cap);
-            sv4_destroy(&packed);
+        } else if (conversion == 'c' &&
+                   (arg->kind == LLG_FMT_PACKED || arg->kind == LLG_FMT_STRING ||
+                    arg->kind == LLG_FMT_REAL)) {
+            sv4_t converted = SV4_EMPTY;
+            const sv4_t* value = llg_fmt_integral_operand(arg, &converted);
+            raw_len = llg_format_char(*value, raw, raw_cap);
+            sv4_destroy(&converted);
         } else if (conversion == 'u' && arg->kind == LLG_FMT_PACKED) {
             raw_len = llg_format_raw2(arg->value.packed, raw, raw_cap);
         } else if (conversion == 'z' && arg->kind == LLG_FMT_PACKED) {
@@ -682,13 +842,17 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
             // prefix rules, which is the scalar case of Slang's pattern
             // visitor.
             raw_len = llg_format_pattern_packed(arg->value.packed, raw, raw_cap);
-        } else if (strchr("feg", conversion) && arg->kind == LLG_FMT_REAL) {
+        } else if (strchr("feg", conversion) &&
+                   (arg->kind == LLG_FMT_REAL || arg->kind == LLG_FMT_PACKED)) {
+            // An integral argument converts to real, X/Z bits as zero.
+            double real = arg->kind == LLG_FMT_REAL ? arg->value.real
+                                                    : sv4_to_real(arg->value.packed);
             char real_fmt[128];
             size_t spec_len = (size_t)(p - start);
             if (spec_len >= sizeof(real_fmt) - 1) spec_len = sizeof(real_fmt) - 2;
             memcpy(real_fmt, start, spec_len);
             real_fmt[spec_len] = 0;
-            int written = snprintf(raw, raw_cap, real_fmt, arg->value.real);
+            int written = snprintf(raw, raw_cap, real_fmt, real);
             raw_len = written < 0 ? 0 : (size_t)written < raw_cap
                                            ? (size_t)written
                                            : raw_cap - 1;
@@ -702,31 +866,23 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
             raw_len = arg->value.string.len;
             if (raw_len > raw_cap) raw_len = raw_cap;
             if (raw_len) memcpy(raw, arg->value.string.data, raw_len);
+        } else if ((conversion == 'p' || conversion == 's') && arg->kind == LLG_FMT_TEXT) {
+            raw_len = arg->value.string.len;
+            if (raw_len > raw_cap) raw_len = raw_cap;
+            if (raw_len) memcpy(raw, arg->value.string.data, raw_len);
         } else if (conversion == 'p' && arg->kind == LLG_FMT_STRING) {
-            // Keep a string pattern visibly distinct from `%s`, matching the
-            // quote-delimited form produced by Slang's pattern formatter.
-            size_t value_len = arg->value.string.len;
-            if (value_len + 2u <= raw_cap) {
-                raw[0] = '"';
-                if (value_len) memcpy(raw + 1, arg->value.string.data, value_len);
-                raw[value_len + 1] = '"';
-                raw_len = value_len + 2u;
-            } else {
-                raw[0] = '"';
-                raw_len = raw_cap;
-                if (raw_len > 1) {
-                    size_t copy = raw_len - 2u;
-                    memcpy(raw + 1, arg->value.string.data, copy);
-                    raw[raw_len - 1] = '"';
-                }
-            }
+            // A quoted string literal with escapes (SV 21.2.1.7, 5.9).
+            raw_len = llg_format_pattern_string(arg->value.string.data,
+                                                arg->value.string.len, raw, raw_cap);
+        } else if (conversion == 'p' && arg->kind == LLG_FMT_REAL) {
+            raw_len = llg_format_pattern_real(arg->value.real, raw, raw_cap);
         } else {
-            free(raw);
+            if (raw != inline_raw) free(raw);
             llg_append_text(out, cap, &len, start, (size_t)(p - start));
             continue;
         }
         llg_emit_field(out, cap, &len, raw, raw_len, spec, conversion);
-        free(raw);
+        if (raw != inline_raw) free(raw);
     }
     out[len] = 0;
     return len;

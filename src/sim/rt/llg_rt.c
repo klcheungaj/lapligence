@@ -34,6 +34,7 @@
 #include "scheduler/nets.c"
 #include "scheduler/nba_commit.c"
 #include "scheduler/formatting.c"
+#include "scheduler/patterns.c"
 #include "scheduler/file_io.c"
 #include "scheduler/scanning.c"
 #include "scheduler/memory_io.c"

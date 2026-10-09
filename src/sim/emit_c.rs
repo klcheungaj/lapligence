@@ -53,7 +53,7 @@ pub(crate) use model::render_with_value_config;
 pub use statements::{render_pre_fn, render_stmt};
 
 pub(crate) use names::{
-    display_ident, escaped_char, event_global_name, function_ident, global_name, ident, path_ident,
+    display_ident, event_global_name, function_ident, global_name, ident, path_ident,
     real_global_name, scoped_name, strip_lib,
 };
 

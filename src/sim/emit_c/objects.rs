@@ -17,6 +17,7 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
     Ok(match value {
         IrStringExpr::Conditional { .. }
         | IrStringExpr::QueuePop { .. }
+        | IrStringExpr::Pattern(_)
         | IrStringExpr::ProcessRandState(_) => {
             return Err("string conditionals require whole-model ownership emission".to_owned())
         }
@@ -223,6 +224,10 @@ fn render_string_format(
             ),
             IrDisplayArg::String(value) => format!(
                 "_llg_format_args[{index}].kind = LLG_FMT_STRING;\n        _llg_format_args[{index}].value.string = {};",
+                string(ctx, value)?
+            ),
+            IrDisplayArg::Text(value) => format!(
+                "_llg_format_args[{index}].kind = LLG_FMT_TEXT;\n        _llg_format_args[{index}].value.string = {};",
                 string(ctx, value)?
             ),
         };
