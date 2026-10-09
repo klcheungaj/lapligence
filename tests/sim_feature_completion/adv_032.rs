@@ -275,21 +275,15 @@ fn assign_findings(sites: &[(u32, u32, &str)]) -> Vec<String> {
         .collect()
 }
 
-/// The language error for an illegal target is the frontend's own located
-/// diagnostic, never the unsupported-by-design message.
-fn rejects_as_language_error(fixture: &str, edition: &str, diagnostic: &str) {
-    for optimized in [false, true] {
-        let output =
-            sim_cli::invoke_with_env(SUITE, fixture, optimized, &["--edition", edition], &[], &[]);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(output.status.code(), Some(1), "{fixture}: {stderr}");
-        assert!(output.stdout.is_empty(), "{fixture}: {output:?}");
-        assert!(stderr.contains(diagnostic), "{fixture}: {stderr}");
-        assert!(
-            !stderr.contains("is not supported by llg"),
-            "{fixture}: illegal form reported as unsupported: {stderr}"
-        );
-    }
+/// The language error for an illegal target is the frontend's or lowering's
+/// own located diagnostic, never the unsupported-by-design message.
+fn assert_not_unsupported(fixture: &str, output: std::process::Output) {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{fixture}: {stderr}");
+    assert!(
+        !stderr.contains("is not supported by llg"),
+        "{fixture}: illegal form reported as unsupported: {stderr}"
+    );
 }
 
 #[test]
@@ -322,20 +316,37 @@ fn procedural_assign_and_deassign_are_rejected_in_every_form() {
             &["--edition", edition],
         );
     }
-    for (fixture, line) in [
-        ("assign_struct.sv", 5),
-        ("assign_unpacked_array.sv", 4),
-        ("assign_string.sv", 4),
-        ("assign_queue.sv", 4),
-        ("assign_class_handle.sv", 7),
-    ] {
-        sim_cli::reject_case_with_error_lines(
-            SUITE,
-            fixture,
-            &assign_findings(&[(line, 5, "assign")]),
-            &["--edition", "sv2009"],
-        );
-    }
+    let sv = ["--edition", "sv2009"];
+    sim_cli::reject_case_with_error_lines(
+        SUITE,
+        "assign_struct.sv",
+        &assign_findings(&[(5, 5, "assign")]),
+        &sv,
+    );
+    sim_cli::reject_case_with_error_lines(
+        SUITE,
+        "assign_unpacked_array.sv",
+        &assign_findings(&[(4, 5, "assign")]),
+        &sv,
+    );
+    sim_cli::reject_case_with_error_lines(
+        SUITE,
+        "assign_string.sv",
+        &assign_findings(&[(4, 5, "assign")]),
+        &sv,
+    );
+    sim_cli::reject_case_with_error_lines(
+        SUITE,
+        "assign_queue.sv",
+        &assign_findings(&[(4, 5, "assign")]),
+        &sv,
+    );
+    sim_cli::reject_case_with_error_lines(
+        SUITE,
+        "assign_class_handle.sv",
+        &assign_findings(&[(7, 5, "assign")]),
+        &sv,
+    );
 }
 
 #[test]
@@ -390,15 +401,39 @@ fn illegal_procedural_assign_targets_stay_language_errors() {
     let bad =
         "lvalue of procedural assign/deassign must be a variable or concatenation of variables";
     for edition in BOTH {
-        rejects_as_language_error(
+        sim_cli::reject_case_with_args(
+            SUITE,
             "assign_hierarchical_net.v",
-            edition,
             &format!("assign_hierarchical_net.v:12:12 {bad}"),
+            &["--edition", edition],
         );
-        rejects_as_language_error(
+        assert_not_unsupported(
+            "assign_hierarchical_net.v",
+            sim_cli::invoke_with_env(
+                SUITE,
+                "assign_hierarchical_net.v",
+                true,
+                &["--edition", edition],
+                &[],
+                &[],
+            ),
+        );
+        sim_cli::reject_case_with_args(
+            SUITE,
             "assign_hierarchical_select.v",
-            edition,
             &format!("assign_hierarchical_select.v:10:12 {bad}"),
+            &["--edition", edition],
+        );
+        assert_not_unsupported(
+            "assign_hierarchical_select.v",
+            sim_cli::invoke_with_env(
+                SUITE,
+                "assign_hierarchical_select.v",
+                true,
+                &["--edition", edition],
+                &[],
+                &[],
+            ),
         );
     }
 }
@@ -439,10 +474,22 @@ fn hierarchical_continuous_assignments_drive_other_instances_nets() {
 fn a_continuously_assigned_child_variable_admits_no_other_driver() {
     // SV 6.5: the procedural initializer is a second driver; the run stops
     // with a located language error, not the unsupported-by-design message.
-    rejects_as_language_error(
+    sim_cli::reject_case_with_args(
+        SUITE,
         "hier_continuous_assign_mixed.sv",
-        "sv2009",
         "has both a continuous assignment at",
+        &["--edition", "sv2009"],
+    );
+    assert_not_unsupported(
+        "hier_continuous_assign_mixed.sv",
+        sim_cli::invoke_with_env(
+            SUITE,
+            "hier_continuous_assign_mixed.sv",
+            true,
+            &["--edition", "sv2009"],
+            &[],
+            &[],
+        ),
     );
 }
 
@@ -462,10 +509,17 @@ fn hierarchical_force_and_release_keep_their_lrm_semantics() {
             &[],
         );
         // V 9.3.2: a select of a variable is not a force target.
-        rejects_as_language_error(
+        sim_cli::reject_case_with_args(SUITE, "hier_force_variable_select.v", "hier_force_variable_select.v:10:11 lvalue of force/release must be a net, a variable, a constant select of a net, or a concatenation of these", &["--edition", edition]);
+        assert_not_unsupported(
             "hier_force_variable_select.v",
-            edition,
-            "hier_force_variable_select.v:10:11 lvalue of force/release must be a net, a variable, a constant select of a net, or a concatenation of these",
+            sim_cli::invoke_with_env(
+                SUITE,
+                "hier_force_variable_select.v",
+                true,
+                &["--edition", edition],
+                &[],
+                &[],
+            ),
         );
     }
 }
