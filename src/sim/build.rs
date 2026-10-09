@@ -76,10 +76,16 @@
 //! - `LLG_CMAKE_TOOLCHAIN_SEED` ([`TOOLCHAIN_SEED_ENV`]) — `0`, `off`,
 //!   `false` or `no` makes every fresh configure run CMake's own toolchain
 //!   detection.
+//! - `LLG_BUILD_TIMINGS` ([`BUILD_TIMINGS_ENV`]) — a file to which every
+//!   model build appends one line of per-phase timings and cache outcomes
+//!   (see `build/timings.rs`); unset or empty records nothing.
 
 mod compiler_probe;
+mod timings;
 mod toolchain_seed;
 mod value;
+
+pub use timings::ENV as BUILD_TIMINGS_ENV;
 
 pub use compiler_probe::MEMO_DIR as COMPILER_PROBE_DIR;
 pub use toolchain_seed::{SEED_DIR as TOOLCHAIN_SEED_DIR, SEED_ENV as TOOLCHAIN_SEED_ENV};
@@ -528,8 +534,23 @@ pub fn build_model_cmake_with_opts(
     extra: &[(&str, &str)],
     opts: &CmakeBuildOpts,
 ) -> Result<PathBuf, BuildError> {
+    let started = Instant::now();
+    let mut timings = timings::BuildTimings::default();
+    let result = build_model_cmake_timed(out_dir, extra, opts, &mut timings);
+    timings.finish(out_dir, started, result.is_ok());
+    result
+}
+
+fn build_model_cmake_timed(
+    out_dir: &Path,
+    extra: &[(&str, &str)],
+    opts: &CmakeBuildOpts,
+    timings: &mut timings::BuildTimings,
+) -> Result<PathBuf, BuildError> {
+    let phase = Instant::now();
     validate_dpi_libraries(opts)?;
     generate_model_sources_with_opts(out_dir, extra, opts)?;
+    timings.record("generate", phase);
 
     let cc = resolve_cc(opts);
     let flags = c_flags(opts)?;
@@ -540,7 +561,9 @@ pub fn build_model_cmake_with_opts(
     let generator = generator_for(opts);
     let launcher = resolve_launcher(opts);
     let cache_root = runtime_cache_root(opts)?;
+    let phase = Instant::now();
     let compiler = compiler_probe::facts(&cc, &cache_root);
+    timings.record("probe", phase);
     let toolchain = toolchain_seed::Toolchain {
         cmake: &cmake_prog,
         generator: &generator,
@@ -550,7 +573,9 @@ pub fn build_model_cmake_with_opts(
         compiler_identity: &compiler.identity,
         compiler_target: &compiler.target,
     };
-    let runtime_library = prepare_runtime_cache(waveform, &toolchain, jobs, opts)?;
+    let phase = Instant::now();
+    let runtime_library = prepare_runtime_cache(waveform, &toolchain, jobs, opts, timings)?;
+    timings.record("runtime", phase);
 
     // Drop an incompatible CMake build tree so configure starts clean: no
     // cache means a previous configure died midway; a generator mismatch
@@ -565,6 +590,7 @@ pub fn build_model_cmake_with_opts(
         &toolchain,
         &[runtime_library_arg],
         &cache_root,
+        timings,
     )?;
     let launch_error = |source| BuildError::CmakeLaunch {
         program: cmake_prog.clone(),
@@ -572,8 +598,11 @@ pub fn build_model_cmake_with_opts(
     };
 
     // Build.
+    let phase = Instant::now();
     let mut build_cmd = build_command(&cmake_prog, &build_dir, jobs, None);
-    let output = build_cmd.output().map_err(launch_error)?;
+    let output = build_cmd.output().map_err(launch_error);
+    timings.record("build", phase);
+    let output = output?;
     if !output.status.success() {
         return Err(BuildError::Compile {
             output: output_tail(&output),
@@ -811,12 +840,14 @@ fn configure_command(
 /// exactly once from scratch without a seed, except when CMake found no build
 /// program for the generator, which a retry cannot fix. A seed whose configure
 /// failed where the clean retry succeeded is rejected for later builds.
+/// `timings` receives the seed and configure phases.
 fn run_configure(
     source: &Path,
     build_dir: &Path,
     toolchain: &toolchain_seed::Toolchain<'_>,
     extra: &[String],
     seed_root: &Path,
+    timings: &mut timings::BuildTimings,
 ) -> Result<(), BuildError> {
     let command =
         |seed_args: &[String]| configure_command(source, build_dir, toolchain, extra, seed_args);
@@ -824,18 +855,37 @@ fn run_configure(
         program: toolchain.cmake.to_owned(),
         source,
     };
-    let seed = if build_dir.exists() {
+    let phase = Instant::now();
+    let existing_tree = build_dir.exists();
+    let seed = if existing_tree {
         None
     } else {
         toolchain_seed::prepare(seed_root, toolchain)
     };
     let seed_args = seed.as_ref().and_then(|seed| seed.apply(build_dir));
+    timings.record("seed", phase);
+    timings.note(
+        "seed",
+        match (existing_tree, seed_args.is_some()) {
+            (true, _) => "existing-tree",
+            (false, true) => "applied",
+            (false, false) => "unseeded",
+        },
+    );
+    timings.note("configure_retry", "0");
+    let phase = Instant::now();
     let mut configure = command(seed_args.as_deref().unwrap_or_default());
-    let mut output = configure.output().map_err(launch_error)?;
+    let output = configure.output().map_err(launch_error);
+    timings.record("configure", phase);
+    let mut output = output?;
     if !output.status.success() && !missing_build_program(&output) {
+        let phase = Instant::now();
+        timings.note("configure_retry", "1");
         remove_dir_all_quiet(build_dir);
         configure = command(&[]);
-        output = configure.output().map_err(launch_error)?;
+        let retried = configure.output().map_err(launch_error);
+        timings.record("configure", phase);
+        output = retried?;
         if output.status.success() && seed_args.is_some() {
             if let Some(seed) = &seed {
                 seed.reject("a seeded configure failed where a clean configure succeeded");
@@ -971,6 +1021,7 @@ fn prepare_runtime_cache(
     toolchain: &toolchain_seed::Toolchain<'_>,
     jobs: usize,
     opts: &CmakeBuildOpts,
+    timings: &mut timings::BuildTimings,
 ) -> Result<PathBuf, BuildError> {
     let cmake_prog = toolchain.cmake;
     let key = format!(
@@ -988,6 +1039,7 @@ fn prepare_runtime_cache(
     );
     let cache_root = runtime_cache_root(opts)?;
     let entry = cache_root.join(&key);
+    timings.note("runtime", "hit");
     if let Some(library) = cached_runtime_library(&entry, &key) {
         return Ok(library);
     }
@@ -1002,6 +1054,8 @@ fn prepare_runtime_cache(
         return Ok(library);
     }
 
+    // Another process may have built it while this one waited for the lock.
+    timings.note("runtime", "built");
     std::fs::create_dir_all(&entry).map_err(|source| BuildError::Io {
         action: "create runtime cache entry",
         path: entry.clone(),
@@ -1058,7 +1112,15 @@ fn prepare_runtime_cache(
 
     let build_dir = entry.join("build");
     remove_incompatible_build_dir(&build_dir, toolchain.generator);
-    run_configure(&entry, &build_dir, toolchain, &[], &cache_root)?;
+    // The archive's configure is part of the caller's `runtime` phase.
+    run_configure(
+        &entry,
+        &build_dir,
+        toolchain,
+        &[],
+        &cache_root,
+        &mut timings::BuildTimings::default(),
+    )?;
     let launch_error = |source| BuildError::CmakeLaunch {
         program: cmake_prog.to_owned(),
         source,

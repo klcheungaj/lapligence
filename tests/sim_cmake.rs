@@ -984,6 +984,79 @@ fn a_changed_compiler_does_not_reuse_another_toolchain_seed() {
     assert_eq!(published_seeds(&cache).len(), 2, "one seed per compiler");
 }
 
+/// `$LLG_BUILD_TIMINGS` receives one record per model build naming its
+/// phases and what the runtime cache and toolchain seed did, so CI logs show
+/// where model-build time goes.
+#[test]
+fn build_timings_record_phases_and_cache_outcomes() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = fresh_dir("build-timings");
+    let record = dir.path().join("timings.tsv");
+    let _timings = EnvVarGuard::set(
+        sim::build::BUILD_TIMINGS_ENV,
+        record.to_str().expect("UTF-8 temp path"),
+    );
+    let opts = sim::build::CmakeBuildOpts {
+        runtime_cache_dir: Some(dir.path().join("runtime-cache")),
+        ..Default::default()
+    };
+    for model in ["first", "second", "first"] {
+        let stdout = build_counter(dir.path(), &dir.path().join(model), &opts).expect("model runs");
+        assert_eq!(stdout, EXPECTED_STDOUT, "{model}");
+    }
+    let text = std::fs::read_to_string(&record).expect("timings written");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 3, "{text}");
+    let field = |line: &str, name: &str| -> Option<String> {
+        line.split('\t')
+            .find_map(|field| field.strip_prefix(&format!("{name}=")).map(str::to_owned))
+    };
+    for line in &lines {
+        assert!(line.starts_with("llg-build\t"), "{line}");
+        assert_eq!(field(line, "result").as_deref(), Some("ok"), "{line}");
+        for phase in [
+            "generate",
+            "probe",
+            "runtime",
+            "seed",
+            "configure",
+            "build",
+            "total",
+        ] {
+            let value = field(line, &format!("{phase}_ms")).unwrap_or_default();
+            assert!(value.parse::<u64>().is_ok(), "{phase} in {line}");
+        }
+        assert_eq!(
+            field(line, "configure_retry").as_deref(),
+            Some("0"),
+            "{line}"
+        );
+    }
+    let outcomes: Vec<_> = lines
+        .iter()
+        .map(|line| {
+            (
+                field(line, "runtime").unwrap(),
+                field(line, "seed").unwrap(),
+            )
+        })
+        .collect();
+    // Fresh trees reuse the seed (as in the test above); a rebuild of an
+    // existing tree reconfigures it in place.
+    assert_eq!(
+        outcomes,
+        [
+            ("built".to_owned(), "applied".to_owned()),
+            ("hit".to_owned(), "applied".to_owned()),
+            ("hit".to_owned(), "existing-tree".to_owned()),
+        ]
+    );
+}
+
 /// A seed that breaks configuration is not trusted again: the build retries
 /// from scratch without it, succeeds, and the key is marked rejected so later
 /// fresh trees configure unseeded.
