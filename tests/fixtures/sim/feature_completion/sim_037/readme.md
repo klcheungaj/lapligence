@@ -15,6 +15,13 @@ tick `s - 1`. Rules used throughout (§16.9.2.1, Annex F):
   `##(n-1) r` and `(r ##n empty)` is `r ##(n-1) 1`; `(empty ##0 r)` and
   `(r ##0 empty)` never match.
 - `r[*0]` is the empty sequence; `r[*k+1]` is `r[*k] ##1 r`.
+- A leading `##[m:n] r` is `1[*m:n] ##1 r`. F.3.4.2.2
+  (`SystemVerilog-1800-2009.txt` L70581): "( ##[m:n] R ) (1[*m:n] ##1 R )"
+  (the PDF's equivalence sign is lost in the text extraction).
+  With `m = 0` the `1[*0] ##1 r` term is `r` itself, so `##[0:n] r` keeps
+  the empty match of `r` exactly like `##0 r` (§16.7 L21795: "##0 a // means
+  a"). `s35` (`##[0:1] (a)[*0:1]` after `go ##1`) therefore also ends on the
+  `go` tick 0 for every trace.
 - `r1 or r2`: the union of the match sets; one line per distinct end tick
   (an attempt has a set of matches, not a list).
 - `r1 and r2`: both start on the same tick; a match ends at the later of one

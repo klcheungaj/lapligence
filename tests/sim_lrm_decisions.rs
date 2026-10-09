@@ -47,3 +47,11 @@ fn aa_d3_cover_sequence_all_matches() {
         include_str!("fixtures/sim/lrm_decisions/AA-D3_cover_sequence_all_matches.out"),
     );
 }
+
+#[test]
+fn aa_d4_leading_range_empty() {
+    run_decision(
+        "AA-D4_leading_range_empty",
+        include_str!("fixtures/sim/lrm_decisions/AA-D4_leading_range_empty.out"),
+    );
+}

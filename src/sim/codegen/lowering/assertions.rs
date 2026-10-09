@@ -1442,9 +1442,15 @@ impl Codegen<'_> {
                         let start = builder.state()?;
                         let accept = builder.state()?;
                         builder.epsilon_with_clock(start, accept, zero_range(), self.sampled_clock)?;
-                        builder.concatenate(SequenceFragment { empty: false, start, accept,
+                        let zero_delay = delay.min == 0;
+                        let lead = builder.concatenate(SequenceFragment { empty: false, start, accept,
                             leading_clock: self.sampled_clock, trailing_clock: self.sampled_clock },
-                            fragment, delay)?
+                            fragment, delay)?;
+                        // `##[0:n] r` is `(1[*0] ##1 r) or ...` = `r or ...`
+                        // (IEEE 1800-2009 F.3.4.2.2), so it keeps the empty
+                        // match of `r` exactly like `##0 r`; the `1 ##` prefix
+                        // models only the nonzero delays.
+                        SequenceFragment { empty: fragment.empty && zero_delay, ..lead }
                     });
                 }
                 if let Some(result) = result { Ok(result) } else {

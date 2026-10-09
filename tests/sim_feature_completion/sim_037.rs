@@ -52,7 +52,7 @@ enum Seq {
     Bool(Atom),
     /// `l ##[m:n] r`.
     Cat(Box<Seq>, u32, Bound, Box<Seq>),
-    /// Leading `##[m:n] r`, defined as `1 ##[m:n] r`.
+    /// Leading `##[m:n] r`, defined as `1[*m:n] ##1 r` (F.3.4.2.2).
     Lead(u32, Bound, Box<Seq>),
     /// Consecutive repetition `(s)[*m:n]`.
     Rep(Box<Seq>, u32, Bound),
@@ -110,11 +110,18 @@ fn matches(seq: &Seq, w: &Word, i: i64) -> BTreeSet<i64> {
             out
         }
         Lead(min, max, right) => {
-            // `1 ##[m:n] r`: the leading `1` occupies position i.
-            if i >= len {
-                return BTreeSet::new();
+            // `1[*k] ##1 r` for each k in [m:n]: k true letters starting at
+            // i, which must exist, then `r` from i + k (with k = 0 this is `r`
+            // itself, including its empty match).
+            let mut out = BTreeSet::new();
+            let top = max.map_or(len + 1, i64::from);
+            for k in i64::from(*min)..=top {
+                if k > 0 && i + k - 1 >= len {
+                    break;
+                }
+                out.extend(matches(right, w, i + k));
             }
-            delayed(*min, *max, right, w, i, true)
+            out
         }
         Rep(body, min, max) => repeat(&|start| matches(body, w, start), *min, *max, i, len),
         Goto(atom, min, max) => {
@@ -425,6 +432,11 @@ fn interpreter_follows_the_annex_f_empty_match_rules() {
     assert_eq!(matches(&and, &word, 0), BTreeSet::from([0, 1]));
     let intersect = Intersect(b(Atom::A), bx(Rep(b(Atom::A), 2, Some(2))));
     assert!(matches(&intersect, &word, 0).is_empty());
+    // `##[0:1] r` = `r or (1 ##1 r)` keeps the empty match of `r` like
+    // `##0 r` (F.3.4.2.2): `##[0:1] b[*0:1]` ends at -1 (empty) and at 0
+    // (`b` on letter 0, or `1` followed by the empty `b[*0]`).
+    let lead = Lead(0, Some(1), bx(Rep(b(Atom::B), 0, Some(1))));
+    assert_eq!(matches(&lead, &word, 0), BTreeSet::from([-1, 0]));
 }
 
 fn assert_sorted_output(label: &str, output: &std::process::Output, expected: &str) {
