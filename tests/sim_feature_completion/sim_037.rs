@@ -608,22 +608,21 @@ fn match_multiplicity_limits_are_reported_errors() {
             !String::from_utf8_lossy(&limited.stdout).contains("done"),
             "optimized={optimized}: the run must stop at the budget"
         );
-        let overflow =
-            sim_cli::invoke_with_env(SUITE, "multiplicity_overflow", optimized, &[], &[], &[]);
-        let stderr = String::from_utf8_lossy(&overflow.stderr);
-        assert!(
-            !overflow.status.success(),
-            "optimized={optimized}: {stderr}"
-        );
-        assert!(
-            stderr.contains("llg: sequence match multiplicity overflow at time 635000 (concurrent assertion p at "),
-            "optimized={optimized}: {stderr}"
-        );
-        assert!(
-            !String::from_utf8_lossy(&overflow.stdout).contains("done"),
-            "optimized={optimized}: the run must stop at the overflow"
-        );
     }
+    sim_cli::run_case_checked_matrix(SUITE, "multiplicity_overflow", &[], &|label, output| {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{label}: {stderr}");
+        assert!(
+            stderr.contains(
+                "llg: sequence match multiplicity overflow at time 635000 (concurrent assertion p at "
+            ),
+            "{label}: {stderr}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stdout).contains("done"),
+            "{label}: the run must stop at the overflow"
+        );
+    });
 }
 
 // Forms owned by other tasks or illegal by the LRM are diagnosed, never
