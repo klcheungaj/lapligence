@@ -222,8 +222,23 @@ typedef struct llg_sequence_token {
     sv4_t* locals;
 } llg_sequence_token_t;
 
+/* One evaluation attempt of an implication `R |-> P` / `R |=> P` (IEEE
+ * 1800-2009 16.13.6). The antecedent attempt and every consequent started by
+ * one of its matches share it, so the attempt reports exactly one result:
+ * a failure as soon as one consequent fails, a success once the antecedent
+ * can match no more and every started consequent has succeeded. */
+typedef struct llg_assertion_eval {
+    struct llg_assertion_eval* next_free;
+    size_t pending; /* consequent attempts not yet resolved */
+    uint8_t antecedent_live;
+    uint8_t decided; /* the attempt's single result has been reported */
+} llg_assertion_eval_t;
+
 typedef struct llg_sequence_attempt {
     struct llg_sequence_attempt* next;
+    /* Shared evaluation attempt of an implication, NULL otherwise. */
+    llg_assertion_eval_t* eval;
+    int eval_owner; /* this is the antecedent attempt of `eval` */
     const llg_sequence_graph_t* graph;
     llg_sequence_token_t* tokens;
     /* Diagnostic creation ordinal; launch uses the endpoint's clock/time. */
@@ -270,6 +285,8 @@ typedef struct llg_concurrent_assertion {
     int abort_sync;
     int enabled;
     int expect_active;
+    /* An armed expect starts exactly one attempt (IEEE 1800-2009 16.18). */
+    int expect_started;
     uint64_t identity;
     const char* label;
     const char* location;
@@ -443,6 +460,7 @@ typedef struct {
     llg_sequence_join_instance_t* sequence_join_pool;
     llg_sequence_endpoint_t* sequence_endpoint_pool;
     llg_sequence_attempt_t* sequence_attempt_pool;
+    llg_assertion_eval_t* assertion_eval_pool;
     llg_assertion_clock_event_t* assertion_clock_event_pool;
     llg_deferred_trigger_t* deferred_triggers;
     llg_deferred_trigger_t* deferred_trigger_tail;

@@ -179,7 +179,7 @@ fn concurrent_assertions_preserve_zero_and_ranged_delays() {
     sim_cli::run_case(
         "concurrent_assertions",
         "sequence_ranges",
-        "ZERO_PASS\nZERO_PASS\nRANGED_PASS\nRANGED_PASS\n",
+        "ZERO_PASS\nZERO_PASS\nRANGED_PASS\nZERO_PASS\nRANGED_PASS\nRANGED_PASS\n",
         "",
         &[],
     );
@@ -221,6 +221,17 @@ fn concurrent_assertions_keep_branch_local_match_state_isolated() {
 #[test]
 fn concurrent_assertions_block_expect_until_its_endpoint() {
     sim_cli::run_case("concurrent_assertions", "expect", "EXPECT_PASS\n", "", &[]);
+}
+
+#[test]
+fn concurrent_assertions_expect_runs_one_attempt_from_an_expect_only_block() {
+    sim_cli::run_case(
+        "concurrent_assertions",
+        "expect_single_attempt",
+        "PREDICATE_FAIL 2\nSEQUENCE_FAIL 3\n",
+        "",
+        &[],
+    );
 }
 
 #[test]

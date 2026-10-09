@@ -1751,24 +1751,28 @@ impl<'a> Codegen<'a> {
         // an owned assertion instance, not an ordinary procedural body; emit
         // it through the sampled assertion path and do not manufacture a
         // process that would try to execute the assertion as a statement.
+        // A procedural `expect` is an executable statement that blocks its
+        // process (IEEE 1800-2009 16.18), never a projected assertion.
+        let projected = |kind: &NodeKind| {
+            matches!(
+                kind,
+                NodeKind::Stmt(StmtKind::ConcurrentAssertion { kind, .. })
+                    if *kind != ConcurrentAssertionKind::Expect
+            )
+        };
         let (concurrent_assertions, assertion_only_body) = match self.kind(stmt) {
-            NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. }) => (vec![stmt], true),
+            kind if projected(kind) => (vec![stmt], true),
             NodeKind::Stmt(StmtKind::Begin) => {
                 let children = &self.node(stmt).children;
                 let assertions = children
                     .iter()
-                    .filter(|child| {
-                        matches!(
-                            self.kind(**child),
-                            NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. })
-                        )
-                    })
+                    .filter(|child| projected(self.kind(**child)))
                     .copied()
                     .collect::<Vec<_>>();
                 let assertion_only = !assertions.is_empty()
                     && children.iter().all(|child| match self.kind(*child) {
-                        NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. })
-                        | NodeKind::Stmt(StmtKind::Empty)
+                        kind if projected(kind) => true,
+                        NodeKind::Stmt(StmtKind::Empty)
                         | NodeKind::Var { .. }
                         | NodeKind::FuncArg { .. } => true,
                         // Slang keeps a named assertion declaration scope as

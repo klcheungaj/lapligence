@@ -430,6 +430,14 @@ later time; retain current-slot edge history for all consumers. Callback order i
 only a replay guard, never elapsed cross-clock time. Explicit action choice must
 not erase assertion failure accounting.
 
+An implication attempt (`R |-> P`) is one `llg_assertion_eval_t` shared by its
+antecedent attempt and every consequent a match of `R` starts; it reports one
+result (IEEE 1800-2009 16.13.6): failure when a consequent fails, success when
+`R` is exhausted and every consequent succeeded. Decided attempts discard their
+remaining threads; abort/disable paths report an attempt once. `cover sequence`
+registers as `LLG_ASSERTION_COVER_SEQUENCE` and reports every nonempty match
+(16.15.3). An armed `expect` starts exactly one attempt (16.18).
+
 Sequence joins (`and`/`intersect`, and `throughout`/`within` reduced to
 `intersect`) are static graph tables: the enter edge forks one thread per
 operand with its own side frame on the scope chain; exit edges pair endpoints

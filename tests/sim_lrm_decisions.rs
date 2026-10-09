@@ -25,6 +25,22 @@ fn run_decision(case: &str, expected: &str) {
 }
 
 #[test]
+fn aa_d1_implication_one_result() {
+    run_decision(
+        "AA-D1_implication_one_result",
+        include_str!("fixtures/sim/lrm_decisions/AA-D1_implication_one_result.out"),
+    );
+}
+
+#[test]
+fn aa_n1_implication_result_time() {
+    run_decision(
+        "AA-N1_implication_result_time",
+        include_str!("fixtures/sim/lrm_decisions/AA-N1_implication_result_time.out"),
+    );
+}
+
+#[test]
 fn aa_d3_cover_sequence_all_matches() {
     run_decision(
         "AA-D3_cover_sequence_all_matches",

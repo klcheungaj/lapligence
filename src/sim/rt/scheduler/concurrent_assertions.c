@@ -61,6 +61,17 @@ static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
     }
 }
 
+/* Whether a leading-clock event starts a new evaluation attempt. An armed
+ * expect starts "a single thread of evaluation" on its first clocking event
+ * (16.18); every other assertion starts one per event. */
+static int assertion_attempt_starts(llg_concurrent_assertion_t* assertion) {
+    if (!assertion->enabled) return 0;
+    if (assertion->kind != LLG_ASSERTION_EXPECT) return 1;
+    if (!assertion->expect_active || assertion->expect_started) return 0;
+    assertion->expect_started = 1;
+    return 1;
+}
+
 static void assertion_disable_signal_changed(sv4_t* signal) {
     if (!signal) return;
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
@@ -95,8 +106,14 @@ static void assertion_abort_attempts(llg_concurrent_assertion_t* assertion) {
         while (*lists[list_index]) {
             llg_sequence_attempt_t* attempt = *lists[list_index];
             *lists[list_index] = attempt->next;
-            assertion_result(assertion, success, assertion->abort_reject ? 0 : 1);
+            // An implication attempt shares one result across its antecedent
+            // and consequent threads; report it once.
+            llg_assertion_eval_t* eval = attempt->eval;
+            int report = !eval || !eval->decided;
+            if (eval) eval->decided = 1;
             sequence_attempt_discard(attempt);
+            if (report)
+                assertion_result(assertion, success, assertion->abort_reject ? 0 : 1);
             if (g.finish) return;
         }
         *tails[list_index] = NULL;
@@ -208,6 +225,33 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
     }
 }
 
+static void sequence_attempt_unlink(llg_sequence_attempt_t** link,
+                                    llg_sequence_attempt_t** tail,
+                                    llg_sequence_attempt_t* attempt) {
+    *link = attempt->next;
+    if (*tail == attempt) *tail = NULL;
+}
+
+static void sequence_list_fix_tail(llg_sequence_attempt_t* head,
+                                   llg_sequence_attempt_t** tail) {
+    if (*tail) return;
+    for (llg_sequence_attempt_t* item = head; item; item = item->next) *tail = item;
+}
+
+/* The antecedent of an implication attempt can match no more. With no match
+ * the attempt succeeds vacuously; otherwise it succeeds now only if every
+ * consequent it started has already succeeded (16.13.6). */
+static void sequence_antecedent_finished(llg_concurrent_assertion_t* assertion,
+                                         llg_sequence_attempt_t* attempt) {
+    llg_assertion_eval_t* eval = attempt->eval;
+    int vacuous = !attempt->matched && (!eval || !eval->decided);
+    int pass = attempt->matched && eval && !eval->decided && eval->pending == 0;
+    if (eval && (vacuous || pass)) eval->decided = 1;
+    sequence_attempt_discard(attempt);
+    if (vacuous) assertion_result(assertion, 1, 1);
+    else if (pass) assertion_result(assertion, 1, 0);
+}
+
 static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* assertion,
                                              uint64_t cycle,
                                              sv4_t* event_clock,
@@ -218,17 +262,22 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
     llg_sequence_attempt_t** antecedent_link = &assertion->sequence_antecedents;
     while (*antecedent_link) {
         llg_sequence_attempt_t* attempt = *antecedent_link;
+        if (attempt->eval && attempt->eval->decided) {
+            // The attempt already failed: its further matches change nothing.
+            sequence_attempt_unlink(antecedent_link, &assertion->sequence_antecedents_tail,
+                                    attempt);
+            sequence_attempt_discard(attempt);
+            continue;
+        }
         int accepted = 0;
         int alive = sequence_attempt_step(
             attempt, assertion, cycle, event_clock, event_edge, event_time, event_order,
             event_tick, &accepted);
         if (accepted && !sequence_spawn_consequents(assertion, attempt, cycle)) return 0;
         if (!alive) {
-            *antecedent_link = attempt->next;
-            if (assertion->sequence_antecedents_tail == attempt)
-                assertion->sequence_antecedents_tail = NULL;
-            if (!attempt->matched) assertion_result(assertion, 1, 1);
-            sequence_attempt_discard(attempt);
+            sequence_attempt_unlink(antecedent_link, &assertion->sequence_antecedents_tail,
+                                    attempt);
+            sequence_antecedent_finished(assertion, attempt);
             if (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active)
                 return 1;
         } else {
@@ -236,15 +285,15 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
         }
         if (g.finish) return 0;
     }
-    if (assertion->sequence_antecedents_tail == NULL) {
-        for (llg_sequence_attempt_t* item = assertion->sequence_antecedents;
-             item; item = item->next)
-            assertion->sequence_antecedents_tail = item;
-    }
+    sequence_list_fix_tail(assertion->sequence_antecedents,
+                           &assertion->sequence_antecedents_tail);
 
-    if (root_event && assertion->enabled && assertion->antecedent_sequence) {
+    int starts = root_event && assertion_attempt_starts(assertion);
+    if (starts && assertion->antecedent_sequence) {
         llg_sequence_attempt_t* attempt = sequence_attempt_new(
             assertion->antecedent_sequence, cycle, NULL, NULL);
+        attempt->eval = assertion_eval_new();
+        attempt->eval_owner = 1;
         int accepted = 0;
         int alive = sequence_attempt_step(
             attempt, assertion, cycle, event_clock, event_edge, event_time, event_order,
@@ -257,12 +306,11 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
             sequence_attempt_append(&assertion->sequence_antecedents,
                                     &assertion->sequence_antecedents_tail, attempt);
         } else {
-            if (!attempt->matched) assertion_result(assertion, 1, 1);
-            sequence_attempt_discard(attempt);
+            sequence_antecedent_finished(assertion, attempt);
             if (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active)
                 return 1;
         }
-    } else if (root_event && assertion->enabled) {
+    } else if (starts) {
         llg_sequence_attempt_t* attempt = sequence_attempt_new(
             assertion->consequent_sequence, cycle, NULL, NULL);
         sequence_attempt_append(&assertion->sequence_consequents,
@@ -272,6 +320,13 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
     llg_sequence_attempt_t** consequent_link = &assertion->sequence_consequents;
     while (*consequent_link) {
         llg_sequence_attempt_t* attempt = *consequent_link;
+        llg_assertion_eval_t* eval = attempt->eval;
+        if (eval && eval->decided) {
+            sequence_attempt_unlink(consequent_link, &assertion->sequence_consequents_tail,
+                                    attempt);
+            sequence_attempt_discard(attempt);
+            continue;
+        }
         int accepted = 0;
         int alive = sequence_attempt_step(
             attempt, assertion, cycle, event_clock, event_edge, event_time, event_order,
@@ -285,20 +340,27 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
             if (alive) {
                 consequent_link = &attempt->next;
             } else {
-                *consequent_link = attempt->next;
-                if (assertion->sequence_consequents_tail == attempt)
-                    assertion->sequence_consequents_tail = NULL;
+                sequence_attempt_unlink(consequent_link,
+                                        &assertion->sequence_consequents_tail, attempt);
                 sequence_attempt_discard(attempt);
             }
             if (g.finish) return 0;
             continue;
         }
         if (accepted || !alive) {
-            *consequent_link = attempt->next;
-            if (assertion->sequence_consequents_tail == attempt)
-                assertion->sequence_consequents_tail = NULL;
+            sequence_attempt_unlink(consequent_link, &assertion->sequence_consequents_tail,
+                                    attempt);
+            // One result per evaluation attempt: a failing consequent decides
+            // it at once; the last success decides it once the antecedent is
+            // exhausted (16.13.6, 16.15.3 "maximum of one per attempt").
+            int report = 1;
+            if (eval) {
+                report = !eval->decided &&
+                         (!accepted || (eval->pending == 1 && !eval->antecedent_live));
+                if (report) eval->decided = 1;
+            }
             sequence_attempt_discard(attempt);
-            assertion_result(assertion, accepted, 0);
+            if (report) assertion_result(assertion, accepted, 0);
             if (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active)
                 return 1;
             if (g.finish) return 0;
@@ -306,11 +368,8 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
             consequent_link = &attempt->next;
         }
     }
-    if (assertion->sequence_consequents_tail == NULL) {
-        for (llg_sequence_attempt_t* item = assertion->sequence_consequents;
-             item; item = item->next)
-            assertion->sequence_consequents_tail = item;
-    }
+    sequence_list_fix_tail(assertion->sequence_consequents,
+                           &assertion->sequence_consequents_tail);
     return 1;
 }
 
@@ -392,8 +451,7 @@ static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
         if (g.finish) return;
     }
 
-    if (!assertion->enabled ||
-        (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active)) return;
+    if (!assertion_attempt_starts(assertion)) return;
 
     int antecedent = assertion->antecedent == NULL ||
                      assertion->antecedent(assertion->data) != 0;

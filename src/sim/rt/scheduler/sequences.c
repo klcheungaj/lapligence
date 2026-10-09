@@ -89,6 +89,11 @@ static void free_sequence_pools(void) {
         free(g.sequence_attempt_pool);
         g.sequence_attempt_pool = next;
     }
+    while (g.assertion_eval_pool) {
+        llg_assertion_eval_t* next = g.assertion_eval_pool->next_free;
+        free(g.assertion_eval_pool);
+        g.assertion_eval_pool = next;
+    }
     while (g.assertion_clock_event_pool) {
         llg_assertion_clock_event_t* next = g.assertion_clock_event_pool->next;
         free(g.assertion_clock_event_pool);
@@ -642,8 +647,32 @@ static void sequence_attempt_append(llg_sequence_attempt_t** head,
     *tail = attempt;
 }
 
+static llg_assertion_eval_t* assertion_eval_new(void) {
+    llg_assertion_eval_t* eval = g.assertion_eval_pool;
+    if (eval) {
+        g.assertion_eval_pool = eval->next_free;
+        memset(eval, 0, sizeof(*eval));
+    } else {
+        eval = llg_checked_calloc(1, sizeof(*eval), "assertion evaluation attempt");
+    }
+    eval->antecedent_live = 1;
+    return eval;
+}
+
+static void assertion_eval_release(llg_sequence_attempt_t* attempt) {
+    llg_assertion_eval_t* eval = attempt->eval;
+    if (!eval) return;
+    attempt->eval = NULL;
+    if (attempt->eval_owner) eval->antecedent_live = 0;
+    else if (eval->pending) eval->pending--;
+    if (eval->antecedent_live || eval->pending) return;
+    eval->next_free = g.assertion_eval_pool;
+    g.assertion_eval_pool = eval;
+}
+
 static void sequence_attempt_discard(llg_sequence_attempt_t* attempt) {
     if (!attempt) return;
+    assertion_eval_release(attempt);
     sequence_tokens_free(attempt->tokens);
     sequence_endpoints_free(attempt->endpoints);
     if (attempt->locals) sv4_destroy_array(attempt->locals, attempt->graph->local_count);
@@ -675,6 +704,10 @@ static int sequence_spawn_consequents(llg_concurrent_assertion_t* assertion,
             antecedent->matched = 1;
             llg_sequence_attempt_t* consequent = sequence_attempt_new(
                 assertion->consequent_sequence, cycle, antecedent->graph, endpoint->locals);
+            if (antecedent->eval) {
+                consequent->eval = antecedent->eval;
+                antecedent->eval->pending++;
+            }
             consequent->launch_pending = 1;
             consequent->launch = *endpoint;
             consequent->launch.next = NULL;
