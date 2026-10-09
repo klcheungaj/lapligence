@@ -422,6 +422,9 @@ struct Capture {
   std::unordered_map<const DefinitionSymbol*, std::vector<const VirtualInterfaceType*>>
       virtualInterfaceTypes;
   std::unordered_map<const void*, uint64_t> semanticIds;
+  // Subroutines named by DPI-C export declarations, collected after
+  // elaboration (the compilation records them while elaborating).
+  std::unordered_set<const SubroutineSymbol*> dpiExports;
   std::vector<std::vector<LlgSlangSemanticEdge>> pendingEdges;
   // Small nodes retain cheap scans. Only high-fanout parents pay for indexes;
   // positions refer to the authoritative ordered edge vector, never its memory.
@@ -2309,6 +2312,8 @@ public:
         }
         result.definition_name = storeString(capture.output, cName);
       }
+      if (capture.dpiExports.count(&symbol))
+        result.auxiliary |= LLG_SLANG_SUBROUTINE_DPI_EXPORT;
     }
     if constexpr (std::same_as<T, ClassType>) {
       result.type_id = capture.type(symbol);
@@ -5904,6 +5909,10 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   ProfileStage elaborateStage("slang.elaborate");
   const Diagnostics& compilationDiagnostics = compilation.getAllDiagnostics();
   elaborateStage.finish();
+  for (const auto& exported : compilation.getDPIExports()) {
+    if (exported.subroutine)
+      capture.dpiExports.insert(exported.subroutine);
+  }
   ProfileStage instanceStage("wrapper.instances");
   DiagnosticEngine engine(sourceManager);
   auto compilationClient = std::make_shared<CaptureClient>(

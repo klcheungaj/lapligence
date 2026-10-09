@@ -320,6 +320,10 @@ impl Db {
                 )
             })
             .collect::<HashMap<_, _>>();
+        let has_dpi_exports = snapshot.semantic_nodes.iter().any(|semantic| {
+            semantic.kind == SemanticKind::Subroutine
+                && semantic.auxiliary & crate::ffi::slang::SUBROUTINE_DPI_EXPORT != 0
+        });
         for semantic in &snapshot.semantic_nodes {
             let id = NodeId::from_index(semantic.id as usize);
             let edges = semantic_edges(snapshot, semantic)?;
@@ -1184,6 +1188,7 @@ impl Db {
             modport_expressions,
             virtual_interface_targets,
             dpi_imports,
+            has_dpi_exports,
             implicit_nets,
             implicit_conversions,
             source_files: snapshot

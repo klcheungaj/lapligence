@@ -35,3 +35,40 @@ fn b3_resume_resensitize() {
         include_str!("fixtures/sim/lrm_decisions/B3_resume_resensitize.out"),
     );
 }
+
+#[test]
+fn b8_context_import_strobe() {
+    if !cfg!(unix) {
+        eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
+        return;
+    }
+    let directory = crate::sim_harness::TempDir::new("lrm-b8").expect("temporary directory");
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/lrm_decisions/B8_context_import_strobe.c");
+    let library = directory.path().join("libb8_context.so");
+    let compiler = std::env::var("LLG_CC")
+        .or_else(|_| std::env::var("CC"))
+        .unwrap_or_else(|_| "cc".to_owned());
+    let output = crate::sim_harness::run_command(
+        std::process::Command::new(compiler)
+            .args(["-shared", "-fPIC"])
+            .arg(&source)
+            .arg("-o")
+            .arg(&library),
+        std::time::Duration::from_secs(60),
+    )
+    .expect("C compiler for the DPI fixture");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let library = library.to_string_lossy();
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "B8_context_import_strobe",
+        include_str!("fixtures/sim/lrm_decisions/B8_context_import_strobe.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}

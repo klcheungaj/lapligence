@@ -299,6 +299,9 @@ pub struct Db {
     /// a side table so synthetic test nodes and the existing NodeKind ABI do
     /// not need a lossy placeholder field.
     dpi_imports: HashMap<NodeId, DpiImportInfo>,
+    /// Whether any subroutine is named by a DPI-C export declaration: only
+    /// then can a context import write SystemVerilog storage (SV 35.5.3).
+    has_dpi_exports: bool,
     /// Nets declared implicitly by Slang's semantic analysis.
     implicit_nets: HashSet<NodeId>,
     /// Context conversions inserted by Slang rather than written as casts.
@@ -359,6 +362,7 @@ impl Db {
             modport_expressions: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
             dpi_imports: HashMap::new(),
+            has_dpi_exports: false,
             implicit_nets: HashSet::new(),
             implicit_conversions: HashSet::new(),
             source_files: HashMap::new(),
@@ -429,6 +433,7 @@ impl Db {
             modport_expressions: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
             dpi_imports: HashMap::new(),
+            has_dpi_exports: false,
             implicit_nets: HashSet::new(),
             implicit_conversions: HashSet::new(),
             source_files: HashMap::new(),
@@ -596,6 +601,12 @@ impl Db {
     /// Return the owned DPI-C import contract for a subroutine declaration.
     pub fn dpi_import(&self, id: NodeId) -> Option<&DpiImportInfo> {
         self.dpi_imports.get(&id)
+    }
+
+    /// Whether the design declares any DPI-C export, through which foreign
+    /// code called by a context import can reach SystemVerilog subroutines.
+    pub fn has_dpi_exports(&self) -> bool {
+        self.has_dpi_exports
     }
 
     pub fn arrays(&self) -> &HashMap<NodeId, ArrayMeta> {

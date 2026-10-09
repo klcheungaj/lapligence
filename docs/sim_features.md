@@ -1425,9 +1425,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `$monitor`/`$strobe` arguments run them in Postponed only when their stores
   target the helpers' own storage, applied without publication; a visible write
   rejects (SV 4.4.2.9). Imported (DPI) functions in event expressions run in the
-  waiting process; in `$monitor`/`$strobe` a non-context import is admitted and
-  a context import, which may write through exports, rejects (SV 35.5.3,
-  4.4.2.9; [sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)).
+  waiting process; in `$monitor`/`$strobe` an import is admitted unless it is a
+  context import in a design that declares DPI exports, through which it may
+  write (SV 35.5.3, 4.4.2.9; [sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)).
   Suspension and arbitrary shared/native captures reject.
   Unique/priority diagnostics remain active; side-effect-free source alone does
   not establish eligibility.

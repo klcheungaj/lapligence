@@ -361,7 +361,8 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
                 | SUBROUTINE_CONSTRUCTOR
                 | SUBROUTINE_DPI_IMPORT
                 | SUBROUTINE_DPI_CONTEXT
-                | SUBROUTINE_DPI_PURE;
+                | SUBROUTINE_DPI_PURE
+                | SUBROUTINE_DPI_EXPORT;
             node.auxiliary & !allowed == 0
                 && (node.auxiliary & (SUBROUTINE_DPI_CONTEXT | SUBROUTINE_DPI_PURE) == 0
                     || node.auxiliary & SUBROUTINE_DPI_IMPORT != 0)

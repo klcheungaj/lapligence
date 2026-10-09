@@ -21,6 +21,7 @@ processes cannot reorder the output.
 | `edges` | §9.4.2 Table 9-2, §9.4.2.3 | `s`: 0→x, x→1 posedges (1, 2); 1→z, z→0 negedges (3, 4); 0→z posedge (5); z→x none (6); x→1 posedge (7); 1→x, x→0 negedges (8, 9); `edge` is either. `posedge vec` uses the LSB: 0→0 none (10), 0→x and x→1 (11, 12), 1→1 none (13). `posedge (a & b)`: 0→x (14), x→1 (15), 1→0 none (16). `iff` is evaluated when the event occurs: `c` changes at 17 with `en = 0`; `en` alone (18) is no event; 19 and 20 with `en = 1` (20 is also a posedge); at 21 `en` falls before `c` changes and at 22 `c` changes before `en` rises, so neither qualifies; 23. |
 | `helper_activations` | §§9.4.2.3, 9.6.2, 13.3.2, 13.5.2 | `watch(5, "A")` waits for `sig > 5`; `sig = 3` at 1 does not qualify; `disable first` at 2 ends it, so `sig = 6` at 4 prints nothing for A. `watch(1, "B")` qualifies at 3 with its own `local_lim`. `@(pick(arr, i))` (const ref helper): 5 writes an unselected element, 6 (`arr[0] = 7`), 7 (`i = 1`, 7 to 9), 8 unselected. `local_event` (9) waits on its own automatic `a`: 2 at 10 fails the qualifier, 1 at 11 prints. `drive_local` (12) calls `rise(l, 1)`, which waits on `posedge s[0]` of its `ref` formal and recurses: 13 (0 to 1), 14 falls, 15 (0 to 1). `above(arr[2], 6)` (15) follows the element through its `ref` formal: 5 at 16 fails, 17 writes another element, 7 at 18 prints. |
 | `foreign_helpers` | §§9.4.2, 35.5.2, 35.5.3, 21.2.2 | `dpi_twice` is pure: `a = 1` at 1 changes it (2), an equal store at 2 is no event, 3 (6). `dpi_count(a) > 2` is true at 3. `$strobe` at 4 calls the non-context import in Postponed and prints `count=3`. The import's call count is library state, not observed. |
+| `context_strobe` | §§4.4.2.9, 35.5.3 | The design declares no DPI export, so the context import `dpi_twice` has no SystemVerilog subroutine to call and can write nothing; `$strobe` at 1 evaluates it in Postponed after `a = 5`: `strobe=10`. Quotes below. |
 | `composition` | §§13.5.1, 25.9, 8.4, 27.4 | `watch(h, 3)` copies the handle (object A) at the call; `h = other` (1) and writes to `other` (2, 4) do not move its waits; `keep.v = 1` writes A at 3, and `keep.v = 3` completes its wait at 9. `port.vb` names `lane[0].b`: 5 writes `lane[1]`; 6 (0 to 4); assigning `port.vb = lane[1].b` at 7 changes the observed value (4 to 7); 8 writes `lane[0]`. |
 
 Adopted FND-002 witnesses (source unchanged): `class_sensitivity_witness`
@@ -32,7 +33,7 @@ any-change and the edge of a Boolean derived from a real are legal).
 
 ## Negatives
 
-All are language rules, rejected in both optimizer modes:
+Language rules, rejected in both optimizer modes:
 
 - `neg_chandle_event`: chandles shall not be used in event expressions
   (§6.14), unlike class handles. Also the FND-002 `neg_chandle_event` witness.
@@ -40,9 +41,35 @@ All are language rules, rejected in both optimizer modes:
   frontend.
 - `neg_output_helper`: a function with output, inout or ref formals in an event
   expression (§13.4), reported by the frontend.
-- `neg_context_strobe`: a context import may write SystemVerilog storage
-  through exported subroutines (§35.5.3), which is illegal in the read-only
-  Postponed region where `$strobe` evaluates (§4.4.2.9).
+
+Implementation restriction (rejected in both optimizer modes):
+
+- `neg_context_strobe`: the design exports `set_a`, so the context import
+  called by `$strobe` may write `a` through it, and llg cannot see whether the
+  foreign code does. Context imports in `$monitor`/`$strobe` are rejected
+  only when the design declares a DPI export (`context_strobe` is the legal
+  counterpart).
+
+§4.4.2.9 (`SystemVerilog-1800-2009.txt` L3212-3214):
+
+> No new value changes are allowed to happen in the current time slot once the Postponed region is reached.
+> Within this region, it is illegal to write values to any net or variable or to schedule an event in any previous
+> region within the current time slot.
+
+§35.5.3 (L55794-55795, L55821-55826):
+
+> import call chain. Since a noncontext imported DPI subroutine cannot make a call to a SystemVerilog export
+> subroutine, the behavior of making any such calls in the DPI import call chain is an error.
+
+> optimizations. An imported subroutine not specified as context shall not access any data objects from
+> SystemVerilog other than its actual arguments. Only the actual arguments can be affected (read or written)
+> by its call. Therefore, a call of a noncontext subroutine is not a barrier for optimizations. A context imported
+> subroutine, however, can access (read or write) any SystemVerilog data objects by calling VPI or by calling
+> an export subroutine.
+
+The text forbids writes in Postponed, not calling a context import. llg does
+not inspect foreign code: without an export, the remaining path is VPI, which
+this check does not cover.
 
 ## Policies
 
