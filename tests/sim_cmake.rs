@@ -932,13 +932,14 @@ fn fresh_model_trees_reuse_the_toolchain_detection_seed() {
 /// A different compiler is a different key: its fresh tree never reuses the
 /// first compiler's detection, and records its own compiler.
 ///
-/// The seed key holds the compiler spelling and the identity text probed from
-/// it (spelling, `--version`, target), so two spellings never share a seed even
-/// when they are the same compiler: macOS installs Apple Clang as both
-/// `/usr/bin/gcc` and `/usr/bin/clang`, and each still gets its own seed and
-/// tree. The compiler ID a tree records is whatever its compiler reports
-/// (`GNU`, `Clang` or `AppleClang`), so it is compared with the macro probe
-/// rather than with the name the compiler was started under.
+/// The seed key holds the compiler spelling as well as its probed identity
+/// (`--version` text and target). That is required, not just conservative: a
+/// seed's `CMakeCCompiler.cmake` records the compiler path, so two spellings
+/// of one compiler must not share a seed. macOS installs Apple Clang as both
+/// `/usr/bin/gcc` and `/usr/bin/clang`; each still gets its own seed and a
+/// tree that names it. The compiler ID a tree records is whatever its compiler
+/// reports (`GNU`, `Clang` or `AppleClang`), so it is compared with a macro
+/// probe rather than with the name the compiler was started under.
 #[cfg(unix)]
 #[test]
 fn a_changed_compiler_does_not_reuse_another_toolchain_seed() {
