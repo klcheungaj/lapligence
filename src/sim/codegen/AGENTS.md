@@ -380,7 +380,10 @@ enter methods. A read no wait can observe rejects with its location, never
 compiles to a wait that cannot wake (a missed dependency is a hang). Only waits that
 re-arm after every wake (`wait`, process-evaluated event plans) may use it, so
 such event controls, foreign functions and `ref`-formal selects take the
-process plan. always_comb/`@*` never add class (§9.2.2.2.1) or
+process plan. always_comb/always_latch add nothing for a class property path or
+class method call, not even the handle variable (§9.2.2.2.1;
+`comb_excludes_class_references`); `@*` adds the handle identifier `h` of `h.x`
+(§9.4.2.2: every identifier in the statement). Neither adds class (§9.2.2.2.1) or
 virtual-interface (§25.9) storage; chandle event expressions reject (§6.14). Copy supported automatic evaluator captures and
 transitively reject disallowed callback effects/captures. Named/mixed events retain
 identity and atomic registration. `->>` captures delay at issue and queues NBA;

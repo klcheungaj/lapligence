@@ -112,3 +112,11 @@ fn ab_n1_suspended_queue_waiter() {
         include_str!("fixtures/sim/lrm_decisions/AB-N1_suspended_queue_waiter.out"),
     );
 }
+
+#[test]
+fn ab_n2_always_comb_class_reference() {
+    check(
+        "AB-N2_always_comb_class_reference",
+        include_str!("fixtures/sim/lrm_decisions/AB-N2_always_comb_class_reference.out"),
+    );
+}

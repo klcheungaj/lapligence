@@ -15,9 +15,10 @@
 //! whose changes cannot be observed this way is rejected with its location:
 //! a missed dependency would leave the wait blocked forever.
 //!
-//! `always_comb` adds nothing for class objects (SV 9.2.2.2.1), and
-//! virtual-interface members cannot be used in sensitivity lists (SV 25.9),
-//! so implicit sensitivity keeps only the handle variables it reads.
+//! `always_comb` adds nothing for class objects, not even the handle
+//! variables of property paths (SV 9.2.2.2.1), `@*` keeps those handle
+//! identifiers (SV 9.4.2.2), and virtual-interface members cannot be used
+//! in sensitivity lists (SV 25.9).
 
 use super::*;
 use crate::sim::ir::IrNativeAccessKind;

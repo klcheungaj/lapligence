@@ -47,7 +47,15 @@ fn handle_formals_and_class_held_interfaces_compose() {
 #[test]
 fn always_comb_and_at_star_keep_distinct_sensitivity() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_013/comb_sensitivity.out");
-    sim_cli::run_case(SUITE, "comb_sensitivity", expected, "", &[]);
+    // The always_comb that reads only `h.x` has an empty sensitivity list
+    // (SV 9.2.2.2.1 adds nothing for class references), which llg reports.
+    sim_cli::run_case(
+        SUITE,
+        "comb_sensitivity",
+        expected,
+        "",
+        &["combinational always process in `tb` reads no signals; evaluating once at time 0"],
+    );
     sim_cli::run_case_backend_parity(SUITE, "comb_sensitivity", expected, &[], &[]);
 }
 

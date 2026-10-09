@@ -143,7 +143,14 @@ impl<'a> Codegen<'a> {
         process_kind: Option<AlwaysKind>,
     ) -> Result<Vec<IrDependency>, String> {
         let mut reads = if process_kind == Some(AlwaysKind::Always) {
+            // SV 9.4.2.2: `@*` adds every identifier in the statement, so a
+            // handle `h` in `h.x` stays in its list.
             self.collect_at_star_signals(scope_path, root)?
+        } else if matches!(process_kind, Some(AlwaysKind::Comb | AlwaysKind::Latch)) {
+            let previous = self.comb_excludes_class_references.replace(true);
+            let reads = self.collect_read_signals(scope_path, root);
+            self.comb_excludes_class_references.set(previous);
+            reads?
         } else {
             self.collect_read_signals(scope_path, root)?
         };
@@ -1355,6 +1362,38 @@ impl<'a> Codegen<'a> {
                     include_function_bodies,
                     bindings,
                 );
+            }
+        }
+        if self.comb_excludes_class_references.get() {
+            // SV 9.2.2.2.1: a class property path adds nothing, not even its
+            // handle variables; a class method call adds only its arguments.
+            if matches!(self.kind(node), NodeKind::Expr(ExprKind::HierPath { .. }))
+                && self.class_field_target(node).is_some()
+            {
+                return Ok(());
+            }
+            if let NodeKind::MethodCall {
+                receiver: Some(receiver),
+                ..
+            } = self.kind(node)
+            {
+                if self.is_class_method_call(node) {
+                    let receiver = *receiver;
+                    for child in &self.node(node).children {
+                        if *child != receiver {
+                            self.walk_read_signals_bound(
+                                scope_path,
+                                *child,
+                                seen,
+                                visited,
+                                out,
+                                include_function_bodies,
+                                bindings,
+                            )?;
+                        }
+                    }
+                    return Ok(());
+                }
             }
         }
         match self.kind(node) {
