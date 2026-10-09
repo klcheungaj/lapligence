@@ -888,7 +888,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   control is reached and after each dependency change (§9), including lists
   with declared named events (trigger counts) and real values (IEEE bit
   patterns). Event controls and level waits on class properties (`@(h.x)`,
-  `hs[i].x`, `n.next.x`, `posedge h.w[0]`), nonvirtual class methods,
+  `hs[i].x`, `n.next.x`, `posedge h.w[0]`, string and handle properties
+  `@(h.s)`, `wait (h.nxt != null)`), static class properties, class storage
+  read inside called functions and nonvirtual methods (through class-handle
+  formals, `this`, handle properties and module handles; methods' module
+  storage reads too), nonvirtual class methods,
   virtual-interface members (`@(posedge v.clk)`), foreign functions and
   selects or qualifiers over a typed task's `ref` formal are evaluated by the
   waiting process, which re-arms on the storage the handle, selector or
@@ -901,6 +905,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   formals (§13.4) reject as language rules. Event handles or array-reading
   helpers in named-event lists with process-evaluated sources, string or
   handle `ref` formals, virtual methods and helper forms outside §9 reject.
+  Reads whose changes no wait can observe reject with their location instead
+  of never waking: per-object container properties, mailbox/semaphore
+  queries, callee reads through other handles (locals, container elements)
+  or virtual-interface handles, and virtual methods
+  ([ki_lrm_audit_b](../tests/fixtures/sim/feature_completion/ki_lrm_audit_b/readme.md)).
   V §§9.7.2–9.7.4 **[1995]**.
 - 🟨 **Intra-assignment controls** — Packed/real/shortreal RHS values are captured
   immediately. Blocking assignments suspend and use update-time selectors; NBAs

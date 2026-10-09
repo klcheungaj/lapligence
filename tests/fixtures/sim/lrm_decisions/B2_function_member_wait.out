@@ -1,0 +1,3 @@
+2: @(get_x(h)) resumed, value 1
+3: wait (get_x(h) == 2) resumed
+4: done

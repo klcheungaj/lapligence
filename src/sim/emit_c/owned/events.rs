@@ -211,6 +211,11 @@ impl Frame<'_, '_> {
                     IrClassFieldType::Real { .. } => format!(
                         "{{ .real = llg_class_real_dependency({receiver}, {class}, {field}) }}"
                     ),
+                    // A string property: its own marker, allocated on the
+                    // first wait that observes it.
+                    IrClassFieldType::String => format!(
+                        "{{ .sig = llg_class_string_dependency({receiver}, {class}, {field}) }}"
+                    ),
                     _ => format!(
                         "{{ .sig = llg_class_packed_dependency({receiver}, {class}, {field}) }}"
                     ),

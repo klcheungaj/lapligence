@@ -956,6 +956,22 @@ mixed named-event wait carry descriptor dependencies.
 
 `tests/fixtures/sim/feature_completion/sim_009/neg_string_event_control.sv`.
 
+## Waits on storage without a change notification
+
+**Status:** open (LRM audit part B).
+
+A `wait` condition or event expression that reads storage publishing no
+change is rejected at compile time with its source location ("cannot be
+observed by a wait or event expression"), because the wait could never
+resume: per-object container properties (`h.q.size()`, `h.fa[1]`), mailbox
+and semaphore queries (`m.num()`), class properties a called function reads
+through a handle other than a class-handle formal, `this`, a handle property
+or a module/static handle (for example a local copy `d = c; d.x`),
+virtual-interface members read inside a called function, and virtual
+methods. SV 9.4.2 makes these legal. Direction: give per-object containers
+and mailbox/semaphore state change markers, and bind callee locals by
+dataflow. Reproduce: `tests/fixtures/sim/feature_completion/ki_lrm_audit_b/neg_*.sv`.
+
 ## Handle-property rebinding outside direct assignments
 
 **Status:** open (SIM-013 boundary).

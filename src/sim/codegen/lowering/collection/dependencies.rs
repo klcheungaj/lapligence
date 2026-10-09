@@ -2032,7 +2032,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn activation_dependency(&self, dependency: &IrDependency) -> bool {
+    pub(super) fn activation_dependency(&self, dependency: &IrDependency) -> bool {
         let array = match dependency {
             IrDependency::ArrayContents(array) | IrDependency::ArrayElement { array, .. } => *array,
             IrDependency::PackedRange { storage, .. } => {

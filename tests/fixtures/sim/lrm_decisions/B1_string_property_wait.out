@@ -1,0 +1,3 @@
+2: @(h.s) resumed, h.s = b
+3: wait (h.s == "go") resumed
+4: done

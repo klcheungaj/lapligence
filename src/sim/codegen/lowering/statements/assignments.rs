@@ -918,6 +918,12 @@ impl EmitCtx<'_, '_> {
         let count =
             count.map(|count| self.capture_event_assignment_expr(frame, &mut captures, count));
         let plan = self.process_event_plan(h, specs)?;
+        if plan.arm.iter().any(|arm| arm.native.is_some()) {
+            return Err(format!(
+                "a nonblocking event control on a string or class-handle expression that the waiting process evaluates is not supported in `{}`",
+                self.cg.source_path(&self.path)
+            ));
+        }
         let armed = plan
             .arm
             .iter()
