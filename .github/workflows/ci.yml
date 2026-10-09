@@ -68,6 +68,7 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts -p test_run_tests.py
           python3 -m unittest discover -s scripts -p test_ci_cache.py
+          python3 -m unittest discover -s scripts -p test_ci_build_timings.py
 
       - name: Check the bundled GMP tables against vendor/gmp
         run: python3 scripts/gmp_tables.py --check
@@ -549,7 +550,10 @@ jobs:
             runner: windows-11-vs2026-arm
             platform: windows
             python_arch: arm64
-            msvc_arch: amd64_arm64
+            # Native ARM64-hosted cl/link: the amd64_arm64 cross tools are x64
+            # programs that run under emulation on this runner, which made
+            # every generated-model configure and compile several times slower.
+            msvc_arch: arm64
             target: aarch64-pc-windows-msvc
           - name: macOS arm64
             runner: macos-15
@@ -613,9 +617,12 @@ jobs:
         run: git apply --whitespace=nowarn --directory=vendor/libfst patches/libfst/libfst-local-changes.patch
 
       # Extracting into the checkout restores target/ at the build job's
-      # compile-time paths.
+      # compile-time paths. Every model build appends its phase timings to
+      # LLG_BUILD_TIMINGS (src/sim/build/timings.rs), summarized below.
       - name: Run release suite
         shell: bash
+        env:
+          LLG_BUILD_TIMINGS: ${{ runner.temp }}/llg-build-timings.tsv
         run: >-
           cargo nextest run --no-fail-fast
           --archive-file "$RUNNER_TEMP/nextest-archive/nextest-archive.tar.zst"
@@ -623,16 +630,35 @@ jobs:
 
       # Whether fresh model trees reused CMake toolchain detection: each seed
       # prints its CMake version (ready) or why it was refused (rejected).
+      # A diagnostic only: it never fails the job.
       - name: Report CMake toolchain seeds
         if: always()
         shell: bash
         run: |
-          find target -mindepth 2 -maxdepth 4 -type d -path '*/cmake-toolchain/*' | while read -r seed; do
+          find target -mindepth 2 -maxdepth 4 -type d -path '*/cmake-toolchain/*' 2>/dev/null | while read -r seed; do
             for marker in ready rejected; do
-              [ -f "$seed/$marker" ] && echo "$seed $marker: $(head -n 1 "$seed/$marker")"
+              if [ -f "$seed/$marker" ]; then
+                echo "$seed $marker: $(head -n 1 "$seed/$marker")"
+              fi
             done
-          done
-          true
+          done || true
+
+      # Where model-build time went: per-phase sums and medians, and how often
+      # the runtime archive and toolchain seed were reused.
+      - name: Report model build timings
+        if: always()
+        shell: bash
+        run: python scripts/ci_build_timings.py "$RUNNER_TEMP/llg-build-timings.tsv" || true
+
+      # Real-time scanning of build trees would slow every compile; record the
+      # runner's Defender state so a slow run can be checked against it.
+      - name: Report Windows Defender state
+        if: always() && matrix.platform == 'windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Get-MpComputerStatus | Format-List RealTimeProtectionEnabled, AntivirusEnabled, AMRunningMode
+          (Get-MpPreference).ExclusionPath
 
       - name: Report runner resources
         if: always()
@@ -913,6 +939,7 @@ jobs:
             --volume "$RUNNER_TEMP/ccache-bin:/ccache-bin:ro" \
             --workdir /workspace \
             --env NEXTEST_PROFILE \
+            --env LLG_BUILD_TIMINGS=/workspace/target/llg-build-timings.tsv \
             --env LLG_INSTALL="${{ matrix.install }}" \
             "${{ matrix.image }}" sh -euxc '
               eval "$LLG_INSTALL"
@@ -927,6 +954,7 @@ jobs:
                 --archive-file /nextest-archive/nextest-archive.tar.zst \
                 --workspace-remap /workspace --extract-to /workspace || status=$?
               python3 scripts/ci_ccache.py stats
+              python3 scripts/ci_build_timings.py "$LLG_BUILD_TIMINGS" || true
               exit $status
             '
 
