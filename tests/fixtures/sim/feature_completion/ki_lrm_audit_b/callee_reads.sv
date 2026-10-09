@@ -54,39 +54,39 @@ module tb;
     fork
       begin
         wait (fx(h) == 1);
-        l_fx = $sformatf("%s %0t", l_fx, $time);
+        l_fx = $sformatf("%s %0d", l_fx, $time);
       end
       forever begin
         @(fx(h));
-        l_at_fx = $sformatf("%s %0t", l_at_fx, $time);
+        l_at_fx = $sformatf("%s %0d", l_at_fx, $time);
       end
       begin
         wait (fnx(h) == 2);
-        l_fnx = $sformatf("%s %0t", l_fnx, $time);
+        l_fnx = $sformatf("%s %0d", l_fnx, $time);
       end
       begin
         wait (fget(h) == 3);
-        l_fget = $sformatf("%s %0t", l_fget, $time);
+        l_fget = $sformatf("%s %0d", l_fget, $time);
       end
       begin
         wait (fwrap(h) == 4);
-        l_fwrap = $sformatf("%s %0t", l_fwrap, $time);
+        l_fwrap = $sformatf("%s %0d", l_fwrap, $time);
       end
       begin
         wait (h.nx() == 5);
-        l_nx = $sformatf("%s %0t", l_nx, $time);
+        l_nx = $sformatf("%s %0d", l_nx, $time);
       end
       begin
         wait (h.gvx() == 16);
-        l_gvx = $sformatf("%s %0t", l_gvx, $time);
+        l_gvx = $sformatf("%s %0d", l_gvx, $time);
       end
       begin
         wait (fglobal() == 7);
-        l_global = $sformatf("%s %0t", l_global, $time);
+        l_global = $sformatf("%s %0d", l_global, $time);
       end
       begin
         wait (fstatic() == 8);
-        l_static = $sformatf("%s %0t", l_static, $time);
+        l_static = $sformatf("%s %0d", l_static, $time);
       end
     join_none
     #1 h.x = 1;

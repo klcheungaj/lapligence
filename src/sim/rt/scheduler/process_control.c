@@ -340,8 +340,15 @@ void llg_process_resume(llg_proc_t* self, llg_process_handle_t* handle) {
     if (!target->suspended || target->killed || target->completed) return;
     target->suspended = 0;
     if (target->wait.kind != W_NONE) {
-        // The outstanding condition remains registered and must be satisfied
-        // before this process becomes runnable again.
+        // SV 9.7: the process is resensitized to its event expression or
+        // keeps waiting for its condition; the registration is still live.
+        // A process that evaluates its event expression itself must take
+        // its armed values again when it withheld an occurrence.
+        if (target->wait_control == LLG_WAIT_EVENT_REFRESH && target->wait_missed) {
+            target->wait_refreshed = 1;
+            wake_proc(target);
+            return;
+        }
         process_status_set(target, LLG_PROCESS_WAITING);
         return;
     }

@@ -647,6 +647,7 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
             llg_wait_inline_payload_t* single = &w->payload.single;
             if (single->specs[0].sig == target) {
                 wake = ev_inline_matches(w, *target, single->specs[0].kind);
+                if (wake && wait_held_by_suspension(w)) wake = 0;
                 if (!wake) {
                     if (wait_inline_fits(target)) wait_inline_copy(w, target);
                     else wait_inline_promote(w, target);
@@ -696,7 +697,7 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
             llg_wait_level_payload_t* level = &w->payload.rare->level;
             if (level->sig == target && sv4_same(*target, level->value)) wake = 1;
         }
-        if (wake) wake_proc(w->proc);
+        if (wake && !wait_held_by_suspension(w)) wake_proc(w->proc);
     }
     if (source) wait_subscription_unlink(&cursor);
     deferred_trigger_source_change(target, NULL);
@@ -852,7 +853,7 @@ static void real_write(double* target, double value) {
                 if (expression_update(w, i, NULL, target)) wake = 1;
             }
         }
-        if (wake) wake_proc(w->proc);
+        if (wake && !wait_held_by_suspension(w)) wake_proc(w->proc);
     }
     if (source) wait_subscription_unlink(&cursor);
     deferred_trigger_source_change(NULL, target);

@@ -483,7 +483,10 @@ impl Frame<'_, '_> {
                     format!("llg_arm_time(self, {ticks})"),
                 )?;
             }
-            IrStmt::WaitAny { sens } => {
+            IrStmt::WaitAny { sens, refresh } => {
+                if *refresh {
+                    self.line("llg_wait_refresh_on_resume(self);");
+                }
                 self.wait_any(sens, None, SuspensionOperation::EventWait)?
             }
             IrStmt::WaitCond { cond, sens, body } => {
@@ -495,7 +498,12 @@ impl Frame<'_, '_> {
                 self.line("}");
                 self.block(body)?;
             }
-            IrStmt::WaitEvents { specs } => self.wait_events(specs)?,
+            IrStmt::WaitEvents { specs, refresh } => {
+                if *refresh {
+                    self.line("llg_wait_refresh_on_resume(self);");
+                }
+                self.wait_events(specs)?
+            }
             IrStmt::ClockingSample {
                 source,
                 sample,

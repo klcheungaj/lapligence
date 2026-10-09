@@ -63,3 +63,11 @@ fn neg_virtual_method() {
         "the storage a virtual method reads",
     );
 }
+
+#[test]
+fn resume_resensitizes_event_controls_and_completes_satisfied_waits() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_lrm_audit_b/resume_resensitize.out");
+    sim_cli::run_case_backend_parity(SUITE, "resume_resensitize", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "resume_resensitize", expected);
+}

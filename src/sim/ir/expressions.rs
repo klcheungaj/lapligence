@@ -88,6 +88,10 @@ pub enum IrRuntimeQuery {
     /// effectful force site (1-bit unsigned two-state). The site's guard
     /// process re-evaluates the source only while this holds.
     ForceSourceActive(usize),
+    /// Whether the current process's last wait ended because `resume()`
+    /// resensitized it after withholding an event while it was suspended
+    /// (1-bit unsigned two-state; see [`IrStmt::WaitAny::refresh`]).
+    WaitRefreshed,
 }
 
 /// Structural expression kinds.  The self-determined width/signedness/fill of

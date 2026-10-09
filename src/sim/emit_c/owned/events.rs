@@ -263,10 +263,14 @@ impl Frame<'_, '_> {
                 values.len(),
                 &values.join(", "),
             );
-            self.await_arm(
-                operation,
-                format!("llg_arm_any_dependencies(self, {array}, {})", sens.len()),
-            )?;
+            // Event controls (explicit, implicit or a process trigger) are
+            // resensitized by resume(); a wait condition keeps its wake.
+            let arm = if operation == SuspensionOperation::ConditionWait {
+                "llg_arm_any_dependencies"
+            } else {
+                "llg_arm_event_dependencies"
+            };
+            self.await_arm(operation, format!("{arm}(self, {array}, {})", sens.len()))?;
         }
         self.cancellation_check_covering(cancellation_mark)
     }
@@ -277,6 +281,11 @@ impl Frame<'_, '_> {
     /// with no ownership transfer, so they are legal wherever a value is.
     pub(super) fn runtime_query(&mut self, query: &IrRuntimeQuery) -> Result<Value, String> {
         Ok(match query {
+            IrRuntimeQuery::WaitRefreshed => self.value(
+                "sv4_from_u64(llg_wait_refreshed(self) ? 1ULL : 0ULL, 1, 0)".to_owned(),
+                1,
+                false,
+            ),
             IrRuntimeQuery::EventTriggerCount(event) => {
                 let event = self.event_address(&IrEventRef::Static(*event))?;
                 self.value(

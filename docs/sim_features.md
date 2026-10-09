@@ -1820,9 +1820,12 @@ These are bounded implementations, not full verification-infrastructure support.
   `get_randstate` and `set_randstate` act on the named process's stream
   ([sim_015](../tests/fixtures/sim/feature_completion/sim_015/readme.md)).
   Methods through a null handle and `await` on the current process end the
-  simulation with an error. Handles in plain storage stay allocated until
-  teardown, an event that fires while its waiter is suspended is delivered on
-  resume, and `status()` in wait or sensitivity expressions, `ref` formals
+  simulation with an error. `resume()` resensitizes a process suspended on an
+  event control (an occurrence while it is suspended is not delivered), and
+  completes a wait condition that became true or a delay that transpired
+  ([ki_lrm_audit_b](../tests/fixtures/sim/feature_completion/ki_lrm_audit_b/readme.md)).
+  Handles in plain storage stay allocated until
+  teardown, and `status()` in wait or sensitivity expressions, `ref` formals
   bound to plain storage and `try_get` into process variables reject
   ([known issues](known_issues.md#process-handles-in-plain-handle-storage-stay-allocated-until-teardown)).
   SV §9.7 **[SV-2005]**.

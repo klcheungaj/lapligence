@@ -343,6 +343,7 @@ impl Validator<'_> {
                         self.validate_event_ref(&IrEventRef::Static(*event), formals, path)?;
                         64
                     }
+                    IrRuntimeQuery::WaitRefreshed => 1,
                     IrRuntimeQuery::ForceSourceActive(signal) => {
                         if self.model.signals.get(*signal).is_none() {
                             return self

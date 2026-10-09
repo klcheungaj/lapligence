@@ -178,6 +178,7 @@ fn generated_private_composite_callback_preserves_event_values_and_cleanup() {
                 },
                 IrEdge::Any,
             )],
+            refresh: false,
         };
         let display = IrStmt::Display {
             fmt: "\"%0d\"".into(),

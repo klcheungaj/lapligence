@@ -27,3 +27,11 @@ fn b2_function_member_wait() {
         include_str!("fixtures/sim/lrm_decisions/B2_function_member_wait.out"),
     );
 }
+
+#[test]
+fn b3_resume_resensitize() {
+    check(
+        "B3_resume_resensitize",
+        include_str!("fixtures/sim/lrm_decisions/B3_resume_resensitize.out"),
+    );
+}

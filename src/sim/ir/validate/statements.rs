@@ -61,7 +61,7 @@ impl Validator<'_> {
         path: &str,
     ) -> ValidationResult {
         // A native-access dependency is resolved each time its wait arms.
-        if let IrStmt::WaitAny { sens } | IrStmt::WaitCond { sens, .. } = stmt {
+        if let IrStmt::WaitAny { sens, .. } | IrStmt::WaitCond { sens, .. } = stmt {
             for (index, dependency) in sens.iter().enumerate() {
                 if matches!(dependency, IrDependency::NativeAccess(_))
                     && !self.valid_dependency(dependency)
@@ -846,7 +846,7 @@ impl Validator<'_> {
                     )?;
                 }
             }
-            IrStmt::WaitEvents { specs } => {
+            IrStmt::WaitEvents { specs, .. } => {
                 for (idx, (source, edge)) in specs.iter().enumerate() {
                     if let IrWaitSrc::Event(event) | IrWaitSrc::FilteredEvent { event, .. } = source
                     {

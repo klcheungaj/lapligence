@@ -246,6 +246,23 @@ llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
     return LLG_CO_ARM_SUSPEND;
 }
 
+llg_co_arm_t llg_arm_event_dependencies(llg_proc_t* self,
+                                        const llg_wait_dependency_t* deps,
+                                        int n) {
+    if (self) self->next_wait_event = 1;
+    llg_co_arm_t arm = llg_arm_any_dependencies(self, deps, n);
+    if (self) self->next_wait_event = 0;
+    return arm;
+}
+
+void llg_wait_refresh_on_resume(llg_proc_t* self) {
+    if (self) self->next_wait_refresh = 1;
+}
+
+int llg_wait_refreshed(const llg_proc_t* self) {
+    return self && self->wait_refreshed;
+}
+
 llg_co_arm_t llg_arm_any_events(llg_proc_t* self,
                                 const llg_event_spec_t* specs, int n) {
     llg_runtime_service_enter(self, "edge wait");

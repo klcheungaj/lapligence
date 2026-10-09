@@ -39,11 +39,25 @@ different processes in one time step cannot reorder the output.
 > The wait statement shall evaluate a condition; and, if it is false, the procedural statements following the wait
 > statement shall remain blocked until that condition becomes true before continuing.
 
+§9.7, L12644-12648:
+
+> The resume() function restarts a previously suspended process. Calling resume on a process that was sus-
+> pended while blocked on another condition shall resensitize the process to the event expression or to wait for
+> the wait condition to become true or for the delay to expire. If the wait condition is now true or the original
+> delay has transpired, the process is scheduled onto the Active or Reactive region to continue its execution in
+> the current time step.
+
+§9.7, L12617-12618 (the `process::state` values printed):
+
+> —      WAITING means the process is waiting in a blocking statement.
+> —      SUSPENDED means the process is stopped awaiting a resume.
+
 ## Positives
 
 | Fixture | Derivation |
 | --- | --- |
 | `string_props` | `h` names `a` (`s = "x"`); `b.s = "y"`. 1: an equal store to `a.s` is no change (L11830-11831 compares with the previous value), so no event. 2: `b` is not named. 3: `h = b` changes `h.s` from `"x"` to `"zz"`: `@(h.s)` wakes. 4: `h.s = "go"`: `@(h.s)` wakes and the wait on `h.s == "go"` completes (L12032-12033). 5: `a` is no longer named. 6: `h.nxt = a`: the wait on `h.nxt != null` completes and `@(h.nxt)` wakes (L11830-11831 applied to the handle property's value). 7: `h.s = "four"`: `@(h.s)` wakes and `h.s.len() == 4` completes. 8: equal stores to `h.s` and `h.nxt` wake nothing. 9: `h = a` changes `h.s` (`"four"` to `"go!!"`) and `h.nxt` (`a` to null): both event controls wake. |
+| `resume_resensitize` | Six children block at 0 on `@e`, `@(posedge clk)`, `@(h.x)` (evaluated by the waiting process), `@(v or e)`, `wait (v == 1)` and `#3`; all are suspended at 1. At 2 `->e`, `clk` rises, `h.x` and `v` become 1: every child is still SUSPENDED at 3 (L12618), and `pd`'s delay transpires at 3. All are resumed at 4: the wait condition is now true and the delay has transpired, so both run at 4 (L12646-12648); the four event controls are resensitized (L12645) and are WAITING at 5. `->e` at 5 wakes `@e` and `@(v or e)`. `clk` falls at 6 and rises at 7. `h.x = 1` at 8 is no change from the value when `@(h.x)` was resensitized (1); `h.x = 0` at 9 is. All six are FINISHED at 10. |
 | `callee_reads` | Waits on functions and methods whose bodies read object members (L11837-11840): `fx(h)` reads `c.x` through its handle formal; `fnx` reads `c.n.x`; `fget` calls the method `c.get()`; `fwrap` calls `fx`; the method `nx()` reads `n.x`; `gvx()` reads the module variable `gv` and `x`; `fglobal()` reads `k.x` through a module handle; `fstatic()` reads the static property `C::sx`. Each condition becomes true at the step that writes its operand: 1, 2, 3, 4, 5, 6 (`gv + x = 12 + 4`), 7 and 8. `@(fx(h))` wakes when `h.x` changes (1, 3, 4). At 9 `h` is rebound to a new object whose `x` is also 4: the value is unchanged, so no event. At 10 the old object is written, no longer named. At 11 the new object's `x` changes. |
 
 ## Negatives (implementation restrictions)

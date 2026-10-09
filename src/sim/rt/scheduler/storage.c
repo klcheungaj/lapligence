@@ -1,6 +1,18 @@
 
 // ── Scheduler state ───────────────────────────────────────────────────────────
 
+/* SV 9.7: resume() resensitizes a process suspended on an event expression,
+ * so an occurrence while it is suspended is not delivered; wait conditions,
+ * delays and other blocking calls keep a pending wake instead. */
+typedef enum {
+    LLG_WAIT_CONDITION = 0,
+    LLG_WAIT_EVENT = 1,
+    // An event control the process evaluates itself: its armed values must
+    // be taken again on resume, so a withheld occurrence wakes it with
+    // llg_wait_refreshed() set.
+    LLG_WAIT_EVENT_REFRESH = 2,
+} llg_wait_control_t;
+
 typedef enum {
     W_NONE,
     W_TIME,
@@ -425,10 +437,21 @@ struct llg_proc {
     llg_nba_t* nba_tail;
     llg_region_t wait_resume_region;
     int has_wait_resume_region;
-    int completed;
-    int killed;
-    int suspended;
-    int wake_pending;
+    // Flags are bytes so the suspension state below fits the same padding.
+    uint8_t completed;
+    uint8_t killed;
+    uint8_t suspended;
+    uint8_t wake_pending;
+    // How suspension treats the registered wait (llg_wait_control_t) and
+    // whether it withheld an occurrence while suspended; the classification
+    // requested for the next wait (llg_arm_event_dependencies,
+    // llg_wait_refresh_on_resume); whether the last wait ended with a
+    // resume-time refresh (llg_wait_refreshed).
+    uint8_t wait_control;
+    uint8_t wait_missed;
+    uint8_t next_wait_event;
+    uint8_t next_wait_refresh;
+    uint8_t wait_refreshed;
     llg_process_handle_t* handle;
     llg_process_local_ref_t* process_locals;
     llg_proc_t* next_retired;
@@ -524,6 +547,7 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
 struct llg_concurrent_assertion;
 static void free_assertion_clock_events(struct llg_concurrent_assertion* assertion);
 static void wake_proc(llg_proc_t* p);
+static int wait_held_by_suspension(llg_wait_t* w);
 static void wake_assertion_waiter(uint64_t identity);
 static void semaphore_waiter_unlink(llg_wait_t* wait);
 static void semaphore_return_grant(llg_proc_t* proc);

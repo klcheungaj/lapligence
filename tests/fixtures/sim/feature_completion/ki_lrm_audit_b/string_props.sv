@@ -19,23 +19,23 @@ module tb;
     fork
       begin
         wait (h.s == "go");
-        l_wait = $sformatf("%s %0t", l_wait, $time);
+        l_wait = $sformatf("%s %0d", l_wait, $time);
       end
       forever begin
         @(h.s);
-        l_at_s = $sformatf("%s %0t", l_at_s, $time);
+        l_at_s = $sformatf("%s %0d", l_at_s, $time);
       end
       begin
         wait (h.nxt != null);
-        l_nxt_wait = $sformatf("%s %0t", l_nxt_wait, $time);
+        l_nxt_wait = $sformatf("%s %0d", l_nxt_wait, $time);
       end
       forever begin
         @(h.nxt);
-        l_at_nxt = $sformatf("%s %0t", l_at_nxt, $time);
+        l_at_nxt = $sformatf("%s %0d", l_at_nxt, $time);
       end
       begin
         wait (h.s.len() == 4);
-        l_len = $sformatf("%s %0t", l_len, $time);
+        l_len = $sformatf("%s %0d", l_len, $time);
       end
     join_none
     #1 a.s = "x";

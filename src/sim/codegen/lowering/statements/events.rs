@@ -213,12 +213,19 @@ impl EmitCtx<'_, '_> {
                     )));
                 IrStmt::WaitEvents {
                     specs: vec![(IrWaitSrc::Event(IrEventRef::Static(event)), IrEdge::Any)],
+                    refresh: false,
                 }
             } else {
-                IrStmt::WaitAny { sens: reads }
+                IrStmt::WaitAny {
+                    sens: reads,
+                    refresh: false,
+                }
             }
         } else {
-            IrStmt::WaitEvents { specs: spec_pairs }
+            IrStmt::WaitEvents {
+                specs: spec_pairs,
+                refresh: false,
+            }
         })
     }
 
@@ -643,7 +650,10 @@ impl EmitCtx<'_, '_> {
             });
         }
         let wait = if events.is_empty() {
-            IrStmt::WaitAny { sens }
+            IrStmt::WaitAny {
+                sens,
+                refresh: true,
+            }
         } else {
             // One atomic wait covers the named events and every value
             // source's dependencies, so no trigger is lost between waits.
@@ -666,10 +676,35 @@ impl EmitCtx<'_, '_> {
                     specs.push((source, IrEdge::Any));
                 }
             }
-            IrStmt::WaitEvents { specs }
+            IrStmt::WaitEvents {
+                specs,
+                refresh: true,
+            }
         };
+        // SV 9.7: after resume() resensitized the control, the values armed
+        // before the suspension are stale; take the current ones without
+        // detecting the withheld change.
+        let refreshed = IrExpr::new(
+            IrExprKind::RuntimeQuery(IrRuntimeQuery::WaitRefreshed),
+            1,
+            false,
+            None,
+        );
         let mut iteration = current;
-        iteration.extend(detect);
+        iteration.push(IrStmt::If {
+            cond: IrExpr::new(
+                IrExprKind::Un {
+                    op: IrUnOp::LogNot,
+                    a: Box::new(refreshed),
+                },
+                1,
+                false,
+                None,
+            ),
+            then_: detect,
+            els: None,
+            check: IrUniquePriorityCheck::None,
+        });
         iteration.extend(advance);
         Ok(ProcessEventPlan {
             arm,

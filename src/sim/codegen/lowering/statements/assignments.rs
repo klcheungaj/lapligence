@@ -696,7 +696,10 @@ impl EmitCtx<'_, '_> {
         if blocking {
             let tmp = format!("_event_rhs_{}", h.0);
             let (w, s) = (rhs_ir.width, rhs_ir.signed);
-            let wait = IrStmt::WaitEvents { specs };
+            let wait = IrStmt::WaitEvents {
+                specs,
+                refresh: false,
+            };
             let wait = if let Some(count) = repeat {
                 IrStmt::Repeat {
                     count,

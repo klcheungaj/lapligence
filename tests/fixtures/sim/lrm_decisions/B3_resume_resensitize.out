@@ -1,0 +1,6 @@
+4: after resume the @e waiter is WAITING
+4: @e resumed
+9: after resume the @(posedge clk) waiter is WAITING
+10: @(posedge clk) resumed
+14: wait (v == 1) resumed
+15: done

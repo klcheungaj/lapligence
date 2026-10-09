@@ -286,7 +286,14 @@ Opaque activation slots may hold event object identities, valid until model
 teardown, or a parent coroutine's event handle address for a synchronous join.
 Cancel joined children before releasing that parent frame. Detached event
 captures own handle copies and never borrow a parent's handle address.
-Waiters own snapshots/dependency lists. Packed edges use LSB, including 0→X/Z and
+Waiters own snapshots/dependency lists. A suspended process's event-control
+wait (`W_EVENTS*`, `W_EVENT`, `W_MIXED`, `W_EXPR`, and `W_DEPS` armed by
+`llg_arm_event_dependencies`) withholds occurrences (`wait_held_by_suspension`)
+while its snapshots stay current, so `resume()` resensitizes it (SV 9.7); wait
+conditions, delays and other blocking calls keep a pending wake. A
+process-evaluated plan marks its wait with `llg_wait_refresh_on_resume`, and a
+withheld occurrence wakes it on resume with `llg_wait_refreshed()` set so it
+re-arms its values without detecting a change. Packed edges use LSB, including 0→X/Z and
 X/Z→1 posedges (negedge mirrored); real changes compare IEEE bits, including signed
 zero and changed NaN payloads. `iff` executes at trigger. Event lists register
 atomically, not as sequential waits. Wake/disable/teardown unregister every event

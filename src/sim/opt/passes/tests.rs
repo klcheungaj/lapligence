@@ -1078,11 +1078,13 @@ fn unused_storage_keeps_wait_event_sources() {
         assign(IrLhs::Whole(0), konst(1, 8)),
         IrStmt::Block(vec![IrStmt::WaitEvents {
             specs: vec![(IrWaitSrc::Sig("G_s1".to_string()), IrEdge::Posedge)],
+            refresh: false,
         }]),
         IrStmt::If {
             cond: IrExpr::new(IrExprKind::SigRead(0), 8, false, None),
             then_: vec![IrStmt::WaitAny {
                 sens: vec![IrDependency::scalar("G_s2")],
+                refresh: false,
             }],
             els: None,
             check: IrUniquePriorityCheck::None,
@@ -1105,6 +1107,7 @@ fn unused_storage_handles_mixed_event_wait_sources() {
             (IrWaitSrc::Sig("G_s1".to_string()), IrEdge::Any),
             (IrWaitSrc::Event(IrEventRef::Static(0)), IrEdge::Any),
         ],
+        refresh: false,
     }];
     let mut m = model_with(body, sigs(3));
     m.events.push(crate::sim::ir::IrEvent {
@@ -1150,9 +1153,11 @@ fn unused_storage_keeps_wait_sources_in_fork_branches() {
         body: vec![
             IrStmt::WaitEvents {
                 specs: vec![(IrWaitSrc::Sig("G_s1".to_string()), IrEdge::Any)],
+                refresh: false,
             },
             IrStmt::WaitAny {
                 sens: vec![IrDependency::scalar("G_s2"), IrDependency::scalar("G_s3")],
+                refresh: false,
             },
         ],
     }];

@@ -1153,6 +1153,7 @@ impl Codegen<'_> {
                 vec![
                     IrStmt::WaitEvents {
                         specs: pending.specs,
+                        refresh: false,
                     },
                     IrStmt::SampledClockTick {
                         clock: pending.clock,

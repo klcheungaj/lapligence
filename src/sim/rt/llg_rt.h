@@ -1687,6 +1687,18 @@ llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
                                       int n);
 llg_co_arm_t llg_arm_any_events(llg_proc_t* self,
                                 const llg_event_spec_t* specs, int n);
+// An implicit or process-evaluated event control's dependency wait: unlike
+// llg_arm_any_dependencies (a wait condition's), an occurrence while the
+// process is suspended is withheld and resume() resensitizes it (SV 9.7).
+llg_co_arm_t llg_arm_event_dependencies(llg_proc_t* self,
+                                        const llg_wait_dependency_t* deps,
+                                        int n);
+// Mark the next event-control wait of `self` as evaluated by the process: if
+// an occurrence was withheld while it was suspended, resume() wakes it with
+// llg_wait_refreshed() true so it takes its armed values again instead of
+// comparing against values from before the suspension.
+void llg_wait_refresh_on_resume(llg_proc_t* self);
+int llg_wait_refreshed(const llg_proc_t* self);
 llg_co_arm_t llg_arm_level(llg_proc_t* self, sv4_t* sig, sv4_t value);
 
 // Synchronization and process-control arms deliver before wake and therefore

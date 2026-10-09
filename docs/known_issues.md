@@ -713,37 +713,6 @@ loop conditions.
 `tests/fixtures/sim/feature_completion/sim_017/neg_assoc_message.sv`,
 `neg_array_variable.sv` and `neg_loop_condition.sv`.
 
-## Suspended event-control waits keep a wake that arrives while suspended
-
-**Status:** open (SIM-015).
-
-### Symptom
-
-A process suspended while blocked on an event control (`@e`, `@(posedge s)`)
-resumes the statement after the control when `resume()` is called, if the
-event occurred while it was suspended. SV 9.7 says `resume()` resensitizes
-the process to the event expression, so such an event would be missed and
-the process would keep waiting.
-
-### Cause
-
-Every wait kind uses one rule: a condition met while suspended leaves a
-pending wake that `resume()` delivers. That rule is correct for delays, wait
-conditions, `wait fork`, `await`, semaphores and mailboxes ("if the wait
-condition is now true or the original delay has transpired"), and the
-process-control tests rely on it for event controls as well.
-
-### Intended direction
-
-Mark event-expression waits at arm time and, while the waiter is suspended,
-refresh their edge snapshots and named-event registrations instead of
-recording a wake; keep the pending wake for the other wait kinds.
-
-### Reproduce
-
-Suspend a process waiting on `@e`, trigger `e`, then resume it a time step
-later: the process continues instead of waiting for the next `->e`.
-
 ## Rejected process-handle forms
 
 **Status:** open (SIM-015).
