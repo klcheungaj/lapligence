@@ -848,22 +848,6 @@ void llg_frame_write_real(llg_frame_t* frame, size_t slot, double value) {
 }
 
 typedef struct {
-    sv4_t* target;
-    sv4_t* enable;
-    uint64_t site;
-    sv4_t value;
-    int active;
-} llg_pca_binding_t;
-
-typedef struct {
-    double* target;
-    sv4_t* enable;
-    uint64_t site;
-    double value;
-    int active;
-} llg_pca_real_binding_t;
-
-typedef struct {
     int active;
     int is_real;
     llg_force_part_t* parts;

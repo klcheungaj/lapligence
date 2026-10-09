@@ -510,8 +510,12 @@ impl EmitCtx<'_, '_> {
             }
             NodeKind::Stmt(StmtKind::Force { .. }) => Ok(vec![self.lower_force(h)?]),
             NodeKind::Stmt(StmtKind::Release { .. }) => Ok(vec![self.lower_release(h)?]),
-            NodeKind::Stmt(StmtKind::ProcContAssign { .. }) => self.lower_proc_cont_assign(h),
-            NodeKind::Stmt(StmtKind::Deassign { lhs }) => self.lower_deassign(*lhs),
+            NodeKind::Stmt(StmtKind::ProcContAssign { .. }) => {
+                Err(self.reject_procedural_assign(h, "assign"))
+            }
+            NodeKind::Stmt(StmtKind::Deassign { .. }) => {
+                Err(self.reject_procedural_assign(h, "deassign"))
+            }
             NodeKind::Stmt(StmtKind::VariableDecl { declaration }) => {
                 self.lower_variable_decl(*declaration)
             }

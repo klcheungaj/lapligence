@@ -234,7 +234,7 @@ total for the stage.
 
 Normalize each body for sharing as soon as it is rendered and drop
 duplicate members' text, reconstructing it exactly only for groups below the
-sharing threshold; this requires abstracting frame-type and PCA helper names
+sharing threshold; this requires abstracting frame-type names
 that are resolved after rendering. Stream the final text to `model.c` only if
 the generated-model API stops returning it in memory. Generated `model.c` must
 stay byte-identical, including both optimizer modes and the exact sharing
@@ -1069,7 +1069,7 @@ Reproduce with `mux3 m[4095:0] (y, sel, a, b);` over 4,096-bit vectors and
 
 The intended direction is one shared process body per array declaration,
 parameterized by the element's bit offsets, like the table-driven
-procedural-continuous-assignment batches.
+net-contribution batches.
 
 ## Release does not restore a variable's continuous driver
 
@@ -1252,8 +1252,8 @@ Reproduce with
 
 ### Symptom
 
-Procedural `assign`/`deassign` beyond whole packed/real/shortreal variables and
-admitted concatenations, MOS and resistive switch primitives, `trireg` nets,
+Procedural `assign`/`deassign` in every form (local or hierarchical target;
+decided 2026-10-09), MOS and resistive switch primitives, `trireg` nets,
 the `` `default_decay_time``, `` `default_trireg_strength`` and `` `delay_mode_*``
 directives, `$dumpports*`, `$q_*` outputs that are not whole integer variables,
 the PLA tasks, `$countdrivers/$getpattern/$scale/$scope/$showscopes/$showvars`
@@ -1264,8 +1264,10 @@ supported by llg` before C generation.
 ### Cause
 
 `sim::legacy_unsupported::scan` finds the constructs the owned database exposes
-(primitives, nets, system calls and directives) and lowering rejects the
-remaining target forms with the same message shape. The PLI 1.0 check cannot be
+(primitives, nets, procedural `assign`/`deassign` statements, system calls and
+directives) and lowering rejects the remaining forms with the same message
+shape. Hierarchical continuous assignments and force/release are supported and
+not part of this list. The PLI 1.0 check cannot be
 exact: `--dpi-lib` libraries are scanned for the symbol strings `veriusertfs`
 and the `tf_*`/`acc_*` routine names, so a library that does not spell them
 (an obfuscated or runtime-computed name), an unlinked source that only includes

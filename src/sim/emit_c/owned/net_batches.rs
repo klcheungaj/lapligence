@@ -67,8 +67,22 @@ impl Frame<'_, '_> {
         })
     }
 
+    /// Emit a statement sequence, folding runs of consecutive structural net
+    /// contributions into one descriptor-table loop.
+    pub(super) fn statements(&mut self, mut statements: &[IrStmt]) -> Result<(), String> {
+        while let Some(statement) = statements.first() {
+            let mut consumed = self.net_batch(statements)?;
+            if consumed == 0 {
+                self.statement(statement)?;
+                consumed = 1;
+            }
+            statements = &statements[consumed..];
+        }
+        Ok(())
+    }
+
     pub(super) fn net_batch(&mut self, statements: &[IrStmt]) -> Result<usize, String> {
-        if self.pca_owner.is_none() || self.sampled_reads {
+        if self.batch_owner.is_none() || self.sampled_reads {
             return Ok(0);
         }
         let Some(first) = statements
@@ -94,7 +108,7 @@ impl Frame<'_, '_> {
         }
         let name = format!(
             "llg_net_rows_{}_{}",
-            self.pca_owner.as_ref().expect("process owner"),
+            self.batch_owner.as_ref().expect("process owner"),
             self.net_batches.len()
         );
         let count = rows.len();

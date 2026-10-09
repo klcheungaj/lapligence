@@ -15,6 +15,7 @@ const UNSUPPORTED_FIXTURES: &[&str] = &[
     "queue_add_array_element.v",
     "assign_in_task.v",
     "assign_struct.sv",
+    "assign_hierarchical.v",
 ];
 
 #[test]

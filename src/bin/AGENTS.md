@@ -36,7 +36,10 @@ Keep reusable processing in the library. Bins import `llg::config`, `llg::core`,
   `tf_*`/`acc_*` routine is refused (unsupported by design).
 - A codegen failure that is a list of `unsupported: <construct> (<family>) is not
   supported by llg` rejections (`CodegenError::is_legacy_unsupported`) prints one
-  `error: <file>:<line>:<col>: ...` line each, not `llg: codegen error:`. `--no-opt` disables normally enabled IR
+  `error: <file>:<line>:<col>: ...` line each, not `llg: codegen error:`.
+  Every procedural `assign`/`deassign` (local or hierarchical target) is such a
+  rejection; hierarchical continuous assignment and force/release run, and their
+  illegal forms keep the frontend's or lowering's located language error. `--no-opt` disables normally enabled IR
   passes; conformance fixtures exercise both modes.
 - `--include-dir`/`-I` admits bounded canonical files under source/configured
   include roots and is also the module-definition search path (core compile

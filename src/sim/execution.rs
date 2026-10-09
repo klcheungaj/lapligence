@@ -716,9 +716,6 @@ fn collect_effects(
             | IrStmt::EventAssign { .. }
             | IrStmt::EventCapture { .. }
             | IrStmt::EventDeclare { .. }
-            | IrStmt::PcaAssign { .. }
-            | IrStmt::PcaDrive { .. }
-            | IrStmt::PcaDeassign { .. }
             | IrStmt::DeclLocal { .. }
             | IrStmt::SharedLocal { .. }
             | IrStmt::Force { .. }
@@ -1157,9 +1154,6 @@ fn collect_statement_expression_effects(
         | IrStmt::EventDeclare { .. }
         | IrStmt::ClockingSample { .. }
         | IrStmt::SampledClockTick { .. } => {}
-        IrStmt::PcaAssign { value, .. } | IrStmt::PcaDrive { value, .. } => {
-            collect_expression_effects(ir, value, effects, visited_calls);
-        }
         IrStmt::If { cond: rhs, .. }
         | IrStmt::While { cond: rhs, .. }
         | IrStmt::Repeat { count: rhs, .. }

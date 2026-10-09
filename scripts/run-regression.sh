@@ -314,7 +314,7 @@ run_phase generated-runtime-sanitizers \
     --test runtime \
     --test sim_a_m \
     --test sim_n_z \
-    -- runtime_values:: runtime_boundaries:: sim_counter:: sim_data_types:: sim_data_types_next:: sim_data_types_completion:: sim_type_conformance:: sim_partial_features:: sim_net_resolution:: sim_net_defaults:: sim_function:: sim_loops:: sim_procedural_assign:: sim_tagged_union_access:: sim_review_next4:: sim_review_tasks08_11:: sim_fixed_ordering_review:: sim_casez:: --test-threads=1
+    -- runtime_values:: runtime_boundaries:: sim_counter:: sim_data_types:: sim_data_types_next:: sim_data_types_completion:: sim_type_conformance:: sim_partial_features:: sim_net_resolution:: sim_net_defaults:: sim_function:: sim_loops:: sim_tagged_union_access:: sim_review_next4:: sim_review_tasks08_11:: sim_fixed_ordering_review:: sim_casez:: --test-threads=1
 run_phase generated-tagged-guard-sanitizers \
     env \
     LLG_CC=gcc \

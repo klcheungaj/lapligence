@@ -92,7 +92,7 @@ the chain arena keep packed locals in arena frames whose estimates follow the
 selected descriptor. Runtime C outside the backends uses only facade names; numeric
 `sizeof(sv4_t)` appears only as native allocation arithmetic. Every emitter render
 context now carries the selected backend: assertion predicates, sampled
-domains, sequence callbacks, storage initialization and PCA batch helpers no
+domains, sequence callbacks and storage initialization no
 longer assume legacy layout (their C-stack frames did not use it, so generated
 code is unchanged). The native runtime/scheduler/container/VPI/waveform probes
 run against compact portable and GMP kernels as well as legacy (see the

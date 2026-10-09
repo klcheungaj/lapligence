@@ -7,7 +7,6 @@
 static void force_dependency_changed(sv4_t* sig, double* real, int is_real);
 static void sig_write(sv4_t* target, sv4_t value);
 static void fixed_array_changed(sv4_t* target);
-static int pca_real_active(double* target);
 
 enum { LLG_DEPENDENCY_INITIAL_BUCKETS = 64u };
 

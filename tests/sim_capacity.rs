@@ -71,44 +71,6 @@ fn capacity_force_entries_grow_past_old_limit() {
 }
 
 #[test]
-fn capacity_pca_bindings_grow_past_old_limit() {
-    // 4100 simultaneous procedural continuous assignments exceed the retired
-    // 4096-entry PCA table. Deassign frees the last target for a normal write.
-    let n = 4100usize;
-    let mut source = String::from(
-        "// llg-test-fixture: tests/sim_capacity.rs/pca_growth.sv\nmodule tb;\n\
-         logic a;\n",
-    );
-    for i in 0..n {
-        source.push_str(&format!("logic v{i};\n"));
-    }
-    source.push_str("initial begin\n    a = 1'b1;\nend\n");
-    // Keep each generated process small: one 4100-statement function makes the
-    // generated C compiler's register allocation dominate the test.
-    for chunk in (0..n).collect::<Vec<_>>().chunks(41) {
-        source.push_str("initial begin\n");
-        for i in chunk {
-            source.push_str(&format!("    assign v{i} = a;\n"));
-        }
-        source.push_str("end\n");
-    }
-    source.push_str("initial begin\n    #1;\n");
-    source.push_str(&format!(
-        "    $display(\"CHECK: %b %b\", v0, v{});\n",
-        n - 1
-    ));
-    source.push_str(&format!(
-        "    deassign v{};\n    v{} = 1'b0;\n    #1;\n",
-        n - 1,
-        n - 1
-    ));
-    source.push_str(&format!("    $display(\"CHECK: %b\", v{});\n", n - 1));
-    source.push_str("    $finish(0);\nend\nendmodule\n");
-    let expected = "CHECK: 1 1\nCHECK: 0\n";
-    run_generated("pca_growth", &source, expected);
-}
-
-#[test]
 fn capacity_final_registrations_grow_past_old_limit() {
     // 1100 registered final blocks exceed the retired 1024-entry table. Every
     // final runs in source order and the last observes the accumulated count.

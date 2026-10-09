@@ -183,56 +183,6 @@ fn module_paths_are_loaded_from_each_instances_record() {
 }
 
 #[test]
-fn compatible_pca_sites_share_across_distinct_source_locations() {
-    let mut model = instance_model(4);
-    for index in 0..4 {
-        let enable = model.signals.len();
-        model.signals.push(
-            IrSignal::new(
-                format!("llg_pca_en_{index}"),
-                None,
-                IrType::Packed {
-                    width: 1,
-                    signed: false,
-                    two_state: false,
-                },
-                None,
-            )
-            .unwrap(),
-        );
-        let process = &mut model.processes[index];
-        process.origin = crate::sim::semantic::Origin::Source {
-            path: "pca.sv".into(),
-            line: index as u32 + 1,
-            column: 1,
-            end_line: index as u32 + 1,
-            end_column: 10,
-            logical: None,
-        };
-        process.shape = IrShape::Loop;
-        process.body = vec![
-            IrStmt::Delay {
-                ticks: IrDelay::Constant(1),
-            },
-            IrStmt::If {
-                cond: IrExpr::new(IrExprKind::SigRead(enable), 1, false, None),
-                then_: vec![IrStmt::PcaDrive {
-                    sig: index,
-                    enable,
-                    site: index,
-                    value: number(7, 8),
-                }],
-                els: None,
-                check: IrUniquePriorityCheck::None,
-            },
-        ];
-    }
-    let source = render_with_sharing_threshold(&ExecutionModel::lower(model).unwrap(), 4).unwrap();
-    assert_eq!(source.matches("LLG_CO_DISPATCH_BEGIN").count(), 1);
-    assert!(source.contains("llg_pca_drive(&(*I->"));
-}
-
-#[test]
 fn shared_net_writers_keep_distinct_array_backed_contributions() {
     let mut model = instance_model(8);
     model

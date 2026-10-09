@@ -785,39 +785,6 @@ impl Validator<'_> {
                     return self.fail(path, "declared event handle name must not be empty");
                 }
             }
-            IrStmt::PcaAssign {
-                sig, enable, value, ..
-            }
-            | IrStmt::PcaDrive {
-                sig, enable, value, ..
-            } => {
-                let Some(target) = self.model.signals.get(*sig) else {
-                    return self.fail(path, format!("signal index {sig} is out of bounds"));
-                };
-                let Some(enable_signal) = self.model.signals.get(*enable) else {
-                    return self.fail(path, format!("enable index {enable} is out of bounds"));
-                };
-                if !matches!(enable_signal.ty, IrType::Packed { width: 1, .. }) {
-                    return self.fail(path, "procedural continuous enable must be one packed bit");
-                }
-                match target.ty {
-                    IrType::Packed { .. }
-                        if value.is_real() || value.width != target.ty.width() =>
-                    {
-                        return self.fail(
-                            path,
-                            "procedural continuous value must match its packed target width",
-                        );
-                    }
-                    IrType::Packed { .. } | IrType::Real { .. } => {}
-                }
-                self.validate_expr(value, formals, &format!("{path}.value"))?;
-            }
-            IrStmt::PcaDeassign { sig } => {
-                if *sig >= self.model.signals.len() {
-                    return self.fail(path, format!("signal index {sig} is out of bounds"));
-                }
-            }
             IrStmt::If {
                 cond, then_, els, ..
             } => {

@@ -9,7 +9,7 @@ pub struct IrSignal {
     pub(in crate::sim) c_name: String,
     /// Original HDL hierarchy, with ASCII unit-separator bytes between path
     /// components. `None` marks synthesized storage that must not be
-    /// waveform-visible (for example PCA enable bits).
+    /// waveform-visible (compiler-internal state).
     pub(in crate::sim) hdl_name: Option<String>,
     pub(in crate::sim) ty: IrType,
     /// For members of a collapsed inout-net group: `(group index, driver

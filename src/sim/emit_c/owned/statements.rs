@@ -314,12 +314,6 @@ impl Frame<'_, '_> {
                 two_state,
             } => self.shared_local(name, *width, *signed, *two_state, init.as_deref())?,
             IrStmt::InertialAssign { lhs, rhs, delay } => self.inertial_assign(lhs, rhs, *delay)?,
-            IrStmt::PcaAssign { .. } | IrStmt::PcaDrive { .. } => self.pca_task(statement)?,
-            IrStmt::PcaDeassign { sig } => {
-                let signal = self.ctx.model.signal(*sig);
-                let suffix = if signal.ty.width() == 0 { "_d" } else { "" };
-                self.line(format!("llg_pca_deassign{suffix}(&{});", signal.c_name));
-            }
             IrStmt::Force {
                 lhs,
                 eval,

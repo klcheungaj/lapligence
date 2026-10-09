@@ -1,7 +1,8 @@
 //! Legacy constructs `llg` rejects by design.
 //!
-//! User decision 2026-10-08: procedural `assign`/`deassign` beyond whole
-//! packed/real/shortreal variables and admitted concatenations, MOS and
+//! User decisions 2026-10-08/09: procedural `assign`/`deassign` in every
+//! form (any target, local or hierarchical; `force`/`release` and module
+//! continuous assignments, including hierarchical ones, stay supported), MOS and
 //! resistive switches, `trireg` charge storage, the optional charge and
 //! delay-mode directives, `$dumpports*`, stochastic-queue forms beyond the
 //! supported `$q_*` subset, PLA tasks, the legacy driver/pattern/scale/scope
@@ -9,11 +10,11 @@
 //! must stop the run before C generation with one source-located message,
 //! never run as a no-op or fail generically. [`diagnostic`] is the single
 //! message shape; [`scan`] finds the constructs the owned database exposes
-//! directly, and lowering uses [`diagnostic`] for the target forms it must
-//! classify itself.
+//! directly, and lowering uses [`diagnostic`] for the forms it must classify
+//! itself or that the scan cannot reach.
 
 use super::semantic::SemanticModel;
-use crate::core::db::{NetType, NodeKind, PrimitiveType};
+use crate::core::db::{NetType, NodeKind, PrimitiveType, StmtKind};
 
 /// Constructs sharing one documented rejection scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,6 +135,14 @@ pub fn scan(model: &SemanticModel<'_>) -> Vec<String> {
                     LegacyFamily::TriregCharge,
                 )
             }
+            NodeKind::Stmt(StmtKind::ProcContAssign { .. }) => (
+                "procedural `assign`".to_owned(),
+                LegacyFamily::ProceduralAssign,
+            ),
+            NodeKind::Stmt(StmtKind::Deassign { .. }) => (
+                "procedural `deassign`".to_owned(),
+                LegacyFamily::ProceduralAssign,
+            ),
             NodeKind::SysCall { name } => match unsupported_system_task_family(name) {
                 Some(family) => (format!("system task `{name}`"), family),
                 None => continue,

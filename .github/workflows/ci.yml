@@ -206,7 +206,7 @@ jobs:
       - name: Run generated runtime and model probes under sanitizers
         run: >-
           cargo nextest run --locked --all-features
-          -E 'test(/^(runtime_values|runtime_random|runtime_boundaries|sim_counter|sim_data_types|sim_data_types_next|sim_data_types_completion|sim_type_conformance|sim_partial_features|sim_net_resolution|sim_net_defaults|sim_function|sim_loops|sim_procedural_assign|sim_tagged_union_access|sim_review_next4|sim_review_tasks08_11|sim_fixed_ordering_review|sim_casez|sim_007)::/)'
+          -E 'test(/^(runtime_values|runtime_random|runtime_boundaries|sim_counter|sim_data_types|sim_data_types_next|sim_data_types_completion|sim_type_conformance|sim_partial_features|sim_net_resolution|sim_net_defaults|sim_function|sim_loops|sim_tagged_union_access|sim_review_next4|sim_review_tasks08_11|sim_fixed_ordering_review|sim_casez|sim_007)::/)'
 
       - name: Run generated tagged guard library models under sanitizers
         run: >-

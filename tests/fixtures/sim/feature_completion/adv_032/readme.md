@@ -25,21 +25,43 @@ checks separately). Each run is also required to leave its `--out-dir` empty.
 | `inspection_tasks.v` | driver and scope inspection | `$countdrivers`, `$getpattern`, `$scale`, `$scope`, `$showscopes`, `$showvars` |
 | `pla_tasks.v` | PLA tasks | eight of the sixteen forms, covering every gate and both timings |
 | `queue_*_*.v` | stochastic queue form | a selected or array-element output of `$q_add`, `$q_remove`, `$q_exam` |
+| `assign_forms.v` | procedural assign form | whole `reg`, `integer`, `real`, a concatenation and `u.x`: every `assign`/`deassign` statement (both editions) |
 | `assign_in_task.v` | procedural assign form | `assign` inside a task (both editions) |
 | `assign_{struct,unpacked_array,string,queue,class_handle}.sv` | procedural assign form | aggregate and non-numeric targets |
+| `assign_hierarchical.v` | procedural assign form | downward, multi-level, generate-if/for, instance-array, per-instance child, upward, concatenated and real hierarchical targets (both editions; shared instance statements report once) |
+| `assign_hierarchical_root.sv` | procedural assign form | `$root` and interface-port targets |
 | `pli_*.c`, `pli_host.v` | PLI 1.0 TF/ACC | shared objects that reference `tf_getp`, `acc_initialize` or define `veriusertfs`, linked with `--dpi-lib` |
 
-Supported boundary (positive pair of the rejections above, hand-derived from
-IEEE 1364-2001 §9.3.1 and §17.6):
+Procedural `assign`/`deassign` is rejected in every form by the user decision of
+2026-10-09: the diagnostic sits at each statement, whatever its target.
 
-- `assign_supported.v`: whole `reg`, `integer`, `real`, a two-part
-  concatenation and a hierarchical reference to a variable follow their live
-  source, keep the last value after `deassign` and accept an ordinary write
-  again.
+Supported boundary (positive pairs, hand-derived; `.out` files are expected
+stdout, run on legacy, compact/portable and compact/GMP values in both optimizer
+modes):
+
+- `hier_continuous_assign.v` (both editions): module-scope continuous
+  assignments into other instances' nets (IEEE 1364-2001 6.1, 12.4) through
+  multi-level, generate-if, generate-for, instance-array, top-name-absolute and
+  upward paths, plus two constant part-selects of one hierarchical net.
+- `hier_continuous_assign_root.sv`: a `$root` path, a child variable with one
+  continuous driver (IEEE 1800-2009 6.5) and an interface instance's net and
+  variable; the 2001 edition rejects `$root`.
+- `hier_force_release.v` (both editions): force/release (IEEE 1364-2001 9.3.2)
+  on multi-level, generate, top-name-absolute, upward, real, net bit-select and
+  concatenated hierarchical targets; variables keep the forced value, nets
+  resume their drivers.
 - `queue_supported.v`: FIFO order, queue-full status 1, queue-empty status 3
   and stat codes 1 (current length) and 3 (longest length) through whole
   integer variables. The longer sources under `tests/fixtures/sim/stochastic`
-  and `tests/fixtures/sim/procedural_assign` keep their own suites.
+  keep their own suite.
+
+Nearest illegal forms stay ordinary located language errors, never the
+unsupported-by-design message: `assign_hierarchical_net.v` and
+`assign_hierarchical_select.v` (procedural assign to a hierarchical net or
+part-select), `hier_force_variable_select.v` (force of a variable bit-select;
+the wrapper promotes the frontend's compatibility warning to an error) and
+`hier_continuous_assign_mixed.sv` (a continuously assigned variable that also
+has a procedural initializer).
 
 Slang already rejects `assign` to nets, bit/part selects and streaming
 concatenations (and real values in a concatenation); those errors are left in

@@ -20,31 +20,6 @@ static void force_table_reserve(int needed) {
     g.force_capacity = capacity;
 }
 
-static void pca_table_reserve(int needed) {
-    if (needed <= g.pca_capacity) return;
-    int capacity = llg_registry_capacity(g.pca_capacity, needed);
-    llg_pca_binding_t* grown = (llg_pca_binding_t*)llg_checked_calloc(
-        (size_t)capacity, sizeof(*grown), "PCA table");
-    if (g.pca_table)
-        memcpy(grown, g.pca_table, (size_t)g.pca_count * sizeof(*grown));
-    free(g.pca_table);
-    g.pca_table = grown;
-    g.pca_capacity = capacity;
-}
-
-static void pca_real_table_reserve(int needed) {
-    if (needed <= g.pca_real_capacity) return;
-    int capacity = llg_registry_capacity(g.pca_real_capacity, needed);
-    llg_pca_real_binding_t* grown = (llg_pca_real_binding_t*)llg_checked_calloc(
-        (size_t)capacity, sizeof(*grown), "real PCA table");
-    if (g.pca_real_table)
-        memcpy(grown, g.pca_real_table,
-               (size_t)g.pca_real_count * sizeof(*grown));
-    free(g.pca_real_table);
-    g.pca_real_table = grown;
-    g.pca_real_capacity = capacity;
-}
-
 // Is `sig` currently covered by a packed force part? Procedural writes are
 // dropped while a signal is forced; net driver slots remain writable so their
 // current resolved value can be exposed on release.
@@ -64,123 +39,6 @@ static int llg_is_real_forced(double* target) {
         if (entry->active && entry->is_real && entry->real_target == target) return 1;
     }
     return 0;
-}
-
-static llg_pca_binding_t* pca_binding(sv4_t* target) {
-    for (int i = 0; i < g.pca_count; i++) {
-        if (g.pca_table[i].target == target) return &g.pca_table[i];
-    }
-    return NULL;
-}
-
-static int pca_active(sv4_t* target) {
-    llg_pca_binding_t* binding = pca_binding(target);
-    return binding && binding->active;
-}
-
-static llg_pca_real_binding_t* pca_real_binding(double* target) {
-    for (int i = 0; i < g.pca_real_count; i++) {
-        if (g.pca_real_table[i].target == target) return &g.pca_real_table[i];
-    }
-    return NULL;
-}
-
-static int pca_real_active(double* target) {
-    llg_pca_real_binding_t* binding = pca_real_binding(target);
-    return binding && binding->active;
-}
-
-static void pca_set_enable(sv4_t* enable, int active) {
-    llg_value_scope_t* scope = llg_value_scope_begin(1);
-    sv4_t* value = llg_value_scope_values(scope);
-    sv4_replace(value, sv4_from_u64(active ? 1 : 0, llg_sv4_width(*enable), llg_sv4_signed(*enable)));
-    sig_write(enable, *value);
-    llg_value_scope_end(scope);
-}
-
-void llg_pca_assign(sv4_t* target, sv4_t* enable, uint64_t site, sv4_t value) {
-    if (!region_can_mutate("procedural continuous assignment")) return;
-    llg_pca_binding_t* binding = pca_binding(target);
-    if (!binding) {
-        if (g.pca_count == INT_MAX) {
-            fprintf(stderr, "llg runtime fatal: PCA binding count overflow\n");
-            abort();
-        }
-        pca_table_reserve(g.pca_count + 1);
-        binding = &g.pca_table[g.pca_count++];
-        memset(binding, 0, sizeof(*binding));
-        binding->target = target;
-    }
-    if (binding->active &&
-        (binding->enable != enable || binding->site != site)) {
-        pca_set_enable(binding->enable, 0);
-    }
-    binding->enable = enable;
-    binding->site = site;
-    sv4_replace(&binding->value, sv4_resize(value, llg_sv4_width(*target), llg_sv4_signed(*target)));
-    binding->active = 1;
-    pca_set_enable(enable, 1);
-    if (!llg_is_forced(target)) sig_write(target, binding->value);
-}
-
-void llg_pca_drive(sv4_t* target, sv4_t* enable, uint64_t site, sv4_t value) {
-    if (!region_can_mutate("procedural continuous assignment")) return;
-    llg_pca_binding_t* binding = pca_binding(target);
-    if (!binding || !binding->active || binding->enable != enable || binding->site != site)
-        return;
-    sv4_replace(&binding->value, sv4_resize(value, llg_sv4_width(*target), llg_sv4_signed(*target)));
-    if (!llg_is_forced(target)) sig_write(target, binding->value);
-}
-
-void llg_pca_deassign(sv4_t* target) {
-    if (!region_can_mutate("procedural continuous assignment")) return;
-    llg_pca_binding_t* binding = pca_binding(target);
-    if (!binding || !binding->active) return;
-    binding->active = 0;
-    sv4_destroy(&binding->value);
-    pca_set_enable(binding->enable, 0);
-}
-
-void llg_pca_assign_d(double* target, sv4_t* enable, uint64_t site, double value) {
-    if (!region_can_mutate("procedural continuous assignment")) return;
-    llg_pca_real_binding_t* binding = pca_real_binding(target);
-    if (!binding) {
-        if (g.pca_real_count == INT_MAX) {
-            fprintf(stderr, "llg runtime fatal: real PCA binding count overflow\n");
-            abort();
-        }
-        pca_real_table_reserve(g.pca_real_count + 1);
-        binding = &g.pca_real_table[g.pca_real_count++];
-        memset(binding, 0, sizeof(*binding));
-        binding->target = target;
-    }
-    if (binding->active &&
-        (binding->enable != enable || binding->site != site)) {
-        pca_set_enable(binding->enable, 0);
-    }
-    binding->enable = enable;
-    binding->site = site;
-    binding->value = value;
-    binding->active = 1;
-    pca_set_enable(enable, 1);
-    if (!llg_is_real_forced(target)) real_write(target, value);
-}
-
-void llg_pca_drive_d(double* target, sv4_t* enable, uint64_t site, double value) {
-    if (!region_can_mutate("procedural continuous assignment")) return;
-    llg_pca_real_binding_t* binding = pca_real_binding(target);
-    if (!binding || !binding->active || binding->enable != enable || binding->site != site)
-        return;
-    binding->value = value;
-    if (!llg_is_real_forced(target)) real_write(target, value);
-}
-
-void llg_pca_deassign_d(double* target) {
-    if (!region_can_mutate("procedural continuous assignment")) return;
-    llg_pca_real_binding_t* binding = pca_real_binding(target);
-    if (!binding || !binding->active) return;
-    binding->active = 0;
-    pca_set_enable(binding->enable, 0);
 }
 
 static void force_free_entry(llg_force_entry_t* entry) {
@@ -337,8 +195,7 @@ static void force_recompute_target(sv4_t* target, llg_net_t* net) {
     if (net) {
         sv4_replace(value, llg_net_compute(net));
     } else {
-        llg_pca_binding_t* pca = pca_binding(target);
-        sv4_copy(value, pca && pca->active ? &pca->value : target);
+        sv4_copy(value, target);
     }
     for (int i = 0; i < g.force_count; i++) {
         llg_force_entry_t* entry = &g.force_table[i];
@@ -474,11 +331,6 @@ void llg_release_parts(const llg_force_part_t* parts, int n_parts,
             if (parts[j].target == target) seen = 1;
         if (seen) continue;
         force_recompute_target(target, nets[i]);
-        llg_pca_binding_t* pca = pca_binding(target);
-        if (pca && pca->active) {
-            pca_set_enable(pca->enable, 0);
-            pca_set_enable(pca->enable, 1);
-        }
     }
     free(nets);
 }
@@ -491,11 +343,6 @@ void llg_release_real(double* target) {
             // A procedural real variable retains the forced value; no saved
             // value exists to restore.
             force_free_entry(entry);
-            llg_pca_real_binding_t* pca = pca_real_binding(target);
-            if (pca && pca->active) {
-                pca_set_enable(pca->enable, 0);
-                pca_set_enable(pca->enable, 1);
-            }
             return;
         }
     }

@@ -518,14 +518,6 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
     cg.build_net_groups()?;
     cg.collect_clocking_storage()?;
     cg.validate_process_semantics()?;
-    // Two-phase PCA site discovery, phase 1: allocate every procedural
-    // continuous `assign <var> = …;` site BEFORE any body lowers (see
-    // `prescan_pca_sites`), so `deassign` lowering never depends on process
-    // order.
-    for top in &tops {
-        let path = cg.instance_path_of(*top);
-        cg.prescan_pca_sites(*top, &path)?;
-    }
     // Functions/tasks become static C functions (prototypes first so bodies
     // may call each other regardless of declaration order), lowered before any
     // process code references them.
@@ -1152,22 +1144,6 @@ struct ArrayElemLhs {
     elem_sel: ElemSel,
 }
 
-/// One procedural continuous assignment site (`assign <var> = …;`): the
-/// enable guard's storage plus the runtime site identity and which statement
-/// node materialized the guard process.
-struct PcaSite {
-    /// Enable-signal IR index (`llg_pca_en_<n>`, starts X = disabled).
-    en: usize,
-    /// Runtime identity of this syntactic assignment site. Distinct sites
-    /// targeting one variable replace one another at execution time.
-    site: usize,
-    /// ProcContAssign arena node whose lowering created the guard process;
-    /// `None` between pre-scan allocation and first lowering. The SAME node
-    /// again (a delay-bearing task body inlined at several call sites) reuses
-    /// the existing site and guard.
-    guarded_by: Option<NodeId>,
-}
-
 /// A call argument bound to one formal: its width/signedness and the arena
 /// node of the actual expression (the bound argument, or the formal's default
 /// when the call omits it).
@@ -1587,17 +1563,6 @@ struct Codegen<'a> {
     /// Design time precision in ps: the finest precision across every module,
     /// which sets the scheduler tick unit (1 tick = `design_precision_fs` fs).
     design_precision_fs: u64,
-    /// Procedural continuous assignment sites: (ProcContAssign arena node,
-    /// target signal) → site. Sites are allocated by a pre-scan over ALL
-    /// process bodies BEFORE any body lowers
-    /// ([`Codegen::prescan_pca_sites`]), so every assignment site has a stable
-    /// runtime identity regardless of process/source order or instance.
-    pca_sites: HashMap<(NodeId, usize), PcaSite>,
-    /// PCA site sequence, used for unique enable-global names
-    /// (`llg_pca_en_<n>`; the reserved `llg_` family never holds a
-    /// user-derived global, so synthesized enables cannot collide with a user
-    /// variable's global).
-    pca_seq: usize,
     /// Whole-net continuous assignment node -> synthetic signal index carrying
     /// that wired net driver's distinct runtime slot.
     wired_driver_sites: HashMap<NodeId, usize>,
@@ -1844,8 +1809,6 @@ impl<'a> Codegen<'a> {
             proc_seq: 0,
             frame_seq: 0,
             design_precision_fs: Timescale::DEFAULT.precision_fs,
-            pca_sites: HashMap::new(),
-            pca_seq: 0,
             wired_driver_sites: HashMap::new(),
             feedback_storage: None,
             structural_driver_sites: HashMap::new(),

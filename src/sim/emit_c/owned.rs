@@ -41,7 +41,6 @@ pub(super) mod native_values;
 pub(super) mod net_batches;
 mod objects;
 mod operands;
-pub(super) mod pca_batches;
 mod pure_calls;
 mod qualifiers;
 mod references;
@@ -201,8 +200,8 @@ pub(super) struct Frame<'a, 'm> {
     coroutine_functions: BTreeSet<usize>,
     cached_fields: cached_fields::CachedFields,
     net_batches: Vec<net_batches::NetBatch>,
-    pca_owner: Option<String>,
-    pca_batches: Vec<super::statements::pca_batches::Batch>,
+    /// Process C name that owns this frame's file-scope batch tables.
+    batch_owner: Option<String>,
     cell_eligibility: frame_cells::CellEligibility,
     stack_cells: String,
     /// Calls of a recursive subprogram's coroutine that enter the chain
@@ -368,8 +367,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             coroutine_functions: BTreeSet::new(),
             cached_fields: cached_fields::CachedFields::default(),
             net_batches: Vec::new(),
-            pca_owner: None,
-            pca_batches: Vec::new(),
+            batch_owner: None,
             cell_eligibility: frame_cells::CellEligibility::default(),
             stack_cells: String::new(),
             recursive_targets: BTreeSet::new(),

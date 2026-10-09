@@ -362,7 +362,7 @@ decision before entering the Core denominator.
 | SYN038-EX-01 | SV2009 | `tagged_union_expression`, `cond_pattern`, `case_pattern_item` (B.3/B.8/B.9) | `tests/fixtures/sim/sequential_predicates/bad_matches_conditional.sv`; SYN-021–025 | Selected Extended tagged/pattern track; SYN-021 finite storage, SYN-024 finite packed tagged predicate/case forms and SYN-025 primitive/structure/tagged cases have separate evidence. Dynamic/native tagged forms remain outside this bounded track; no Core denominator. |
 | SYN038-EX-02 | SV2009 | `queue_dimension`, `associative_dimension`, `dynamic_array_variable_identifier` (B.3/B.4) | `tests/fixtures/sim/data_types_next/dynamic_array.sv`; `tests/fixtures/sim/data_types_next/associative_array.sv`; SYN-034 | Resizable/native storage is outside synthesizable Core; bounded simulator implementations have positive owners in `sim_data_types_next` and `sim_virtual_interfaces` and OUTSIDE_CORE_IMPLEMENTED assignments. |
 | SYN038-EX-03 | V2001/SV2009 | `non_integer_type`, runtime `real_type`, `string`, `chandle` (B.3) | `tests/fixtures/sim/data_types_next/inside_chandle_rejected.sv`; SYN-016 | Constants may elaborate; runtime real/native objects are outside Core. |
-| SYN038-EX-04 | V2001/SV2009 | `procedural_continuous_assignment`, `force`/`release` extensions (B.7/B.9) | `tests/fixtures/sim/procedural_assign/real.sv`; SYN-034(4) | Bounded assign/deassign and force/release are implemented in simulation by sim_procedural_assign. SYN-034(4) excludes the target-dependent legacy-driver synthesis profile from Core. |
+| SYN038-EX-04 | V2001/SV2009 | `procedural_continuous_assignment`, `force`/`release` extensions (B.7/B.9) | `tests/fixtures/sim/feature_completion/adv_032/assign_forms.v`; SYN-034(4) | Procedural assign/deassign is unsupported by design (ADV-001): every form stops with the ADV-032 diagnostic (`tests/sim_feature_completion/adv_032.rs`). Force/release is implemented in simulation by sim_force. SYN-034(4) excludes the target-dependent legacy-driver synthesis profile from Core. |
 | SYN038-EX-05 | V2001/SV2009 | `mos_switch_instance`, `pass_switch_instance`, resistive switch forms (B.24) | [`sim_gates_reject_switch_primitive`](../tests/sim_gates.rs) (`tests/sim_gates.rs`); SYN-034 | Device-level switch semantics are outside portable Core RTL; the inline test supplies the single-fault variable-terminal rejection. |
 | SYN038-EX-06 | V2001/SV2009 | `sequential_body`, `sequential_entry`, `seq_input_list`, `current_state`, `next_state`, `edge_symbol`, `edge_input_list`, `edge_indicator`, `udp_initial_statement`, `init_val`, `udp_reg_declaration` (B.25) | `tests/fixtures/sim/partial_features/udp_sequential_rejected.sv`; `tests/fixtures/sim/partial_features/udp_edge_rejected.sv`; SYN-031 | SYN-031 qualifies scalar combinational UDPs only. Sequential/edge/state-initialization UDPs are explicitly rejected and need separate implementation; they are outside Core and the selected Extended subset. |
 | SYN038-EX-07 | V2001/SV2009 | `specify_block`, `system_timing_check`, `path_delay_value` (B.26) | `tests/fixtures/sim/partial_features/negative_constant_delay.sv`; groups 17–19 | Timing/path/SDF behavior is simulation infrastructure, not Core synthesis. |
@@ -383,8 +383,8 @@ decision before entering the Core denominator.
 assignment register. It contains 940 distinct names, each with its edition,
 Annex A section or B-family source, and one CORE, EXTENDED,
 OUTSIDE_CORE_IMPLEMENTED, EXCLUDED or ALIAS/HELPER disposition. There are
-228 direct CORE names, 61 selected EXTENDED names, 18 implemented
-outside-Core names, 411 EXCLUDED names and 222 ALIAS/HELPER names; zero
+228 direct CORE names, 61 selected EXTENDED names, 15 implemented
+outside-Core names, 414 EXCLUDED names and 222 ALIAS/HELPER names; zero
 OPEN or BOUNDARY names. The four former BOUNDARY names resolve to two
 qualified combinational UDP forms and two excluded sequential UDP forms.
 ALIAS/HELPER entries point to assigned parent productions. These are grammar
@@ -489,7 +489,7 @@ for traceability, not as a current feature-status report.
 | 32 | Array/container sensitivity | CORE | `PR-02`–`PR-03`, SYN-005/SYN-007/SYN-014 |
 | 33 | Intra-assignment timing | RETAIN | Existing NBA capture; timing-bearing/native forms excluded |
 | 34 | Force and release | OUTSIDE + POLICY | General forcing is outside Core; SYN-034 selected static/legacy target required |
-| 35 | Procedural assign/deassign | POLICY | SYN-034 bounded legacy target required |
+| 35 | Procedural assign/deassign | OUTSIDE | Unsupported by design (ADV-001); explicit ADV-032 diagnostic |
 | 36 | Named disable | CORE | `PR-09`, SYN-037 local finite control |
 | 37 | Loop forms and captures | CORE | `PR-04`–`PR-06`, SYN-037 |
 | 38 | Uniqueness and priority checking | CORE | `PR-08`, SYN-011/SYN-025 finite checks |

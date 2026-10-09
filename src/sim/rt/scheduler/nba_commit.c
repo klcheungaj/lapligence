@@ -53,7 +53,7 @@ static void apply_nba(llg_nba_t* next) {
             llg_dependency_changed(next->native.chandle.dependency);
         }
     } else if (next->is_real) {
-        if (!llg_is_real_forced(next->real_target) && !pca_real_active(next->real_target))
+        if (!llg_is_real_forced(next->real_target))
             real_write(next->real_target, next->real_value);
     } else {
         sv4_t* target = next->target;
@@ -61,7 +61,7 @@ static void apply_nba(llg_nba_t* next) {
             if (next->net_slot < 0 || next->net_slot >= next->net_target->n_drivers)
                 return;
             target = next->net_target->drivers[next->net_slot];
-        } else if (llg_is_forced(target) || pca_active(target)) return;
+        } else if (llg_is_forced(target)) return;
         if (!target) return;
         if (next->tag_view && !nba_tag_commit_valid(next->tag_view, target)) return;
         sv4_t value = (next->has_mask || next->has_range)

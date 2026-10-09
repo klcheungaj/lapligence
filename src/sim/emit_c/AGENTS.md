@@ -426,8 +426,7 @@ loops destroy values and clear alias lists; repeated start/close rebuilds them.
 Runs of consecutive constant startup calls (spawns, finals,
 waveform registrations) use argument tables and loops in their original order;
 registrations still fail startup. Generated identifiers are standard C (never
-`$`, checked by the all-fixture lint); synthesized procedural-assign enables use
-reserved `llg_pca_en_<n>` names.
+`$`, checked by the all-fixture lint).
 
 `names.rs` owns reversible `cI_` / `Z` source-name escapes and injective
 component composition. Lowering retains raw source components separately from
@@ -467,66 +466,15 @@ emitter. Use [ownership validation](../../../tests/readme.md#dynamic-ownership-v
 and its generated-C sanitizer configuration; do not infer feature acceptance from
 component tests.
 
-## Procedural continuous assignment batches
-
-Process statement lists batch only adjacent `PcaAssign` operations with exactly
-equal source representation, selection/conversion IR and target type. The typed
-source whitelist permits signal/static-local reads, part selects, constant
-bit/indexed selects and numeric conversions; the execution effect summary must
-contain only `ImmediateStore`. Dynamic selectors, computed/calling sources,
-automatic cells, sampled reads and resolver-based net aliases remain unbatched.
-Every other statement, lexical boundary and execution-block boundary breaks a
-run. `PCA_BATCH_MIN_ASSIGNMENTS` is the named minimum (4); shorter runs retain
-their original emission.
-
-Each batch has a file-scope `static const` source/target/enable/binding table.
-One model-local non-inlined helper per exact typed shape uses the ordinary owned
-expression/conversion emitter and the caller's registered temporary slots. Each
-row evaluates/clones its source and preserves the original selection/conversion
-semantics under the packed borrow and cast-elision rules above, publishes with
-its own binding and destroys its owners before the next row. Repeated
-targets and reads of earlier targets remain legal; never hoist source values.
-The loop has a separate resume-free block, and its index uses `Frame::declare`.
-Deassign, drive, force/release and callable/final bodies retain their original
-paths. Tables are typed instance-record operands, so shared processes load their
-own rows; resolved-net sources still address C14 storage normally. No runtime or
-coroutine ABI changes are involved.
-
-## Electrical contribution batches
-
-`owned/net_batches.rs` batches consecutive whole structural writes of part selects
-from an identical captured local/conversion expression. Tables record net, slot,
-source bounds and target width/sign. `NET_BATCH_MIN_ASSIGNMENTS` is the named
-minimum (4); descriptor cast metadata uses `cast_width` / `cast_signed` fields,
-distinct from packed-value representation fields. Lexical/execution boundaries,
-different sources/delays and other operations end a run. One resume-free loop
-uses registered temporary owners and `Frame::declare` for its index, preserves
-publication order and destroys each
-row's values. Evaluate the captured base once; only local reads and numeric
-conversion/resize wrappers qualify. No signal reads or side effects are hoisted.
-Delayed batches keep one static inertial handle per original contribution and
-retain the complete transition tuple. Descriptor tables are typed instance
-operands for body sharing; delayed bodies retain the existing static-storage
-exclusion. Short or disconnected gathers use ordinary statement emission.
-Electrical widths and signs can vary within a table. Every row keeps an explicit
-cast after its part select; temporary width/sign placeholders cannot prove that
-conversion redundant. Any future batch cast elision must prove matching source
-and destination width/sign for every row. Ordinary per-site borrowing and
-constant-storage rules still apply outside these row conversions. Declared HDL,
-waveform and VPI shapes remain their original bit-binding views. The runtime/value
-ABI is unchanged.
-
 ## Instance body sharing
 
 `model/sharing.rs` groups compiler-owned emitted bodies by source location,
 coroutine/ordinary ABI, exact canonical frame layout and typed operand shapes,
-then requires exact equality after normalization. PCA drivers also share across
-distinct source sites when their typed driver operations and normalized bodies
-match; each original source location remains in its descriptor. Unrepresented
+then requires exact equality after normalization. Unrepresented
 references remain in the key. Widths, resume numbers, array extents and ordinary
 parameter payloads remain structural; generate-instance ULL payloads may become
 record fields.
-Only known activation/PCA/net-contribution identities become scalar operands.
+Only known activation/net-contribution identities become scalar operands.
 Bodies with local static storage stay separate. Startup-external roots (assertion
 actions) stay separate because they do not receive the startup record initialization.
 
@@ -546,7 +494,7 @@ access indexes (`release_emission_state`), keeping only the block tree, fields
 and call slots that frame grouping, sharing and metadata read. The production
 path (`render_with_value_config`) owns the `ExecutionModel`: it releases each
 process's operations after that coroutine body is rendered, so a fact needed
-later (the PCA-driver sharing key) is recorded on the artifact, and a changed
+later must be recorded on the artifact, and a changed
 arena-callee set is reanalyzed in place. The borrowed test API keeps the model
 intact and clones only for reanalysis. Assembly moves bodies into the model text
 and drops artifacts before the identifier pass, which bounds identifiers in the

@@ -248,7 +248,7 @@ void llg_nba_d(double* target, double value) {
 }
 
 void llg_ba_d(double* target, double value) {
-    if (llg_is_real_forced(target) || pca_real_active(target)) return;
+    if (llg_is_real_forced(target)) return;
     real_write(target, value);
 }
 

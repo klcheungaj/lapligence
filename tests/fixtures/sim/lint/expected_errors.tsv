@@ -116,9 +116,6 @@ partial_features/nba_four_state.sv	mixed-assignments	5:5
 partial_features/real_sensitivity.sv	combinational-loop	17:13
 partial_features/region_boundaries.sv	mixed-assignments	5:5
 partial_features/unknown_delay_zero.sv	mixed-assignments	5:5
-procedural_assign/concat.sv	mixed-assignments	6:3
-procedural_assign/priority.sv	mixed-assignments	4:3
-procedural_assign/real.sv	mixed-assignments	4:3
 process_control/kill_tree.sv	mixed-assignments	12:5
 review_batch4/packed_prefixes.sv	combinational-loop	5:17
 review_bundle/n03_mixed_record_patterns.sv	mixed-assignments	23:5

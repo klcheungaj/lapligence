@@ -59,17 +59,17 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 2. Data types | 3 | 10 | 0 | 0 | 0 | 0 | 13 |
 | 3. Modules/ports/elaboration | 4 | 5 | 0 | 0 | 0 | 0 | 9 |
 | 4. Scheduling/processes | 4 | 3 | 0 | 0 | 0 | 1 | 8 |
-| 5. Procedural statements | 5 | 8 | 0 | 1 | 0 | 0 | 14 |
+| 5. Procedural statements | 5 | 7 | 0 | 1 | 0 | 0 | 13 |
 | 6. Timing controls | 0 | 7 | 0 | 0 | 0 | 0 | 7 |
 | 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 0 | 17 |
-| 8. Continuous/structural | 3 | 6 | 3 | 1 | 0 | 0 | 13 |
+| 8. Continuous/structural | 4 | 6 | 3 | 1 | 0 | 0 | 14 |
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 0 | 7 |
 | 10. System tasks/functions | 10 | 10 | 2 | 4 | 0 | 0 | 26 |
 | 11. Compiler directives | 6 | 1 | 0 | 1 | 0 | 0 | 8 |
 | 12. Verification/foreign interfaces | 1 | 12 | 0 | 1 | 3 | 0 | 17 |
-| **Total** | **45** | **80** | **6** | **8** | **3** | **1** | **143** |
+| **Total** | **46** | **79** | **6** | **8** | **3** | **1** | **143** |
 
-**126 rows have some source implementation; 80 of those remain partial and one
+**126 rows have some source implementation; 79 of those remain partial and one
 is accepted.** The accepted row (`always_ff` and writer rules) carries
 post-change HDL execution evidence from RTL-013 and RTL-099; other rows have no
 row-level acceptance promotion yet, which does not mean they lack passing tests.
@@ -130,7 +130,7 @@ are not independent conformance oracles.
 The six SYN-034 optional target uses remain outside this selected profile:
 elaboration-only static class methods/constant objects; operator overloading;
 elaboration-only fixed-input locator results; legacy procedural assign/deassign
-beyond the supported whole-variable subset or static-initialization force; module-body specparams; and finite
+(unsupported by design in every form) or static-initialization force; module-body specparams; and finite
 assertion/monitor synthesis. Profile exclusion does not negate separately
 implemented simulator behavior. PLA tasks are unsupported by design (§10).
 
@@ -691,8 +691,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   width (one interval per row), record or packed members and ref-port targets
   remain separate writers; overlapping procedural, called-function,
   hierarchical, ref-port, positional-pattern, output-port and continuous writes
-  are diagnosed within admitted storage. Force/release and procedural
-  `assign`/`deassign` are overrides, not competing writers. Constant rows and
+  are diagnosed within admitted storage. Force/release is an override, not a
+  competing writer. Constant rows and
   slices of descriptor arrays bound to output ports are one cell-interval
   writer each ([RTL-099](../tests/sim_feature_completion/rtl_099.rs)).
   SV §9.2.2.4 **[SV-2005]**.
@@ -830,25 +830,23 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
   Omitted slots in nested resizable traversal, associative nesting,
   string/shared/native captures and illegal iterator writes remain rejected. SV §§12.7.1, 12.7.3 **[SV-2005]**.
-- 🟨 **Procedural assign/deassign** — Whole packed/real/shortreal variables
-  (including a hierarchical reference that names one) and admitted packed
-  concatenations use replaceable live RHS bindings. `deassign` retains the last
-  value; ordinary writes cannot override an active binding. `force` wins, and
-  release resumes the latest live RHS. Pinned by
-  [adv_032](../tests/fixtures/sim/feature_completion/adv_032/readme.md)
-  `assign_supported`. Every other form is the next row. V §9.3.1 **[1995]**.
-- 🚫 **Procedural assign/deassign — remaining forms** — Net, selected and
-  part-selected targets, streaming targets, unpacked array and structure
-  targets, string, queue, dynamic and class-handle targets, and `assign` inside
-  a function or task activation stop the run with `unsupported: procedural
-  `assign` … (legacy procedural assign/deassign form) is not supported by llg`
-  (Slang already rejects nets, selects and streams in this context with its
-  own error). V §9.3.1 **[1995]**.
+- 🚫 **Procedural assign/deassign** — Every procedural `assign` and
+  `deassign` statement, whatever its target (whole, concatenated, real,
+  aggregate or non-numeric variables, and local or hierarchical references
+  such as `u.x`, `g[1].v.x`, `$root.tb.u.x` or an upward name), and `assign`
+  inside a function or task, stops the run with `unsupported: procedural
+  `assign`` (or `` `deassign` ``) `(legacy procedural assign/deassign form) is
+  not supported by llg` at the statement (user decision 2026-10-09). Illegal
+  targets (nets, selects, streams) keep Slang's own located error. Pinned by
+  [adv_032](../tests/fixtures/sim/feature_completion/adv_032/readme.md).
+  V §9.3.1 **[1995]**.
 - 🟨 **Force/release** — Persistent packed/real variables and admitted constant-selected, concatenated, resolved-net and canonical alias targets support live
-  RHS dependencies and wakeups. Release restores net resolution; variables retain
-  the forced value unless a procedural continuous assignment resumes. Dynamic
-  selects, automatic/array targets and unsupported indirect/hierarchical/net
-  forms reject. Live RHS sources include fixed-array elements and whole arrays
+  RHS dependencies and wakeups, local or through hierarchical, generate,
+  instance-array, top-name and upward paths
+  ([adv_032](../tests/fixtures/sim/feature_completion/adv_032/readme.md)
+  `hier_force_release`). Release restores net resolution; variables retain
+  the forced value. Variable selects are language errors (V §9.3.2); dynamic
+  selects, automatic/array targets and unsupported indirect net forms reject. Live RHS sources include fixed-array elements and whole arrays
   (through their change markers). A helper with visible writes, persistent
   state or descriptor formals is evaluated by the force statement and then, while
   the force is in effect, by a per-site guard process into a hidden source the
@@ -1183,6 +1181,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   the newest evaluation's target and value (the LRM is silent), and the longest
   static prefix (SV §11.5.3) is the written storage. Net targets and gate
   terminals keep constant selects. V §6.1 **[1995]**.
+- 🟦 **Hierarchical continuous assignments** — Module-scope `assign` into a
+  net of another instance through downward, multi-level, generate-if/for,
+  instance-array, top-name, `$root` and upward paths, constant part-selects of a
+  hierarchical net, and (SystemVerilog) a child or interface variable with one
+  continuous driver. A second driver of such a variable is a located language
+  error (SV §6.5). Pinned in both editions, optimizer modes and value backends
+  by [adv_032](../tests/fixtures/sim/feature_completion/adv_032/readme.md)
+  `hier_continuous_assign`. V §§6.1, 12.4 **[1995]**.
 - 🟨 **Fixed-array continuous assignments** — Whole/selected fixed values,
   slices, conditionals, patterns and function returns capture one RHS per
   activation. Net arrays retain per-cell/per-bit contribution slots. Each

@@ -531,17 +531,6 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         IrStmt::DelayedChandleAssign { rhs, .. } => {
             rhs.expressions(&mut |expr| collect_expr_reads(expr, model, rw));
         }
-        IrStmt::PcaAssign {
-            sig, enable, value, ..
-        }
-        | IrStmt::PcaDrive {
-            sig, enable, value, ..
-        } => {
-            rw.write(*sig);
-            rw.write(*enable);
-            collect_expr_reads(value, model, rw);
-        }
-        IrStmt::PcaDeassign { sig } => rw.write(*sig),
         IrStmt::ClockingSample { source, sample, .. } => {
             rw.read(*source);
             rw.write(*sample);

@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use super::constants::{c_string_literal, fs_to_timescale_str, round_shortreal};
+use super::constants::{c_string_literal, fs_to_timescale_str};
 use super::context::RCtx;
 use super::expressions::{
     arg_resize, bool_code, render_assign, render_expr_impl as render_expr, render_lhs_address,
@@ -39,7 +39,6 @@ mod callbacks;
 pub use callbacks::render_pre_fn;
 mod force;
 use force::{render_force, render_release};
-pub(super) mod pca_batches;
 
 // ── Statement rendering ───────────────────────────────────────────────────────
 
@@ -53,20 +52,6 @@ pub fn render_stmt(ctx: &RCtx<'_>, st: &crate::sim::ir::IrStmt) -> Result<String
     )?;
     super::require_owned_emission()?;
     render_stmt_impl(ctx, st).map_err(EmitError::new)
-}
-
-fn render_pca_real_value(
-    ctx: &RCtx<'_>,
-    value: &IrExpr,
-    shortreal: bool,
-) -> Result<String, String> {
-    let rendered = render_expr(ctx, value)?;
-    let code = if rendered.width == 0 {
-        rendered.code
-    } else {
-        format!("sv4_to_real({})", rendered.code)
-    };
-    Ok(round_shortreal(code, shortreal))
 }
 
 fn render_stream_assignment(
@@ -481,51 +466,6 @@ fn render_stmt_scoped(
             format!(
                 "    llg_event_t* _{name}_source = {source};\n    llg_event_t {name} = {{ .object = _{name}_source ? _{name}_source->object : NULL }};\n"
             )
-        }
-        IrStmt::PcaAssign {
-            sig,
-            enable,
-            site,
-            value,
-        } => {
-            let target = &ctx.model.signal(*sig).c_name;
-            let enable = &ctx.model.signal(*enable).c_name;
-            match ctx.model.signal(*sig).ty {
-                IrType::Real { shortreal } => {
-                    let value = render_pca_real_value(ctx, value, shortreal)?;
-                    format!("    llg_pca_assign_d(&{target}, &{enable}, {site}ULL, {value});\n")
-                }
-                IrType::Packed { .. } => {
-                    let value = render_expr(ctx, value)?.code;
-                    format!("    llg_pca_assign(&{target}, &{enable}, {site}ULL, {value});\n")
-                }
-            }
-        }
-        IrStmt::PcaDrive {
-            sig,
-            enable,
-            site,
-            value,
-        } => {
-            let target = &ctx.model.signal(*sig).c_name;
-            let enable = &ctx.model.signal(*enable).c_name;
-            match ctx.model.signal(*sig).ty {
-                IrType::Real { shortreal } => {
-                    let value = render_pca_real_value(ctx, value, shortreal)?;
-                    format!("    llg_pca_drive_d(&{target}, &{enable}, {site}ULL, {value});\n")
-                }
-                IrType::Packed { .. } => {
-                    let value = render_expr(ctx, value)?.code;
-                    format!("    llg_pca_drive(&{target}, &{enable}, {site}ULL, {value});\n")
-                }
-            }
-        }
-        IrStmt::PcaDeassign { sig } => {
-            let target = &ctx.model.signal(*sig);
-            match target.ty {
-                IrType::Real { .. } => format!("    llg_pca_deassign_d(&{});\n", target.c_name),
-                IrType::Packed { .. } => format!("    llg_pca_deassign(&{});\n", target.c_name),
-            }
         }
         IrStmt::If {
             cond,

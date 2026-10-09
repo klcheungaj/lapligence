@@ -838,7 +838,7 @@ int llg_rt_process_count(void);
 // Integer arguments are checked four-state values; unknown or out-of-range
 // values are reported as a controlled runtime failure instead of being
 // silently truncated. Output values are written through the ordinary
-// procedural-write path so force/PCA rules remain consistent with HDL.
+// procedural-write path so force rules remain consistent with HDL.
 enum {
     LLG_Q_OK = 0,
     LLG_Q_FULL = 1,
@@ -2013,18 +2013,6 @@ void llg_ba_d(double* target, double value);
 // snapshotted first, then every cell publishes through llg_ba_d.
 void llg_real_cells_order(double* cells, uint64_t count, uint64_t element_cells,
                           int method);
-
-// Procedural continuous assignments. Each generated assignment site has a
-// stable identity; executing a new site replaces the target's active binding.
-// Ordinary blocking/NBA writes to an active target are ignored. Deassign keeps
-// the last driven value, and a live binding remains beneath force/release.
-// The binding tables grow on demand with checked allocation.
-void llg_pca_assign(sv4_t* target, sv4_t* enable, uint64_t site, sv4_t value);
-void llg_pca_drive(sv4_t* target, sv4_t* enable, uint64_t site, sv4_t value);
-void llg_pca_deassign(sv4_t* target);
-void llg_pca_assign_d(double* target, sv4_t* enable, uint64_t site, double value);
-void llg_pca_drive_d(double* target, sv4_t* enable, uint64_t site, double value);
-void llg_pca_deassign_d(double* target);
 
 // ── force / release ───────────────────────────────────────────────────────────
 //

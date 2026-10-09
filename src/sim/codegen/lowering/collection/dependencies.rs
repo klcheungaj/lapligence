@@ -809,20 +809,6 @@ impl<'a> Codegen<'a> {
                 self.walk_process_writes_bound(*lhs, writes, visited_functions, bindings, mode)?;
                 return Ok(());
             }
-            NodeKind::Stmt(StmtKind::ProcContAssign { .. })
-                if mode == ProcessWriteMode::Ownership =>
-            {
-                for child in self.node(node).children.iter().skip(1) {
-                    self.walk_process_writes_bound(
-                        *child,
-                        writes,
-                        visited_functions,
-                        bindings,
-                        mode,
-                    )?;
-                }
-                return Ok(());
-            }
             NodeKind::Stmt(StmtKind::Assign { .. })
             | NodeKind::Stmt(StmtKind::ProcContAssign { .. })
             | NodeKind::Stmt(StmtKind::Force { .. })
@@ -1248,17 +1234,6 @@ impl<'a> Codegen<'a> {
         Ok(out)
     }
 
-    pub(in super::super) fn walk_read_signals(
-        &self,
-        scope_path: &str,
-        node: NodeId,
-        seen: &mut HashSet<IrDependency>,
-        visited: &mut HashSet<NodeId>,
-        out: &mut Vec<IrDependency>,
-    ) -> Result<(), String> {
-        self.walk_read_signals_mode(scope_path, node, seen, visited, out, true)
-    }
-
     fn walk_read_signals_mode(
         &self,
         scope_path: &str,
@@ -1492,8 +1467,7 @@ impl<'a> Codegen<'a> {
             | NodeKind::Stmt(StmtKind::ProcContAssign { .. }) => {
                 // Sensitivity of a process body: an assignment's LHS base
                 // signal must NOT trigger the process (it would self-wake
-                // after every write — including the dedicated PCA guard
-                // process's writes).  Only the LHS's index/bounds
+                // after every write).  Only the LHS's index/bounds
                 // expressions are reads.
                 if let Some(rhs) = self.node(node).children.get(1) {
                     self.walk_read_signals_bound(

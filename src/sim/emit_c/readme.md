@@ -77,11 +77,6 @@ for defaults, index resets, alias binding and teardown. Net resolution preserves
 electrical bit correspondence and driver semantics. Consecutive spawns, finals
 and waveform registrations run from constant
 argument tables in their original order.
-Consecutive compatible procedural `assign` statements also use immutable row
-tables and one model-local typed helper per shape. Each row reads its source at
-issue time and completes publication/cleanup before the next row. Shared bodies
-load their own table from their instance record; the minimum run length and
-eligibility rules are in the [emitter guide](AGENTS.md#procedural-continuous-assignment-batches).
 
 See [owned-emitter components](owned/readme.md), [runtime](../rt/readme.md),
 [feature status](../../../docs/sim_features.md) and

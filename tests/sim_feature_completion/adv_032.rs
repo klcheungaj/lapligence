@@ -1,8 +1,10 @@
 //! ADV-032: legacy constructs the user decision of 2026-10-08 leaves
 //! unsupported must stop the run with one source-located diagnostic before C
 //! generation. Expected diagnostics are written out literally from the
-//! construct and family names in `docs/sim_features.md`; the supported
-//! procedural `assign`/`deassign` and `$q_*` subsets keep executing.
+//! construct and family names in `docs/sim_features.md`. Procedural
+//! `assign`/`deassign` is rejected in every form, local or hierarchical;
+//! hierarchical continuous assignment and force/release, and the supported
+//! `$q_*` subset, keep executing.
 use super::{sim_cli, sim_harness};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -10,7 +12,6 @@ use std::time::Duration;
 
 const SUITE: &str = "feature_completion/adv_032";
 const BOTH: &[&str] = &["v2001", "sv2009"];
-const SV_ONLY: &[&str] = &["sv2009"];
 
 const MOS: &str = "MOS and resistive switch primitives";
 const TRIREG: &str = "trireg charge storage";
@@ -265,92 +266,206 @@ fn stochastic_queue_outputs_beyond_whole_integer_variables_are_rejected() {
     }
 }
 
+/// One expected rejection per procedural `assign`/`deassign` statement, at the
+/// statement's own position.
+fn assign_findings(sites: &[(u32, u32, &str)]) -> Vec<String> {
+    sites
+        .iter()
+        .map(|(line, col, stmt)| finding(*line, *col, &format!("procedural `{stmt}`"), ASSIGN))
+        .collect()
+}
+
+/// The language error for an illegal target is the frontend's own located
+/// diagnostic, never the unsupported-by-design message.
+fn rejects_as_language_error(fixture: &str, edition: &str, diagnostic: &str) {
+    for optimized in [false, true] {
+        let output =
+            sim_cli::invoke_with_env(SUITE, fixture, optimized, &["--edition", edition], &[], &[]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{fixture}: {stderr}");
+        assert!(output.stdout.is_empty(), "{fixture}: {output:?}");
+        assert!(stderr.contains(diagnostic), "{fixture}: {stderr}");
+        assert!(
+            !stderr.contains("is not supported by llg"),
+            "{fixture}: illegal form reported as unsupported: {stderr}"
+        );
+    }
+}
+
 #[test]
-fn procedural_assign_beyond_variables_and_concatenations_is_rejected() {
+fn procedural_assign_and_deassign_are_rejected_in_every_form() {
+    // User decision 2026-10-09: procedural assign/deassign (V 9.3.1, SV
+    // 10.6.1) is unsupported by design whatever the target; every statement
+    // is reported, including the forms an earlier subset simulated.
     for edition in BOTH {
+        sim_cli::reject_case_with_error_lines(
+            SUITE,
+            "assign_forms.v",
+            &assign_findings(&[
+                (14, 5, "assign"),
+                (18, 5, "deassign"),
+                (23, 5, "assign"),
+                (27, 5, "deassign"),
+                (28, 5, "deassign"),
+                (31, 5, "assign"),
+                (33, 5, "assign"),
+                (35, 5, "deassign"),
+                (36, 5, "assign"),
+                (38, 5, "deassign"),
+            ]),
+            &["--edition", edition],
+        );
         sim_cli::reject_case_with_error_lines(
             SUITE,
             "assign_in_task.v",
-            &[finding(
-                5,
-                14,
-                "procedural `assign` inside a function or task activation",
-                ASSIGN,
-            )],
+            &assign_findings(&[(5, 7, "assign")]),
             &["--edition", edition],
         );
     }
-    let aggregate = "procedural `assign` on a select or aggregate target";
-    let scalar = "procedural `assign` on a target that is not a packed, real or shortreal variable";
-    for edition in SV_ONLY {
-        sim_cli::reject_case_with_error_lines(
-            SUITE,
-            "assign_struct.sv",
-            &[finding(5, 12, aggregate, ASSIGN)],
-            &["--edition", edition],
-        );
-    }
-    for edition in SV_ONLY {
-        sim_cli::reject_case_with_error_lines(
-            SUITE,
-            "assign_unpacked_array.sv",
-            &[finding(4, 12, aggregate, ASSIGN)],
-            &["--edition", edition],
-        );
-    }
-    for edition in SV_ONLY {
-        sim_cli::reject_case_with_error_lines(
-            SUITE,
-            "assign_string.sv",
-            &[finding(4, 12, scalar, ASSIGN)],
-            &["--edition", edition],
-        );
-    }
-    for edition in SV_ONLY {
-        sim_cli::reject_case_with_error_lines(
-            SUITE,
-            "assign_queue.sv",
-            &[finding(4, 12, scalar, ASSIGN)],
-            &["--edition", edition],
-        );
-    }
-    for edition in SV_ONLY {
-        sim_cli::reject_case_with_error_lines(
-            SUITE,
-            "assign_class_handle.sv",
-            &[finding(7, 12, scalar, ASSIGN)],
-            &["--edition", edition],
-        );
-    }
-}
-
-#[test]
-fn sv_only_forms_are_rejected_by_the_verilog_2001_edition_before_lowering() {
-    for fixture in [
-        "assign_struct.sv",
-        "assign_unpacked_array.sv",
-        "assign_string.sv",
-        "assign_queue.sv",
-        "assign_class_handle.sv",
+    for (fixture, line) in [
+        ("assign_struct.sv", 5),
+        ("assign_unpacked_array.sv", 4),
+        ("assign_string.sv", 4),
+        ("assign_queue.sv", 4),
+        ("assign_class_handle.sv", 7),
     ] {
-        frontend_rejects(fixture, "v2001", "is not available in IEEE 2001");
+        sim_cli::reject_case_with_error_lines(
+            SUITE,
+            fixture,
+            &assign_findings(&[(line, 5, "assign")]),
+            &["--edition", "sv2009"],
+        );
     }
 }
 
 #[test]
-fn supported_procedural_assign_subset_keeps_executing() {
-    // Hand-derived from V 9.3.1: a live binding follows its source until
-    // deassign, deassign keeps the last value, and a later ordinary write
-    // lands again.
-    let expected = include_str!("../fixtures/sim/feature_completion/adv_032/assign_supported.out");
+fn hierarchical_procedural_assign_targets_are_rejected_like_local_ones() {
+    // Downward, multi-level, generate-if/for, instance-array, per-instance
+    // child, upward, concatenated and real targets; the two `owner`
+    // instances share their statements, which are reported once.
     for edition in BOTH {
-        sim_cli::run_case_with_args(
+        sim_cli::reject_case_with_error_lines(
             SUITE,
-            "assign_supported.v",
-            expected,
-            "llg: $finish at time 10000 at tb:39:5\n",
-            &[],
+            "assign_hierarchical.v",
+            &assign_findings(&[
+                (15, 5, "assign"),
+                (16, 8, "deassign"),
+                (22, 5, "assign"),
+                (23, 8, "deassign"),
+                (47, 5, "assign"),
+                (48, 5, "assign"),
+                (49, 5, "assign"),
+                (50, 5, "assign"),
+                (51, 5, "assign"),
+                (52, 5, "assign"),
+                (53, 8, "deassign"),
+                (54, 5, "deassign"),
+                (55, 5, "deassign"),
+                (56, 5, "deassign"),
+                (57, 5, "deassign"),
+                (58, 5, "deassign"),
+            ]),
             &["--edition", edition],
+        );
+    }
+    sim_cli::reject_case_with_error_lines(
+        SUITE,
+        "assign_hierarchical_root.sv",
+        &assign_findings(&[
+            (9, 5, "assign"),
+            (10, 8, "deassign"),
+            (25, 5, "assign"),
+            (26, 5, "assign"),
+            (27, 8, "deassign"),
+            (28, 5, "deassign"),
+        ]),
+        &["--edition", "sv2009"],
+    );
+}
+
+#[test]
+fn illegal_procedural_assign_targets_stay_language_errors() {
+    // V 9.3.1: only variables and their concatenations; a net or a select
+    // reached through a hierarchical path is a frontend error at the target.
+    let bad =
+        "lvalue of procedural assign/deassign must be a variable or concatenation of variables";
+    for edition in BOTH {
+        rejects_as_language_error(
+            "assign_hierarchical_net.v",
+            edition,
+            &format!("assign_hierarchical_net.v:12:12 {bad}"),
+        );
+        rejects_as_language_error(
+            "assign_hierarchical_select.v",
+            edition,
+            &format!("assign_hierarchical_select.v:10:12 {bad}"),
+        );
+    }
+}
+
+#[test]
+fn hierarchical_continuous_assignments_drive_other_instances_nets() {
+    // Hand-derived from V 6.1/12.4: each net follows its own expression of
+    // `src` (1 then 6); the undriven generate-for sibling stays z, the
+    // upward driver is constant 5 and the two part-selects compose `b.n`.
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/adv_032/hier_continuous_assign.out");
+    for edition in BOTH {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "hier_continuous_assign.v",
+            expected,
+            &["--edition", edition],
+            &[],
+        );
+    }
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/adv_032/hier_continuous_assign_root.out");
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "hier_continuous_assign_root.sv",
+        expected,
+        &["--edition", "sv2009"],
+        &[],
+    );
+    frontend_rejects(
+        "hier_continuous_assign_root.sv",
+        "v2001",
+        "is not available in IEEE 2001",
+    );
+}
+
+#[test]
+fn a_continuously_assigned_child_variable_admits_no_other_driver() {
+    // SV 6.5: the procedural initializer is a second driver; the run stops
+    // with a located language error, not the unsupported-by-design message.
+    rejects_as_language_error(
+        "hier_continuous_assign_mixed.sv",
+        "sv2009",
+        "has both a continuous assignment at",
+    );
+}
+
+#[test]
+fn hierarchical_force_and_release_keep_their_lrm_semantics() {
+    // Hand-derived from V 9.3.2: forced variables keep the forced value after
+    // release, forced nets resume their drivers, a later bit force overrides
+    // one bit of a whole-net force, and the upward force window is t=2..4.
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/adv_032/hier_force_release.out");
+    for edition in BOTH {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "hier_force_release.v",
+            expected,
+            &["--edition", edition],
+            &[],
+        );
+        // V 9.3.2: a select of a variable is not a force target.
+        rejects_as_language_error(
+            "hier_force_variable_select.v",
+            edition,
+            "hier_force_variable_select.v:10:11 lvalue of force/release must be a net, a variable, a constant select of a net, or a concatenation of these",
         );
     }
 }
@@ -559,5 +674,5 @@ fn component_db_keeps_active_charge_directives_with_positions() {
         .file
         .ends_with("directive_delay_mode_path.v"));
     assert!(db_of("directive_inactive.v").legacy_directives().is_empty());
-    assert!(db_of("assign_supported.v").legacy_directives().is_empty());
+    assert!(db_of("assign_forms.v").legacy_directives().is_empty());
 }

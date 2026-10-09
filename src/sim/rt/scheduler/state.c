@@ -487,12 +487,6 @@ typedef struct {
     llg_force_entry_t* force_table;   // checked-growable live-entry table
     int force_count;
     int force_capacity;
-    llg_pca_binding_t* pca_table;
-    int pca_count;
-    int pca_capacity;
-    llg_pca_real_binding_t* pca_real_table;
-    int pca_real_count;
-    int pca_real_capacity;
     llg_rng_state_t rng_root;
     int argc;
     char** argv;
