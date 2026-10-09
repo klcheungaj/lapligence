@@ -132,7 +132,7 @@ fn deferred_file_output_keeps_owned_args_until_postponed_region() {
         })
         .map_err(|error| error.to_string())?;
         let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
-        let expected_file = "strobe=0010\nmonitor=2\n";
+        let expected_file = "strobe=10\nmonitor=2\n";
         for (name, options) in [
             ("optimized", OptConfig::default()),
             ("unoptimized", OptConfig::none()),

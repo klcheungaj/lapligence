@@ -1,0 +1,6 @@
+main tb.main
+fn tb.where_am_i
+task tb.u1.show
+leaf tb.u1.blk work.leaf
+leaf tb.u2.blk work.leaf
+gen tb.gen[0] <tb.gen[0]>

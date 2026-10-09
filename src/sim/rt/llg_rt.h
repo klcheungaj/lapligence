@@ -335,7 +335,105 @@ enum {
     // A net's strength view (see llg_net_t.strength): one byte per bit,
     // formatted only by `%v`.
     LLG_FMT_STRENGTH = 3,
+    // Conversion text already rendered by the model (a `%p` pattern),
+    // printed verbatim; owned like LLG_FMT_STRING.
+    LLG_FMT_TEXT = 4,
 };
+
+// Assignment-pattern text (`%p`/`%0p`, SV 21.2.1.7) of one value, described
+// by immutable generated tables. `storage` names the root's representation:
+// FROM_PACKED `const sv4_t*` (a packed scalar or a flattened aggregate whose
+// first member/element is most significant), FROM_REAL `const double*`,
+// FROM_STRING `const llg_string_t*`, FROM_HANDLE `void* const*`, FROM_VALUE
+// `const llg_value_t*`, FROM_PACKED_CONTAINER a packed dynamic array, queue or
+// associative array and FROM_VALUE_CONTAINER its value-element form (selected
+// by the type kind), FROM_NESTED_CONTAINER a container nested in a value.
+// The source is only read; the returned string is owned by the caller.
+enum {
+    LLG_PATTERN_PACKED = 0,
+    LLG_PATTERN_PACKED_STRUCT = 1,
+    LLG_PATTERN_REAL = 2,
+    LLG_PATTERN_STRING = 3,
+    LLG_PATTERN_FIXED_ARRAY = 4,
+    LLG_PATTERN_STRUCT = 5,
+    LLG_PATTERN_UNION = 6,
+    LLG_PATTERN_QUEUE = 7,
+    LLG_PATTERN_DYNAMIC = 8,
+    LLG_PATTERN_ASSOC = 9,
+    LLG_PATTERN_CLASS = 10,
+    LLG_PATTERN_CHANDLE = 11,
+    LLG_PATTERN_EVENT = 12,
+    LLG_PATTERN_VIRTUAL_INTERFACE = 13,
+    LLG_PATTERN_PROCESS = 14,
+};
+
+enum {
+    LLG_PATTERN_FROM_PACKED = 0,
+    LLG_PATTERN_FROM_REAL = 1,
+    LLG_PATTERN_FROM_STRING = 2,
+    LLG_PATTERN_FROM_HANDLE = 3,
+    LLG_PATTERN_FROM_VALUE = 4,
+    LLG_PATTERN_FROM_PACKED_CONTAINER = 5,
+    LLG_PATTERN_FROM_VALUE_CONTAINER = 6,
+    LLG_PATTERN_FROM_NESTED_CONTAINER = 7,
+};
+
+// Nested class objects printed by one `%p` before `(...)` replaces deeper
+// objects; it bounds the walk's chain and native recursion.
+#define LLG_PATTERN_MAX_DEPTH 64u
+// Longest `%p` text; longer output is truncated with a warning (the LRM
+// requires at least 1024 characters).
+#define LLG_PATTERN_OUTPUT_LIMIT ((size_t)1u << 20)
+
+// Types refer to each other by index into one model table;
+// LLG_PATTERN_NO_TYPE selects a storage's generic form.
+#define LLG_PATTERN_NO_TYPE UINT32_MAX
+typedef struct llg_pattern_type llg_pattern_type_t;
+typedef struct {
+    const char* name;
+    uint32_t type;
+} llg_pattern_member_t;
+// `words` holds the member value's bits, x and z limbs (3 * limbs entries).
+typedef struct {
+    const char* name;
+    const uint64_t* words;
+} llg_pattern_enum_t;
+// `flat_width` is the packed or flattened width; `count` the members, enum
+// members or fixed dimensions (`bounds` holds left/right per dimension).
+struct llg_pattern_type {
+    uint8_t kind;
+    uint8_t signed_flag;
+    uint8_t shortreal;
+    uint32_t flat_width;
+    size_t count;
+    const llg_pattern_member_t* members;
+    const llg_pattern_enum_t* enums;
+    const int32_t* bounds;
+    uint32_t element;
+};
+// One property of a class layout, base class properties first.
+typedef struct {
+    const char* name;
+    uint32_t type;
+    uint8_t storage;
+} llg_pattern_field_t;
+typedef struct {
+    size_t count;
+    const llg_pattern_field_t* fields;
+} llg_pattern_class_t;
+// The model's view of a live object: its class id and property count, or 0
+// for a reclaimed object; and the storage of property `index`.
+typedef int (*llg_pattern_object_fn)(void* handle, uint32_t* class_id,
+                                     size_t* count);
+typedef const void* (*llg_pattern_field_fn)(void* handle, size_t index);
+void llg_pattern_set_classes(const llg_pattern_class_t* classes, uint32_t count,
+                             llg_pattern_object_fn object,
+                             llg_pattern_field_fn field);
+// Class field types index the table passed to llg_pattern_format.
+llg_string_t llg_pattern_format(const llg_pattern_type_t* types,
+                                uint32_t type_count, uint32_t type,
+                                uint8_t storage, const void* source,
+                                int abbreviated);
 
 enum {
     LLG_SEVERITY_INFO = 0,

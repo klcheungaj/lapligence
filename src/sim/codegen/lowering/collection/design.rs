@@ -560,6 +560,14 @@ impl<'a> Codegen<'a> {
         } else {
             gs_name
         });
+        // `%m` and diagnostics name the block as written (`g[0]`), not in
+        // its escaped path form.
+        let display = format!(
+            "{}.{}",
+            self.display_path(path),
+            components.last().map_or("genblk", String::as_str)
+        );
+        self.display_paths.insert(gs_path.clone(), display);
         self.c_paths.insert(gs_path.clone(), components);
         self.gen_scope_paths.insert(gs, gs_path.clone());
         self.scope_nodes.insert(gs_path.clone(), gs);

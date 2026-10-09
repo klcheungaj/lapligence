@@ -249,7 +249,7 @@ use crate::core::model::TypeInfo;
 use crate::core::value::ValueData;
 use crate::ffi::slang::LanguageEdition;
 use crate::sim::emit_c::{
-    display_ident, escaped_char, event_global_name, function_ident, global_name, ident, path_ident,
+    display_ident, event_global_name, function_ident, global_name, ident, path_ident,
     real_global_name, render_expr, scoped_name, strip_lib, RCtx, LLG_MAX_WIDTH,
 };
 use crate::sim::ir::{
@@ -1423,6 +1423,8 @@ struct Codegen<'a> {
     /// Native record class properties by declaration: their per-object
     /// value (SIM-011).
     class_native_fields: HashMap<NodeId, usize>,
+    /// Class display layouts for `%p` are being or have been built.
+    pattern_classes_started: bool,
     /// Native record class properties selected through an explicit handle,
     /// keyed by the selecting path expression: receiver-qualified aliases.
     receiver_native_values: HashMap<NodeId, usize>,
@@ -1761,6 +1763,7 @@ impl<'a> Codegen<'a> {
             container_initializers: Vec::new(),
             receiver_containers: HashMap::new(),
             class_native_fields: HashMap::new(),
+            pattern_classes_started: false,
             receiver_native_values: HashMap::new(),
             container_iterator: None,
             inline_iterators: Vec::new(),

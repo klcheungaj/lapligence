@@ -892,6 +892,19 @@ passing the binding next to the scope string through the runtime formatting
 entry points. Reproduce with `string f = "%l"; $display("%s", $sformatf(f));`
 inside a cell bound from a non-`work` library.
 
+## `%p` of tagged unions and built-in synchronization handles
+
+SIM-024 formats every other value under `%p` from a display-type table, but
+two forms still reject during lowering instead of printing: tagged unions
+(the table has no tag view; SV §21.2.1.7 leaves the text to the
+implementation, which would print the active member) and `semaphore`/
+`mailbox` handles held directly in a `%p` argument (their objects are runtime
+records, not class layouts). As class properties they print as handles.
+Fixing it means a tagged-union table entry that reads the tag and active
+member, and handle kinds for the two runtime records. Reproduce with
+[`neg_tagged_union_pattern.sv`](../tests/fixtures/sim/feature_completion/sim_024/neg_tagged_union_pattern.sv)
+or `semaphore s = new; initial $display("%p", s);`.
+
 ## Effectful helpers in runtime-callback evaluators
 
 **Status:** narrowed by RTL-007b; two list forms remain.

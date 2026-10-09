@@ -35,10 +35,11 @@ fn run_sim(sv: &str, tag: &str) -> Result<String, String> {
 ///   t=10  initial: clk=0 (negedge, not watched); #5 -> t=15.
 ///   t=15  initial: clk=1 posedge -> gen processes re-record arr[i] <= i
 ///        (same values); initial #1 -> t=16.
-///   t=16  initial: $display("arr=0 1 2 3"); $finish.
+///   t=16  initial: $display("arr=%d ...") of the 8-bit elements; $finish.
 ///
-/// Expected stdout (exactly):
-///   arr=0 1 2 3
+/// Expected stdout (exactly; `%d` of an 8-bit value is three columns wide,
+/// SV 21.2.1.3):
+///   arr=  0   1   2   3
 #[test]
 fn sim_gen_loop_processes() {
     if !llg::sim::build::cmake_available() {
@@ -64,7 +65,7 @@ endmodule
 "#;
 
     let stdout = run_sim(sv, "genloop").expect("simulation should run");
-    assert_eq!(stdout, "arr=0 1 2 3\n");
+    assert_eq!(stdout, "arr=  0   1   2   3\n");
 }
 
 /// A conditional generate (`if (MODE == 0) … else …`) with a process in each

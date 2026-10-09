@@ -11,12 +11,15 @@ pub(super) use assignments::NativeNbaValue;
 mod classes;
 mod classification;
 mod enumerations;
+mod format_text;
 mod handles;
 mod initialization;
 mod mailboxes;
 mod methods;
+mod patterns;
 mod processes;
 mod queries;
+pub(in crate::sim::codegen) use format_text::c_format_literal;
 mod strings;
 mod virtual_interfaces;
 

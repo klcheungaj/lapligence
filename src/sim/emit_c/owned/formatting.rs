@@ -17,7 +17,9 @@ impl Frame<'_, '_> {
                 IrDisplayArg::Packed(expr)
                 | IrDisplayArg::Real(expr)
                 | IrDisplayArg::Strength(expr) => Prepared::Numeric(self.expression(expr)?),
-                IrDisplayArg::String(text) => Prepared::Text(self.string(text)?),
+                IrDisplayArg::String(text) | IrDisplayArg::Text(text) => {
+                    Prepared::Text(self.string(text)?)
+                }
             });
         }
         if args.is_empty() {
@@ -50,8 +52,13 @@ impl Frame<'_, '_> {
                     self.line(format!("{array}[{index}].value.real = {};", value.real()));
                     self.discard(value);
                 }
-                (IrDisplayArg::String(_), Prepared::Text(value)) => {
-                    self.line(format!("{array}[{index}].kind = LLG_FMT_STRING;"));
+                (IrDisplayArg::String(_) | IrDisplayArg::Text(_), Prepared::Text(value)) => {
+                    let kind = if matches!(arg, IrDisplayArg::Text(_)) {
+                        "LLG_FMT_TEXT"
+                    } else {
+                        "LLG_FMT_STRING"
+                    };
+                    self.line(format!("{array}[{index}].kind = {kind};"));
                     self.line(format!(
                         "{array}[{index}].value.string = {};",
                         value.take_string()

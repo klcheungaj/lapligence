@@ -190,6 +190,8 @@ pub enum IrStringExpr {
     },
     Case(Box<IrStringExpr>, bool),
     Substr(Box<IrStringExpr>, Box<IrExpr>, Box<IrExpr>),
+    /// `%p`/`%0p` text of one typed value (SV 21.2.1.7).
+    Pattern(Box<super::IrPattern>),
     /// Conditional operator with a string result (SV 11.4.11). A known
     /// predicate evaluates one arm; an ambiguous one evaluates both and
     /// yields their common value when they are equal, otherwise the empty
@@ -223,6 +225,9 @@ pub enum IrDisplayArg {
     /// A net strength view read for `%v`: eight two-state bits per net bit,
     /// in the `llg_net_t.strength` encoding.
     Strength(IrExpr),
+    /// Conversion text rendered before formatting (a `%p` pattern), printed
+    /// verbatim by its conversion.
+    Text(IrStringExpr),
 }
 
 impl IrDisplayArg {
@@ -262,21 +267,21 @@ impl IrDisplayArg {
                 let _ = (model, path);
                 Ok(())
             }
-            Self::String(value) => value.validate(model, string_return),
+            Self::String(value) | Self::Text(value) => value.validate(model, string_return),
         }
     }
 
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
             Self::Packed(value) | Self::Real(value) | Self::Strength(value) => visit(value),
-            Self::String(value) => value.expressions(visit),
+            Self::String(value) | Self::Text(value) => value.expressions(visit),
         }
     }
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
             Self::Packed(value) | Self::Real(value) | Self::Strength(value) => visit(value),
-            Self::String(value) => value.expressions_mut(visit),
+            Self::String(value) | Self::Text(value) => value.expressions_mut(visit),
         }
     }
 }
@@ -850,6 +855,7 @@ impl IrStringExpr {
             }
             // Formal indices are checked by the enclosing statement.
             Self::ProcessRandState(target) => target.validate_shape(model),
+            Self::Pattern(pattern) => pattern.validate(model, "string.pattern"),
             _ => Ok(()),
         }
     }
@@ -910,6 +916,7 @@ impl IrStringExpr {
                     arg.expressions(visit);
                 }
             }
+            Self::Pattern(pattern) => pattern.expressions(visit),
             Self::Case(value, _) => value.visit_expressions(typed_call_args, visit),
             Self::Substr(value, first, last) => {
                 value.visit_expressions(typed_call_args, visit);
@@ -975,6 +982,7 @@ impl IrStringExpr {
                     arg.expressions_mut(visit);
                 }
             }
+            Self::Pattern(pattern) => pattern.expressions_mut(visit),
             Self::Case(value, _) => value.expressions_mut(visit),
             Self::Substr(value, first, last) => {
                 value.expressions_mut(visit);

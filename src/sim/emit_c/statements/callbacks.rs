@@ -233,6 +233,12 @@ pub(in super::super) fn render_pre_fn_impl(
                             "    out[{i}].kind = LLG_FMT_STRING; out[{i}].value.string = {rendered};\n"
                         ));
                     }
+                    IrDisplayArg::Text(value) => {
+                        let rendered = super::super::objects::string(ctx, value)?;
+                        out.push_str(&format!(
+                            "    out[{i}].kind = LLG_FMT_TEXT; out[{i}].value.string = {rendered};\n"
+                        ));
+                    }
                 }
             }
             out.push_str("}\n");

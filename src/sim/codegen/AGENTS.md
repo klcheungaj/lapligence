@@ -584,8 +584,16 @@ share conversions. Validate all 21 Table 20-4 math functions, evaluate each argu
 once and retain libm domain/nonfinite behavior. Do not infer real expressions from
 source or bypass context-specific rejection guards.
 
-Parse display formats during lowering; `%d` retains signedness and `$write` omits
-newline. Monitors/strobes run after settled Active/Inactive/NBA work; latest monitor
+Parse display formats during lowering (`objects/format_text.rs`, shared by every
+display, file, string and severity task); `%d` retains signedness and `$write` omits
+newline. Arguments stay typed: never re-parse rendered text. Literal string
+arguments start format segments, `%m` comes from `format_scope` (nearest named
+block, subroutine or generate block), and non-`%p` conversions of unpacked values
+or handles reject. `%p` (`objects/patterns.rs`) lowers to `IrStringExpr::Pattern`
+over interned `IrModel::pattern_types`/`pattern_classes`; the runtime walker in
+`rt/scheduler/patterns.c` only reads storage, bounds object nesting with
+`LLG_PATTERN_MAX_DEPTH`, marks cycles and reclaimed objects instead of following
+them, and caps text at `LLG_PATTERN_OUTPUT_LIMIT`. Monitors/strobes run after settled Active/Inactive/NBA work; latest monitor
 only, registration/enabling forces a report, time-only arguments do not retrigger.
 Deferred callbacks need owned environments. Waveform controls preserve source/depth
 identity against the fixed catalog; omit waveform/libfst when unused, reject
