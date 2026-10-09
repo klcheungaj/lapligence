@@ -144,7 +144,7 @@ fn matches_raw(seq: &Seq, w: &Word, i: i64) -> Ends {
             let mut out = Ends::new();
             let top = max.map_or(len + 1, i64::from);
             for k in i64::from(*min)..=top {
-                if k > 0 && i + k - 1 >= len {
+                if k > 0 && i + k > len {
                     break;
                 }
                 add_all(&mut out, &matches(right, w, i + k), 1);
