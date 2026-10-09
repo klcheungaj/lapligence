@@ -184,3 +184,79 @@ impl Frame<'_, '_> {
         Ok(result)
     }
 }
+
+/// The change a store into handle storage must publish when it does not go
+/// through `llg_class_handle_store` or a module handle's assignment (task
+/// output copy-out, mailbox retrieval, task-form `$cast`; SV 9.4.2).
+pub(super) struct HandleStorePublish {
+    /// The slot's value before the store.
+    previous: String,
+    /// The statement that publishes a changed value.
+    publish: String,
+    slot: String,
+}
+
+impl Frame<'_, '_> {
+    /// Capture what a store through `slot` (resolved from IR address
+    /// `address`) must publish: a module handle object's change marker, or
+    /// the marker of the object holding a handle property. Call it before
+    /// the store; other handle storage publishes nothing.
+    pub(super) fn handle_store_publish(
+        &mut self,
+        address: &str,
+        slot: &str,
+    ) -> Result<Option<HandleStorePublish>, String> {
+        let publish = if let Some(object) = self.ctx.model.objects.iter().find(|object| {
+            object.ty == IrObjectType::Chandle && slot == format!("&{}", object.c_name)
+        }) {
+            format!("llg_dependency_changed(&{}_llg_dep);", object.c_name)
+        } else {
+            let Some(name) = address.strip_prefix('&') else {
+                return Ok(None);
+            };
+            let Some(access) = self
+                .ctx
+                .model
+                .native_accesses
+                .iter()
+                .find(|access| access.name == name)
+                .cloned()
+            else {
+                return Ok(None);
+            };
+            let IrNativeAccessKind::ClassField { class, field } = access.kind else {
+                return Ok(None);
+            };
+            let layout = &self.ctx.model.classes[class].fields[field];
+            if layout.ty != IrClassFieldType::Chandle
+                || layout.container.is_some()
+                || layout.native_value.is_some()
+            {
+                return Ok(None);
+            }
+            // The store itself already reported a null receiver.
+            let previous = std::mem::replace(&mut self.quiet_receivers, true);
+            let receiver = self.chandle(&access.receiver);
+            self.quiet_receivers = previous;
+            let receiver = self.scalar("void*", receiver?);
+            format!("llg_class_handle_published({receiver});")
+        };
+        let previous = self.scalar("void*", format!("*(void**)({slot})"));
+        Ok(Some(HandleStorePublish {
+            previous,
+            publish,
+            slot: slot.to_owned(),
+        }))
+    }
+
+    /// Publish a store captured by [`Self::handle_store_publish`] if it
+    /// changed the handle.
+    pub(super) fn finish_handle_store_publish(&mut self, publish: Option<HandleStorePublish>) {
+        if let Some(publish) = publish {
+            self.line(format!(
+                "if (*(void**)({}) != {}) {{ {} }}",
+                publish.slot, publish.previous, publish.publish
+            ));
+        }
+    }
+}

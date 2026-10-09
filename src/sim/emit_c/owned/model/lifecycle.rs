@@ -209,7 +209,7 @@ pub(in crate::sim::emit_c) fn main(
     }
     if !model.classes.is_empty() {
         out.push_str(
-            "    (void)llg_class_field_quiet; (void)llg_class_packed_dependency; (void)llg_class_real_dependency; (void)llg_class_handle_dependency; (void)llg_class_string_dependency; (void)llg_class_handle_store;\n",
+            "    (void)llg_class_field_quiet; (void)llg_class_packed_dependency; (void)llg_class_real_dependency; (void)llg_class_handle_dependency; (void)llg_class_string_dependency; (void)llg_class_handle_store; (void)llg_class_handle_published;\n",
         );
     }
     if !model.virtual_interfaces.is_empty() {

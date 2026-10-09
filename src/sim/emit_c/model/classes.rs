@@ -185,6 +185,12 @@ static sv4_t* llg_class_string_dependency(void* handle, uint32_t expected, size_
     }
     return value->dependency;
 }
+/* A handle property written in place (task output copy-out, mailbox
+ * retrieval, task-form $cast) publishes the same change after the store. */
+static void llg_class_handle_published(void* handle) {
+    llg_class_object_t* object = (llg_class_object_t*)handle;
+    if (object && object->handle_dependency) llg_dependency_changed(object->handle_dependency);
+}
 static void llg_class_handle_store(void* handle, uint32_t expected, size_t index, void* value) {
     void** slot = &llg_class_field(handle, expected, index, 3)->value.handle;
     if (*slot == value) return;

@@ -71,3 +71,11 @@ fn resume_resensitizes_event_controls_and_completes_satisfied_waits() {
     sim_cli::run_case_backend_parity(SUITE, "resume_resensitize", expected, &[], &[]);
     sim_cli::run_case_after_db_drop(SUITE, "resume_resensitize", expected);
 }
+
+#[test]
+fn every_handle_writer_publishes_its_change() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_lrm_audit_b/handle_writers.out");
+    sim_cli::run_case_backend_parity(SUITE, "handle_writers", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "handle_writers", expected);
+}

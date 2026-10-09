@@ -296,6 +296,7 @@ impl Frame<'_, '_> {
             | MailboxTryGet(_, mailbox, target, peek)
             | MailboxTryGetLocal(_, mailbox, target, peek) => {
                 let mailbox = self.chandle(mailbox)?;
+                let publish = self.mailbox_handle_publish(target)?;
                 let target = self.mailbox_destination(target)?;
                 if matches!(statement, MailboxTryGet(..) | MailboxTryGetLocal(..)) {
                     self.line(format!(
@@ -314,10 +315,27 @@ impl Frame<'_, '_> {
                     // the write lands in live storage (SIM-017).
                     self.line(format!("llg_mailbox_delivery_take(self, {target});"));
                 }
+                self.finish_handle_store_publish(publish);
             }
             _ => return Err(pending("object statement ownership contract")),
         }
         self.cancellation_check_covering(cancellation_mark)
+    }
+
+    /// The change a `get`/`peek` into handle storage publishes (SV 9.4.2:
+    /// a write to a handle that changes it is an event).
+    fn mailbox_handle_publish(
+        &mut self,
+        target: &IrMailboxTarget,
+    ) -> Result<Option<super::native_access::HandleStorePublish>, String> {
+        match target {
+            IrMailboxTarget::Typed { target, .. } => self.mailbox_handle_publish(target),
+            IrMailboxTarget::Handle { addr } => {
+                let slot = self.native_address(addr, NativeKind::Chandle)?.address;
+                self.handle_store_publish(addr, &slot)
+            }
+            _ => Ok(None),
+        }
     }
 
     fn mailbox_put(

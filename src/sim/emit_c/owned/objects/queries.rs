@@ -296,8 +296,10 @@ impl Frame<'_, '_> {
         {
             let target = self.native_address(address, super::super::native::NativeKind::Chandle)?;
             let source = self.chandle(source)?;
+            let publish = self.handle_store_publish(address, &target.address)?;
             let success = self.scalar("int", format!("llg_class_is_a({source}, {expected})"));
             self.line(format!("if ({success}) *({}) = {source};", target.address));
+            self.finish_handle_store_publish(publish);
             self.report_cast_failure(&success, cast);
             return Ok(self.value(format!("sv4_from_u64({success}, 1, 0)"), 1, false));
         }

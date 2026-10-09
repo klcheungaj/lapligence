@@ -72,3 +72,11 @@ fn b8_context_import_strobe() {
         &[],
     );
 }
+
+#[test]
+fn b4_handle_write_events() {
+    check(
+        "B4_handle_write_events",
+        include_str!("fixtures/sim/lrm_decisions/B4_handle_write_events.out"),
+    );
+}
