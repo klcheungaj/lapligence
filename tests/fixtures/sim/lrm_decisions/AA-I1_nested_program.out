@@ -1,0 +1,2 @@
+module tb.m t=1
+program tb.p t=2 shared=5a

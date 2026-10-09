@@ -41,6 +41,50 @@ fn enclosing_instance_specializations_keep_nested_defaults_and_port_widths() {
 }
 
 #[test]
+fn portless_nested_modules_and_programs_are_implicitly_instantiated() {
+    // SV 23.4 and 24.3: a portless nested module or program that is not
+    // explicitly instantiated gets one instance named after its declaration;
+    // a nested module with ports is ignored.
+    sim_cli::run_case_with_args(
+        SUITE,
+        "implicit_nested",
+        "implicit tb.m\nexplicit tb.u1\nexplicit tb.u2\nprogram tb.p sees 5a\n",
+        "llg: $finish at time 2000 at tb.p:25:7\n",
+        &[],
+        &["--edition", "sv2009"],
+    );
+}
+
+#[test]
+fn owned_model_names_implicit_nested_instances_after_their_declarations() {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim")
+        .join(SUITE)
+        .join("implicit_nested.sv");
+    let output = compile::compile_checked(&compile::CompileOpts {
+        files: vec![source.to_string_lossy().into_owned()],
+        top: Some("tb".to_owned()),
+        ..Default::default()
+    })
+    .expect("implicit nested instances should compile");
+    let database =
+        db::Db::from_slang(&output.snapshot).expect("owned database without link cycles");
+    drop(output);
+    let design = model::DesignModel::from_db(&database);
+    for (path, definition) in [
+        ("tb.m", "m"),
+        ("tb.p", "p"),
+        ("tb.u1", "twice"),
+        ("tb.u2", "twice"),
+    ] {
+        let instance = design.instance(path).expect("nested instance");
+        assert_eq!(instance.def_name, definition, "{path}");
+    }
+    assert!(design.instance("tb.with_ports").is_none());
+    assert!(design.instance("tb.twice").is_none());
+}
+
+#[test]
 fn matching_extern_header_and_body_specialize_parameterized_ports() {
     for policy in ["separate", "merged"] {
         sim_cli::run_case_with_source_prefix(

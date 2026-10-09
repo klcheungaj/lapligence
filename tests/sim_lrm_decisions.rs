@@ -90,3 +90,11 @@ fn aa_d7_real_sampled_illegal() {
         "$past of a real expression is illegal",
     );
 }
+
+#[test]
+fn aa_i1_nested_program() {
+    run_decision(
+        "AA-I1_nested_program",
+        include_str!("fixtures/sim/lrm_decisions/AA-I1_nested_program.out"),
+    );
+}

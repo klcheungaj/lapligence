@@ -2022,7 +2022,18 @@ public:
       if (capture.declarationOnly)
         sourceConnections.push_back(&symbol);
     }
-    capture.sourceIdentity(symbol.getSyntax(), id);
+    // An implicitly instantiated nested module, interface or program (SV
+    // 23.4, 24.3) uses its declaration as instance syntax. The definition and
+    // the instance body own that declaration's identity; grouping the
+    // instance with them would make the body's identity edge name its own
+    // instance.
+    bool implicitInstance = false;
+    if constexpr (std::same_as<T, InstanceSymbol>) {
+      implicitInstance = symbol.getSyntax() &&
+                         syntax::ModuleDeclarationSyntax::isKind(symbol.getSyntax()->kind);
+    }
+    if (!implicitInstance)
+      capture.sourceIdentity(symbol.getSyntax(), id);
     auto& result = capture.output.semantic_nodes[static_cast<size_t>(id)];
     result.kind = semanticSymbolKind(symbol.kind);
     result.name = storeString(capture.output, symbol.name);
