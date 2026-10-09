@@ -29,9 +29,11 @@ impl<'a> Codegen<'a> {
     /// Classify a sampled-value argument by its declared type before it is
     /// lowered, so a non-integral operand gets a specific diagnostic instead
     /// of being coerced or failing in a generic reference path. SV 16.6.1
-    /// excludes string, event, chandle, class, associative and dynamic array
-    /// operands from sampled expressions; fixed unpacked arrays and unpacked
-    /// structures are legal but have no sampled storage yet.
+    /// excludes noninteger (checked after lowering, for `$past` and the
+    /// functions derived from it), string, event, chandle, class, associative
+    /// and dynamic array operands from sampled expressions; fixed unpacked
+    /// arrays and unpacked structures are legal but have no sampled storage
+    /// yet.
     fn check_sampled_argument_type(
         &self,
         scope_path: &str,
@@ -159,31 +161,21 @@ impl<'a> Codegen<'a> {
         if !super::super::assertions::sampled_compatible(&argument) {
             return Err(sampled_argument_error(name, scope_path, &argument));
         }
-        // A real argument's history holds its exact 64-bit IEEE image, which
-        // `$past` decodes and `$stable`/`$changed` compare as reals. `$rose`
-        // and `$fell` read a least significant bit, which a real lacks.
-        let real = argument.is_real();
-        if real && matches!(kind, IrSampledFunc::Rose | IrSampledFunc::Fell) {
+        // SV 16.9.3: "expression1 and expression2 may be any expression
+        // allowed in assertions", and 16.6.1 excludes noninteger operands
+        // there; F.3.4.4 derives `$rose/$fell/$stable/$changed` from `$past`.
+        // A real anywhere in the argument is therefore illegal. (`$sampled(e)`
+        // is `e` itself and keeps real operands.)
+        let mut has_real = false;
+        crate::sim::opt::walk_expr_mut(&mut argument.clone(), &mut |expression| {
+            has_real |= expression.is_real();
+        });
+        if has_real {
             return Err(format!(
-                "{name} of a real expression is illegal in `{scope_path}`: a real has no least significant bit"
+                "{name} of a real expression is illegal in `{scope_path}`: sampled-value functions \
+                 exclude noninteger (shortreal, real, realtime) operands (SV 16.6.1)"
             ));
         }
-        let (kind, argument) = if real {
-            let image = IrExpr::new(
-                IrExprKind::SysFunc(Box::new(IrSysFunc::RealToBits(Box::new(argument)))),
-                64,
-                false,
-                None,
-            );
-            let kind = match kind {
-                IrSampledFunc::Stable => IrSampledFunc::RealStable,
-                IrSampledFunc::Changed => IrSampledFunc::RealChanged,
-                kind => kind,
-            };
-            (kind, image)
-        } else {
-            (kind, argument)
-        };
 
         let mut ticks = 0;
         let mut gate = None;
@@ -248,7 +240,7 @@ impl<'a> Codegen<'a> {
         } else {
             (1, false)
         };
-        let call = IrExpr::new(
+        Ok(IrExpr::new(
             IrExprKind::SysFunc(Box::new(IrSysFunc::Sampled(IrSampledCall::new(
                 kind,
                 argument,
@@ -258,17 +250,7 @@ impl<'a> Codegen<'a> {
             width,
             signed,
             None,
-        );
-        Ok(if real && kind == IrSampledFunc::Past {
-            IrExpr::new(
-                IrExprKind::SysFunc(Box::new(IrSysFunc::BitsToReal(Box::new(call)))),
-                0,
-                false,
-                None,
-            )
-        } else {
-            call
-        })
+        ))
     }
 
     /// Lower system-function expressions ($system/$clog2/$time/$stime/$bits/

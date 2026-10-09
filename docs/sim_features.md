@@ -1898,13 +1898,12 @@ before its evaluation (repeated ticks in a step count once) and returns the
 initial value (declaration value or type default) before enough ticks; value
 change functions compare the calling step's Preponed value with the most
 recent strictly earlier tick, also between edges. `iff` and the `$past` gate
-read current values when the clock occurs. Real arguments keep numeric
-samples: `$past` returns the exact sampled real and `$stable/$changed` compare
-with real `==`, also inside assertions; `$rose/$fell` of a real are illegal.
-Outside any assertion, a procedural `$sampled` returns the Preponed value of
-every packed or real signal it reads, registered without per-slot history.
-String, event, chandle, class, dynamic and associative array arguments are
-diagnosed as illegal (§16.6.1); fixed unpacked arrays, unpacked structures,
+read current values when the clock occurs. Outside any assertion, a
+procedural `$sampled` returns the Preponed value of every packed or real signal
+it reads, registered without per-slot history. Real, shortreal and realtime
+operands of `$past`, `$rose`, `$fell`, `$stable`, `$changed` and the global
+clocking functions, string, event, chandle, class, dynamic and associative
+array arguments are diagnosed as illegal (§16.6.1); fixed unpacked arrays, unpacked structures,
 queues and unpacked element selections are explicit unsupported rejections
 ([known issue](known_issues.md#sampled-value-arguments-without-sampled-storage),
 [SIM-035 fixtures](../tests/fixtures/sim/feature_completion/sim_035/readme.md)).

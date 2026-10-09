@@ -79,3 +79,14 @@ fn aa_d6_event_clock_gate_instant() {
         include_str!("fixtures/sim/lrm_decisions/AA-D6_event_clock_gate_instant.out"),
     );
 }
+
+#[test]
+fn aa_d7_real_sampled_illegal() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!("fixtures/sim/lrm_decisions/AA-D7_real_sampled_illegal.out").is_empty());
+    sim_cli::reject_case(
+        SUITE,
+        "AA-D7_real_sampled_illegal",
+        "$past of a real expression is illegal",
+    );
+}

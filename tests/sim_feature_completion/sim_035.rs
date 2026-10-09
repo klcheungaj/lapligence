@@ -37,7 +37,7 @@ fn complex_clocking_events_sample_on_every_tick() {
             ..Default::default()
         },
         expected,
-        "llg: $finish at time 17000 at tb:91:8\n",
+        "llg: $finish at time 17000 at tb:85:8\n",
     );
 }
 
@@ -90,6 +90,33 @@ fn neg_fell_shortreal() {
         SUITE,
         "neg_fell_shortreal",
         "$fell of a real expression is illegal",
+    );
+}
+
+#[test]
+fn neg_real_assertion() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_real_assertion",
+        "$changed of a real expression is illegal",
+    );
+}
+
+#[test]
+fn neg_real_past() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_real_past",
+        "$past of a real expression is illegal",
+    );
+}
+
+#[test]
+fn neg_stable_realtime() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_stable_realtime",
+        "$stable of a real expression is illegal",
     );
 }
 

@@ -1233,11 +1233,13 @@ Reproduce with
 
 **Status:** open (SIM-035 boundary).
 
-Sampled-value functions keep a history of packed integral or real values.
-Fixed unpacked arrays, unpacked structures and unions, queues and unpacked
-array element selections (`$past(arr[i])`) are legal arguments (SV 16.6.1
-excludes only string, event, chandle, class, dynamic and associative array
-operands) but reject explicitly ("sampled histories hold packed integral and
+Sampled-value functions keep a history of packed integral values. Fixed
+unpacked arrays, unpacked structures and unions, queues and unpacked array
+element selections (`$past(arr[i])`) are legal arguments (SV 16.6.1, L21575
+onward: "The following types are not allowed: — Noninteger types (shortreal,
+real, and realtime)", then string, event, chandle, class, associative and
+dynamic arrays; "Fixed-size arrays, packed or unpacked, can be used as a
+whole") but reject explicitly ("sampled histories hold packed integral and
 real values" or "must be a static packed or real expression") instead of being
 flattened. Sampling them needs Preponed snapshots of unpacked storage, which
 assertions also lack.
