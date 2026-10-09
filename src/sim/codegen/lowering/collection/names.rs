@@ -260,6 +260,41 @@ impl<'a> Codegen<'a> {
         self.display_paths.get(path).map_or(path, String::as_str)
     }
 
+    /// `%m` text for a call at `node` lowered in `path` (SV 21.2.1.6): the
+    /// hierarchical name of the nearest enclosing named scope, so named
+    /// blocks and subroutines extend the instance or generate-block path.
+    /// When the call's parents do not lead back to `path`'s own scope (for
+    /// example code shared from a package or class), the scope path alone is
+    /// the conservative answer.
+    pub(in super::super) fn format_scope(&self, path: &str, node: NodeId) -> String {
+        let base = self.display_path(path).to_owned();
+        let Some(&scope) = self.scope_nodes.get(path) else {
+            return base;
+        };
+        let mut names: Vec<String> = Vec::new();
+        let mut current = self.node(node).parent;
+        while let Some(id) = current {
+            if id == scope {
+                let mut text = base;
+                for name in names.iter().rev() {
+                    text.push('.');
+                    text.push_str(name);
+                }
+                return text;
+            }
+            let named = matches!(
+                self.kind(id),
+                NodeKind::Stmt(StmtKind::Begin) | NodeKind::FuncTask { .. }
+            );
+            let name = &self.node(id).name;
+            if named && !name.is_empty() {
+                names.push(strip_lib(name).to_string());
+            }
+            current = self.node(id).parent;
+        }
+        base
+    }
+
     /// `%l` text for code owned by `scope` (SV §33.7): `library.cell` of the
     /// nearest enclosing instance's bound definition, or `library.$unit`
     /// outside a design element, matching the frontend formatter. Captured
@@ -279,41 +314,6 @@ impl<'a> Codegen<'a> {
             current = self.node(id).parent;
         }
         format!("{DEFAULT_SOURCE_LIBRARY}.$unit")
-    }
-
-    /// Replace `%l`/`%L` in a literal runtime format with the static library
-    /// binding of `path`'s scope. Other specifications, including `%%`, are
-    /// copied unchanged; a path without a registered scope keeps the format.
-    pub(in super::super) fn bind_library_format(&self, path: &str, format: Vec<u8>) -> Vec<u8> {
-        let Some(scope) = self.scope_nodes.get(path) else {
-            return format;
-        };
-        if !format.contains(&b'%') {
-            return format;
-        }
-        let binding = self.library_binding(*scope).replace('%', "%%");
-        let mut bound = Vec::with_capacity(format.len());
-        let mut index = 0;
-        while index < format.len() {
-            if format[index] != b'%' {
-                bound.push(format[index]);
-                index += 1;
-                continue;
-            }
-            // Same specification grammar as display lowering: flags, width
-            // and precision digits, then one conversion character.
-            let mut end = index + 1;
-            while end < format.len() && matches!(format[end], b'-' | b'.' | b'0'..=b'9') {
-                end += 1;
-            }
-            if end < format.len() && matches!(format[end], b'l' | b'L') {
-                bound.extend_from_slice(binding.as_bytes());
-            } else {
-                bound.extend_from_slice(&format[index..(end + 1).min(format.len())]);
-            }
-            index = end + 1;
-        }
-        bound
     }
 
     pub(in super::super) fn c_path_ident(&self, path: &str) -> String {

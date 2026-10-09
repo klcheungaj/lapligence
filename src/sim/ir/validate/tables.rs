@@ -857,6 +857,7 @@ impl Validator<'_> {
         }
 
         self.validate_native_tables()?;
+        super::patterns::validate_pattern_tables(self.model)?;
         for (index, access) in self.model.native_accesses.iter().enumerate() {
             let path = format!("native_accesses[{index}]");
             if access.name != format!("_llg_access_{index}") {

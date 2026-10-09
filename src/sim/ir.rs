@@ -33,6 +33,11 @@ pub(in crate::sim) use native_values::{
 };
 pub use native_values::{IrNativeLeafExpr, IrNativeLeafValue, IrNativeValue};
 mod objects;
+mod patterns;
+pub use patterns::{
+    IrPattern, IrPatternClass, IrPatternEnumMember, IrPatternField, IrPatternMember,
+    IrPatternSource, IrPatternStorage, IrPatternType,
+};
 mod validate;
 pub use containers::{
     IrAssocKey, IrAssocTraversal, IrContainer, IrContainerElement, IrContainerExpr,
@@ -479,6 +484,11 @@ pub struct IrModel {
     pub(in crate::sim) native_types: Vec<IrContainerElement>,
     /// Descriptor-backed native aggregate storage (formals, results, locals).
     pub(in crate::sim) native_values: Vec<IrNativeValue>,
+    /// Display types of `%p` arguments, children before parents.
+    pub(in crate::sim) pattern_types: Vec<IrPatternType>,
+    /// Display layout of every class, indexed like `classes`; empty when no
+    /// `%p` argument can reach a class object.
+    pub(in crate::sim) pattern_classes: Vec<IrPatternClass>,
     pub(in crate::sim) class_allocations: Vec<IrClassAllocation>,
     /// Virtual-interface descriptors and their concrete instance bindings.
     pub(in crate::sim) virtual_interfaces: Vec<IrVirtualInterface>,
@@ -575,6 +585,8 @@ impl IrModel {
             native_accesses: parts.native_accesses,
             native_types: Vec::new(),
             native_values: Vec::new(),
+            pattern_types: Vec::new(),
+            pattern_classes: Vec::new(),
             class_allocations: parts.class_allocations,
             virtual_interfaces: parts.virtual_interfaces,
             udp_tables: parts.udp_tables,

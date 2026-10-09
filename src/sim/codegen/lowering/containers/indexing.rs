@@ -412,7 +412,7 @@ impl<'a> Codegen<'a> {
     /// Container storage of a declaration. A function's result storage is
     /// visible only inside the body being lowered; elsewhere the function
     /// name denotes a call.
-    fn container_declaration(&self, node: NodeId) -> Option<ContainerInfo> {
+    pub(in super::super) fn container_declaration(&self, node: NodeId) -> Option<ContainerInfo> {
         if matches!(self.kind(node), NodeKind::FuncTask { .. })
             && self.func.as_ref().and_then(|function| function.ret_node) != Some(node)
         {

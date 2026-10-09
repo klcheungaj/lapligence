@@ -16,19 +16,19 @@ fn monitor_re_evaluates_real_and_string_arguments() {
     );
 }
 
+/// A real argument of an integral conversion is converted to a 64-bit
+/// signed integer, so `%d` prints it in that type's 21-column decimal field
+/// (SV 6.12.2, 21.2.1.3); the frontend only warns about it.
 #[test]
-fn display_rejects_real_for_integral_conversion() {
-    reject_case(
-        "display_formatting_invalid",
-        "requires a packed or string argument",
-    );
+fn display_converts_real_for_integral_conversion() {
+    run_case("display_real_integral", "                    1\n");
 }
 
 #[test]
 fn display_extended_conversions_and_strobe_order() {
     run_case(
         "display_extended",
-        "hex=X bin=1x0z char=* strength=St1 StX St0 HiZ\nupper=2a\npattern=8'd42 4'b1x0z\nraw2=*\0\0\0 raw4=\r\0\0\0\x05\0\0\0\ntime=0 library=work.tb\nfirst=43\nsecond=43\n",
+        "hex=X bin=1x0z char=* strength=St1 StX St0 HiZ\nupper=2a\npattern=42 X\nraw2=*\0\0\0 raw4=\r\0\0\0\x05\0\0\0\ntime=0 library=work.tb\nfirst=43\nsecond=43\n",
     );
 }
 

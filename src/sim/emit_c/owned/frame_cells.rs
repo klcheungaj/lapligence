@@ -457,7 +457,9 @@ impl CellEligibility {
                         IrDisplayArg::Packed(value)
                         | IrDisplayArg::Real(value)
                         | IrDisplayArg::Strength(value) => self.expression(ctx, value),
-                        IrDisplayArg::String(value) => self.string(ctx, value),
+                        IrDisplayArg::String(value) | IrDisplayArg::Text(value) => {
+                            self.string(ctx, value)
+                        }
                     }
                 }
                 if let Some(value) = descriptor {

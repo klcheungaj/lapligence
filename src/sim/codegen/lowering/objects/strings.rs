@@ -318,21 +318,12 @@ impl Codegen<'_> {
                 let Some((format, values)) = args.split_first() else {
                     return Err(format!("$sformatf requires a format argument in `{path}`"));
                 };
-                let format = match self.lower_string(path, *format)? {
-                    IrStringExpr::Literal(text) => {
-                        IrStringExpr::Literal(self.bind_library_format(path, text))
-                    }
-                    dynamic => dynamic,
-                };
-                let args = values
-                    .iter()
-                    .map(|value| self.lower_format_arg(path, *value))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(IrStringExpr::Format {
-                    format: Box::new(format),
-                    args,
-                    scope: path.to_owned(),
-                })
+                let library = self
+                    .scope_nodes
+                    .get(path)
+                    .map(|scope| self.library_binding(*scope));
+                let (format, values) = (*format, values.to_vec());
+                self.lower_explicit_format(path, library.as_deref(), "$sformatf", format, &values)
             }
             NodeKind::SysCall { name } if name == "$typename" => {
                 let [argument] = self.node(node).children.as_slice() else {

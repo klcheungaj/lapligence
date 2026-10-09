@@ -164,6 +164,7 @@ impl Frame<'_, '_> {
                 self.discard(last);
                 result
             }
+            Pattern(pattern) => self.pattern_text(pattern)?,
             Format {
                 format,
                 args,

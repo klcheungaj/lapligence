@@ -1234,7 +1234,7 @@ fn collect_statement_expression_effects(
                     | IrDisplayArg::Strength(expression) => {
                         collect_expression_effects(ir, expression, effects, visited_calls)
                     }
-                    IrDisplayArg::String(value) => {
+                    IrDisplayArg::String(value) | IrDisplayArg::Text(value) => {
                         collect_string_effects(ir, value, effects, visited_calls)
                     }
                 }
@@ -1248,7 +1248,7 @@ fn collect_statement_expression_effects(
                     | IrDisplayArg::Strength(expression) => {
                         collect_expression_effects(ir, expression, effects, visited_calls)
                     }
-                    IrDisplayArg::String(value) => {
+                    IrDisplayArg::String(value) | IrDisplayArg::Text(value) => {
                         collect_string_effects(ir, value, effects, visited_calls)
                     }
                 }
@@ -2175,6 +2175,16 @@ fn collect_string_effects(
             collect_expression_effects(ir, value, effects, visited_calls)
         }
         IrStringExpr::Case(value, _) => collect_string_effects(ir, value, effects, visited_calls),
+        // Pattern formatting only reads its source.
+        IrStringExpr::Pattern(pattern) => match &pattern.source {
+            crate::sim::ir::IrPatternSource::Packed(value) => {
+                collect_expression_effects(ir, value, effects, visited_calls)
+            }
+            crate::sim::ir::IrPatternSource::Handle(value) => {
+                collect_chandle_effects(ir, value, effects, visited_calls)
+            }
+            crate::sim::ir::IrPatternSource::Container(_) => {}
+        },
         IrStringExpr::Substr(value, first, last) => {
             collect_string_effects(ir, value, effects, visited_calls);
             collect_expression_effects(ir, first, effects, visited_calls);
@@ -2207,7 +2217,8 @@ fn collect_string_effects(
                     | crate::sim::ir::IrDisplayArg::Strength(value) => {
                         collect_expression_effects(ir, value, effects, visited_calls)
                     }
-                    crate::sim::ir::IrDisplayArg::String(value) => {
+                    crate::sim::ir::IrDisplayArg::String(value)
+                    | crate::sim::ir::IrDisplayArg::Text(value) => {
                         collect_string_effects(ir, value, effects, visited_calls)
                     }
                 }

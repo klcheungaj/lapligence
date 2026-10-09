@@ -1421,16 +1421,27 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Write omits the added newline; explicit format conversions override variant
   radix. V §§17.1, 17.2.1–17.2.2 **[1995/SV-2005]**.
 - 🟨 **Typed formatting** — `%d/%h/%x/%b/%o/%c/%u/%z/%v/%t`, `%f/%e/%g`, `%s`,
-  `%m`, `%l`, `%%` and admitted width/precision grammar retain packed X/Z,
-  strengths, real and string values. A `%h/%x/%o` digit or `%d` value with every
-  bit x/z prints `x`/`z`; a partially unknown one prints `X` (any x bit) or `Z`.
-  Packed `%s` uses ASCII bytes without leading
-  zero bytes; real `%s` rejects. `%p` is limited to scalar packed/string values,
-  not aggregates. V §17.1.1.2; SV §21.2 **[1995/SV-2005]**.
+  `%m`, `%l`, `%p/%0p`, `%%` and width/precision/`-`/`%0` flags share one typed
+  formatter for display, file, monitor/strobe and string outputs. Unsized `%d`
+  uses the type's maximum decimal width, `%0` the minimum, explicit widths are
+  minimums; X/Z digits follow SV §21.2.1.4. Real arguments of integral
+  conversions round to 64-bit integers and integral `%e/%f/%g` arguments
+  convert to real. String literals in argument lists start format segments;
+  empty arguments print a space. `%m` names the enclosing named block,
+  subroutine or generate block. `%p` prints arrays (declared order), queues,
+  dynamic and associative arrays, unpacked and packed structures (named
+  members), packed unions, enums (names), quoted strings, other singular
+  values as unformatted display text (SV §21.2.1.7), class objects (properties, cycle
+  and depth-64 markers), and `null`/`chandle`/`event`/`interface`/`process`
+  for other handles; output is capped at 1 MiB with a warning
+  ([sim_024](../tests/fixtures/sim/feature_completion/sim_024/readme.md)).
+  Tagged unions and semaphore/mailbox handles reject under `%p`; non-`%p`
+  conversions of unpacked values or handles reject; run-time formats keep
+  `%l` approximate. V §17.1.1.2; SV §21.2 **[1995/SV-2005]**.
 - 🟨 **Postponed output** — Strobe observes settled values after Active/Inactive/
   NBA iteration. One active monitor coalesces same-slot changes; registration and
-  re-enable queue one report. Packed, real and string changes are supported;
-  automatic monitor dependencies and aggregate/container formatting reject.
+  re-enable queue one report. Packed, real, string and `%p` container/record
+  changes are supported; automatic monitor dependencies reject.
   Helpers may keep their own static state or take descriptor arrays; visible
   helper writes reject (§9). V §§17.1.2–17.1.3 **[1995]**.
 - 🟦 **String formatting** — `$sformat/$swrite` and radix variants write native

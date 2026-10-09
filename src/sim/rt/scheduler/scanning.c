@@ -551,7 +551,7 @@ static char* llg_typed_line_alloc(const char* fmt, llg_fmt_arg_t* args, int n,
                 llg_fatal_allocation("typed formatted line", 1, SIZE_MAX);
             extra += (size_t)llg_sv4_width(args[i].value.packed) * 8u;
         }
-        if (args[i].kind == LLG_FMT_STRING) {
+        if (args[i].kind == LLG_FMT_STRING || args[i].kind == LLG_FMT_TEXT) {
             if (args[i].value.string.len > SIZE_MAX - extra)
                 llg_fatal_allocation("typed formatted line", 1, SIZE_MAX);
             if (args[i].value.string.len > (SIZE_MAX - extra) / 8u)

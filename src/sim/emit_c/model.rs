@@ -1028,6 +1028,7 @@ fn render_model(
     // record properties from them (SIM-011).
     out.push_str(&super::owned::native_values::native_type_tables(model)?.0);
     render_class_decls(model, &mut out);
+    out.push_str(&super::owned::patterns::pattern_tables(model));
     super::owned::udp::tables(model, &mut out);
     render_signal_decls(model, &mut out);
     render_vpi_metadata(model, &mut out);

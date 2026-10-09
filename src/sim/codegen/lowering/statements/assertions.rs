@@ -62,7 +62,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 if_false: if_false.map(Box::new),
                 label: label.clone(),
                 location: self.finish_location(h),
-                scope: self.cg.display_path(&self.path).to_owned(),
+                scope: self.cg.format_scope(&self.path, h),
                 identity: h.index() as u64,
             }]);
         }
@@ -277,7 +277,8 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                         crate::sim::ir::IrDisplayArg::Strength(value) => {
                             Ok(crate::sim::ir::IrDisplayArg::Strength(capture(value)))
                         }
-                        crate::sim::ir::IrDisplayArg::String(_) => Err(
+                        crate::sim::ir::IrDisplayArg::String(_)
+                        | crate::sim::ir::IrDisplayArg::Text(_) => Err(
                             "string value arguments in deferred immediate assertion actions are not supported"
                                 .to_owned(),
                         ),
@@ -320,7 +321,8 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                         crate::sim::ir::IrDisplayArg::Strength(value) => {
                             Ok(crate::sim::ir::IrDisplayArg::Strength(capture(value)))
                         }
-                        crate::sim::ir::IrDisplayArg::String(_) => Err(
+                        crate::sim::ir::IrDisplayArg::String(_)
+                        | crate::sim::ir::IrDisplayArg::Text(_) => Err(
                             "string value arguments in deferred immediate assertion actions are not supported"
                                 .to_owned(),
                         ),
