@@ -6,18 +6,18 @@ fa-unique 5
 fd 2 4 2
 fd-index 1 2
 fd-max 9
-fd-unique 3 4 3 1
+fd-unique 3 2 4 9
 fo 3 -2 0 1
 fo-min -3
 fo-last 0
-fr 2 0 1
+fr 2 -1.0 2.5
 fr-min -1.0
 sa 2 charlie delta
 sa-first bravo
 sa-last bravo
-sa-unique 3 charlie
+sa-unique 3 1 2 4
 sa-keylen 3 alpha bravo delta
 na 2 -5 100
 ka 2 -30 30
 dyn 2 0 2
-dyn-unique 3 0 1 3
+dyn-unique 3 7 8 9

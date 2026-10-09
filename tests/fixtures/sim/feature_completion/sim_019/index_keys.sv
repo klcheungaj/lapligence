@@ -20,6 +20,7 @@ module tb;
   int ka[int];
   int kq[$];
   int dyn[];
+  int vals[$];
 
   initial begin
     q = fa.find_index with (item == 3);
@@ -40,8 +41,14 @@ module tb;
     $display("fd-index %0d %0d", q.size(), q[0]);
     bq = fd.max();
     $display("fd-max %0d", bq[0]);
+    // 7.12.1: unique_index order is unrelated to the receiver's and a
+    // duplicate may report any of its indices, so print the sorted values
+    // the indices select.
     q = fd.unique_index();
-    $display("fd-unique %0d %0d %0d %0d", q.size(), q[0], q[1], q[2]);
+    vals.delete();
+    foreach (q[i]) vals.push_back(fd[q[i]]);
+    vals.sort();
+    $display("fd-unique %0d %0d %0d %0d", q.size(), vals[0], vals[1], vals[2]);
 
     // fo[-2]=8, fo[-1]=-3, fo[0]=8, fo[1]=0.
     q = fo.find_index with (item >= 16'sd0);
@@ -52,7 +59,10 @@ module tb;
     $display("fo-last %0d", q[0]);
 
     q = fr.unique_index();
-    $display("fr %0d %0d %0d", q.size(), q[0], q[1]);
+    rq.delete();
+    foreach (q[i]) rq.push_back(fr[q[i]]);
+    rq.sort();
+    $display("fr %0d %0.1f %0.1f", q.size(), rq[0], rq[1]);
     rq = fr.min();
     $display("fr-min %0.1f", rq[0]);
 
@@ -67,7 +77,10 @@ module tb;
     skeys = sa.find_last_index with (item < 4);
     $display("sa-last %s", skeys[0]);
     skeys = sa.unique_index();
-    $display("sa-unique %0d %s", skeys.size(), skeys[skeys.size() - 1]);
+    vals.delete();
+    foreach (skeys[i]) vals.push_back(sa[skeys[i]]);
+    vals.sort();
+    $display("sa-unique %0d %0d %0d %0d", skeys.size(), vals[0], vals[1], vals[2]);
     skeys = sa.find_index with (item.index().len() == 5);
     $display("sa-keylen %0d %s %s %s", skeys.size(), skeys[0], skeys[1], skeys[2]);
 
@@ -91,7 +104,10 @@ module tb;
     q = dyn.find_index with (item == 7);
     $display("dyn %0d %0d %0d", q.size(), q[0], q[1]);
     q = dyn.unique_index();
-    $display("dyn-unique %0d %0d %0d %0d", q.size(), q[0], q[1], q[2]);
+    vals.delete();
+    foreach (q[i]) vals.push_back(dyn[q[i]]);
+    vals.sort();
+    $display("dyn-unique %0d %0d %0d %0d", q.size(), vals[0], vals[1], vals[2]);
     $finish(0);
   end
 endmodule

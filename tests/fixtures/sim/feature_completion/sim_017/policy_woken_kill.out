@@ -1,0 +1,5 @@
+pending n=1
+handed back n=2 wrote=0
+head 4
+next 5
+peek dropped n=1 str=[]

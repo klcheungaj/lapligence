@@ -80,3 +80,27 @@ fn b4_handle_write_events() {
         include_str!("fixtures/sim/lrm_decisions/B4_handle_write_events.out"),
     );
 }
+
+#[test]
+fn ab_o1_with_evaluation_order() {
+    check(
+        "AB-O1_with_evaluation_order",
+        include_str!("fixtures/sim/lrm_decisions/AB-O1_with_evaluation_order.out"),
+    );
+}
+
+#[test]
+fn ab_o2_unique_order() {
+    check(
+        "AB-O2_unique_order",
+        include_str!("fixtures/sim/lrm_decisions/AB-O2_unique_order.out"),
+    );
+}
+
+#[test]
+fn ab_o3_kill_woken_receiver() {
+    check(
+        "AB-O3_kill_woken_receiver",
+        include_str!("fixtures/sim/lrm_decisions/AB-O3_kill_woken_receiver.out"),
+    );
+}
