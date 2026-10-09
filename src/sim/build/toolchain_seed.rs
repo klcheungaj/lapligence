@@ -103,20 +103,28 @@ pub(super) struct Toolchain<'a> {
     pub compiler_target: &'a str,
 }
 
-/// `-G`, launcher, compiler and flag arguments shared by the probe and the
-/// generated projects' configures, so they cannot drift apart.
+/// Configuration of CMake's detection `try_compile` projects. Without it
+/// they use Debug flags; with MSVC that means `/Zi /RTC1`, so every compiler
+/// check writes a PDB through the shared `mspdbsrv.exe`, which is slower and
+/// was seen failing with C1041 (cannot open the PDB) under parallel CI tests.
+/// The models themselves build in Release as well.
+const TRY_COMPILE_CONFIGURATION: &str = "Release";
+
+/// `-G`, launcher, compiler, flag and detection arguments shared by the probe
+/// and the generated projects' configures, so they cannot drift apart.
 pub(super) fn toolchain_args(
     generator: &str,
     launcher: &str,
     cc: &str,
     flags: &str,
-) -> [String; 5] {
+) -> [String; 6] {
     [
         "-G".to_owned(),
         generator.to_owned(),
         format!("-DCMAKE_C_COMPILER_LAUNCHER={launcher}"),
         format!("-DCMAKE_C_COMPILER={cc}"),
         format!("-DCMAKE_C_FLAGS:STRING={flags}"),
+        format!("-DCMAKE_TRY_COMPILE_CONFIGURATION={TRY_COMPILE_CONFIGURATION}"),
     ]
 }
 
