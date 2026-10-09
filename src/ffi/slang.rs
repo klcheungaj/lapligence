@@ -1,6 +1,6 @@
 //! Safe, owned Rust facade over the Slang C ABI.
 //!
-//! [`compile`] receives the finished capture through the ABI v16 record
+//! [`compile`] receives the finished capture through the ABI v17 record
 //! stream (see the `stream` module) and owns every decoded record. No Slang
 //! pointer or native allocation escapes it.
 
@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 16;
+const ABI_VERSION: u32 = 17;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -711,6 +711,8 @@ pub const SEMANTIC_STMT_CONCURRENT_ASSERT: u32 = 64;
 pub const SEMANTIC_STMT_CONCURRENT_ASSUME: u32 = 65;
 pub const SEMANTIC_STMT_CONCURRENT_COVER: u32 = 66;
 pub const SEMANTIC_STMT_CONCURRENT_EXPECT: u32 = 67;
+/// `cover sequence` (IEEE 1800-2009 16.15.3 counts every match).
+pub const SEMANTIC_STMT_CONCURRENT_COVER_SEQUENCE: u32 = 68;
 /// Pattern-matching case statements are tagged apart from ordinary case so
 /// lowering rejects them with their source location instead of treating a
 /// surviving pattern as an empty case.

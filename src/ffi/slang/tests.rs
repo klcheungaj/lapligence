@@ -440,6 +440,7 @@ fn current_statement_and_expression_subkinds_are_admitted() {
     assert!(validate_semantic_subkind(18, SEMANTIC_STMT_CONCURRENT_ASSUME).is_ok());
     assert!(validate_semantic_subkind(18, SEMANTIC_STMT_CONCURRENT_COVER).is_ok());
     assert!(validate_semantic_subkind(18, SEMANTIC_STMT_CONCURRENT_EXPECT).is_ok());
+    assert!(validate_semantic_subkind(18, SEMANTIC_STMT_CONCURRENT_COVER_SEQUENCE).is_ok());
     assert!(validate_semantic_subkind(18, SEMANTIC_STMT_PATTERN_CASE).is_ok());
     assert!(validate_semantic_subkind(19, 86).is_ok());
     assert!(validate_semantic_subkind(19, 89).is_ok());
@@ -450,7 +451,7 @@ fn current_statement_and_expression_subkinds_are_admitted() {
     assert!(validate_semantic_subkind(25, SEMANTIC_SCOPE_CLOCKING_BLOCK).is_ok());
     assert!(validate_semantic_subkind(9, SEMANTIC_VARIABLE_CLOCKING).is_ok());
     assert!(validate_semantic_subkind(26, SEMANTIC_TIMING_ONE_STEP_DELAY).is_ok());
-    assert!(validate_semantic_subkind(18, 68).is_err());
+    assert!(validate_semantic_subkind(18, 69).is_err());
     assert!(validate_semantic_subkind(19, 79).is_err());
     assert!(validate_semantic_subkind(28, SEMANTIC_ASSERTION_EXPR_SIMPLE).is_ok());
     assert!(validate_semantic_subkind(28, SEMANTIC_ASSERTION_EXPR_DISABLE_IFF).is_ok());

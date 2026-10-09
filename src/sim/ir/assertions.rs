@@ -48,6 +48,9 @@ pub enum IrConcurrentAssertionKind {
     Assert,
     Assume,
     Cover,
+    /// `cover sequence` reports every match of an attempt, with
+    /// multiplicity (IEEE 1800-2009 16.15.3), and never fails.
+    CoverSequence,
     /// Procedural `expect` uses the same sampled property engine but arms a
     /// single assertion attempt and suspends its caller until the endpoint.
     Expect,

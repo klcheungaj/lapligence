@@ -24,8 +24,13 @@ tick `s - 1`. Rules used throughout (§16.9.2.1, Annex F):
 - `e throughout r` is `e[*0:$] intersect r`; `r1 within r2` is
   `(1[*0:$] ##1 r1 ##1 1[*0:$]) intersect r2`.
 - `first_match(r)`: only the earliest end tick of the attempt, once.
-- `go ##1 (r) |-> 1'b1` in a `cover property` prints one line per match of
-  `r` started on the tick after `go` (vacuous successes are not covered).
+- `cover sequence (go ##1 (r))` prints one line per match of `r` started on
+  the tick after `go`. IEEE 1800-2009 16.15.3
+  (`SystemVerilog-1800-2009.txt` L26590-26592): "for sequence coverage, all
+  matches per evaluation attempt are reported, whereas for property coverage
+  the coverage count is incremented at most once per evaluation attempt". A
+  `cover property` of `go ##1 (r) |-> 1'b1` would report at most one line
+  per attempt.
 
 ## A01 `exhaustive`
 
@@ -36,7 +41,7 @@ sequences, repeated empty-admitting bodies, goto and nonconsecutive), `or`,
 `and`, `intersect`, `throughout`, `within`, `first_match` and nestings of
 them. For each of the 1024 two-signal traces of length 5 the testbench pulses
 `go` on tick 0, drives the trace on ticks 1-5 and kills pending attempts with
-`disable iff (kill)` on tick 6. Each match prints `<label> <trace> <end>`.
+`disable iff (kill)` on tick 6. Each match prints `<label> <trace> <end>` from a `cover sequence`.
 
 The expected lines are computed by the test from a separate trace
 interpreter in `tests/sim_feature_completion/sim_037.rs`, written directly

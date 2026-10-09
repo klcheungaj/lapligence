@@ -263,6 +263,8 @@ typedef struct llg_concurrent_assertion {
     const llg_co_desc_t* fail_desc;
     void* data;
     int kind;
+    /* `cover sequence`: report every match, never a failure. */
+    int cover_sequence;
     int overlapped;
     int abort_reject;
     int abort_sync;

@@ -447,6 +447,10 @@ enum {
     LLG_ASSERTION_ASSUME = 1,
     LLG_ASSERTION_COVER = 2,
     LLG_ASSERTION_EXPECT = 3,
+    /* Registration-only kind accepted by the sequence registrations: a
+     * `cover sequence` is a cover that reports every match of an attempt
+     * (IEEE 1800-2009 16.15.3). Runtime records keep LLG_ASSERTION_COVER. */
+    LLG_ASSERTION_COVER_SEQUENCE = 4,
 };
 
 enum {

@@ -470,6 +470,7 @@ impl Codegen<'_> {
             ConcurrentAssertionKind::Assert => IrConcurrentAssertionKind::Assert,
             ConcurrentAssertionKind::Assume => IrConcurrentAssertionKind::Assume,
             ConcurrentAssertionKind::Cover => IrConcurrentAssertionKind::Cover,
+            ConcurrentAssertionKind::CoverSequence => IrConcurrentAssertionKind::CoverSequence,
             ConcurrentAssertionKind::Expect => IrConcurrentAssertionKind::Expect,
         };
         let abort_condition = parts.abort_condition.clone();

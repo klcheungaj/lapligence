@@ -1867,7 +1867,7 @@ These are bounded implementations, not full verification-infrastructure support.
 
 | Area | Implemented forms |
 | --- | --- |
-| Attempts and actions | Preponed packed sampling, Observed resolution, overlapping attempts, vacuity accounting and Reactive actions. |
+| Attempts and actions | Preponed packed sampling, Observed resolution, overlapping attempts, vacuity accounting and Reactive actions. `cover sequence` runs its pass statement for every nonempty match of an attempt (SV §16.15.3). |
 | Clock/disable flow | Nearest default-clock inheritance, compatible declaration/call-site clocks, legal multiclock `##0`/`##1` boundaries, asynchronous single-signal `disable iff`, bounded `accept_on/reject_on` and synchronous variants. |
 | Sequences | Single-clock composition under Annex F: nested `##` concatenation with fixed, ranged and unbounded delays; consecutive repetition of Booleans and of whole sequences (`[*m:n]`, `[*]`, `[+]`, empty-admitting bodies) and nonconsecutive/goto repetition; empty matches; `or`; multi-cycle `and`, `intersect`, `throughout` and `within` (runtime joins that pair operand endpoints and drop threads that can no longer pair); `first_match`. Live sequence threads are bounded by `LLG_SEQUENCE_THREAD_LIMIT` (default 1,000,000); exhaustion is a reported execution error. |
 | Properties and instances | One-cycle `not/and/or/iff/implies` and `if/else` forms; named sequence/property instances with positional/named/default arguments. |

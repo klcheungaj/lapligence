@@ -16,6 +16,9 @@ pub enum ConcurrentAssertionKind {
     Assert,
     Assume,
     Cover,
+    /// `cover sequence`: every match of an attempt is counted (IEEE
+    /// 1800-2009 16.15.3), not at most one success per attempt.
+    CoverSequence,
     Expect,
 }
 

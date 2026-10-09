@@ -276,6 +276,23 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
         int alive = sequence_attempt_step(
             attempt, assertion, cycle, event_clock, event_edge, event_time, event_order,
             event_tick, &accepted);
+        if (assertion->cover_sequence) {
+            // Sequence coverage reports every nonempty match of the attempt
+            // as it completes and keeps the attempt until no thread remains.
+            for (const llg_sequence_endpoint_t* endpoint = attempt->endpoints;
+                 accepted && endpoint && !g.finish; endpoint = endpoint->next)
+                if (!endpoint->empty) assertion_result(assertion, 1, 0);
+            if (alive) {
+                consequent_link = &attempt->next;
+            } else {
+                *consequent_link = attempt->next;
+                if (assertion->sequence_consequents_tail == attempt)
+                    assertion->sequence_consequents_tail = NULL;
+                sequence_attempt_discard(attempt);
+            }
+            if (g.finish) return 0;
+            continue;
+        }
         if (accepted || !alive) {
             *consequent_link = attempt->next;
             if (assertion->sequence_consequents_tail == attempt)
@@ -610,9 +627,12 @@ int llg_assertion_register_sequence_control(
     const llg_co_desc_t* fail_desc, void* data, int kind,
     int overlapped, int abort_reject, int abort_sync, uint64_t identity,
     const char* label, const char* location, const char* scope) {
+    int cover_sequence = kind == LLG_ASSERTION_COVER_SEQUENCE;
+    if (cover_sequence) kind = LLG_ASSERTION_COVER;
     if (!g.initialized || g.running || g.config_error || !clock ||
         !valid_sequence_graph(consequent, clock, edge) ||
         (antecedent && !valid_sequence_graph(antecedent, clock, edge)) ||
+        (cover_sequence && antecedent) ||
         (edge != LLG_EV_POSEDGE && edge != LLG_EV_NEGEDGE) ||
         kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_EXPECT ||
         (overlapped != 0 && overlapped != 1) ||
@@ -636,6 +656,7 @@ int llg_assertion_register_sequence_control(
     assertion->abort_condition = abort_condition;
     assertion->data = data;
     assertion->kind = kind;
+    assertion->cover_sequence = cover_sequence;
     assertion->overlapped = overlapped;
     assertion->abort_reject = abort_reject;
     assertion->abort_sync = abort_sync;

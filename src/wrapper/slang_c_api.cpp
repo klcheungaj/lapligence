@@ -2843,8 +2843,10 @@ public:
           result.subkind = LLG_SLANG_STMT_CONCURRENT_ASSUME;
           break;
         case AssertionKind::CoverProperty:
-        case AssertionKind::CoverSequence:
           result.subkind = LLG_SLANG_STMT_CONCURRENT_COVER;
+          break;
+        case AssertionKind::CoverSequence:
+          result.subkind = LLG_SLANG_STMT_CONCURRENT_COVER_SEQUENCE;
           break;
         case AssertionKind::Expect:
           result.subkind = LLG_SLANG_STMT_CONCURRENT_EXPECT;

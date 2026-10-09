@@ -16,30 +16,30 @@ module tb;
   bit [1:8] wave_b = 8'b0_1_1_1_0_1_1_0;
   bit [1:8] wave_c = 8'b1_0_1_1_1_0_1_0;
 
-  m01: cover property (@(posedge clk) go ##1 ((a ##1 b) or (a ##2 c) or b) |-> 1'b1)
+  m01: cover sequence (@(posedge clk) go ##1 ((a ##1 b) or (a ##2 c) or b))
     $display("M01 t=%0d", t);
-  m02: cover property (@(posedge clk) go ##1 ((a ##1 b) or (a ##1 a)) |-> 1'b1)
+  m02: cover sequence (@(posedge clk) go ##1 ((a ##1 b) or (a ##1 a)))
     $display("M02 t=%0d", t);
-  m03: cover property (@(posedge clk) go ##1 (a[*0:2] ##1 b) |-> 1'b1)
+  m03: cover sequence (@(posedge clk) go ##1 (a[*0:2] ##1 b))
     $display("M03 t=%0d", t);
-  m04: cover property (@(posedge clk) go ##1 (c ##1 a[*0:1]) |-> 1'b1)
+  m04: cover sequence (@(posedge clk) go ##1 (c ##1 a[*0:1]))
     $display("M04 t=%0d", t);
-  m05: cover property (@(posedge clk) go ##1 (a[*0] ##0 c) |-> 1'b1)
+  m05: cover sequence (@(posedge clk) go ##1 (a[*0] ##0 c))
     $display("M05 t=%0d", t);
-  m06: cover property (@(posedge clk) go ##1 (a[*1:3] intersect (c ##[0:2] c)) |-> 1'b1)
+  m06: cover sequence (@(posedge clk) go ##1 (a[*1:3] intersect (c ##[0:2] c)))
     $display("M06 t=%0d", t);
-  m07: cover property (@(posedge clk)
-      go ##1 first_match((a ##1 b) or (a ##1 a) or (c ##2 c)) |-> 1'b1)
+  m07: cover sequence (@(posedge clk)
+      go ##1 first_match((a ##1 b) or (a ##1 a) or (c ##2 c)))
     $display("M07 t=%0d", t);
-  m08: cover property (@(posedge clk) go ##1 ((a ##1 a) and (c ##2 c)) |-> 1'b1)
+  m08: cover sequence (@(posedge clk) go ##1 ((a ##1 a) and (c ##2 c)))
     $display("M08 t=%0d", t);
-  m09: cover property (@(posedge clk) go ##1 ((b ##1 b) within (a ##[1:3] c)) |-> 1'b1)
+  m09: cover sequence (@(posedge clk) go ##1 ((b ##1 b) within (a ##[1:3] c)))
     $display("M09 t=%0d", t);
-  m10: cover property (@(posedge clk) go ##1 (a throughout (c ##[1:3] b)) |-> 1'b1)
+  m10: cover sequence (@(posedge clk) go ##1 (a throughout (c ##[1:3] b)))
     $display("M10 t=%0d", t);
-  m11: cover property (@(posedge clk) go ##1 (a[*0:1] and (c ##2 c)) |-> 1'b1)
+  m11: cover sequence (@(posedge clk) go ##1 (a[*0:1] and (c ##2 c)))
     $display("M11 t=%0d", t);
-  m12: cover property (@(posedge clk) go3 ##0 (a ##[1:2] b) |-> 1'b1)
+  m12: cover sequence (@(posedge clk) go3 ##0 (a ##[1:2] b))
     $display("M12 t=%0d", t);
 
   initial begin

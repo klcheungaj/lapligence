@@ -1,0 +1,33 @@
+//! Portable LRM decision cases (IEEE 1800-2009). Every fixture under
+//! `tests/fixtures/sim/lrm_decisions/` is plain SystemVerilog with top `tb`,
+//! no tool-specific options, and its exact expected stdout in `<case>.out`;
+//! the header comment quotes the clause each line rests on, so the case can be
+//! rerun unchanged on another simulator. Each runs through the public CLI on
+//! every value backend in both optimizer modes.
+
+use crate::sim_cli;
+
+const SUITE: &str = "lrm_decisions";
+
+fn run_decision(case: &str, expected: &str) {
+    sim_cli::run_case_checked_matrix(SUITE, case, &[], &|label, output| {
+        assert!(
+            output.status.success(),
+            "{label}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            expected,
+            "{label}: stdout differs from the clause-derived expectation"
+        );
+    });
+}
+
+#[test]
+fn aa_d3_cover_sequence_all_matches() {
+    run_decision(
+        "AA-D3_cover_sequence_all_matches",
+        include_str!("fixtures/sim/lrm_decisions/AA-D3_cover_sequence_all_matches.out"),
+    );
+}

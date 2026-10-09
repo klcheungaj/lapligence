@@ -91,6 +91,14 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
             IrConcurrentAssertionKind::Assert => "LLG_ASSERTION_ASSERT",
             IrConcurrentAssertionKind::Assume => "LLG_ASSERTION_ASSUME",
             IrConcurrentAssertionKind::Cover => "LLG_ASSERTION_COVER",
+            // A predicate-registered sequence has at most one match per
+            // attempt, so only the sequence engine needs the match count.
+            IrConcurrentAssertionKind::CoverSequence
+                if assertion.consequent_sequence().is_some() =>
+            {
+                "LLG_ASSERTION_COVER_SEQUENCE"
+            }
+            IrConcurrentAssertionKind::CoverSequence => "LLG_ASSERTION_COVER",
             IrConcurrentAssertionKind::Expect => "LLG_ASSERTION_EXPECT",
         };
         let edge = if assertion.posedge() {

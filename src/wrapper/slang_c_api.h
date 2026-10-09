@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 16u
+#define LLG_SLANG_ABI_VERSION 17u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -569,6 +569,9 @@ enum {
   LLG_SLANG_STMT_CONCURRENT_ASSUME = 65,
   LLG_SLANG_STMT_CONCURRENT_COVER = 66,
   LLG_SLANG_STMT_CONCURRENT_EXPECT = 67,
+  /* `cover sequence` counts every match of an attempt (IEEE 1800-2009
+   * 16.15.3), unlike `cover property`, so it keeps its own tag. */
+  LLG_SLANG_STMT_CONCURRENT_COVER_SEQUENCE = 68,
   /* Pattern-matching case statements are kept distinct from ordinary case so
    * the owned database cannot reduce a surviving pattern to an empty case
    * before G3-01 implements matching. */

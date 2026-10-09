@@ -363,7 +363,7 @@ fn bounded_sequences_match_the_annex_f_interpreter_on_every_trace() {
     let mut expected = Vec::new();
     for (index, seq) in sequences.iter().enumerate() {
         let line = format!(
-            "  s{index:02}: cover property (@(posedge clk) disable iff (kill) go ##1 {} |-> 1'b1) $display(\"{index:02} %0d %0d\", trace, pos);",
+            "  s{index:02}: cover sequence (@(posedge clk) disable iff (kill) go ##1 {}) $display(\"{index:02} %0d %0d\", trace, pos);",
             render(seq)
         );
         assert!(
@@ -382,7 +382,7 @@ fn bounded_sequences_match_the_annex_f_interpreter_on_every_trace() {
         }
     }
     assert_eq!(
-        source.matches(": cover property").count(),
+        source.matches(": cover sequence").count(),
         sequences.len(),
         "fixture and interpreter list different sequences"
     );
