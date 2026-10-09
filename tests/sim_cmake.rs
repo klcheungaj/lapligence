@@ -931,6 +931,14 @@ fn fresh_model_trees_reuse_the_toolchain_detection_seed() {
 
 /// A different compiler is a different key: its fresh tree never reuses the
 /// first compiler's detection, and records its own compiler.
+///
+/// The seed key holds the compiler spelling and the identity text probed from
+/// it (spelling, `--version`, target), so two spellings never share a seed even
+/// when they are the same compiler: macOS installs Apple Clang as both
+/// `/usr/bin/gcc` and `/usr/bin/clang`, and each still gets its own seed and
+/// tree. The compiler ID a tree records is whatever its compiler reports
+/// (`GNU`, `Clang` or `AppleClang`), so it is compared with the macro probe
+/// rather than with the name the compiler was started under.
 #[cfg(unix)]
 #[test]
 fn a_changed_compiler_does_not_reuse_another_toolchain_seed() {
@@ -945,10 +953,15 @@ fn a_changed_compiler_does_not_reuse_another_toolchain_seed() {
     };
     let dir = fresh_dir("toolchain-seed-compilers");
     let cache = dir.path().join("runtime-cache");
-    for (name, compiler, id) in [("gcc", &gcc, "GNU"), ("clang", &clang, "Clang")] {
+    for (name, compiler) in [("gcc", &gcc), ("clang", &clang)] {
+        let compiler = compiler.to_string_lossy().into_owned();
+        let Some(id) = c_compiler::cmake_compiler_id(&compiler) else {
+            eprintln!("SKIP: cannot identify the family of {compiler}");
+            return;
+        };
         let opts = sim::build::CmakeBuildOpts {
             runtime_cache_dir: Some(cache.clone()),
-            cc: Some(compiler.to_string_lossy().into_owned()),
+            cc: Some(compiler.clone()),
             ..Default::default()
         };
         let model_dir = dir.path().join(name);
@@ -959,8 +972,12 @@ fn a_changed_compiler_does_not_reuse_another_toolchain_seed() {
         let compiler_file =
             std::fs::read_to_string(platform_dir(&build).join("CMakeCCompiler.cmake")).unwrap();
         assert!(
+            compiler_file.contains(&format!("set(CMAKE_C_COMPILER \"{compiler}\")")),
+            "{name} tree must record the compiler it was given ({compiler}): {compiler_file}"
+        );
+        assert!(
             compiler_file.contains(&format!("set(CMAKE_C_COMPILER_ID \"{id}\")")),
-            "{name} tree must record its own compiler: {compiler_file}"
+            "{name} tree must record its compiler's own ID ({id}): {compiler_file}"
         );
     }
     assert_eq!(published_seeds(&cache).len(), 2, "one seed per compiler");

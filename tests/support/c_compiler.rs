@@ -136,3 +136,37 @@ fn probe_gnu_gcc(compiler: &str) -> bool {
     };
     defined("__GNUC__") && !defined("__clang__")
 }
+
+/// The compiler ID CMake reports for a GNU-like `compiler`
+/// (`CMAKE_C_COMPILER_ID`), judged from its predefined macros: `GNU` for real
+/// GCC, `AppleClang` for Apple's Clang (which macOS installs as both `clang`
+/// and `gcc`) and `Clang` for any other Clang. `None` when the macros cannot
+/// be read or name neither family.
+pub(crate) fn cmake_compiler_id(compiler: &str) -> Option<&'static str> {
+    let output = Command::new(compiler)
+        .args(["-dM", "-E", "-x", "c", "-"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let macros = String::from_utf8_lossy(&output.stdout);
+    let defined = |name: &str| {
+        macros
+            .lines()
+            .any(|line| line.split_whitespace().nth(1) == Some(name))
+    };
+    if defined("__clang__") {
+        Some(if defined("__apple_build_version__") {
+            "AppleClang"
+        } else {
+            "Clang"
+        })
+    } else if defined("__GNUC__") {
+        Some("GNU")
+    } else {
+        None
+    }
+}
