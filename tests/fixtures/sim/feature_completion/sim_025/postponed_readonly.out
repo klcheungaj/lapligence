@@ -1,0 +1,5 @@
+S a=2 t=0
+M a=2 b=3
+D snap=5 a=2 b=3 t=1
+M a=5 b=3
+D a=5 b=3 t=2

@@ -1379,7 +1379,12 @@ typedef void (*llg_display_eval_fn)(llg_fmt_arg_t* out, void* context);
 // pointers that trigger re-evaluation; display-only time queries are not
 // triggers.  Registration queues a report for the scheduler's settled
 // observation point rather than printing immediately.  Only the most recent
-// $monitor is active; a new call replaces the previous one.
+// $monitor is active; a new call replaces it.  $fmonitor lists
+// (llg_file_monitor_with_typed_reads) are separate entries: any number are
+// active at once, none replaces or is replaced by $monitor, and $fclose
+// removes a list when its last channel closes.  An invalid or closed
+// descriptor registers nothing and sets the $ferror status.  Reports of one
+// slot print in registration order, after that slot's strobes.
 void llg_monitor_with_reads(const char* fmt, int n, llg_mon_eval_fn eval,
                             sv4_t* const* reads, int n_reads);
 // Compatibility entry point for callers without an explicit trigger set.
@@ -1399,9 +1404,11 @@ void llg_file_monitor_with_typed_reads(
     const char* scope, const llg_display_read_t* reads, int n_reads);
 void llg_file_strobe_typed(uint32_t descriptor, const char* fmt, int n,
                            llg_display_eval_fn eval, const char* scope);
-// $monitoron / $monitoroff: resume / suspend the active monitor.  While
-// suspended the last-printed snapshot is kept; enabling queues one report at
-// the next settled observation point even when values are unchanged.
+// $monitoron / $monitoroff: set / clear the monitor flag, which only the
+// $monitor list observes.  The flag outlives the list (a $monitor issued
+// while it is clear stays silent), the last-printed snapshot is kept, and
+// enabling queues one report at the next settled observation point even when
+// values are unchanged.
 void llg_monitor_set(int on);
 
 // Spawn one process. `desc` and its `fn` remain immutable for the process

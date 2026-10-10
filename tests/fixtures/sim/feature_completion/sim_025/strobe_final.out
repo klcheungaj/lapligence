@@ -1,0 +1,7 @@
+S0 a=1 x=0000 r=1.00 s=a
+S1 a=50 inc=51 s=latelate
+S2 q='{7} a=50
+L a=53 q=4
+L a=53 q=4
+L a=53 q=4
+T x=10xz r=-0.50 s=late

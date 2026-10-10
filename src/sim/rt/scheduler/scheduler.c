@@ -297,7 +297,7 @@ static int run_postponed_set(void) {
     g.current_region = LLG_REGION_POSTPONED;
     g.private_evaluation = 1;
     flush_strobes();
-    if (!g.finish) check_monitor();
+    if (!g.finish) check_monitors();
     g.private_evaluation = 0;
     if (g.finish) return 0;
     return run_region_queue(LLG_REGION_POSTPONED_PLI);

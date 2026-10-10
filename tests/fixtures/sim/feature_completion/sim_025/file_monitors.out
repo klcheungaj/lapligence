@@ -1,0 +1,31 @@
+out a=1
+mon b=2
+out a=2
+mon b=3
+out a=4
+mon b=4
+out a=5
+mon b=5
+sim025_m1.txt: f1 a=1
+sim025_m1.txt: f1b b=2
+sim025_m1.txt: f1 a=2
+sim025_m1.txt: f1b b=3
+sim025_m2.txt: f2 a=1 b=2
+sim025_m2.txt: mc a=1
+sim025_m2.txt: f2 a=2 b=2
+sim025_m2.txt: mc a=2
+sim025_m2.txt: f2 a=2 b=3
+sim025_m2.txt: f2 a=4 b=4
+sim025_m2.txt: mc a=4
+sim025_m3.txt: f3 b=2
+sim025_m3.txt: mc a=1
+sim025_m3.txt: mc a=2
+sim025_m3.txt: f3 b=3
+sim025_m3.txt: f3 b=4
+sim025_m3.txt: mc a=4
+sim025_m4.txt: f4 a=4
+sim025_m4.txt: f4 a=5
+sim025_m5.txt: fd b=2
+sim025_m5.txt: fd b=3
+sim025_m5.txt: fd b=4
+sim025_m5.txt: fd b=5

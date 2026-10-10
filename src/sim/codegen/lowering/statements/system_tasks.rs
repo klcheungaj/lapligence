@@ -777,10 +777,25 @@ impl EmitCtx<'_, '_> {
                     }]);
                 }
                 DisplayTaskKind::Deferred { strobe, file } => {
-                    if self.func.is_some() || self.inline.is_some() {
+                    // A static subroutine's variables are model storage, so a
+                    // deferred report may read them at Postponed. Formals,
+                    // automatics and class receivers die with the activation
+                    // (SV 13.3.2), so naming one rejects at its location.
+                    if let Some(function) = &self.func {
+                        if function.class_receiver.is_some() {
+                            return Err(format!(
+                                "{name} in class method `{}` cannot defer a report: \
+                                 the object may not outlive the activation (`{}`)",
+                                function.name, self.path
+                            ));
+                        }
+                    }
+                    if let Some(local) = args.iter().find_map(|arg| self.activation_bound_ref(*arg))
+                    {
                         return Err(format!(
-                            "{name} in `{}` cannot escape a function or task activation",
-                            self.path
+                            "{name} in `{}` cannot defer a reference to `{}`: the call activation, not model storage, holds it",
+                            self.path,
+                            self.cg.node(local).name
                         ));
                     }
                     if let Some(local) = args

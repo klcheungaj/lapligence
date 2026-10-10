@@ -121,6 +121,17 @@ scripts/run-tests.sh -E 'test(/^sim_lrm_decisions::/)'
 | S23-D3 | **Packed member and element selects of nets are part-selects.** A constant member select of a packed-structure net, a constant element select of a packed-array net and a constant indexed part-select of a net are constant part-selects of a vector net: they are forced and released bit-exactly while the other bits follow the drivers. | 10.6.2 L13373-13374; 7.2.1 L7696-7700; 11.5.1 L15779-15782 | `S23-D3_net_member_select` | llg choice for member and element selects (10.6.2 names only bit- and part-selects); LRM text for indexed part-selects |
 | S23-D4 | **Forces and releases combine bit by bit.** Each net bit belongs to the latest force that covered it, so a later overlapping force replaces only the overlapped bits; a release of a part of a forced range releases exactly those bits and the rest stay forced. | 10.6.2 L13373-13374, L13397-13399; 4.9.2 L3519 | `S23-D4_partial_release` | llg choice (the text does not say how overlapping forces and partial releases combine) |
 
+## Postponed output (SIM-025)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S25-D1 | **The monitor flag outlives the display list.** `$monitoroff` clears one flag; a `$monitor` issued while it is clear registers a list that stays silent until `$monitoron`, which then prints once even if no value changed. | 21.2.3 L36536-36541 | `S25-D1_monitor_flag_persists` | llg choice (the text calls it "a monitor flag" set only by `$monitoron`/`$monitoroff`; it does not say that a new `$monitor` re-enables it) |
+| S25-D2 | **Any number of `$fmonitor` lists are active together.** They are independent of `$monitor` and of each other (also on one file); `$monitoron/$monitoroff` do not affect them; `$fclose` cancels a list for the channel it closes, and a multichannel list keeps its other channels. | 21.3.2 L36676-36679; 21.3.1 L36635-36636 | `S25-D2_multiple_fmonitor` | LRM text for independence and cancellation; llg choice for the partial close of a multichannel list |
+| S25-D3 | **A value that returns within the slot does not report.** The settled values at the end of the slot are compared with the printed ones, per argument expression: a variable that changes and returns, or an expression whose operands change but whose value does not, prints nothing. | 21.2.3 L36516-36519, L36530-36531 | `S25-D3_value_returns_within_slot` | llg choice (the text says "changes value" and "end of the time step" without addressing intermediate values) |
+| S25-D4 | **Reports in static subroutines are legal.** `$strobe`/`$monitor`/`$fstrobe` in static tasks and functions may name module variables and static formals and locals; only automatic variables are barred. | 13.3.2 L18646-18652 | `S25-D4_static_subroutine_reports` | LRM text |
+| S25-D5 | **Pending reports at `$finish` are dropped.** The Postponed region of the slot that executes `$finish` does not run, so its `$strobe` and `$monitor` lines do not print. | 20.2 L34119; 21.2.2 L36482-36484 | `S25-D5_pending_report_at_finish` (the missing lines are policy) | llg policy |
+| S25-D6 | **Order of reports in a slot.** Strobes print in call order, then monitors (`$monitor` and `$fmonitor`) in registration order; a replaced `$monitor` takes the position of its replacement. | 4.4.2.9 L3210 | `S25-D6_report_order_in_slot` (the whole trace is policy) | llg policy |
+
 ## Earlier decisions
 
 These predate the register. Their evidence lives in the feature fixtures named

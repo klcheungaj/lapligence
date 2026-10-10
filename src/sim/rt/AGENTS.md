@@ -511,8 +511,11 @@ invalid/unknown bounds or negative count. Keep element owners across callbacks;
 this does not qualify multidimensional binary reads.
 
 Monitor registration/enabling forces a postponed report; only registered signal
-changes dirty later reports, and only the latest monitor is active. Strobes wait
-for settled NBA-triggered work. `%t` retains caller units; design-wide timeformat
+changes dirty later reports. `$monitor` owns one list (a new call replaces it)
+governed by the `$monitoron/$monitoroff` flag, which outlives the list; any
+number of `$fmonitor` lists are independent entries that `$fclose` removes with
+their last channel. An invalid descriptor registers nothing. Strobes wait for
+settled NBA-triggered work and print before the slot's monitors. `%t` retains caller units; design-wide timeformat
 never changes scheduler time. Integer queries use quotient/remainder, halves up;
 realtime is fractional. The runtime consumes integer design-precision ticks;
 codegen owns scaling.

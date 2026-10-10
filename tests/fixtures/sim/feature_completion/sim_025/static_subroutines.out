@@ -1,0 +1,5 @@
+task a=1 v=7 loc=8
+func v=3 sv=8
+func fstrobe a=1
+task monitor a=1 loc=9
+task monitor a=2 loc=9

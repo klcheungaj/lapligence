@@ -292,3 +292,51 @@ fn s23_d4_partial_release() {
         include_str!("fixtures/sim/lrm_decisions/S23-D4_partial_release.out"),
     );
 }
+
+#[test]
+fn s25_d1_monitor_flag_persists() {
+    run_decision(
+        "S25-D1_monitor_flag_persists",
+        include_str!("fixtures/sim/lrm_decisions/S25-D1_monitor_flag_persists.out"),
+    );
+}
+
+#[test]
+fn s25_d2_multiple_fmonitor() {
+    run_decision(
+        "S25-D2_multiple_fmonitor",
+        include_str!("fixtures/sim/lrm_decisions/S25-D2_multiple_fmonitor.out"),
+    );
+}
+
+#[test]
+fn s25_d3_value_returns_within_slot() {
+    run_decision(
+        "S25-D3_value_returns_within_slot",
+        include_str!("fixtures/sim/lrm_decisions/S25-D3_value_returns_within_slot.out"),
+    );
+}
+
+#[test]
+fn s25_d4_static_subroutine_reports() {
+    run_decision(
+        "S25-D4_static_subroutine_reports",
+        include_str!("fixtures/sim/lrm_decisions/S25-D4_static_subroutine_reports.out"),
+    );
+}
+
+#[test]
+fn s25_d5_pending_report_at_finish() {
+    run_decision(
+        "S25-D5_pending_report_at_finish",
+        include_str!("fixtures/sim/lrm_decisions/S25-D5_pending_report_at_finish.out"),
+    );
+}
+
+#[test]
+fn s25_d6_report_order_in_slot() {
+    run_decision(
+        "S25-D6_report_order_in_slot",
+        include_str!("fixtures/sim/lrm_decisions/S25-D6_report_order_in_slot.out"),
+    );
+}

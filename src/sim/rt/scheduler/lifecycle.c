@@ -279,18 +279,7 @@ void llg_rt_cleanup(void) {
         g.strobes = next;
     }
     g.strobe_tail = NULL;
-    free(g.mon.fmt);
-    if (g.mon.last) sv4_destroy_array(g.mon.last, (size_t)g.mon.n);
-    if (g.mon.work) sv4_destroy_array(g.mon.work, (size_t)g.mon.n);
-    free(g.mon.last);
-    free(g.mon.work);
-    free(g.mon.reads);
-    llg_fmt_args_destroy(g.mon.typed_last, g.mon.n);
-    llg_fmt_args_destroy(g.mon.typed_work, g.mon.n);
-    free(g.mon.typed_last);
-    free(g.mon.typed_work);
-    free(g.mon.typed_reads);
-    free(g.mon.scope);
+    llg_monitors_free_all();
     free_region_callbacks();
     free_sampled_values();
     free_assertions();

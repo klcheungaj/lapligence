@@ -1,0 +1,4 @@
+mc a=2
+sim025_s1.txt: s1 a=2
+sim025_s1.txt: mc a=2
+sim025_s3.txt: new a=2

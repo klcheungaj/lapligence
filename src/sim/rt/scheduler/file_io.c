@@ -176,7 +176,7 @@ void llg_file_close(uint32_t descriptor) {
     if (!llg_file_mask_valid(descriptor)) return;
     for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
         if (!llg_file_selected(descriptor, i)) continue;
-        if (g.mon.typed) g.mon.descriptor = llg_file_without_slot(g.mon.descriptor, i);
+        llg_monitors_cancel_slot(i);
         for (llg_strobe_t* e = g.strobes; e; e = e->next)
             if (e->typed) e->descriptor = llg_file_without_slot(e->descriptor, i);
         llg_file_slot_t* slot = &llg_file_slots[i];

@@ -1,0 +1,9 @@
+strobe 1 a=1
+strobe 2 a=1
+fmonitor 1 a=1
+monitor a=1
+fmonitor 2 a=1
+strobe 3 a=2
+fmonitor 1 a=2
+monitor a=2
+fmonitor 2 a=2
