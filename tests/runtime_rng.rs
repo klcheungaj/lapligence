@@ -171,7 +171,7 @@ fn random_runtime_compiles_and_runs_without_scheduler() {
     assert!(
         compiled.status.success(),
         "standalone random runtime must compile:\n{}",
-        String::from_utf8_lossy(&compiled.stderr)
+        c_compiler::compiler_diagnostics(&compiled)
     );
 
     let stdout = sim_harness::run_executable(&executable).expect("random probe should run");

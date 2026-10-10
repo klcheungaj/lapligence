@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::{Mutex, OnceLock};
 
 /// Compiler for tests that compile runtime C directly: `$LLG_CC`, then `$CC`
@@ -92,6 +92,17 @@ pub(crate) fn strict_c11_executable(
         command.arg("-lm").arg("-o").arg(&executable);
     }
     (command, executable)
+}
+
+/// Both output streams of a compiler run, for failure messages. MSVC `cl`
+/// writes its diagnostics to stdout and GNU-like drivers to stderr, so
+/// printing only one stream hides the error from the other family.
+pub(crate) fn compiler_diagnostics(output: &Output) -> String {
+    format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
 }
 
 /// True when `compiler` is GNU GCC rather than a Clang driver installed under
