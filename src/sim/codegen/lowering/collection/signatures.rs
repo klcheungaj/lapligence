@@ -449,12 +449,9 @@ impl<'a> Codegen<'a> {
                         format!("function `{}` has no C name", self.node(*c).name)
                     })?;
                 // Event formals of every direction are typed parameters
-                // (`IrCallArg::EventVal`/`EventAddr`); a class method's event
-                // formals stay with the receiver-aware expansion.
-                let inline_expanded = dpi.is_none()
-                    && ((is_task_f && self.subroutine_requires_inline(*c, inst))
-                        || (self.class_nodes.contains_key(&inst)
-                            && formals_ir.iter().any(|formal| formal.event)));
+                // (`IrCallArg::EventVal`/`EventAddr`), class methods included.
+                let inline_expanded =
+                    dpi.is_none() && is_task_f && self.subroutine_requires_inline(*c, inst);
                 // Register the model entry (call-site lowering and the C
                 // renderers resolve through it).
                 let ir = self.model.funcs.len();
