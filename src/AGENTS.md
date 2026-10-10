@@ -127,8 +127,9 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
 - MSVC `/W4 /WX` also rejects what GCC/Clang accept by default: C4701 for a
   variable assigned only inside a `while` loop (at `/O2`; use `do`), C4702 for a
   `return` after an `abort()` helper that `/O2` inlines (declare it `_Noreturn`),
-  and C4090 for `memset` on an array of pointers to const (assign elements).
-  Clang `-Wconditional-uninitialized`/`-Wunreachable-code` approximate the first
+  C4090 for `memset` on an array of pointers to const (assign elements), and
+  C4132 for a valid C11 tentative definition `static const T x;` completed later
+  (define the object first, after a function prototype). Clang `-Wconditional-uninitialized`/`-Wunreachable-code` approximate the first
   two. Details: [runtime guide](sim/rt/AGENTS.md).
 - `cl` writes its diagnostics to stdout, not stderr: print both streams when a
   compile fails. A Ninja build stops at the first failing source, so one CI run
@@ -159,6 +160,14 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
 - Without zlib's configure step `Z_HAVE_UNISTD_H` is unset, so its `gz*` code
   calls undeclared `read`/`write`/`lseek`/`close`, which GCC 14 and Clang reject;
   the bundled zlib defines it outside Windows.
+- Windows test temporary directories drop the test's label (`llg-<pid>-<n>`),
+  so a word that a Unix run finds in a diagnostic's path is absent there. Match
+  diagnostic fields (message, severity, position), never a whole `Debug` dump.
+- The GitHub Windows arm64 image ships Defender real-time protection on; the
+  x64 image ships it off. Both list `C:\` and `D:\` as excluded paths. On arm64
+  a fresh, seeded model configure took 1.9 s (median) against 0.14 s for an
+  existing tree, and 0.25/0.17 s on x64; `scripts/ci_windows_runner.py` measures
+  where that time goes.
 - Linux CI builds only in static-musl Alpine; glibc Ubuntu/Rocky containers run
   those binaries. Minimal images lack clang, which `generated_c_frame_lint`
   requires alongside gcc; install test tools explicitly. zlib is bundled, never
