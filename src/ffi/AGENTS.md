@@ -27,6 +27,7 @@ remain on the calling thread; do not implement `Send` or `Sync`.
 - ABI v17 adds statement tag 68 (`LLG_SLANG_STMT_CONCURRENT_COVER_SEQUENCE`)
   and subroutine auxiliary bit 11 (`LLG_SLANG_SUBROUTINE_DPI_EXPORT`); a new
   tag or flag bit bumps the version on both sides together.
+- ABI v18 adds scope subkind 235 (`LLG_SLANG_SCOPE_ANONYMOUS_PROGRAM`).
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;

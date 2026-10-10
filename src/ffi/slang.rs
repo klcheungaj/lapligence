@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 17;
+const ABI_VERSION: u32 = 18;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -773,6 +773,9 @@ pub const SEMANTIC_ASSERTION_FINAL: u64 = 1 << 1;
 pub const SEMANTIC_TIMING_CYCLE_DELAY: u32 = 117;
 pub const SEMANTIC_TIMING_ONE_STEP_DELAY: u32 = 118;
 pub const SEMANTIC_SCOPE_CLOCKING_BLOCK: u32 = 230;
+/// An anonymous program (SV 24.6): a scope whose members belong to the
+/// enclosing package or compilation-unit namespace.
+pub const SEMANTIC_SCOPE_ANONYMOUS_PROGRAM: u32 = 235;
 pub const SEMANTIC_VARIABLE_CLOCKING: u32 = 231;
 /// Local assertion variables are materialized by Slang per assertion attempt;
 /// they are not members of the enclosing instance scope.

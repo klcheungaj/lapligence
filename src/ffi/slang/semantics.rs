@@ -297,7 +297,10 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
         15 => matches!(subkind, 0 | 160..=164 | 200..=227),
         18 => matches!(subkind, 0 | 32..=68 | SEMANTIC_STMT_PATTERN_CASE),
         19 => matches!(subkind, 0 | 64..=78 | 80..=94),
-        25 => matches!(subkind, 0 | 194 | SEMANTIC_SCOPE_CLOCKING_BLOCK),
+        25 => matches!(
+            subkind,
+            0 | 194 | SEMANTIC_SCOPE_CLOCKING_BLOCK | SEMANTIC_SCOPE_ANONYMOUS_PROGRAM
+        ),
         26 => matches!(subkind, 0 | 112..=118),
         28 => matches!(subkind, 0..=13),
         20..=22 => matches!(subkind, 0 | 76),

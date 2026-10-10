@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 17u
+#define LLG_SLANG_ABI_VERSION 18u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -698,7 +698,11 @@ enum {
    * per-attempt lowering. */
   LLG_SLANG_VARIABLE_ASSERTION_LOCAL = 232,
   /* Pattern `.name` bindings are lexical temporaries, not instance signals. */
-  LLG_SLANG_VARIABLE_PATTERN_BINDING = 234
+  LLG_SLANG_VARIABLE_PATTERN_BINDING = 234,
+  /* An anonymous program (SV 24.6) in a package or compilation unit. Its
+   * members belong to the enclosing namespace; the scope only records that
+   * they are programwide items. */
+  LLG_SLANG_SCOPE_ANONYMOUS_PROGRAM = 235
 };
 
 /* Clocking metadata carried in LlgSlangSemanticNode::auxiliary. Edge codes
