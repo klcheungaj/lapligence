@@ -141,7 +141,6 @@ static int llg_value_try_default_mode(llg_value_t* value,
             return 1;
         default:
             llg_container_fatal("invalid recursive container value kind");
-            return 0;
     }
 }
 
@@ -276,7 +275,6 @@ static int llg_value_try_construct_copy(llg_value_t* target,
             return 1;
         default:
             llg_container_fatal("invalid recursive container value kind");
-            return 0;
     }
 }
 
