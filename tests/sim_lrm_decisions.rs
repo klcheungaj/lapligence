@@ -257,3 +257,38 @@ fn s14_d6_wait_order_error_continues() {
         include_str!("fixtures/sim/lrm_decisions/S14-D6_wait_order_error_continues.out"),
     );
 }
+
+#[test]
+fn s23_d1_release_reestablishes_continuous() {
+    run_decision(
+        "S23-D1_release_reestablishes_continuous",
+        include_str!("fixtures/sim/lrm_decisions/S23-D1_release_reestablishes_continuous.out"),
+    );
+}
+
+#[test]
+fn s23_d2_force_non_singular() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!("fixtures/sim/lrm_decisions/S23-D2_force_non_singular.out").is_empty());
+    sim_cli::reject_case(
+        SUITE,
+        "S23-D2_force_non_singular",
+        "is an unpacked structure or union, which is not a singular variable (IEEE 1800-2009 10.6.2)",
+    );
+}
+
+#[test]
+fn s23_d3_net_member_select() {
+    run_decision(
+        "S23-D3_net_member_select",
+        include_str!("fixtures/sim/lrm_decisions/S23-D3_net_member_select.out"),
+    );
+}
+
+#[test]
+fn s23_d4_partial_release() {
+    run_decision(
+        "S23-D4_partial_release",
+        include_str!("fixtures/sim/lrm_decisions/S23-D4_partial_release.out"),
+    );
+}

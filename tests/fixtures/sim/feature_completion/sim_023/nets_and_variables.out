@@ -1,0 +1,12 @@
+1 w=1 wa=0 wo=1 t=1 m=1xx0
+1 cv=40 k=55 rv=2.5 pv=1
+2 w=0 wa=1 wo=0 t=z m=0101
+2 v=x5 r=2.25 e=C s=34 i=-3 b2=0100
+2 cv=aa k=00 rv=0.5 pv=c
+3 w=0 wa=1 wo=0 t=z m=0101
+3 v=x5 r=2.25 e=C s=34 i=-3 b2=0100
+3 cv=aa k=00 rv=0.5 pv=c
+4 w=0 wa=0 wo=1 t=0 m=0000
+4 v=x5 r=2.25 e=C s=34 i=-3 b2=0100
+5 cv=41 k=55 rv=4 pv=2
+6 v=03 r=9 e=B s=00 i=0 b2=0000 cv=42
