@@ -1,4 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
+# MSVC Debug: embed debug information in each object (/Z7) instead of the
+# shared PDB of /Zi, which ccache refuses as an unsupported compiler option.
+# Takes effect from CMake 3.25 (CMP0141); set before project() enables C.
+if(POLICY CMP0141)
+  cmake_policy(SET CMP0141 NEW)
+endif()
+set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
 project(llg_dynamic_storage_tests C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
