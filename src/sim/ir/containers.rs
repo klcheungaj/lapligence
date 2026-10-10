@@ -54,6 +54,28 @@ pub struct IrContainerMember {
 }
 
 impl IrContainerElement {
+    /// Whether values of this shape can be streamed (SV 6.24.3): integral
+    /// and string leaves, structs and fixed arrays of them, and dynamic
+    /// arrays or queues of them. Associative arrays nested in a value,
+    /// unions, reals and handles cannot.
+    pub fn is_bit_stream(&self) -> bool {
+        match self {
+            Self::Packed { .. } | Self::String => true,
+            Self::Aggregate { members, .. } => {
+                members.iter().all(|member| member.element.is_bit_stream())
+            }
+            Self::FixedArray { element, .. } => element.is_bit_stream(),
+            Self::Container { kind, element, .. } => {
+                !kind.to_ascii_lowercase().contains("assoc") && element.is_bit_stream()
+            }
+            Self::Real { .. }
+            | Self::Chandle
+            | Self::Event
+            | Self::Union { .. }
+            | Self::Opaque { .. } => false,
+        }
+    }
+
     /// Exact payload width for fixed integral shapes, checked before frame allocation.
     pub fn fixed_packed_width(&self) -> Option<u32> {
         match self {
@@ -321,6 +343,9 @@ pub enum IrStreamSegment {
     },
     /// The bytes of a string, index 0 leftmost (SV 6.24.3).
     String(IrStringExpr),
+    /// Every element of a packed-element fixed unpacked model array, in
+    /// declaration (storage) order: the order of a one-index `foreach`.
+    FixedArray(usize),
     /// A nested streaming concatenation.
     Nested(Box<IrBitStream>),
 }
@@ -365,7 +390,9 @@ impl IrBitStream {
                 } => {
                     let container = container_kind(model, *container, None)?;
                     let associative = matches!(container.kind, IrContainerKind::Associative { .. });
-                    if !container.element.is_packed() || (associative && selector.is_some()) {
+                    let element = container.element.is_packed()
+                        || (!associative && container.element.is_bit_stream());
+                    if !element || (associative && selector.is_some()) {
                         return Err(IrValidationError::new(
                             "container",
                             "bit stream container segment requires packed elements",
@@ -376,6 +403,18 @@ impl IrBitStream {
                     }
                 }
                 IrStreamSegment::String(value) => value.validate(model, string_return)?,
+                IrStreamSegment::FixedArray(array) => {
+                    if model
+                        .arrays
+                        .get(*array)
+                        .is_none_or(|array| array.real || array.elem_width == 0)
+                    {
+                        return Err(IrValidationError::new(
+                            "container",
+                            "bit stream fixed-array segment requires packed elements",
+                        ));
+                    }
+                }
                 IrStreamSegment::Nested(stream) => {
                     if stream.unpack.is_some() {
                         return Err(IrValidationError::new(
@@ -400,6 +439,7 @@ impl IrBitStream {
                 } => stream_selector_expressions(selector, visit),
                 IrStreamSegment::Container { selector: None, .. } => {}
                 IrStreamSegment::String(value) => value.expressions(visit),
+                IrStreamSegment::FixedArray(_) => {}
                 IrStreamSegment::Nested(stream) => stream.expressions(visit),
             }
         }
@@ -415,6 +455,7 @@ impl IrBitStream {
                 } => stream_selector_expressions_mut(selector, visit),
                 IrStreamSegment::Container { selector: None, .. } => {}
                 IrStreamSegment::String(value) => value.expressions_mut(visit),
+                IrStreamSegment::FixedArray(_) => {}
                 IrStreamSegment::Nested(stream) => stream.expressions_mut(visit),
             }
         }

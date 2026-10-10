@@ -844,15 +844,19 @@ impl Frame<'_, '_> {
                     selector,
                 } => {
                     let name = self.container_name(*container)?;
+                    let packed = self.ctx.model.containers[*container].element.is_packed();
                     match &self.ctx.model.containers[*container].kind {
                         IrContainerKind::Associative { .. } => {
                             SegmentCode::Append("llg_bitstream_append_assoc", format!(", &{name}"))
                         }
                         kind => {
-                            let function = if matches!(kind, IrContainerKind::Dynamic) {
-                                "llg_bitstream_append_dyn"
-                            } else {
-                                "llg_bitstream_append_queue"
+                            let function = match (kind, packed) {
+                                (IrContainerKind::Dynamic, true) => "llg_bitstream_append_dyn",
+                                (IrContainerKind::Dynamic, false) => {
+                                    "llg_bitstream_append_dyn_values"
+                                }
+                                (_, true) => "llg_bitstream_append_queue",
+                                (_, false) => "llg_bitstream_append_queue_values",
                             };
                             let (selector, first, second) = super::containers::stream_selector(
                                 self,
@@ -871,6 +875,20 @@ impl Frame<'_, '_> {
                     let code = value.code();
                     strings.push(value);
                     SegmentCode::Append("llg_bitstream_append_string", format!(", {code}"))
+                }
+                IrStreamSegment::FixedArray(array) => {
+                    let info = self.ctx.model.array(*array);
+                    if info.sparse() {
+                        SegmentCode::Append(
+                            "llg_bitstream_append_fixed_array",
+                            format!(", {}", self.fixed_array_address(*array)?),
+                        )
+                    } else {
+                        SegmentCode::Append(
+                            "llg_bitstream_append_values",
+                            format!(", {}, {}ULL", info.c_name, info.total),
+                        )
+                    }
                 }
                 IrStreamSegment::Nested(inner) => SegmentCode::Nested(
                     self.bit_stream_segments(&inner.segments, owners, strings)?,

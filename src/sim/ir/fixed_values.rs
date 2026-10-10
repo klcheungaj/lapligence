@@ -36,6 +36,14 @@ pub enum IrFixedValue {
         cell_width: u32,
         runtime_sized: bool,
     },
+    /// A runtime-sized bit stream operand (a string, resizable container or
+    /// record with such members) as `cell_width`-bit cells, left cell first;
+    /// it never forms one packed value, so it is not bounded by the packed
+    /// width. An empty stream contributes no bits.
+    BitStream {
+        stream: Box<IrBitStream>,
+        cell_width: u32,
+    },
     /// A view of dense (below-threshold, non-net) integral array storage,
     /// presented to descriptor transport cell for cell; the source code stays
     /// one copy loop whatever the extent.
@@ -72,7 +80,10 @@ impl IrFixedValue {
                 }
             }
             Self::Convert { value, .. } => value.calls(visit),
-            Self::Packed { .. } | Self::Selected { .. } | Self::Dense(_) => {}
+            Self::Packed { .. }
+            | Self::Selected { .. }
+            | Self::Dense(_)
+            | Self::BitStream { .. } => {}
         }
     }
 
@@ -105,6 +116,7 @@ impl IrFixedValue {
             }
             Self::Convert { value, .. } => value.expressions(visit),
             Self::Packed { value, .. } => visit(value),
+            Self::BitStream { stream, .. } => stream.expressions(visit),
             Self::Dense(view) => {
                 for selector in &view.selectors {
                     visit(&selector.value);
@@ -152,6 +164,7 @@ impl IrFixedValue {
             }
             Self::Convert { value, .. } => value.expressions_mut(visit),
             Self::Packed { value, .. } => visit(value),
+            Self::BitStream { stream, .. } => stream.expressions_mut(visit),
             Self::Dense(view) => {
                 for selector in &mut view.selectors {
                     visit(&mut selector.value);

@@ -1111,6 +1111,8 @@ typedef struct llg_bitstream_t {
 void llg_bitstream_init(llg_bitstream_t* stream);
 void llg_bitstream_destroy(llg_bitstream_t* stream);
 void llg_bitstream_append_value(llg_bitstream_t* stream, sv4_t value);
+void llg_bitstream_append_values(llg_bitstream_t* stream, const sv4_t* values,
+                                 uint64_t count);
 void llg_bitstream_append_stream(llg_bitstream_t* stream,
                                  const llg_bitstream_t* source);
 void llg_bitstream_append_dyn(llg_bitstream_t* stream,
@@ -1121,10 +1123,23 @@ void llg_bitstream_append_queue(llg_bitstream_t* stream,
                                 sv4_t first, sv4_t second);
 void llg_bitstream_append_assoc(llg_bitstream_t* stream,
                                 const llg_assoc_t* array);
+/* Containers of recursive values: every integral and string leaf in
+ * declaration and index order (SV 11.4.14.1). */
+void llg_bitstream_append_dyn_values(llg_bitstream_t* stream,
+                                     const llg_dyn_value_array_t* array,
+                                     int selector_kind, sv4_t first,
+                                     sv4_t second);
+void llg_bitstream_append_queue_values(llg_bitstream_t* stream,
+                                       const llg_queue_value_array_t* queue,
+                                       int selector_kind, sv4_t first,
+                                       sv4_t second);
 void llg_bitstream_append_string(llg_bitstream_t* stream, llg_string_t value);
 void llg_bitstream_reverse(llg_bitstream_t* stream, uint32_t slice,
                            int from_left);
 sv4_t llg_bitstream_value(const llg_bitstream_t* stream);
+/* Stream bits [position, position + width) as one packed value. */
+sv4_t llg_bitstream_bits(const llg_bitstream_t* stream, uint64_t position,
+                         uint32_t width);
 void llg_bitstream_value_to(sv4_t* dst, const llg_bitstream_t* stream);
 void llg_bitstream_to_dyn(llg_dyn_array_t* dst, const llg_bitstream_t* stream,
                           int exact);

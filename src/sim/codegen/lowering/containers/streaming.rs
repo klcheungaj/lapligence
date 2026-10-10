@@ -676,32 +676,30 @@ impl<'a> Codegen<'a> {
                 "streaming container target must have a packed element in `{path}`"
             ));
         }
-        let selector = stream
-            .with_expr
-            .map(|node| self.lower_stream_selector(path, node))
-            .transpose()?;
-        let source = self.lower_stream_operand(path, rhs, None)?;
-        if source.is_real() {
-            return Err(format!(
-                "real source is not legal for a streaming container target in `{path}`"
-            ));
-        }
-        let slice = if *slice_size == 0 {
-            1
-        } else {
-            u32::try_from(*slice_size)
-                .map_err(|_| format!("streaming slice size is too large in `{path}`"))?
+        // The whole source unpacks into the container, which must take whole
+        // elements; the source streams without a packed temporary.
+        let source = match self.kind(rhs) {
+            NodeKind::Expr(ExprKind::Cast { operand, .. })
+                if matches!(
+                    self.kind(*operand),
+                    NodeKind::Expr(ExprKind::Streaming { .. })
+                ) =>
+            {
+                *operand
+            }
+            _ => rhs,
         };
+        let mut stream = self.lower_bit_stream_source(path, source)?;
+        let direction = match direction {
+            DbStreamingDirection::LeftToRight => IrStreamDirection::LeftToRight,
+            DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
+        };
+        stream.unpack = Some((Self::stream_slice(path, *slice_size)?, direction));
         Ok(Some(IrStmt::Container(Box::new(
-            IrContainerStmt::StreamAssign {
+            IrContainerStmt::BitStreamAssign {
                 container: container.ir,
-                source,
-                slice,
-                direction: match direction {
-                    DbStreamingDirection::LeftToRight => IrStreamDirection::LeftToRight,
-                    DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
-                },
-                selector,
+                stream,
+                exact: true,
             },
         ))))
     }

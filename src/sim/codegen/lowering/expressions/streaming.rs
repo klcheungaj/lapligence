@@ -447,6 +447,12 @@ impl<'a> Codegen<'a> {
         Some(aggregate.leaves)
     }
 
+    /// Whether `node` denotes an unpacked struct with string or resizable
+    /// members.
+    pub(in super::super) fn is_dynamic_member_record(&self, node: NodeId) -> bool {
+        self.native_record_stream_leaves(node).is_some()
+    }
+
     /// The members of a struct with string or resizable members as one
     /// nested stream of its leaves.
     fn native_record_stream(
@@ -518,12 +524,12 @@ impl<'a> Codegen<'a> {
                 .containers
                 .get(container.ir)
                 .ok_or_else(|| format!("streaming container is out of bounds in `{path}`"))?;
-            if !info.element.is_packed() {
+            let associative = matches!(info.kind, IrContainerKind::Associative { .. });
+            if !info.element.is_packed() && (associative || !info.element.is_bit_stream()) {
                 return Err(format!(
-                    "streaming operand with nested container, string or record elements is not supported in `{path}`"
+                    "streaming operand whose elements are not integral, string, struct or array values (or that is an associative array of such aggregates) is not supported in `{path}`"
                 ));
             }
-            let associative = matches!(info.kind, IrContainerKind::Associative { .. });
             if associative && with_node.is_some() {
                 return Err(format!(
                     "streaming `with` selector requires a one-dimensional unpacked array in `{path}`"
@@ -568,6 +574,19 @@ impl<'a> Codegen<'a> {
             return Err(format!(
                 "streaming operand that is a resizable container without its own storage (a member, element or call result) is not supported in `{path}`"
             ));
+        }
+        // A whole fixed model array wider than one packed value streams its
+        // cells directly instead of through a packed image.
+        if with_node.is_none() {
+            if let Some(array) = self.array_of(value).cloned() {
+                let cells = array.dims.iter().fold(1u128, |cells, (left, right)| {
+                    cells * (u128::from(left.abs_diff(*right)) + 1)
+                });
+                let bits = cells * u128::from(array.elem_width);
+                if !array.real && bits > u128::from(LLG_MAX_WIDTH) {
+                    return Ok(IrStreamSegment::FixedArray(self.reference_array(array.ir)));
+                }
+            }
         }
         let value = self.lower_stream_operand(path, value, with_node)?;
         if value.is_real() {
@@ -657,13 +676,14 @@ impl<'a> Codegen<'a> {
         value_node: NodeId,
         with_node: Option<NodeId>,
     ) -> Result<IrExpr, String> {
-        // Strings and associative arrays have no packed stream form of their
-        // own; they stream through a runtime-sized bit stream.
+        // Strings, associative arrays and containers of recursive values have
+        // no packed stream form of their own; they stream through a
+        // runtime-sized bit stream.
         let associative = self.container_of(value_node).is_some_and(|container| {
-            self.model
-                .containers
-                .get(container.ir)
-                .is_some_and(|info| matches!(info.kind, IrContainerKind::Associative { .. }))
+            self.model.containers.get(container.ir).is_some_and(|info| {
+                matches!(info.kind, IrContainerKind::Associative { .. })
+                    || !info.element.is_packed()
+            })
         });
         let string = self.container_of(value_node).is_none()
             && (self.is_string_expr(path, value_node)

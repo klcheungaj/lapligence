@@ -140,6 +140,12 @@ void llg_bitstream_append_value(llg_bitstream_t* stream, sv4_t value) {
     if (words != local) free(words);
 }
 
+void llg_bitstream_append_values(llg_bitstream_t* stream, const sv4_t* values,
+                                 uint64_t count) {
+    for (uint64_t index = 0; index < count; ++index)
+        llg_bitstream_append_value(stream, values[index]);
+}
+
 void llg_bitstream_append_stream(llg_bitstream_t* stream,
                                  const llg_bitstream_t* source) {
     llg_bitstream_reserve(stream, stream->length + source->length);
@@ -208,6 +214,79 @@ void llg_bitstream_append_assoc(llg_bitstream_t* stream,
                                 const llg_assoc_t* array) {
     for (size_t index = 0; index < array->size; ++index)
         llg_bitstream_append_value(stream, array->entries[index].value);
+}
+
+/* One recursive value in stream order. A null value, or an aggregate or
+ * container without storage, streams its type's default. */
+static void llg_bitstream_append_item(llg_bitstream_t* stream,
+                                      const llg_value_t* value,
+                                      const llg_value_desc_t* desc) {
+    if (value && !value->desc) value = NULL;
+    switch (desc->kind) {
+        case LLG_VALUE_PACKED:
+            if (value) {
+                llg_bitstream_append_value(stream, value->value.packed);
+            } else {
+                sv4_t fallback = llg_element_default(
+                    desc->packed_width, desc->packed_signed, desc->packed_two_state);
+                llg_bitstream_append_value(stream, fallback);
+                sv4_destroy(&fallback);
+            }
+            return;
+        case LLG_VALUE_STRING:
+            if (value) llg_bitstream_append_string(stream, value->value.string);
+            return;
+        case LLG_VALUE_AGGREGATE:
+        case LLG_VALUE_FIXED_ARRAY: {
+            const llg_value_t* items = value ? value->value.items : NULL;
+            for (size_t index = 0; index < desc->item_count; ++index)
+                llg_bitstream_append_item(stream, items ? &items[index] : NULL,
+                                          llg_value_item_desc(desc, index));
+            return;
+        }
+        case LLG_VALUE_CONTAINER: {
+            const llg_dyn_value_array_t* items = value ? value->value.container : NULL;
+            if (items)
+                for (size_t index = 0; index < items->size; ++index)
+                    llg_bitstream_append_item(stream, &items->data[index],
+                                              desc->element);
+            return;
+        }
+        default:
+            llg_container_fatal("streamed value is not a bit-stream type");
+    }
+}
+
+static void llg_bitstream_append_items(llg_bitstream_t* stream,
+                                       const llg_value_t* data, size_t size,
+                                       const llg_value_desc_t* element,
+                                       int selector_kind, sv4_t first,
+                                       sv4_t second) {
+    int64_t left;
+    int64_t right;
+    size_t count;
+    llg_stream_bounds(selector_kind, first, second, size, &left, &right, &count);
+    for (size_t offset = 0; offset < count; ++offset) {
+        int64_t index = llg_stream_index_at(left, right, offset);
+        int in_range = index >= 0 && (uint64_t)index < (uint64_t)size;
+        llg_bitstream_append_item(stream, in_range ? &data[index] : NULL, element);
+    }
+}
+
+void llg_bitstream_append_dyn_values(llg_bitstream_t* stream,
+                                     const llg_dyn_value_array_t* array,
+                                     int selector_kind, sv4_t first,
+                                     sv4_t second) {
+    llg_bitstream_append_items(stream, array->data, array->size,
+                               array->element, selector_kind, first, second);
+}
+
+void llg_bitstream_append_queue_values(llg_bitstream_t* stream,
+                                       const llg_queue_value_array_t* queue,
+                                       int selector_kind, sv4_t first,
+                                       sv4_t second) {
+    llg_bitstream_append_items(stream, queue->data, queue->size,
+                               queue->element, selector_kind, first, second);
 }
 
 /* A string streams as a dynamic array of bytes, index 0 leftmost (6.24.3). */
@@ -289,6 +368,13 @@ static sv4_t llg_bitstream_slice(const llg_bitstream_t* stream,
     llg_sv4_import_words(&value, 0, words, count);
     if (words != local) free(words);
     return value;
+}
+
+sv4_t llg_bitstream_bits(const llg_bitstream_t* stream, uint64_t position,
+                         uint32_t width) {
+    if (!width || position > stream->length || stream->length - position < width)
+        llg_container_fatal("bit stream read is out of range");
+    return llg_bitstream_slice(stream, position, width);
 }
 
 sv4_t llg_bitstream_value(const llg_bitstream_t* stream) {

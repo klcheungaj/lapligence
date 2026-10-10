@@ -169,10 +169,27 @@ impl Codegen<'_> {
     /// A packed bit-stream operand as descriptor cells: an array keeps its
     /// element as the cell, any other value is one cell.
     fn lower_fixed_packed(&mut self, path: &str, node: NodeId) -> Result<IrFixedValue, String> {
-        if self.container_of(node).is_some() {
-            return Err(format!(
-                "resizable container operand of an oversized fixed stream in `{path}` is not supported"
-            ));
+        // A string, resizable container or record with such members streams
+        // its runtime-sized bits as cells of its element width.
+        if self.is_runtime_stream_source(path, node) {
+            let cell_width = self
+                .container_of(node)
+                .and_then(|container| self.model.containers.get(container.ir))
+                .and_then(|container| container.element.packed())
+                .map_or_else(
+                    || {
+                        if self.is_string_expr(path, node) {
+                            8
+                        } else {
+                            1
+                        }
+                    },
+                    |(width, _, _)| width,
+                );
+            return Ok(IrFixedValue::BitStream {
+                stream: Box::new(self.lower_bit_stream_source(path, node)?),
+                cell_width,
+            });
         }
         let value = match self.lower_bitstream_source(path, node)? {
             Some(value) => value,

@@ -148,6 +148,11 @@ int llg_fixed_array_stream_value(llg_fixed_array_t*, const llg_fixed_array_t* co
 /* Copy `total` dense cells from `origin` into a zeroed scratch array; an
  * invalid view (`origin` UINT64_MAX) reads the borrowed `fallback`. */
 void llg_fixed_array_dense_source(llg_fixed_array_t*, const sv4_t*, uint64_t, uint64_t, sv4_t);
+/* A descriptor stream operand holding the `cell_width`-bit cells of a
+ * runtime-sized bit stream, left cell first; returns 0 for an empty stream. */
+int llg_fixed_array_bitstream_source(llg_fixed_array_t*, const llg_bitstream_t*, uint32_t);
+/* Append every cell in storage order to a runtime-sized bit stream. */
+void llg_bitstream_append_fixed_array(llg_bitstream_t*, const llg_fixed_array_t*);
 
 // Keep the library and every model translation unit on the host-allocation
 // declaration contract. CMake supplies the same definition when compiling

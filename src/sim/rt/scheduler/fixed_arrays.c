@@ -287,6 +287,28 @@ sv4_t llg_fixed_array_stream_source(const llg_fixed_array_t* array,
     return packed;
 }
 
+int llg_fixed_array_bitstream_source(llg_fixed_array_t* result, const llg_bitstream_t* stream,
+                                     uint32_t cell_width) {
+    if (!result || result->total) fixed_bad_state("invalid fixed stream operand");
+    if (!stream->length) return 0;
+    if (!cell_width || stream->length % cell_width)
+        fixed_bad_state("bit stream fixed operand is not whole cells");
+    uint64_t total = stream->length / cell_width;
+    llg_fixed_array_init(result, total, sv4_zero(cell_width, 0), NULL);
+    for (uint64_t i = 0; i < total; ++i) {
+        sv4_t cell = llg_bitstream_bits(stream, i * cell_width, cell_width);
+        if (!sv4_same(cell, result->initial)) sv4_move(llg_fixed_array_cell(result, i), &cell);
+        sv4_destroy(&cell);
+    }
+    return 1;
+}
+
+void llg_bitstream_append_fixed_array(llg_bitstream_t* stream,
+                                      const llg_fixed_array_t* array) {
+    for (uint64_t index = 0; index < array->total; ++index)
+        llg_bitstream_append_value(stream, *llg_fixed_array_peek(array, index));
+}
+
 sv4_t llg_fixed_array_compare(const llg_fixed_array_t* left,
                              const llg_fixed_array_t* right, int case_eq, int negate) {
     if (left->total != right->total) fixed_bad_state("fixed comparison shape mismatch");

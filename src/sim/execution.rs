@@ -2132,7 +2132,8 @@ fn collect_bit_stream_effects(
                 collect_bit_stream_effects(ir, inner, effects, visited_calls)
             }
             crate::sim::ir::IrStreamSegment::Packed(_)
-            | crate::sim::ir::IrStreamSegment::Container { .. } => {}
+            | crate::sim::ir::IrStreamSegment::Container { .. }
+            | crate::sim::ir::IrStreamSegment::FixedArray(_) => {}
         }
     }
     stream.expressions(&mut |expression| {
@@ -2432,6 +2433,9 @@ fn collect_fixed_value_effects(
             for part in parts {
                 collect_fixed_value_effects(ir, part, effects, visited_calls);
             }
+        }
+        IrFixedValue::BitStream { stream, .. } => {
+            collect_bit_stream_effects(ir, stream, effects, visited_calls)
         }
         IrFixedValue::Array(_)
         | IrFixedValue::Dense(_)
