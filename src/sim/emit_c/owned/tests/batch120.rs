@@ -390,6 +390,7 @@ fn clocking_drive_passes_registered_payload_to_the_runtime() {
             &number(4, 65),
             &IrDelay::Constant(1),
             &[(IrWaitSrc::Sig("G_value".to_owned()), IrEdge::Posedge)],
+            None,
         )
         .unwrap();
     assert!(frame

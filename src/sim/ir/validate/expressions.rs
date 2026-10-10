@@ -105,6 +105,7 @@ impl Validator<'_> {
                     IrObjectQuery::StringInside { .. } => Some((1, false)),
                     IrObjectQuery::StringPacked(..) => None,
                     IrObjectQuery::ProcessStatus(..) => Some((32, true)),
+                    IrObjectQuery::VirtualInterfaceInstance { .. } => Some((32, false)),
                     IrObjectQuery::MailboxNum(..)
                     | IrObjectQuery::MailboxTryPut { .. }
                     | IrObjectQuery::MailboxTryGet { .. } => Some((32, true)),

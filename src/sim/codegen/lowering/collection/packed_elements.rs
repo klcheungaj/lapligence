@@ -448,6 +448,44 @@ impl<'a> Codegen<'a> {
             }
             _ => self.packed_ranges_for_base(base).unwrap_or_default(),
         };
+        self.packed_selection_steps_in(path, &dimensions, select, parent_width, steps, fold)
+    }
+
+    /// A select chain (element selects, then at most one part-select, in
+    /// source order) over a value whose packed dimensions come from its
+    /// declaration rather than from the selected expression, e.g. a clockvar
+    /// reached through a virtual-interface handle.
+    pub(in super::super) fn packed_selection_steps_over(
+        &mut self,
+        path: &str,
+        dimensions: &[crate::core::db::PackedRange],
+        selects: Vec<Select>,
+        width: u32,
+    ) -> Result<Vec<IrPackedSelect>, String> {
+        let mut width = width;
+        let mut steps = Vec::new();
+        let mut consumed = 0usize;
+        for select in selects {
+            let remaining = dimensions.get(consumed..).unwrap_or_default();
+            let used = match &select {
+                Select::Elements(indices) => indices.len(),
+                _ => 0,
+            };
+            self.packed_selection_steps_in(path, remaining, select, &mut width, &mut steps, true)?;
+            consumed += used;
+        }
+        Ok(steps)
+    }
+
+    fn packed_selection_steps_in(
+        &mut self,
+        path: &str,
+        dimensions: &[crate::core::db::PackedRange],
+        select: Select,
+        parent_width: &mut u32,
+        steps: &mut Vec<IrPackedSelect>,
+        fold: bool,
+    ) -> Result<(), String> {
         match select {
             Select::Elements(indices) => {
                 for (dimension, index) in indices.into_iter().enumerate() {

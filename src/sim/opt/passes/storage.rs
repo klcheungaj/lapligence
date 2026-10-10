@@ -456,9 +456,17 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         | IrStmt::SharedLocal {
             init: Some(init), ..
         } => collect_expr_reads(init, model, rw),
+        IrStmt::ClockingDrive {
+            lhs, rhs, cycles, ..
+        } => {
+            collect_lhs_rw(lhs, model, rw);
+            collect_expr_reads(rhs, model, rw);
+            if let Some(cycles) = cycles {
+                collect_expr_reads(cycles, model, rw);
+            }
+        }
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
-        | IrStmt::ClockingDrive { lhs, rhs, .. }
         | IrStmt::InertialAssign { lhs, rhs, .. } => {
             collect_lhs_rw(lhs, model, rw);
             collect_expr_reads(rhs, model, rw);

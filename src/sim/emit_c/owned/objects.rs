@@ -323,6 +323,21 @@ impl Frame<'_, '_> {
                 let right = self.chandle(right)?;
                 self.value(format!("sv4_from_u64({left} == {right}, 1, 0)"), 1, false)
             }
+            VirtualInterfaceInstance {
+                handle,
+                interface,
+                site,
+            } => {
+                let handle = self.chandle(handle)?;
+                self.value(
+                    format!(
+                        "sv4_from_u64(llg_vif_instance({handle}, {interface}, {}), 32, 0)",
+                        c_string_literal(site)
+                    ),
+                    32,
+                    false,
+                )
+            }
             ProcessEq(left, right) => {
                 let left = self.process_value(left)?;
                 let right = self.process_value(right)?;

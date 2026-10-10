@@ -395,7 +395,14 @@ typedef struct llg_clocking_drive {
     int is_real;
     double real_value;
     uint64_t ticks;
+    // Matching clocking events still to occur before the drive matures.
+    uint64_t events;
 } llg_clocking_drive_t;
+
+typedef struct {
+    sv4_t* sig;
+    size_t refs;
+} llg_clocking_drive_source_t;
 
 static void clocking_drive_signal_match(sv4_t* signal, sv4_t old, sv4_t value);
 static void clocking_drive_event_match(llg_event_object_t* event);
@@ -482,6 +489,13 @@ typedef struct {
     size_t clocking_used;
     llg_clocking_drive_t* clocking_drives;
     llg_clocking_drive_t* clocking_drives_tail;
+    // Distinct clock signals named by pending drives, with reference counts,
+    // and the number of named-event sources: writes and triggers that cannot
+    // mature a pending drive skip the scan of `clocking_drives`.
+    llg_clocking_drive_source_t* clocking_drive_sources;
+    size_t clocking_drive_source_count;
+    size_t clocking_drive_source_capacity;
+    size_t clocking_drive_event_refs;
     uint64_t sampled_time;
     int sampled_time_valid;
     llg_concurrent_assertion_t* assertions;

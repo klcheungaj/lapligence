@@ -312,6 +312,59 @@ static int clocking_event_current(const llg_wait_src_t* srcs, int n) {
     return 0;
 }
 
+static void clocking_drive_sources_acquire(const llg_clocking_drive_t* drive) {
+    for (int i = 0; i < drive->n_specs; i++) {
+        sv4_t* sig = drive->specs[i].sig;
+        if (!sig) {
+            g.clocking_drive_event_refs++;
+            continue;
+        }
+        size_t at = 0;
+        while (at < g.clocking_drive_source_count &&
+               g.clocking_drive_sources[at].sig != sig)
+            at++;
+        if (at == g.clocking_drive_source_count) {
+            if (at == g.clocking_drive_source_capacity) {
+                size_t capacity = at ? at * 2 : 4;
+                llg_clocking_drive_source_t* grown =
+                    (llg_clocking_drive_source_t*)llg_checked_malloc(
+                        capacity, sizeof(*grown), "clocking drive sources");
+                if (at) memcpy(grown, g.clocking_drive_sources, at * sizeof(*grown));
+                free(g.clocking_drive_sources);
+                g.clocking_drive_sources = grown;
+                g.clocking_drive_source_capacity = capacity;
+            }
+            g.clocking_drive_sources[at].sig = sig;
+            g.clocking_drive_sources[at].refs = 0;
+            g.clocking_drive_source_count++;
+        }
+        g.clocking_drive_sources[at].refs++;
+    }
+}
+
+static void clocking_drive_sources_release(const llg_clocking_drive_t* drive) {
+    for (int i = 0; i < drive->n_specs; i++) {
+        sv4_t* sig = drive->specs[i].sig;
+        if (!sig) {
+            if (g.clocking_drive_event_refs) g.clocking_drive_event_refs--;
+            continue;
+        }
+        for (size_t at = 0; at < g.clocking_drive_source_count; at++) {
+            if (g.clocking_drive_sources[at].sig != sig) continue;
+            if (--g.clocking_drive_sources[at].refs == 0)
+                g.clocking_drive_sources[at] =
+                    g.clocking_drive_sources[--g.clocking_drive_source_count];
+            break;
+        }
+    }
+}
+
+static int clocking_drive_source_pending(const sv4_t* sig) {
+    for (size_t at = 0; at < g.clocking_drive_source_count; at++)
+        if (g.clocking_drive_sources[at].sig == sig) return 1;
+    return 0;
+}
+
 static void free_clocking_drive(llg_clocking_drive_t* drive) {
     if (!drive) return;
     sv4_destroy(&drive->value);
@@ -360,6 +413,8 @@ static int clocking_drive_source_matches_event(
 }
 
 static void clocking_drive_signal_match(sv4_t* signal, sv4_t old, sv4_t value) {
+    if (!g.clocking_drives || !clocking_drive_source_pending(signal)) return;
+    int removed = 0;
     llg_clocking_drive_t** slot = &g.clocking_drives;
     while (*slot) {
         llg_clocking_drive_t* drive = *slot;
@@ -367,17 +422,26 @@ static void clocking_drive_signal_match(sv4_t* signal, sv4_t old, sv4_t value) {
             slot = &drive->next;
             continue;
         }
+        if (--drive->events) {
+            slot = &drive->next;
+            continue;
+        }
         *slot = drive->next;
         drive->next = NULL;
         clocking_drive_enqueue(drive);
+        clocking_drive_sources_release(drive);
         free_clocking_drive(drive);
+        removed = 1;
     }
+    if (!removed) return;
     g.clocking_drives_tail = g.clocking_drives;
     while (g.clocking_drives_tail && g.clocking_drives_tail->next)
         g.clocking_drives_tail = g.clocking_drives_tail->next;
 }
 
 static void clocking_drive_event_match(llg_event_object_t* event) {
+    if (!g.clocking_drive_event_refs) return;
+    int removed = 0;
     llg_clocking_drive_t** slot = &g.clocking_drives;
     while (*slot) {
         llg_clocking_drive_t* drive = *slot;
@@ -385,11 +449,18 @@ static void clocking_drive_event_match(llg_event_object_t* event) {
             slot = &drive->next;
             continue;
         }
+        if (--drive->events) {
+            slot = &drive->next;
+            continue;
+        }
         *slot = drive->next;
         drive->next = NULL;
         clocking_drive_enqueue(drive);
+        clocking_drive_sources_release(drive);
         free_clocking_drive(drive);
+        removed = 1;
     }
+    if (!removed) return;
     g.clocking_drives_tail = g.clocking_drives;
     while (g.clocking_drives_tail && g.clocking_drives_tail->next)
         g.clocking_drives_tail = g.clocking_drives_tail->next;

@@ -404,6 +404,11 @@ void llg_rt_run(void) {
         for (;;) {
             if (!run_design_set()) break;
             if (!run_observed_set()) break;
+            // The inner loop of SV 4.5 iterates Active through Post-Observed:
+            // design processes woken in Observed (a clocking block event, SV
+            // 14.13) run before the reactive set, so their synchronous drives
+            // share the Re-NBA region of the same pass.
+            if (design_pending()) continue;
             if (!run_reactive_set()) break;
             // Iterate the outer loop of SV 4.5 until Active through
             // Post-Re-NBA, including Observed, are all empty.

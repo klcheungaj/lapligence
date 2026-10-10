@@ -1080,9 +1080,17 @@ fn collect_statement_expression_effects(
         IrStmt::RealArrayOrder(order) => order.expressions(&mut |child| {
             collect_expression_effects(ir, child, effects, visited_calls)
         }),
+        IrStmt::ClockingDrive {
+            lhs, rhs, cycles, ..
+        } => {
+            collect_expression_effects(ir, rhs, effects, visited_calls);
+            if let Some(cycles) = cycles {
+                collect_expression_effects(ir, cycles, effects, visited_calls);
+            }
+            collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
+        }
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
-        | IrStmt::ClockingDrive { lhs, rhs, .. }
         | IrStmt::InertialAssign { lhs, rhs, .. } => {
             collect_expression_effects(ir, rhs, effects, visited_calls);
             collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
@@ -2070,6 +2078,9 @@ fn collect_object_query_effects(
         IrObjectQuery::ChandleEq(a, b) => {
             collect_chandle_effects(ir, a, effects, visited_calls);
             collect_chandle_effects(ir, b, effects, visited_calls);
+        }
+        IrObjectQuery::VirtualInterfaceInstance { handle, .. } => {
+            collect_chandle_effects(ir, handle, effects, visited_calls);
         }
         IrObjectQuery::SemaphoreTryGet(receiver, keys) => {
             collect_chandle_effects(ir, receiver, effects, visited_calls);

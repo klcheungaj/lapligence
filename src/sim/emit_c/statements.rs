@@ -384,11 +384,25 @@ fn render_stmt_scoped(
             rhs,
             ticks,
             specs,
+            cycles,
         } => {
             let delay = render_delay(ctx, ticks)?;
-            let assignment =
-                super::assignments::render_clocking_nba(ctx, lhs, rhs, "_clocking_skew", specs)?;
-            format!("{{ uint64_t _clocking_skew={delay}; {assignment} }}\n")
+            let cycles = match cycles {
+                Some(count) => format!("llg_repeat_count({})", render_expr(ctx, count)?.code),
+                None => "0ULL".to_owned(),
+            };
+            // The runtime takes the skew and the `##n` count as adjacent
+            // arguments, so they travel through the delay text together.
+            let assignment = super::assignments::render_clocking_nba(
+                ctx,
+                lhs,
+                rhs,
+                "_clocking_skew, _clocking_cycles",
+                specs,
+            )?;
+            format!(
+                "{{ uint64_t _clocking_skew={delay}; uint64_t _clocking_cycles={cycles}; {assignment} }}\n"
+            )
         }
         IrStmt::ClockingCycleWait { count, specs } => clocking_cycle_wait_text(ctx, count, specs)?,
         IrStmt::InertialAssign { lhs, rhs, delay } => {

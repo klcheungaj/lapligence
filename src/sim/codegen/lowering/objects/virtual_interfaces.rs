@@ -215,3 +215,133 @@ impl Codegen<'_> {
         }))
     }
 }
+
+/// A synchronous drive target reached through a virtual-interface handle
+/// (`v.cb.x <= e`, `v.cb.x[i] <= e`; SV 14.16, 25.9).
+pub(in super::super) struct VirtualClockingTarget {
+    pub(in super::super) handle: IrChandleExpr,
+    pub(in super::super) descriptor: usize,
+    pub(in super::super) site: String,
+    /// The clockvar node addressed by the source text; it carries the
+    /// clockvar's declared type and direction.
+    pub(in super::super) clockvar: NodeId,
+    /// The same clockvar in each bound instance, by descriptor instance index.
+    pub(in super::super) instances: Vec<NodeId>,
+    /// The selects of `clockvar select` (SV 14.16), in source order.
+    pub(in super::super) selects: Vec<super::super::collection::Select>,
+    pub(in super::super) width: u32,
+    pub(in super::super) two_state: bool,
+}
+
+impl Codegen<'_> {
+    /// Resolve a synchronous drive target rooted at a virtual-interface
+    /// handle. The handle is lowered once; the clockvar of every concrete
+    /// instance the descriptor can bind is listed so a drive can dispatch on
+    /// the instance bound when it issues.
+    pub(in super::super) fn virtual_clocking_target(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+    ) -> Result<Option<VirtualClockingTarget>, String> {
+        use super::super::collection::Select;
+        let mut root = lhs;
+        let mut selects = Vec::new();
+        loop {
+            let (base, select) = match self.kind(root) {
+                NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                    (*base, Select::Elements(vec![*index]))
+                }
+                NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                    (*base, Select::Elements(indices.clone()))
+                }
+                NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+                    (*base, Select::Part(*left, *right))
+                }
+                NodeKind::Expr(ExprKind::IndexedPartSelect {
+                    base,
+                    base_expr,
+                    width_expr,
+                    neg,
+                }) => (*base, Select::Indexed(*base_expr, *width_expr, *neg)),
+                _ => break,
+            };
+            selects.push(select);
+            root = base;
+        }
+        if !matches!(self.kind(root), NodeKind::Expr(ExprKind::HierPath { .. })) {
+            return Ok(None);
+        }
+        let Some(clockvar) = self.clocking_var_target(root) else {
+            return Ok(None);
+        };
+        let Some((handle, descriptor, _slot, width, _signed, two_state, _shortreal)) =
+            self.virtual_interface_access(path, root, true)?
+        else {
+            return Ok(None);
+        };
+        // Element selects precede an optional part-select (SV A.8.4 `select`).
+        selects.reverse();
+        if selects
+            .iter()
+            .rev()
+            .skip(1)
+            .any(|select| !matches!(select, Select::Elements(_)))
+        {
+            return Err(format!(
+                "a part-select followed by another select of a clockvar in `{path}` is not a clockvar select"
+            ));
+        }
+        let var = self
+            .db
+            .clocking_var(clockvar)
+            .ok_or_else(|| format!("clocking member has no owned declaration in `{path}`"))?;
+        let block_name = self.node(var.block).name.clone();
+        let var_name = self.node(clockvar).name.clone();
+        let mut bound = self
+            .virtual_interface_instances
+            .iter()
+            .filter(|(_, (owner, _))| *owner == descriptor)
+            .map(|(interface, (_, instance))| (*instance, *interface))
+            .collect::<Vec<_>>();
+        bound.sort_unstable_by_key(|(instance, _)| *instance);
+        let mut instances = Vec::with_capacity(bound.len());
+        for (position, (instance, interface)) in bound.into_iter().enumerate() {
+            if instance != position {
+                return Err(format!(
+                    "virtual interface descriptor for `{path}` has non-contiguous instances"
+                ));
+            }
+            let concrete = self
+                .node(interface)
+                .children
+                .iter()
+                .copied()
+                .find(|block| {
+                    self.db.is_clocking_block(*block) && self.node(*block).name == block_name
+                })
+                .and_then(|block| {
+                    self.node(block).children.iter().copied().find(|variable| {
+                        self.db.is_clocking_var(*variable) && self.node(*variable).name == var_name
+                    })
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "interface instance `{}` has no clockvar `{block_name}.{var_name}` for a drive in `{path}`",
+                        self.node(interface).full_name
+                    )
+                })?;
+            instances.push(concrete);
+        }
+        let site = self.source_site("virtual interface clocking drive", path, lhs);
+        Ok(Some(VirtualClockingTarget {
+            handle,
+            descriptor,
+            site,
+            clockvar,
+            instances,
+            selects,
+            width,
+            two_state,
+        }))
+    }
+}

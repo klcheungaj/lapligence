@@ -2032,3 +2032,41 @@ fn sequence_joins_need_one_fork_an_exit_and_one_action_per_edge() {
         "operand starts are states"
     );
 }
+
+#[test]
+fn clocking_drive_cycle_counts_and_instance_dispatch_are_checked() {
+    let model = valid_model();
+    let drive = |cycles: IrExpr| IrStmt::ClockingDrive {
+        lhs: IrLhs::Whole(0),
+        rhs: packed_const(1, 1),
+        ticks: IrDelay::Constant(0),
+        specs: vec![(IrWaitSrc::Sig("sig".into()), IrEdge::Posedge)],
+        cycles: Some(Box::new(cycles)),
+    };
+    let real = IrExpr::new(IrExprKind::Const(IrConst::real(2.0)), 0, false, None);
+    let error = model.validate_stmt(&drive(real), None).unwrap_err();
+    assert!(
+        error.detail().contains("cycle count must be integral"),
+        "{error:?}"
+    );
+
+    let query = |width: u32| {
+        IrExpr::new(
+            IrExprKind::ObjectQuery(Box::new(IrObjectQuery::VirtualInterfaceInstance {
+                handle: IrChandleExpr::Null,
+                interface: 0,
+                site: "site".into(),
+            })),
+            width,
+            false,
+            None,
+        )
+    };
+    let error = model.validate_expr(&query(32), None).unwrap_err();
+    assert!(
+        error
+            .detail()
+            .contains("unknown virtual interface descriptor"),
+        "{error:?}"
+    );
+}

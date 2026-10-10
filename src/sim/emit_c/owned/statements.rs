@@ -549,7 +549,8 @@ impl Frame<'_, '_> {
                 rhs,
                 ticks,
                 specs,
-            } => self.clocking_drive(lhs, rhs, ticks, specs)?,
+                cycles,
+            } => self.clocking_drive(lhs, rhs, ticks, specs, cycles.as_deref())?,
             IrStmt::ClockingCycleWait { count, specs } => {
                 let count = self.expression(count)?;
                 if count.width == 0 {

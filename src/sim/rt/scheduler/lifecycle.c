@@ -201,6 +201,11 @@ static void free_clocking_drives(void) {
         g.clocking_drives = next;
     }
     g.clocking_drives_tail = NULL;
+    free(g.clocking_drive_sources);
+    g.clocking_drive_sources = NULL;
+    g.clocking_drive_source_count = 0;
+    g.clocking_drive_source_capacity = 0;
+    g.clocking_drive_event_refs = 0;
 }
 
 static void free_q_queues(void) {

@@ -13,6 +13,59 @@ impl<'a> Codegen<'a> {
         self.signal_of(source)
     }
 
+    /// The dedicated net driver of a clocking output/inout whose signal is a
+    /// wired net (SV 14.16), as a whole-signal write target.
+    pub(super) fn clocking_net_driver_info(&self, target: NodeId) -> Option<SignalInfo> {
+        let signal = *self.clocking_net_drivers.get(&target)?;
+        let ir = self.model.signals.get(signal)?;
+        let (group, slot) = ir.net_driver?;
+        Some(SignalInfo {
+            global: ir.c_name.clone(),
+            width: ir.ty.width(),
+            signed: ir.ty.signed(),
+            two_state: ir.ty.two_state(),
+            real: false,
+            shortreal: false,
+            net_driver: Some((self.model.net_groups.get(group)?.c_name.clone(), slot)),
+            ir: signal,
+        })
+    }
+
+    /// The unselected write target of one concrete clockvar's synchronous
+    /// drive: its dedicated net driver, its signal, or the lvalue its
+    /// clocking expression names (SV 14.5, 14.16).
+    pub(super) fn clocking_drive_root(
+        &mut self,
+        path: &str,
+        clockvar: NodeId,
+        selected: bool,
+    ) -> Result<IrLhs, String> {
+        if let Some(info) = self.clocking_net_driver_info(clockvar) {
+            return self.lhs_to_ir(Lhs::Whole(info));
+        }
+        if let Some(info) = self.clocking_var_source_info(clockvar).cloned() {
+            return self.lhs_to_ir(Lhs::Whole(info));
+        }
+        let expression = self
+            .db
+            .clocking_var(clockvar)
+            .map(|var| var.expression)
+            .ok_or_else(|| {
+                format!(
+                    "clocking member `{}` has no owned declaration in `{path}`",
+                    self.node(clockvar).name
+                )
+            })?;
+        if selected {
+            return Err(format!(
+                "a select of clockvar `{}`, which is bound to an expression, is not supported \
+                 through a virtual interface in `{path}`",
+                self.node(clockvar).name
+            ));
+        }
+        self.lower_lhs(path, expression)
+    }
+
     pub(super) fn clocking_var_read_source_info(
         &self,
         target: NodeId,

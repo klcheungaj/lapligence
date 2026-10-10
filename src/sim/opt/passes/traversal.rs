@@ -453,9 +453,17 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::RealArrayOrder(order) => {
             order.expressions_mut(&mut |child| walk_expr_mut(child, f))
         }
+        IrStmt::ClockingDrive {
+            lhs, rhs, cycles, ..
+        } => {
+            walk_lhs_mut(lhs, f);
+            walk_expr_mut(rhs, f);
+            if let Some(cycles) = cycles {
+                walk_expr_mut(cycles, f);
+            }
+        }
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
-        | IrStmt::ClockingDrive { lhs, rhs, .. }
         | IrStmt::InertialAssign { lhs, rhs, .. } => {
             walk_lhs_mut(lhs, f);
             walk_expr_mut(rhs, f);

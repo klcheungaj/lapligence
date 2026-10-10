@@ -121,6 +121,7 @@ fn callbacks_captures_clocking_and_foreign_operations_fail_closed() {
             rhs: number(0, 65),
             ticks: IrDelay::Constant(0),
             specs: Vec::new(),
+            cycles: None,
         },
         IrStmt::VpiCall {
             site: 0,

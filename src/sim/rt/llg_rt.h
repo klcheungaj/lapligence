@@ -2103,14 +2103,18 @@ void llg_nba_net_selected_after(llg_net_t* net, int slot, sv4_t value,
                                 uint64_t ticks);
 // Synchronous drives use the target clocking event. If the event has not
 // occurred in the current time slot, the runtime retains the captured value
-// until the next matching event before applying the output skew.
+// until the next matching event before applying the output skew. `cycles`
+// is the drive's `##n` (SV 14.16): an on-event drive matures `n` events
+// later, an off-event drive at the `max(n, 1)`-th following event.
 void llg_clocking_nba_sync_after(sv4_t* target, sv4_t value, uint64_t ticks,
+                                 uint64_t cycles,
                                  const llg_wait_src_t* specs, int n_specs);
 void llg_clocking_nba_net_sync_after(llg_net_t* net, int slot, sv4_t value,
-                                     uint64_t ticks,
+                                     uint64_t ticks, uint64_t cycles,
                                      const llg_wait_src_t* specs, int n_specs);
 void llg_nba_d_after(double* target, double value, uint64_t ticks);
 void llg_clocking_nba_d_sync_after(double* target, double value, uint64_t ticks,
+                                   uint64_t cycles,
                                    const llg_wait_src_t* specs, int n_specs);
 // Native NBAs to persistent storage. The string value is consumed; the
 // chandle or class handle value is stored as-is at commit, which toggles
@@ -2150,17 +2154,17 @@ void llg_nba_tagged_selected_after(sv4_t* target, sv4_t value,
 // the general fallback; contiguous masks are narrowed internally.
 void llg_nba_masked(sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks);
 void llg_clocking_nba_sync_masked_after(
-    sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks,
+    sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks, uint64_t cycles,
     const llg_wait_src_t* specs, int n_specs);
 void llg_clocking_nba_net_sync_masked_after(
     llg_net_t* net, int slot, sv4_t value, sv4_t mask, uint64_t ticks,
-    const llg_wait_src_t* specs, int n_specs);
+    uint64_t cycles, const llg_wait_src_t* specs, int n_specs);
 void llg_clocking_nba_sync_selected_after(
     sv4_t* target, sv4_t value, sv4_select_plan_t plan, int reverse,
-    uint64_t ticks, const llg_wait_src_t* specs, int n_specs);
+    uint64_t ticks, uint64_t cycles, const llg_wait_src_t* specs, int n_specs);
 void llg_clocking_nba_net_sync_selected_after(
     llg_net_t* net, int slot, sv4_t value, sv4_select_plan_t plan, int reverse,
-    uint64_t ticks, const llg_wait_src_t* specs, int n_specs);
+    uint64_t ticks, uint64_t cycles, const llg_wait_src_t* specs, int n_specs);
 void llg_ba(sv4_t* target, sv4_t value);
 // llg_ba borrowing `value` by address. Generated stores use it so that
 // unoptimized AArch64 (and other ABIs passing large structs through a

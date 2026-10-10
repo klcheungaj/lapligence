@@ -583,6 +583,15 @@ pub(super) fn query(
             chandle(ctx, a)?,
             chandle(ctx, b)?
         ),
+        IrObjectQuery::VirtualInterfaceInstance {
+            handle,
+            interface,
+            site,
+        } => format!(
+            "sv4_from_u64(llg_vif_instance({}, {interface}, {}), 32, 0)",
+            chandle(ctx, handle)?,
+            super::constants::c_string_literal(site)
+        ),
         IrObjectQuery::SemaphoreTryGet(receiver, keys) => format!(
             "sv4_from_u64((uint64_t)llg_semaphore_try_get((llg_semaphore_t *){}, {}), {width}, {})",
             chandle(ctx, receiver)?,

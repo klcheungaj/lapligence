@@ -82,8 +82,14 @@ impl Frame<'_, '_> {
         rhs: &IrExpr,
         ticks: &IrDelay,
         specs: &[(IrWaitSrc, IrEdge)],
+        cycles: Option<&IrExpr>,
     ) -> Result<(), String> {
         let value = self.expression(rhs)?;
+        // The count is taken at issue, like the value (SV 14.16).
+        let cycles = match cycles {
+            Some(cycles) => self.event_repeat(Some(cycles))?,
+            None => "0ULL".to_owned(),
+        };
         let target = self.target(lhs)?;
         if target.sequence_local || (target.binding.automatic && target.width == 0) {
             return Err("clocking drive requires stable target storage".to_owned());
@@ -97,7 +103,7 @@ impl Frame<'_, '_> {
         );
         let ticks = self.delay(ticks)?;
         let sources = self.clocking_sources(specs)?;
-        let tail = format!("{ticks}, {sources}, {}", specs.len());
+        let tail = format!("{ticks}, {cycles}, {sources}, {}", specs.len());
         self.line(format!("if ({}) {{", target.valid));
         if target.width == 0 {
             self.line(format!(

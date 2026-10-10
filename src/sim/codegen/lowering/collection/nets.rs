@@ -1588,9 +1588,7 @@ impl<'a> Codegen<'a> {
             self.note_uwire_drivers(&type_plan, &fallback, &sources, &mut uwire_drivers);
             for (source, strengths) in sources {
                 let signal = self.add_structural_driver(gidx, source, strengths)?;
-                if matches!(self.kind(source), NodeKind::ContAssign { .. }) {
-                    self.wired_driver_sites.insert(source, signal);
-                }
+                self.record_wired_driver_site(source, signal);
             }
         }
 
@@ -1785,9 +1783,7 @@ impl<'a> Codegen<'a> {
             }
             for (source, strengths) in sources {
                 let signal = self.add_structural_driver(gidx, source, strengths)?;
-                if matches!(self.kind(source), NodeKind::ContAssign { .. }) {
-                    self.wired_driver_sites.insert(source, signal);
-                }
+                self.record_wired_driver_site(source, signal);
             }
         }
 
@@ -2159,6 +2155,10 @@ impl<'a> Codegen<'a> {
         let member_set: HashSet<NodeId> = members.iter().copied().collect();
         let mut sources: HashMap<NodeId, (u8, u8)> = HashMap::new();
         for id in self.design_nodes() {
+            if let Some(site) = self.clocking_net_site(id, &member_set)? {
+                sources.insert(id, site);
+                continue;
+            }
             match self.kind(id) {
                 NodeKind::ContAssign {
                     strength0,
@@ -2300,6 +2300,10 @@ impl<'a> Codegen<'a> {
             let member_set = HashSet::from([net]);
             let mut sites: HashMap<NodeId, (u8, u8)> = HashMap::new();
             for id in nodes {
+                if let Some(site) = self.clocking_net_site(*id, &member_set)? {
+                    sites.insert(*id, site);
+                    continue;
+                }
                 match self.kind(*id) {
                     NodeKind::ContAssign {
                         strength0,
@@ -2388,6 +2392,11 @@ impl<'a> Codegen<'a> {
                         let Some(lhs) = self.node(*id).children.first().copied() else {
                             continue;
                         };
+                        // A synchronous drive updates its clockvar's own
+                        // driver slot, collected above.
+                        if self.is_clocking_drive_lhs(lhs) {
+                            continue;
+                        }
                         if self.nested_member_target(lhs, &member_set).is_some() {
                             let form = if *blocking { "blocking" } else { "nonblocking" };
                             return Err(format!(
@@ -2520,12 +2529,64 @@ impl<'a> Codegen<'a> {
 
             for (source, strengths) in sites {
                 let signal = self.add_structural_driver(group, source, strengths)?;
-                if matches!(self.kind(source), NodeKind::ContAssign { .. }) {
-                    self.wired_driver_sites.insert(source, signal);
-                }
+                self.record_wired_driver_site(source, signal);
             }
         }
         Ok(())
+    }
+
+    /// Remember which slot a continuous assignment or a clocking output
+    /// drives, so its writes target that slot instead of the net's own.
+    fn record_wired_driver_site(&mut self, source: NodeId, signal: usize) {
+        if matches!(self.kind(source), NodeKind::ContAssign { .. }) {
+            self.wired_driver_sites.insert(source, signal);
+        } else if self.db.is_clocking_var(source) {
+            self.clocking_net_drivers.insert(source, signal);
+        }
+    }
+
+    /// The driver of a clocking output/inout whose signal is a member of
+    /// `member_set`. SV 14.16 creates one (strong1, strong0) driver per such
+    /// clockvar, initialized to 'z and updated only by synchronous drives,
+    /// so the net keeps resolving it against its other drivers.
+    fn clocking_net_site(
+        &self,
+        node: NodeId,
+        member_set: &HashSet<NodeId>,
+    ) -> Result<Option<(u8, u8)>, String> {
+        let Some(var) = self.db.clocking_var(node) else {
+            return Ok(None);
+        };
+        if !matches!(var.direction, DbDirection::Output | DbDirection::Inout) {
+            return Ok(None);
+        }
+        match var.source {
+            Some(source) => Ok(self
+                .nested_member_target(source, member_set)
+                .map(|_| (6, 6))),
+            None if self
+                .nested_member_target(var.expression, member_set)
+                .is_some() =>
+            {
+                Err(format!(
+                    "clocking output `{}` bound to an expression over wired net `{}` is not supported",
+                    self.display_name(node),
+                    self.display_name(
+                        self.nested_member_target(var.expression, member_set)
+                            .unwrap_or(node)
+                    )
+                ))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Whether an assignment target names clocking members, i.e. the
+    /// statement is a synchronous drive (SV 14.16).
+    fn is_clocking_drive_lhs(&self, lhs: NodeId) -> bool {
+        let mut targets = Vec::new();
+        self.clocking_lhs_targets(lhs, &mut targets);
+        !targets.is_empty()
     }
 
     /// The reason a candidate inout-net group cannot be supported, from a
@@ -2576,6 +2637,9 @@ impl<'a> Codegen<'a> {
                     let Some(lhs) = self.node(id).children.first().copied() else {
                         continue;
                     };
+                    if self.is_clocking_drive_lhs(lhs) {
+                        continue;
+                    }
                     if let Some(member) = self.member_write_base(lhs, &member_set) {
                         return Some(format!(
                             "nonblocking assignment to member `{}`",

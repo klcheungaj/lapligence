@@ -268,11 +268,17 @@ void llg_nba_net_selected_after(llg_net_t* net, int slot, sv4_t value,
     enqueue_nba(n);
 }
 
+// SV 14.16: a drive matures `##n` events of the target clocking event after
+// an on-event issue. An off-event issue behaves as if issued at the next
+// event, so it needs one more event unless `n` is zero (`##0` has no effect).
 static void clocking_drive_schedule(const llg_clocking_drive_t* drive,
+                                    uint64_t cycles,
                                     const llg_wait_src_t* specs, int n_specs) {
     if (!specs || n_specs <= 0 || !region_can_mutate("clocking drive scheduling"))
         return;
-    if (clocking_event_current(specs, n_specs)) {
+    uint64_t events = cycles;
+    if (!clocking_event_current(specs, n_specs) && events == 0) events = 1;
+    if (events == 0) {
         clocking_drive_enqueue(drive);
         return;
     }
@@ -296,33 +302,36 @@ static void clocking_drive_schedule(const llg_clocking_drive_t* drive,
     pending->is_real = drive->is_real;
     pending->real_value = drive->real_value;
     pending->ticks = drive->ticks;
+    pending->events = events;
+    clocking_drive_sources_acquire(pending);
     if (g.clocking_drives_tail) g.clocking_drives_tail->next = pending;
     else g.clocking_drives = pending;
     g.clocking_drives_tail = pending;
 }
 
 void llg_clocking_nba_sync_after(sv4_t* target, sv4_t value, uint64_t ticks,
+                                 uint64_t cycles,
                                  const llg_wait_src_t* specs, int n_specs) {
     llg_clocking_drive_t drive = {0};
     drive.target = target;
     drive.value = value;
     drive.ticks = ticks;
-    clocking_drive_schedule(&drive, specs, n_specs);
+    clocking_drive_schedule(&drive, cycles, specs, n_specs);
 }
 
 void llg_clocking_nba_net_sync_after(llg_net_t* net, int slot, sv4_t value,
-                                     uint64_t ticks,
+                                     uint64_t ticks, uint64_t cycles,
                                      const llg_wait_src_t* specs, int n_specs) {
     llg_clocking_drive_t drive = {0};
     drive.net_target = net;
     drive.net_slot = slot;
     drive.value = value;
     drive.ticks = ticks;
-    clocking_drive_schedule(&drive, specs, n_specs);
+    clocking_drive_schedule(&drive, cycles, specs, n_specs);
 }
 
 void llg_clocking_nba_sync_masked_after(
-    sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks,
+    sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks, uint64_t cycles,
     const llg_wait_src_t* specs, int n_specs) {
     llg_clocking_drive_t drive = {0};
     drive.target = target;
@@ -330,12 +339,12 @@ void llg_clocking_nba_sync_masked_after(
     drive.mask = mask;
     drive.has_mask = 1;
     drive.ticks = ticks;
-    clocking_drive_schedule(&drive, specs, n_specs);
+    clocking_drive_schedule(&drive, cycles, specs, n_specs);
 }
 
 void llg_clocking_nba_net_sync_masked_after(
     llg_net_t* net, int slot, sv4_t value, sv4_t mask, uint64_t ticks,
-    const llg_wait_src_t* specs, int n_specs) {
+    uint64_t cycles, const llg_wait_src_t* specs, int n_specs) {
     llg_clocking_drive_t drive = {0};
     drive.net_target = net;
     drive.net_slot = slot;
@@ -343,12 +352,12 @@ void llg_clocking_nba_net_sync_masked_after(
     drive.mask = mask;
     drive.has_mask = 1;
     drive.ticks = ticks;
-    clocking_drive_schedule(&drive, specs, n_specs);
+    clocking_drive_schedule(&drive, cycles, specs, n_specs);
 }
 
 void llg_clocking_nba_sync_selected_after(
     sv4_t* target, sv4_t value, sv4_select_plan_t plan, int reverse,
-    uint64_t ticks, const llg_wait_src_t* specs, int n_specs) {
+    uint64_t ticks, uint64_t cycles, const llg_wait_src_t* specs, int n_specs) {
     if (!target) return;
     llg_clocking_drive_t drive = {0};
     drive.target = target;
@@ -356,13 +365,13 @@ void llg_clocking_nba_sync_selected_after(
                                   &drive.range_offset, &drive.range_width);
     drive.has_range = 1;
     drive.ticks = ticks;
-    clocking_drive_schedule(&drive, specs, n_specs);
+    clocking_drive_schedule(&drive, cycles, specs, n_specs);
     sv4_destroy(&drive.value);
 }
 
 void llg_clocking_nba_net_sync_selected_after(
     llg_net_t* net, int slot, sv4_t value, sv4_select_plan_t plan, int reverse,
-    uint64_t ticks, const llg_wait_src_t* specs, int n_specs) {
+    uint64_t ticks, uint64_t cycles, const llg_wait_src_t* specs, int n_specs) {
     if (!net || slot < 0 || slot >= net->n_drivers || !net->drivers[slot]) return;
     llg_clocking_drive_t drive = {0};
     drive.net_target = net;
@@ -372,18 +381,19 @@ void llg_clocking_nba_net_sync_selected_after(
                                   &drive.range_width);
     drive.has_range = 1;
     drive.ticks = ticks;
-    clocking_drive_schedule(&drive, specs, n_specs);
+    clocking_drive_schedule(&drive, cycles, specs, n_specs);
     sv4_destroy(&drive.value);
 }
 
 void llg_clocking_nba_d_sync_after(double* target, double value, uint64_t ticks,
+                                   uint64_t cycles,
                                    const llg_wait_src_t* specs, int n_specs) {
     llg_clocking_drive_t drive = {0};
     drive.real_target = target;
     drive.real_value = value;
     drive.is_real = 1;
     drive.ticks = ticks;
-    clocking_drive_schedule(&drive, specs, n_specs);
+    clocking_drive_schedule(&drive, cycles, specs, n_specs);
 }
 
 void llg_nba_event_after(llg_event_t* ev, uint64_t ticks) {

@@ -54,7 +54,7 @@ static void check_clocking_handoff(void) {
     llg_value_scope_t* owner = llg_value_scope_begin(1);
     sv4_t* target = llg_value_scope_values(owner);
     sv4_replace(target, sv4_zero(129, 0));
-    llg_clocking_nba_sync_after(target, value, 1, &spec, 1);
+    llg_clocking_nba_sync_after(target, value, 1, 0, &spec, 1);
     CHECK(g.clocking_drives != NULL && owner->references == 2);
     llg_value_scope_end(owner);
     CHECK(owner->references == 1);

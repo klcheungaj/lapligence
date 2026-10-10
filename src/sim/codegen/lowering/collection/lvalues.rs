@@ -425,6 +425,9 @@ impl<'a> Codegen<'a> {
             .clocking_var_target(lhs)
             .or_else(|| self.db.is_clocking_var(lhs).then_some(lhs))
         {
+            if let Some(info) = self.clocking_net_driver_info(target) {
+                return Ok(Lhs::Whole(info));
+            }
             if let Some(info) = self.clocking_var_source_info(target).cloned() {
                 return Ok(Lhs::Whole(info));
             }

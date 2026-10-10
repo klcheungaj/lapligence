@@ -1587,6 +1587,9 @@ struct Codegen<'a> {
     /// Whole-net continuous assignment node -> synthetic signal index carrying
     /// that wired net driver's distinct runtime slot.
     wired_driver_sites: HashMap<NodeId, usize>,
+    /// Clocking output/inout node -> synthetic signal of the net driver that
+    /// SV 14.16 creates for it when its clocking signal is a wired net.
+    clocking_net_drivers: HashMap<NodeId, usize>,
     /// Lazily built packed C storage name -> (readable signal index, true-net
     /// alias groups) for continuous-driver self-feedback analysis.
     feedback_storage: Option<HashMap<String, (usize, Vec<usize>)>>,
@@ -1839,6 +1842,7 @@ impl<'a> Codegen<'a> {
             frame_seq: 0,
             design_precision_fs: Timescale::DEFAULT.precision_fs,
             wired_driver_sites: HashMap::new(),
+            clocking_net_drivers: HashMap::new(),
             feedback_storage: None,
             release_markers: HashMap::new(),
             structural_driver_sites: HashMap::new(),
