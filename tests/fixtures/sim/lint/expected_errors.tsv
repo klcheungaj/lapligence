@@ -102,8 +102,6 @@ p30_fixed_arrays/replicated_assignment_patterns.sv	mixed-assignments	26:5
 partial_features/array_indexed_bounds.sv	mixed-assignments	6:5
 partial_features/array_indexed_nba.sv	mixed-assignments	10:5
 partial_features/array_select_ranges.sv	mixed-assignments	5:5
-partial_features/clocking_h14_async.sv	mixed-assignments	13:3
-partial_features/clocking_h14.sv	mixed-assignments	20:3
 partial_features/clocking_history_slot.sv	mixed-assignments	22:3
 partial_features/clocking_history_slot.sv	mixed-assignments	51:3
 partial_features/declared_select_ranges.sv	mixed-assignments	6:5
@@ -123,7 +121,6 @@ review_bundle/r02_tagged_selected_write.sv	mixed-assignments	10:3
 review_bundle/r02_tagged_selected_wrong_write.sv	mixed-assignments	10:3
 review_bundle/r12_record_conditional_2state_nba.sv	mixed-assignments	16:5
 review_bundle/r13_record_pattern_selected_nba.sv	mixed-assignments	15:5
-sv4_gmp_integration/sampled_owners.sv	mixed-assignments	33:5
 sv4_gmp_integration/scheduler_snapshots.sv	mixed-assignments	26:5
 syn001_type_keys/syn_001_type_keys.sv	mixed-assignments	39:5
 syn003_pattern_lvalues/syn_003_pattern_lvalues.sv	mixed-assignments	17:3

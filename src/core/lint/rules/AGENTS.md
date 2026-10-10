@@ -40,8 +40,9 @@ native traversal or I/O.
   connections refer to actual instances, without frontend-generated copies.
 - `mixed_assign.rs` — `mixed-assignments`: one Error at the process keyword
   when its body contains both blocking and nonblocking `StmtKind::Assign`.
-  Ignore procedural continuous assignments, force/release and declaration
-  initializers. Do not suppress overlap with `blocking-in-always_ff` or
+  Ignore procedural continuous assignments, force/release, declaration
+  initializers and synchronous drives to clockvars (SV 14.16.1: a drive is
+  not a nonblocking assignment). Do not suppress overlap with `blocking-in-always_ff` or
   `nba-in-always_comb`: these diagnose different conditions, and this rule
   also covers plain level-sensitive always and initial/final processes.
 - `undriven.rs` — `undriven-signal`: flags a declared signal that is read
