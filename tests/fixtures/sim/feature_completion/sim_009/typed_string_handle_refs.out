@@ -1,0 +1,11 @@
+spell 0 at 1
+spell 1 at 2
+spell 2 at 3
+watch 1 a at 4
+watch 0 b at 6
+rebound 1 5 at 7
+rebound 0 -1 at 9
+member 0 at 10
+member 1 at 11
+member 2 at 12
+qualified 0 at 15

@@ -1,0 +1,7 @@
+either 2 r 0 at 1
+either 1 r 5 at 2
+gated 1 r 0 at 4
+gated 0 r 3 at 7
+implicit 1 sees 1 at 8
+implicit 0 sees 2 at 9
+either 0 r 1 at 10

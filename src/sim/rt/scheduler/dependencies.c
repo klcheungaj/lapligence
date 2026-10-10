@@ -21,9 +21,7 @@ static size_t dependency_bucket(const void* target) {
 }
 
 static const void* dependency_key(const llg_dependency_binding_t* binding) {
-    if (binding->target) return (const void*)binding->target;
-    if (binding->real_target) return (const void*)binding->real_target;
-    return (const void*)binding->handle_target;
+    return binding->key;
 }
 
 static llg_dependency_binding_t* dependency_bucket_head(const void* target) {
@@ -54,22 +52,18 @@ static void dependency_index_reserve(void) {
     }
 }
 
-static void dependency_bind(sv4_t* target, double* real_target, void* const* handle_target,
-                            sv4_t* dependency, const char* what) {
-    const void* key = target ? (const void*)target
-        : real_target ? (const void*)real_target : (const void*)handle_target;
+static void dependency_bind(const void* key, uint8_t kind, sv4_t* dependency,
+                            const char* what) {
     for (llg_dependency_binding_t* binding = dependency_bucket_head(key);
          binding; binding = binding->bucket_next) {
-        if (binding->target == target && binding->real_target == real_target &&
-            binding->handle_target == handle_target &&
+        if (binding->key == key && binding->kind == kind &&
             binding->dependency == dependency) return;
     }
     dependency_index_reserve();
     llg_dependency_binding_t* binding = (llg_dependency_binding_t*)llg_checked_malloc(
         1, sizeof(*binding), what);
-    binding->target = target;
-    binding->real_target = real_target;
-    binding->handle_target = handle_target;
+    binding->key = key;
+    binding->kind = kind;
     binding->dependency = dependency;
     binding->next = llg_dependency_bindings;
     llg_dependency_bindings = binding;
@@ -84,7 +78,7 @@ void llg_dependency_bind(sv4_t* target, sv4_t* dependency) {
         fprintf(stderr, "llg: invalid dependency binding\n");
         abort();
     }
-    dependency_bind(target, NULL, NULL, dependency, "dependency binding");
+    dependency_bind(target, LLG_DEPENDENCY_BINDING_PACKED, dependency, "dependency binding");
 }
 
 void llg_dependency_bind_real(double* target, sv4_t* dependency) {
@@ -92,7 +86,7 @@ void llg_dependency_bind_real(double* target, sv4_t* dependency) {
         fprintf(stderr, "llg: invalid real dependency binding\n");
         abort();
     }
-    dependency_bind(NULL, target, NULL, dependency, "real dependency binding");
+    dependency_bind(target, LLG_DEPENDENCY_BINDING_REAL, dependency, "real dependency binding");
 }
 
 void llg_dependency_bind_handle(void* const* target, sv4_t* dependency) {
@@ -100,13 +94,15 @@ void llg_dependency_bind_handle(void* const* target, sv4_t* dependency) {
         fprintf(stderr, "llg: invalid handle dependency binding\n");
         abort();
     }
-    dependency_bind(NULL, NULL, target, dependency, "handle dependency binding");
+    dependency_bind(target, LLG_DEPENDENCY_BINDING_HANDLE, dependency,
+                    "handle dependency binding");
 }
 
 sv4_t* llg_handle_dependency(const void* target) {
     for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
          binding; binding = binding->bucket_next) {
-        if ((const void*)binding->handle_target == target) return binding->dependency;
+        if (binding->key == target && binding->kind == LLG_DEPENDENCY_BINDING_HANDLE)
+            return binding->dependency;
     }
     return llg_dependency_or_never(NULL);
 }
@@ -709,7 +705,9 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
     deferred_trigger_source_change(target, NULL);
     for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
          binding; binding = binding->bucket_next) {
-        if (binding->target == target) llg_dependency_changed(binding->dependency);
+        if (binding->key == (const void*)target &&
+            binding->kind == LLG_DEPENDENCY_BINDING_PACKED)
+            llg_dependency_changed(binding->dependency);
     }
     fixed_array_changed(target);
     force_dependency_changed(target, NULL, 0);
@@ -857,7 +855,9 @@ static void real_write(double* target, double value) {
     deferred_trigger_source_change(NULL, target);
     for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
          binding; binding = binding->bucket_next) {
-        if (binding->real_target == target) llg_dependency_changed(binding->dependency);
+        if (binding->key == (const void*)target &&
+            binding->kind == LLG_DEPENDENCY_BINDING_REAL)
+            llg_dependency_changed(binding->dependency);
     }
     force_dependency_changed(NULL, target, 1);
     if (target_pin) llg_value_scope_end(target_pin);

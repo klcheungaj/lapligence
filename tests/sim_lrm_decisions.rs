@@ -761,3 +761,35 @@ fn s21_d2_record_result_overload_admitted() {
         include_str!("fixtures/sim/lrm_decisions/S21-D2_record_result_overload_admitted.out"),
     );
 }
+
+#[test]
+fn s09_d1_string_ref_wait() {
+    run_decision(
+        "S09-D1_string_ref_wait",
+        include_str!("fixtures/sim/lrm_decisions/S09-D1_string_ref_wait.out"),
+    );
+}
+
+#[test]
+fn s09_d2_handle_ref_event() {
+    run_decision(
+        "S09-D2_handle_ref_event",
+        include_str!("fixtures/sim/lrm_decisions/S09-D2_handle_ref_event.out"),
+    );
+}
+
+#[test]
+fn s09_d3_ref_implicit_sensitivity() {
+    run_decision(
+        "S09-D3_ref_implicit_sensitivity",
+        include_str!("fixtures/sim/lrm_decisions/S09-D3_ref_implicit_sensitivity.out"),
+    );
+}
+
+#[test]
+fn s09_d4_class_property_ref_wait() {
+    run_decision(
+        "S09-D4_class_property_ref_wait",
+        include_str!("fixtures/sim/lrm_decisions/S09-D4_class_property_ref_wait.out"),
+    );
+}

@@ -93,3 +93,68 @@ fn typed_bodies_follow_whole_ref_actuals() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_009/typed_ref_waits.out");
     sim_cli::run_case_backend_parity(SUITE, "typed_ref_waits", expected, &[], &[]);
 }
+
+#[test]
+fn recursive_element_and_property_ref_waits_take_the_typed_path() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/typed_element_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "typed_element_refs", expected, &[], &[]);
+}
+
+#[test]
+fn named_event_lists_and_implicit_sensitivity_follow_ref_formals() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_009/typed_event_lists.out");
+    sim_cli::run_case_backend_parity(SUITE, "typed_event_lists", expected, &[], &[]);
+}
+
+#[test]
+fn string_and_handle_ref_waits_follow_the_actual_marker() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/typed_string_handle_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "typed_string_handle_refs", expected, &[], &[]);
+}
+
+#[test]
+fn waited_string_refs_to_fork_visible_automatics_are_explicit() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_shared_string_ref_wait",
+        "`ref` actual of string or handle formal `s` of task `ws`, which waits on it, is a class property or an automatic variable a fork branch can change; its changes publish no marker the task can wait on (SIM-009)",
+    );
+}
+
+#[test]
+fn waited_handle_refs_to_class_properties_are_explicit() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_handle_property_ref_wait",
+        "`ref` actual of string or handle formal `h` of task `wh`, which waits on it, is a class property or an automatic variable a fork branch can change; its changes publish no marker the task can wait on (SIM-009)",
+    );
+}
+
+#[test]
+fn timing_controls_in_functions_are_rejected() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_function_timing",
+        "neg_function_timing.sv:5:5 statements that pass time are not allowed in this context",
+    );
+}
+
+#[test]
+fn nonblocking_assignments_to_ref_formals_are_rejected() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_ref_nba",
+        "neg_ref_nba.sv:6:7 nonblocking assignment to automatic variable 'r' is not allowed",
+    );
+}
+
+#[test]
+fn ref_formals_in_nonblocking_event_controls_are_rejected() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_automatic_event_capture",
+        "neg_automatic_event_capture.sv:7:20 cannot refer to automatic variable 'r' from intra-assignment event control of nonblocking assignment",
+    );
+}

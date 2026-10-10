@@ -224,6 +224,15 @@ independent transcription in
 | S38-D8 | **`until_with` nonvacuity.** `p until_with q` is nonvacuous only through `p`, as 16.15.8 x) states, although unrolling the Annex F derivation would also count `q`. | 16.15.8 x) L27415-27417; F.3.4.3.8 L70674 | `S38-D8_until_with_vacuity` | LRM text (clause text over Annex F) |
 | S38-D9 | **Sync abort on a new attempt.** An attempt that begins on a tick where its `sync_accept_on` condition holds is aborted on that tick, like the pending attempts. | 16.13.14 L25255-25258, L25269-25271 | `S38-D9_sync_abort_new_attempt` | LRM text (llg formerly reported only the older attempts) |
 
+## Waits on `ref` formals in typed tasks (SIM-009)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S09-D1 | **A string `ref` formal is waited on through its actual.** A `wait` or `@` on a string `ref` formal resumes when the string the actual names changes value; writing an equal value is no change. | 9.4.2 L11822-11824; 13.5.2 L19138-19141 | `S09-D1_string_ref_wait` | LRM text (llg rejected the recursive form and never woke the other before) |
+| S09-D2 | **`@` on a handle `ref` formal follows the handle variable.** It resumes when the variable the actual names is written with a different handle (including `null`); a store to a property of the referenced object, or writing the same handle, is no event. | 9.4.2 L11822-11823, L11830-11831 | `S09-D2_handle_ref_event` | LRM text (llg rejected `@` on a handle `ref` formal and never woke a `wait` on one before) |
+| S09-D3 | **`@*` includes the variable a `ref` formal names.** Implicit sensitivity of a statement reading a `ref` formal waits on the actual's variable. | 9.4.2.2 L11892-11894; 13.5.2 L19138-19140 | `S09-D3_ref_implicit_sensitivity` | llg reading (the text lists nets and variables; llg treats the formal as the variable it names, as it did for module actuals; automatic actuals no longer force an expansion) |
+| S09-D4 | **A `ref` formal bound to a class property or array element is waited on through it.** A `wait` resumes when that property or element changes; stores to other elements do not satisfy it. | 13.5.2 L19140-19147; 9.4.3 L12032-12033 | `S09-D4_class_property_ref_wait` | LRM text (llg never woke a task waiting on a class property before) |
+
 ## Earlier decisions
 
 These predate the register. Their evidence lives in the feature fixtures named
