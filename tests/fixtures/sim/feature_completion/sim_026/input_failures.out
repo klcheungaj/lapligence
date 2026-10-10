@@ -1,0 +1,18 @@
+A c=1 a=5 b=2 d=3
+B c=-1 a=5
+C c=-1 a=5
+D c=1 a=9 b=2
+E c=0 a=9
+F c=0 a=9
+G c=0 r=0.500000
+H c=4 a=44 n=f d=01011101 p=def
+I c=2 a=255 r=inf
+J c=1 r=-inf
+K c=3 a=1 b=2 d=zzzzzzzz ch=122
+L c=-1 s=keep eof=1
+M c=0 u=11223344
+N c=-1 u=11223344
+O c=0 tell=0 m0=xx
+P c=0 tell=0
+Q c=2 m=xx xx 41 42
+R c=1 m0=43

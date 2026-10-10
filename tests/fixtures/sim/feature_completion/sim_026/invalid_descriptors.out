@@ -1,0 +1,11 @@
+A getc=-1
+B ungetc=-1
+C fgets=0 s=keep
+D fscanf=-1 a=5
+E fread=0 a=5
+F fread=0 m0=77
+G tell=-1 seek=-1 rewind=-1 eof=-1
+H ferror=1 message=1
+I zero=-1 x=-1
+J mcd=-1 stdout=-1 unopened=-1
+K getc=-1 fscanf=-1 a=5

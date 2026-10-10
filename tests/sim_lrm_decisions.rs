@@ -355,6 +355,126 @@ fn s20_6_dynamic_cast_whole_elements() {
 }
 
 #[test]
+fn s26_d1_scan_selector_snapshot() {
+    run_decision(
+        "S26-D1_scan_selector_snapshot",
+        include_str!("fixtures/sim/lrm_decisions/S26-D1_scan_selector_snapshot.out"),
+    );
+}
+
+#[test]
+fn s26_d2_invalid_descriptor_input() {
+    run_decision(
+        "S26-D2_invalid_descriptor_input",
+        include_str!("fixtures/sim/lrm_decisions/S26-D2_invalid_descriptor_input.out"),
+    );
+}
+
+#[test]
+fn s26_d3_unformatted_words() {
+    run_decision(
+        "S26-D3_unformatted_words",
+        include_str!("fixtures/sim/lrm_decisions/S26-D3_unformatted_words.out"),
+    );
+}
+
+#[test]
+fn s26_d4_scan_time_scaling() {
+    run_decision(
+        "S26-D4_scan_time_scaling",
+        include_str!("fixtures/sim/lrm_decisions/S26-D4_scan_time_scaling.out"),
+    );
+}
+
+#[test]
+fn s26_d5_scan_strength() {
+    run_decision(
+        "S26-D5_scan_strength",
+        include_str!("fixtures/sim/lrm_decisions/S26-D5_scan_strength.out"),
+    );
+}
+
+#[test]
+fn s26_d6_integer_scan_into_real() {
+    run_decision(
+        "S26-D6_integer_scan_into_real",
+        include_str!("fixtures/sim/lrm_decisions/S26-D6_integer_scan_into_real.out"),
+    );
+}
+
+#[test]
+fn s26_d7_fread_short_last_word() {
+    run_decision(
+        "S26-D7_fread_short_last_word",
+        include_str!("fixtures/sim/lrm_decisions/S26-D7_fread_short_last_word.out"),
+    );
+}
+
+#[test]
+fn s26_d8_fgets_packed_capacity() {
+    run_decision(
+        "S26-D8_fgets_packed_capacity",
+        include_str!("fixtures/sim/lrm_decisions/S26-D8_fgets_packed_capacity.out"),
+    );
+}
+
+#[test]
+fn s26_d9_scan_string_into_byte_array() {
+    run_decision(
+        "S26-D9_scan_string_into_byte_array",
+        include_str!("fixtures/sim/lrm_decisions/S26-D9_scan_string_into_byte_array.out"),
+    );
+}
+
+#[test]
+fn s26_d10_suppressed_binary_conversion() {
+    run_decision(
+        "S26-D10_suppressed_binary_conversion",
+        include_str!("fixtures/sim/lrm_decisions/S26-D10_suppressed_binary_conversion.out"),
+    );
+}
+
+#[test]
+fn s26_d11_seek_clears_error() {
+    run_decision(
+        "S26-D11_seek_clears_error",
+        include_str!("fixtures/sim/lrm_decisions/S26-D11_seek_clears_error.out"),
+    );
+}
+
+#[test]
+fn s26_d12_packed_scan_source() {
+    run_decision(
+        "S26-D12_packed_scan_source",
+        include_str!("fixtures/sim/lrm_decisions/S26-D12_packed_scan_source.out"),
+    );
+}
+
+#[test]
+fn s26_d13_scope_conversion_counts() {
+    run_decision(
+        "S26-D13_scope_conversion_counts",
+        include_str!("fixtures/sim/lrm_decisions/S26-D13_scope_conversion_counts.out"),
+    );
+}
+
+#[test]
+fn s26_d14_ungetc_returns_zero() {
+    run_decision(
+        "S26-D14_ungetc_returns_zero",
+        include_str!("fixtures/sim/lrm_decisions/S26-D14_ungetc_returns_zero.out"),
+    );
+}
+
+#[test]
+fn s26_d15_fwrite_z_encoding() {
+    run_decision(
+        "S26-D15_fwrite_z_encoding",
+        include_str!("fixtures/sim/lrm_decisions/S26-D15_fwrite_z_encoding.out"),
+    );
+}
+
+#[test]
 fn s32_d1_implicit_finish_immediate() {
     run_decision(
         "S32-D1_implicit_finish_immediate",

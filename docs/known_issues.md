@@ -607,6 +607,62 @@ targets, and queue a whole-container commit for nonblocking unpacks.
 
 `tests/fixtures/sim/feature_completion/sim_020/unsupported_*.sv`.
 
+## File input destinations not supported (SIM-026)
+
+**Status:** open. SIM-026 accepts every other legal destination of
+`$fscanf`, `$sscanf`, `$fgets` and `$fread`.
+
+### Symptom
+
+- A field of a packed member of an unpacked structure that also has a string
+  or real member (`us.p.lo`, where `p` is packed and `us` has a `string`
+  member) is rejected with `cannot resolve hierarchical assignment LHS`. Plain
+  assignments to this form are rejected in the same way. The whole member
+  (`us.p`) and structures without string or real members work.
+- A character of a string (`s[0]`) as a destination is rejected explicitly.
+- Reading an element of an integer-keyed associative array of strings
+  (`string m[int]`) is rejected with `string container read requires a
+  dynamic array or queue`. A scan into `m[3]` stores correctly; only reading
+  it back fails, and string-keyed arrays work.
+- `$fread` into an unpacked structure is rejected by the frontend
+  (`invalid argument type`). The LRM names only integral variables and
+  memories.
+- The `undriven-signal` lint warning does not count destinations of input
+  functions, or output actuals of task and function calls, as drivers. A
+  variable written only by `$fscanf` is reported as read with no driver.
+
+### Cause
+
+Structures with string or real members are stored as native records, and
+their lvalue path resolves one member level only. A string character has no
+retained element cell to stage a conversion through. String reads from
+associative arrays are lowered only for string keys. The lint driver walk
+visits assignment statements, not call arguments.
+
+### Intended direction
+
+Resolve nested packed fields of native-record members as selects of the
+member. Stage a string-character destination through a byte local, as
+container string elements are staged. Add integer-key string reads to the
+associative-array read path. Count the output arguments of calls as driver writes in
+`core::lint::rules::analysis`.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_026/neg_string_character.sv`. The
+other forms reproduce with one call each, for example:
+
+```systemverilog
+typedef struct packed { logic [3:0] hi, lo; } p_t;
+typedef struct { p_t p; string s; } u_t;
+u_t us; string m[int]; integer c;
+initial begin
+  c = $sscanf("5", "%h", us.p.lo);                 // rejected
+  c = $sscanf("w", "%s", m[3]);                     // stores
+  $display("%s", m[3]);                             // rejected
+end
+```
+
 ## Anonymous program members draw a spurious shadowing warning
 
 **Status:** open (SIM-032); cosmetic.
