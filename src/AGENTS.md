@@ -168,11 +168,29 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
 - Windows test temporary directories drop the test's label (`llg-<pid>-<n>`),
   so a word that a Unix run finds in a diagnostic's path is absent there. Match
   diagnostic fields (message, severity, position), never a whole `Debug` dump.
-- The GitHub Windows arm64 image ships Defender real-time protection on; the
-  x64 image ships it off. Both list `C:\` and `D:\` as excluded paths. On arm64
-  a fresh, seeded model configure took 1.9 s (median) against 0.14 s for an
-  existing tree, and 0.25/0.17 s on x64; `scripts/ci_windows_runner.py` measures
-  where that time goes.
+- The GitHub Windows arm64 image ships Defender real-time, on-access,
+  behaviour and IOAV protection on, with tamper protection, so
+  `Set-MpPreference` cannot turn them off; the x64 image ships them off. Both
+  list `C:\` and `D:\` as excluded paths. Under the test load a fresh, seeded
+  model configure took 3.0 s (median) on arm64 against 0.15 s for an existing
+  tree, 0.35 s on x64 and 19 ms on Linux; `scripts/ci_windows_runner.py`
+  measures where that time goes. Doing less per fresh tree is the remaining
+  lever (opt-in `LLG_CMAKE_TREE_TEMPLATES`, [sim guide](sim/AGENTS.md)).
+- On the arm64 runner `bash` (Git Bash) and Git's `link` are x64 images run
+  under emulation, and Git's `usr/bin` precedes the MSVC tools on a Git Bash
+  `PATH`. CMake still links with the native `link.exe` beside `cl`
+  (`CMakeFindBinUtils` searches the compiler's directory first); Cargo needs
+  the pinned linker (`.github/actions/msvc-linker`).
+- The UCRT's `clock()` returns elapsed wall time, not processor time; timing
+  checks that compare CPU costs use `llg_process_cpu_seconds`
+  (`llg_platform_native.h`).
+- Renaming `malloc`/`free` with `-D` on the compiler command line also renames
+  the UCRT's own `dllimport` declarations, so references become `__imp_<name>`
+  that no static library defines (LNK2019). Rename in a header included after
+  `<stdlib.h>` (a forced include).
+- ccache refuses MSVC `/Zi` (shared PDB) as an unsupported compiler option;
+  Debug CMake projects that should be cached embed debug information
+  (`/Z7`, `CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded`, CMP0141).
 - Linux CI builds only in static-musl Alpine; glibc Ubuntu/Rocky containers run
   those binaries. Minimal images lack clang, which `generated_c_frame_lint`
   requires alongside gcc; install test tools explicitly. zlib is bundled, never
