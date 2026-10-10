@@ -47,6 +47,9 @@ pub(super) fn stream_selector_code(
 
 pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<String, String> {
     Ok(match operation {
+        IrContainerExpr::BitStream(_) => {
+            return Err("bit stream values require whole-model ownership emission".into())
+        }
         IrContainerExpr::Stream {
             container,
             slice,
@@ -348,6 +351,11 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
         | IrContainerStmt::UniquePositions { .. }
         | IrContainerStmt::SortByKeys { .. } => {
             return Err("container record values require whole-model ownership emission".into())
+        }
+        IrContainerStmt::BitStreamAssign { .. } => {
+            return Err(
+                "bit-stream container assignments require whole-model ownership emission".into(),
+            )
         }
         IrContainerStmt::StreamAssign {
             container,

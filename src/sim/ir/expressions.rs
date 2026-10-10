@@ -343,9 +343,12 @@ pub enum IrExprKind {
     /// Assign a runtime-sized streaming concatenation to a fixed-size
     /// bit-stream target (`llg_stream_to_fixed`): left-aligned, zero-filled
     /// on the right, and a runtime error when the stream is larger (SV
-    /// 11.4.14). The node width is the target width.
+    /// 11.4.14). The node width is the target width. An `exact` conversion
+    /// is a bit-stream cast of a dynamically sized source, whose size must
+    /// equal the target's (SV 6.24.3; `llg_stream_cast_fixed`).
     StreamToFixed {
         a: Box<IrExpr>,
+        exact: bool,
     },
     /// Unsized fill literal used as a value (`sv4_fill(f, width, signed)`).
     Fill(u8),

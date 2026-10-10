@@ -126,11 +126,6 @@ fn neg_copy_out_forms() {
 fn neg_descriptor_stream_forms() {
     sim_cli::reject_case(
         SUITE,
-        "neg_descriptor_container",
-        "resizable container operand of an oversized fixed stream",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "neg_stream_exceeds",
         "llg runtime fatal: fixed stream exceeds destination",
     );

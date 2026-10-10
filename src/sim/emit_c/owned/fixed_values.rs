@@ -51,10 +51,37 @@ impl Frame<'_, '_> {
                 .ok_or_else(|| "fixed stream has no descriptor-shaped operand".to_owned()),
             IrFixedValue::Convert { array, .. } => Ok((*array, self.ctx.model.array(*array).total)),
             IrFixedValue::Dense(view) => Ok((view.array, view.total)),
-            IrFixedValue::Packed { .. } | IrFixedValue::Selected { .. } => {
+            IrFixedValue::Packed { .. }
+            | IrFixedValue::Selected { .. }
+            | IrFixedValue::BitStream { .. } => {
                 Err("stream operand has no descriptor shape of its own".to_owned())
             }
         }
+    }
+
+    /// A scratch descriptor holding the cells of a runtime-sized bit stream;
+    /// it stays empty (`total` zero) for an empty stream.
+    fn fixed_bit_stream_source(
+        &mut self,
+        stream: &IrBitStream,
+        cell_width: u32,
+        consume: Option<u64>,
+    ) -> Result<String, String> {
+        let mut owners = Vec::new();
+        let mut strings = Vec::new();
+        let bits = self.consumed_bit_stream(stream, consume, &mut owners, &mut strings)?;
+        let object = self.fixed_scratch();
+        self.line(format!(
+            "(void)llg_fixed_array_bitstream_source({object}, &{bits}, {cell_width}u);"
+        ));
+        self.line(format!("llg_bitstream_destroy(&{bits});"));
+        for value in owners {
+            self.discard(value);
+        }
+        for value in strings {
+            self.native_discard(value);
+        }
+        Ok(object)
     }
 
     /// A zeroed scratch descriptor owned by the current value scope.
@@ -85,6 +112,16 @@ impl Frame<'_, '_> {
                         value.code
                     ));
                     self.discard(value);
+                }
+                IrFixedValue::BitStream {
+                    stream,
+                    cell_width,
+                    consume,
+                } => {
+                    let object = self.fixed_bit_stream_source(stream, *cell_width, *consume)?;
+                    self.line(format!(
+                        "if ({object}->total) {sources}[{count}++] = {object};"
+                    ));
                 }
                 IrFixedValue::Selected { array, selector } => {
                     let info = self.ctx.model.array(*array).clone();
@@ -206,6 +243,11 @@ impl Frame<'_, '_> {
                 self.discard(value);
                 Ok(object)
             }
+            IrFixedValue::BitStream {
+                stream,
+                cell_width,
+                consume,
+            } => self.fixed_bit_stream_source(stream, *cell_width, *consume),
             IrFixedValue::Selected { .. } => {
                 Err("a runtime `with` selection is only a descriptor stream operand".to_owned())
             }

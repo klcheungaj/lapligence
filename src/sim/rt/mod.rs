@@ -251,6 +251,7 @@ pub fn container_sources() -> (&'static str, &'static str) {
             include_str!("container/value_elements.c"),
             include_str!("container/destinations.c"),
             include_str!("container/method_gather.c"),
+            include_str!("container/bitstreams.c"),
         ),
     )
 }

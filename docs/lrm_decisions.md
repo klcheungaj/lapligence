@@ -121,6 +121,17 @@ scripts/run-tests.sh -E 'test(/^sim_lrm_decisions::/)'
 | S23-D3 | **Packed member and element selects of nets are part-selects.** A constant member select of a packed-structure net, a constant element select of a packed-array net and a constant indexed part-select of a net are constant part-selects of a vector net: they are forced and released bit-exactly while the other bits follow the drivers. | 10.6.2 L13373-13374; 7.2.1 L7696-7700; 11.5.1 L15779-15782 | `S23-D3_net_member_select` | llg choice for member and element selects (10.6.2 names only bit- and part-selects); LRM text for indexed part-selects |
 | S23-D4 | **Forces and releases combine bit by bit.** Each net bit belongs to the latest force that covered it, so a later overlapping force replaces only the overlapped bits; a release of a part of a forced range releases exactly those bits and the rest stay forced. | 10.6.2 L13373-13374, L13397-13399; 4.9.2 L3519 | `S23-D4_partial_release` | llg choice (the text does not say how overlapping forces and partial releases combine) |
 
+## Bit-stream operations (SIM-020)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S20-1 | **Strings stream as bytes.** A string streams as its bytes, index 0 leftmost. A stream assigned or unpacked into a string fills it left to right, one character per 8 bits, and drops zero bytes. | 6.24.3 L7514-7515, L7528; 6.16 L5641-5642; 11.4.14 L15472-15474 | `S20-1_string_stream_bytes` | LRM text |
+| S20-2 | **Greedy dynamic targets.** In one unpack, the first unselected dynamic array or queue takes every bit that the fixed targets after it leave. Each later unselected one becomes empty. | 11.4.14.4 L15600-15602; 6.24.3 L7522-7526 | `S20-2_greedy_dynamic_targets` | LRM text |
+| S20-3 | **Dynamic targets are zero-filled.** A stream assigned to a dynamic array or queue gets as many elements as hold the whole stream. The last element is zero-filled on the right. | 11.4.14 L15472-15474 | `S20-3_dynamic_target_fill` | LRM text |
+| S20-4 | **`with` ranges grow but never shrink.** A `with` range on a dynamic unpack target grows the array when the range reaches past its end; new elements read as zero. It never shrinks the array, and elements outside the range keep their values. | 11.4.14.4 L15629-15630, L15643-15645 | `S20-4_with_range_resize` | llg choice (the text says "resized to accommodate" without saying whether a larger array shrinks) |
+| S20-5 | **`<<` unpack consumes, then reverses.** A `<<` unpack first takes from the left of the source the bits its targets need, then reverses those blocks. `with` extents are resolved before the reordering. | 11.4.14.3 L15561-15566 | `S20-5_reverse_unpack_consumed` | llg choice (the text defines the consumed bits but not how `<<` orders a partial source) |
+| S20-6 | **Casts to dynamic types need whole elements.** An explicit bit-stream cast to a dynamic array or queue type needs a source that is a whole number of elements; any other size is a run-time error. An uncast stream assignment still zero-fills (S20-3). | 6.24.3 L7534-7537 | `S20-6_dynamic_cast_whole_elements` (negative at run time: the `.out` holds the output before the error) | llg choice |
+
 ## Postponed output (SIM-025)
 
 | ID | Decision | Clause (SV) | Case | Kind |

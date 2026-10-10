@@ -342,6 +342,22 @@ impl Frame<'_, '_> {
         }
         let mut values = Vec::new();
         let mut strings = Vec::new();
+        if let IrContainerExpr::BitStream(stream) = operation {
+            let bits = self.bit_stream(stream, &mut values, &mut strings)?;
+            let result = self.reserve(expression.width, expression.signed);
+            self.line(format!(
+                "llg_bitstream_value_to(&{}, &{bits});",
+                result.code
+            ));
+            self.line(format!("llg_bitstream_destroy(&{bits});"));
+            for value in values {
+                self.discard(value);
+            }
+            for value in strings {
+                self.native_discard(value);
+            }
+            return Ok(result);
+        }
         let code = expressions::render(self, operation, &mut values, &mut strings)?;
         let result = self.value(code, expression.width, expression.signed);
         for value in values {

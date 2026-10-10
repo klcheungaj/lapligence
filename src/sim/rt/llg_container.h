@@ -352,6 +352,9 @@ void llg_stream_segment_two_state(sv4_t* segment, uint32_t element_width,
  * stream larger than the target is an error (IEEE 1800-2009 11.4.14). The
  * source is borrowed; the returned value is owned by the caller. */
 sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int is_signed);
+/* Bit-stream cast of a dynamically sized source to a fixed-size type: the
+ * sizes must match (IEEE 1800-2009 6.24.3). Borrows `value`. */
+sv4_t llg_stream_cast_fixed(sv4_t value, uint32_t width, int is_signed);
 
 enum {
     LLG_CONTAINER_METHOD_FIND = 0,
@@ -984,6 +987,7 @@ void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declara
 void llg_stream_unpack_source_to(sv4_t* dst, const sv4_t* value, uint64_t bits, uint32_t slice, int right_to_left);
 void llg_fixed_image_stream_source_to(sv4_t* dst, const sv4_t* image, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);
 void llg_stream_to_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed);
+void llg_stream_cast_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed);
 void llg_queue_value_get_to(sv4_t* dst, const llg_queue_value_array_t* queue, const sv4_t* index);
 void llg_queue_value_get_nested_to(sv4_t* dst, const llg_queue_value_array_t* queue, const sv4_t* indices, size_t count);
 void llg_dyn_stream_to(sv4_t* dst, const llg_dyn_array_t* array, uint32_t slice, int right_to_left, int selector_kind, const sv4_t* first, const sv4_t* second);
@@ -1091,6 +1095,62 @@ void llg_queue_value_sort_by_keys(llg_queue_value_array_t* queue,
                                   const llg_queue_t* packed_keys,
                                   const llg_queue_value_array_t* value_keys,
                                   int descending);
+
+/* Runtime-sized bit streams for streaming operators and bit-stream casts with
+ * resizable operands or destinations (IEEE 1800-2009 6.24.3, 11.4.14). The
+ * stream is not bounded by the packed value width; only `llg_bitstream_value`
+ * materializes it as one packed value. Appends borrow their operands.
+ * `reverse` reorders `slice`-bit blocks: from the right for a pack and from
+ * the left for the inverse unpack. Destinations with `exact` require whole
+ * elements; otherwise the stream is left-aligned and zero-filled. */
+/* One 64-bit stream word per plane, indexed by LLG_SV4_BITS/X/Z. */
+typedef struct {
+    uint64_t plane[3];
+} llg_bitstream_word_t;
+typedef struct llg_bitstream_t {
+    llg_bitstream_word_t* words;
+    uint64_t length;
+    uint64_t capacity;
+} llg_bitstream_t;
+void llg_bitstream_init(llg_bitstream_t* stream);
+void llg_bitstream_destroy(llg_bitstream_t* stream);
+void llg_bitstream_append_value(llg_bitstream_t* stream, sv4_t value);
+void llg_bitstream_append_values(llg_bitstream_t* stream, const sv4_t* values,
+                                 uint64_t count);
+void llg_bitstream_append_stream(llg_bitstream_t* stream,
+                                 const llg_bitstream_t* source);
+void llg_bitstream_append_dyn(llg_bitstream_t* stream,
+                              const llg_dyn_array_t* array, int selector_kind,
+                              sv4_t first, sv4_t second);
+void llg_bitstream_append_queue(llg_bitstream_t* stream,
+                                const llg_queue_t* queue, int selector_kind,
+                                sv4_t first, sv4_t second);
+void llg_bitstream_append_assoc(llg_bitstream_t* stream,
+                                const llg_assoc_t* array);
+/* Containers of recursive values: every integral and string leaf in
+ * declaration and index order (SV 11.4.14.1). */
+void llg_bitstream_append_dyn_values(llg_bitstream_t* stream,
+                                     const llg_dyn_value_array_t* array,
+                                     int selector_kind, sv4_t first,
+                                     sv4_t second);
+void llg_bitstream_append_queue_values(llg_bitstream_t* stream,
+                                       const llg_queue_value_array_t* queue,
+                                       int selector_kind, sv4_t first,
+                                       sv4_t second);
+void llg_bitstream_append_string(llg_bitstream_t* stream, llg_string_t value);
+void llg_bitstream_take(llg_bitstream_t* stream, uint64_t bits);
+void llg_bitstream_reverse(llg_bitstream_t* stream, uint32_t slice,
+                           int from_left);
+sv4_t llg_bitstream_value(const llg_bitstream_t* stream);
+/* Stream bits [position, position + width) as one packed value. */
+sv4_t llg_bitstream_bits(const llg_bitstream_t* stream, uint64_t position,
+                         uint32_t width);
+void llg_bitstream_value_to(sv4_t* dst, const llg_bitstream_t* stream);
+void llg_bitstream_to_dyn(llg_dyn_array_t* dst, const llg_bitstream_t* stream,
+                          int exact);
+void llg_bitstream_to_queue(llg_queue_t* dst, const llg_bitstream_t* stream,
+                            int exact);
+llg_string_t llg_bitstream_string(const llg_bitstream_t* stream, int exact);
 
 #ifdef __cplusplus
 }

@@ -355,6 +355,28 @@ impl Codegen<'_> {
                 {
                     return Ok(string_literal(decoded_string_bytes(value)?));
                 }
+                // A streaming concatenation fills the string as a dynamic
+                // array of bytes, left-aligned (SV 6.24.3, 11.4.14); a
+                // resizable or unpacked source is a bit-stream cast and must
+                // supply whole bytes.
+                if let Some(stream) = self.lower_bit_stream(path, operand)? {
+                    return Ok(IrStringExpr::BitStream { stream: Box::new(stream), exact: false });
+                }
+                if self.is_runtime_stream_source(path, operand) {
+                    let stream = self.lower_bit_stream_source(path, operand)?;
+                    return Ok(IrStringExpr::BitStream { stream: Box::new(stream), exact: true });
+                }
+                if let Some(value) = self.lower_bitstream_source(path, operand)? {
+                    return Ok(IrStringExpr::BitStream {
+                        stream: Box::new(crate::sim::ir::IrBitStream {
+                            segments: vec![crate::sim::ir::IrStreamSegment::Packed(value)],
+                            slice: 1,
+                            direction: IrStreamDirection::LeftToRight,
+                            unpack: None,
+                        }),
+                        exact: true,
+                    });
+                }
                 let value = self.lower_expr(path,operand)?;
                 if value.is_real() { return Err("real to string cast is unsupported".to_owned()); }
                 Ok(IrStringExpr::FromPacked(Box::new(value)))

@@ -1,0 +1,9 @@
+overlap-with 4 2 01 02 03 04
+self-reverse 3 03 02 01
+self-grow 4 04 01 02 03
+swap 22 11
+fixed-self-reverse 13 12 11 10
+source-selector 1112 1
+target-selector 00 aa bb 00 1
+dynamic-selector 1 aa 1
+reverse-selector 1 34 12 1

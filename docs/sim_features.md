@@ -1170,9 +1170,22 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   source range past the bounds streams element defaults; a target range past
   them writes the in-range part and reports an error. Fixed destinations,
   including runtime `with` ranges, accept nonblocking streams with issue-time
-  sources and selectors. At most one resizable destination is allowed;
-  mixed/resizable destinations use a
-  [blocking-only assignment path](../src/sim/codegen/lowering/containers/streaming.rs).
+  sources and selectors. Mixed and resizable destinations use a
+  [blocking-only assignment path](../src/sim/codegen/lowering/containers/streaming.rs);
+  with several resizable destinations the first unselected one is greedy and
+  later unselected ones are emptied (SV §11.4.14.4).
+  Strings, dynamic arrays, queues, associative-array sources, nested
+  containers and structs with string or resizable members stream through a
+  runtime-sized bit stream (`llg_bitstream_t`) that is not bounded by the
+  packed width, as sources, unpack targets and bit-stream casts in both
+  directions; a stream assigned to a dynamic array, queue or string resizes it
+  (left-aligned, zero-filled), strings drop zero bytes, explicit casts to
+  dynamic types need whole elements, and a `<<` unpack resolves `with`
+  extents before reordering the consumed bits. Queue operands (plain or
+  `with`-selected) of oversized descriptor streams and oversized whole fixed
+  unpack targets use the same segments
+  ([SIM-020](../tests/fixtures/sim/feature_completion/sim_020/readme.md),
+  decisions S20-1 to S20-6 in [the register](lrm_decisions.md)).
   Output copy-out from a task or void-function call statement unpacks into
   runtime or out-of-range `with` targets with selectors fixed at the call, and
   elements mixing two-state and four-state members convert member-wise
@@ -1181,8 +1194,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   an expression or of an intra-assignment-delayed assignment, reject.
   Compound streaming assignments are outside the assignment grammar
   (SV §11.4.14.3, Annex A.6.2). Fixed-size cast mismatches, unpacked-union
-  bit-stream casts, real/associative operands, native strings, recursive objects
-  and unsupported reference combinations reject.
+  bit-stream casts, real/chandle/event operands, associative destinations and
+  unsupported reference combinations reject; class objects, casts into structs
+  with resizable members and nonblocking unpacks into whole resizable or string
+  targets are llg limits
+  ([known issue](known_issues.md#bit-stream-limits-sim-020)).
   SV §§6.24.3, 11.4.14 **[SV-2005]**.
 - 🟨 **Let expressions** — Expansions bind free names and defaults in
   declaration scope, take positional, named, default and typed actuals,

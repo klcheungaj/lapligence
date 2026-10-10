@@ -173,6 +173,14 @@ pub enum IrStringExpr {
     Concat(Vec<IrStringExpr>),
     Repeat(Box<IrStringExpr>, Box<IrExpr>),
     FromPacked(Box<IrExpr>),
+    /// The bytes of a runtime-sized bit stream (SV 6.24.3 treats a string as
+    /// a dynamic array of bytes). `exact` (a bit-stream cast or a whole
+    /// unpack) requires whole bytes; otherwise the stream is left-aligned and
+    /// zero-filled. Zero bytes are dropped (SV 6.16).
+    BitStream {
+        stream: Box<super::IrBitStream>,
+        exact: bool,
+    },
     /// Return the declaration name matching a runtime enum value.  The
     /// receiver and values remain typed packed expressions so optimizer
     /// traversal and capacity accounting see every dependency.
@@ -827,6 +835,15 @@ impl IrStringExpr {
                 }
                 key.validate(model, string_return)
             }
+            Self::BitStream { stream, .. } => {
+                if stream.unpack.is_some_and(|(slice, _)| slice == 0) {
+                    return Err(super::IrValidationError::new(
+                        "string",
+                        "bit stream unpack slice size must be positive",
+                    ));
+                }
+                stream.validate(model, string_return)
+            }
             Self::Concat(parts) => parts
                 .iter()
                 .try_for_each(|part| part.validate(model, string_return)),
@@ -904,6 +921,7 @@ impl IrStringExpr {
                 visit(count);
             }
             Self::FromPacked(value) => visit(value),
+            Self::BitStream { stream, .. } => stream.expressions(visit),
             Self::EnumName { receiver, members } => {
                 visit(receiver);
                 for member in members {
@@ -970,6 +988,7 @@ impl IrStringExpr {
                 visit(count);
             }
             Self::FromPacked(value) => visit(value),
+            Self::BitStream { stream, .. } => stream.expressions_mut(visit),
             Self::EnumName { receiver, members } => {
                 visit(receiver);
                 for member in members {

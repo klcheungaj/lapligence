@@ -54,6 +54,28 @@ pub struct IrContainerMember {
 }
 
 impl IrContainerElement {
+    /// Whether values of this shape can be streamed (SV 6.24.3): integral
+    /// and string leaves, structs and fixed arrays of them, and dynamic
+    /// arrays or queues of them. Associative arrays nested in a value,
+    /// unions, reals and handles cannot.
+    pub fn is_bit_stream(&self) -> bool {
+        match self {
+            Self::Packed { .. } | Self::String => true,
+            Self::Aggregate { members, .. } => {
+                members.iter().all(|member| member.element.is_bit_stream())
+            }
+            Self::FixedArray { element, .. } => element.is_bit_stream(),
+            Self::Container { kind, element, .. } => {
+                !kind.to_ascii_lowercase().contains("assoc") && element.is_bit_stream()
+            }
+            Self::Real { .. }
+            | Self::Chandle
+            | Self::Event
+            | Self::Union { .. }
+            | Self::Opaque { .. } => false,
+        }
+    }
+
     /// Exact payload width for fixed integral shapes, checked before frame allocation.
     pub fn fixed_packed_width(&self) -> Option<u32> {
         match self {
@@ -306,6 +328,140 @@ pub enum IrStreamSelector {
     },
 }
 
+/// One operand of a runtime-sized bit stream, in stream order (SV 11.4.14.1).
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrStreamSegment {
+    /// A packed value; a runtime-sized stream value carries its own width.
+    Packed(IrExpr),
+    /// The packed elements of a dynamic array or queue in index order, or of
+    /// a `with` selection whose indices past the end stream the element
+    /// default (SV 11.4.14.4); or an associative array's values in index
+    /// order (no selector).
+    Container {
+        container: usize,
+        selector: Option<IrStreamSelector>,
+    },
+    /// The bytes of a string, index 0 leftmost (SV 6.24.3).
+    String(IrStringExpr),
+    /// Every element of a packed-element fixed unpacked model array, in
+    /// declaration (storage) order: the order of a one-index `foreach`.
+    FixedArray(usize),
+    /// A nested streaming concatenation.
+    Nested(Box<IrBitStream>),
+}
+
+/// A runtime-sized bit stream (SV 6.24.3, 11.4.14) that is never limited by
+/// the packed value width: the segments are concatenated, reordered by the
+/// pack operator (`slice`, `direction`), and, for a whole unpack into one
+/// resizable destination, by the inverse of the target operator (`unpack`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrBitStream {
+    pub segments: Vec<IrStreamSegment>,
+    pub slice: u32,
+    pub direction: super::IrStreamDirection,
+    pub unpack: Option<(u32, super::IrStreamDirection)>,
+}
+
+impl IrBitStream {
+    pub(in crate::sim) fn validate(
+        &self,
+        model: &super::IrModel,
+        string_return: Option<bool>,
+    ) -> Result<(), IrValidationError> {
+        if self.slice == 0 || self.unpack.is_some_and(|(slice, _)| slice == 0) {
+            return Err(IrValidationError::new(
+                "container",
+                "bit stream slice size must be positive",
+            ));
+        }
+        for segment in &self.segments {
+            match segment {
+                IrStreamSegment::Packed(value) => {
+                    if value.is_real() || value.fill.is_some() {
+                        return Err(IrValidationError::new(
+                            "container",
+                            "bit stream packed segment must be integral",
+                        ));
+                    }
+                }
+                IrStreamSegment::Container {
+                    container,
+                    selector,
+                } => {
+                    let container = container_kind(model, *container, None)?;
+                    let associative = matches!(container.kind, IrContainerKind::Associative { .. });
+                    let element = container.element.is_packed()
+                        || (!associative && container.element.is_bit_stream());
+                    if !element || (associative && selector.is_some()) {
+                        return Err(IrValidationError::new(
+                            "container",
+                            "bit stream container segment requires packed elements",
+                        ));
+                    }
+                    if let Some(selector) = selector {
+                        validate_stream_selector(selector)?;
+                    }
+                }
+                IrStreamSegment::String(value) => value.validate(model, string_return)?,
+                IrStreamSegment::FixedArray(array) => {
+                    if model
+                        .arrays
+                        .get(*array)
+                        .is_none_or(|array| array.real || array.elem_width == 0)
+                    {
+                        return Err(IrValidationError::new(
+                            "container",
+                            "bit stream fixed-array segment requires packed elements",
+                        ));
+                    }
+                }
+                IrStreamSegment::Nested(stream) => {
+                    if stream.unpack.is_some() {
+                        return Err(IrValidationError::new(
+                            "container",
+                            "nested bit stream cannot unpack",
+                        ));
+                    }
+                    stream.validate(model, string_return)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        for segment in &self.segments {
+            match segment {
+                IrStreamSegment::Packed(value) => visit(value),
+                IrStreamSegment::Container {
+                    selector: Some(selector),
+                    ..
+                } => stream_selector_expressions(selector, visit),
+                IrStreamSegment::Container { selector: None, .. } => {}
+                IrStreamSegment::String(value) => value.expressions(visit),
+                IrStreamSegment::FixedArray(_) => {}
+                IrStreamSegment::Nested(stream) => stream.expressions(visit),
+            }
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        for segment in &mut self.segments {
+            match segment {
+                IrStreamSegment::Packed(value) => visit(value),
+                IrStreamSegment::Container {
+                    selector: Some(selector),
+                    ..
+                } => stream_selector_expressions_mut(selector, visit),
+                IrStreamSegment::Container { selector: None, .. } => {}
+                IrStreamSegment::String(value) => value.expressions_mut(visit),
+                IrStreamSegment::FixedArray(_) => {}
+                IrStreamSegment::Nested(stream) => stream.expressions_mut(visit),
+            }
+        }
+    }
+}
+
 /// Container expressions return packed element values or packed method status.
 #[derive(Clone, Debug, PartialEq)]
 #[allow(clippy::large_enum_variant)]
@@ -320,6 +476,9 @@ pub enum IrContainerExpr {
         direction: super::IrStreamDirection,
         selector: Option<IrStreamSelector>,
     },
+    /// A runtime-sized bit stream materialized as one packed value whose
+    /// runtime width is its length; the expression records `LLG_MAX_WIDTH`.
+    BitStream(Box<IrBitStream>),
     Size(usize),
     Reduce {
         container: usize,
@@ -477,6 +636,15 @@ pub enum IrContainerStmt {
         slice: u32,
         direction: super::IrStreamDirection,
         selector: Option<IrStreamSelector>,
+    },
+    /// Replace a packed-element dynamic array or queue with the elements of
+    /// a runtime-sized bit stream. `exact` (a bit-stream cast or a whole
+    /// unpack) requires whole elements; otherwise the stream is left-aligned
+    /// and zero-filled (SV 6.24.3, 11.4.14, 11.4.14.4).
+    BitStreamAssign {
+        container: usize,
+        stream: IrBitStream,
+        exact: bool,
     },
     DynamicNew {
         container: usize,
@@ -1005,6 +1173,15 @@ impl IrContainerExpr {
         string_return: Option<bool>,
     ) -> Result<(), IrValidationError> {
         let (index, expected) = match self {
+            Self::BitStream(stream) => {
+                if stream.unpack.is_some() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "a bit stream value cannot unpack",
+                    ));
+                }
+                return stream.validate(model, string_return);
+            }
             Self::Stream {
                 container,
                 slice,
@@ -1334,6 +1511,7 @@ impl IrContainerExpr {
                 ..
             } => stream_selector_expressions(selector, visit),
             Self::Stream { selector: None, .. } => {}
+            Self::BitStream(stream) => stream.expressions(visit),
             Self::Get { index, .. }
             | Self::GetReal { index, .. }
             | Self::Exists { key: index, .. } => visit(index),
@@ -1354,6 +1532,7 @@ impl IrContainerExpr {
                 ..
             } => stream_selector_expressions_mut(selector, visit),
             Self::Stream { selector: None, .. } => {}
+            Self::BitStream(stream) => stream.expressions_mut(visit),
             Self::Get { index, .. }
             | Self::GetReal { index, .. }
             | Self::Exists { key: index, .. } => visit(index),
@@ -1410,6 +1589,22 @@ impl IrContainerStmt {
                     validate_stream_selector(selector)?;
                 }
                 Ok(())
+            }
+            Self::BitStreamAssign {
+                container, stream, ..
+            } => {
+                let container = container_kind(model, *container, None)?;
+                if !matches!(
+                    container.kind,
+                    IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+                ) || !container.element.is_packed()
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "bit stream assignment requires a packed dynamic array or queue",
+                    ));
+                }
+                stream.validate(model, string_return)
             }
             Self::DynamicNew {
                 container,
@@ -2390,6 +2585,7 @@ impl IrContainerStmt {
                     stream_selector_expressions(selector, visit);
                 }
             }
+            Self::BitStreamAssign { stream, .. } => stream.expressions(visit),
             Self::DynamicNew { size, .. } => visit(size),
             Self::Set { index, value, .. }
             | Self::SetReal { index, value, .. }
@@ -2504,6 +2700,7 @@ impl IrContainerStmt {
                     stream_selector_expressions_mut(selector, visit);
                 }
             }
+            Self::BitStreamAssign { stream, .. } => stream.expressions_mut(visit),
             Self::DynamicNew { size, .. } => visit(size),
             Self::Set { index, value, .. }
             | Self::SetReal { index, value, .. }

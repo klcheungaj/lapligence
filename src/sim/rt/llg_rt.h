@@ -148,6 +148,11 @@ int llg_fixed_array_stream_value(llg_fixed_array_t*, const llg_fixed_array_t* co
 /* Copy `total` dense cells from `origin` into a zeroed scratch array; an
  * invalid view (`origin` UINT64_MAX) reads the borrowed `fallback`. */
 void llg_fixed_array_dense_source(llg_fixed_array_t*, const sv4_t*, uint64_t, uint64_t, sv4_t);
+/* A descriptor stream operand holding the `cell_width`-bit cells of a
+ * runtime-sized bit stream, left cell first; returns 0 for an empty stream. */
+int llg_fixed_array_bitstream_source(llg_fixed_array_t*, const llg_bitstream_t*, uint32_t);
+/* Append every cell in storage order to a runtime-sized bit stream. */
+void llg_bitstream_append_fixed_array(llg_bitstream_t*, const llg_fixed_array_t*);
 
 // Keep the library and every model translation unit on the host-allocation
 // declaration contract. CMake supplies the same definition when compiling
@@ -1248,6 +1253,9 @@ int64_t llg_fixed_image_element_lsb(int64_t declaration_left,
 /* Left-align a runtime-sized stream in a fixed-size bit-stream target; an
  * oversize stream is an error (IEEE 1800-2009 11.4.14). Borrows `value`. */
 sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int is_signed);
+/* Bit-stream cast of a dynamically sized source to a fixed-size type: the
+ * sizes must match (IEEE 1800-2009 6.24.3). Borrows `value`. */
+sv4_t llg_stream_cast_fixed(sv4_t value, uint32_t width, int is_signed);
 
 // ── File descriptors and output ─────────────────────────────────────────────
 // A mode-string fopen returns a bit-31-tagged FD. Preopened FDs 0x80000000,
@@ -2231,6 +2239,7 @@ void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declara
 void llg_stream_unpack_source_to(sv4_t* dst, const sv4_t* value, uint64_t bits, uint32_t slice, int right_to_left);
 void llg_fixed_image_stream_source_to(sv4_t* dst, const sv4_t* image, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);
 void llg_stream_to_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed);
+void llg_stream_cast_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed);
 
 #ifdef __cplusplus
 }

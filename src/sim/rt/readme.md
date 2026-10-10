@@ -42,7 +42,7 @@ reclaimed objects print `(reclaimed)` and output stops at
 | `llg_rng.h/.c` | Process/object random streams, independent of scheduling. |
 | `llg_co.h/.c` | Stackless coroutine frames, anchors, arena cold paths and the synchronous driver for recursive subprograms; the generated-process contract is [process ABI version 3](process_abi.md). |
 | `llg_string.h/.c` | Owned byte strings, conversion and change notification. |
-| `llg_container.h/.c`, `container/` | Dynamic arrays, queues, associative storage and retained element identities. |
+| `llg_container.h/.c`, `container/` | Dynamic arrays, queues, associative storage and retained element identities; `container/bitstreams.c` holds runtime-sized bit streams (`llg_bitstream_t`) for streaming and bit-stream casts of strings, resizable containers and oversized arrays, built only through the public value facade. |
 | `llg_rt.h/.c`, `scheduler/` | IEEE region scheduling, processes, events, assignments, synchronization, assertions, I/O and VPI. |
 | `llg_wave.h/.c` | Optional asynchronous VCD/FST output with one producer/writer and flush/close barriers. |
 | `llg_compiler.h`, `llg_platform.h`, `llg_platform_native.h` | The platform layer: every compiler and OS conditional (atomics, threads, dynamic libraries, host paths/directories, stack limit, console log process) behind neutral inline functions. `llg_compiler.h` is safe for generated models; the other two are private to runtime `.c` files. |

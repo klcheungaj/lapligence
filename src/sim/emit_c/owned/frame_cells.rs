@@ -228,7 +228,7 @@ impl CellEligibility {
             | IrExprKind::CastToReal { a, .. }
             | IrExprKind::ToTwoState { a }
             | IrExprKind::BitStreamCast { a, .. }
-            | IrExprKind::StreamToFixed { a }
+            | IrExprKind::StreamToFixed { a, .. }
             | IrExprKind::PartSel { base: a, .. }
             | IrExprKind::Stream { value: a, .. } => self.expression(ctx, a),
             IrExprKind::Mux { sel, a, b }

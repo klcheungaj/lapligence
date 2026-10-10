@@ -16,6 +16,11 @@ impl<'a> Codegen<'a> {
         {
             return Ok(Some(statement));
         }
+        if let Some(statement) =
+            self.lower_stream_into_fixed_descriptor(path, lhs, rhs, blocking, op)?
+        {
+            return Ok(Some(statement));
+        }
         if let Some(statement) = self.lower_stream_mixed_assignment(path, lhs, rhs, blocking, op)? {
             return Ok(Some(statement));
         }
@@ -349,9 +354,15 @@ impl<'a> Codegen<'a> {
         ) {
             return Ok(IrStmt::Container(Box::new(IrContainerStmt::Delete(dst.ir))));
         }
+        // A streaming concatenation resizes a dynamic array or queue to hold
+        // the whole stream, left-aligned and zero-filled (SV 11.4.14).
+        if let Some(statement) = self.lower_stream_into_container(path, dst.ir, rhs)? {
+            return Ok(statement);
+        }
         // A dynamic array and a queue of one element type assign to each
         // other through an implicit conversion (SV 7.6), which is a whole
-        // copy, not a bit-stream cast.
+        // copy, not a bit-stream cast. An explicit cast between different
+        // element widths is a bit-stream cast instead.
         if let Some(source) = self
             .container_of(self.p30_unwrap_cast(rhs))
             .filter(|source| source.ir != dst.ir)
@@ -366,6 +377,8 @@ impl<'a> Codegen<'a> {
                     | (IrContainerKind::Queue { .. }, IrContainerKind::Dynamic)
             ) && target.element.compatible_with(&origin.element)
                 && target.element.is_packed() == origin.element.is_packed()
+                && target.element.packed().map(|(width, _, _)| width)
+                    == origin.element.packed().map(|(width, _, _)| width)
             {
                 return Ok(IrStmt::Container(Box::new(IrContainerStmt::Copy {
                     dst: dst.ir,

@@ -248,6 +248,28 @@ impl Validator<'_> {
                     u64::from(value.width)
                 })
             }
+            IrFixedValue::BitStream {
+                stream,
+                cell_width,
+                consume,
+            } => {
+                stream.validate(self.model, self.string_return.get())?;
+                let mut result = Ok(());
+                stream.expressions(&mut |value| {
+                    if result.is_ok() {
+                        result = self.validate_expr(value, formals, path);
+                    }
+                });
+                result?;
+                if *cell_width == 0
+                    || (stream.unpack.is_some() && consume.is_none())
+                    || consume.is_some_and(|bits| bits % u64::from(*cell_width) != 0)
+                {
+                    return self.fail(path, "bit stream fixed operand requires whole cells");
+                }
+                // Its width is checked when the stream is built.
+                Ok(0)
+            }
             IrFixedValue::Selected { array, selector } => {
                 self.validate_fixed_activation(*array, path)?;
                 let valid = self.model.arrays.get(*array).is_some_and(|array| {

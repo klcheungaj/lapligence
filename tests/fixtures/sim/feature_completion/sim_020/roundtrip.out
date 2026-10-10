@@ -1,0 +1,13 @@
+string-to-queue 5 48 6f
+queue-to-string olleH
+round-trip Hello 1
+string-to-dynamic 5 olleH
+reversed-bounds 11 44
+reversed-to-ascending 44 33 22 11
+nested-to-queue 6 12 10 00
+nested-round-trip 1
+slice3 100111001000100
+slice3-back 10000 00011 11100
+slice5 6f95 2 6f 95
+byte-slice-to-shortint 2 0403 0201
+shortint-slice-to-bytes 4 02 01 04 03

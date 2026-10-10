@@ -181,6 +181,16 @@ impl<'a> Codegen<'a> {
         nba: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        if matches!(self.kind(rhs), NodeKind::Expr(ExprKind::Cast { .. }))
+            && self.is_dynamic_member_record(lhs)
+            && self
+                .query_descriptor(rhs)
+                .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::Aggregate(_)))
+        {
+            return Err(format!(
+                "bit-stream cast into a struct with string or resizable members is not supported in `{path}`"
+            ));
+        }
         if let Some(statement) = self.lower_native_value_assignment(path, lhs, rhs, nba, op)? {
             return Ok(Some(statement));
         }

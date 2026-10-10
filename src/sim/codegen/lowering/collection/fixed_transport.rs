@@ -169,10 +169,28 @@ impl Codegen<'_> {
     /// A packed bit-stream operand as descriptor cells: an array keeps its
     /// element as the cell, any other value is one cell.
     fn lower_fixed_packed(&mut self, path: &str, node: NodeId) -> Result<IrFixedValue, String> {
-        if self.container_of(node).is_some() {
-            return Err(format!(
-                "resizable container operand of an oversized fixed stream in `{path}` is not supported"
-            ));
+        // A string, resizable container or record with such members streams
+        // its runtime-sized bits as cells of its element width.
+        if self.is_runtime_stream_source(path, node) {
+            let cell_width = self
+                .container_of(node)
+                .and_then(|container| self.model.containers.get(container.ir))
+                .and_then(|container| container.element.packed())
+                .map_or_else(
+                    || {
+                        if self.is_string_expr(path, node) {
+                            8
+                        } else {
+                            1
+                        }
+                    },
+                    |(width, _, _)| width,
+                );
+            return Ok(IrFixedValue::BitStream {
+                stream: Box::new(self.lower_bit_stream_source(path, node)?),
+                cell_width,
+                consume: None,
+            });
         }
         let value = match self.lower_bitstream_source(path, node)? {
             Some(value) => value,
@@ -227,10 +245,26 @@ impl Codegen<'_> {
                 selector: self.lower_stream_selector(path, with_node)?,
             });
         }
-        if self.container_of(value).is_some() {
-            return Err(format!(
-                "resizable container operand of an oversized fixed stream in `{path}` is not supported"
-            ));
+        if let Some(container) = self.container_of(value) {
+            // The selected elements stream as runtime-sized cells of the
+            // element width (SV 11.4.14.4), never as one packed value.
+            let cell_width = self
+                .model
+                .containers
+                .get(container.ir)
+                .and_then(|container| container.element.packed())
+                .map_or(1, |(width, _, _)| width);
+            let segment = self.lower_stream_segment(path, value, Some(with_node))?;
+            return Ok(IrFixedValue::BitStream {
+                stream: Box::new(crate::sim::ir::IrBitStream {
+                    segments: vec![segment],
+                    slice: 1,
+                    direction: crate::sim::ir::IrStreamDirection::LeftToRight,
+                    unpack: None,
+                }),
+                cell_width,
+                consume: None,
+            });
         }
         let element_width = match self.array_of(value) {
             Some(array) => array.elem_width,

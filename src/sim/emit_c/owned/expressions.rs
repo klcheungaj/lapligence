@@ -309,10 +309,15 @@ impl Frame<'_, '_> {
                 let code = format!("sv4_to_two_state({})", value.code);
                 self.replace(value, code, expr.width, expr.signed)
             }
-            IrExprKind::StreamToFixed { a } => {
+            IrExprKind::StreamToFixed { a, exact } => {
                 let value = self.operand(a)?;
+                let function = if *exact {
+                    "llg_stream_cast_fixed"
+                } else {
+                    "llg_stream_to_fixed"
+                };
                 let code = format!(
-                    "llg_stream_to_fixed({}, {}u, {})",
+                    "{function}({}, {}u, {})",
                     value.code,
                     expr.width,
                     u8::from(expr.signed)

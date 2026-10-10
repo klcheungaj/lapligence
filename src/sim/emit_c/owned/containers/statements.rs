@@ -34,6 +34,25 @@ pub(super) fn render(
                 matches!(direction, IrStreamDirection::RightToLeft) as u8
             )
         }
+        IrContainerStmt::BitStreamAssign {
+            container,
+            stream,
+            exact,
+        } => {
+            let function = match ctx.model.containers[*container].kind {
+                IrContainerKind::Dynamic => "llg_bitstream_to_dyn",
+                IrContainerKind::Queue { .. } => "llg_bitstream_to_queue",
+                IrContainerKind::Associative { .. } => {
+                    return Err("associative arrays are not legal bit-stream destinations".into())
+                }
+            };
+            let bits = frame.bit_stream(stream, owners, strings)?;
+            format!(
+                "    {function}(&{}, &{bits}, {});\n    llg_bitstream_destroy(&{bits});\n",
+                name(frame, *container)?,
+                u8::from(*exact)
+            )
+        }
         IrContainerStmt::DynamicNew {
             container,
             size,

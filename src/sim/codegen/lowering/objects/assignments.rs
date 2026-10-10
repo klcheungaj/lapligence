@@ -11,6 +11,14 @@ impl Codegen<'_> {
         blocking: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        // A whole unpack into one string assigns the string its bytes.
+        let unpack = self.string_unpack_target(path, lhs)?;
+        let lhs = unpack.map_or(lhs, |(string, _, _)| string);
+        if unpack.is_some() && !blocking {
+            return Err(format!(
+                "nonblocking streaming unpack into a string is not supported in `{path}`"
+            ));
+        }
         let indexed = match self.kind(lhs) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => Some((*base, *index)),
             _ => None,
@@ -217,8 +225,14 @@ impl Codegen<'_> {
                     ),
                 ))));
             }
+            let value = match unpack {
+                Some((_, slice, direction)) => {
+                    self.lower_string_unpack_source(path, rhs, slice, direction)?
+                }
+                None => self.lower_string(path, rhs)?,
+            };
             return Ok(Some(IrStmt::Object(Box::new(
-                IrObjectStmt::StringAssignLocal(target, self.lower_string(path, rhs)?),
+                IrObjectStmt::StringAssignLocal(target, value),
             ))));
         }
         let index = index.expect("object target checked above");
@@ -229,7 +243,15 @@ impl Codegen<'_> {
                     self.object_int_argument(path, position, 32)?,
                     self.object_int_argument(path, rhs, 8)?,
                 ),
-                None => IrObjectStmt::StringAssign(index, self.lower_string(path, rhs)?),
+                None => IrObjectStmt::StringAssign(
+                    index,
+                    match unpack {
+                        Some((_, slice, direction)) => {
+                            self.lower_string_unpack_source(path, rhs, slice, direction)?
+                        }
+                        None => self.lower_string(path, rhs)?,
+                    },
+                ),
             },
             IrObjectType::Chandle => {
                 if indexed.is_some() {

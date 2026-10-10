@@ -42,20 +42,30 @@ impl<'a> Codegen<'a> {
                 "bit-stream cast destination has an empty packed element in `{path}`"
             ));
         }
-        let source_descriptor = self.query_descriptor(*operand);
-        if source_descriptor.is_some_and(|descriptor| {
-            matches!(
-                descriptor.shape,
-                TypeShape::Container { .. } | TypeShape::String | TypeShape::Opaque { .. }
-            )
-        }) {
+        let operand = *operand;
+        // A dynamically sized source must fill whole destination elements
+        // (SV 6.24.3); its size is known only at run time.
+        if self.is_runtime_stream_source(path, operand) {
+            let stream = self.lower_bit_stream_source(path, operand)?;
+            return Ok(Some(IrStmt::Container(Box::new(
+                IrContainerStmt::BitStreamAssign {
+                    container: dst.ir,
+                    stream,
+                    exact: true,
+                },
+            ))));
+        }
+        if self
+            .query_descriptor(operand)
+            .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::Opaque { .. }))
+        {
             return Err(format!(
-                "dynamic-size, string, or opaque bit-stream source is not supported in `{path}`"
+                "opaque bit-stream source is not supported in `{path}`"
             ));
         }
-        let source = match self.lower_bitstream_source(path, *operand)? {
+        let source = match self.lower_bitstream_source(path, operand)? {
             Some(value) => value,
-            None => self.lower_expr(path, *operand)?,
+            None => self.lower_expr(path, operand)?,
         };
         if source.is_real() {
             return Err(format!(
@@ -128,6 +138,199 @@ impl<'a> Codegen<'a> {
         Ok(Some(IrStmt::Block(statements)))
     }
 
+    /// The string of a streaming target that is exactly one string, with the
+    /// target's slice size and operator. Such an unpack fills the string as
+    /// a dynamic array of bytes (SV 6.24.3) through the string assignment.
+    pub(in super::super) fn string_unpack_target(
+        &self,
+        path: &str,
+        lhs: NodeId,
+    ) -> Result<Option<(NodeId, u32, IrStreamDirection)>, String> {
+        let NodeKind::Expr(ExprKind::Streaming {
+            direction,
+            slice_size,
+            streams,
+        }) = self.kind(lhs)
+        else {
+            return Ok(None);
+        };
+        let strings = streams
+            .iter()
+            .filter(|stream| self.is_string_expr(path, stream.value))
+            .count();
+        if strings == 0 {
+            return Ok(None);
+        }
+        if strings != 1 || streams.len() != 1 || streams[0].with_expr.is_some() {
+            return Err(format!(
+                "a string streaming target must be the only target of its unpack in `{path}`"
+            ));
+        }
+        let direction = match direction {
+            DbStreamingDirection::LeftToRight => IrStreamDirection::LeftToRight,
+            DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
+        };
+        Ok(Some((
+            streams[0].value,
+            Self::stream_slice(path, *slice_size)?,
+            direction,
+        )))
+    }
+
+    /// The source of a whole unpack into one string: the stream consumed by
+    /// the inverse of the target operator, which must supply whole bytes
+    /// (SV 11.4.14.3, 11.4.14.4).
+    pub(in super::super) fn lower_string_unpack_source(
+        &mut self,
+        path: &str,
+        rhs: NodeId,
+        slice: u32,
+        direction: IrStreamDirection,
+    ) -> Result<IrStringExpr, String> {
+        let source = match self.kind(rhs) {
+            NodeKind::Expr(ExprKind::Cast { operand, .. })
+                if matches!(
+                    self.kind(*operand),
+                    NodeKind::Expr(ExprKind::Streaming { .. })
+                ) =>
+            {
+                *operand
+            }
+            _ => rhs,
+        };
+        let mut stream = self.lower_bit_stream_source(path, source)?;
+        stream.unpack = Some((slice, direction));
+        Ok(IrStringExpr::BitStream {
+            stream: Box::new(stream),
+            exact: true,
+        })
+    }
+
+    /// Assign a streaming concatenation (possibly wrapped in the conversion
+    /// to the target type) to a whole packed-element dynamic array or queue.
+    pub(super) fn lower_stream_into_container(
+        &mut self,
+        path: &str,
+        dst: usize,
+        rhs: NodeId,
+    ) -> Result<Option<IrStmt>, String> {
+        let source = match self.kind(rhs) {
+            NodeKind::Expr(ExprKind::Cast { operand, .. })
+                if matches!(
+                    self.kind(*operand),
+                    NodeKind::Expr(ExprKind::Streaming { .. })
+                ) =>
+            {
+                *operand
+            }
+            NodeKind::Expr(ExprKind::Streaming { .. }) => rhs,
+            _ => return Ok(None),
+        };
+        let target = self.model.containers.get(dst).ok_or_else(|| {
+            format!("streaming assignment target container is out of bounds in `{path}`")
+        })?;
+        if !matches!(
+            target.kind,
+            IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+        ) || !target.element.is_packed()
+        {
+            return Err(format!(
+                "a streaming concatenation can only be assigned to a dynamic array or queue of packed elements in `{path}`"
+            ));
+        }
+        let Some(stream) = self.lower_bit_stream(path, source)? else {
+            return Ok(None);
+        };
+        Ok(Some(IrStmt::Container(Box::new(
+            IrContainerStmt::BitStreamAssign {
+                container: dst,
+                stream,
+                exact: false,
+            },
+        ))))
+    }
+
+    /// Unpack into one whole fixed array whose bits exceed the packed value
+    /// width. The source streams into a runtime-sized bit stream whose
+    /// leftmost target-width bits are consumed (fewer is a runtime error,
+    /// SV 11.4.14.3), reordered for `<<`, and published as descriptor cells,
+    /// so the target never forms one packed value. Narrower targets keep the
+    /// packed unpack.
+    pub(super) fn lower_stream_into_fixed_descriptor(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        blocking: bool,
+        op: Operation,
+    ) -> Result<Option<IrStmt>, String> {
+        let NodeKind::Expr(ExprKind::Streaming {
+            direction,
+            slice_size,
+            streams,
+        }) = self.kind(lhs)
+        else {
+            return Ok(None);
+        };
+        let [stream] = streams.as_slice() else {
+            return Ok(None);
+        };
+        if stream.with_expr.is_some() {
+            return Ok(None);
+        }
+        let (target, direction, slice_size) = (stream.value, *direction, *slice_size);
+        let Some(array) = self.array_of(target) else {
+            return Ok(None);
+        };
+        let storage = &self.model.arrays[array.ir];
+        if !storage.sparse() || storage.real || storage.is_net() || storage.elem_width == 0 {
+            return Ok(None);
+        }
+        let cell_width = storage.elem_width;
+        let view = self.fixed_memory_view(path, target)?;
+        let bits = view
+            .total
+            .checked_mul(u64::from(cell_width))
+            .ok_or_else(|| format!("streaming assignment target width overflows in `{path}`"))?;
+        if bits <= u64::from(LLG_MAX_WIDTH) {
+            return Ok(None);
+        }
+        if op != Operation::Assignment {
+            return Err(format!(
+                "compound assignment to a streaming target in `{path}` is not supported"
+            ));
+        }
+        let source = match self.kind(rhs) {
+            NodeKind::Expr(ExprKind::Cast { operand, .. })
+                if matches!(
+                    self.kind(*operand),
+                    NodeKind::Expr(ExprKind::Streaming { .. })
+                ) =>
+            {
+                *operand
+            }
+            _ => rhs,
+        };
+        let mut stream = self.lower_bit_stream_source(path, source)?;
+        let direction = match direction {
+            DbStreamingDirection::LeftToRight => IrStreamDirection::LeftToRight,
+            DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
+        };
+        stream.unpack = Some((Self::stream_slice(path, slice_size)?, direction));
+        Ok(Some(IrStmt::FixedValueAssign {
+            dst: view,
+            src: Box::new(crate::sim::ir::IrFixedValue::Stream {
+                parts: vec![crate::sim::ir::IrFixedValue::BitStream {
+                    stream: Box::new(stream),
+                    cell_width,
+                    consume: Some(bits),
+                }],
+                slice: 0,
+            }),
+            nba: !blocking,
+        }))
+    }
+
     fn stream_target_contains_container(&self, node: NodeId) -> bool {
         if self.container_of(node).is_some() {
             return true;
@@ -179,15 +382,34 @@ impl<'a> Codegen<'a> {
         blocking: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        if self.string_unpack_target(path, lhs)?.is_some() {
+            return Ok(None);
+        }
         let mode = if blocking {
             StreamTargetMode::Blocking
         } else {
             StreamTargetMode::Nonblocking
         };
-        let Some(plan) = self.stream_mixed_targets(path, lhs, mode, op)? else {
+        // An unpack consumes the source stream itself (SV 11.4.14.3), not
+        // its conversion to the target width.
+        let source_node = match self.kind(rhs) {
+            NodeKind::Expr(ExprKind::Cast { operand, .. })
+                if matches!(
+                    self.kind(*operand),
+                    NodeKind::Expr(ExprKind::Streaming { .. })
+                ) =>
+            {
+                *operand
+            }
+            _ => rhs,
+        };
+        // A runtime-sized source can be shorter than static packed targets,
+        // which the checked unpack reports (SV 11.4.14.3).
+        let runtime_source = self.is_runtime_stream_source(path, source_node);
+        let Some(plan) = self.stream_targets_plan(path, lhs, mode, op, runtime_source)? else {
             return Ok(None);
         };
-        let source = self.lower_stream_operand(path, rhs, None)?;
+        let source = self.lower_stream_operand(path, source_node, None)?;
         if source.is_real() {
             return Err(format!(
                 "real source is not legal for a streaming assignment in `{path}`"
@@ -207,6 +429,20 @@ impl<'a> Codegen<'a> {
         mode: StreamTargetMode,
         op: Operation,
     ) -> Result<Option<StreamTargetPlan>, String> {
+        self.stream_targets_plan(path, lhs, mode, op, false)
+    }
+
+    /// [`Self::stream_mixed_targets`], also planning a target of only static
+    /// packed lvalues when `checked` (its source size is known only at run
+    /// time).
+    fn stream_targets_plan(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        mode: StreamTargetMode,
+        op: Operation,
+        checked: bool,
+    ) -> Result<Option<StreamTargetPlan>, String> {
         let blocking = mode == StreamTargetMode::Blocking;
         let NodeKind::Expr(ExprKind::Streaming {
             direction,
@@ -218,7 +454,7 @@ impl<'a> Codegen<'a> {
         };
         let streams = streams.clone();
         let (direction, slice_size) = (*direction, *slice_size);
-        let mut needs_mixed = false;
+        let mut needs_mixed = checked;
         let mut has_container = false;
         for stream in &streams {
             if self.stream_target_contains_container(stream.value) {
@@ -252,12 +488,25 @@ impl<'a> Codegen<'a> {
             ));
         }
 
-        let reversed_fixed = direction == DbStreamingDirection::RightToLeft && !has_container;
+        // Without an unselected resizable target, a `<<` unpack resolves
+        // every selector before it reorders the consumed source.
+        let greedy_target = streams
+            .iter()
+            .any(|stream| stream.with_expr.is_none() && self.container_of(stream.value).is_some());
+        let reversed_fixed = direction == DbStreamingDirection::RightToLeft && !greedy_target;
         let mut targets = Vec::new();
         // Lvalue nodes of the targets already unpacked, for the selector
         // dependence check below.
         let mut earlier = Vec::new();
-        let mut container_count = 0usize;
+        // The first unselected resizable target takes every bit the packed
+        // targets after it leave (SV 11.4.14.4); a runtime-sized selection
+        // after it would make that extent depend on a later selector.
+        let mut greedy_seen = false;
+        let selected_after_greedy = |path: &str| {
+            format!(
+                "a streaming `with` target after an unselected dynamic array or queue of the same unpack is not supported in `{path}`"
+            )
+        };
         for stream in streams {
             // Slang normally stores streaming operands directly in `streams`,
             // but an explicit nested concatenation is still legal. Flatten it
@@ -289,6 +538,9 @@ impl<'a> Codegen<'a> {
                 if let Some(with_node) = stream.with_expr {
                     if let Some(bounds) = self.fixed_with_bounds(path, value)? {
                         if !self.static_with_in_bounds(path, with_node, bounds)? {
+                            if greedy_seen {
+                                return Err(selected_after_greedy(path));
+                            }
                             // SV 11.4.14.4: a later selector observes values
                             // unpacked to its left. A queued unpack has not
                             // published them, and a `<<` unpack must size its
@@ -353,11 +605,19 @@ impl<'a> Codegen<'a> {
                 }
 
                 if let Some(container) = self.container_of(value) {
-                    container_count += 1;
-                    if container_count > 1 {
-                        return Err(format!(
-                            "streaming assignment supports at most one resizable target in `{path}`"
-                        ));
+                    if let Some(with_node) = stream.with_expr {
+                        if greedy_seen {
+                            return Err(selected_after_greedy(path));
+                        }
+                        if (!blocking || reversed_fixed)
+                            && self.reads_overlap_lvalue_writes(path, with_node, &earlier)?
+                        {
+                            return Err(format!(
+                                "right-to-left streaming `with` selector reads a target unpacked earlier by the same assignment in `{path}`"
+                            ));
+                        }
+                    } else {
+                        greedy_seen = true;
                     }
                     let target = self.model.containers.get(container.ir).ok_or_else(|| {
                         format!("streaming target container is out of bounds in `{path}`")
@@ -471,6 +731,12 @@ impl<'a> Codegen<'a> {
             return Ok(None);
         }
         let stream = &streams[0];
+        // A `with` range consumes only the selected elements from the left
+        // of a possibly wider source (SV 11.4.14.3), which the checked unpack
+        // does.
+        if stream.with_expr.is_some() {
+            return Ok(None);
+        }
         let Some(container) = self.container_of(stream.value) else {
             return Ok(None);
         };
@@ -491,32 +757,30 @@ impl<'a> Codegen<'a> {
                 "streaming container target must have a packed element in `{path}`"
             ));
         }
-        let selector = stream
-            .with_expr
-            .map(|node| self.lower_stream_selector(path, node))
-            .transpose()?;
-        let source = self.lower_stream_operand(path, rhs, None)?;
-        if source.is_real() {
-            return Err(format!(
-                "real source is not legal for a streaming container target in `{path}`"
-            ));
-        }
-        let slice = if *slice_size == 0 {
-            1
-        } else {
-            u32::try_from(*slice_size)
-                .map_err(|_| format!("streaming slice size is too large in `{path}`"))?
+        // The whole source unpacks into the container, which must take whole
+        // elements; the source streams without a packed temporary.
+        let source = match self.kind(rhs) {
+            NodeKind::Expr(ExprKind::Cast { operand, .. })
+                if matches!(
+                    self.kind(*operand),
+                    NodeKind::Expr(ExprKind::Streaming { .. })
+                ) =>
+            {
+                *operand
+            }
+            _ => rhs,
         };
+        let mut stream = self.lower_bit_stream_source(path, source)?;
+        let direction = match direction {
+            DbStreamingDirection::LeftToRight => IrStreamDirection::LeftToRight,
+            DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
+        };
+        stream.unpack = Some((Self::stream_slice(path, *slice_size)?, direction));
         Ok(Some(IrStmt::Container(Box::new(
-            IrContainerStmt::StreamAssign {
+            IrContainerStmt::BitStreamAssign {
                 container: container.ir,
-                source,
-                slice,
-                direction: match direction {
-                    DbStreamingDirection::LeftToRight => IrStreamDirection::LeftToRight,
-                    DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
-                },
-                selector,
+                stream,
+                exact: true,
             },
         ))))
     }
