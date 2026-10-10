@@ -101,8 +101,10 @@ writer, timing and flip-flop violations reject independently of lint. Ordinary
 `always` remains a procedural loop with cooperative, source-located back-edge
 budgets, not a comb/run-once replacement.
 
-Preserve program-instance origin and Reactive launch, rejecting prohibited program
-members before lowering; `$exit` admission requires program-process context.
+Preserve program-instance origin and Reactive launch (initials, generate-scope
+initials and continuous assignments of a program), rejecting prohibited program
+members (also inside program generate scopes) before lowering; `$exit` admission
+requires program-process context.
 Preserve source-origin classification and declaration lifetime rather than
 qualifier spelling. Defaults precede initialization and processes: ordinary nets
 start Z, arrays/scalar variables receive their typed fills/initializers, and
