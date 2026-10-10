@@ -48,6 +48,43 @@ class BuildTimingsTest(unittest.TestCase):
                 self.assertEqual(timings.main([str(path)]), 0)
             self.assertIn("model builds: 3", output.getvalue())
 
+    def test_profiles_rank_commands_by_self_time(self):
+        events = [
+            {"cat": "project", "name": "configure", "ph": "B", "ts": 0},
+            {"cat": "script", "name": "project", "ph": "B", "ts": 10,
+             "args": {"location": "C:\\a\\m1\\CMakeLists.txt:2"}},
+            {"cat": "script", "name": "execute_process", "ph": "B", "ts": 20,
+             "args": {"location": "C:/Program Files/CMake/Modules/X.cmake:7"}},
+            {"ph": "E", "ts": 1020},
+            {"ph": "E", "ts": 1510},
+            {"ph": "E", "ts": 2000},
+            {"cat": "project", "name": "generate", "ph": "B", "ts": 2000},
+            {"ph": "E", "ts": 5000},
+        ]
+        text = timings.summarize_profiles([events, events])
+        self.assertIn("cmake configure profiles: 2", text)
+        self.assertIn("configure: median=2ms", text)
+        self.assertIn("generate: median=3ms", text)
+        rows = [line.split() for line in text.splitlines()[4:]]
+        self.assertEqual(rows[0][3:], ["execute_process", "Modules/X.cmake:7"])
+        self.assertEqual(rows[0][:3], ["2.0", "2", "1.0"])
+        self.assertEqual(rows[1][3:], ["project", "m1/CMakeLists.txt:2"])
+        self.assertEqual(rows[1][2], "0.5")
+
+    def test_profile_directory_skips_unreadable_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "a.json").write_text('[{"cat": "project", "name": "configure", "ph": "B", "ts": 0}, '
+                                                 '{"ph": "E", "ts": 3000}]', encoding="utf-8")
+            Path(directory, "b.json").write_text("[{", encoding="utf-8")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(timings.main([str(Path(directory) / "none.tsv"),
+                                               "--cmake-profiles", directory]), 0)
+            text = output.getvalue()
+            self.assertIn("cmake configure profiles: 1", text)
+            self.assertIn("configure: median=3ms", text)
+            self.assertIn("unreadable profiles: 1", text)
+
 
 if __name__ == "__main__":
     unittest.main()

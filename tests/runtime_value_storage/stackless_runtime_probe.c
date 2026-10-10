@@ -394,8 +394,12 @@ typedef struct {
 LLG_CO_ANCHORED_OK(sync_count_frame_t);
 
 enum { SYNC_DEPTH = 200000u, SYNC_NESTED_AT = 1000u, SYNC_NESTED_DEPTH = 300u };
-static const llg_co_desc_t sync_count_desc;
 static unsigned count_synchronously(unsigned n);
+/* Declare the entry and define its descriptor before the body that names it:
+ * MSVC /W4 rejects the C11 tentative definition `static const T x;` (C4132). */
+static llg_co_status_t sync_count(llg_co_frame_t* co, llg_co_chain_t* ch);
+static const llg_co_desc_t sync_count_desc = {
+    sync_count, "sync count", sizeof(sync_count_frame_t), NULL, 0, 0};
 
 static llg_co_status_t sync_count(llg_co_frame_t* co, llg_co_chain_t* ch) {
     sync_count_frame_t* F = (sync_count_frame_t*)co;
@@ -419,9 +423,6 @@ static llg_co_status_t sync_count(llg_co_frame_t* co, llg_co_chain_t* ch) {
     *F->result = F->inner + 1;
     return LLG_CO_DONE;
 }
-
-static const llg_co_desc_t sync_count_desc = {
-    sync_count, "sync count", sizeof(sync_count_frame_t), NULL, 0, 0};
 
 static unsigned count_synchronously(unsigned n) {
     llg_co_sync_t sync;

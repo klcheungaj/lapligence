@@ -954,13 +954,21 @@ endmodule
         if compiled.ok() {
             return Err("ambiguous wildcard import unexpectedly compiled".to_owned());
         }
-        let diagnostics = compiled
-            .diagnostics
-            .iter()
-            .map(|diagnostic| format!("{diagnostic:?}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if !diagnostics.to_ascii_lowercase().contains("ambig") {
+        // Slang's AmbiguousWildcardImport error, at the reference that sees
+        // both imports. Match the message and position, never the whole Debug
+        // text: its file path contains this test's temp directory name.
+        let ambiguous = compiled.diagnostics.iter().any(|diagnostic| {
+            diagnostic.severity == compile::Severity::Error
+                && diagnostic.message == "multiple imports found for identifier 'value'"
+                && (diagnostic.line, diagnostic.col) == (13, 24)
+        });
+        if !ambiguous {
+            let diagnostics = compiled
+                .diagnostics
+                .iter()
+                .map(|diagnostic| format!("{diagnostic:?}"))
+                .collect::<Vec<_>>()
+                .join("\n");
             return Err(format!(
                 "wildcard import diagnostic was not ambiguity-specific: {diagnostics}"
             ));

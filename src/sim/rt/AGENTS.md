@@ -569,9 +569,13 @@ Standalone probes also build with MSVC `/W4 /WX`, at `/O2` for the
 `strict_c11_executable` tests. Avoid what GCC/Clang `-Wall -Wextra` accept but
 MSVC rejects: a statement after an unconditional call to an `abort()` helper
 (C4702 once `/O2` inlines it; declare the helper `_Noreturn`), a local assigned
-only inside a `while` loop (C4701; use `do`), and an array of pointers to const
-passed as `void*` (C4090). Clang `-Wunreachable-code` and
-`-Wconditional-uninitialized` approximate the first two.
+only inside a `while` loop (C4701; use `do`), an array of pointers to const
+passed as `void*` (C4090), and a tentative definition `static const T x;` that a
+later initialized definition completes (C4132; declare the function it names
+and define the object before its first use). Clang `-Wunreachable-code` and
+`-Wconditional-uninitialized` approximate the first two; nothing approximates
+C4132. Generated models still forward-declare descriptors that way, because
+mutual recursion needs it; they build at `/W3`.
 
 Preserve source APIs: `value_sources`, `random_sources`, `rng_sources`,
 `coroutine_sources`, `runtime_sources`, `string_sources`, `container_sources`,

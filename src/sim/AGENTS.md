@@ -191,7 +191,9 @@ Detection `try_compile`s use `CMAKE_TRY_COMPILE_CONFIGURATION=Release` (no MSVC
 whether `CMAKE_SIZEOF_VOID_P` is known yet, so clean and seeded trees would
 otherwise differ. Keep these flags in `toolchain_args`, shared by probe and builds. `LLG_BUILD_TIMINGS=<file>` appends one per-phase timing and
 cache-outcome line per model build (`build/timings.rs`); CI summarizes it with
-`scripts/ci_build_timings.py`.
+`scripts/ci_build_timings.py`. `LLG_CMAKE_PROFILE_DIR=<dir>` adds a CMake
+google-trace profile per configure (`--cmake-profiles` summarizes them); it
+changes no build output and stays out of every cache and seed key.
 Compiler self-reports (`--version`/`/Bv` identity, target) come from
 `build/compiler_probe.rs`: each argument spawns at most once per probe (an MSVC
 banner skips `-dumpmachine`), results are memoized per process by spelling,
