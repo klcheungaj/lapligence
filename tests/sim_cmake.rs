@@ -1063,6 +1063,105 @@ fn build_timings_record_phases_and_cache_outcomes() {
     );
 }
 
+/// Opt-in configured-tree templates (`LLG_CMAKE_TREE_TEMPLATES`): the first
+/// fresh tree is captured, a second tree in another directory checks the
+/// template against its own real configure, and later fresh trees are written
+/// from the template without a configure. Every tree builds and runs. A
+/// template whose tree fails to build is rejected once a configured rebuild
+/// of that tree succeeds, and later trees configure normally.
+#[test]
+fn opt_in_tree_templates_replace_checked_fresh_configures() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = fresh_dir("tree-template");
+    let record = dir.path().join("timings.tsv");
+    let _timings = EnvVarGuard::set(
+        sim::build::BUILD_TIMINGS_ENV,
+        record.to_str().expect("UTF-8 temp path"),
+    );
+    let _templates = EnvVarGuard::set(sim::build::TREE_TEMPLATE_ENV, "1");
+    let cache = dir.path().join("runtime-cache");
+    let opts = sim::build::CmakeBuildOpts {
+        runtime_cache_dir: Some(cache.clone()),
+        ..Default::default()
+    };
+    let field = |line: &str, name: &str| -> Option<String> {
+        line.split('\t')
+            .find_map(|field| field.strip_prefix(&format!("{name}=")).map(str::to_owned))
+    };
+    let models = ["first", "second", "third", "fourth"];
+    for model in models {
+        let stdout = build_counter(dir.path(), &dir.path().join(model), &opts).expect("model runs");
+        assert_eq!(stdout, EXPECTED_STDOUT, "{model}");
+    }
+    let text = std::fs::read_to_string(&record).expect("timings written");
+    let lines: Vec<&str> = text.lines().collect();
+    let templates: Vec<_> = lines.iter().map(|line| field(line, "template")).collect();
+    let expected =
+        ["captured", "verified", "applied", "applied"].map(|value| Some(value.to_owned()));
+    if templates[0].is_none() {
+        // The scratch path uses characters a template does not substitute.
+        eprintln!("SKIP: temporary directory not eligible for templates: {text}");
+        return;
+    }
+    assert_eq!(templates, expected, "{text}");
+    for line in &lines[2..] {
+        assert_eq!(
+            field(line, "configure_ms"),
+            None,
+            "no configure ran: {line}"
+        );
+    }
+    // The written tree names its own directories only.
+    let cache_text = std::fs::read_to_string(dir.path().join("third/build/CMakeCache.txt"))
+        .expect("written cache");
+    let third = dir.path().join("third");
+    let third = third.to_str().expect("UTF-8 temp path");
+    assert!(cache_text.contains(third), "{cache_text}");
+    for other in ["first", "second", "fourth"] {
+        let other = dir.path().join(other);
+        assert!(
+            !cache_text.contains(other.to_str().unwrap()),
+            "{cache_text}"
+        );
+    }
+    // An existing templated tree reconfigures and rebuilds in place.
+    let stdout = build_counter(dir.path(), &dir.path().join("third"), &opts)
+        .expect("templated tree rebuilds");
+    assert_eq!(stdout, EXPECTED_STDOUT);
+
+    // Break the published template without changing its record lengths: its
+    // trees then name a missing source.
+    let entries: Vec<_> = std::fs::read_dir(cache.join(sim::build::TREE_TEMPLATE_DIR))
+        .expect("template root")
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.join("ready").is_file())
+        .collect();
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    let template = entries[0].join("template");
+    let stored = std::fs::read_to_string(&template).expect("template text");
+    std::fs::write(&template, stored.replace("model.c", "modelXc")).expect("break template");
+    let stdout = build_counter(dir.path(), &dir.path().join("fifth"), &opts)
+        .expect("a configured rebuild replaces the failed template build");
+    assert_eq!(stdout, EXPECTED_STDOUT);
+    assert!(entries[0].join("rejected").is_file(), "template rejected");
+    let stdout = build_counter(dir.path(), &dir.path().join("sixth"), &opts).expect("model runs");
+    assert_eq!(stdout, EXPECTED_STDOUT);
+    let text = std::fs::read_to_string(&record).expect("timings written");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        field(lines[5], "template").as_deref(),
+        Some("failed-build"),
+        "{text}"
+    );
+    assert_eq!(field(lines[6], "template"), None, "{text}");
+    assert!(field(lines[6], "configure_ms").is_some(), "{text}");
+}
+
 /// A seed that breaks configuration is not trusted again: the build retries
 /// from scratch without it, succeeds, and the key is marked rejected so later
 /// fresh trees configure unseeded.
