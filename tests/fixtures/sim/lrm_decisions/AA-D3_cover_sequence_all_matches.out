@@ -1,0 +1,3 @@
+sequence match t=2
+sequence match t=3
+sequence matches=2 property successes=1

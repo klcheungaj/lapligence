@@ -55,7 +55,11 @@ fn render_with_frame(
                     )?;
                 }
             }
+            // SV 9.7 / 9.6.2: a named block forming the whole branch has no
+            // statement to resume at after `disable`, so the branch ends KILLED.
+            frame.terminal_activation = matches!(body.as_slice(), [IrStmt::ActivationScope { .. }]);
             frame.block(body)?;
+            frame.terminal_activation = false;
             frame.line("goto _llg_return;");
             frame.line("_llg_return: ;");
             frame.line("llg_value_scopes_end_since(_llg_frame_base);");

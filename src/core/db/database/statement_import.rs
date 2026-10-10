@@ -41,11 +41,13 @@ pub(super) fn statement_from_slang(
         SEMANTIC_STMT_CONCURRENT_ASSERT
         | SEMANTIC_STMT_CONCURRENT_ASSUME
         | SEMANTIC_STMT_CONCURRENT_COVER
+        | SEMANTIC_STMT_CONCURRENT_COVER_SEQUENCE
         | SEMANTIC_STMT_CONCURRENT_EXPECT => StmtKind::ConcurrentAssertion {
             kind: match node.subkind {
                 SEMANTIC_STMT_CONCURRENT_ASSERT => ConcurrentAssertionKind::Assert,
                 SEMANTIC_STMT_CONCURRENT_ASSUME => ConcurrentAssertionKind::Assume,
                 SEMANTIC_STMT_CONCURRENT_COVER => ConcurrentAssertionKind::Cover,
+                SEMANTIC_STMT_CONCURRENT_COVER_SEQUENCE => ConcurrentAssertionKind::CoverSequence,
                 SEMANTIC_STMT_CONCURRENT_EXPECT => ConcurrentAssertionKind::Expect,
                 _ => unreachable!("concurrent assertion subkind was prevalidated"),
             },

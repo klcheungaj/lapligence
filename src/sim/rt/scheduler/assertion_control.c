@@ -419,6 +419,7 @@ int llg_assertion_expect_start(uint64_t identity) {
         return assertion_control_failure("expect has no unique inactive assertion instance");
     free_assertion_attempts(assertion);
     assertion->expect_active = 1;
+    assertion->expect_started = 0;
     assertion->edge_pending = 0;
     assertion->sequence_cycle = 0;
     return 1;

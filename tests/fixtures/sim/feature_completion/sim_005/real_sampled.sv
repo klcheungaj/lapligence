@@ -1,6 +1,8 @@
-// SIM-005: sampled-value functions keep real samples numeric (IEEE 1800-2009
-// 16.9.3): $past returns the exact sampled real, and $stable/$changed compare
-// samples with real equality, so -0.0 equals 0.0 and NaN never equals itself.
+// SIM-005: $sampled keeps real samples numeric (IEEE 1800-2009 16.9.3). The
+// other sampled value functions reject real operands (16.6.1,
+// SystemVerilog-1800-2009.txt L21575-21576: "The following types are not
+// allowed: — Noninteger types (shortreal, real, and realtime)"); see the
+// sim_035 negative fixtures.
 module tb;
   real r = 1.25;
   shortreal sh = shortreal'(0.5);
@@ -10,12 +12,8 @@ module tb;
   always #5 clk = ~clk;
 
   always @(posedge clk)
-    if ($sampled(r) != $sampled(r))
-      $display("%0d nan past_nan=%0d %0d %0d", $time, $past(r) != $past(r), $stable(r),
-               $changed(r));
-    else
-      $display("%0d %.2f %.2f %0d %0d", $time, $sampled(r), $past(r), $stable(r),
-               $changed(r));
+    if ($sampled(r) != $sampled(r)) $display("%0d nan", $time);
+    else $display("%0d %.2f", $time, $sampled(r));
 
   initial begin
     r = 2.5;

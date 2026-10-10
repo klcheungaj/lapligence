@@ -286,6 +286,13 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
     if !model.sampled_domains().is_empty() {
         return Err("sampled-value histories require the owned model emitter".to_owned());
     }
+    if model
+        .assertions()
+        .iter()
+        .any(|assertion| assertion.clock_gate().is_some())
+    {
+        return Err("`iff`-gated assertion clocks require the owned model emitter".to_owned());
+    }
     for (index, assertion) in model.assertions().iter().enumerate() {
         let clock = model.signal(assertion.clock_signal()).c_name();
         let disable = assertion
@@ -314,6 +321,14 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
             IrConcurrentAssertionKind::Assert => "LLG_ASSERTION_ASSERT",
             IrConcurrentAssertionKind::Assume => "LLG_ASSERTION_ASSUME",
             IrConcurrentAssertionKind::Cover => "LLG_ASSERTION_COVER",
+            // A predicate-registered sequence has at most one match per
+            // attempt, so only the sequence engine needs the match count.
+            IrConcurrentAssertionKind::CoverSequence
+                if assertion.consequent_sequence().is_some() =>
+            {
+                "LLG_ASSERTION_COVER_SEQUENCE"
+            }
+            IrConcurrentAssertionKind::CoverSequence => "LLG_ASSERTION_COVER",
             IrConcurrentAssertionKind::Expect => "LLG_ASSERTION_EXPECT",
         };
         let edge = if assertion.posedge() {

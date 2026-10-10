@@ -19,6 +19,56 @@ static void sequence_thread_release(void) {
     if (g.sequence_threads) g.sequence_threads--;
 }
 
+/* Match multiplicity arithmetic. Counts grow with the number of distinct ways
+ * a sequence matches, which can be exponential in its length; overflow is a
+ * reported execution error, never a silently wrong count. */
+static void sequence_mult_overflow(void) {
+    const llg_concurrent_assertion_t* assertion = g.sequence_current;
+    if (g.finish) return;
+    fprintf(stderr,
+            "llg: sequence match multiplicity overflow at time %llu (concurrent assertion %s at %s)\n",
+            (unsigned long long)g.now,
+            assertion && assertion->label && assertion->label[0] ? assertion->label : "<unnamed>",
+            assertion && assertion->location ? assertion->location : "<unknown>");
+    llg_last_failure = 1;
+    g.finish = 1;
+}
+
+static uint64_t sequence_mult_add(uint64_t a, uint64_t b) {
+    if (a > UINT64_MAX - b) {
+        sequence_mult_overflow();
+        return UINT64_MAX;
+    }
+    return a + b;
+}
+
+static uint64_t sequence_mult_mul(uint64_t a, uint64_t b) {
+    if (a != 0 && b > UINT64_MAX / a) {
+        sequence_mult_overflow();
+        return UINT64_MAX;
+    }
+    return a * b;
+}
+
+/* Work that runs once per match (match items, cover pass statements) is
+ * enumerated, so it stays under the thread budget like live threads do. */
+static int sequence_mult_enumerable(uint64_t mult) {
+    if (mult <= g.sequence_thread_limit) return 1;
+    const llg_concurrent_assertion_t* assertion = g.sequence_current;
+    if (!g.finish) {
+        fprintf(stderr,
+                "llg: sequence thread budget exhausted: %llu matches must each run match items or"
+                " a pass statement at time %llu (concurrent assertion %s at %s); raise"
+                " LLG_SEQUENCE_THREAD_LIMIT\n",
+                (unsigned long long)mult, (unsigned long long)g.now,
+                assertion && assertion->label && assertion->label[0] ? assertion->label : "<unnamed>",
+                assertion && assertion->location ? assertion->location : "<unknown>");
+        llg_last_failure = 1;
+        g.finish = 1;
+    }
+    return 0;
+}
+
 static llg_sequence_scope_t* sequence_scope_alloc(void) {
     llg_sequence_scope_t* scope = g.sequence_scope_pool;
     if (!scope) return llg_checked_calloc(1, sizeof(*scope), "sequence frame");
@@ -88,6 +138,11 @@ static void free_sequence_pools(void) {
         llg_sequence_attempt_t* next = g.sequence_attempt_pool->next;
         free(g.sequence_attempt_pool);
         g.sequence_attempt_pool = next;
+    }
+    while (g.assertion_eval_pool) {
+        llg_assertion_eval_t* next = g.assertion_eval_pool->next_free;
+        free(g.assertion_eval_pool);
+        g.assertion_eval_pool = next;
     }
     while (g.assertion_clock_event_pool) {
         llg_assertion_clock_event_t* next = g.assertion_clock_event_pool->next;
@@ -271,11 +326,115 @@ static void sequence_token_push(const llg_sequence_graph_t* graph,
             old->checked = 1;
             old->last_order = token->last_order;
         }
+        // Equal threads are distinct paths with one future: count them.
+        old->mult = sequence_mult_add(old->mult, token->mult);
         sequence_token_free(token);
         return;
     }
     token->next = *list;
     *list = token;
+}
+
+static uint64_t sequence_work_key(const uint32_t* rank, const llg_sequence_token_t* token) {
+    return ((uint64_t)rank[token->state] << 1) | (token->transition != UINT32_MAX);
+}
+
+/* Same-step work is kept in rank order: a state expands only after every
+ * zero-delay path into it has arrived and merged, so its multiplicity is
+ * complete. Equal pending threads merge as in sequence_token_push. */
+static void sequence_work_push(const llg_sequence_graph_t* graph, const uint32_t* rank,
+                               llg_sequence_token_t** list, llg_sequence_token_t* token) {
+    uint64_t key = sequence_work_key(rank, token);
+    llg_sequence_token_t** link = list;
+    while (*link && sequence_work_key(rank, *link) < key) link = &(*link)->next;
+    for (llg_sequence_token_t* old = *link; old && sequence_work_key(rank, old) == key;
+         old = old->next) {
+        if (!sequence_token_same(graph, old, token)) continue;
+        if (token->checked && (!old->checked || old->last_order < token->last_order)) {
+            old->checked = 1;
+            old->last_order = token->last_order;
+        }
+        old->mult = sequence_mult_add(old->mult, token->mult);
+        sequence_token_free(token);
+        return;
+    }
+    token->next = *link;
+    *link = token;
+}
+
+/* Rank states in topological order of the zero-delay transitions (and the
+ * join fork edge to the right operand start), so one step can process them
+ * in an order where all same-step arrivals precede an expansion. A state on a
+ * zero-delay cycle, if a graph ever had one, keeps index order; a path that
+ * closes such a cycle is then dropped as an already processed duplicate. */
+static uint32_t* sequence_graph_rank(const llg_sequence_graph_t* graph) {
+    uint32_t states = graph->states;
+    uint32_t edges = 0;
+    for (uint32_t i = 0; i < graph->transition_count; i++) {
+        const llg_sequence_transition_t* t = &graph->transitions[i];
+        if (t->min_delay == 0) edges++;
+        if (t->enter_join) edges++;
+    }
+    uint32_t* rank = llg_checked_calloc(states, sizeof(*rank), "sequence state rank");
+    uint32_t* indegree = llg_checked_calloc(states, sizeof(*indegree), "sequence rank scratch");
+    uint32_t* first = llg_checked_calloc((size_t)states + 1, sizeof(*first), "sequence rank scratch");
+    uint32_t* target = llg_checked_calloc(edges ? edges : 1, sizeof(*target), "sequence rank scratch");
+    uint32_t* queue = llg_checked_calloc(states, sizeof(*queue), "sequence rank scratch");
+    uint8_t* done = llg_checked_calloc(states, 1, "sequence rank scratch");
+    for (uint32_t i = 0; i < graph->transition_count; i++) {
+        const llg_sequence_transition_t* t = &graph->transitions[i];
+        if (t->min_delay == 0) first[t->from + 1]++;
+        if (t->enter_join) first[t->to + 1]++;
+    }
+    for (uint32_t s = 0; s < states; s++) first[s + 1] += first[s];
+    uint32_t* fill = llg_checked_calloc((size_t)states + 1, sizeof(*fill), "sequence rank scratch");
+    memcpy(fill, first, ((size_t)states + 1) * sizeof(*fill));
+    for (uint32_t i = 0; i < graph->transition_count; i++) {
+        const llg_sequence_transition_t* t = &graph->transitions[i];
+        if (t->min_delay == 0) {
+            target[fill[t->from]++] = t->to;
+            indegree[t->to]++;
+        }
+        if (t->enter_join) {
+            uint32_t right = graph->joins[t->enter_join - 1].right_start;
+            target[fill[t->to]++] = right;
+            indegree[right]++;
+        }
+    }
+    uint32_t next_rank = 0, head = 0, tail = 0, scan = 0;
+    while (next_rank < states) {
+        if (head == tail) {
+            // Seed with every source; on a cycle, take the lowest remaining
+            // state as if its incoming cycle edge were absent.
+            for (uint32_t s = 0; s < states; s++)
+                if (!done[s] && indegree[s] == 0) { done[s] = 1; queue[tail++] = s; }
+            if (head == tail) {
+                while (done[scan]) scan++;
+                done[scan] = 1;
+                queue[tail++] = scan;
+            }
+        }
+        uint32_t s = queue[head++];
+        rank[s] = next_rank++;
+        for (uint32_t e = first[s]; e < first[s + 1]; e++) {
+            uint32_t to = target[e];
+            if (indegree[to]) indegree[to]--;
+            if (!done[to] && indegree[to] == 0) { done[to] = 1; queue[tail++] = to; }
+        }
+    }
+    free(fill);
+    free(done);
+    free(queue);
+    free(target);
+    free(first);
+    free(indegree);
+    return rank;
+}
+
+static const uint32_t* sequence_rank_for(const llg_concurrent_assertion_t* assertion,
+                                         const llg_sequence_graph_t* graph) {
+    return graph == assertion->antecedent_sequence ? assertion->antecedent_rank
+                                                   : assertion->consequent_rank;
 }
 
 static void sequence_endpoints_free(llg_sequence_endpoint_t* endpoint) {
@@ -297,6 +456,7 @@ static void sequence_endpoint_add(llg_sequence_attempt_t* attempt,
     endpoint->tick = token->entered_tick;
     endpoint->order = token->entered_order;
     endpoint->empty = empty;
+    endpoint->mult = token->mult;
     endpoint->next = attempt->endpoints;
     attempt->endpoints = endpoint;
     if (!empty) attempt->matched = 1;
@@ -313,6 +473,30 @@ static void sequence_match_items(const llg_sequence_graph_t* graph,
         return;
     }
     for (uint32_t index = 0; index < count && !g.finish; index++) graph->match(start + index, attempt);
+}
+
+/* Match items run once per match (16.10, 16.11): a thread standing for `mult`
+ * paths runs them `mult` times, each time on the thread's locals as they were
+ * before the items. The paths agree on their locals, so the last run leaves
+ * the locals every path has afterwards. */
+static void sequence_match_items_per_path(const llg_sequence_graph_t* graph,
+                                          llg_sequence_attempt_t* attempt,
+                                          llg_sequence_token_t* thread,
+                                          const llg_sequence_transition_t* edge) {
+    if (edge->match_count == 0) return;
+    if (thread->mult <= 1) {
+        sequence_match_items(graph, attempt, edge->match_start, edge->match_count);
+        return;
+    }
+    if (!sequence_mult_enumerable(thread->mult)) return;
+    sv4_t* before = sequence_locals_clone(graph, thread->locals);
+    for (uint64_t path = 0; path < thread->mult && !g.finish; path++) {
+        if (path > 0)
+            for (uint32_t i = 0; i < graph->local_count; i++) sv4_copy(&thread->locals[i], &before[i]);
+        sequence_match_items(graph, attempt, edge->match_start, edge->match_count);
+    }
+    if (before) sv4_destroy_array(before, graph->local_count);
+    free(before);
 }
 
 static void sequence_token_anchor(llg_sequence_token_t* token,
@@ -436,8 +620,11 @@ static int sequence_start(llg_sequence_attempt_t* attempt,
     // inherited declaration cells have already been copied from its endpoint.
     if (attempt->graph->init) attempt->graph->init(attempt);
     if (g.finish) return 0;
+    // A consequent started by an antecedent endpoint is one evaluation per
+    // antecedent match it stands for (16.13.6).
     llg_sequence_token_t seed = { .state = attempt->graph->start,
-        .transition = UINT32_MAX, .locals = attempt->locals };
+        .transition = UINT32_MAX, .locals = attempt->locals,
+        .mult = attempt->launch_pending ? attempt->launch.mult : 1 };
     sequence_token_anchor(&seed, &event);
     if (attempt->graph->admits_empty) sequence_endpoint_add(attempt, &seed, 1);
     attempt->tokens = sequence_token_copy(attempt->graph, &seed);
@@ -467,13 +654,23 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
     attempt->endpoints = NULL;
     *accepted = 0;
     if (!attempt->started && !sequence_start(attempt, assertion, &current)) return !g.finish;
-    llg_sequence_token_t* work = attempt->tokens;
+    const uint32_t* rank = sequence_rank_for(assertion, graph);
+    // Threads carried from earlier steps are distinct and run first; threads
+    // created in this step follow in rank order (see sequence_work_push).
+    llg_sequence_token_t* carried = attempt->tokens;
+    llg_sequence_token_t* work = NULL;
     llg_sequence_token_t* processed = NULL;
     llg_sequence_token_t* next = NULL;
     attempt->tokens = NULL;
-    while (work && !g.finish) {
-        llg_sequence_token_t* token = work;
-        work = token->next;
+    while ((carried || work) && !g.finish) {
+        llg_sequence_token_t* token;
+        if (carried) {
+            token = carried;
+            carried = token->next;
+        } else {
+            token = work;
+            work = token->next;
+        }
         token->next = NULL;
         int duplicate = 0;
         for (llg_sequence_token_t* old = processed; old; old = old->next)
@@ -487,7 +684,7 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
                 if (graph->transitions[i].from != token->state) continue;
                 llg_sequence_token_t* edge = sequence_token_copy(graph, token);
                 edge->transition = i;
-                sequence_token_push(graph, &work, edge);
+                sequence_work_push(graph, rank, &work, edge);
             }
             continue;
         }
@@ -544,18 +741,25 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
                 int other = !side;
                 llg_sequence_mark_t mark = { .time = event.time, .tick = event.tick,
                     .clock = event.signal, .edge = event.edge };
+                if (!join->matched[side] || !sequence_mark_same(&join->last[side], &mark))
+                    join->at_last[side] = 0;
                 join->matched[side] = 1;
                 join->last[side] = mark;
-                int pair = plan->kind == LLG_SEQUENCE_JOIN_AND
-                    ? join->matched[other]
-                    : join->matched[other] && sequence_mark_same(&join->last[other], &mark);
-                // One continuation per join endpoint tick: the other side's
-                // threads ending on the same tick would only duplicate it.
-                if (!pair || (join->emitted && sequence_mark_same(&join->emitted_at, &mark))) {
+                join->at_last[side] = sequence_mult_add(join->at_last[side], destination->mult);
+                join->total[side] = sequence_mult_add(join->total[side], destination->mult);
+                // Every operand match pairs with every match of the other
+                // operand (16.9.5: "Each match of the first operand sequence is
+                // combined with the single match of the second"). A pair is
+                // counted by whichever of its two matches arrives second, so
+                // matches ending on one tick are paired exactly once.
+                uint64_t partners = plan->kind == LLG_SEQUENCE_JOIN_AND
+                    ? join->total[other]
+                    : join->matched[other] && sequence_mark_same(&join->last[other], &mark)
+                        ? join->at_last[other] : 0;
+                if (partners == 0) {
                     matches = 0;
                 } else {
-                    join->emitted = 1;
-                    join->emitted_at = mark;
+                    destination->mult = sequence_mult_mul(destination->mult, partners);
                     destination->scope = frame->parent;
                     sequence_scope_retain(destination->scope);
                     sequence_scope_release(frame);
@@ -577,8 +781,12 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
                 join->refs = 2;
                 join->alive[0] = join->alive[1] = 1;
                 if (plan->kind == LLG_SEQUENCE_JOIN_AND) {
+                    // An empty operand match ends before the fork; it is one
+                    // match that every match of the other operand pairs with.
                     join->matched[0] = plan->left_empty;
                     join->matched[1] = plan->right_empty;
+                    join->total[0] = plan->left_empty;
+                    join->total[1] = plan->right_empty;
                 }
                 fork = sequence_token_copy(graph, destination);
                 llg_sequence_scope_t* left = sequence_scope_alloc();
@@ -603,15 +811,16 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
             scope->parent = destination->scope; // transfer the token's parent reference
             destination->scope = scope;
         }
-        if (matches) sequence_match_items(graph, attempt, edge->match_start, edge->match_count);
+        if (matches) sequence_match_items_per_path(graph, attempt, destination, edge);
         attempt->locals = NULL;
-        if (matches && !g.finish) sequence_token_push(graph, &work, destination);
+        if (matches && !g.finish) sequence_work_push(graph, rank, &work, destination);
         else sequence_token_free(destination);
         if (fork) {
-            if (!g.finish) sequence_token_push(graph, &work, fork);
+            if (!g.finish) sequence_work_push(graph, rank, &work, fork);
             else sequence_token_free(fork);
         }
     }
+    sequence_tokens_free(carried);
     sequence_tokens_free(work);
     sequence_tokens_free(processed);
     // Dropping a doomed thread can end a join side and doom further
@@ -642,8 +851,32 @@ static void sequence_attempt_append(llg_sequence_attempt_t** head,
     *tail = attempt;
 }
 
+static llg_assertion_eval_t* assertion_eval_new(void) {
+    llg_assertion_eval_t* eval = g.assertion_eval_pool;
+    if (eval) {
+        g.assertion_eval_pool = eval->next_free;
+        memset(eval, 0, sizeof(*eval));
+    } else {
+        eval = llg_checked_calloc(1, sizeof(*eval), "assertion evaluation attempt");
+    }
+    eval->antecedent_live = 1;
+    return eval;
+}
+
+static void assertion_eval_release(llg_sequence_attempt_t* attempt) {
+    llg_assertion_eval_t* eval = attempt->eval;
+    if (!eval) return;
+    attempt->eval = NULL;
+    if (attempt->eval_owner) eval->antecedent_live = 0;
+    else if (eval->pending) eval->pending--;
+    if (eval->antecedent_live || eval->pending) return;
+    eval->next_free = g.assertion_eval_pool;
+    g.assertion_eval_pool = eval;
+}
+
 static void sequence_attempt_discard(llg_sequence_attempt_t* attempt) {
     if (!attempt) return;
+    assertion_eval_release(attempt);
     sequence_tokens_free(attempt->tokens);
     sequence_endpoints_free(attempt->endpoints);
     if (attempt->locals) sv4_destroy_array(attempt->locals, attempt->graph->local_count);
@@ -675,6 +908,10 @@ static int sequence_spawn_consequents(llg_concurrent_assertion_t* assertion,
             antecedent->matched = 1;
             llg_sequence_attempt_t* consequent = sequence_attempt_new(
                 assertion->consequent_sequence, cycle, antecedent->graph, endpoint->locals);
+            if (antecedent->eval) {
+                consequent->eval = antecedent->eval;
+                antecedent->eval->pending++;
+            }
             consequent->launch_pending = 1;
             consequent->launch = *endpoint;
             consequent->launch.next = NULL;

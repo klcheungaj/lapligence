@@ -174,9 +174,11 @@ typedef struct llg_sequence_join_instance {
     size_t refs;
     uint8_t alive[2];
     uint8_t matched[2];
-    uint8_t emitted;
     llg_sequence_mark_t last[2];
-    llg_sequence_mark_t emitted_at;
+    /* Match multiplicity per side: every match so far (`and` pairs a new
+     * match with all of them) and the matches at `last` (`intersect`). */
+    uint64_t total[2];
+    uint64_t at_last[2];
 } llg_sequence_join_instance_t;
 
 /* A dynamic frame on a thread's chain: a first_match invocation scope
@@ -201,6 +203,8 @@ typedef struct llg_sequence_endpoint {
     int edge;
     uint64_t time, order, tick;
     int empty;
+    /* Number of distinct matches this endpoint stands for (16.9.5-16.9.8). */
+    uint64_t mult;
 } llg_sequence_endpoint_t;
 
 typedef struct llg_sequence_token {
@@ -216,14 +220,33 @@ typedef struct llg_sequence_token {
     uint64_t entered_tick;
     sv4_t* entered_clock;
     int entered_edge;
+    /* Number of distinct paths (ways of matching) merged into this thread.
+     * Paths that no match item or local variable distinguishes are counted,
+     * not enumerated, so `(a or a)[*n]` stays one thread. */
+    uint64_t mult;
     /* A sequence thread carries its own local assertion state.  Keeping this
      * on the token prevents `or`/repetition joins from merging distinct
      * match-item histories merely because their automaton state is equal. */
     sv4_t* locals;
 } llg_sequence_token_t;
 
+/* One evaluation attempt of an implication `R |-> P` / `R |=> P` (IEEE
+ * 1800-2009 16.13.6). The antecedent attempt and every consequent started by
+ * one of its matches share it, so the attempt reports exactly one result:
+ * a failure as soon as one consequent fails, a success once the antecedent
+ * can match no more and every started consequent has succeeded. */
+typedef struct llg_assertion_eval {
+    struct llg_assertion_eval* next_free;
+    size_t pending; /* consequent attempts not yet resolved */
+    uint8_t antecedent_live;
+    uint8_t decided; /* the attempt's single result has been reported */
+} llg_assertion_eval_t;
+
 typedef struct llg_sequence_attempt {
     struct llg_sequence_attempt* next;
+    /* Shared evaluation attempt of an implication, NULL otherwise. */
+    llg_assertion_eval_t* eval;
+    int eval_owner; /* this is the antecedent attempt of `eval` */
     const llg_sequence_graph_t* graph;
     llg_sequence_token_t* tokens;
     /* Diagnostic creation ordinal; launch uses the endpoint's clock/time. */
@@ -255,6 +278,11 @@ typedef struct llg_concurrent_assertion {
     struct llg_concurrent_assertion* next;
     sv4_t* clock;
     int edge;
+    /* `iff` condition of the leading clocking event, or NULL. A gated clock
+     * counts its own ticks: an edge with the condition false is no tick, so
+     * `##n` delays count only gated edges. */
+    llg_sampled_gate_fn clock_gate;
+    uint64_t gated_ticks;
     sv4_t* disable;
     llg_concurrent_assertion_predicate_fn antecedent;
     llg_concurrent_assertion_predicate_fn consequent;
@@ -263,11 +291,15 @@ typedef struct llg_concurrent_assertion {
     const llg_co_desc_t* fail_desc;
     void* data;
     int kind;
+    /* `cover sequence`: report every match, never a failure. */
+    int cover_sequence;
     int overlapped;
     int abort_reject;
     int abort_sync;
     int enabled;
     int expect_active;
+    /* An armed expect starts exactly one attempt (IEEE 1800-2009 16.18). */
+    int expect_started;
     uint64_t identity;
     const char* label;
     const char* location;
@@ -277,6 +309,10 @@ typedef struct llg_concurrent_assertion {
     llg_assertion_attempt_t* attempts_tail;
     const llg_sequence_graph_t* antecedent_sequence;
     const llg_sequence_graph_t* consequent_sequence;
+    /* Per-state processing rank of each graph (zero-delay topological
+     * order), so every path into a state is merged before it expands. */
+    uint32_t* antecedent_rank;
+    uint32_t* consequent_rank;
     llg_sequence_attempt_t* sequence_antecedents;
     llg_sequence_attempt_t* sequence_antecedents_tail;
     llg_sequence_attempt_t* sequence_consequents;
@@ -441,6 +477,7 @@ typedef struct {
     llg_sequence_join_instance_t* sequence_join_pool;
     llg_sequence_endpoint_t* sequence_endpoint_pool;
     llg_sequence_attempt_t* sequence_attempt_pool;
+    llg_assertion_eval_t* assertion_eval_pool;
     llg_assertion_clock_event_t* assertion_clock_event_pool;
     llg_deferred_trigger_t* deferred_triggers;
     llg_deferred_trigger_t* deferred_trigger_tail;

@@ -176,6 +176,8 @@ static void free_assertions(void) {
     while (g.assertions) {
         llg_concurrent_assertion_t* next = g.assertions->next;
         free_assertion_attempts(g.assertions);
+        free(g.assertions->antecedent_rank);
+        free(g.assertions->consequent_rank);
         free(g.assertions);
         g.assertions = next;
     }

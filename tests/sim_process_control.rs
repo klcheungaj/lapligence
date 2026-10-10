@@ -11,7 +11,7 @@ fn process_handles_preserve_waits_identity_and_terminal_status() {
     sim_cli::run_case(
         "process_control",
         "control",
-        "identity=1 child_status=1\ncontrol waiting=2 suspended=3 triggered=3 done=0 repeated=0 stage=1\n",
+        "identity=1 child_status=1\ncontrol waiting=2 suspended=3 triggered=3 resumed=2 done=0 repeated=0 stage=1\n",
         "",
         &[],
     );

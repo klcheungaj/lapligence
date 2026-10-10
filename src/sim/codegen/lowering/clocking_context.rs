@@ -518,7 +518,10 @@ impl<'a> Codegen<'a> {
                 let event_specs = ctx.lower_event_specs(&block_info.event_specs)?;
                 (event_specs, std::mem::take(&mut ctx.pre_fns))
             };
-            let mut body = vec![IrStmt::WaitEvents { specs: event_specs }];
+            let mut body = vec![IrStmt::WaitEvents {
+                specs: event_specs,
+                refresh: false,
+            }];
             for var in self.node(block).children.iter().copied() {
                 let Some(var_info) = self.db.clocking_var(var) else {
                     continue;

@@ -223,7 +223,11 @@ impl<'a> Codegen<'a> {
                     // process. Only a context import can reach SystemVerilog
                     // storage (through exported subroutines, SV 35.5.3).
                     needs_process(process, "foreign (DPI) functions have no effect summary");
-                    if import.context {
+                    // Without a DPI-C export there is no SystemVerilog
+                    // subroutine the foreign code can call, so it cannot
+                    // write SystemVerilog storage (SV 4.4.2.9 forbids only
+                    // writes in Postponed).
+                    if import.context && self.db.has_dpi_exports() {
                         external.get_or_insert_with(|| {
                             format!(
                                 "context import `{name}` in `{scope_path}` may write SystemVerilog storage through exported subroutines"

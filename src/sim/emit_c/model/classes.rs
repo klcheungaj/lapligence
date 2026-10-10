@@ -68,6 +68,8 @@ static int llg_class_gc_interior(const void* handle, const llg_gc_tracer_t* trac
     for (size_t i = 0; i < object->count; ++i) {
         const llg_class_field_t* field = &object->fields[i];
         if (llg_gc_interior_hit(tracer, &field->value)) return 1;
+        if (field->kind == 2 && field->value.string.dependency &&
+            llg_gc_interior_hit(tracer, field->value.string.dependency)) return 1;
         if (field->kind == 4 && llg_gc_interior_hit(tracer, field->value.handle)) return 1;
     }
     return 0;
@@ -81,7 +83,15 @@ static void llg_class_gc_finalize(void* handle) {
             llg_clocking_forget_signal(&object->fields[i].value.packed);
             sv4_destroy(&object->fields[i].value.packed);
         }
-        else if (object->fields[i].kind == 2) llg_string_destroy(&object->fields[i].value.string);
+        else if (object->fields[i].kind == 2) {
+            sv4_t* dependency = object->fields[i].value.string.dependency;
+            llg_string_destroy(&object->fields[i].value.string);
+            if (dependency) {
+                llg_clocking_forget_signal(dependency);
+                sv4_destroy(dependency);
+                free(dependency);
+            }
+        }
         else if (object->fields[i].kind == 4) { object->fields[i].drop(object->fields[i].value.handle); free(object->fields[i].value.handle); }
     }
     if (object->handle_dependency) {
@@ -158,6 +168,28 @@ static sv4_t* llg_class_handle_dependency(void* handle) {
         *object->handle_dependency = empty;
     }
     return object->handle_dependency;
+}
+/* A string property keeps its marker in the string itself, so every changed
+ * store (llg_string_move) toggles it; allocated when a wait first observes
+ * the property and released with the object. */
+static sv4_t* llg_class_string_dependency(void* handle, uint32_t expected, size_t index) {
+    llg_class_field_t* field = llg_class_field_lookup(handle, expected, index);
+    if (!field || field->kind != 2) return llg_dependency_or_never(NULL);
+    llg_string_t* value = &field->value.string;
+    if (!value->dependency) {
+        sv4_t empty = SV4_EMPTY;
+        value->dependency = (sv4_t*)malloc(sizeof *value->dependency);
+        if (!value->dependency) abort();
+        *value->dependency = empty;
+        value->notify = llg_dependency_changed;
+    }
+    return value->dependency;
+}
+/* A handle property written in place (task output copy-out, mailbox
+ * retrieval, task-form $cast) publishes the same change after the store. */
+static void llg_class_handle_published(void* handle) {
+    llg_class_object_t* object = (llg_class_object_t*)handle;
+    if (object && object->handle_dependency) llg_dependency_changed(object->handle_dependency);
 }
 static void llg_class_handle_store(void* handle, uint32_t expected, size_t index, void* value) {
     void** slot = &llg_class_field(handle, expected, index, 3)->value.handle;

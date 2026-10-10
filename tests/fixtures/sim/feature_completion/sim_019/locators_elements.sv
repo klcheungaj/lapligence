@@ -58,7 +58,9 @@ module tb;
     $display("min %s", sr[0]);
     sr = s.max() with (item.len());
     $display("max-len %0d %s", sr.size(), sr[0]);
+    // 7.12.1: unique's result order is unrelated to the receiver's; sort it.
     sr = s.unique();
+    sr.sort();
     $display("unique %0d %s %s %s %s", sr.size(), sr[0], sr[1], sr[2], sr[3]);
 
     r = new[5];

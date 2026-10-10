@@ -24,6 +24,16 @@ controls. `nested_out_of_scope.sv` checks that the local definition cannot be
 instantiated from outside its parent. `nested_declaration_in_generate.sv`
 checks the Annex A.1.4/A.4.2 grammar boundary: generated instances are legal,
 but a module declaration directly in a generate block is not a generate item.
+`implicit_nested.sv` checks implicit instantiation: a portless nested module
+or program that is not explicitly instantiated runs as one instance named after
+its declaration, and a nested module with ports is ignored (§23.4,
+`SystemVerilog-1800-2009.txt` L41758-41760: "Nested modules with no ports that
+are not explicitly instantiated shall be implicitly instantiated once with an
+instance name identical to the module name. Otherwise, if they have ports and
+are not explicitly instantiated, they are ignored."; §24.3, L43208-43210:
+"Nested programs with no ports or top-level programs that are not explicitly
+instantiated are implicitly instantiated once."). The owned model test also
+checks that the import has no link cycle.
 `extern_2001.sv` and `nested_2001.sv` keep the SystemVerilog-only forms
 separate from the 2009 controls.
 

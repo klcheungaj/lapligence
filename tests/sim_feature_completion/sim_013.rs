@@ -47,7 +47,15 @@ fn handle_formals_and_class_held_interfaces_compose() {
 #[test]
 fn always_comb_and_at_star_keep_distinct_sensitivity() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_013/comb_sensitivity.out");
-    sim_cli::run_case(SUITE, "comb_sensitivity", expected, "", &[]);
+    // The always_comb that reads only `h.x` has an empty sensitivity list
+    // (SV 9.2.2.2.1 adds nothing for class references), which llg reports.
+    sim_cli::run_case(
+        SUITE,
+        "comb_sensitivity",
+        expected,
+        "",
+        &["combinational always process in `tb` reads no signals; evaluating once at time 0"],
+    );
     sim_cli::run_case_backend_parity(SUITE, "comb_sensitivity", expected, &[], &[]);
 }
 
@@ -67,13 +75,8 @@ fn helper_events_wait_in_their_own_activation() {
     sim_cli::run_case_after_db_drop(SUITE, "helper_activations", expected);
 }
 
-#[test]
-fn foreign_helpers_run_in_the_waiting_process() {
-    if !cfg!(unix) {
-        eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
-        return;
-    }
-    let directory = sim_harness::TempDir::new("sim013-dpi").expect("temporary directory");
+/// Build `foreign_helpers.c` into a shared library in `directory`.
+fn foreign_library(directory: &sim_harness::TempDir) -> String {
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/feature_completion/sim_013/foreign_helpers.c");
     let library = directory.path().join("libsim013_foreign.so");
@@ -94,7 +97,17 @@ fn foreign_helpers_run_in_the_waiting_process() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let library = library.to_string_lossy();
+    library.to_string_lossy().into_owned()
+}
+
+#[test]
+fn foreign_helpers_run_in_the_waiting_process() {
+    if !cfg!(unix) {
+        eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
+        return;
+    }
+    let directory = sim_harness::TempDir::new("sim013-dpi").expect("temporary directory");
+    let library = foreign_library(&directory);
     let expected = include_str!("../fixtures/sim/feature_completion/sim_013/foreign_helpers.out");
     sim_cli::run_case_with_args(
         SUITE,
@@ -107,6 +120,26 @@ fn foreign_helpers_run_in_the_waiting_process() {
     sim_cli::run_case_backend_parity(
         SUITE,
         "foreign_helpers",
+        expected,
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
+#[test]
+fn context_import_in_strobe_without_exports() {
+    // SV 4.4.2.9 forbids writes in Postponed; without a DPI export the
+    // context import has no SystemVerilog subroutine to write through.
+    if !cfg!(unix) {
+        eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
+        return;
+    }
+    let directory = sim_harness::TempDir::new("sim013-ctx").expect("temporary directory");
+    let library = foreign_library(&directory);
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_013/context_strobe.out");
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "context_strobe",
         expected,
         &["--dpi-lib", &library],
         &[],
@@ -204,8 +237,9 @@ fn neg_output_helper() {
 
 #[test]
 fn neg_context_strobe() {
-    // Language rule (SV 4.4.2.9 with 35.5.3): a context import may write
-    // through exports, which the read-only Postponed region forbids.
+    // Implementation restriction (SV 4.4.2.9 with 35.5.3): the design has a
+    // DPI export the context import may write through, and llg cannot see
+    // whether the foreign code does so in the read-only Postponed region.
     sim_cli::reject_case(
         SUITE,
         "neg_context_strobe",

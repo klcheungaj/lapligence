@@ -98,6 +98,21 @@ fn killed_receivers_and_senders_neither_lose_nor_duplicate_messages() {
     );
 }
 
+/// llg policy, not a conformance oracle: IEEE 1800-2009 9.7 L12632-12634
+/// terminates a process that is not blocked "at some unspecified time in the
+/// current time step", so a woken receiver may or may not take its message
+/// before the kill. llg returns the message to the head (see the readme).
+#[test]
+fn llg_policy_woken_receiver_kill_returns_its_message() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "policy_woken_kill",
+        include_str!("../fixtures/sim/feature_completion/sim_017/policy_woken_kill.out"),
+        &[],
+        &[],
+    );
+}
+
 #[test]
 fn woken_processes_reenter_the_mailbox() {
     sim_cli::run_case_backend_parity(

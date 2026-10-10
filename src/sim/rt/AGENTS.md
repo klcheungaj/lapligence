@@ -286,7 +286,21 @@ Opaque activation slots may hold event object identities, valid until model
 teardown, or a parent coroutine's event handle address for a synchronous join.
 Cancel joined children before releasing that parent frame. Detached event
 captures own handle copies and never borrow a parent's handle address.
-Waiters own snapshots/dependency lists. Packed edges use LSB, including 0→X/Z and
+Waiters own snapshots/dependency lists. A suspended process's event-control
+wait (`W_EVENTS*`, `W_EVENT`, `W_MIXED`, `W_EXPR`, and `W_DEPS` armed by
+`llg_arm_event_dependencies`) withholds occurrences (`wait_held_by_suspension`)
+while its snapshots stay current, so `resume()` resensitizes it (SV 9.7); wait
+conditions, delays and other blocking calls keep a pending wake. Semaphore
+and mailbox get/peek/put waiters are withdrawn from their FIFO on `suspend()`
+(`wait_queue_withdraw`) so keys, messages and space stay with other waiters,
+and `resume()` re-queues them at the tail and services the queue
+(`wait_queue_rejoin`); the registration and payload stay live for kill and
+teardown. A fork branch whose whole body is one named block exits it with
+`llg_activation_exit_terminal`; if a disable ended the block, `proc_complete`
+records `KILLED` instead of `FINISHED` (`disabled_whole`, SV 9.7). A
+process-evaluated plan marks its wait with `llg_wait_refresh_on_resume`, and a
+withheld occurrence wakes it on resume with `llg_wait_refreshed()` set so it
+re-arms its values without detecting a change. Packed edges use LSB, including 0→X/Z and
 X/Z→1 posedges (negedge mirrored); real changes compare IEEE bits, including signed
 zero and changed NaN payloads. `iff` executes at trigger. Event lists register
 atomically, not as sequential waits. Wake/disable/teardown unregister every event
@@ -430,13 +444,33 @@ later time; retain current-slot edge history for all consumers. Callback order i
 only a replay guard, never elapsed cross-clock time. Explicit action choice must
 not erase assertion failure accounting.
 
+An implication attempt (`R |-> P`) is one `llg_assertion_eval_t` shared by its
+antecedent attempt and every consequent a match of `R` starts; it reports one
+result (IEEE 1800-2009 16.13.6): failure when a consequent fails, success when
+`R` is exhausted and every consequent succeeded. Decided attempts discard their
+remaining threads; abort/disable paths report an attempt once. `cover sequence`
+registers as `LLG_ASSERTION_COVER_SEQUENCE` and reports every nonempty match
+(16.15.3). An armed `expect` starts exactly one attempt (16.18).
+`llg_assertion_gate_clock` attaches a leading clock's `iff` gate (current values
+at the clock write, 9.4.2.3); a gated-off edge appends no clock event, and the
+assertion counts gated ticks itself so `##n` delays skip gated-off edges.
+
 Sequence joins (`and`/`intersect`, and `throughout`/`within` reduced to
 `intersect`) are static graph tables: the enter edge forks one thread per
 operand with its own side frame on the scope chain; exit edges pair endpoints
 (intersect: same tick; and: the later tick, an empty-admitting operand counts as
-matched at the fork) and emit at most one continuation per tick. A side's
+one match at the fork) and continue with the arriving thread's multiplicity
+times its partner count, each pair counted by its later arrival. A side's
 liveness is its frame refcount; after every step prune threads whose join can no
 longer pair, to a fixed point, so impossible obligations fail instead of pending.
+Match multiplicity (IEEE 1800-2009 16.9.5-16.9.8): a token and an endpoint
+carry `mult`, the number of distinct paths they stand for; equal tokens merge
+by adding it. Same-step work runs in the per-graph zero-delay topological
+rank computed at registration, so a state expands only once all its
+same-step paths have merged. Ways of matching the empty word count once.
+Match items and `cover sequence` pass statements run once per path, which is
+enumerated only there and only within `LLG_SEQUENCE_THREAD_LIMIT`; an
+exhausted budget or a count above 2^64 - 1 is a reported error.
 Tokens, frames, joins, endpoints, attempts and assertion clock events are
 recycled through `g` free lists released by `llg_rt_cleanup`; keep steady-state
 stepping allocation-free. Live tokens plus attempts count against

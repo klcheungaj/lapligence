@@ -63,7 +63,7 @@ at 14 it is 6.
 
 | Clock | Ticks | Printed values at 14 |
 | --- | --- | --- |
-| `posedge a or negedge b` | 2, 4 | `$past` 1..3: 2 1 0; changed (6 against 2): 1; real `r` at 4: 2.50, at 2: 0.25, stable (Preponed 2.5 at 14 against 2.5): 1 |
+| `posedge a or negedge b` | 2, 4 | `$past` 1..3: 2 1 0; changed (6 against 2): 1 |
 | `posedge (a \| ~b)` | 2 (0 to 1; it stays 1 at 4 and 7) | 1 0 |
 | `@(c)` | 5 | 2 0 |
 | `edge a` | 2, 7 | 3 1 |
@@ -82,8 +82,8 @@ separately: at 16, ticks 12 and 10 give 5 4.
 
 ### `assertion_history` (A01, overlapping assertions and actions)
 
-`clk` rises at 5, 15, 25, 35, 45; each edge's NBA increments `v` and adds 0.5
-to `r`, so Preponed `v` is 0, 1, 2, 3, 4 and `r` 0.0, 0.5, 1.0, 1.5, 2.0. All
+`clk` rises at 5, 15, 25, 35, 45; each edge's NBA increments `v`, so Preponed
+`v` is 0, 1, 2, 3, 4. All
 `$past(v, ...)` calls in the five assertions and their actions share one
 history of depth 3.
 
@@ -94,8 +94,23 @@ history of depth 3.
   25's 2) = 1.
 - `a3`: `$past(v,3)` is 0 until 45, where it is tick 15's 1; the action prints
   `past3 = 1`, `past1 = 3`.
-- `a4`: `$changed(r)` compares 0.0 with the initial 0.0 at 5 and fails once.
 - `a5` is disabled while `rst` is 1 (until 12) and passes afterwards.
+
+### `event_gate_instant` (`$past` gate of a waiting-process clock)
+
+§16.9.3 (`SystemVerilog-1800-2009.txt` L22767-22768): "the particular time
+step is the kth strictly prior time step in which the event ev iff
+expression2 occurred"; §9.4.2.3 (L11988): the qualifier "is evaluated when a
+changes and not when enable changes". Each event below is raised while `g` is
+1 and `g` is cleared later in the same statement sequence, before the clock's
+waiting process can run.
+
+- `L` at 4: `posedge a` at 2 (g = 1 when `a` rises) is a tick of the event
+  list `posedge a or posedge b`, whose sample of `v` at 2 is 2. `posedge
+  (a & c)` has not occurred (c = 0), so it returns the initial 1. `L 2 1`.
+- `N` at 8: `->ev` at 6 and the rise of `a & c` at 6 (c set before g is
+  cleared) are both ticks; the sample of `v` at 6 is 5. `N 5 5`.
+- `G` at 10: `->ev` at 9 after `g = 1` ticks with the sample 7. `G 7`.
 
 ### Witnesses
 
@@ -111,7 +126,7 @@ history of depth 3.
 
 | Fixture | Rule | Diagnostic |
 | --- | --- | --- |
-| `neg_rose_real`, `neg_fell_shortreal` | §16.9.3: `$rose/$fell` test the LSB of an integral value | llg: illegal, no least significant bit |
+| `neg_rose_real`, `neg_fell_shortreal`, `neg_real_assertion`, `neg_real_past`, `neg_stable_realtime` | §16.6.1 (`SystemVerilog-1800-2009.txt` L21575-21576): "The following types are not allowed: — Noninteger types (shortreal, real, and realtime)" | llg: "of a real expression is illegal" |
 | `neg_string_arg`, `neg_sampled_string`, `neg_class_arg`, `neg_event_arg`, `neg_dynamic_arg`, `neg_assoc_arg` | §16.6.1 excludes these operand types | llg: illegal operand type |
 | `neg_automatic_arg` | §16.9.3: argument variables shall be static | llg |
 | `neg_past_zero`, `neg_past_negative`, `neg_past_nonconst`, `neg_past_unknown_ticks` | §16.9.3: `number_of_ticks` is a constant of at least 1 | frontend |

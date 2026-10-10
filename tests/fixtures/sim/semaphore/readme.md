@@ -11,8 +11,9 @@ task's semaphore argument remains valid across a blocking `get`.
 until its blocked child resumes.
 `static.sv` checks that a static procedural declaration initializer runs once
 when an enclosing `always` process re-enters.
-`suspend.sv` checks that a put waking a suspended waiter records a pending wake
-and resumes it only after the process handle is resumed.
+`suspend.sv` checks that a put while the only waiter is suspended leaves the key
+available (§9.7: a suspended process is not a candidate) and that `resume()`
+re-queues the waiter, which then takes the key and completes.
 `invalid_count.sv` checks that a negative signed key count is rejected at the
 runtime boundary.
 `task_local.sv` checks that an automatic task can construct and consume a

@@ -332,6 +332,7 @@ impl Frame<'_, '_> {
         // their values before the call: a changed handle publishes its
         // change marker after the callee returns (SIM-007).
         let mut handle_publishes = Vec::new();
+        let mut property_publishes = Vec::new();
         let mut container_copyouts = Vec::new();
         let mut string_copyouts = Vec::new();
         let mut real_copyouts = Vec::new();
@@ -672,6 +673,7 @@ impl Frame<'_, '_> {
                     parameters.push(format!("(void**){slot}"));
                 }
                 IrCallArg::ChandleAddr(address) | IrCallArg::ChandleRefAddr(address) => {
+                    let ir_address = address;
                     let address = self.native_address(address, NativeKind::Chandle)?.address;
                     if let Some(object) = self.ctx.model.objects.iter().find(|object| {
                         object.ty == crate::sim::ir::IrObjectType::Chandle
@@ -680,6 +682,10 @@ impl Frame<'_, '_> {
                         let name = object.c_name.clone();
                         let previous = self.scalar("void*", name.clone());
                         handle_publishes.push((name, previous));
+                    } else if let Some(publish) = self.handle_store_publish(ir_address, &address)? {
+                        // A handle property bound to an output or `ref`
+                        // formal: the callee stores in place.
+                        property_publishes.push(publish);
                     }
                     parameters.push(address);
                 }
@@ -867,6 +873,9 @@ impl Frame<'_, '_> {
             self.line(format!(
                 "if ((void*){name} != {previous}) llg_dependency_changed(&{name}_llg_dep);"
             ));
+        }
+        for publish in property_publishes {
+            self.finish_handle_store_publish(Some(publish));
         }
         for (target, storage) in string_copyouts {
             self.line(format!(

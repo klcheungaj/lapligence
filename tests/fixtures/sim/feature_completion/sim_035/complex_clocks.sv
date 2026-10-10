@@ -25,7 +25,6 @@ endmodule
 module tb;
   logic a = 1'b0, b = 1'b1, c = 1'b0, k = 1'b0, g = 1'b0;
   logic [3:0] v = 4'h0;
-  real r = 0.25;
   event e;
   clocking cbk @(posedge k);
   endclocking
@@ -47,10 +46,7 @@ module tb;
   initial begin
     #1 v = 4'h1;
     #1 a = 1'b1;
-    #1 begin
-      v = 4'h2;
-      r = 2.5;
-    end
+    #1 v = 4'h2;
     #1 b = 1'b0;
     #1 c = 1'b1;
     #1 v = 4'h3;
@@ -72,8 +68,6 @@ module tb;
       $display("or %h %h %h %b", $past(v, 1, , @(posedge a or negedge b)),
                $past(v, 2, , @(posedge a or negedge b)),
                $past(v, 3, , @(posedge a or negedge b)), $changed(v, @(posedge a or negedge b)));
-      $display("real %.2f %.2f %b", $past(r, 1, , @(posedge a or negedge b)),
-               $past(r, 2, , @(posedge a or negedge b)), $stable(r, @(posedge a or negedge b)));
       $display("expr %h %h", $past(v, 1, , @(posedge (a | ~b))),
                $past(v, 2, , @(posedge (a | ~b))));
       $display("change %h %h", $past(v, 1, , @(c)), $past(v, 2, , @(c)));

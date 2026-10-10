@@ -317,7 +317,7 @@ fn sens_lists_of(s: &IrStmt, out: &mut Vec<IrDependency>) {
                 sens_lists_of(x, out);
             }
         }
-        IrStmt::WaitEvents { specs } | IrStmt::ClockingCycleWait { specs, .. } => {
+        IrStmt::WaitEvents { specs, .. } | IrStmt::ClockingCycleWait { specs, .. } => {
             for (src, _) in specs {
                 match src {
                     IrWaitSrc::Sig(name) => out.push(IrDependency::scalar(name)),
@@ -329,7 +329,7 @@ fn sens_lists_of(s: &IrStmt, out: &mut Vec<IrDependency>) {
                 }
             }
         }
-        IrStmt::WaitAny { sens } => out.extend(sens.iter().cloned()),
+        IrStmt::WaitAny { sens, .. } => out.extend(sens.iter().cloned()),
         IrStmt::Block(b)
         | IrStmt::ActivationScope { body: b, .. }
         | IrStmt::While { body: b, .. }
@@ -615,7 +615,7 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         // arrays; a signal referenced only here still needs its storage).
         // Named-event entries (`IrWaitSrc::Event`) are NOT storage — the
         // event globals are always emitted, so they are simply skipped.
-        IrStmt::WaitEvents { specs } => {
+        IrStmt::WaitEvents { specs, .. } => {
             for (src, _) in specs {
                 match src {
                     IrWaitSrc::Sig(name) => {
@@ -652,7 +652,7 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                 }
             }
         }
-        IrStmt::WaitAny { sens } => {
+        IrStmt::WaitAny { sens, .. } => {
             for dependency in sens {
                 mark_dependency_read(dependency, model, rw);
             }

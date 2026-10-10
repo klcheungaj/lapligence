@@ -554,6 +554,7 @@ fn evaluated_waits_require_valid_helpers_and_dependencies() {
                 },
                 IrEdge::Any,
             )],
+            refresh: false,
         }],
     );
     model.processes.push(process);
@@ -602,7 +603,10 @@ fn native_access_dependencies_name_rearmed_class_or_interface_storage() {
         function: None,
     });
     let dependency = IrDependency::NativeAccess("_llg_access_0".into());
-    let wait = |sens| IrStmt::WaitAny { sens };
+    let wait = |sens| IrStmt::WaitAny {
+        sens,
+        refresh: false,
+    };
     model.processes.push(IrProcess::new(
         "proc".into(),
         "top.initial".into(),
@@ -638,6 +642,7 @@ fn native_access_dependencies_name_rearmed_class_or_interface_storage() {
             },
             IrEdge::Any,
         )],
+        refresh: false,
     }];
     assert!(model
         .validate()

@@ -626,7 +626,8 @@ whose exhaustion stops the run with an error rather than dropping attempts.
 
 Every attempt is stepped separately so that each one reports its own pass or
 fail (§16.12). Attempts with the same automaton state are not merged, and
-deduplication inside one attempt scans that attempt's token list. Tokens with
+merging equal tokens (adding their match multiplicity) inside one attempt
+scans that attempt's token list. Tokens with
 local variables still allocate their local arrays per copy.
 
 ### Intended direction
@@ -634,7 +635,7 @@ local variables still allocate their local arrays per copy.
 Group pending attempts of one assertion whose token sets differ only in their
 start tick and whose transitions are unbounded or already past their lower
 bound, stepping the group once and fanning results out per attempt; index the
-per-attempt deduplication by (state, edge).
+per-attempt token merging by (state, edge).
 
 ### Reproduce
 
@@ -712,37 +713,6 @@ loop conditions.
 
 `tests/fixtures/sim/feature_completion/sim_017/neg_assoc_message.sv`,
 `neg_array_variable.sv` and `neg_loop_condition.sv`.
-
-## Suspended event-control waits keep a wake that arrives while suspended
-
-**Status:** open (SIM-015).
-
-### Symptom
-
-A process suspended while blocked on an event control (`@e`, `@(posedge s)`)
-resumes the statement after the control when `resume()` is called, if the
-event occurred while it was suspended. SV 9.7 says `resume()` resensitizes
-the process to the event expression, so such an event would be missed and
-the process would keep waiting.
-
-### Cause
-
-Every wait kind uses one rule: a condition met while suspended leaves a
-pending wake that `resume()` delivers. That rule is correct for delays, wait
-conditions, `wait fork`, `await`, semaphores and mailboxes ("if the wait
-condition is now true or the original delay has transpired"), and the
-process-control tests rely on it for event controls as well.
-
-### Intended direction
-
-Mark event-expression waits at arm time and, while the waiter is suspended,
-refresh their edge snapshots and named-event registrations instead of
-recording a wake; keep the pending wake for the other wait kinds.
-
-### Reproduce
-
-Suspend a process waiting on `@e`, trigger `e`, then resume it a time step
-later: the process continues instead of waiting for the next `->e`.
 
 ## Rejected process-handle forms
 
@@ -956,27 +926,21 @@ mixed named-event wait carry descriptor dependencies.
 
 `tests/fixtures/sim/feature_completion/sim_009/neg_string_event_control.sv`.
 
-## Handle-property rebinding outside direct assignments
+## Waits on storage without a change notification
 
-**Status:** open (SIM-013 boundary).
+**Status:** open (LRM audit part B).
 
-A wait on a property selected through a class handle property (`@(n.next.v)`,
-`wait (n.next.v == 1)`) moves to the new object when a blocking assignment
-rebinds that property (`n.next = m`). Other writers of a handle property (task
-or function output copy-out, mailbox `get`/`peek` into the property, task-form
-`$cast`) store without toggling the object's handle marker, so such a wait
-keeps observing the previous object until another dependency changes. A
-mailbox retrieval stores through the raw slot address frozen at the call,
-when the receiver resumes (`llg_mailbox_delivery_take`, SIM-017). For the
-same reason a mailbox `get`/`peek` into a module class handle variable does
-not wake `@(h)` on that variable. Other waits on handle variables, handle
-array elements and the property itself are not affected. Direction: route
-every class handle-property store through `llg_class_handle_store`; for
-mailboxes, give the handle target the object's (or variable's) change marker
-so the delivery toggles it while keeping the frozen slot. Reproduce: replace
-`n.next = new;` in
-`tests/fixtures/sim/feature_completion/sim_013/class_handles.sv` with a task
-call whose `output Node` formal is bound to `n.next`.
+A `wait` condition or event expression that reads storage publishing no
+change is rejected at compile time with its source location ("cannot be
+observed by a wait or event expression"), because the wait could never
+resume: per-object container properties (`h.q.size()`, `h.fa[1]`), mailbox
+and semaphore queries (`m.num()`), class properties a called function reads
+through a handle other than a class-handle formal, `this`, a handle property
+or a module/static handle (for example a local copy `d = c; d.x`),
+virtual-interface members read inside a called function, and virtual
+methods. SV 9.4.2 makes these legal. Direction: give per-object containers
+and mailbox/semaphore state change markers, and bind callee locals by
+dataflow. Reproduce: `tests/fixtures/sim/feature_completion/ki_lrm_audit_b/neg_*.sv`.
 
 ## Native stack frames grow with a statement's format-argument count
 
@@ -1232,21 +1196,16 @@ Reproduce with
 
 **Status:** open (SIM-035 boundary).
 
-Sampled-value functions keep a history of packed integral or real values.
-Fixed unpacked arrays, unpacked structures and unions, queues and unpacked
-array element selections (`$past(arr[i])`) are legal arguments (SV 16.6.1
-excludes only string, event, chandle, class, dynamic and associative array
-operands) but reject explicitly ("sampled histories hold packed integral and
+Sampled-value functions keep a history of packed integral values. Fixed
+unpacked arrays, unpacked structures and unions, queues and unpacked array
+element selections (`$past(arr[i])`) are legal arguments (SV 16.6.1, L21575
+onward: "The following types are not allowed: — Noninteger types (shortreal,
+real, and realtime)", then string, event, chandle, class, associative and
+dynamic arrays; "Fixed-size arrays, packed or unpacked, can be used as a
+whole") but reject explicitly ("sampled histories hold packed integral and
 real values" or "must be a static packed or real expression") instead of being
 flattened. Sampling them needs Preponed snapshots of unpacked storage, which
 assertions also lack.
-
-The `$past` gating expression of a clock that ticks through a synthetic
-waiting process (event lists, named or clocking-block events, expression
-edges) is evaluated when that process runs in the event's time step, not at
-the instant of the event; a same-step write to the gate between the event and
-the process run is therefore seen. Direct packed-signal edges evaluate their
-`iff` and gate at the write itself.
 
 Concurrent assertions themselves still need one direct signal clock and a
 single-signal `disable iff` (SIM-038, ADV-013), so sampled-value functions in

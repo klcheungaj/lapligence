@@ -1202,6 +1202,12 @@ struct Codegen<'a> {
     /// Ordinary values use 2009 time-literal rounding. Delay expressions
     /// temporarily disable it so their complete expression rounds once.
     round_time_literals: bool,
+    /// Set while collecting an always_comb/always_latch sensitivity list:
+    /// SV 9.2.2.2.1 "References to class objects and method calls of class
+    /// objects do not add anything", so the read walk skips class property
+    /// paths and class method receivers (the handle variables included).
+    /// Waits and `@*` walk them normally.
+    comb_excludes_class_references: std::cell::Cell<bool>,
     warnings: Vec<String>,
     /// The typed IR being built (signals/arrays/functions/processes); the C
     /// renderers in `emit_c` consume it.  During the seam transition the
@@ -1600,6 +1606,9 @@ struct Codegen<'a> {
     assertion_action_procs: HashSet<String>,
     /// Clock inferred while lowering a property or its Reactive action.
     sampled_clock: Option<SampledClock>,
+    /// Leading clock of the concurrent assertion being lowered, with its
+    /// `iff` gate; nested sequence clocks are checked against it.
+    assertion_leading_clock: Option<SampledClock>,
     /// Interned sampled-value clocks and histories (`IrModel::sampled_clocks`
     /// and `sampled_domains`), keyed by their lowered identity so every call
     /// that reads one expression on one clock and gate shares one history.
@@ -1685,6 +1694,7 @@ impl<'a> Codegen<'a> {
             origins: semantic.origins().to_vec(),
             db: semantic.db(),
             round_time_literals: db.edition() == LanguageEdition::SystemVerilog2009,
+            comb_excludes_class_references: std::cell::Cell::new(false),
             warnings: Vec::new(),
             model: IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
                 .expect("the default timescale has non-zero precision"),
@@ -1821,6 +1831,7 @@ impl<'a> Codegen<'a> {
             final_procs: Vec::new(),
             assertion_action_procs: HashSet::new(),
             sampled_clock: None,
+            assertion_leading_clock: None,
             sampled_clock_keys: HashMap::new(),
             sampled_domain_keys: HashMap::new(),
             sampled_event_clocks: Vec::new(),

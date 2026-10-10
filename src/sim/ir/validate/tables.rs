@@ -381,6 +381,21 @@ impl Validator<'_> {
                     "assertion clock must be an active packed signal",
                 );
             }
+            if let Some(gate) = assertion.clock_gate {
+                if !self.model.sampled_clocks.get(gate).is_some_and(|clock| {
+                    clock.gate.is_some()
+                        && clock.kind
+                            == crate::sim::ir::IrSampledClockKind::Edge {
+                                signal: assertion.clock_signal,
+                                posedge: assertion.posedge,
+                            }
+                }) {
+                    return self.fail(
+                        format!("{path}.clock_gate"),
+                        "assertion clock gate must name a gated sampled clock on the assertion clock",
+                    );
+                }
+            }
             if let Some(disable) = assertion.disable_signal {
                 let Some(signal) = self.model.signals.get(disable) else {
                     return self.fail(

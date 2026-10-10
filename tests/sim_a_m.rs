@@ -70,6 +70,7 @@ mod sim_interface;
 mod sim_interface_body;
 mod sim_logical_ops;
 mod sim_loops;
+mod sim_lrm_decisions;
 mod sim_mailboxes;
 mod sim_memory;
 mod sim_memory_editions;

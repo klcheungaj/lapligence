@@ -1,4 +1,5 @@
-// SV 16.9.3: $fell of a shortreal has no least significant bit either.
+// SV 16.6.1 (SystemVerilog-1800-2009.txt L21576): shortreal is a noninteger
+// type, so $fell of a shortreal is rejected.
 module tb;
   logic clk = 1'b0;
   shortreal r = 0.5;

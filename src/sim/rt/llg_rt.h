@@ -447,6 +447,10 @@ enum {
     LLG_ASSERTION_ASSUME = 1,
     LLG_ASSERTION_COVER = 2,
     LLG_ASSERTION_EXPECT = 3,
+    /* Registration-only kind accepted by the sequence registrations: a
+     * `cover sequence` is a cover that reports every match of an attempt
+     * (IEEE 1800-2009 16.15.3). Runtime records keep LLG_ASSERTION_COVER. */
+    LLG_ASSERTION_COVER_SEQUENCE = 4,
 };
 
 enum {
@@ -1650,6 +1654,9 @@ void llg_disable_fork(llg_proc_t* self);
 llg_activation_t* llg_activation_enter(uint32_t declaration,
                                        uint32_t instance);
 void llg_activation_exit(llg_activation_t* activation);
+// Exit of the named block that is a fork branch's whole body: when a disable
+// ended it, the branch process terminates KILLED rather than FINISHED (SV 9.7).
+void llg_activation_exit_terminal(llg_activation_t* activation);
 int llg_activation_cancelled(void);
 // Disabling an activation that reaches `self` completes cancellation
 // bookkeeping, sets LLG_EXIT_ABANDON, and returns for immediate propagation.
@@ -1687,6 +1694,18 @@ llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
                                       int n);
 llg_co_arm_t llg_arm_any_events(llg_proc_t* self,
                                 const llg_event_spec_t* specs, int n);
+// An implicit or process-evaluated event control's dependency wait: unlike
+// llg_arm_any_dependencies (a wait condition's), an occurrence while the
+// process is suspended is withheld and resume() resensitizes it (SV 9.7).
+llg_co_arm_t llg_arm_event_dependencies(llg_proc_t* self,
+                                        const llg_wait_dependency_t* deps,
+                                        int n);
+// Mark the next event-control wait of `self` as evaluated by the process: if
+// an occurrence was withheld while it was suspended, resume() wakes it with
+// llg_wait_refreshed() true so it takes its armed values again instead of
+// comparing against values from before the suspension.
+void llg_wait_refresh_on_resume(llg_proc_t* self);
+int llg_wait_refreshed(const llg_proc_t* self);
 llg_co_arm_t llg_arm_level(llg_proc_t* self, sv4_t* sig, sv4_t value);
 
 // Synchronization and process-control arms deliver before wake and therefore
@@ -1951,6 +1970,11 @@ double llg_sampled_real(const double* signal);
 typedef int (*llg_sampled_gate_fn)(void* data);
 int llg_sampled_clock_register_edge(uint64_t clock, sv4_t* signal, int edge,
                                     llg_sampled_gate_fn gate, void* data);
+/* Gate the leading clock of the concurrent assertion just registered with
+ * `identity`: its clocking event `@(edge clk iff cond)` occurs only when
+ * `gate` (reading current values, called with NULL) is true at the clock
+ * write (IEEE 1800-2009 9.4.2.3). Call after the registration, before run. */
+int llg_assertion_gate_clock(uint64_t identity, llg_sampled_gate_fn gate);
 int llg_sampled_clock_register_event(uint64_t clock, llg_sampled_gate_fn gate,
                                      void* data);
 void llg_sampled_clock_tick(uint64_t clock);

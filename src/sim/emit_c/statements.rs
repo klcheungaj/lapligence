@@ -762,7 +762,7 @@ fn render_stmt_scoped(
                 ),
             }
         }
-        IrStmt::WaitEvents { specs } => wait_events_text(ctx, specs)?,
+        IrStmt::WaitEvents { specs, .. } => wait_events_text(ctx, specs)?,
         IrStmt::ClockingEventTrigger { ev } => {
             format!("    (void)llg_clocking_event_observed({});\n", event_ref_code(ctx, ev)?)
         }
@@ -799,7 +799,7 @@ fn render_stmt_scoped(
             *frame,
             captures,
         )?,
-        IrStmt::WaitAny { sens } => wait_any_text(ctx, sens),
+        IrStmt::WaitAny { sens, .. } => wait_any_text(ctx, sens),
         IrStmt::WaitCond { cond, sens, body } => {
             let rc = render_expr(ctx, cond)?;
             let mut out = format!(

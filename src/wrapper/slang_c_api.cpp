@@ -422,6 +422,9 @@ struct Capture {
   std::unordered_map<const DefinitionSymbol*, std::vector<const VirtualInterfaceType*>>
       virtualInterfaceTypes;
   std::unordered_map<const void*, uint64_t> semanticIds;
+  // Subroutines named by DPI-C export declarations, collected after
+  // elaboration (the compilation records them while elaborating).
+  std::unordered_set<const SubroutineSymbol*> dpiExports;
   std::vector<std::vector<LlgSlangSemanticEdge>> pendingEdges;
   // Small nodes retain cheap scans. Only high-fanout parents pay for indexes;
   // positions refer to the authoritative ordered edge vector, never its memory.
@@ -2022,7 +2025,18 @@ public:
       if (capture.declarationOnly)
         sourceConnections.push_back(&symbol);
     }
-    capture.sourceIdentity(symbol.getSyntax(), id);
+    // An implicitly instantiated nested module, interface or program (SV
+    // 23.4, 24.3) uses its declaration as instance syntax. The definition and
+    // the instance body own that declaration's identity; grouping the
+    // instance with them would make the body's identity edge name its own
+    // instance.
+    bool implicitInstance = false;
+    if constexpr (std::same_as<T, InstanceSymbol>) {
+      implicitInstance = symbol.getSyntax() &&
+                         syntax::ModuleDeclarationSyntax::isKind(symbol.getSyntax()->kind);
+    }
+    if (!implicitInstance)
+      capture.sourceIdentity(symbol.getSyntax(), id);
     auto& result = capture.output.semantic_nodes[static_cast<size_t>(id)];
     result.kind = semanticSymbolKind(symbol.kind);
     result.name = storeString(capture.output, symbol.name);
@@ -2309,6 +2323,8 @@ public:
         }
         result.definition_name = storeString(capture.output, cName);
       }
+      if (capture.dpiExports.count(&symbol))
+        result.auxiliary |= LLG_SLANG_SUBROUTINE_DPI_EXPORT;
     }
     if constexpr (std::same_as<T, ClassType>) {
       result.type_id = capture.type(symbol);
@@ -2843,8 +2859,10 @@ public:
           result.subkind = LLG_SLANG_STMT_CONCURRENT_ASSUME;
           break;
         case AssertionKind::CoverProperty:
-        case AssertionKind::CoverSequence:
           result.subkind = LLG_SLANG_STMT_CONCURRENT_COVER;
+          break;
+        case AssertionKind::CoverSequence:
+          result.subkind = LLG_SLANG_STMT_CONCURRENT_COVER_SEQUENCE;
           break;
         case AssertionKind::Expect:
           result.subkind = LLG_SLANG_STMT_CONCURRENT_EXPECT;
@@ -5904,6 +5922,10 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   ProfileStage elaborateStage("slang.elaborate");
   const Diagnostics& compilationDiagnostics = compilation.getAllDiagnostics();
   elaborateStage.finish();
+  for (const auto& exported : compilation.getDPIExports()) {
+    if (exported.subroutine)
+      capture.dpiExports.insert(exported.subroutine);
+  }
   ProfileStage instanceStage("wrapper.instances");
   DiagnosticEngine engine(sourceManager);
   auto compilationClient = std::make_shared<CaptureClient>(

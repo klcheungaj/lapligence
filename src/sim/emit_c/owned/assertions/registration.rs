@@ -91,6 +91,14 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
             IrConcurrentAssertionKind::Assert => "LLG_ASSERTION_ASSERT",
             IrConcurrentAssertionKind::Assume => "LLG_ASSERTION_ASSUME",
             IrConcurrentAssertionKind::Cover => "LLG_ASSERTION_COVER",
+            // A predicate-registered sequence has at most one match per
+            // attempt, so only the sequence engine needs the match count.
+            IrConcurrentAssertionKind::CoverSequence
+                if assertion.consequent_sequence().is_some() =>
+            {
+                "LLG_ASSERTION_COVER_SEQUENCE"
+            }
+            IrConcurrentAssertionKind::CoverSequence => "LLG_ASSERTION_COVER",
             IrConcurrentAssertionKind::Expect => "LLG_ASSERTION_EXPECT",
         };
         let edge = if assertion.posedge() {
@@ -185,6 +193,13 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
                     c_string_literal(assertion.scope()),
                 ));
             }
+        }
+        if let Some(clock) = assertion.clock_gate() {
+            out.push_str(&format!(
+                "    if (!llg_assertion_gate_clock({}ULL, {})) return 0;\n",
+                assertion.identity(),
+                sampled_clock_gate_name(clock),
+            ));
         }
     }
     out.push_str("    return !llg_rt_failed();\n}\n\n");

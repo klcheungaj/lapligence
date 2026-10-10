@@ -1,0 +1,5 @@
+big: s2 done 1, s1 SUSPENDED
+space: first=1 n=1 p1 SUSPENDED
+killed getter: n=1
+log: s2@1 p2@2 pk9@3 s1@3
+after resume: full n=1 pm n=1

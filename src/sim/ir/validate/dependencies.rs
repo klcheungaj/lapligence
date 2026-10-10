@@ -119,6 +119,7 @@ impl Validator<'_> {
                                     field.ty,
                                     IrClassFieldType::Packed { .. }
                                         | IrClassFieldType::Real { .. }
+                                        | IrClassFieldType::String
                                         | IrClassFieldType::Chandle
                                 )
                         }),

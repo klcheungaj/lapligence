@@ -11,6 +11,47 @@ pub(super) struct ProcessEventArm {
     pub(super) width: u32,
     pub(super) signed: bool,
     pub(super) value: IrExpr,
+    /// A string or class-handle value, held in a native local instead of
+    /// `value` (SV 9.4.2: either is a legal event expression).
+    pub(super) native: Option<NativeEventValue>,
+}
+
+/// A string or class-handle event value.
+#[derive(Clone)]
+pub(super) enum NativeEventValue {
+    String(crate::sim::ir::IrStringExpr),
+    Chandle(IrChandleExpr),
+}
+
+impl NativeEventValue {
+    /// Declare lexical local `name` holding this value.
+    fn declare(&self, name: &str) -> IrStmt {
+        match self {
+            Self::String(value) => IrStmt::DeclString {
+                name: name.to_owned(),
+                init: Some(value.clone()),
+            },
+            Self::Chandle(value) => IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                name.to_owned(),
+                Some(value.clone()),
+            ))),
+        }
+    }
+}
+
+impl ProcessEventArm {
+    fn declare(&self) -> IrStmt {
+        match &self.native {
+            Some(native) => native.declare(&self.local),
+            None => IrStmt::DeclLocal {
+                name: self.local.clone(),
+                width: self.width,
+                signed: self.signed,
+                init: Some(Box::new(self.value.clone())),
+                two_state: false,
+            },
+        }
+    }
 }
 
 /// An event control that the waiting process evaluates itself instead of a
@@ -67,13 +108,7 @@ impl ProcessEventPlan {
         let mut block = self
             .arm
             .iter()
-            .map(|arm| IrStmt::DeclLocal {
-                name: arm.local.clone(),
-                width: arm.width,
-                signed: arm.signed,
-                init: Some(Box::new(arm.value.clone())),
-                two_state: false,
-            })
+            .map(ProcessEventArm::declare)
             .collect::<Vec<_>>();
         block.push(self.hit_declaration());
         block.push(self.wait_loop());
@@ -178,12 +213,19 @@ impl EmitCtx<'_, '_> {
                     )));
                 IrStmt::WaitEvents {
                     specs: vec![(IrWaitSrc::Event(IrEventRef::Static(event)), IrEdge::Any)],
+                    refresh: false,
                 }
             } else {
-                IrStmt::WaitAny { sens: reads }
+                IrStmt::WaitAny {
+                    sens: reads,
+                    refresh: false,
+                }
             }
         } else {
-            IrStmt::WaitEvents { specs: spec_pairs }
+            IrStmt::WaitEvents {
+                specs: spec_pairs,
+                refresh: false,
+            }
         })
     }
 
@@ -391,7 +433,74 @@ impl EmitCtx<'_, '_> {
         for (index, (source, condition)) in sources.into_iter().enumerate() {
             let last = format!("_llg_evl{}_{index}", h.0);
             let next = format!("_llg_evn{}_{index}", h.0);
+            let mut native = None;
             let (value, changed) = match source {
+                Source::Value(expression, edge)
+                    if self.cg.is_string_expr(&self.path, expression)
+                        || self.cg.is_chandle_expr(&self.path, expression) =>
+                {
+                    // SV 9.4.2: a string or class-handle event is a change of
+                    // its value (handle identity); edges need an integral
+                    // operand.
+                    if edge != IrEdge::Any {
+                        return Err(format!(
+                            "edge control on a string or class-handle expression is not legal in `{path}`"
+                        ));
+                    }
+                    let path = self.path.clone();
+                    for dependency in self.cg.with_dynamic_reads(&path, expression, |cg| {
+                        cg.collect_evaluator_sensitivity(&path, expression)
+                    })? {
+                        if !sens.contains(&dependency) {
+                            sens.push(dependency);
+                        }
+                    }
+                    let changed = if self.cg.is_string_expr(&self.path, expression) {
+                        native = Some(NativeEventValue::String(
+                            self.cg.lower_string(&self.path, expression)?,
+                        ));
+                        let compare = IrExpr::new(
+                            IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringCompare(
+                                crate::sim::ir::IrStringExpr::LocalRead(last.clone()),
+                                crate::sim::ir::IrStringExpr::LocalRead(next.clone()),
+                                false,
+                            ))),
+                            32,
+                            true,
+                            None,
+                        );
+                        let zero = IrConst::packed(vec![0], vec![], vec![], 32, true, None)
+                            .map_err(|error| error.to_string())?;
+                        binary(
+                            IrBinOp::CaseNeq,
+                            compare,
+                            IrExpr::new(IrExprKind::Const(zero), 32, true, None),
+                        )
+                    } else {
+                        native = Some(NativeEventValue::Chandle(
+                            self.cg.lower_chandle(&self.path, expression)?,
+                        ));
+                        let same = IrExpr::new(
+                            IrExprKind::ObjectQuery(Box::new(IrObjectQuery::ChandleEq(
+                                IrChandleExpr::LocalRead(last.clone()),
+                                IrChandleExpr::LocalRead(next.clone()),
+                            ))),
+                            1,
+                            false,
+                            None,
+                        );
+                        IrExpr::new(
+                            IrExprKind::Un {
+                                op: IrUnOp::LogNot,
+                                a: Box::new(same),
+                            },
+                            1,
+                            false,
+                            None,
+                        )
+                    };
+                    (zero.clone(), changed)
+                }
                 Source::Named(event) => {
                     let target = self.cg.event_target_of(event).ok_or_else(|| {
                         format!("event control has an unresolved named event in `{path}`")
@@ -477,18 +586,20 @@ impl EmitCtx<'_, '_> {
                 }
             };
             let (width, signed) = (value.width, value.signed);
+            let next_arm = ProcessEventArm {
+                local: next.clone(),
+                width,
+                signed,
+                value: value.clone(),
+                native: native.clone(),
+            };
+            current.push(next_arm.declare());
             arm.push(ProcessEventArm {
                 local: last.clone(),
                 width,
                 signed,
-                value: value.clone(),
-            });
-            current.push(IrStmt::DeclLocal {
-                name: next.clone(),
-                width,
-                signed,
-                init: Some(Box::new(value)),
-                two_state: false,
+                value,
+                native: native.clone(),
             });
             let found = IrStmt::Assign {
                 lhs: target(&hit, 1, false, true),
@@ -518,14 +629,31 @@ impl EmitCtx<'_, '_> {
                 els: None,
                 check: IrUniquePriorityCheck::None,
             });
-            advance.push(IrStmt::Assign {
-                lhs: target(&last, width, signed, false),
-                rhs: local(&next, width, signed),
-                nba: false,
+            advance.push(match native {
+                Some(NativeEventValue::String(_)) => {
+                    IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
+                        last.clone(),
+                        crate::sim::ir::IrStringExpr::LocalRead(next.clone()),
+                    )))
+                }
+                Some(NativeEventValue::Chandle(_)) => {
+                    IrStmt::Object(Box::new(IrObjectStmt::ChandleAssignLocal(
+                        last.clone(),
+                        IrChandleExpr::LocalRead(next.clone()),
+                    )))
+                }
+                None => IrStmt::Assign {
+                    lhs: target(&last, width, signed, false),
+                    rhs: local(&next, width, signed),
+                    nba: false,
+                },
             });
         }
         let wait = if events.is_empty() {
-            IrStmt::WaitAny { sens }
+            IrStmt::WaitAny {
+                sens,
+                refresh: true,
+            }
         } else {
             // One atomic wait covers the named events and every value
             // source's dependencies, so no trigger is lost between waits.
@@ -548,10 +676,35 @@ impl EmitCtx<'_, '_> {
                     specs.push((source, IrEdge::Any));
                 }
             }
-            IrStmt::WaitEvents { specs }
+            IrStmt::WaitEvents {
+                specs,
+                refresh: true,
+            }
         };
+        // SV 9.7: after resume() resensitized the control, the values armed
+        // before the suspension are stale; take the current ones without
+        // detecting the withheld change.
+        let refreshed = IrExpr::new(
+            IrExprKind::RuntimeQuery(IrRuntimeQuery::WaitRefreshed),
+            1,
+            false,
+            None,
+        );
         let mut iteration = current;
-        iteration.extend(detect);
+        iteration.push(IrStmt::If {
+            cond: IrExpr::new(
+                IrExprKind::Un {
+                    op: IrUnOp::LogNot,
+                    a: Box::new(refreshed),
+                },
+                1,
+                false,
+                None,
+            ),
+            then_: detect,
+            els: None,
+            check: IrUniquePriorityCheck::None,
+        });
         iteration.extend(advance);
         Ok(ProcessEventPlan {
             arm,
@@ -791,9 +944,83 @@ impl EmitCtx<'_, '_> {
         spec: &EventSpec,
         condition: Option<NodeId>,
     ) -> Result<(IrWaitSrc, IrEdge), String> {
+        if let EventSpec::Qualified { event, condition } = spec {
+            return self.lower_event_spec(event, Some(*condition));
+        }
+        let condition = condition
+            .map(|expression| {
+                self.event_evaluator(expression).and_then(|(name, real)| {
+                    if real {
+                        Err(format!(
+                            "real-valued event qualifiers are not supported in `{}`",
+                            self.path
+                        ))
+                    } else {
+                        Ok(name)
+                    }
+                })
+            })
+            .transpose()?;
+        self.lower_event_spec_qualified(spec, condition)
+    }
+
+    /// Lower the event specs of a sampled-value event clock whose `$past`
+    /// gate must hold when the event occurs (`ev iff expression2`, IEEE
+    /// 1800-2009 16.9.3; 9.4.2.3 evaluates a qualifier "when a changes"):
+    /// the gate joins each item's own `iff`, so the wait checks both at the
+    /// triggering instant instead of after the waiting process resumes.
+    pub(in super::super) fn lower_event_specs_gated(
+        &mut self,
+        specs: &[EventSpec],
+        gate: &IrExpr,
+    ) -> Result<Vec<(IrWaitSrc, IrEdge)>, String> {
+        specs
+            .iter()
+            .map(|spec| {
+                let (event, iff) = match spec {
+                    EventSpec::Qualified { event, condition } => (event.as_ref(), Some(*condition)),
+                    event => (event, None),
+                };
+                let condition = match iff {
+                    Some(node) => {
+                        let iff = self.cg.lower_boolean_expr(&self.path, node)?;
+                        IrExpr::new(
+                            IrExprKind::Bin {
+                                op: IrBinOp::LogAnd,
+                                a: Box::new(iff),
+                                b: Box::new(gate.clone()),
+                            },
+                            1,
+                            false,
+                            None,
+                        )
+                    }
+                    None => gate.clone(),
+                };
+                let name = self.cg.new_fn_name(&self.path, "event_eval");
+                self.pre_fns.push(crate::sim::ir::IrPreFn::MonEval {
+                    c_name: name.clone(),
+                    args: vec![condition],
+                    context: None,
+                    item: false,
+                    real_item: false,
+                });
+                self.lower_event_spec_qualified(event, Some(name))
+            })
+            .collect()
+    }
+
+    fn lower_event_spec_qualified(
+        &mut self,
+        spec: &EventSpec,
+        condition: Option<String>,
+    ) -> Result<(IrWaitSrc, IrEdge), String> {
         let (expression, edge, event) = match spec {
-            EventSpec::Qualified { event, condition } => {
-                return self.lower_event_spec(event, Some(*condition))
+            EventSpec::Qualified { .. } => {
+                return Err(format!(
+                    "nested event qualifiers are not supported in `{}`",
+                    self.path
+                ))
             }
             EventSpec::Named(event) => {
                 let target = self.cg.event_target_of(*event).ok_or_else(|| {
@@ -825,20 +1052,6 @@ impl EmitCtx<'_, '_> {
                 )
             }
         };
-        let condition = condition
-            .map(|expression| {
-                self.event_evaluator(expression).and_then(|(name, real)| {
-                    if real {
-                        Err(format!(
-                            "real-valued event qualifiers are not supported in `{}`",
-                            self.path
-                        ))
-                    } else {
-                        Ok(name)
-                    }
-                })
-            })
-            .transpose()?;
         if let Some(event) = event {
             let event = self.cg.event_ref_of(&event, &self.path)?;
             return Ok((

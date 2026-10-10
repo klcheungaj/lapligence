@@ -6,6 +6,8 @@
 - [Shared harnesses](support/readme.md): temporary directories, cleanup and timeouts.
 - [LSP fixtures](fixtures/lsp/): framed stdio tests, manifests and source headers.
 - [Simulation feature status](../docs/sim_features.md): the sole support checklist.
+- [LRM decision register](../docs/lrm_decisions.md): portable cases in
+  [fixtures/sim/lrm_decisions/](fixtures/sim/lrm_decisions/) (see [LRM decision cases](#lrm-decision-cases)).
 
 ## Test binaries
 
@@ -395,6 +397,19 @@ variables run in both optimizer modes on both backends and after Db destruction;
 net and gate-terminal runtime selects and writers inside a runtime select's
 longest static prefix reject. The legality ruling is in the
 [fixture readme](fixtures/sim/feature_completion/rtl_105/readme.md).
+
+### LRM decision cases
+
+- [`fixtures/sim/lrm_decisions/`](fixtures/sim/lrm_decisions/) holds one
+  portable case per semantic decision: `<ID>_<name>.sv` (plain IEEE 1800-2009,
+  top `tb`, no llg options, header quoting the clause) and its exact stdout
+  `<ID>_<name>.out`. An empty `.out` marks a negative (compile-error) case;
+  a `.c` companion is a DPI-C library.
+- The [decision register](../docs/lrm_decisions.md) lists every case, how
+  to run it on another simulator, and what changes on a mismatch (the
+  trusted simulator wins).
+- `sim_lrm_decisions.rs` runs each case on all value backends in both optimizer
+  modes: `scripts/run-tests.sh -E 'test(/^sim_lrm_decisions::/)'`.
 
 ### Vendor patch preparation
 

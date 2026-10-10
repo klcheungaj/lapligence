@@ -696,7 +696,10 @@ impl EmitCtx<'_, '_> {
         if blocking {
             let tmp = format!("_event_rhs_{}", h.0);
             let (w, s) = (rhs_ir.width, rhs_ir.signed);
-            let wait = IrStmt::WaitEvents { specs };
+            let wait = IrStmt::WaitEvents {
+                specs,
+                refresh: false,
+            };
             let wait = if let Some(count) = repeat {
                 IrStmt::Repeat {
                     count,
@@ -918,6 +921,12 @@ impl EmitCtx<'_, '_> {
         let count =
             count.map(|count| self.capture_event_assignment_expr(frame, &mut captures, count));
         let plan = self.process_event_plan(h, specs)?;
+        if plan.arm.iter().any(|arm| arm.native.is_some()) {
+            return Err(format!(
+                "a nonblocking event control on a string or class-handle expression that the waiting process evaluates is not supported in `{}`",
+                self.cg.source_path(&self.path)
+            ));
+        }
         let armed = plan
             .arm
             .iter()

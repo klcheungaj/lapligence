@@ -208,7 +208,10 @@ impl EmitCtx<'_, '_> {
         };
         let sens = self.cg.collect_evaluator_sensitivity(&self.path, rhs)?;
         let guard = vec![
-            IrStmt::WaitAny { sens },
+            IrStmt::WaitAny {
+                sens,
+                refresh: false,
+            },
             IrStmt::If {
                 cond: IrExpr::new(
                     IrExprKind::RuntimeQuery(IrRuntimeQuery::ForceSourceActive(source)),

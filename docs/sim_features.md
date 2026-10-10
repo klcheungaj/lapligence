@@ -2,7 +2,9 @@
 
 This is the maintained `llg` simulation-feature inventory. Support is limited to
 the forms and contexts stated below; it does not imply full IEEE conformance or
-synthesis-tool acceptance.
+synthesis-tool acceptance. Semantic choices where the standard needed
+interpretation, with portable test cases, are in the
+[LRM decision register](lrm_decisions.md).
 
 <a id="dynamic-value-migration-acceptance-boundary"></a>
 
@@ -677,8 +679,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Unchanged results do not notify downstream readers; a closed latch retains
   its value. Branches pruned by the optimizer keep their wake sources. Blocking
   timing and forks reject; delayed NBAs are not rejected merely for their delay.
-  Class-property and method reads add nothing beyond the handle variables read
-  (§9.2.2.2.1) and virtual-interface members add nothing (§25.9); dynamic
+  Class-property paths and class method calls add nothing, not even the
+  handle variable (`h` in `h.x`/`h.f()`; a direct `h == null` is a variable
+  read) (§9.2.2.2.1) and virtual-interface members add nothing (§25.9); dynamic
   container elements and sizes are read through their contents/shape markers
   ([sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)).
   Native record leaves held in dynamic containers remain partial.
@@ -877,7 +880,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   handle's change marker, which also drives whole-handle ports and `@(h)`
   (SIM-007). Module process handles publish the same marker (SIM-015).
   Like `always_comb`, `@*` adds nothing for a property read through a handle
-  (`h.v`) or a virtual-interface member (SV §§9.2.2.2.1, 25.9); explicit event
+  (`h.v`) or a virtual-interface member (SV §§9.2.2.2.1, 25.9), but it adds the
+  handle identifier `h` itself (§9.4.2.2), which `always_comb` does not; explicit event
   controls and `wait` follow them instead (below). Built-in semaphore/mailbox
   handles have no change marker and reject in sensitivity and wait expressions.
   V §9.7.5 **[2001]**.
@@ -888,7 +892,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   control is reached and after each dependency change (§9), including lists
   with declared named events (trigger counts) and real values (IEEE bit
   patterns). Event controls and level waits on class properties (`@(h.x)`,
-  `hs[i].x`, `n.next.x`, `posedge h.w[0]`), nonvirtual class methods,
+  `hs[i].x`, `n.next.x`, `posedge h.w[0]`, string and handle properties
+  `@(h.s)`, `wait (h.nxt != null)`), static class properties, class storage
+  read inside called functions and nonvirtual methods (through class-handle
+  formals, `this`, handle properties and module handles; methods' module
+  storage reads too), nonvirtual class methods,
   virtual-interface members (`@(posedge v.clk)`), foreign functions and
   selects or qualifiers over a typed task's `ref` formal are evaluated by the
   waiting process, which re-arms on the storage the handle, selector or
@@ -901,6 +909,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   formals (§13.4) reject as language rules. Event handles or array-reading
   helpers in named-event lists with process-evaluated sources, string or
   handle `ref` formals, virtual methods and helper forms outside §9 reject.
+  Reads whose changes no wait can observe reject with their location instead
+  of never waking: per-object container properties, mailbox/semaphore
+  queries, callee reads through other handles (locals, container elements)
+  or virtual-interface handles, and virtual methods
+  ([ki_lrm_audit_b](../tests/fixtures/sim/feature_completion/ki_lrm_audit_b/readme.md)).
   V §§9.7.2–9.7.4 **[1995]**.
 - 🟨 **Intra-assignment controls** — Packed/real/shortreal RHS values are captured
   immediately. Blocking assignments suspend and use update-time selectors; NBAs
@@ -1416,9 +1429,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `$monitor`/`$strobe` arguments run them in Postponed only when their stores
   target the helpers' own storage, applied without publication; a visible write
   rejects (SV 4.4.2.9). Imported (DPI) functions in event expressions run in the
-  waiting process; in `$monitor`/`$strobe` a non-context import is admitted and
-  a context import, which may write through exports, rejects (SV 35.5.3,
-  4.4.2.9; [sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)).
+  waiting process; in `$monitor`/`$strobe` an import is admitted unless it is a
+  context import in a design that declares DPI exports, through which it may
+  write (SV 35.5.3, 4.4.2.9; [sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)).
   Suspension and arbitrary shared/native captures reject.
   Unique/priority diagnostics remain active; side-effect-free source alone does
   not establish eligibility.
@@ -1811,9 +1824,17 @@ These are bounded implementations, not full verification-infrastructure support.
   `get_randstate` and `set_randstate` act on the named process's stream
   ([sim_015](../tests/fixtures/sim/feature_completion/sim_015/readme.md)).
   Methods through a null handle and `await` on the current process end the
-  simulation with an error. Handles in plain storage stay allocated until
-  teardown, an event that fires while its waiter is suspended is delivered on
-  resume, and `status()` in wait or sensitivity expressions, `ref` formals
+  simulation with an error. `resume()` resensitizes a process suspended on an
+  event control (an occurrence while it is suspended is not delivered), and
+  completes a wait condition that became true or a delay that transpired.
+  A process suspended in semaphore `get` or mailbox `get`/`peek`/`put` is not
+  a candidate for keys, messages or space; `resume()` re-queues it at the
+  FIFO tail. Disabling the named block that forms a whole fork branch ends
+  that process `KILLED`; a disabled block followed by more statements does not
+  end its process
+  ([ki_lrm_audit_b](../tests/fixtures/sim/feature_completion/ki_lrm_audit_b/readme.md)).
+  Handles in plain storage stay allocated until
+  teardown, and `status()` in wait or sensitivity expressions, `ref` formals
   bound to plain storage and `try_get` into process variables reject
   ([known issues](known_issues.md#process-handles-in-plain-handle-storage-stay-allocated-until-teardown)).
   SV §9.7 **[SV-2005]**.
@@ -1867,9 +1888,9 @@ These are bounded implementations, not full verification-infrastructure support.
 
 | Area | Implemented forms |
 | --- | --- |
-| Attempts and actions | Preponed packed sampling, Observed resolution, overlapping attempts, vacuity accounting and Reactive actions. |
-| Clock/disable flow | Nearest default-clock inheritance, compatible declaration/call-site clocks, legal multiclock `##0`/`##1` boundaries, asynchronous single-signal `disable iff`, bounded `accept_on/reject_on` and synchronous variants. |
-| Sequences | Single-clock composition under Annex F: nested `##` concatenation with fixed, ranged and unbounded delays; consecutive repetition of Booleans and of whole sequences (`[*m:n]`, `[*]`, `[+]`, empty-admitting bodies) and nonconsecutive/goto repetition; empty matches; `or`; multi-cycle `and`, `intersect`, `throughout` and `within` (runtime joins that pair operand endpoints and drop threads that can no longer pair); `first_match`. Live sequence threads are bounded by `LLG_SEQUENCE_THREAD_LIMIT` (default 1,000,000); exhaustion is a reported execution error. |
+| Attempts and actions | Preponed packed sampling, Observed resolution, overlapping attempts, vacuity accounting and Reactive actions. `cover sequence` runs its pass statement for every nonempty match of an attempt (SV §16.15.3). An implication attempt `R \|-> P` reports one result (SV §16.13.6): a failure as soon as one consequent started by a match of `R` fails, otherwise a success once `R` can match no more and every such consequent has succeeded; an antecedent that can always match again (`b[->1:$]`) leaves the attempt pending. A procedural `expect` starts exactly one attempt (SV §16.18). |
+| Clock/disable flow | Leading `iff`-qualified clocks, written or inherited from default clocking (SV §§9.4.2.3, 16.17): an edge whose condition is false at the edge is no clock tick; nested `iff` clocks inside a sequence are rejected unless they are the leading clocking event. Nearest default-clock inheritance, compatible declaration/call-site clocks, legal multiclock `##0`/`##1` boundaries, asynchronous single-signal `disable iff`, bounded `accept_on/reject_on` and synchronous variants. |
+| Sequences | Single-clock composition under Annex F: nested `##` concatenation with fixed, ranged and unbounded delays; consecutive repetition of Booleans and of whole sequences (`[*m:n]`, `[*]`, `[+]`, empty-admitting bodies) and nonconsecutive/goto repetition; empty matches; `or`; multi-cycle `and`, `intersect`, `throughout` and `within` (runtime joins that pair operand endpoints and drop threads that can no longer pair); `first_match`. Matches are counted with multiplicity (SV §§16.9.5, 16.9.7, 16.9.8): each `or` operand, each pair of `and`/`intersect` operand matches and each delay or repetition choice is a distinct match, observable through `cover sequence` and once-per-match match items; ways of matching the empty word count once. Live sequence threads are bounded by `LLG_SEQUENCE_THREAD_LIMIT` (default 1,000,000); exhaustion is a reported execution error. |
 | Properties and instances | One-cycle `not/and/or/iff/implies` and `if/else` forms; named sequence/property instances with positional/named/default arguments. |
 | Locals and match items | Per-attempt local input capture/defaults, ordered assignment/increment/subroutine-call items and isolated local snapshots for overlapping/branching threads. |
 | Control | Bounded blocking `expect`, sequence `.matched`, `$asserton/$assertoff/$assertkill` and hierarchy selectors. Internal post-2009 level-0 ON/OFF/KILL `$assertcontrol` support is not admitted by either target edition. |
@@ -1898,13 +1919,12 @@ before its evaluation (repeated ticks in a step count once) and returns the
 initial value (declaration value or type default) before enough ticks; value
 change functions compare the calling step's Preponed value with the most
 recent strictly earlier tick, also between edges. `iff` and the `$past` gate
-read current values when the clock occurs. Real arguments keep numeric
-samples: `$past` returns the exact sampled real and `$stable/$changed` compare
-with real `==`, also inside assertions; `$rose/$fell` of a real are illegal.
-Outside any assertion, a procedural `$sampled` returns the Preponed value of
-every packed or real signal it reads, registered without per-slot history.
-String, event, chandle, class, dynamic and associative array arguments are
-diagnosed as illegal (§16.6.1); fixed unpacked arrays, unpacked structures,
+read current values when the clock occurs. Outside any assertion, a
+procedural `$sampled` returns the Preponed value of every packed or real signal
+it reads, registered without per-slot history. Real, shortreal and realtime
+operands of `$past`, `$rose`, `$fell`, `$stable`, `$changed` and the global
+clocking functions, string, event, chandle, class, dynamic and associative
+array arguments are diagnosed as illegal (§16.6.1); fixed unpacked arrays, unpacked structures,
 queues and unpacked element selections are explicit unsupported rejections
 ([known issue](known_issues.md#sampled-value-arguments-without-sampled-storage),
 [SIM-035 fixtures](../tests/fixtures/sim/feature_completion/sim_035/readme.md)).

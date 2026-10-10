@@ -1,0 +1,3 @@
+B fail t=2
+A fail t=3
+assert failures=1

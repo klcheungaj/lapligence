@@ -37,7 +37,7 @@ fn complex_clocking_events_sample_on_every_tick() {
             ..Default::default()
         },
         expected,
-        "llg: $finish at time 17000 at tb:91:8\n",
+        "llg: $finish at time 17000 at tb:85:8\n",
     );
 }
 
@@ -45,6 +45,13 @@ fn complex_clocking_events_sample_on_every_tick() {
 fn overlapping_assertions_and_actions_share_sampled_histories() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_035/assertion_history.out");
     sim_cli::run_case_backend_parity(SUITE, "assertion_history", expected, &[], &[]);
+}
+
+#[test]
+fn event_clock_gates_are_read_when_the_event_occurs() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_035/event_gate_instant.out");
+    sim_cli::run_case_backend_parity(SUITE, "event_gate_instant", expected, &[], &[]);
 }
 
 // FND-002 witnesses, adopted with a reviewed oracle.
@@ -83,6 +90,33 @@ fn neg_fell_shortreal() {
         SUITE,
         "neg_fell_shortreal",
         "$fell of a real expression is illegal",
+    );
+}
+
+#[test]
+fn neg_real_assertion() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_real_assertion",
+        "$changed of a real expression is illegal",
+    );
+}
+
+#[test]
+fn neg_real_past() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_real_past",
+        "$past of a real expression is illegal",
+    );
+}
+
+#[test]
+fn neg_stable_realtime() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_stable_realtime",
+        "$stable of a real expression is illegal",
     );
 }
 

@@ -1,7 +1,10 @@
-// SIM-019: `with` expressions evaluate once per element in index or key
-// order (SV 7.12), may call subroutines with side effects and capture
-// automatic state of the caller (locals, formals, loop variables); receivers
-// selected through a side-effecting index are evaluated once.
+// SIM-019: `with` expressions may call subroutines with side effects and
+// capture automatic state of the caller (locals, formals, loop variables);
+// receivers selected through a side-effecting index are evaluated once.
+// The number and order of `with` evaluations are not printed: 7.12 says side
+// effects "may be unpredictable" and 7.12.1 that locators "traverse the array
+// in an unspecified order". llg's once-per-element, index-order policy is
+// checked separately by `policy_callbacks`.
 module tb;
   typedef struct {
     string name;
@@ -46,21 +49,20 @@ module tb;
   initial begin
     calls = 0;
     r = q.find with (probe(item) > 5);
-    $display("find %0d calls %0d trace %0d %0d %0d %0d %0d", r.size(), calls,
-             trace[0], trace[1], trace[2], trace[3], trace[4]);
+    $display("find %0d calls-ok %0d", r.size(), calls > 0);
 
     calls = 0;
     trace.delete();
     total = q.sum() with (probe(item));
-    $display("sum %0d calls %0d", total, calls);
+    $display("sum %0d calls-ok %0d", total, calls > 0);
 
     calls = 0;
     r = q.max() with (probe(item));
-    $display("max %0d calls %0d", r[0], calls);
+    $display("max %0d calls-ok %0d", r[0], calls > 0);
 
     calls = 0;
     r = q.find_first with (probe(item) == 9);
-    $display("first %0d calls-ok %0d", r[0], calls >= 2 && calls <= 5);
+    $display("first %0d calls-ok %0d", r[0], calls > 0);
 
     calls = 0;
     order = "";
@@ -68,12 +70,12 @@ module tb;
     sa["amy"] = 2;
     sa["kim"] = 3;
     total = sa.sum() with (note(item.index()));
-    $display("assoc %0d calls %0d order %s", total, calls, order);
+    $display("assoc %0d calls-ok %0d keys-seen %0d", total, calls > 0, order.len() > 0);
 
     calls = 0;
     order = "";
     s.sort() with (note(item));
-    $display("sort %s %s %s calls-ok %0d", s[0], s[1], s[2], calls >= 3);
+    $display("sort %s %s %s calls-ok %0d", s[0], s[1], s[2], calls > 0);
 
     for (int limit = 3; limit <= 8; limit += 5) begin
       automatic int bias = limit;
