@@ -668,3 +668,75 @@ fn s36_d8_dynamic_ref_actual() {
         "cannot pass a dynamic variable to ref argument `x`",
     );
 }
+
+#[test]
+fn s38_d1_end_of_simulation_strength() {
+    run_decision(
+        "S38-D1_end_of_simulation_strength",
+        include_str!("fixtures/sim/lrm_decisions/S38-D1_end_of_simulation_strength.out"),
+    );
+}
+
+#[test]
+fn s38_d2_async_abort_sampled() {
+    run_decision(
+        "S38-D2_async_abort_sampled",
+        include_str!("fixtures/sim/lrm_decisions/S38-D2_async_abort_sampled.out"),
+    );
+}
+
+#[test]
+fn s38_d3_pending_operand_vacuous() {
+    run_decision(
+        "S38-D3_pending_operand_vacuous",
+        include_str!("fixtures/sim/lrm_decisions/S38-D3_pending_operand_vacuous.out"),
+    );
+}
+
+#[test]
+fn s38_d4_expect_inline_action() {
+    run_decision(
+        "S38-D4_expect_inline_action",
+        include_str!("fixtures/sim/lrm_decisions/S38-D4_expect_inline_action.out"),
+    );
+}
+
+#[test]
+fn s38_d5_default_disable_scope() {
+    run_decision(
+        "S38-D5_default_disable_scope",
+        include_str!("fixtures/sim/lrm_decisions/S38-D5_default_disable_scope.out"),
+    );
+}
+
+#[test]
+fn s38_d6_initial_assertion_single_attempt() {
+    run_decision(
+        "S38-D6_initial_assertion_single_attempt",
+        include_str!("fixtures/sim/lrm_decisions/S38-D6_initial_assertion_single_attempt.out"),
+    );
+}
+
+#[test]
+fn s38_d7_action_blocks_independent() {
+    run_decision(
+        "S38-D7_action_blocks_independent",
+        include_str!("fixtures/sim/lrm_decisions/S38-D7_action_blocks_independent.out"),
+    );
+}
+
+#[test]
+fn s38_d8_until_with_vacuity() {
+    run_decision(
+        "S38-D8_until_with_vacuity",
+        include_str!("fixtures/sim/lrm_decisions/S38-D8_until_with_vacuity.out"),
+    );
+}
+
+#[test]
+fn s38_d9_sync_abort_new_attempt() {
+    run_decision(
+        "S38-D9_sync_abort_new_attempt",
+        include_str!("fixtures/sim/lrm_decisions/S38-D9_sync_abort_new_attempt.out"),
+    );
+}
