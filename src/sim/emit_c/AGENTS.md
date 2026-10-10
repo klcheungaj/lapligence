@@ -305,12 +305,15 @@ that its body never reads. An input event formal is a by-value `llg_event_t` (fr
 coroutine callee) holding the object the actual named at the call: the caller
 snapshots `{ p ? p->object : NULL }` and the callee binds a private handle copy
 (`IrEventRef::Formal`), so rebinding the actual or the formal cannot move waits.
-Output, inout and ref event formals and event controls reading by-value formals or
-locals stay inline-expanded templates that
-are never emitted; a task whose event control reads a `ref` formal is a template
-whose per-signal specializations are emitted (`subroutine_requires_inline`,
-`CallShape`). Concrete interface members retain their
-actual member address.
+A task whose waited `ref` formal is an unpacked aggregate stays an
+inline-expanded template that is never emitted; a task whose event control reads
+a `ref` formal also emits per-signal specializations (`subroutine_requires_inline`,
+`CallShape`). A typed body waits on a packed/real `ref` formal through
+`llg_ref_dependency(r)`, on a string `ref` formal through its
+`llg_string_t.dependency` and on a handle `ref` formal through
+`llg_handle_dependency` (module/static handle objects register their marker
+with `llg_dependency_bind_handle` when the model has a handle `ref` formal).
+Concrete interface members retain their actual member address.
 
 Container operations evaluate operands in order, register borrowed string keys and
 item snapshots, compute all mapped results before publishing, and destroy consumed

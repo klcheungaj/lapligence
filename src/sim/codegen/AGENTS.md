@@ -114,13 +114,17 @@ once in hidden model storage; automatic locals initialize per lexical entry,
 including inherited lifetimes and loop/block scopes.
 Subroutine calls use the typed `IrFunc`, timed or disabling included; a call is
 expanded (`lower_task_inline`) only where `CallShape` says the caller's environment
-is needed: output/inout/ref event formals and event controls reading by-value
-formals or locals; class-method event formals are typed. A `ref` formal read by an event
-control binds a whole-signal actual statically: each distinct actual signal gets one
-cloned task (`task_specialization`, lowered after all call sites); a level wait or
-an explicit control without named events follows a whole-variable actual through
-its descriptor (selects/qualifiers are process-evaluated), otherwise the call
-expands. Keep those cases in that one predicate and record new ones there.
+is needed: a waited `ref` formal of unpacked aggregate type, or one whose actual
+is a container element or unpacked member (`whole_variable_actual` fails). A
+`ref` formal read by an event control binds a whole-signal actual statically:
+each distinct actual signal gets one cloned task (`task_specialization`, lowered
+after all call sites); otherwise the typed body follows a whole variable,
+fixed-array element or class property through its descriptor
+(`IrDependency::RefFormal`; selects, qualifiers, named-event lists and `@*` are
+process-evaluated). String and handle `ref` formals wait on their actual's marker
+(`IrDependency::NativeRefFormal`); each call checks its actual has one
+(`native_ref_actual_observable`). Keep those cases in that one predicate and
+record new ones there.
 Fixed aggregate projections of static function locals use that persistent signal
 as their read/write owner, including tagged-member guards; activation locals do
 not name the persistent cell.

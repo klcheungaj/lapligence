@@ -928,8 +928,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)).
   Real edges (SV §6.12.1), chandles (§6.14) and functions with output/ref
   formals (§13.4) reject as language rules. Event handles or array-reading
-  helpers in named-event lists with process-evaluated sources, string or
-  handle `ref` formals, virtual methods and helper forms outside §9 reject.
+  helpers in named-event lists with process-evaluated sources, virtual
+  methods and helper forms outside §9 reject.
   Reads whose changes no wait can observe reject with their location instead
   of never waking: per-object container properties, mailbox/semaphore
   queries, callee reads through other handles (locals, container elements)
@@ -1469,14 +1469,21 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   objects, a new one per automatic activation. A `ref` formal read by an
   event control binds a whole module-signal actual (or, for a native record
   formal, a module, static or block record) per specialized task copy; a
-  `wait (cond)` or explicit event control on a `ref` formal (a select,
-  operator or qualifier being evaluated by the waiting process, SIM-013)
-  follows any whole-variable actual through its descriptor in the typed body,
-  so such tasks recurse and take native formals with automatic actuals. Event
-  expressions over by-value formals copy them when the control arms; event
-  controls reading string/handle `ref` formals and `ref`-formal expressions in
-  lists with named events use inline task paths; event formals of class
-  methods, virtual ones included, take the typed path
+  `wait (cond)`, explicit event control or implicit `@*` on a packed or real
+  `ref` formal (a select, operator, qualifier or list naming an event being
+  evaluated by the waiting process, SIM-013) follows the actual through its
+  descriptor in the typed body when the actual is a whole variable, a
+  fixed-array element (static, automatic, multidimensional or hierarchical)
+  or a class property, so such tasks recurse, run as class methods and take
+  native formals. Waits and `@` on string and class-handle `ref` formals
+  follow the change marker of the module, package, static or process
+  variable the actual names (SIM-009-A03, decisions S09-D1..D4); fork-visible
+  automatic and class-property actuals of such formals reject explicitly.
+  Unpacked aggregate `ref` formals and container-element or unpacked-member
+  actuals of waited `ref` formals still use the inline path, which rejects
+  them ([known issue](known_issues.md#event-controls-on-subroutine-storage-in-expanded-tasks)).
+  Event expressions over by-value formals copy them when the control arms;
+  event formals of class methods, virtual ones included, take the typed path
   ([sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md));
   the process-handle formal ABI remains unsupported. Unresolved environments and broader
   timing/native/aggregate combinations reject. V §12.4 **[1995]**.
@@ -1503,9 +1510,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Unique/priority diagnostics remain active; side-effect-free source alone does
   not establish eligibility.
 - ❌ **Unsupported or illegal call forms** — Recursive task calls requiring
-  inline-only event/ref environments remain rejected. Typed recursive
-  delay-bearing tasks use independent SCC/arena activations; direct and mutual
-  recursion have witnesses in [the function/task suite](../tests/sim_function.rs).
+  an inline event/ref environment (an unpacked aggregate `ref` formal or a
+  container-element or unpacked-member actual of a waited `ref` formal)
+  remain rejected. Typed recursive delay-bearing tasks use independent
+  SCC/arena activations; direct and mutual recursion have witnesses in
+  [the function/task suite](../tests/sim_function.rs) and
+  [sim_009](../tests/fixtures/sim/feature_completion/sim_009/readme.md).
   Jumps into other lexical scopes/backward unstructured jumps remain
   rejected; timing-bearing class tasks (SIM-011) and virtual-interface tasks
   (SIM-012) execute. Direct task calls and
