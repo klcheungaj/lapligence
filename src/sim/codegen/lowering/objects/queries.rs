@@ -471,7 +471,11 @@ impl Codegen<'_> {
     }
 
     /// The synchronization-object identity of an event operand or null.
-    fn lower_event_identity(&mut self, path: &str, node: NodeId) -> Result<IrChandleExpr, String> {
+    pub(super) fn lower_event_identity(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<IrChandleExpr, String> {
         if self.is_null_event_expression(node) {
             return Ok(IrChandleExpr::Null);
         }

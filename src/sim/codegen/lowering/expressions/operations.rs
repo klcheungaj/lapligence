@@ -429,7 +429,8 @@ impl<'a> Codegen<'a> {
                 Ok(a)
             }
             Operation::LogicalNot => {
-                let a = op!(0);
+                // Handles (events, chandles, mailboxes) test against null.
+                let a = self.lower_boolean_expr(scope_path, operands[0])?;
                 Ok(IrExpr::new(
                     IrExprKind::Un {
                         op: IrUnOp::LogNot,

@@ -778,6 +778,26 @@ impl EmitCtx<'_, '_> {
         )
     }
 
+    /// Lower the count of a repeat loop or a repeat event control (standalone,
+    /// intra-assignment and `->>`). Every form shares this conversion, and
+    /// the runtime's `sv4_repeat_count` then treats X/Z and nonpositive
+    /// signed counts as zero (SV 12.7.2, 9.4.5). The grammar admits any
+    /// expression; a real count converts to an integer by rounding, ties
+    /// away from zero (SV 6.12.2), into a signed 64-bit value so that
+    /// negative reals keep their sign and run zero times.
+    pub(super) fn lower_repeat_count(&mut self, count: NodeId) -> Result<IrExpr, String> {
+        let value = self.cg.lower_expr(&self.path, count)?;
+        if value.is_real() {
+            return Ok(IrExpr::new(
+                IrExprKind::CastToPacked { a: Box::new(value) },
+                64,
+                true,
+                None,
+            ));
+        }
+        Ok(value)
+    }
+
     pub(super) fn lower_nonblocking_event_trigger(
         &mut self,
         statement: NodeId,
@@ -821,13 +841,7 @@ impl EmitCtx<'_, '_> {
                         "repeat nonblocking event triggers require an event control",
                     ));
                 };
-                let repeat = self.cg.lower_expr(&self.path, *count)?;
-                if repeat.is_real() {
-                    return Err(self.unsupported_event_trigger_timing(
-                        timing,
-                        "repeat nonblocking event triggers require a packed count",
-                    ));
-                }
+                let repeat = self.lower_repeat_count(*count)?;
                 if self.event_specs_need_process(specs) {
                     return self.process_evaluated_event_trigger(
                         statement,
