@@ -150,6 +150,15 @@ scripts/run-tests.sh -E 'test(/^sim_lrm_decisions::/)'
 | S32-D1 | **The implicit `$finish` of programs is immediate.** When the last thread originating in a program initial ends, llg calls `$finish` at that point, as if that thread had called it: events still pending in the same time slot (a Re-NBA update, the design processes it would wake) do not run, and final procedures see the last committed values. | 24.3 L43229-43232; 9.2.3 L11258-11261 | `S32-D1_implicit_finish_immediate` | llg choice (the text says "immediately after" the threads end without saying whether pending same-slot events run first) |
 | S32-D2 | **Programs can be bound into interfaces.** A `bind` whose target scope is an interface may instantiate a program; the program runs once per interface instance. | 23.11 L42888-42893, L42897-42901; A.1.4 L40954-40957 | `S32-D2_bind_program_into_interface` | llg choice (the prose names only interfaces as code bound into interfaces; the grammar allows a program instantiation as an interface item and an interface as a bind target) |
 
+## Synchronous drives and clocking (SIM-034)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S34-D1 | **A cycle-delayed drive does not block.** `cb.v <= ##n e` evaluates `e` and `n` when it executes and matures `n` events of the target's own clocking block later; issued away from an event it counts from the next event (`##0` has no effect). Drives that mature in the same Re-NBA region commit in issue order, so the last issued value is driven. | 14.16 L20103-20108, L20144-20147; 14.16.2 L20194-20195, L20244-20260; 14.11 L19824-19828 | `S34-D1_cycle_drive_maturation` | LRM text (the clause's own example; llg blocked the process for the cycle count before) |
+| S34-D2 | **A clocking output on a net has its own driver.** The driver starts at `'z`, has strong strength and resolves with the net's other drivers. | 14.16 L20069-20074 | `S34-D2_clocking_net_driver` | LRM text (llg wrote into the net's existing driver before) |
+| S34-D3 | **A drive through a virtual interface is bound when it executes.** It drives the clockvar of the instance the handle names at that moment, with that instance's clocking event and skew; rebinding the handle before the drive matures does not redirect it. | 25.9 L44891-44893; 14.16 L20144-20147 | `S34-D3_vif_drive_bound_at_issue` | llg choice (the text does not say when the handle of a pending drive is resolved; llg treats it like an NBA target) |
+| S34-D4 | **Design processes woken in Observed run before the reactive set.** A module process waiting for a clocking block event resumes in the Active region of the same pass, before program processes woken by the same event run in Reactive; its drives commit in the following Re-NBA region. | 14.13 L19921-19923; 4.5 L3386-3392; 24.3.1 L43248-43249 | `S34-D4_observed_wakeup_before_reactive` | LRM text (llg ran the reactive set first before) |
+
 ## File input (SIM-026)
 
 | ID | Decision | Clause (SV) | Case | Kind |

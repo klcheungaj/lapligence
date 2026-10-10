@@ -977,7 +977,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   event already occurred, and a default named by `default clocking cb;` or
   declared in a nested module is resolved per module
   ([sim_033](../tests/fixtures/sim/feature_completion/sim_033/readme.md)).
-  Missing default events and unsupported cross-clock forms reject. Clocking drives and assertion sequence delays are
+  A `##n` prefix waits from any time, also away from the event; the drive form
+  `cb.x <= ##n v` does not block and counts the target block's own events, so
+  it needs no default clocking
+  ([sim_034](../tests/fixtures/sim/feature_completion/sim_034/readme.md)).
+  A missing default clocking is a frontend error. Assertion sequence delays are
   bounded separately in §12. SV §14.11 **[SV-2005]**.
 
 ## 7. Expressions & operators
@@ -1894,8 +1898,12 @@ These are bounded implementations, not full verification-infrastructure support.
   access through a null handle is a run-time error at its source position
   that stops the process
   ([sim_012](../tests/fixtures/sim/feature_completion/sim_012/readme.md)).
-  Dynamic clocking output/inout dispatch (SIM-034), modport expression ports
-  and broader polymorphic/capture forms reject.
+  Synchronous drives through handles, views, class properties and array
+  elements (output, skewed, cycle-delayed, selected and inout-net drives) go
+  to the instance the handle names when the drive executes; rebinding never
+  redirects a pending drive
+  ([sim_034](../tests/fixtures/sim/feature_completion/sim_034/readme.md)).
+  Modport expression ports and broader polymorphic/capture forms reject.
   SV §§25.5, 25.7, 25.9–25.10 **[SV-2009]**.
 - 🟨 **Programs** — Named, nested (implicitly instantiated) and bound
   programs with module-style, interface and modport ports, package imports,
@@ -1923,15 +1931,25 @@ These are bounded implementations, not full verification-infrastructure support.
   expressions of packed, real or shortreal type; `@(cb.x)` and edges on
   clockvars see sampled-value changes
   ([sim_033](../tests/fixtures/sim/feature_completion/sim_033/readme.md)).
-  Constant output/inout skews capture values for Re-NBA; off-event drives wait
-  for the next event. Inouts retain resolved-net drives and sampled reads;
-  admitted signal-edge qualifiers and packed selected targets are present.
-  Unpacked, string, class and event inputs, edge-qualified input skews and
-  `@(vif.cb)` reject explicitly; chandle inputs are illegal (SV §§6.14, 14.5).
-  Output/inout writes must use admitted nonblocking assignments; compound
-  writes and concatenated clockvar lvalues are prohibited by SV §14.16. Skews
-  must be constant expressions (SV §14.4); runtime skews are language-illegal.
-  Unsupported cross-clock forms remain excluded.
+  Synchronous drives capture their value (and `##n` count) when they execute
+  and commit in Re-NBA after the constant output skew; off-event drives act at
+  the next event, `##n` drives mature `n` events of the target block later
+  without blocking, and drives maturing together commit in issue order. An
+  output or inout on a net drives it through its own strong driver that starts
+  at `'z` and resolves with the net's other drivers. Design processes woken by
+  the Observed clocking event run before the reactive set of the same pass.
+  Drives go through concrete blocks, modport clocking ports and virtual
+  interfaces (decisions S34-D1-D4,
+  [sim_034](../tests/fixtures/sim/feature_completion/sim_034/readme.md)).
+  Admitted signal-edge qualifiers and selected targets (element selects, then
+  a part-select) are present. A clockvar bound to an expression over a wired
+  net, and a select of an expression-bound clockvar through a virtual
+  interface, reject explicitly. Unpacked, string, class and event inputs,
+  edge-qualified input skews and `@(vif.cb)` reject explicitly; chandle inputs
+  are illegal (SV §§6.14, 14.5). Clockvars are written only by synchronous
+  drives: blocking, compound, concatenated and `#d`-delayed writes are
+  prohibited by SV §14.16. Skews must be constant expressions (SV §14.4);
+  runtime skews are language-illegal.
   SV ch.14 **[SV-2005]**.
 - 🟨 **Process control** — `process::self/status/kill/suspend/resume/await`
   retain identity, wait conditions, descendant cleanup and terminal status;

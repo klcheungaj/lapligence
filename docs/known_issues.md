@@ -1420,6 +1420,30 @@ Reproduce with
 [`neg_input_edge_skew.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_input_edge_skew.sv) and
 [`neg_vif_clocking_event.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_vif_clocking_event.sv).
 
+## Synchronous drive forms outside the driver model
+
+**Status:** open (SIM-034 boundary).
+
+Synchronous drives reach their target through the clockvar's signal, the
+clocking block's own net driver, or the lvalue a clocking expression names.
+Two legal forms reject explicitly:
+
+- an output or inout clockvar bound to an expression over a wired net
+  (`output x = w[3:0]` on a `wire`): the clocking driver would have to cover
+  only the selected bits of a separate driver slot ("bound to an expression
+  over wired net ... is not supported");
+- a select of an expression-bound clockvar through a virtual interface
+  (`v.cb.x[1] <= ...` when `x` is declared `output x = s[3:0]`): the
+  per-instance arm has no unselected root to apply the select to.
+
+A drive through a virtual interface dispatches on the bound instance with a
+`case` over the descriptor's instances, so each drive site carries one drive
+per instance of that interface type: code size grows with the instance count
+(execution stays a single dispatch). Off-event and `##n` drives keep one heap
+record each until they mature.
+
+Reproduce with a clocking block `output x = w[3:0];` over a `wire [7:0] w`.
+
 ## Sampled-value arguments without sampled storage
 
 **Status:** open (SIM-035 boundary).

@@ -254,6 +254,13 @@ in both optimizer modes on every backend; `complex_clocks` also runs at model
 `sim::ir::validate::tests::sampled_*` unit tests and the sampled-domain ring
 checks in `runtime_value_storage`'s `retention_probe.c`.
 
+SIM-034's synchronous-drive fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_034::)'`. Positive fixtures run
+in both optimizer modes on every backend; `drive_timeline` and `vif_drives` also
+run at model `-O0`/`-O3` after Db destruction. Their decisions S34-D1-D4 are in
+`sim_lrm_decisions`; the component check is
+`sim::ir::validate::tests::clocking_drive_cycle_counts_and_instance_dispatch_are_checked`.
+
 SIM-037's sequence-composition fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_037::)'`. `exhaustive` compares
 36 sequences on all 1024 two-signal traces of length 5 with the test-side
