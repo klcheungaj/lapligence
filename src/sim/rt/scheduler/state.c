@@ -525,6 +525,12 @@ typedef struct {
     int force_count;
     int force_capacity;
     llg_rng_state_t rng_root;
+    // Per-instance initialization streams of static processes (18.14.1),
+    // an open-addressing table keyed by instance name.
+    int rng_instance_streams;  // seed static processes per instance
+    struct llg_rng_scope_entry* rng_scopes;
+    size_t rng_scope_capacity;
+    size_t rng_scope_count;
     int argc;
     char** argv;
     llg_q_queue_t* q_queues;

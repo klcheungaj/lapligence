@@ -28,7 +28,7 @@ static llg_proc_t* spawn_in_region(const llg_co_desc_t* desc,
     }
     p->handle = process_handle_new(p);
     p->status = LLG_PROCESS_RUNNING;
-    llg_rng_state_child(&g.rng_root, &p->rng);
+    rng_seed_static(p);
     p->budget_time = g.now;
     p->region = region;
     register_proc(p);

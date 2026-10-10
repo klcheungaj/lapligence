@@ -202,10 +202,121 @@ static llg_rng_state_t* llg_process_rng(void) {
     return process ? &process->rng : &g.rng_root;
 }
 
-static int llg_rng_argument(sv4_t value, uint32_t* result) {
-    if (sv4_is_unknown(value) || llg_sv4_width(value) == 0) return 0;
-    *result = (uint32_t)sv4_to_u64(value);
-    return 1;
+/* Container methods (shuffle) draw from the calling thread's stream. */
+static llg_rng_state_t* llg_container_thread_rng(void) {
+    return llg_process_rng();
+}
+
+/* Seeds, $urandom seeds and $urandom_range bounds are `int`/`int unsigned`
+ * formals: a 4-state actual converts to 2-state with X/Z bits read as 0
+ * (IEEE 1800-2009 6.11.2), then truncates to 32 bits. */
+static uint32_t llg_rng_argument(sv4_t value) {
+    if (llg_sv4_width(value) == 0) return 0;
+    if (!sv4_is_unknown(value)) return (uint32_t)sv4_to_u64(value);
+    sv4_t known = sv4_to_two_state(value);
+    uint32_t result = (uint32_t)sv4_to_u64(known);
+    sv4_destroy(&known);
+    return result;
+}
+
+/* IEEE 1800-2009 18.14.1: every module, interface and program instance has
+ * an initialization RNG, and a static process is seeded with the next value
+ * of the initialization RNG of the instance that declares it. The instance is
+ * the process label without its final kind component (`tb.u.always` ->
+ * `tb.u`); an indexed initializer label (`tb.class_initializer.3`) also drops
+ * its index. Each instance stream derives from the root and the instance
+ * name, so processes added to one instance never move another instance's
+ * seeds and identical instances still draw different sequences. */
+typedef struct llg_rng_scope_entry {
+    const char* scope;
+    size_t length;
+    llg_rng_state_t rng;
+} llg_rng_scope_t;
+
+static size_t rng_scope_length(const char* name) {
+    if (!name) return 0;
+    size_t length = strlen(name);
+    size_t digits = length;
+    while (digits > 0 && name[digits - 1] >= '0' && name[digits - 1] <= '9')
+        --digits;
+    if (digits < length && digits > 0 && name[digits - 1] == '.')
+        length = digits - 1;
+    while (length > 0 && name[length - 1] != '.') --length;
+    return length > 0 ? length - 1 : 0;
+}
+
+static uint64_t rng_scope_hash(const char* scope, size_t length) {
+    uint64_t hash = UINT64_C(0xcbf29ce484222325);
+    for (size_t index = 0; index < length; ++index) {
+        hash ^= (unsigned char)scope[index];
+        hash *= UINT64_C(0x100000001b3);
+    }
+    return hash;
+}
+
+static void rng_scopes_grow(void) {
+    size_t capacity = g.rng_scope_capacity ? g.rng_scope_capacity * 2 : 64;
+    if (capacity > SIZE_MAX / sizeof(llg_rng_scope_t))
+        llg_fatal_allocation("instance random streams", capacity,
+                             sizeof(llg_rng_scope_t));
+    llg_rng_scope_t* table = (llg_rng_scope_t*)llg_checked_calloc(
+        capacity, sizeof(*table), "instance random streams");
+    for (size_t index = 0; index < g.rng_scope_capacity; ++index) {
+        llg_rng_scope_t* entry = &g.rng_scopes[index];
+        if (!entry->scope) continue;
+        size_t slot = (size_t)rng_scope_hash(entry->scope, entry->length) &
+                      (capacity - 1);
+        while (table[slot].scope) slot = (slot + 1) & (capacity - 1);
+        table[slot] = *entry;
+    }
+    free(g.rng_scopes);
+    g.rng_scopes = table;
+    g.rng_scope_capacity = capacity;
+}
+
+static llg_rng_state_t* rng_instance_stream(const char* name) {
+    static const char model_scope[] = "";
+    size_t length = rng_scope_length(name);
+    const char* scope = length ? name : model_scope;
+    if ((g.rng_scope_count + 1) * 4 > g.rng_scope_capacity * 3)
+        rng_scopes_grow();
+    uint64_t hash = rng_scope_hash(scope, length);
+    size_t mask = g.rng_scope_capacity - 1;
+    size_t slot = (size_t)hash & mask;
+    while (g.rng_scopes[slot].scope) {
+        llg_rng_scope_t* entry = &g.rng_scopes[slot];
+        if (entry->length == length && memcmp(entry->scope, scope, length) == 0)
+            return &entry->rng;
+        slot = (slot + 1) & mask;
+    }
+    llg_rng_scope_t* entry = &g.rng_scopes[slot];
+    entry->scope = scope;
+    entry->length = length;
+    llg_rng_state_derive(&entry->rng, &g.rng_root, hash);
+    ++g.rng_scope_count;
+    return &entry->rng;
+}
+
+static void rng_scopes_free(void) {
+    free(g.rng_scopes);
+    g.rng_scopes = NULL;
+    g.rng_scope_capacity = 0;
+    g.rng_scope_count = 0;
+}
+
+/* Model-spawned processes are static processes of their instance. Forked
+ * and detached children derive from their parent thread instead (forks.c).
+ * A model that never observes a random stream keeps the cheaper root-order
+ * seeding: no label hashing or instance table on its spawns. */
+static void rng_seed_static(llg_proc_t* p) {
+    llg_rng_state_t* parent = g.rng_instance_streams
+        ? rng_instance_stream(p->name)
+        : &g.rng_root;
+    llg_rng_state_child(parent, &p->rng);
+}
+
+void llg_rt_use_instance_random_streams(void) {
+    g.rng_instance_streams = 1;
 }
 
 sv4_t llg_urandom(void) {
@@ -213,31 +324,19 @@ sv4_t llg_urandom(void) {
 }
 
 sv4_t llg_urandom_seed(sv4_t seed) {
-    uint32_t value = 0;
-    if (!llg_rng_argument(seed, &value)) return sv4_x(32, 0);
-    llg_rng_state_seed(llg_process_rng(), value);
+    llg_rng_state_seed(llg_process_rng(), llg_rng_argument(seed));
     return llg_urandom();
 }
 
 sv4_t llg_urandom_range(sv4_t max, sv4_t min, int has_min) {
-    uint32_t high;
-    uint32_t low = 0;
-    if (!llg_rng_argument(max, &high) ||
-        (has_min && !llg_rng_argument(min, &low)))
-        return sv4_x(32, 0);
-    if (!has_min) low = 0;
+    uint32_t high = llg_rng_argument(max);
+    uint32_t low = has_min ? llg_rng_argument(min) : 0;
     return sv4_from_u64(
         (uint64_t)llg_rng_state_uniform(llg_process_rng(), high, low), 32, 0);
 }
 
 void llg_process_srandom(sv4_t seed) {
-    uint32_t value = 0;
-    if (!llg_rng_argument(seed, &value)) {
-        fprintf(stderr, "llg: random runtime: srandom seed is unknown or real\n");
-        llg_last_failure = 1;
-        return;
-    }
-    llg_rng_state_seed(llg_process_rng(), value);
+    llg_rng_state_seed(llg_process_rng(), llg_rng_argument(seed));
 }
 
 llg_string_t llg_process_get_randstate(void) {
@@ -252,4 +351,31 @@ int llg_process_set_randstate(llg_string_t state) {
     }
     llg_string_destroy(&state);
     return ok;
+}
+
+/* Object streams (IEEE 1800-2009 18.14.1 object stability): creation seeds
+ * the object with the next value of the creating thread, or of the root
+ * initialization stream outside a process. A model that keeps no object
+ * state still consumes that draw so the thread's sequence does not depend on
+ * whether some object's stream is ever inspected. */
+void llg_object_rng_create(llg_rng_state_t* object) {
+    llg_rng_state_t* thread = llg_process_rng();
+    if (object) llg_rng_state_child(thread, object);
+    else llg_rng_state_skip_child(thread);
+}
+
+void llg_object_srandom(llg_rng_state_t* object, sv4_t seed) {
+    if (object) llg_rng_state_seed(object, llg_rng_argument(seed));
+}
+
+llg_string_t llg_object_get_randstate(const llg_rng_state_t* object) {
+    return object ? llg_rng_state_get(object) : llg_string_bytes("", 0);
+}
+
+void llg_object_set_randstate(llg_rng_state_t* object, llg_string_t state) {
+    if (object && !llg_rng_state_set(object, &state)) {
+        fprintf(stderr, "llg: random runtime: invalid randstate string\n");
+        llg_last_failure = 1;
+    }
+    llg_string_destroy(&state);
 }

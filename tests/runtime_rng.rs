@@ -105,6 +105,20 @@ static int check_state_replay(void) {
     return 0;
 }
 
+/* A child whose stream is never observed advances the parent exactly like a
+ * created child, so the parent's later values do not depend on whether the
+ * child's state is kept. */
+static int check_skipped_child(void) {
+    llg_rng_state_t created, skipped, child;
+    llg_rng_state_seed(&created, UINT64_C(5));
+    skipped = created;
+    llg_rng_state_child(&created, &child);
+    llg_rng_state_skip_child(&skipped);
+    CHECK(same_state(&created, &skipped));
+    CHECK(llg_rng_state_next(&created) == llg_rng_state_next(&skipped));
+    return 0;
+}
+
 static int check_inclusive_ranges(void) {
     llg_rng_state_t stream;
     llg_rng_state_seed(&stream, UINT64_C(99));
@@ -123,6 +137,7 @@ int main(void) {
     CHECK(check_hierarchical_seed_consumption() == 0);
     CHECK(check_sibling_streams() == 0);
     CHECK(check_state_replay() == 0);
+    CHECK(check_skipped_child() == 0);
     CHECK(check_inclusive_ranges() == 0);
     puts("runtime random streams ok");
     return 0;

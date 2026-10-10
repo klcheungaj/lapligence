@@ -941,6 +941,13 @@ impl EmitCtx<'_, '_> {
                     two_state: false,
                 }])
             }
+            // A random system function in statement position (a void cast,
+            // SV 6.24.1) still draws and writes back its seed; only the value
+            // is discarded. Generic `$` names would otherwise become VPI
+            // task calls.
+            "$urandom" | "$urandom_range" | "$random" | "$dist_uniform" | "$dist_normal"
+            | "$dist_exponential" | "$dist_poisson" | "$dist_chi_square" | "$dist_t"
+            | "$dist_erlang" => Ok(vec![IrStmt::PlusArg(self.cg.lower_expr(&self.path, h)?)]),
             "$test$plusargs" | "$value$plusargs" => Ok(vec![IrStmt::PlusArg(
                 self.cg.lower_plusarg_expr(&self.path, name, h)?,
             )]),

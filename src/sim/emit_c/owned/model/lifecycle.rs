@@ -212,6 +212,9 @@ pub(in crate::sim::emit_c) fn main(
             "    (void)llg_class_field_quiet; (void)llg_class_packed_dependency; (void)llg_class_real_dependency; (void)llg_class_handle_dependency; (void)llg_class_string_dependency; (void)llg_class_handle_store; (void)llg_class_handle_published;\n",
         );
     }
+    if !model.classes.is_empty() && model.random.objects {
+        out.push_str("    (void)llg_class_rng;\n");
+    }
     if !model.virtual_interfaces.is_empty() {
         out.push_str(
             "    (void)llg_vif_member; (void)llg_vif_read; (void)llg_vif_member_quiet; (void)llg_vif_member_dependency; (void)llg_vif_real_member; (void)llg_vif_real_member_quiet;\n",
@@ -329,6 +332,11 @@ pub(in crate::sim::emit_c) fn main(
             c_string_literal(&call.name), call.args.len(), call.time_unit_fs));
     }
     out.push_str("    llg_vpi_start_simulation();\n    if (llg_vpi_failed()) goto start_failed;\n");
+    // Static processes seed from their instance's initialization stream only
+    // where some stream is observable (SV 18.14.1).
+    if model.random.threads || model.random.objects {
+        out.push_str("    llg_rt_use_instance_random_streams();\n");
+    }
     // First executable process per C name, matching the former linear search.
     let mut executable_by_name = HashMap::new();
     for item in execution.processes() {

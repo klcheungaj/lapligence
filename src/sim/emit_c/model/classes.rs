@@ -11,7 +11,7 @@ pub(super) fn render_class_decls(model: &IrModel, out: &mut String) {
     }
     // All class receivers use one actual C type. Casting separately flattened
     // derived structs to unrelated base structs would violate C alias rules.
-    out.push_str(r#"
+    let declarations = r#"
 typedef struct {
     unsigned kind;
     union { sv4_t packed; double real; llg_string_t string; void* handle; } value;
@@ -27,7 +27,7 @@ typedef struct llg_class_object {
     /* Change marker of the object's handle properties, allocated when a wait
      * first observes a property selected through one of them. */
     sv4_t* handle_dependency;
-} llg_class_object_t;
+LLG_CLASS_RNG_MEMBER} llg_class_object_t;
 /* LLG_GC_VERIFY keeps unreachable objects allocated with this class id, so
  * an access through a missed collector root is reported. */
 #define LLG_CLASS_RECLAIMED UINT32_MAX
@@ -112,7 +112,18 @@ static const llg_gc_type_t llg_class_gc_type = {
 static void llg_class_storage_destroy(void) {
     llg_gc_teardown();
 }
-"#);
+"#;
+    // Objects keep their own random stream only when the model seeds or
+    // inspects one (SV 18.13-18.14); other models pay no per-object state.
+    if model.random.objects {
+        out.push_str(&declarations.replace(
+            "LLG_CLASS_RNG_MEMBER",
+            "    /* The object's random stream (SV 18.14.1 object stability). */\n    llg_rng_state_t rng;\n",
+        ));
+        out.push_str("static llg_rng_state_t* llg_class_rng(void* handle, const char* site) {\n    llg_class_object_t* object = (llg_class_object_t*)llg_class_require(handle, site);\n    return object ? &object->rng : NULL;\n}\n");
+    } else {
+        out.push_str(&declarations.replace("LLG_CLASS_RNG_MEMBER", ""));
+    }
     out.push_str("static int llg_class_is_a(void* object, uint32_t expected) {\n    if (!object) return 0;\n    uint32_t id = llg_class_id(object);\n    for (;;) {\n        if (id == expected) return 1;\n        switch (id) {\n");
     for (index, class) in model.classes.iter().enumerate() {
         if let Some(base) = class.base {
@@ -200,10 +211,16 @@ static void llg_class_handle_store(void* handle, uint32_t expected, size_t index
 }
 "#);
     for (index, class) in model.classes.iter().enumerate() {
-        out.push_str(&format!("static void* llg_class_new_{index}(void) {{\n    llg_class_object_t* object = (llg_class_object_t*)llg_gc_alloc(sizeof(*object), &llg_class_gc_type);\n    object->class_id = {index};\n    object->count = {};\n", class.fields.len()));
+        let allocate = if model.random.objects || model.random.threads {
+            "alloc"
+        } else {
+            "new"
+        };
+        out.push_str(&format!("static void* llg_class_{allocate}_{index}(void) {{\n    llg_class_object_t* object = (llg_class_object_t*)llg_gc_alloc(sizeof(*object), &llg_class_gc_type);\n    object->class_id = {index};\n    object->count = {};\n", class.fields.len()));
         if !class.fields.is_empty() {
             out.push_str("    object->fields = (llg_class_field_t*)calloc(object->count, sizeof(*object->fields));\n    if (!object->fields) { free(object); abort(); }\n");
         }
+
         // The collected heap owns the object from allocation; no collection
         // can run before the caller stores the handle (safe points lie
         // outside process turns), so constructors and defaults may follow.
@@ -264,6 +281,20 @@ static void llg_class_handle_store(void* handle, uint32_t expected, size_t index
             }
         }
         out.push_str("    return object;\n}\n");
+        // `new` seeds the object from the creating thread's next value; a
+        // model that never inspects object streams still consumes it when
+        // thread streams are observable (SV 18.14.1). A shallow copy only
+        // allocates (llg_class_alloc_*) and copies the state (SV 8.11).
+        if model.random.objects || model.random.threads {
+            let target = if model.random.objects {
+                "&object->rng"
+            } else {
+                "NULL"
+            };
+            out.push_str(&format!(
+                "static void* llg_class_new_{index}(void) {{\n    llg_class_object_t* object = (llg_class_object_t*)llg_class_alloc_{index}();\n    llg_object_rng_create({target});\n    return object;\n}}\n"
+            ));
+        }
         render_class_copy(model, index, class, out);
     }
 }
@@ -281,9 +312,17 @@ fn render_class_copy(
     out: &mut String,
 ) {
     use crate::sim::ir::IrClassFieldType;
+    let allocate = if model.random.objects || model.random.threads {
+        "alloc"
+    } else {
+        "new"
+    };
     out.push_str(&format!(
-        "static void* llg_class_copy_{index}(void* source) {{\n    const llg_class_object_t* from = (const llg_class_object_t*)source;\n    if (!from) return NULL;\n    llg_class_object_t* object = (llg_class_object_t*)llg_class_new_{index}();\n"
+        "static void* llg_class_copy_{index}(void* source) {{\n    const llg_class_object_t* from = (const llg_class_object_t*)source;\n    if (!from) return NULL;\n    llg_class_object_t* object = (llg_class_object_t*)llg_class_{allocate}_{index}();\n"
     ));
+    if model.random.objects {
+        out.push_str("    object->rng = from->rng;\n");
+    }
     for (field_index, field) in class.fields.iter().enumerate() {
         let to = format!("object->fields[{field_index}].value");
         let from = format!("from->fields[{field_index}].value");

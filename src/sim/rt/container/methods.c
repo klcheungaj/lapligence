@@ -175,9 +175,21 @@ static llg_rng_state_t llg_container_rng_state = {
 };
 static int llg_container_rng_initialized;
 
+static llg_rng_state_t* (*llg_container_rng_source)(void);
+
 void llg_container_seed(uint64_t seed) {
     llg_rng_state_seed(&llg_container_rng_state, seed);
     llg_container_rng_initialized = 1;
+}
+
+void llg_container_set_rng_source(llg_rng_state_t* (*source)(void)) {
+    llg_container_rng_source = source;
+}
+
+static llg_rng_state_t* llg_container_rng(void) {
+    if (llg_container_rng_source) return llg_container_rng_source();
+    if (!llg_container_rng_initialized) llg_container_seed(0);
+    return &llg_container_rng_state;
 }
 
 // Sorting keys. Each element's key is evaluated once, then a stable bottom-up
@@ -432,12 +444,12 @@ static int llg_method_reorder(sv4_t* data, uint64_t* element_ids,
     }
     if (method == LLG_CONTAINER_METHOD_SHUFFLE) {
         int changed = 0;
+        llg_rng_state_t* rng = count > 1 ? llg_container_rng() : NULL;
         for (size_t index = count; index > 1; --index) {
             if (index > UINT32_MAX)
                 llg_container_fatal("shuffle size exceeds random range");
-            if (!llg_container_rng_initialized) llg_container_seed(0);
             size_t other = (size_t)llg_rng_state_uniform(
-                &llg_container_rng_state, (uint32_t)(index - 1), 0);
+                rng, (uint32_t)(index - 1), 0);
             if (other == index - 1) continue;
             if (!sv4_same(data[other], data[index - 1]) ||
                 (element_ids && element_ids[other] != element_ids[index - 1]))
@@ -559,12 +571,12 @@ static int llg_value_reorder(llg_value_t* data, size_t count,
             }
             return changed;
         }
+        llg_rng_state_t* rng = llg_container_rng();
         for (size_t index = count; index > 1; --index) {
             if (index > UINT32_MAX)
                 llg_container_fatal("shuffle size exceeds random range");
-            if (!llg_container_rng_initialized) llg_container_seed(0);
             size_t other = (size_t)llg_rng_state_uniform(
-                &llg_container_rng_state, (uint32_t)(index - 1), 0);
+                rng, (uint32_t)(index - 1), 0);
             if (other == index - 1) continue;
             llg_value_t value = data[other];
             data[other] = data[index - 1];

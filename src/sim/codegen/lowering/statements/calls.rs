@@ -17,6 +17,9 @@ impl EmitCtx<'_, '_> {
         is_task: bool,
         callee: Option<NodeId>,
     ) -> Result<IrStmt, String> {
+        if let Some(statement) = self.cg.lower_object_random_statement(&self.path, h)? {
+            return Ok(statement);
+        }
         if let Some(f) = &self.func {
             if is_task && !f.is_task
                 // A constructor invocation is a task-shaped call in Slang's

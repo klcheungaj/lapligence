@@ -28,6 +28,9 @@ void llg_rng_state_derive(llg_rng_state_t* child,
                           const llg_rng_state_t* parent,
                           uint64_t ordinal);
 void llg_rng_state_child(llg_rng_state_t* parent, llg_rng_state_t* child);
+/* Advance `parent` exactly as llg_rng_state_child does, for a child whose
+ * stream is never observed (no state is kept). */
+void llg_rng_state_skip_child(llg_rng_state_t* parent);
 uint32_t llg_rng_state_next(llg_rng_state_t* state);
 uint32_t llg_rng_state_uniform(llg_rng_state_t* state,
                                uint32_t first, uint32_t second);

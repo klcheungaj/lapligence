@@ -19,7 +19,8 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
         | IrStringExpr::QueuePop { .. }
         | IrStringExpr::Pattern(_)
         | IrStringExpr::BitStream { .. }
-        | IrStringExpr::ProcessRandState(_) => {
+        | IrStringExpr::ProcessRandState(_)
+        | IrStringExpr::ObjectRandState(_) => {
             return Err("string conditionals require whole-model ownership emission".to_owned())
         }
         IrStringExpr::Literal(bytes) => {
@@ -989,7 +990,7 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrObjectStmt) -> Result<Stri
         IrObjectStmt::ProcessAwait(target) => {
             format!("    llg_process_await({});\n", process(ctx, target)?)
         }
-        IrObjectStmt::ProcessRandom { .. } => {
+        IrObjectStmt::ProcessRandom { .. } | IrObjectStmt::ObjectRandom { .. } => {
             return Err("process random methods require the ownership emitter".to_owned())
         }
     })

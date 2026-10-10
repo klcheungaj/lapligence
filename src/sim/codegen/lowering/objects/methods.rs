@@ -3,6 +3,95 @@
 use super::*;
 
 impl Codegen<'_> {
+    /// The built-in random-stream method `node` calls when it is a class's
+    /// `srandom`, `get_randstate` or `set_randstate` (SV 18.13.3-18.13.5).
+    /// Slang adds these to every class and rejects a member declaring one of
+    /// their names (InvalidMethodOverride), so a class method with such a
+    /// name is always the built-in.
+    pub(in super::super) fn object_random_method(&self, node: NodeId) -> Option<&'static str> {
+        let (name, callee) = match self.kind(node) {
+            NodeKind::MethodCall {
+                name,
+                callee: Some(callee),
+                ..
+            }
+            | NodeKind::FuncCall {
+                name,
+                callee: Some(callee),
+                ..
+            } => (name.as_str(), *callee),
+            _ => return None,
+        };
+        let method = ["srandom", "get_randstate", "set_randstate"]
+            .into_iter()
+            .find(|method| *method == name)?;
+        self.class_method_owner(callee)?;
+        Some(method)
+    }
+
+    /// The object whose stream a built-in random method call addresses: its
+    /// explicit receiver or the enclosing method's `this`. Marks the model as
+    /// keeping object streams.
+    fn object_random_target(&mut self, path: &str, node: NodeId) -> Result<IrChandleExpr, String> {
+        let target = self
+            .class_method_receiver(path, node)?
+            .ok_or_else(|| format!("built-in random method without an object in `{path}`"))?;
+        self.model.random.threads = true;
+        self.model.random.objects = true;
+        Ok(target)
+    }
+
+    /// Lower `h.srandom(seed)` or `h.set_randstate(state)` (SV 18.13.3,
+    /// 18.13.5) on a class object; `None` when `node` is another call.
+    pub(in super::super) fn lower_object_random_statement(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrStmt>, String> {
+        let Some(method) = self.object_random_method(node) else {
+            return Ok(None);
+        };
+        let args = self.call_argument_nodes(node);
+        let op = match (method, args.as_slice()) {
+            // `int seed`: real seeds round and X/Z bits read as 0 (6.11.2).
+            ("srandom", [seed]) => {
+                let seed = self.lower_expr(path, *seed)?;
+                IrProcessRandom::Seed(ir_to_storage(seed, 32, false, true)?)
+            }
+            ("set_randstate", [state]) => {
+                IrProcessRandom::SetState(self.lower_string(path, *state)?)
+            }
+            ("get_randstate", _) => {
+                return Err(format!(
+                    "`get_randstate` result discarded as a statement in `{path}` is not supported"
+                ))
+            }
+            _ => return Err(format!("{method} requires exactly one argument in {path}")),
+        };
+        let target = self.object_random_target(path, node)?;
+        Ok(Some(IrStmt::Object(Box::new(IrObjectStmt::ObjectRandom {
+            target,
+            op,
+        }))))
+    }
+
+    /// Lower `h.get_randstate()` (SV 18.13.4) on a class object; `None` when
+    /// `node` is another call.
+    pub(in super::super) fn lower_object_random_state(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrStringExpr>, String> {
+        if self.object_random_method(node) != Some("get_randstate") {
+            return Ok(None);
+        }
+        if !self.call_argument_nodes(node).is_empty() {
+            return Err(format!("get_randstate takes no arguments in {path}"));
+        }
+        let target = self.object_random_target(path, node)?;
+        Ok(Some(IrStringExpr::ObjectRandState(Box::new(target))))
+    }
+
     pub(in super::super) fn lower_object_method(
         &mut self,
         path: &str,
@@ -51,15 +140,14 @@ impl Codegen<'_> {
             };
         }
         if self.is_process_rng_receiver(receiver) {
+            self.model.random.threads = true;
             let args = self.node(node).children.get(1..).unwrap_or_default();
             return match (name.as_str(), args) {
+                // `int seed`: real seeds round and X/Z bits read as 0 (6.11.2).
                 ("srandom", [seed]) => {
                     let seed = self.lower_expr(path, *seed)?;
-                    if seed.is_real() {
-                        return Err(format!("srandom seed must be integral in {path}"));
-                    }
                     Ok(IrStmt::RandomSeed {
-                        seed: IrExpr::convert_to(seed, 32, false),
+                        seed: ir_to_storage(seed, 32, false, true)?,
                     })
                 }
                 ("set_randstate", [state]) => Ok(IrStmt::RandomStateSet {
@@ -77,16 +165,14 @@ impl Codegen<'_> {
         {
             // Any other handle seeds or restores the stream of the process it
             // names, which need not be the caller (SV 18.14).
+            self.model.random.threads = true;
             let args = self.node(node).children.get(1..).unwrap_or_default();
             let [argument] = args else {
                 return Err(format!("{name} requires exactly one argument in {path}"));
             };
             let op = if name == "srandom" {
                 let seed = self.lower_expr(path, *argument)?;
-                if seed.is_real() {
-                    return Err(format!("srandom seed must be integral in {path}"));
-                }
-                IrProcessRandom::Seed(IrExpr::convert_to(seed, 32, false))
+                IrProcessRandom::Seed(ir_to_storage(seed, 32, false, true)?)
             } else {
                 IrProcessRandom::SetState(self.lower_string(path, *argument)?)
             };

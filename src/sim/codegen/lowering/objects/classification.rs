@@ -340,7 +340,8 @@ impl Codegen<'_> {
                     && self.is_string_expr(path, *receiver))
                     || (name == "get_randstate"
                         && (self.is_process_rng_receiver(*receiver)
-                            || self.is_process_value(path, *receiver)))
+                            || self.is_process_value(path, *receiver)
+                            || self.object_random_method(node).is_some()))
                     || (name == "name"
                         && self
                             .enum_metadata_for_expr(*receiver)

@@ -88,7 +88,9 @@ it pay one NULL test per resolution. Query counts ignore X/Z except isunknown. N
 conversion rules belong to lowering/value APIs, not host int/long assumptions.
 `llg_random` uses modulo-2^32 seed arithmetic and checked/clamped distribution
 conversions following Annex N. Process/object RNG streams consume one parent draw
-when creating a child, not when operating on an existing child.
+when creating a child, not when operating on an existing child. Static processes
+seed from their instance's initialization stream; keep the `LLG_RNG_V1` state
+text versioned and pointer-free (see readme "Random streams").
 
 Strings clone reads, consume expression operands and replace/update mutations.
 Stable callback markers belong only to persistent storage; unchanged writes do

@@ -129,6 +129,9 @@ pub enum IrStringExpr {
     /// Snapshot of another process's random stream through its handle
     /// (`p.get_randstate()`, SV 18.14).
     ProcessRandState(Box<IrProcessExpr>),
+    /// Snapshot of a class object's random stream (`h.get_randstate()`,
+    /// SV 18.13.4); requires `IrRandomUse::objects`.
+    ObjectRandState(Box<IrChandleExpr>),
     Read(usize),
     LocalRead(String),
     /// Read and clone a native string formal. The callee owns the returned
@@ -606,6 +609,12 @@ pub enum IrObjectStmt {
         target: IrProcessExpr,
         op: IrProcessRandom,
     },
+    /// Seed or restore the random stream of the class object `target`
+    /// (`srandom`/`set_randstate`, SV 18.13); requires `IrRandomUse::objects`.
+    ObjectRandom {
+        target: IrChandleExpr,
+        op: IrProcessRandom,
+    },
 }
 
 impl IrStringExpr {
@@ -872,6 +881,12 @@ impl IrStringExpr {
             }
             // Formal indices are checked by the enclosing statement.
             Self::ProcessRandState(target) => target.validate_shape(model),
+            Self::ObjectRandState(_) if !model.random.objects => {
+                Err(super::IrValidationError::new(
+                    "string",
+                    "object random state requires object stream storage",
+                ))
+            }
             Self::Pattern(pattern) => pattern.validate(model, "string.pattern"),
             _ => Ok(()),
         }
@@ -892,6 +907,7 @@ impl IrStringExpr {
             | Self::FormalRead(_)
             | Self::QueuePop { .. } => {}
             Self::ProcessRandState(target) => target.expressions(visit),
+            Self::ObjectRandState(target) => target.expressions(visit),
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter().for_each(visit),
             Self::AssociativeGet { key, .. } => key.expressions(visit),
@@ -961,6 +977,7 @@ impl IrStringExpr {
             | Self::FormalRead(_)
             | Self::QueuePop { .. } => {}
             Self::ProcessRandState(target) => target.expressions_mut(visit),
+            Self::ObjectRandState(target) => target.expressions_mut(visit),
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter_mut().for_each(visit),
             Self::AssociativeGet { key, .. } => key.expressions_mut(visit),
@@ -1758,6 +1775,25 @@ impl IrObjectStmt {
                     IrProcessRandom::SetState(state) => state.validate(model, None),
                 }
             }
+            Self::ObjectRandom { target, op } => {
+                if !model.random.objects {
+                    return Err(super::IrValidationError::new(
+                        "object random",
+                        "object random methods require object stream storage",
+                    ));
+                }
+                target.validate(model, formals, chandle_return)?;
+                match op {
+                    IrProcessRandom::Seed(seed) if seed.is_real() || seed.width != 32 => {
+                        Err(super::IrValidationError::new(
+                            "object srandom",
+                            "seed must be a 32-bit integral value",
+                        ))
+                    }
+                    IrProcessRandom::Seed(_) => Ok(()),
+                    IrProcessRandom::SetState(state) => state.validate(model, None),
+                }
+            }
         }
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
@@ -1790,6 +1826,13 @@ impl IrObjectStmt {
             | Self::ProcessControl { target: value, .. }
             | Self::ProcessAwait(value) => value.expressions(visit),
             Self::ProcessRandom { target, op } => {
+                target.expressions(visit);
+                match op {
+                    IrProcessRandom::Seed(seed) => visit(seed),
+                    IrProcessRandom::SetState(state) => state.expressions(visit),
+                }
+            }
+            Self::ObjectRandom { target, op } => {
                 target.expressions(visit);
                 match op {
                     IrProcessRandom::Seed(seed) => visit(seed),
@@ -1849,6 +1892,13 @@ impl IrObjectStmt {
             | Self::ProcessControl { target: value, .. }
             | Self::ProcessAwait(value) => value.expressions_mut(visit),
             Self::ProcessRandom { target, op } => {
+                target.expressions_mut(visit);
+                match op {
+                    IrProcessRandom::Seed(seed) => visit(seed),
+                    IrProcessRandom::SetState(state) => state.expressions_mut(visit),
+                }
+            }
+            Self::ObjectRandom { target, op } => {
                 target.expressions_mut(visit);
                 match op {
                     IrProcessRandom::Seed(seed) => visit(seed),
