@@ -1,10 +1,12 @@
-
 typedef struct {
     llg_file_slot_t* file;
     const unsigned char* bytes;
     size_t length;
     size_t position;
     int input_failure;
+    // Owning scope of the call: `%m` text and the unit `%t` converts into.
+    const char* scope;
+    uint64_t time_unit_fs;
 } llg_scan_input_t;
 
 static int llg_scan_get(llg_scan_input_t* input) {
@@ -27,11 +29,17 @@ static int llg_scan_unget(llg_scan_input_t* input, int value) {
     return 1;
 }
 
+// IEEE 1800-2009 21.3.4.3 a): for $sscanf, null characters are also white
+// space (a packed or byte-array source can carry them).
+static int llg_scan_is_space(const llg_scan_input_t* input, int value) {
+    return value != EOF && (isspace((unsigned char)value) || (!input->file && value == 0));
+}
+
 static int llg_scan_skip_space(llg_scan_input_t* input) {
     int value;
     do {
         value = llg_scan_get(input);
-    } while (value != EOF && isspace((unsigned char)value));
+    } while (llg_scan_is_space(input, value));
     if (value != EOF) (void)llg_scan_unget(input, value);
     else input->input_failure = 1;
     return value != EOF;
@@ -45,7 +53,7 @@ static int llg_scan_token(llg_scan_input_t* input, size_t limit,
     size_t used = 0;
     for (;;) {
         int value = llg_scan_get(input);
-        if (value == EOF || isspace((unsigned char)value)) {
+        if (value == EOF || llg_scan_is_space(input, value)) {
             if (value != EOF) (void)llg_scan_unget(input, value);
             else if (used == 0) input->input_failure = 1;
             break;
@@ -122,7 +130,8 @@ static int llg_scan_numeric(llg_scan_input_t* input, char conversion, size_t lim
                             unsigned char** result, size_t* length) {
     size_t capacity = 64u, used = 0;
     unsigned char* bytes = (unsigned char*)llg_checked_malloc(capacity, 1, "numeric input");
-    int real = conversion == 'f' || conversion == 'e' || conversion == 'g';
+    int real = conversion == 'f' || conversion == 'e' || conversion == 'g' ||
+               conversion == 't';
     unsigned base = conversion == 'b' ? 2u : conversion == 'o' ? 8u :
                     conversion == 'h' || conversion == 'x' ? 16u : 10u;
     int digits = 0, dot = 0, exponent = 0, exponent_digits = 0;
@@ -267,11 +276,33 @@ static int llg_scan_bytes_to_packed(const unsigned char* bytes, size_t length,
     return 1;
 }
 
+// Integral conversions into a real destination take the token's integer
+// value (unknown digits read as zero, as in any integral-to-real conversion).
+static int llg_scan_integer_to_real(const unsigned char* bytes, size_t length,
+                                    char conversion, double* result) {
+    // Four bits per digit hold any base; past 2^20 bits a double has long
+    // saturated, so longer tokens keep their low-order digits only.
+    uint64_t width64 = (uint64_t)length * 4u + 2u;
+    uint32_t width = width64 > (UINT64_C(1) << 20) ? UINT32_C(1) << 20 : (uint32_t)width64;
+    sv4_t value = SV4_EMPTY;
+    if (!llg_scan_integer(bytes, length, conversion, width, 1, &value)) {
+        sv4_destroy(&value);
+        return 0;
+    }
+    *result = sv4_to_real(value);
+    sv4_destroy(&value);
+    return 1;
+}
+
+static void llg_scan_store_real(const llg_file_input_target_t* target, double value) {
+    llg_ba_d(target->real, target->shortreal ? (double)(float)value : value);
+}
+
 static int llg_scan_assign(const unsigned char* bytes, size_t length, char conversion,
                            const llg_file_input_target_t* target, uint32_t width,
                            int is_signed) {
     if (!target) return 0;
-    if (conversion == 's' || conversion == 'c') {
+    if (conversion == 's' || conversion == 'c' || conversion == 'm') {
         if (target->kind == LLG_FILE_INPUT_STRING && target->string) {
             llg_string_move(target->string, llg_string_bytes((const char*)bytes, length));
             return 1;
@@ -294,7 +325,7 @@ static int llg_scan_assign(const unsigned char* bytes, size_t length, char conve
         free(text);
         if (!valid) return 0;
         if (target->kind == LLG_FILE_INPUT_REAL && target->real) {
-            llg_ba_d(target->real, target->shortreal ? (double)(float)value : value);
+            llg_scan_store_real(target, value);
             return 1;
         }
         if (target->kind == LLG_FILE_INPUT_PACKED && target->packed) {
@@ -303,6 +334,12 @@ static int llg_scan_assign(const unsigned char* bytes, size_t length, char conve
             return 1;
         }
         return 0;
+    }
+    if (target->kind == LLG_FILE_INPUT_REAL && target->real) {
+        double value;
+        if (!llg_scan_integer_to_real(bytes, length, conversion, &value)) return 0;
+        llg_scan_store_real(target, value);
+        return 1;
     }
     if (target->kind != LLG_FILE_INPUT_PACKED || !target->packed) return 0;
     sv4_t value = SV4_EMPTY;
@@ -318,16 +355,228 @@ static void llg_scan_token_destroy(void* object) {
     free(*(unsigned char**)object);
 }
 
+// `%t` (Table 21-8): the token is a real number in the `$timeformat` unit,
+// rounded to the `$timeformat` precision and converted to the calling
+// scope's unit. Both steps run on the decimal digits so that the standard's
+// example (10.345 ms at precision 2 into a 1ns unit gives 10350000.0) is
+// exact rather than subject to binary rounding.
+static int llg_scan_time_value(const unsigned char* bytes, size_t length,
+                               const llg_scan_input_t* input, double* result) {
+    size_t at = 0;
+    int negative = 0;
+    if (at < length && (bytes[at] == '+' || bytes[at] == '-')) negative = bytes[at++] == '-';
+    char* digits = (char*)llg_checked_malloc(length + 2u, 1, "time input digits");
+    size_t count = 0;
+    long point = 0;
+    int seen_dot = 0;
+    for (; at < length && bytes[at] != 'e' && bytes[at] != 'E'; ++at) {
+        if (bytes[at] == '.') { seen_dot = 1; continue; }
+        digits[count++] = (char)bytes[at];
+        if (!seen_dot) ++point;
+    }
+    if (at < length) {
+        long exponent = 0;
+        int exponent_negative = 0;
+        ++at;
+        if (at < length && (bytes[at] == '+' || bytes[at] == '-'))
+            exponent_negative = bytes[at++] == '-';
+        for (; at < length; ++at)
+            if (exponent < 100000) exponent = exponent * 10 + (bytes[at] - '0');
+        point += exponent_negative ? -exponent : exponent;
+    }
+    int display = llg_time_unit_exponent(g.time_format.unit_fs);
+    int scope = llg_time_unit_exponent(input->time_unit_fs);
+    if (scope == INT_MIN) scope = llg_time_unit_exponent(g.design_precision_fs);
+    if (display == INT_MIN || scope == INT_MIN) display = scope = 0;
+    // Round half away from zero at the display precision.
+    long keep = point + (long)g.time_format.precision;
+    if (keep < (long)count) {
+        int up = keep >= 0 && digits[keep] >= '5';
+        if (keep < 0) keep = 0;
+        count = (size_t)keep;
+        if (up) {
+            size_t index = count;
+            while (index > 0 && digits[index - 1u] == '9') digits[--index] = '0';
+            if (index == 0) {
+                memmove(digits + 1, digits, count);
+                digits[0] = '1';
+                ++count;
+                ++point;
+            } else {
+                digits[index - 1u]++;
+            }
+        }
+    }
+    point += (long)display - (long)scope;
+    double value = 0.0;
+    if (count > 0 && point > 400) value = HUGE_VAL;
+    else if (count > 0 && point > -400) {
+        // Render "0.<zeros><digits>" or "<digits><zeros>.<rest>" for strtod.
+        size_t lead = point < 0 ? (size_t)(-point) : 0;
+        size_t trail = point > (long)count ? (size_t)point - count : 0;
+        size_t size = count + lead + trail + 4u;
+        char* text = (char*)llg_checked_malloc(size, 1, "time input text");
+        size_t used = 0;
+        if (point <= 0) {
+            text[used++] = '0';
+            text[used++] = '.';
+            memset(text + used, '0', lead);
+            used += lead;
+            memcpy(text + used, digits, count);
+            used += count;
+        } else if ((size_t)point >= count) {
+            memcpy(text + used, digits, count);
+            used += count;
+            memset(text + used, '0', trail);
+            used += trail;
+        } else {
+            memcpy(text + used, digits, (size_t)point);
+            used += (size_t)point;
+            text[used++] = '.';
+            memcpy(text + used, digits + point, count - (size_t)point);
+            used += count - (size_t)point;
+        }
+        text[used] = 0;
+        value = strtod(text, NULL);
+        free(text);
+    }
+    free(digits);
+    *result = negative ? -value : value;
+    return 1;
+}
+
+static int llg_scan_store_time(const unsigned char* bytes, size_t length,
+                               const llg_scan_input_t* input,
+                               const llg_file_input_target_t* target) {
+    double value;
+    if (!target || !llg_scan_time_value(bytes, length, input, &value)) return 0;
+    if (target->kind == LLG_FILE_INPUT_REAL && target->real) {
+        llg_scan_store_real(target, value);
+        return 1;
+    }
+    if (target->kind == LLG_FILE_INPUT_PACKED && target->packed) {
+        llg_ref_write_owned(target->packed, sv4_from_real(value, target->packed->width,
+                                                          target->packed->is_signed));
+        return 1;
+    }
+    return 0;
+}
+
+// `%u` / `%z` (Table 21-8): unformatted data in the layout `$fwrite` gives
+// them, 32-bit little-endian words with the least significant word first;
+// `%z` writes each word as its VPI aval/bval pair (0:00 1:10 Z:01 X:11).
+// Exactly enough data to fill the destination is read; no white space is
+// skipped. A short read assigns nothing.
+static int llg_scan_binary(llg_scan_input_t* input, char conversion,
+                           const llg_file_input_target_t* target) {
+    if (!target || target->kind != LLG_FILE_INPUT_PACKED || !target->packed ||
+        target->packed->width == 0)
+        return 0;
+    uint32_t width = target->packed->width;
+    size_t planes = conversion == 'z' ? 2u : 1u;
+    sv4_t value = sv4_zero(width, target->packed->is_signed);
+    uint64_t words = ((uint64_t)width + 31u) / 32u;
+    size_t consumed = 0;
+    for (uint64_t word = 0; word < words; ++word) {
+        uint32_t plane[2] = {0, 0};
+        for (size_t p = 0; p < planes; ++p) {
+            for (unsigned byte = 0; byte < 4u; ++byte) {
+                int c = llg_scan_get(input);
+                if (c == EOF) {
+                    sv4_destroy(&value);
+                    if (!consumed) {
+                        input->input_failure = 1;
+                        return -1;
+                    }
+                    return 0;
+                }
+                ++consumed;
+                plane[p] |= (uint32_t)(unsigned char)c << (byte * 8u);
+            }
+        }
+        uint32_t aval = plane[0];
+        uint32_t bval = conversion == 'z' ? plane[1] : 0u;
+        uint64_t bits = aval & ~bval, x = aval & bval, z = ~aval & bval;
+        size_t limb = (size_t)(word / 2u);
+        unsigned shift = (unsigned)(word % 2u) * 32u;
+        llg_sv4_set_word(&value, limb,
+                         llg_sv4_word(value, limb, LLG_SV4_BITS) | (bits << shift),
+                         llg_sv4_word(value, limb, LLG_SV4_X) | (x << shift),
+                         llg_sv4_word(value, limb, LLG_SV4_Z) | (z << shift));
+    }
+    llg_ref_write_owned(target->packed, value);
+    return 1;
+}
+
+// `%v` (Table 21-8, 21.2.1.5): one three-character strength token, assigned
+// as its four-state value. A mnemonic pair or two strength digits precede
+// the value character; `HiZ` is high impedance. L and H read as X.
+static int llg_scan_strength(llg_scan_input_t* input, const llg_file_input_target_t* target,
+                             int suppressed) {
+    if (!llg_scan_skip_space(input)) return -1;
+    char token[3];
+    for (unsigned i = 0; i < 3u; ++i) {
+        int c = llg_scan_get(input);
+        if (c == EOF || llg_scan_is_space(input, c)) {
+            if (c != EOF) (void)llg_scan_unget(input, c);
+            return 0;
+        }
+        token[i] = (char)c;
+    }
+    static const char* const mnemonics[] = {"Su", "St", "Pu", "La", "We", "Me", "Sm", "Hi"};
+    unsigned state;
+    if (memcmp(token, "HiZ", 3) == 0) {
+        state = 3;
+    } else {
+        int known = isdigit((unsigned char)token[0]) && token[0] <= '7' &&
+                    isdigit((unsigned char)token[1]) && token[1] <= '7';
+        for (size_t i = 0; !known && i < sizeof(mnemonics) / sizeof(mnemonics[0]); ++i)
+            known = memcmp(token, mnemonics[i], 2) == 0;
+        if (!known) return 0;
+        switch (token[2]) {
+        case '0': state = 0; break;
+        case '1': state = 1; break;
+        case 'X': case 'x': case 'L': case 'H': state = 2; break;
+        case 'Z': case 'z': state = 3; break;
+        default: return 0;
+        }
+    }
+    if (suppressed) return 2;
+    if (!target || target->kind != LLG_FILE_INPUT_PACKED || !target->packed ||
+        target->packed->width == 0)
+        return 0;
+    sv4_t value = sv4_zero(target->packed->width, target->packed->is_signed);
+    llg_scan_set_bit(&value, 0, (int)state);
+    llg_ref_write_owned(target->packed, value);
+    return 1;
+}
+
 static int llg_scan_conversion(llg_scan_input_t* input, char conversion,
                                size_t width, int suppressed,
                                const llg_file_input_target_t* target) {
     unsigned char* bytes = NULL;
     size_t length = 0;
     int ok;
+    if (conversion == 'u' || conversion == 'z') {
+        // Unformatted data is sized by its destination; a suppressed field
+        // has none, so the directive fails.
+        return suppressed ? 0 : llg_scan_binary(input, conversion, target);
+    }
+    if (conversion == 'v') return llg_scan_strength(input, target, suppressed);
+    if (conversion == 'm') {
+        // `%m` reads no input; it assigns the calling scope's name.
+        if (suppressed) return 2;
+        const char* scope = input->scope ? input->scope : "";
+        return target && llg_scan_assign((const unsigned char*)scope, strlen(scope), 'm',
+                                         target,
+                                         target->packed ? target->packed->width : 32u,
+                                         target->packed ? target->packed->is_signed : 0)
+            ? 1 : 0;
+    }
     if (conversion == 'c') {
         ok = llg_scan_chars(input, width ? width : 1u, &bytes, &length);
     } else {
-        if (!llg_scan_skip_space(input)) return 0;
+        if (!llg_scan_skip_space(input)) return -1;
         ok = conversion == 's'
             ? llg_scan_token(input, width ? width : SIZE_MAX, &bytes, &length)
             : llg_scan_numeric(input, conversion, width ? width : SIZE_MAX, &bytes, &length);
@@ -347,7 +596,9 @@ static int llg_scan_conversion(llg_scan_input_t* input, char conversion,
     llg_value_scope_t* token_scope = llg_value_scope_begin_object(
         sizeof(unsigned char*), llg_scan_token_destroy);
     *(unsigned char**)llg_value_scope_object(token_scope) = bytes;
-    ok = llg_scan_assign(bytes, length, conversion, target, target_width, target_signed);
+    ok = conversion == 't'
+        ? llg_scan_store_time(bytes, length, input, target)
+        : llg_scan_assign(bytes, length, conversion, target, target_width, target_signed);
     llg_value_scope_end(token_scope);
     return ok ? 1 : 0;
 }
@@ -394,16 +645,12 @@ static int llg_scan_format(llg_scan_input_t* input, const char* format,
             if (width > (SIZE_MAX - digit) / 10u) width = SIZE_MAX;
             else width = width * 10u + digit;
         }
-        while (i < length && (format[i] == 'l' || format[i] == 'L' ||
-                              format[i] == 'j' ||
-                              format[i] == 'z' || format[i] == 't')) i++;
+        // C length modifiers are tolerated; `z` and `t` are conversions here.
+        while (i < length && (format[i] == 'l' || format[i] == 'L' || format[i] == 'j')) i++;
         if (i >= length) break;
         char conversion = format[i++];
         if (conversion >= 'A' && conversion <= 'Z') conversion = (char)(conversion - 'A' + 'a');
-        if (conversion != 'd' && conversion != 'i' && conversion != 'u' &&
-            conversion != 'o' && conversion != 'x' && conversion != 'h' &&
-            conversion != 'b' && conversion != 'c' && conversion != 's' &&
-            conversion != 'f' && conversion != 'e' && conversion != 'g') break;
+        if (!strchr("dioxhbcsfegtuvzm", conversion)) break;
         const llg_file_input_target_t* target = NULL;
         if (!suppressed) {
             if (target_index >= target_count) break;
@@ -418,19 +665,60 @@ static int llg_scan_format(llg_scan_input_t* input, const char* format,
     return assigned || matched || !input->input_failure ? assigned : -1;
 }
 
+int llg_file_scanf_scoped(uint32_t descriptor, const char* format,
+                          const llg_file_input_target_t* targets, int target_count,
+                          const char* scope, uint64_t time_unit_fs) {
+    llg_file_slot_t* slot;
+    // No input can be read from an invalid, closed or multichannel descriptor,
+    // so the call ends before its first conversion: EOF (21.3.4.3).
+    if (!llg_file_single_ordinary(descriptor, &slot)) return EOF;
+    llg_scan_input_t input = {slot, NULL, 0, 0, 0, scope, time_unit_fs};
+    return llg_scan_format(&input, format, targets, target_count);
+}
+
 int llg_file_scanf(uint32_t descriptor, const char* format,
                    const llg_file_input_target_t* targets, int target_count) {
-    llg_file_slot_t* slot;
-    if (!llg_file_single_ordinary(descriptor, &slot)) return 0;
-    llg_scan_input_t input = {slot, NULL, 0, 0, 0};
+    return llg_file_scanf_scoped(descriptor, format, targets, target_count, NULL, 0);
+}
+
+int llg_string_scanf_scoped(const char* source, size_t source_length,
+                            const char* format,
+                            const llg_file_input_target_t* targets, int target_count,
+                            const char* scope, uint64_t time_unit_fs) {
+    llg_scan_input_t input = {NULL, (const unsigned char*)source, source_length, 0, 0,
+                              scope, time_unit_fs};
     return llg_scan_format(&input, format, targets, target_count);
 }
 
 int llg_string_scanf(const char* source, size_t source_length,
                      const char* format,
                      const llg_file_input_target_t* targets, int target_count) {
-    llg_scan_input_t input = {NULL, (const unsigned char*)source, source_length, 0, 0};
-    return llg_scan_format(&input, format, targets, target_count);
+    return llg_string_scanf_scoped(source, source_length, format, targets, target_count,
+                                   NULL, 0);
+}
+
+// The text of a packed `$sscanf` source or format: its bytes from the most
+// significant end with leading zero bytes dropped (they only pad the value);
+// interior zero bytes stay and read as white space. Unknown bits make the
+// call return EOF (21.3.4.3), reported through `unknown`.
+llg_string_t llg_scan_text_from_packed(sv4_t value, int* unknown) {
+    if (unknown) *unknown = sv4_is_unknown(value);
+    uint32_t width = llg_sv4_width(value);
+    size_t count = ((size_t)width + 7u) / 8u;
+    unsigned char* bytes = (unsigned char*)llg_checked_malloc(count ? count : 1u, 1,
+                                                              "scan source text");
+    size_t used = 0;
+    for (size_t index = count; index > 0; --index) {
+        size_t bit = (index - 1u) * 8u;
+        unsigned char byte = 0;
+        for (unsigned part = 0; part < 8u; ++part)
+            if (llg_sv4_state(value, (uint64_t)(bit + part)) == 1) byte |= (unsigned char)(1u << part);
+        if (!used && !byte) continue;
+        bytes[used++] = byte;
+    }
+    llg_string_t text = llg_string_bytes((const char*)bytes, used);
+    free(bytes);
+    return text;
 }
 
 static int llg_file_read_byte(llg_file_slot_t* slot, unsigned char* output) {
@@ -626,4 +914,45 @@ int llg_fixed_file_read_array(uint32_t descriptor, llg_fixed_array_t* values, ui
                         const int32_t* dimensions, int dimension_count,
                         int has_start, sv4_t start, int has_count, sv4_t count) {
     return fixed_file_read_array(descriptor, NULL, values, elem_width, elem_signed, elem_two_state, total, dimensions, dimension_count, has_start, start, has_count, count);
+}
+
+// `$fread` into a whole dynamic array or queue (SIM-026): the elements are
+// addresses 0..size-1 of a memory, read like a fixed memory (21.3.4.4); one
+// contents notification follows when any byte was read.
+static int llg_file_read_resizable(uint32_t descriptor, sv4_t* values, size_t size,
+                                   uint32_t elem_width, int elem_signed, int elem_two_state,
+                                   int has_start, sv4_t start, int has_count, sv4_t count,
+                                   llg_container_notify_fn notify, sv4_t* contents,
+                                   sv4_t* shape) {
+    if (size > (size_t)INT32_MAX) {
+        llg_file_global_failure("file read destination is too large");
+        return 0;
+    }
+    if (size == 0) return 0;
+    const int32_t dimensions[2] = {0, (int32_t)(size - 1u)};
+    int result = fixed_file_read_array(descriptor, values, NULL, elem_width, elem_signed,
+                                       elem_two_state, size, dimensions, 1, has_start,
+                                       start, has_count, count);
+    if (result > 0 && notify) notify(contents, shape, LLG_CONTAINER_CHANGED_CONTENTS);
+    return result;
+}
+
+int llg_dyn_file_read(uint32_t descriptor, struct llg_dyn_array_t* array,
+                      int has_start, sv4_t start, int has_count, sv4_t count) {
+    if (!array) return 0;
+    return llg_file_read_resizable(descriptor, array->data, array->size,
+                                   array->element_width, array->element_signed,
+                                   array->element_two_state, has_start, start, has_count,
+                                   count, array->notify, array->contents_dependency,
+                                   array->shape_dependency);
+}
+
+int llg_queue_file_read(uint32_t descriptor, struct llg_queue_t* queue,
+                        int has_start, sv4_t start, int has_count, sv4_t count) {
+    if (!queue) return 0;
+    return llg_file_read_resizable(descriptor, queue->data, queue->size,
+                                   queue->element_width, queue->element_signed,
+                                   queue->element_two_state, has_start, start, has_count,
+                                   count, queue->notify, queue->contents_dependency,
+                                   queue->shape_dependency);
 }

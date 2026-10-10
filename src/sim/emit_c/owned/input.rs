@@ -5,11 +5,42 @@ use super::*;
 
 impl Frame<'_, '_> {
     fn input_text(&mut self, text: &IrPlusArgText) -> Result<NativeValue, String> {
+        self.scan_text(text, &mut Vec::new())
+    }
+
+    /// Owned text of a plusarg/scan string. Packed text records an `int`
+    /// local in `unknown` that is set when the value has X/Z bits; a scan
+    /// with such a source or format returns EOF (21.3.4.3).
+    fn scan_text(
+        &mut self,
+        text: &IrPlusArgText,
+        unknown: &mut Vec<String>,
+    ) -> Result<NativeValue, String> {
         match text {
             IrPlusArgText::Literal(text) => {
                 self.string(&IrStringExpr::Literal(text.as_bytes().to_vec()))
             }
             IrPlusArgText::Dynamic(text) => self.string(text),
+            IrPlusArgText::Packed(value) => {
+                let value = self.expression(value)?;
+                let flag = self.scalar("int", "0".to_owned());
+                let text = self.native_value(
+                    NativeKind::String,
+                    format!("llg_scan_text_from_packed({}, &{flag})", value.code),
+                );
+                self.discard(value);
+                unknown.push(flag);
+                Ok(text)
+            }
+        }
+    }
+
+    /// `call`, or EOF when any packed scan text had unknown bits.
+    fn unless_unknown(call: String, unknown: &[String]) -> String {
+        if unknown.is_empty() {
+            call
+        } else {
+            format!("(({}) ? -1 : {call})", unknown.join(" || "))
         }
     }
 
@@ -308,38 +339,46 @@ impl Frame<'_, '_> {
                 descriptor,
                 format,
                 targets,
+                scope,
             } => {
                 let descriptor = self.descriptor(descriptor)?;
-                let format = self.input_text(format)?;
+                let mut unknown = Vec::new();
+                let format = self.scan_text(format, &mut unknown)?;
                 let (array, owners) = self.input_targets(targets, &mut cells_to_release)?;
                 targets_to_release.extend(owners);
                 let call = format!(
-                    "llg_file_scanf({descriptor}, {}, {array}, {})",
+                    "llg_file_scanf_scoped({descriptor}, {}, {array}, {}, {}, {}ULL)",
                     Self::text_pointer(&format),
-                    targets.len()
+                    targets.len(),
+                    c_string_literal(&scope.name),
+                    scope.time_unit_fs
                 );
                 text.push(format);
-                call
+                Self::unless_unknown(call, &unknown)
             }
             IrFileInput::ScanString {
                 source,
                 format,
                 targets,
+                scope,
             } => {
-                let source = self.string(source)?;
-                let format = self.input_text(format)?;
+                let mut unknown = Vec::new();
+                let source = self.scan_text(source, &mut unknown)?;
+                let format = self.scan_text(format, &mut unknown)?;
                 let (array, owners) = self.input_targets(targets, &mut cells_to_release)?;
                 targets_to_release.extend(owners);
                 let call = format!(
-                    "llg_string_scanf({}, ({})->len, {}, {array}, {})",
+                    "llg_string_scanf_scoped({}, ({})->len, {}, {array}, {}, {}, {}ULL)",
                     Self::text_pointer(&source),
                     source.address,
                     Self::text_pointer(&format),
-                    targets.len()
+                    targets.len(),
+                    c_string_literal(&scope.name),
+                    scope.time_unit_fs
                 );
                 text.push(source);
                 text.push(format);
-                call
+                Self::unless_unknown(call, &unknown)
             }
             IrFileInput::Read {
                 descriptor,
@@ -348,19 +387,30 @@ impl Frame<'_, '_> {
                 count,
             } => {
                 let descriptor = self.descriptor(descriptor)?;
-                let reference = if let IrFileReadTarget::Packed {
-                    lhs,
-                    width,
-                    signed,
-                    two_state,
-                } = target
-                {
-                    let (address, target) =
-                        self.file_reference(lhs, *width, *signed, *two_state)?;
-                    targets_to_release.push(target);
-                    Some(address)
-                } else {
-                    None
+                let reference = match target {
+                    IrFileReadTarget::Packed {
+                        lhs,
+                        width,
+                        signed,
+                        two_state,
+                    } => {
+                        let (address, target) =
+                            self.file_reference(lhs, *width, *signed, *two_state)?;
+                        targets_to_release.push(target);
+                        Some(address)
+                    }
+                    IrFileReadTarget::Element {
+                        read,
+                        width,
+                        signed,
+                        two_state,
+                    } => {
+                        let (address, release) =
+                            self.element_reference(read, *width, *signed, *two_state)?;
+                        cells_to_release.push(release);
+                        Some(address)
+                    }
+                    IrFileReadTarget::Array { .. } | IrFileReadTarget::Container { .. } => None,
                 };
                 let start_value = start
                     .as_ref()
@@ -380,6 +430,17 @@ impl Frame<'_, '_> {
                     .unwrap_or("(sv4_t)SV4_EMPTY");
                 let call = if let Some(reference) = reference {
                     format!("llg_file_read_packed({descriptor}, {reference})")
+                } else if let IrFileReadTarget::Container { container } = target {
+                    let runtime = match self.ctx.model.containers[*container].kind {
+                        IrContainerKind::Queue { .. } => "llg_queue_file_read",
+                        _ => "llg_dyn_file_read",
+                    };
+                    format!(
+                        "{runtime}({descriptor}, &{}, {}, {first}, {}, {count_code})",
+                        self.container_name(*container)?,
+                        u8::from(start.is_some()),
+                        u8::from(count.is_some())
+                    )
                 } else if let IrFileReadTarget::Array { array } = target {
                     let array = self.ctx.model.array(*array);
                     let dimensions = array

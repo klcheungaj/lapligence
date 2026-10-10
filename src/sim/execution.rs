@@ -1826,11 +1826,10 @@ fn collect_expression_effects(
                         descriptor,
                         format,
                         targets,
+                        ..
                     } => {
                         collect_expression_effects(ir, descriptor, effects, visited_calls);
-                        if let crate::sim::ir::IrPlusArgText::Dynamic(format) = format {
-                            collect_string_effects(ir, format, effects, visited_calls);
-                        }
+                        collect_scan_text_effects(ir, format, effects, visited_calls);
                         for target in targets {
                             effects.push(ExecutionEffect::ImmediateStore);
                             match target {
@@ -1849,11 +1848,10 @@ fn collect_expression_effects(
                         source,
                         format,
                         targets,
+                        ..
                     } => {
-                        collect_string_effects(ir, source, effects, visited_calls);
-                        if let crate::sim::ir::IrPlusArgText::Dynamic(format) = format {
-                            collect_string_effects(ir, format, effects, visited_calls);
-                        }
+                        collect_scan_text_effects(ir, source, effects, visited_calls);
+                        collect_scan_text_effects(ir, format, effects, visited_calls);
                         for target in targets {
                             effects.push(ExecutionEffect::ImmediateStore);
                             match target {
@@ -1882,8 +1880,15 @@ fn collect_expression_effects(
                         if let Some(count) = count {
                             collect_expression_effects(ir, count, effects, visited_calls);
                         }
-                        if let crate::sim::ir::IrFileReadTarget::Packed { lhs, .. } = target {
-                            collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
+                        match target {
+                            crate::sim::ir::IrFileReadTarget::Packed { lhs, .. } => {
+                                collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
+                            }
+                            crate::sim::ir::IrFileReadTarget::Element { read, .. } => {
+                                collect_expression_effects(ir, read, effects, visited_calls);
+                            }
+                            crate::sim::ir::IrFileReadTarget::Array { .. }
+                            | crate::sim::ir::IrFileReadTarget::Container { .. } => {}
                         }
                     }
                 }
@@ -2156,6 +2161,24 @@ fn collect_bit_stream_effects(
     stream.expressions(&mut |expression| {
         collect_expression_effects(ir, expression, effects, visited_calls)
     });
+}
+
+/// Effects of scan source or format text (`IrPlusArgText`).
+fn collect_scan_text_effects(
+    ir: &IrModel,
+    text: &crate::sim::ir::IrPlusArgText,
+    effects: &mut Vec<ExecutionEffect>,
+    visited_calls: &mut CallVisits,
+) {
+    match text {
+        crate::sim::ir::IrPlusArgText::Literal(_) => {}
+        crate::sim::ir::IrPlusArgText::Dynamic(text) => {
+            collect_string_effects(ir, text, effects, visited_calls)
+        }
+        crate::sim::ir::IrPlusArgText::Packed(value) => {
+            collect_expression_effects(ir, value, effects, visited_calls)
+        }
+    }
 }
 
 fn collect_string_effects(

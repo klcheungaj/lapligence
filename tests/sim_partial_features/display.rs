@@ -28,7 +28,7 @@ fn display_converts_real_for_integral_conversion() {
 fn display_extended_conversions_and_strobe_order() {
     run_case(
         "display_extended",
-        "hex=X bin=1x0z char=* strength=St1 StX St0 HiZ\nupper=2a\npattern=42 X\nraw2=*\0\0\0 raw4=\r\0\0\0\x05\0\0\0\ntime=0 library=work.tb\nfirst=43\nsecond=43\n",
+        "hex=X bin=1x0z char=* strength=St1 StX St0 HiZ\nupper=2a\npattern=42 X\nraw2=*\0\0\0 raw4=\x0c\0\0\0\x05\0\0\0\ntime=0 library=work.tb\nfirst=43\nsecond=43\n",
     );
 }
 

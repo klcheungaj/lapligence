@@ -1101,8 +1101,12 @@ impl Validator<'_> {
                         } => {
                             self.validate_file_input(
                                 &IrFileInput::ScanString {
-                                    source: IrStringExpr::Literal(Vec::new()),
+                                    source: IrPlusArgText::Literal(String::new()),
                                     format: IrPlusArgText::Literal(String::new()),
+                                    scope: crate::sim::ir::IrScanScope {
+                                        name: String::new(),
+                                        time_unit_fs: 0,
+                                    },
                                     targets: vec![IrFileInputTarget::Element {
                                         read: read.clone(),
                                         width: *width,
@@ -1483,8 +1487,9 @@ fn sequence_statement(statement: &IrStmt) -> bool {
                 | IrObjectStmt::StringAssignLocal(..)
                 | IrObjectStmt::ChandleAssignLocal(..)
         ),
-        // Whole-element copies into lexical temporaries (SIM-007) and the
-        // key queues of generated array-method loops (SIM-019).
+        // Whole-element copies into lexical temporaries (SIM-007), the
+        // key queues of generated array-method loops (SIM-019) and the
+        // element stores of staged file-input destinations (SIM-026).
         IrStmt::Container(operation) => matches!(
             operation.as_ref(),
             IrContainerStmt::Declare(_)
@@ -1492,6 +1497,13 @@ fn sequence_statement(statement: &IrStmt) -> bool {
                 | IrContainerStmt::ValueItemToContainer { .. }
                 | IrContainerStmt::QueuePushBack { .. }
                 | IrContainerStmt::QueuePushBackString { .. }
+                | IrContainerStmt::Set { .. }
+                | IrContainerStmt::SetReal { .. }
+                | IrContainerStmt::SetNested { .. }
+                | IrContainerStmt::SetString { .. }
+                | IrContainerStmt::SetStringReal { .. }
+                | IrContainerStmt::SetStringValue { .. }
+                | IrContainerStmt::SetStringString { .. }
         ),
         IrStmt::Block(statements) => statements.iter().all(sequence_statement),
         // Generated array-method loops: lexical locals and bounded loops

@@ -1390,6 +1390,18 @@ int llg_file_scanf(uint32_t descriptor, const char* format,
 int llg_string_scanf(const char* source, size_t source_length,
                      const char* format,
                      const llg_file_input_target_t* targets, int target_count);
+// Scoped forms used by generated models: `scope` is the `%m` text and
+// `time_unit_fs` the calling scope's unit for `%t` (21.3.4.3).
+int llg_file_scanf_scoped(uint32_t descriptor, const char* format,
+                          const llg_file_input_target_t* targets, int target_count,
+                          const char* scope, uint64_t time_unit_fs);
+int llg_string_scanf_scoped(const char* source, size_t source_length,
+                            const char* format,
+                            const llg_file_input_target_t* targets, int target_count,
+                            const char* scope, uint64_t time_unit_fs);
+// The bytes of a borrowed packed scan source or format, leading zero bytes
+// dropped; `*unknown` reports X/Z bits, which make the scan return EOF.
+llg_string_t llg_scan_text_from_packed(sv4_t value, int* unknown);
 int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target);
 int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
                         int elem_signed, int elem_two_state, uint64_t total,
@@ -1398,6 +1410,13 @@ int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
 int llg_fixed_file_read_array(uint32_t descriptor, llg_fixed_array_t* values, uint32_t elem_width,
                         int elem_signed, int elem_two_state, uint64_t total,
                         const int32_t* dimensions, int dimension_count,
+                        int has_start, sv4_t start, int has_count, sv4_t count);
+// `$fread` into a whole packed dynamic array or queue: addresses 0..size-1.
+struct llg_dyn_array_t;
+struct llg_queue_t;
+int llg_dyn_file_read(uint32_t descriptor, struct llg_dyn_array_t* array,
+                      int has_start, sv4_t start, int has_count, sv4_t count);
+int llg_queue_file_read(uint32_t descriptor, struct llg_queue_t* queue,
                         int has_start, sv4_t start, int has_count, sv4_t count);
 
 // ── $monitor / $strobe ────────────────────────────────────────────────────────

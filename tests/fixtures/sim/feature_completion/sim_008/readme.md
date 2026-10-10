@@ -18,7 +18,5 @@ cited clauses, not captured from llg.
 | `neg_record_ref_const_write` | Nearest illegal form (§13.5.2): a write through a `const ref` record formal is a frontend error. |
 | `scan_elements` | §21.3.4.3. The first scan converts four items into `q[1]`, `d[0]`, `aa[3]` and `sa["k"]` (`41` hex = 65): `4 5 6 7 65`. The second converts only `aa[7]` = 9; `aa[8]` is never written, so it does not exist and `aa` holds keys 3 and 7: `1 9 0 2`. |
 | `plusarg_elements` | §21.6, run with `+N=4 +H=1f`. `N` and `H` match into `q[0]` = 4 and `aa["h"]` = 'h1f = 31; `M` does not match, so `aa["m"]` is not created; `d[0]` = 4; three matches. |
-| `neg_string_element_scan` | Legal by §21.3.4.3; a string container element as a scan destination is rejected explicitly. |
-| `neg_real_element_scan` | Legal by §21.3.4.3; a real container element as a scan destination is rejected explicitly. |
 | `mixed_ref_formals` | §13.5.2. `add(4, q)` and `add2(q, 5)` push through a queue `ref` declared after and before an input: 4 5; `set(3, l, "k")` writes a record through a `ref` between inputs: 3 + 1 = 4. `rec(2, r)` forwards its own `ref` queue to the recursive call after each `#1`; the innermost call prints first and each level keeps its own local queue: `0 0`, `1 1`, `2 2`, then `r` holds 3 elements at time 3. |
 | `neg_expression_element_output` | A container element as an output actual of a call inside an expression is rejected at code generation (statement calls support it). |

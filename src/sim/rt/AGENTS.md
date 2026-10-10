@@ -517,6 +517,16 @@ Binary rank-one `$fread` advances low-to-high HDL addresses independently of phy
 declaration order, clamps count at the high bound, and consumes/writes nothing for
 invalid/unknown bounds or negative count. Keep element owners across callbacks;
 this does not qualify multidimensional binary reads.
+Scans (`scanning.c`) assign a destination only after its conversion
+succeeds. `%u`/`%z` read 32-bit little-endian vecval words (aval then bval; this assumes
+a little-endian host, true of every supported target),
+assign nothing on short data, and `$fwrite` writes the same encoding. `%t`
+scales in decimal through the `$timeformat` unit into the caller's unit.
+Integral `$sscanf` sources drop leading zero bytes; NUL is white space.
+Container `$fread` notifies once after the read, and a short final word fills
+only its high bytes. `$ungetc` returns 0, and a successful seek clears the
+slot's error and EOF state. Invalid descriptors return each function's
+failure code without touching destinations (`lrm_decisions` S26-D*).
 
 Monitor registration/enabling forces a postponed report; only registered signal
 changes dirty later reports. `$monitor` owns one list (a new call replaces it)

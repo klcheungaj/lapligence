@@ -66,12 +66,12 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 0 | 17 |
 | 8. Continuous/structural | 4 | 6 | 3 | 1 | 0 | 0 | 14 |
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 0 | 7 |
-| 10. System tasks/functions | 10 | 10 | 2 | 4 | 0 | 0 | 26 |
+| 10. System tasks/functions | 11 | 9 | 2 | 4 | 0 | 0 | 26 |
 | 11. Compiler directives | 6 | 1 | 0 | 1 | 0 | 0 | 8 |
 | 12. Verification/foreign interfaces | 1 | 12 | 0 | 1 | 3 | 0 | 17 |
-| **Total** | **46** | **79** | **6** | **8** | **3** | **1** | **143** |
+| **Total** | **47** | **78** | **6** | **8** | **3** | **1** | **143** |
 
-**126 rows have some source implementation; 79 of those remain partial and one
+**126 rows have some source implementation; 78 of those remain partial and one
 is accepted.** The accepted row (`always_ff` and writer rules) carries
 post-change HDL execution evidence from RTL-013 and RTL-099; other rows have no
 row-level acceptance promotion yet, which does not mean they lack passing tests.
@@ -1555,25 +1555,33 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 ### Input and memory files
 
 - 🟨 **Scanning/character/line input** — `$fscanf/$sscanf/$fgets/$fgetc/$ungetc`
-  retain input/format values, admitted packed/selected/string/real destinations,
-  EOF, byte and X/Z behavior. Fixed packed scanner sub-accesses through ref
-  formals preserve checked selection plans. Packed queue, dynamic and
-  associative elements are destinations through retained element cells,
-  written only for converted items; string and real container elements and
-  general aggregate targets reject
-  ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
-  V §17.2.4; SV §21.3.4 **[2001/SV-2005]**.
-- 🟨 **Binary input** — `$fread` supports admitted packed/memory targets with
-  bounded start/count. Rank-one memories advance from lowest to highest HDL
-  address in either declaration direction. Packed reads accept and ignore
-  start/count; the exact memory-storage argument is legal in 2001 without
-  admitting unrelated whole-array value uses. Packed-bound and memory-edition
-  cases have [file-I/O](../tests/sim_file_io.rs) and
-  [edition](../tests/sim_edition.rs) regression sources; these were not rerun here.
-  V §17.2.4.4; SV §21.3.4.4
-  **[2001/SV-2005]**.
+  write every conversion of Table 21-8 (`%b %o %d %h %x %c %s %e %f %g %t %v
+  %u %z %m`, `%*`, field widths, X/Z digits) into whole and selected packed
+  variables, memory elements, structure members, strings, reals, task and
+  function formals, class properties and the integral, string and real
+  elements of queues, dynamic, fixed and associative arrays. Destination
+  selectors are evaluated when the call starts; only converted items are
+  written. `%t` scales by `$timeformat` into the scope unit, integer
+  conversions convert into reals, `$sscanf` reads string, packed and byte-array
+  sources, `$ungetc` returns 0 and invalid descriptors return EOF. Unpacked
+  aggregates other than byte arrays reject; a string character and a nested
+  field of a native-record member are
+  [known issues](known_issues.md#file-input-destinations-not-supported-sim-026).
+  Oracles: [sim_026](../tests/fixtures/sim/feature_completion/sim_026/readme.md),
+  decisions S26-D1 to D15. V §17.2.4; SV §21.3.4 **[2001/SV-2005]**.
+- 🟦 **Binary input** — `$fread` loads packed variables, selects, structure
+  members, memories (with start/count, either declaration direction),
+  elements of 2-D memories and dynamic arrays and queues of packed elements,
+  first byte most significant; a short last word fills its high bytes.
+  Packed reads ignore start/count; the memory argument is legal in 2001
+  without admitting other whole-array uses. `%u`/`%z` read and `$fwrite`
+  writes 32-bit little-endian vecval words.
+  Text and binary reads mix on one stream
+  ([sim_026](../tests/fixtures/sim/feature_completion/sim_026/readme.md)).
+  V §17.2.4.4; SV §21.3.4.4 **[2001/SV-2005]**.
 - 🟦 **File position/status** — `$ftell/$fseek/$rewind/$fflush/$ferror/$feof`
-  preserve EOF/error and invalid/closed-descriptor status. V §§17.2.5–17.2.7;
+  preserve EOF/error and invalid/closed-descriptor status; `$rewind` is also a
+  function and a successful reposition clears the error status. V §§17.2.5–17.2.7;
   SV §§21.3.5–21.3.8 **[2001/SV-2005]**.
 - 🟨 **Memory images** — `$readmemh/$readmemb` accept owned string paths,
   whitespace/comments, binary/hex digits, X/Z and `@` addresses.

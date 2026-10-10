@@ -924,6 +924,26 @@ pub enum IrFileReadTarget {
     Array {
         array: usize,
     },
+    /// One packed element of a queue, dynamic or associative array, written
+    /// through a retained element cell bound at the call (SIM-026).
+    Element {
+        read: Box<IrExpr>,
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    },
+    /// A whole packed dynamic array or queue: addresses 0..size-1.
+    Container {
+        container: usize,
+    },
+}
+
+/// The calling scope of a formatted scan: the `%m` text and the time unit
+/// `%t` converts into (IEEE 1800-2009 21.3.4.3).
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrScanScope {
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) time_unit_fs: u64,
 }
 
 /// Lowered forms of the character, line, formatted, and binary file input
@@ -945,11 +965,13 @@ pub enum IrFileInput {
         descriptor: Box<IrExpr>,
         format: IrPlusArgText,
         targets: Vec<IrFileInputTarget>,
+        scope: IrScanScope,
     },
     ScanString {
-        source: IrStringExpr,
+        source: IrPlusArgText,
         format: IrPlusArgText,
         targets: Vec<IrFileInputTarget>,
+        scope: IrScanScope,
     },
     Read {
         descriptor: Box<IrExpr>,
@@ -979,14 +1001,18 @@ impl IrFileInputTarget {
 
 impl IrFileReadTarget {
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
-        if let Self::Packed { lhs, .. } = self {
-            lhs.expressions(visit);
+        match self {
+            Self::Packed { lhs, .. } => lhs.expressions(visit),
+            Self::Element { read, .. } => visit(read),
+            Self::Array { .. } | Self::Container { .. } => {}
         }
     }
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
-        if let Self::Packed { lhs, .. } = self {
-            lhs.expressions_mut(visit);
+        match self {
+            Self::Packed { lhs, .. } => lhs.expressions_mut(visit),
+            Self::Element { read, .. } => visit(read),
+            Self::Array { .. } | Self::Container { .. } => {}
         }
     }
 }
@@ -1010,6 +1036,7 @@ impl IrFileInput {
                 descriptor,
                 format,
                 targets,
+                ..
             } => {
                 visit(descriptor);
                 format.expressions(visit);
@@ -1021,6 +1048,7 @@ impl IrFileInput {
                 source,
                 format,
                 targets,
+                ..
             } => {
                 source.expressions(visit);
                 format.expressions(visit);
@@ -1064,6 +1092,7 @@ impl IrFileInput {
                 descriptor,
                 format,
                 targets,
+                ..
             } => {
                 visit(descriptor);
                 format.expressions_mut(visit);
@@ -1075,6 +1104,7 @@ impl IrFileInput {
                 source,
                 format,
                 targets,
+                ..
             } => {
                 source.expressions_mut(visit);
                 format.expressions_mut(visit);
@@ -1147,18 +1177,26 @@ impl IrRandomFunc {
 pub enum IrPlusArgText {
     Literal(String),
     Dynamic(IrStringExpr),
+    /// Integral text of a `$sscanf` source or a scan format, evaluated once
+    /// at the call. Its bytes are the text; unknown bits make the scan
+    /// return EOF (IEEE 1800-2009 21.3.4.3).
+    Packed(Box<IrExpr>),
 }
 
 impl IrPlusArgText {
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
-        if let Self::Dynamic(value) = self {
-            value.expressions(visit);
+        match self {
+            Self::Literal(_) => {}
+            Self::Dynamic(value) => value.expressions(visit),
+            Self::Packed(value) => visit(value),
         }
     }
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
-        if let Self::Dynamic(value) = self {
-            value.expressions_mut(visit);
+        match self {
+            Self::Literal(_) => {}
+            Self::Dynamic(value) => value.expressions_mut(visit),
+            Self::Packed(value) => visit(value),
         }
     }
 }

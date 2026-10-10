@@ -340,14 +340,15 @@ static size_t llg_format_raw4(sv4_t value, char* raw, size_t cap) {
     uint32_t last_bits = llg_sv4_width(value) % 64u;
     if (last_bits == 0) last_bits = 64;
     for (uint32_t i = 0; i < words; i++) {
-        uint64_t unknown = llg_sv4_word(value, i, LLG_SV4_X) | llg_sv4_word(value, i, LLG_SV4_Z);
-        uint64_t bits = llg_sv4_word(value, i, LLG_SV4_BITS);
+        uint64_t x = llg_sv4_word(value, i, LLG_SV4_X);
+        uint64_t z = llg_sv4_word(value, i, LLG_SV4_Z);
+        uint64_t bits = llg_sv4_word(value, i, LLG_SV4_BITS) & ~(x | z);
         size_t halves = (i == words - 1 && last_bits <= 32) ? 1u : 2u;
         for (size_t half = 0; half < halves; half++) {
-            // VPI's four-state encoding uses aval = known bits XOR unknown
-            // and bval = unknown, matching Slang's formatRaw4 helper.
-            uint32_t aval = (uint32_t)((bits ^ unknown) >> (half * 32));
-            uint32_t bval = (uint32_t)(unknown >> (half * 32));
+            // s_vpi_vecval (IEEE 1800-2009 38.15) encodes 0:00 1:10 Z:01 X:11
+            // as (aval, bval); the X and Z planes are kept separately here.
+            uint32_t aval = (uint32_t)((bits | x) >> (half * 32));
+            uint32_t bval = (uint32_t)((x | z) >> (half * 32));
             if (len + sizeof(aval) + sizeof(bval) > cap) {
                 size_t remaining = cap - len;
                 if (remaining) {

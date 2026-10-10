@@ -175,7 +175,7 @@ fn file_scan_uses_registered_source_and_typed_borrowed_target() {
     };
     let mut frame = Frame::new(&ctx);
     let input = IrFileInput::ScanString {
-        source: IrStringExpr::Literal(b"7".to_vec()),
+        source: IrPlusArgText::Literal("7".to_owned()),
         format: IrPlusArgText::Literal("%d".to_owned()),
         targets: vec![IrFileInputTarget::Packed {
             lhs: Box::new(IrLhs::Whole(0)),
@@ -183,6 +183,10 @@ fn file_scan_uses_registered_source_and_typed_borrowed_target() {
             signed: false,
             two_state: false,
         }],
+        scope: IrScanScope {
+            name: "tb".to_owned(),
+            time_unit_fs: 0,
+        },
     };
     let result = frame.file_input(&input).unwrap();
     frame.discard(result);
@@ -191,10 +195,11 @@ fn file_scan_uses_registered_source_and_typed_borrowed_target() {
     assert!(source.contains(".kind = LLG_FILE_INPUT_PACKED"));
     assert!(
         source.find("llg_value_scope_begin_object").unwrap()
-            < source.find("llg_string_scanf(").unwrap()
+            < source.find("llg_string_scanf_scoped(").unwrap()
     );
     assert!(
-        source.find("llg_string_scanf(").unwrap() < source.find("llg_value_scope_end(").unwrap()
+        source.find("llg_string_scanf_scoped(").unwrap()
+            < source.find("llg_value_scope_end(").unwrap()
     );
 }
 

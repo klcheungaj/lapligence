@@ -113,8 +113,8 @@ static int check_file_io(void) {
         !sv4_is_unknown(mixed) || word.len != 5 || memcmp(word.data, "hello", 5) != 0)
         return fail("formatted scan");
     if (llg_file_getc(descriptor) != '\n') return fail("line delimiter");
-    if (llg_file_ungetc(descriptor, test_value(sv4_from_u64('A', 8, 0))) != 'A' ||
-        llg_file_ungetc(descriptor, test_value(sv4_from_u64('B', 8, 0))) != 'B' ||
+    if (llg_file_ungetc(descriptor, test_value(sv4_from_u64('A', 8, 0))) != 0 ||
+        llg_file_ungetc(descriptor, test_value(sv4_from_u64('B', 8, 0))) != 0 ||
         llg_file_getc(descriptor) != 'B' || llg_file_getc(descriptor) != 'A')
         return fail("repeated ungetc");
     if (llg_file_gets(descriptor, &word) != 1 || word.len != 1 || word.data[0] != '\n')
@@ -122,7 +122,7 @@ static int check_file_io(void) {
     if (llg_file_getc(descriptor) != EOF || llg_file_eof(descriptor) != 1) return fail("eof");
     if (llg_file_scanf(descriptor, "%d", targets, 1) != -1)
         return fail("formatted eof result");
-    if (llg_file_ungetc(descriptor, test_value(sv4_from_u64('C', 8, 0))) != 'C' ||
+    if (llg_file_ungetc(descriptor, test_value(sv4_from_u64('C', 8, 0))) != 0 ||
         llg_file_eof(descriptor) != 0 || llg_file_getc(descriptor) != 'C' ||
         llg_file_eof(descriptor) != 0)
         return fail("eof cleared by ungetc");
@@ -162,7 +162,7 @@ static int check_file_io(void) {
     };
     const unsigned char numeric_source[] = "1010 17 0x2a 429 1.25";
     if (llg_string_scanf((const char*)numeric_source, sizeof(numeric_source) - 1,
-                         "%b %o %i %u %f", numeric_targets, 5) != 5 ||
+                         "%b %o %i %d %f", numeric_targets, 5) != 5 ||
         sv4_to_u64(binary_number) != 10u || sv4_to_u64(octal_number) != 15u ||
         sv4_to_u64(auto_number) != 42u || sv4_to_u64(unsigned_number) != 429u ||
         real_number != 1.25)
