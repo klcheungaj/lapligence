@@ -275,9 +275,14 @@ original deadlines, changed values cancel, return to current value cancels witho
 replacement. Preserve full single/rise-fall/three-way delays and choose each
 changed bit's delay, taking minimum applicable endpoints for ambiguous transitions.
 Force overlays visible storage while ordinary writes/driver slots remain live;
-release retains variable value or recomputes current net resolution.
-Re-force replaces a matching entry. Keep typed constant-selected/concat targets;
-reject unsupported variable selects, automatic/local captures and arrays.
+release retains variable value or recomputes current net resolution. Releasing a
+variable toggles its hidden release marker; `attach_release_reevaluation` makes
+the variable's synthetic continuous drivers (assignments, port links) sensitive
+to it after all lowering, so they rerun (SV 10.6.2). Re-force replaces a matching
+entry per bit. Keep typed constant-selected/concat targets; constant indexed,
+member and element selects of nets become fixed parts (`normalize_force_lhs`).
+Reject unsupported variable selects, automatic/local captures, arrays, and
+string/handle/event or whole net-array targets with located errors.
 Procedural `assign`/`deassign` is unsupported by design: `legacy_unsupported::scan`
 rejects every reachable statement before lowering and dispatch rejects the rest.
 No subroutine/captured RHS admission without an owned activation environment.

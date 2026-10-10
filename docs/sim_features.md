@@ -843,17 +843,35 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   targets (nets, selects, streams) keep Slang's own located error. Pinned by
   [adv_032](../tests/fixtures/sim/feature_completion/adv_032/readme.md).
   V §9.3.1 **[1995]**.
-- 🟨 **Force/release** — Persistent packed/real variables and admitted constant-selected, concatenated, resolved-net and canonical alias targets support live
-  RHS dependencies and wakeups, local or through hierarchical, generate,
-  instance-array, top-name and upward paths
-  ([adv_032](../tests/fixtures/sim/feature_completion/adv_032/readme.md)
-  `hier_force_release`). Release restores net resolution; variables retain
-  the forced value. Variable selects are language errors (V §9.3.2); dynamic
-  selects, automatic/array targets and unsupported indirect net forms reject. Live RHS sources include fixed-array elements and whole arrays
-  (through their change markers). A helper with visible writes, persistent
-  state or descriptor formals is evaluated by the force statement and then, while
-  the force is in effect, by a per-site guard process into a hidden source the
-  read-only evaluator reads; release or replacement stops it (§9).
+- 🟨 **Force/release** — Packed, enumerated, packed-structure and real
+  variables, every resolved net kind (`wire`, `wand`, `wor`, `tri`,
+  multi-driven), constant bit-, part- and indexed part-selects of nets, constant
+  member and element selects of packed-structure and packed-array nets, net-array
+  elements, true-net aliases and concatenations of these, local or through
+  hierarchical, generate, instance-array, interface, `$root` and upward paths,
+  from processes, tasks, functions, class methods and fork branches. The RHS is
+  live: a change of any operand, including another forced signal, re-evaluates
+  it at once in the writing process while ordinary drivers and procedural
+  writes continue underneath. Forces and releases act bit by bit (a later
+  overlapping force replaces only the overlapped bits; a partial release frees
+  only the named bits). Release recomputes a net from its current drivers
+  immediately; a variable keeps the forced value until its next procedural
+  write, except that a variable driven by a continuous assignment or an output
+  port is re-established by a scheduled reevaluation (SV §10.6.2). A force
+  outlives the process that applied it (kill, `disable`, task return), and the
+  model closes cleanly with forces active
+  ([sim_023](../tests/fixtures/sim/feature_completion/sim_023/readme.md),
+  decisions S23-D1–D4 in [lrm_decisions](lrm_decisions.md)). Live RHS sources
+  include fixed-array elements and whole arrays (through their change markers).
+  A helper with visible writes, persistent state or descriptor formals is
+  evaluated by the force statement and then, while the force is in effect, by a
+  per-site guard process into a hidden source the read-only evaluator reads;
+  release or replacement stops it (§9). Variable selects, memory words (V
+  §9.3.2), dynamic net selects, automatic targets or RHS references, class
+  properties, dynamic elements (SV §§6.21, 13.3.2) and unpacked aggregates (not
+  singular, SV §6.4) are located errors. Missing: string, class-handle and event
+  variables, whole net arrays and SV2009 static unpacked-array elements
+  ([known issue](known_issues.md#unsupported-force-and-release-targets)).
   V §9.3.2 **[1995]**.
 
 ## 6. Timing controls
