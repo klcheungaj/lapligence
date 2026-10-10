@@ -1144,7 +1144,8 @@ files = ["a.sv"]
         );
         let options = resolve_no_env(cli(&["x.sv"]), Some(&on)).unwrap();
         let wave = options.wave.expect("configured waveform");
-        assert_eq!(wave.file, path_string(&dir.join("w/dump.vcd")));
+        // Configured paths resolve component-wise to native separators.
+        assert_eq!(wave.file, path_string(&dir.join("w").join("dump.vcd")));
         assert_eq!(wave.depth, 0, "the default depth dumps every level");
         let options = resolve_no_env(cli(&["--no-wave", "x.sv"]), Some(&on)).unwrap();
         assert_eq!(options.wave, None);
