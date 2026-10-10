@@ -8,6 +8,18 @@ use std::time::Duration;
 
 const STAGE_TIMEOUT: Duration = Duration::from_secs(180);
 const BUILD_TIMEOUT: Duration = Duration::from_secs(600);
+/// The ctest stage runs about 120 probe processes in sequence, each bounded by
+/// its own ctest TIMEOUT, so this cap only has to stop a run whose probes are
+/// all slow. Linux runs the legacy stage in about 17 s. Windows CI exceeded
+/// 180 s on both runners: every probe is a new process (Defender scans each
+/// on arm64), the expect-failure and mixed-mode cases start `cmake -P` and
+/// `cl`, and MSVC Debug probes run at `/Od /RTC1`. 600 s matches the build
+/// stage and leaves over 3x the observed 180 s lower bound.
+const TEST_STAGE_TIMEOUT: Duration = if cfg!(windows) {
+    Duration::from_secs(600)
+} else {
+    STAGE_TIMEOUT
+};
 
 #[test]
 fn dynamic_storage_and_waveform_snapshots() {
@@ -83,7 +95,7 @@ fn run_storage_tests(label: &str, options: &[String]) {
     for (stage, command, timeout) in [
         ("configure", &mut configure, STAGE_TIMEOUT),
         ("build", &mut build, BUILD_TIMEOUT),
-        ("test", &mut test, STAGE_TIMEOUT),
+        ("test", &mut test, TEST_STAGE_TIMEOUT),
     ] {
         let output = sim_harness::run_command(command, timeout)
             .unwrap_or_else(|error| panic!("storage tests {stage}: {error}"));

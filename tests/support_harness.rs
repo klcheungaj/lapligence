@@ -120,6 +120,23 @@ fn command_timeout_stops_descendants_holding_output_pipes() {
     assert!(start.elapsed() < Duration::from_secs(5));
 }
 
+#[cfg(unix)]
+#[test]
+fn command_timeout_reports_the_output_printed_before_the_deadline() {
+    use std::process::Command;
+    use std::time::Duration;
+
+    let error = sim_harness::run_command(
+        Command::new("sh").args(["-c", "echo started-step; echo failing-step >&2; sleep 30"]),
+        Duration::from_millis(500),
+    )
+    .unwrap_err();
+    assert!(error.starts_with("timed out"), "{error}");
+    let stdout = error.find("started-step").expect("stdout tail in the error");
+    let stderr = error.find("failing-step").expect("stderr tail in the error");
+    assert!(stdout < stderr, "{error}");
+}
+
 #[test]
 fn cwd_lock_recovers_after_an_action_panics() {
     let original =

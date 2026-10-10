@@ -4,6 +4,11 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 include(CTest)
+# MSVC: link the release CRT (/MD) in every configuration, as generated models
+# and the /MD GMP archives do. The Debug configuration keeps /Od, /RTC1 and
+# assert(); the debug CRT heap would also check every allocation of the
+# allocation-heavy scale and oracle probes.
+set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreadedDLL)
 set(LLG_TEST_HAS_WAVEFORMS false)
 set(LLG_TEST_HAS_SCHEDULER false)
 set(LLG_TEST_HAS_COROUTINES false)
@@ -392,7 +397,7 @@ if(LLG_STORAGE_TEST_SCHEDULER)
       set_tests_properties(coroutine_scale_${mode} PROPERTIES TIMEOUT 60)
     endforeach()
     foreach(mode IN ITEMS release debug)
-      add_executable(fork_group_scale_${mode}_probe fork_group_scale_probe.c)
+      add_executable(fork_group_scale_${mode}_probe fork_group_scale_probe.c probe_cpu_time.c)
       if(mode STREQUAL "debug")
         target_compile_definitions(fork_group_scale_${mode}_probe PRIVATE LLG_CO_DEBUG=1)
       elseif(MSVC)

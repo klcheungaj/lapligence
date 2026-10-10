@@ -1,5 +1,4 @@
 #include "llg_rt.c"
-#include <time.h>
 #include "probe.h"
 #include "probe_co.h"
 
@@ -20,6 +19,11 @@
 #define SCALE_MIN_ROUNDS 3u
 #define SCALE_MAX_ROUNDS 16u
 #define SCALE_BUDGET_SECONDS 20.0
+
+/* Process CPU time (probe_cpu_time.c): the UCRT's clock() is wall time, which
+ * counts time other processes run and so inflates both the ratios and the
+ * budget under a parallel test load. */
+double probe_cpu_seconds(void);
 
 static unsigned count;
 static unsigned started;
@@ -118,7 +122,7 @@ static double run(unsigned n, fork_mode_t mode) {
     finish_parked = cancel == 2 || cancel == 3;
     staggered = cancel == 3;
     one_group = mode.single;
-    clock_t begin = clock();
+    double begin = probe_cpu_seconds();
     llg_rt_init();
     llg_event_object_reset(&park_object);
     llg_spawn(&scale_parent_desc, "parent");
@@ -128,12 +132,12 @@ static double run(unsigned n, fork_mode_t mode) {
     CHECK(!g.all_procs && !g.zombie_groups && !g.waiters && !g.process_handles);
     llg_event_object_reset(&park_object);
     CHECK(value_test_live() == 0);
-    return (double)(clock() - begin) / CLOCKS_PER_SEC;
+    return probe_cpu_seconds() - begin;
 }
 
 static double removal_order(unsigned n, fork_mode_t unused) {
     (void)unused;
-    clock_t begin = clock();
+    double begin = probe_cpu_seconds();
     llg_rt_init();
     llg_proc_t* parent = llg_spawn(&scale_parent_desc, "unlink parent");
     g.current = parent;
@@ -151,7 +155,7 @@ static double removal_order(unsigned n, fork_mode_t unused) {
     free(groups);
     g.current = NULL;
     llg_rt_cleanup();
-    return (double)(clock() - begin) / CLOCKS_PER_SEC;
+    return probe_cpu_seconds() - begin;
 }
 
 static void event_positions(void) {
