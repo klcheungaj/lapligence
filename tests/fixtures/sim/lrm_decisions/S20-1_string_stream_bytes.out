@@ -1,0 +1,5 @@
+reversed 64636261
+bytes 2 61 62
+pack AB 2
+unpack CD 2
+unpack-reversed DCBA

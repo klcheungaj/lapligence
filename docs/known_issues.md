@@ -365,8 +365,8 @@ recheck at commit. The oversized source of a whole-value `matches` binding that
 is a fixed array rather than a record still rejects (RTL-016).
 Dense rows as descriptor pattern items and scatter targets, and dense arrays,
 packed values, runtime `with` ranges and nested streams as parts of an
-oversized stream, use descriptor transport (RTL-103); a resizable container operand of an oversized
-stream rejects (SIM-020).
+oversized stream, use descriptor transport (RTL-103); resizable container
+operands, plain or `with`-selected, stream as runtime-sized cells (SIM-020).
 
 Fixed-array `reverse`/`sort`/`rsort`, selected-row reductions and `inside`
 over stored cells (descriptor arrays, selected rows and dense arrays above 16
@@ -574,6 +574,38 @@ receivers computed by element selects or calls, retained element cells for
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`.
+
+## Bit-stream limits (SIM-020)
+
+**Status:** open; SIM-020 streams strings, resizable containers and records
+with such members through runtime-sized bit streams.
+
+### Symptom
+
+These legal forms reject with explicit diagnostics: streaming a class
+object's members (SV 11.4.14.1); a bit-stream cast into a struct with string
+or resizable members; a nonblocking unpack into a whole dynamic array, queue
+or string; a dynamic array or queue whose element is an unpacked array as an
+unpack target (streaming it as a source works); and an unpack whose targets
+together exceed the packed width unless the target is one whole fixed array.
+
+### Cause
+
+Class objects have no owned stream descriptor. A cast into a record with
+dynamic members needs a greedy unpack into its member leaves, which the record
+assignment paths do not lower. Nonblocking container writes have no queued
+whole-container commit. Unpacked-element containers have no element writer
+for streamed cells, and multi-target unpacks consume one packed value.
+
+### Intended direction
+
+Generalize the bit-stream unpack (`llg_bitstream_t` plus typed target
+segments) to record leaves, unpacked-element containers and several oversized
+targets, and queue a whole-container commit for nonblocking unpacks.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_020/unsupported_*.sv`.
 
 ## Process handles in plain handle storage stay allocated until teardown
 

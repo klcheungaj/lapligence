@@ -1,0 +1,11 @@
+greedy-middle 01 3 02 03 04 05
+greedy-first aa 2 0 bb cc dd
+with-length 3 3 01 03 77 6
+with-range 3 00 aa bb
+with-index 4 11 5a 13
+zero-fill 2 0102 0300
+cast-to-dynamic 2 0102 0304
+string-zero-bytes AB 2
+string-unpack CD 2
+record-source 4 02 aa bb 55
+record-members 2 2 aa bb 55

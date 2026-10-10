@@ -206,3 +206,64 @@ fn ab_n3_disable_branch_status() {
         include_str!("fixtures/sim/lrm_decisions/AB-N3_disable_branch_status.out"),
     );
 }
+
+#[test]
+fn s20_1_string_stream_bytes() {
+    run_decision(
+        "S20-1_string_stream_bytes",
+        include_str!("fixtures/sim/lrm_decisions/S20-1_string_stream_bytes.out"),
+    );
+}
+
+#[test]
+fn s20_2_greedy_dynamic_targets() {
+    run_decision(
+        "S20-2_greedy_dynamic_targets",
+        include_str!("fixtures/sim/lrm_decisions/S20-2_greedy_dynamic_targets.out"),
+    );
+}
+
+#[test]
+fn s20_3_dynamic_target_fill() {
+    run_decision(
+        "S20-3_dynamic_target_fill",
+        include_str!("fixtures/sim/lrm_decisions/S20-3_dynamic_target_fill.out"),
+    );
+}
+
+#[test]
+fn s20_4_with_range_resize() {
+    run_decision(
+        "S20-4_with_range_resize",
+        include_str!("fixtures/sim/lrm_decisions/S20-4_with_range_resize.out"),
+    );
+}
+
+#[test]
+fn s20_5_reverse_unpack_consumed() {
+    run_decision(
+        "S20-5_reverse_unpack_consumed",
+        include_str!("fixtures/sim/lrm_decisions/S20-5_reverse_unpack_consumed.out"),
+    );
+}
+
+/// Negative at run time: the output before the error is portable.
+#[test]
+fn s20_6_dynamic_cast_whole_elements() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S20-6_dynamic_cast_whole_elements.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S20-6_dynamic_cast_whole_elements",
+        &[],
+        &|label, output| {
+            assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+            assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains(
+                    "bit stream size does not match a whole number of destination elements"
+                ),
+                "{label}: {output:?}"
+            );
+        },
+    );
+}

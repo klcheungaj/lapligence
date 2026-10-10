@@ -99,6 +99,17 @@ scripts/run-tests.sh -E 'test(/^sim_lrm_decisions::/)'
 | AB-O2 | **`unique` order.** `unique()`/`unique_index()` keep the first occurrence of each value, in index order. | 7.12.1 L9295-9301 | `AB-O2_unique_order` (`llg` lines are policy, `sorted` lines are portable) | llg policy |
 | AB-O3 | **Killing a woken receiver.** A mailbox message leaves the queue when `put` hands it to a waiting receiver. Killing that receiver before it runs returns the message to the head of the queue. | 9.7 L12630-12634 | `AB-O3_kill_woken_receiver` (`llg` lines are policy, the `conserved` line is portable) | llg policy |
 
+## Bit-stream operations (SIM-020)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S20-1 | **Strings stream as bytes.** A string streams as its bytes, index 0 leftmost. A stream assigned or unpacked into a string fills it left to right, one character per 8 bits, and drops zero bytes. | 6.24.3 L7514-7515, L7528; 6.16 L5641-5642; 11.4.14 L15472-15474 | `S20-1_string_stream_bytes` | LRM text |
+| S20-2 | **Greedy dynamic targets.** In one unpack, the first unselected dynamic array or queue takes every bit that the fixed targets after it leave. Each later unselected one becomes empty. | 11.4.14.4 L15600-15602; 6.24.3 L7522-7526 | `S20-2_greedy_dynamic_targets` | LRM text |
+| S20-3 | **Dynamic targets are zero-filled.** A stream assigned to a dynamic array or queue gets as many elements as hold the whole stream. The last element is zero-filled on the right. | 11.4.14 L15472-15474 | `S20-3_dynamic_target_fill` | LRM text |
+| S20-4 | **`with` ranges grow but never shrink.** A `with` range on a dynamic unpack target grows the array when the range reaches past its end; new elements read as zero. It never shrinks the array, and elements outside the range keep their values. | 11.4.14.4 L15629-15630, L15643-15645 | `S20-4_with_range_resize` | llg choice (the text says "resized to accommodate" without saying whether a larger array shrinks) |
+| S20-5 | **`<<` unpack consumes, then reverses.** A `<<` unpack first takes from the left of the source the bits its targets need, then reverses those blocks. `with` extents are resolved before the reordering. | 11.4.14.3 L15561-15566 | `S20-5_reverse_unpack_consumed` | llg choice (the text defines the consumed bits but not how `<<` orders a partial source) |
+| S20-6 | **Casts to dynamic types need whole elements.** An explicit bit-stream cast to a dynamic array or queue type needs a source that is a whole number of elements; any other size is a run-time error. An uncast stream assignment still zero-fills (S20-3). | 6.24.3 L7534-7537 | `S20-6_dynamic_cast_whole_elements` (negative at run time: the `.out` holds the output before the error) | llg choice |
+
 ## Earlier decisions
 
 These predate the register. Their evidence lives in the feature fixtures named
