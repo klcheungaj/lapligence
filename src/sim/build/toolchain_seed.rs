@@ -52,7 +52,7 @@ pub const SEED_DIR: &str = "cmake-toolchain";
 
 /// Bumped whenever the layout or the self-check changes, so older entries are
 /// never read by a newer llg.
-const FORMAT: &str = "llg-cmake-toolchain-seed-v3";
+const FORMAT: &str = "llg-cmake-toolchain-seed-v4";
 
 /// The text every generated project places before `project()`. Detection
 /// runs inside `project()`, so the policies in effect there must match the
@@ -112,12 +112,21 @@ const TRY_COMPILE_CONFIGURATION: &str = "Release";
 
 /// `-G`, launcher, compiler, flag and detection arguments shared by the probe
 /// and the generated projects' configures, so they cannot drift apart.
+///
+/// The install prefix is explicit (and empty) because llg's trees never
+/// install, while CMake's Windows default depends on detection order:
+/// `CMakeGenericSystem.cmake` picks `Program Files (x86)` when it runs before
+/// `CMAKE_SIZEOF_VOID_P` is known (a clean configure) and `Program Files`
+/// when a seeded tree already has it, so a seeded tree would otherwise differ
+/// from a clean one in `cmake_install.cmake`. The prefix also feeds
+/// `CMAKE_SYSTEM_PREFIX_PATH`; `CMAKE_FIND_NO_INSTALL_PREFIX` keeps the empty
+/// value out of the find search paths.
 pub(super) fn toolchain_args(
     generator: &str,
     launcher: &str,
     cc: &str,
     flags: &str,
-) -> [String; 6] {
+) -> [String; 8] {
     [
         "-G".to_owned(),
         generator.to_owned(),
@@ -125,6 +134,8 @@ pub(super) fn toolchain_args(
         format!("-DCMAKE_C_COMPILER={cc}"),
         format!("-DCMAKE_C_FLAGS:STRING={flags}"),
         format!("-DCMAKE_TRY_COMPILE_CONFIGURATION={TRY_COMPILE_CONFIGURATION}"),
+        "-DCMAKE_INSTALL_PREFIX:PATH=".to_owned(),
+        "-DCMAKE_FIND_NO_INSTALL_PREFIX:BOOL=ON".to_owned(),
     ]
 }
 
@@ -550,25 +561,49 @@ fn parse_cache(text: &str) -> BTreeMap<String, String> {
     entries
 }
 
-/// Every spelling of `paths` CMake may write: native, forward-slash, and the
-/// canonical form.
+/// Every spelling of `paths` CMake may write: native, forward-slash, the
+/// canonical form, and each of those as escaped in a Ninja file.
 fn path_spellings(paths: &[&Path]) -> Vec<String> {
-    let mut spellings = BTreeSet::new();
+    let mut forms = Vec::new();
     for path in paths {
-        let mut forms = vec![path.to_path_buf()];
+        forms.push(path.to_string_lossy().into_owned());
         if let Ok(canonical) = crate::ffi::platform::canonicalize(path) {
-            forms.push(canonical);
+            forms.push(canonical.to_string_lossy().into_owned());
         }
-        for form in forms {
-            let text = form.to_string_lossy().into_owned();
-            spellings.insert(text.replace('\\', "/"));
-            spellings.insert(text);
+    }
+    spellings_of(forms)
+}
+
+/// `texts` in native and forward-slash form, each also in its Ninja-escaped
+/// spellings, without empty strings and longest first (so a shorter
+/// spelling never splits a longer one that contains it).
+fn spellings_of(texts: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut spellings = BTreeSet::new();
+    for text in texts {
+        for form in [text.replace('\\', "/"), text] {
+            spellings.extend(ninja_spellings(&form));
+            spellings.insert(form);
         }
     }
     let mut spellings: Vec<String> = spellings.into_iter().filter(|s| !s.is_empty()).collect();
-    // Longest first, so a canonical prefix never splits a longer spelling.
     spellings.sort_by_key(|spelling| std::cmp::Reverse(spelling.len()));
     spellings
+}
+
+/// How a Ninja file may spell `text`. Ninja escapes `$` as `$$` everywhere,
+/// and CMake's Ninja generator also escapes `:` as `$:` and a space as `$ `
+/// in paths (`cmake_ninja_workdir = D$:\a\...` on Windows); command lines may
+/// leave them unescaped. Every combination is listed because which escapes a
+/// line uses depends on where the path appears.
+fn ninja_spellings(text: &str) -> [String; 4] {
+    let dollars = text.replace('$', "$$");
+    let colons = dollars.replace(':', "$:");
+    [
+        dollars.replace(' ', "$ "),
+        colons.replace(' ', "$ "),
+        colons,
+        dollars,
+    ]
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -600,11 +635,7 @@ fn generated_tree(
     let mut paths = Vec::new();
     super::collect_paths(build, &mut paths);
     let spellings = path_spellings(&[build]);
-    let module_spellings: Vec<String> = if cmake_root.is_empty() {
-        Vec::new()
-    } else {
-        vec![cmake_root.to_owned(), cmake_root.replace('/', "\\")]
-    };
+    let module_spellings = module_spellings(cmake_root);
     let platform_prefix = format!("CMakeFiles/{version_dir}/");
     let mut tree = BTreeMap::new();
     for path in paths.into_iter().filter(|path| path.is_file()) {
@@ -631,6 +662,16 @@ fn generated_tree(
         tree.insert(relative, normalize(bytes, &spellings, &module_spellings));
     }
     Ok(tree)
+}
+
+/// Spellings of CMake's module directory (`CMAKE_ROOT`, always with forward
+/// slashes): CMake files use it as is, `build.ninja` with native and
+/// Ninja-escaped separators.
+fn module_spellings(cmake_root: &str) -> Vec<String> {
+    if cmake_root.is_empty() {
+        return Vec::new();
+    }
+    spellings_of([cmake_root.to_owned(), cmake_root.replace('/', "\\")])
 }
 
 fn normalize(bytes: Vec<u8>, tree_spellings: &[String], module_spellings: &[String]) -> Vec<u8> {
@@ -666,15 +707,13 @@ fn differences(
     for (path, bytes) in reference {
         match candidate.get(path) {
             None => found.push(format!("{path} missing")),
-            Some(other) if other != bytes => {
-                let line = String::from_utf8_lossy(bytes)
-                    .lines()
-                    .zip(String::from_utf8_lossy(other).lines())
-                    .find(|(left, right)| left != right)
-                    .map(|(left, right)| format!(": `{left}` vs `{right}`"))
-                    .unwrap_or_default();
-                found.push(format!("{path}{line}"));
-            }
+            Some(other) if other != bytes => found.push(format!(
+                "{path}{}",
+                differing_lines(
+                    &String::from_utf8_lossy(bytes),
+                    &String::from_utf8_lossy(other)
+                )
+            )),
             Some(_) => {}
         }
     }
@@ -690,6 +729,35 @@ fn differences(
         found.push(format!("{rest} more"));
     }
     found
+}
+
+/// The first differing line of two files, and how many other line positions
+/// differ, so one CI log shows whether a file has one cause or many.
+fn differing_lines(reference: &str, candidate: &str) -> String {
+    let reference: Vec<&str> = reference.lines().collect();
+    let candidate: Vec<&str> = candidate.lines().collect();
+    let mut differing = (0..reference.len().max(candidate.len()))
+        .filter(|&index| reference.get(index) != candidate.get(index));
+    let Some(first) = differing.next() else {
+        // Same lines: only line endings or a final newline differ.
+        return ": same lines, different line endings".to_owned();
+    };
+    let line = |lines: &[&str]| {
+        lines
+            .get(first)
+            .map_or("<no line>".to_owned(), |line| format!("`{line}`"))
+    };
+    let mut text = format!(
+        ": line {}: {} vs {}",
+        first + 1,
+        line(&reference),
+        line(&candidate)
+    );
+    let rest = differing.count();
+    if rest > 0 {
+        text.push_str(&format!(" (+{rest} more differing lines)"));
+    }
+    text
 }
 
 #[cfg(test)]
@@ -917,11 +985,116 @@ mod tests {
         candidate.insert("z".to_owned(), Vec::new());
         assert_eq!(
             differences(&reference, &candidate),
-            ["f00 missing", "f01: `a` vs `b`", "z unexpected"]
+            ["f00 missing", "f01: line 1: `a` vs `b`", "z unexpected"]
         );
         let all_missing = differences(&reference, &BTreeMap::new());
         assert_eq!(all_missing.len(), MAX_REPORTED_DIFFERENCES + 1);
         assert_eq!(all_missing.last().unwrap(), "4 more");
+    }
+
+    #[test]
+    fn ninja_spellings_cover_every_escape_combination() {
+        assert_eq!(
+            ninja_spellings(r"C:\Program Files\x$y"),
+            [
+                r"C:\Program$ Files\x$$y".to_owned(),
+                r"C$:\Program$ Files\x$$y".to_owned(),
+                r"C$:\Program Files\x$$y".to_owned(),
+                r"C:\Program Files\x$$y".to_owned(),
+            ]
+        );
+        // POSIX paths without special characters gain no extra spelling.
+        assert_eq!(
+            path_spellings(&[Path::new("/work/probe/full")]),
+            ["/work/probe/full"]
+        );
+    }
+
+    /// Windows probe trees as CMake's Ninja generator wrote them in CI
+    /// (Windows x64 and arm64 runs of 5576b057): `cmake_ninja_workdir` and
+    /// build edges spell the tree with `$:`, command lines do not, and the
+    /// re-run dependency lines name CMake's modules with `$:` and `$ `. The
+    /// clean (`full`) and seeded (`check`) trees must compare equal, while a
+    /// real difference is still reported.
+    #[test]
+    fn windows_ninja_escaped_paths_are_normalized_like_plain_ones() {
+        let entry = r"D:\a\lapligence\lapligence\target\llg-runtime-cache\cmake-toolchain\36c593e66a04e03e\probe";
+        let escaped = entry.replacen(':', "$:", 1);
+        let modules = module_spellings("C:/Program Files/CMake/share/cmake-4.1");
+        let modules_dir = r"C$:\Program$ Files\CMake\share\cmake-4.1\Modules";
+        let ninja = |tree: &str, detection: &str| {
+            format!(
+                "cmake_ninja_workdir = {escaped}\\{tree}\\\n\
+                 build CMakeFiles\\probe_lib.dir\\probe_lib.c.obj: C_COMPILER__probe_lib_unscanned_Debug {escaped}\\src\\probe_lib.c\n\
+                 \x20 COMMAND = C:\\WINDOWS\\system32\\cmd.exe /C \"cd /D {entry}\\{tree} && \"C:\\Program Files\\CMake\\bin\\cmake.exe\" --regenerate-during-build -S{entry}\\src -B{entry}\\{tree}\"\n\
+                 build build.ninja: RERUN_CMAKE | {modules_dir}\\CMakeCInformation.cmake {detection}{escaped}\\src\\CMakeLists.txt\n\
+                 build {modules_dir}\\CMakeCInformation.cmake {detection}{escaped}\\src\\CMakeLists.txt: phony\n"
+            )
+        };
+        let clean = ninja(
+            "full",
+            &format!("{modules_dir}\\CMakeDetermineCCompiler.cmake "),
+        );
+        let seeded = ninja("check", "");
+        // The line exactly as the x64 rejection quoted it.
+        assert!(clean.starts_with(
+            r"cmake_ninja_workdir = D$:\a\lapligence\lapligence\target\llg-runtime-cache\cmake-toolchain\36c593e66a04e03e\probe\full\"
+        ));
+        let normalized = |text: &str, tree: &str| {
+            let spellings = path_spellings(&[Path::new(&format!("{entry}\\{tree}"))]);
+            normalize(text.as_bytes().to_vec(), &spellings, &modules)
+        };
+        let reference = normalized(&clean, "full");
+        let candidate = normalized(&seeded, "check");
+        assert_eq!(
+            String::from_utf8_lossy(&reference),
+            String::from_utf8_lossy(&candidate)
+        );
+        assert!(
+            String::from_utf8_lossy(&reference).starts_with("cmake_ninja_workdir = <BUILD>\\\n")
+        );
+
+        let reference = BTreeMap::from([("build.ninja".to_owned(), reference)]);
+        let changed = normalized(&seeded.replace("Debug", "Release"), "check");
+        let found = differences(
+            &reference,
+            &BTreeMap::from([("build.ninja".to_owned(), changed)]),
+        );
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].starts_with("build.ninja: line 2: "), "{found:?}");
+
+        // The install prefixes the two CI trees recorded still differ; the
+        // explicit prefix in `toolchain_args` is what makes them agree.
+        let install = |prefix: &str| {
+            BTreeMap::from([(
+                "cmake_install.cmake".to_owned(),
+                format!("if(NOT DEFINED CMAKE_INSTALL_PREFIX)\n  set(CMAKE_INSTALL_PREFIX \"{prefix}/llg_toolchain_probe\")\nendif()\n").into_bytes(),
+            )])
+        };
+        assert_eq!(
+            differences(&install("C:/Program Files (x86)"), &install("C:/Program Files")),
+            ["cmake_install.cmake: line 2: `  set(CMAKE_INSTALL_PREFIX \"C:/Program Files (x86)/llg_toolchain_probe\")` vs `  set(CMAKE_INSTALL_PREFIX \"C:/Program Files/llg_toolchain_probe\")`"]
+        );
+    }
+
+    #[test]
+    fn configures_never_take_the_platform_default_install_prefix() {
+        let args = toolchain_args("Ninja", "", "cl", "");
+        assert!(args.contains(&"-DCMAKE_INSTALL_PREFIX:PATH=".to_owned()));
+        assert!(args.contains(&"-DCMAKE_FIND_NO_INSTALL_PREFIX:BOOL=ON".to_owned()));
+    }
+
+    #[test]
+    fn differing_files_name_their_first_line_and_the_rest_count() {
+        assert_eq!(
+            differing_lines("a\nb\nc", "a\nx\ny\nz"),
+            ": line 2: `b` vs `x` (+2 more differing lines)"
+        );
+        assert_eq!(differing_lines("a\n", "a\nb"), ": line 2: <no line> vs `b`");
+        assert_eq!(
+            differing_lines("a\r\n", "a\n"),
+            ": same lines, different line endings"
+        );
     }
 
     /// MSVC-like compilers leave `CMakeFiles/ShowIncludes/` behind only in a

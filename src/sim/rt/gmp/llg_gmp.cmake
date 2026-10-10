@@ -28,6 +28,14 @@ check_type_size("unsigned short" LLG_GMP_SIZEOF_UNSIGNED_SHORT LANGUAGE C)
 check_type_size("unsigned int" LLG_GMP_SIZEOF_UNSIGNED LANGUAGE C)
 check_type_size("unsigned long" LLG_GMP_SIZEOF_UNSIGNED_LONG LANGUAGE C)
 check_type_size("unsigned long long" LLG_GMP_SIZEOF_UNSIGNED_LONG_LONG LANGUAGE C)
+# A check whose test program does not compile leaves its size empty; say so
+# instead of misreporting the target. With MSVC a common cause is a build tree
+# whose try_compile object paths exceed MAX_PATH (260 characters).
+if(NOT HAVE_LLG_GMP_SIZEOF_VOID_P OR NOT HAVE_LLG_GMP_SIZEOF_UNSIGNED_LONG_LONG)
+  message(FATAL_ERROR "compact GMP kernels: the C type-size checks did not "
+    "compile (see CMakeFiles/CMakeConfigureLog.yaml); with MSVC, check that "
+    "the build directory path is short enough for MAX_PATH")
+endif()
 if(NOT LLG_GMP_SIZEOF_VOID_P EQUAL 8 OR NOT LLG_GMP_SIZEOF_UNSIGNED_LONG_LONG EQUAL 8)
   message(FATAL_ERROR "compact GMP kernels require a 64-bit target")
 endif()

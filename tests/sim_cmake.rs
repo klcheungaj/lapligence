@@ -66,7 +66,13 @@ endmodule
 
 const EXPECTED_STDOUT: &str = "count=8 done=0\ncount=9 done=0\n";
 
-/// Portable generator backend for the explicit-`-G` case.
+/// Generator for the explicit-`-G` case, distinct from the default Ninja.
+/// Windows uses NMake: "Unix Makefiles" there runs recipes through an MSYS
+/// `sh` (Git's `gmake`), which rewrites MSVC options such as `/nologo` into
+/// paths (`C:/Program Files/Git/nologo`), so `link` fails with LNK1181.
+#[cfg(windows)]
+const GENERATOR: &str = "NMake Makefiles";
+#[cfg(not(windows))]
 const GENERATOR: &str = "Unix Makefiles";
 
 /// Minimal stand-in model source; only used where cmake must fail *before*

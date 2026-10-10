@@ -19,4 +19,12 @@ static int check_2d(const char *path) {
     printf("memory_reversed_2d=%s\n",ok?"PASS":"FAIL");
     for(int i=0;i<4;i++)sv4_destroy(&mem[i]);sv4_destroy(&absent);return !ok;
 }
-int main(int argc,char **argv){if(argc!=3)return 2;return check_order(argv[1],0,0x11,0x22)|check_order(argv[1],1,0x22,0x11)|check_2d(argv[2]);}
+int main(int argc,char **argv){
+    if(argc!=3)return 2;
+    /* Separate statements: the operands of `|` are unsequenced (C11 6.5p3),
+     * and MSVC x64 evaluated the second check first, printing its line first. */
+    int failed=check_order(argv[1],0,0x11,0x22);
+    failed|=check_order(argv[1],1,0x22,0x11);
+    failed|=check_2d(argv[2]);
+    return failed;
+}

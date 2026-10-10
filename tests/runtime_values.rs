@@ -72,7 +72,7 @@ fn value_runtime_compiles_and_runs_without_scheduler() {
     assert!(
         compiled.status.success(),
         "standalone value runtime must compile without the scheduler:\n{}",
-        String::from_utf8_lossy(&compiled.stderr)
+        c_compiler::compiler_diagnostics(&compiled)
     );
 
     let stdout = sim_harness::run_executable(&executable).expect("value probe should run");
@@ -112,7 +112,7 @@ fn value_runtime_rejects_over_capacity_widths() {
     assert!(
         compiled.status.success(),
         "standalone value boundary probe must compile:\n{}",
-        String::from_utf8_lossy(&compiled.stderr)
+        c_compiler::compiler_diagnostics(&compiled)
     );
 
     for operation in ["constructor", "resolution"] {

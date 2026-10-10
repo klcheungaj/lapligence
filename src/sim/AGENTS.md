@@ -177,14 +177,19 @@ CMake itself re-configures from. The exact key covers CMake and its version,
 generator, compiler spelling/identity/target, flags, launcher, host and the
 detection environment (`PATH`, `INCLUDE`, `LIB`, `SDKROOT`, ...). Publication
 needs a self-check (clean + re-configure vs seeded probe build files equal
-modulo tree paths, CMake module lists and detection scratch such as MSVC's
-`CMakeFiles/ShowIncludes/`) under a non-blocking entry lock;
+modulo tree paths (plain, forward-slash, canonical and Ninja-escaped `$:`/`$ `/`$$`
+spellings), CMake module lists and detection scratch such as MSVC's
+`CMakeFiles/ShowIncludes/`) under a non-blocking entry lock; a rejection names
+each differing file with its first differing line;
 otherwise a `rejected` marker stops probing. A seeded configure that fails is
 retried clean and rejects the seed. Published files never change; ready/rejected
 markers are renamed into place with the exact key. Projects keep the shared
 `PROJECT_PREAMBLE` before `project()`. `LLG_CMAKE_TOOLCHAIN_SEED=0` disables it.
 Detection `try_compile`s use `CMAKE_TRY_COMPILE_CONFIGURATION=Release` (no MSVC
-`/Zi` PDBs). `LLG_BUILD_TIMINGS=<file>` appends one per-phase timing and
+`/Zi` PDBs). Every configure passes an empty `CMAKE_INSTALL_PREFIX` (with
+`CMAKE_FIND_NO_INSTALL_PREFIX=ON`): CMake's Windows default prefix depends on
+whether `CMAKE_SIZEOF_VOID_P` is known yet, so clean and seeded trees would
+otherwise differ. Keep these flags in `toolchain_args`, shared by probe and builds. `LLG_BUILD_TIMINGS=<file>` appends one per-phase timing and
 cache-outcome line per model build (`build/timings.rs`); CI summarizes it with
 `scripts/ci_build_timings.py`.
 Compiler self-reports (`--version`/`/Bv` identity, target) come from

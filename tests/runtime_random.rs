@@ -116,8 +116,8 @@ fn random_runtime_vectors_and_boundaries_are_stable_at_both_optimization_levels(
             .unwrap_or_else(|error| panic!("compile random runtime at {optimization}: {error}"));
         assert!(
             output.status.success(),
-            "random runtime must compile at {optimization}: {}",
-            String::from_utf8_lossy(&output.stderr)
+            "random runtime must compile at {optimization}:\n{}",
+            c_compiler::compiler_diagnostics(&output)
         );
         let output = sim_harness::run_executable(&executable).expect("run random probe");
         assert_eq!(output, "vector=0 boundaries=0\n", "{optimization}");

@@ -91,13 +91,15 @@ static double uniform(int32_t *seed, int64_t start, int64_t end) {
 
 static double normal(int32_t *seed, int32_t mean, int32_t deviation) {
     double v1;
-    double v2;
-    double s = 1.0;
-    while (s >= 1.0 || s == 0.0) {
+    double s;
+    // The reference listing primes s with 1.0 and loops with `while`; the
+    // first pass always runs, and `do` states that so MSVC /W4 cannot report
+    // v1 as potentially uninitialized (C4701) at /O2.
+    do {
         v1 = uniform(seed, -1, 1);
-        v2 = uniform(seed, -1, 1);
+        double v2 = uniform(seed, -1, 1);
         s = v1 * v1 + v2 * v2;
-    }
+    } while (s >= 1.0 || s == 0.0);
     s = v1 * sqrt(-2.0 * log(s) / s);
     return s * (double)deviation + (double)mean;
 }

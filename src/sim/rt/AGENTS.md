@@ -544,6 +544,14 @@ Compile facade translation units only; synchronize private fragment order with
 `include_str!`/`concat!` flat embedding. Never include value implementation in the
 scheduler or export private shared state to avoid assembly rules.
 
+Standalone probes also build with MSVC `/W4 /WX`, at `/O2` for the
+`strict_c11_executable` tests. Avoid what GCC/Clang `-Wall -Wextra` accept but
+MSVC rejects: a statement after an unconditional call to an `abort()` helper
+(C4702 once `/O2` inlines it; declare the helper `_Noreturn`), a local assigned
+only inside a `while` loop (C4701; use `do`), and an array of pointers to const
+passed as `void*` (C4090). Clang `-Wunreachable-code` and
+`-Wconditional-uninitialized` approximate the first two.
+
 Preserve source APIs: `value_sources`, `random_sources`, `rng_sources`,
 `coroutine_sources`, `runtime_sources`, `string_sources`, `container_sources`,
 `selftest_source`, `selftest_support_source`, `waveform_sources` and

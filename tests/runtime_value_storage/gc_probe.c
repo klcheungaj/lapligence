@@ -143,7 +143,9 @@ static void start(int verify) {
     llg_gc.base_threshold = llg_gc.threshold = 1000000;
     llg_gc.growth_percent = 100;
     memset(roots, 0, sizeof(roots));
-    memset(interior_roots, 0, sizeof(interior_roots));
+    // Assigned, not memset: MSVC reports C4090 (const qualifiers) for an
+    // array of pointers to const passed as void*, and /WX makes it an error.
+    for (int i = 0; i < INTERIOR_ROOTS; ++i) interior_roots[i] = NULL;
     finalized = condemned_seen = 0;
     CHECK(llg_gc_register_roots(probe_roots, (void*)roots));
 }

@@ -14,7 +14,10 @@
 static void llg_dyn_outdate_references(llg_dyn_array_t* array);
 static void llg_assoc_outdate_references(llg_assoc_t* array, size_t position);
 
-static void llg_container_fatal(const char* message) {
+/* _Noreturn, and no statement follows an unconditional call: MSVC /O2 inlines
+ * this helper, sees abort() and reports such a statement as unreachable
+ * (C4702), an error in the /W4 /WX standalone probe builds. */
+static _Noreturn void llg_container_fatal(const char* message) {
     fprintf(stderr, "llg container fatal: %s\n", message);
     abort();
 }
@@ -101,7 +104,6 @@ static sv4_t llg_reduce_identity(uint32_t width, int8_t is_signed,
             return sv4_from_u64(0, width, is_signed);
         default:
             llg_container_fatal("invalid container reduction operation");
-            return sv4_from_u64(0, width, is_signed);
     }
 }
 
@@ -119,7 +121,6 @@ static sv4_t llg_reduce_step(sv4_t accumulated, sv4_t value, int operation) {
             return sv4_xor(accumulated, value);
         default:
             llg_container_fatal("invalid container reduction operation");
-            return sv4_clone(&accumulated);
     }
 }
 
