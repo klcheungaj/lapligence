@@ -9,6 +9,7 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrFixedValue, String> {
+        let node = self.overload_operand(node);
         let node = match self.descriptor_cast(node) {
             DescriptorCast::Convert(cast, operand) => {
                 let value = self.lower_fixed_value(path, operand)?;

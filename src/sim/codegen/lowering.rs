@@ -1198,6 +1198,17 @@ enum NetDeclTarget {
     Unknown,
 }
 
+/// What an overloaded update's `OverloadCurrent` operand (IEEE 1800-2009
+/// 11.11) stands for while the update's function call is lowered.
+#[derive(Clone, Copy, Debug)]
+enum OverloadCurrent {
+    /// The packed mutation's captured target value (width, signedness).
+    Packed(u32, bool),
+    /// The target node itself: a side-effect-free native record target that
+    /// is read again, like the statement form `A = f(A, B)`.
+    Target(NodeId),
+}
+
 struct Codegen<'a> {
     origins: Vec<crate::sim::semantic::Origin>,
     db: &'a Db,
@@ -1563,7 +1574,7 @@ struct Codegen<'a> {
     /// Width and signedness of the target of each overloaded update
     /// (IEEE 1800-2009 11.11) whose value is being lowered, innermost last.
     /// Its `OverloadCurrent` operand reads the mutation's captured target.
-    overload_current: Vec<(u32, bool)>,
+    overload_current: Vec<OverloadCurrent>,
     /// Owning module-instance arena node of the current emission context;
     /// used to resolve unbound callees by name.
     inst: NodeId,

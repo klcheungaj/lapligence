@@ -1864,6 +1864,7 @@ impl Codegen<'_> {
         before: &mut Vec<IrStmt>,
         after: &mut Vec<IrStmt>,
     ) -> Result<IrCallArg, String> {
+        let actual = self.overload_operand(actual);
         let layout = self
             .native_layout(formal)?
             .ok_or("native formal has no layout")?;

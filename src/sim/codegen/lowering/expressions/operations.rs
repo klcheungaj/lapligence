@@ -687,7 +687,10 @@ impl<'a> Codegen<'a> {
                 format!("overloaded update in `{scope_path}` has no function call")
             })?;
             self.overload_current
-                .push((current_type.width, current_type.signed));
+                .push(super::super::OverloadCurrent::Packed(
+                    current_type.width,
+                    current_type.signed,
+                ));
             let value = self.lower_expr(scope_path, call);
             self.overload_current.pop();
             apply_lhs_assignment_context(&self.model, &lhs, value?)
@@ -792,7 +795,7 @@ impl<'a> Codegen<'a> {
     /// The target value an overloaded update's function call reads
     /// (`OverloadCurrent`): the enclosing mutation expression's capture.
     pub(in super::super) fn overload_current_read(
-        &self,
+        &mut self,
         scope_path: &str,
         node: NodeId,
     ) -> Option<Result<IrExpr, String>> {
@@ -805,21 +808,37 @@ impl<'a> Codegen<'a> {
         ) {
             return None;
         }
-        Some(
-            self.overload_current
-                .last()
-                .map(|&(width, signed)| {
-                    IrExpr::new(
-                        IrExprKind::LocalRead("_llg_mut_current".to_owned()),
-                        width,
-                        signed,
-                        None,
-                    )
-                })
-                .ok_or_else(|| {
-                    format!("overloaded operator target value outside its update in `{scope_path}`")
+        Some(match self.overload_current.last() {
+            Some(&super::super::OverloadCurrent::Packed(width, signed)) => Ok(IrExpr::new(
+                IrExprKind::LocalRead("_llg_mut_current".to_owned()),
+                width,
+                signed,
+                None,
+            )),
+            Some(&super::super::OverloadCurrent::Target(target)) => {
+                self.lower_expr(scope_path, target)
+            }
+            None => Err(format!(
+                "overloaded operator target value outside its update in `{scope_path}`"
+            )),
+        })
+    }
+
+    /// The node an operand stands for: an `OverloadCurrent` operand of an
+    /// update whose target is read again (`OverloadCurrent::Target`) is that
+    /// target; every other node is itself.
+    pub(in super::super) fn overload_operand(&self, node: NodeId) -> NodeId {
+        let unwrapped = self.p30_unwrap_cast(node);
+        match (self.kind(unwrapped), self.overload_current.last()) {
+            (
+                NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::OverloadCurrent,
+                    ..
                 }),
-        )
+                Some(&super::super::OverloadCurrent::Target(target)),
+            ) => target,
+            _ => node,
+        }
     }
 
     pub(super) fn lower_member_select_index(

@@ -1472,6 +1472,28 @@ impl<'a> Codegen<'a> {
         let actual_aggregate = self.unpacked_aggregate_info(actual);
         let (child_aggregate, actual_aggregate) = match (child_aggregate, actual_aggregate) {
             (None, None) => return Ok(false),
+            // A record-valued expression (a function call, such as a
+            // resolved operator overload, IEEE 1800-2009 11.11) drives an
+            // input port like a continuous assignment of its value (23.3.3.2).
+            (Some(_), None) if direction == DbDirection::Input && self.native_call_node(actual) => {
+                let reads = self.collect_read_signals(parent_path, actual)?;
+                let statement = self
+                    .lower_unpacked_aggregate_assignment(
+                        child_path,
+                        internal,
+                        actual,
+                        false,
+                        Operation::Assignment,
+                    )?
+                    .ok_or_else(|| {
+                        format!(
+                            "aggregate port `{}` did not lower as a complete aggregate assignment",
+                            self.display_name(port)
+                        )
+                    })?;
+                self.emit_link_process(parent_path, child_path, port, reads, statement);
+                return Ok(true);
+            }
             (Some(_), None) | (None, Some(_)) => {
                 return Err(format!(
                     "aggregate port `{}` connects to a non-aggregate actual in `{child_path}`",

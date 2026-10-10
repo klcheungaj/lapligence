@@ -1,7 +1,7 @@
 //! Assignments.
 
 use super::*;
-use crate::sim::codegen::lowering::collection::native_values::NativeTaggedRoot;
+use crate::sim::codegen::lowering::collection::native_values::{NativeEndpoint, NativeTaggedRoot};
 
 impl EmitCtx<'_, '_> {
     /// Lower an assignment without intra-assignment delay (`force_blocking`
@@ -153,6 +153,9 @@ impl EmitCtx<'_, '_> {
             // selectors have side effects) is read and written by one
             // mutation; statement position discards its value.
             return self.lower_discarded_mutation(op, &[lhs, rhs]);
+        }
+        if let Some(statement) = self.lower_native_overload_update_value(lhs, rhs, blocking)? {
+            return Ok(statement);
         }
         if let NodeKind::Expr(ExprKind::Operation {
             op: Operation::OverloadUpdate | Operation::OverloadPostUpdate,
@@ -352,6 +355,98 @@ impl EmitCtx<'_, '_> {
             rhs: rhs_ir,
             nba: !blocking,
         })
+    }
+
+    /// `lhs = <overloaded update>` (IEEE 1800-2009 11.11) whose target is a
+    /// native record (string, real, handle or container members) with
+    /// side-effect-free selectors. Such a target has no packed mutation
+    /// capture, so the update runs as `A = f(A, B)` with the target read
+    /// again, and `lhs` receives the updated target or, for a postfix
+    /// increment or decrement, a copy of the target taken before the update.
+    /// Targets whose selectors have side effects keep their packed-only form.
+    fn lower_native_overload_update_value(
+        &mut self,
+        lhs: NodeId,
+        rhs: NodeId,
+        blocking: bool,
+    ) -> Result<Option<IrStmt>, String> {
+        let NodeKind::Expr(ExprKind::Operation {
+            op: op @ (Operation::OverloadUpdate | Operation::OverloadPostUpdate),
+            operands,
+            ..
+        }) = self.cg.kind(rhs)
+        else {
+            return Ok(None);
+        };
+        let post = *op == Operation::OverloadPostUpdate;
+        let (Some(&target), Some(&call)) = (operands.first(), operands.get(1)) else {
+            return Ok(None);
+        };
+        if !self.cg.side_effect_free(target) {
+            return Ok(None);
+        }
+        let native = self.cg.native_layout(target)?.is_some()
+            && (self.cg.native_endpoint(target)?.is_some() || self.cg.is_container_record(target));
+        // A fixed target above the packed value limit is read again the same
+        // way; its old value has no temporary, so its postfix value stays
+        // with the packed-only form.
+        let oversized = !native
+            && self
+                .cg
+                .check_overloaded_update_target(&self.path, target)
+                .is_err();
+        if !native && (!oversized || post) {
+            return Ok(None);
+        }
+        let mut statements = Vec::with_capacity(4);
+        let old = if post {
+            let temporary = self.cg.native_temporary(target)?;
+            let copy = NativeEndpoint::Value {
+                value: temporary,
+                prefix: Vec::new(),
+            };
+            let descriptor = self.cg.query_descriptor(target).cloned().ok_or_else(|| {
+                format!("overloaded update target in `{}` has no type", self.path)
+            })?;
+            statements.push(IrStmt::NativeValueDeclare(temporary));
+            statements.push(self.cg.native_assign_into(
+                &self.path,
+                &copy,
+                &descriptor,
+                target,
+                false,
+            )?);
+            Some(copy)
+        } else {
+            None
+        };
+        self.cg
+            .overload_current
+            .push(super::super::OverloadCurrent::Target(target));
+        let update =
+            self.lower_assignment_operands(target, call, true, Operation::Assignment, false);
+        self.cg.overload_current.pop();
+        statements.push(update?);
+        statements.push(match old {
+            Some(copy) => {
+                let (destination, _) = self.cg.native_endpoint(lhs)?.ok_or_else(|| {
+                    format!(
+                        "the value of an overloaded postfix update on a native record in `{}` needs a record destination",
+                        self.path
+                    )
+                })?;
+                self.cg
+                    .native_transfer(&self.path, &destination, &copy, !blocking)?
+            }
+            None => self.lower_assignment_operands(
+                lhs,
+                target,
+                blocking,
+                Operation::Assignment,
+                false,
+            )?,
+        });
+        Ok(Some(IrStmt::Block(statements)))
     }
 
     /// Emit a compound assignment or increment/decrement to a select or array

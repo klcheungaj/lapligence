@@ -49,5 +49,6 @@ unnamed overload), `neg_import_after_use` (the import follows the use) and
 `neg_import_reexport` (exports never carry it) report invalid operands;
 `neg_import_two_packages` reports two equally matching imported prototypes as
 ambiguous. `limit_native_value` pins the documented limit: an overloaded
-update used as a value needs a target within the packed value limit and
-without native (string) members.
+update whose target selector has side effects needs a target within the packed
+value limit and without native (string) members. Value forms with
+side-effect-free native targets run since SIM-021 (`../sim_021/`).
