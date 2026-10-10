@@ -764,8 +764,9 @@ impl<'a> Codegen<'a> {
 
     /// An overloaded update (IEEE 1800-2009 11.11) that yields a value or binds
     /// its target once runs as one packed mutation. Targets above the packed
-    /// value limit and native records have no such form yet; the statement
-    /// forms with side-effect-free targets keep their ordinary assignment.
+    /// value limit and native records have no such form yet: their statement
+    /// forms and assignment values with side-effect-free targets re-read the
+    /// target (`lower_native_overload_update_value`) instead.
     pub(in super::super) fn check_overloaded_update_target(
         &self,
         scope_path: &str,
@@ -786,7 +787,7 @@ impl<'a> Codegen<'a> {
         };
         if limited {
             return Err(format!(
-                "an overloaded operator update whose value is used or whose target selector has side effects requires a target within the {LLG_MAX_WIDTH}-bit packed value limit without native members in `{scope_path}`"
+                "an overloaded operator update on a target above the {LLG_MAX_WIDTH}-bit packed value limit or with native members yields a value only as the right-hand side of an assignment, needs side-effect-free target selectors, and has a postfix value only for native records, in `{scope_path}`"
             ));
         }
         Ok(())

@@ -1865,6 +1865,16 @@ impl Codegen<'_> {
         after: &mut Vec<IrStmt>,
     ) -> Result<IrCallArg, String> {
         let actual = self.overload_operand(actual);
+        if let NodeKind::Expr(ExprKind::Operation {
+            op: Operation::OverloadUpdate | Operation::OverloadPostUpdate,
+            operands,
+            ..
+        }) = self.kind(self.p30_unwrap_cast(actual))
+        {
+            if let Some(&target) = operands.first() {
+                self.check_overloaded_update_target(path, target)?;
+            }
+        }
         let layout = self
             .native_layout(formal)?
             .ok_or("native formal has no layout")?;

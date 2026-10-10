@@ -74,7 +74,11 @@ operand reads the target's current value. They lower to the ordinary
 `IrExprKind::Mutation` (the call is its value, the operand its
 `_llg_mut_current` capture), so the target resolves once; an unpacked record's
 leaf `Stream` is admitted as a mutation target only here. Targets above the
-packed value limit or with native members are rejected with a specific error.
+packed value limit or with native members have no such capture: as the
+right-hand side of an assignment with side-effect-free selectors they lower to
+a block that runs `A = f(A, ...)` with `OverloadCurrent::Target` mapping the
+operand back to the target (a native temporary keeps a postfix value), and
+every other once-bound form is rejected with a specific error.
 Statement-position updates with side-effect-free targets, including `for`
 steps, arrive from the frontend as ordinary `A = f(A, ...)` assignments.
 

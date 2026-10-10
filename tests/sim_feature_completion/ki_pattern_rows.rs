@@ -66,7 +66,7 @@ fn for_step_side_effect_selectors_keep_the_descriptor_limit() {
     sim_cli::reject_case(
         SUITE,
         "limit_descriptor_step_selector",
-        "an overloaded operator update whose value is used or whose target selector has side effects requires a target within the 1048575-bit packed value limit without native members",
+        "an overloaded operator update on a target above the 1048575-bit packed value limit or with native members yields a value only as the right-hand side of an assignment, needs side-effect-free target selectors",
     );
 }
 
