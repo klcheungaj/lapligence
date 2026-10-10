@@ -287,7 +287,23 @@ pub(crate) fn invoke_with_env(
     envs: &[(&str, &str)],
     remove_env: &[&str],
 ) -> Output {
-    invoke_with_env_and_files(suite, fixture, optimized, args, envs, remove_env, &[])
+    let source = fixture_path(suite, fixture);
+    let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
+    let label = format!("{suite}/{fixture}, optimized={optimized}");
+    run_fixture_command(&source, &label, |lint_args| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+        command.current_dir(directory.path()).args(["--top", "tb"]);
+        if !optimized {
+            command.arg("--no-opt");
+        }
+        command.args(args).args(lint_args);
+        command.arg(&source);
+        command.envs(envs.iter().copied());
+        for variable in remove_env {
+            command.env_remove(variable);
+        }
+        command
+    })
 }
 
 /// [`invoke_with_env`] after writing checked-in input `files` (name,
