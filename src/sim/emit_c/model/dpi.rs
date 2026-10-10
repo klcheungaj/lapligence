@@ -509,9 +509,11 @@ pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
         // SV 35.9 b): an imported task returns 1 only when it returns because
         // of a disable. Without exported subroutines nothing can disable it
         // inside the call, so a nonzero result breaks the protocol, which
-        // 35.9 makes a fatal simulation error; nothing is copied out.
+        // 35.9 makes a fatal simulation error; nothing is published. The
+        // publication loop below tests the status, so no jump crosses the
+        // snapshot declarations.
         out.push_str(&format!(
-            "    if ({call} != 0) {{\n        llg_dpi_task_protocol_error(\"{}\");\n        goto _dpi_return;\n    }}\n",
+            "    int _dpi_status = {call};\n    if (_dpi_status != 0) llg_dpi_task_protocol_error(\"{}\");\n",
             dpi.c_name()
         ));
     } else {
@@ -588,7 +590,11 @@ pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
         .enumerate()
         .filter(|(_, formal)| formal.is_address())
     {
-        out.push_str("    if (llg_activation_cancelled()) goto _dpi_return;\n");
+        out.push_str(if f.is_task {
+            "    if (_dpi_status != 0 || llg_activation_cancelled()) goto _dpi_return;\n"
+        } else {
+            "    if (llg_activation_cancelled()) goto _dpi_return;\n"
+        });
         let statement = match formal_type(dpi, index)? {
             IrDpiType::String => {
                 format!("llg_string_move_take(o{index}, _dpi_s{index});")
@@ -602,7 +608,7 @@ pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
         out.push_str(&format!("    {statement}\n"));
     }
     // A label must precede a statement, not a declaration, in C11.
-    if f.is_task || f.formals.iter().any(|formal| formal.is_address()) {
+    if f.formals.iter().any(|formal| formal.is_address()) {
         out.push_str("_dpi_return: ;\n");
     }
     let result = match ret {

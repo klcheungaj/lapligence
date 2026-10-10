@@ -1,14 +1,16 @@
 // llg_dpi.h — generated-model bridge for DPI-C imports (SV Annex H).
 //
-// Embedded after llg_vpi.h. Generated thunks convert each packed or unpacked
-// argument between the model's packed payload and a foreign buffer that the
-// thunk owns for the call, so foreign code never sees simulator storage
-// (H.6.7). The svdpi.h routines themselves are defined with the VPI bridge.
+// Embedded ahead of llg_vpi.h in the generated bridge header. Generated
+// thunks convert each packed or unpacked argument between the model's packed
+// payload and a foreign buffer that the thunk owns for the call, so foreign
+// code never sees simulator storage (H.6.7). The svdpi.h routines themselves are defined with the VPI bridge.
 #ifndef LLG_DPI_H
 #define LLG_DPI_H
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include "llg_rt.h"
 
 #ifdef __cplusplus
 extern "C" {

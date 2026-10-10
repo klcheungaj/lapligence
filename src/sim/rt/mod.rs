@@ -35,11 +35,12 @@ pub fn vpi_sources() -> (&'static str, &'static str) {
     )
 }
 
-/// Internal bridge header included by generated models.  The public plugin
+/// Internal bridge header included by generated models: the DPI-C bridge
+/// declarations (`llg_dpi.h`), then the VPI bridge, which includes them.  The public plugin
 /// header is emitted as `vpi_user.h`; keeping this header separate avoids
 /// exposing model metadata structures to applications.
 pub fn vpi_bridge_header() -> &'static str {
-    concat!(include_str!("llg_vpi.h"), include_str!("llg_dpi.h"))
+    concat!(include_str!("llg_dpi.h"), include_str!("llg_vpi.h"))
 }
 
 /// Scheduler-independent deterministic random-stream service.  It owns the
