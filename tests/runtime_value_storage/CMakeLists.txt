@@ -1,9 +1,21 @@
 cmake_minimum_required(VERSION 3.16)
+# MSVC Debug: embed debug information in each object (/Z7) instead of the
+# shared PDB of /Zi, which ccache refuses as an unsupported compiler option.
+# Takes effect from CMake 3.25 (CMP0141); set before project() enables C.
+if(POLICY CMP0141)
+  cmake_policy(SET CMP0141 NEW)
+endif()
+set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
 project(llg_dynamic_storage_tests C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 include(CTest)
+# MSVC: link the release CRT (/MD) in every configuration, as generated models
+# and the /MD GMP archives do. The Debug configuration keeps /Od, /RTC1 and
+# assert(); the debug CRT heap would also check every allocation of the
+# allocation-heavy scale and oracle probes.
+set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreadedDLL)
 set(LLG_TEST_HAS_WAVEFORMS false)
 set(LLG_TEST_HAS_SCHEDULER false)
 set(LLG_TEST_HAS_COROUTINES false)
@@ -71,8 +83,14 @@ if(LLG_STORAGE_TEST_VALUE_BACKEND STREQUAL "compact")
   if(selected_gmp_include)
     target_include_directories(selected_value_units PRIVATE ${selected_gmp_include})
   endif()
-  target_compile_definitions(selected_value_units PRIVATE malloc=llg_value_test_malloc
-    calloc=llg_value_test_calloc realloc=llg_value_test_realloc free=llg_value_test_free)
+  # Rename the allocator in a forced include, after <stdlib.h>: -Dmalloc=...
+  # would also rename the CRT's dllimport declarations under MSVC.
+  set(value_test_alloc_hooks "${CMAKE_CURRENT_SOURCE_DIR}/value_test_alloc_hooks.h")
+  if(MSVC)
+    target_compile_options(selected_value_units PRIVATE "/FI${value_test_alloc_hooks}")
+  else()
+    target_compile_options(selected_value_units PRIVATE -include "${value_test_alloc_hooks}")
+  endif()
 elseif(NOT LLG_STORAGE_TEST_VALUE_BACKEND STREQUAL "legacy")
   message(FATAL_ERROR "LLG_STORAGE_TEST_VALUE_BACKEND must be legacy or compact")
 endif()
@@ -386,7 +404,7 @@ if(LLG_STORAGE_TEST_SCHEDULER)
       set_tests_properties(coroutine_scale_${mode} PROPERTIES TIMEOUT 60)
     endforeach()
     foreach(mode IN ITEMS release debug)
-      add_executable(fork_group_scale_${mode}_probe fork_group_scale_probe.c)
+      add_executable(fork_group_scale_${mode}_probe fork_group_scale_probe.c probe_cpu_time.c)
       if(mode STREQUAL "debug")
         target_compile_definitions(fork_group_scale_${mode}_probe PRIVATE LLG_CO_DEBUG=1)
       elseif(MSVC)

@@ -70,12 +70,17 @@
 //!   directory with a `ready` marker. The only other children are the
 //!   auxiliary directories in [`RUNTIME_CACHE_AUX_DIRS`]: [`TOOLCHAIN_SEED_DIR`]
 //!   (`cmake-toolchain/`) holds the CMake toolchain-detection seeds that fresh
-//!   build trees reuse (see `build/toolchain_seed.rs`), and
+//!   build trees reuse (see `build/toolchain_seed.rs`),
 //!   [`COMPILER_PROBE_DIR`] (`compiler-probe/`) the MSVC compiler self-report
-//!   memo (see `build/compiler_probe.rs`).
+//!   memo (see `build/compiler_probe.rs`), and [`TREE_TEMPLATE_DIR`]
+//!   (`cmake-tree/`) the opt-in configured-tree templates.
 //! - `LLG_CMAKE_TOOLCHAIN_SEED` ([`TOOLCHAIN_SEED_ENV`]) — `0`, `off`,
 //!   `false` or `no` makes every fresh configure run CMake's own toolchain
 //!   detection.
+//! - `LLG_CMAKE_TREE_TEMPLATES` ([`TREE_TEMPLATE_ENV`]) — `1`, `on`, `true`
+//!   or `yes` writes fresh seeded model trees from a checked configured-tree
+//!   template under [`TREE_TEMPLATE_DIR`] (`cmake-tree/`) instead of running
+//!   CMake's configure (see `build/tree_template.rs`). Off by default.
 //! - `LLG_BUILD_TIMINGS` ([`BUILD_TIMINGS_ENV`]) — a file to which every
 //!   model build appends one line of per-phase timings and cache outcomes
 //!   (see `build/timings.rs`); unset or empty records nothing.
@@ -85,18 +90,21 @@ mod dpi_link;
 mod legacy_pli;
 mod timings;
 mod toolchain_seed;
+mod tree_template;
 mod value;
 
 pub use timings::ENV as BUILD_TIMINGS_ENV;
 
 pub use compiler_probe::MEMO_DIR as COMPILER_PROBE_DIR;
 pub use toolchain_seed::{SEED_DIR as TOOLCHAIN_SEED_DIR, SEED_ENV as TOOLCHAIN_SEED_ENV};
+pub use tree_template::{TEMPLATE_DIR as TREE_TEMPLATE_DIR, TEMPLATE_ENV as TREE_TEMPLATE_ENV};
 
 /// The runtime cache root's children that are not runtime archive entries.
 /// Every other child is one archive entry (a directory that is ready once it
 /// holds a `ready` marker); code that enumerates or prunes the root skips
 /// these names.
-pub const RUNTIME_CACHE_AUX_DIRS: [&str; 2] = [TOOLCHAIN_SEED_DIR, COMPILER_PROBE_DIR];
+pub const RUNTIME_CACHE_AUX_DIRS: [&str; 3] =
+    [TOOLCHAIN_SEED_DIR, COMPILER_PROBE_DIR, TREE_TEMPLATE_DIR];
 
 use std::error::Error;
 use std::fmt;
@@ -624,13 +632,17 @@ fn build_model_cmake_timed(
     // kept — reconfigure + build are incremental.
     remove_incompatible_build_dir(&build_dir, &generator);
 
-    let runtime_library_arg = format!("-DLLG_RUNTIME_LIBRARY={}", runtime_library.display());
-    run_configure(
+    let runtime_library_arg = [format!(
+        "-DLLG_RUNTIME_LIBRARY={}",
+        runtime_library.display()
+    )];
+    let template = run_configure(
         out_dir,
         &build_dir,
         &toolchain,
-        &[runtime_library_arg],
+        &runtime_library_arg,
         &cache_root,
+        true,
         timings,
     )?;
     let launch_error = |source| BuildError::CmakeLaunch {
@@ -643,7 +655,32 @@ fn build_model_cmake_timed(
     let mut build_cmd = build_command(&cmake_prog, &build_dir, jobs, None);
     let output = build_cmd.output().map_err(launch_error);
     timings.record("build", phase);
-    let output = output?;
+    let mut output = output?;
+    if !output.status.success() {
+        if let Some(template) = template {
+            // The tree came from a template: build it once more from a real
+            // configure, and stop using the template if that succeeds.
+            remove_dir_all_quiet(&build_dir);
+            run_configure(
+                out_dir,
+                &build_dir,
+                &toolchain,
+                &runtime_library_arg,
+                &cache_root,
+                false,
+                timings,
+            )?;
+            timings.note("template", "failed-build");
+            let phase = Instant::now();
+            let mut build_cmd = build_command(&cmake_prog, &build_dir, jobs, None);
+            let retried = build_cmd.output().map_err(launch_error);
+            timings.record("build", phase);
+            output = retried?;
+            if output.status.success() {
+                template.reject("a build from the template failed where a configured tree built");
+            }
+        }
+    }
     if !output.status.success() {
         let transcript = format!(
             "{}\n{}",
@@ -895,14 +932,20 @@ fn configure_command(
 /// program for the generator, which a retry cannot fix. A seed whose configure
 /// failed where the clean retry succeeded is rejected for later builds.
 /// `timings` receives the seed and configure phases.
+///
+/// With `templates` (model trees only), a fresh seeded tree may instead be
+/// written from a checked configured-tree template ([`tree_template`]); the
+/// applied template is returned so the caller can reject it when the build
+/// fails. A real configure of a fresh tree captures or checks the template.
 fn run_configure(
     source: &Path,
     build_dir: &Path,
     toolchain: &toolchain_seed::Toolchain<'_>,
     extra: &[String],
     seed_root: &Path,
+    templates: bool,
     timings: &mut timings::BuildTimings,
-) -> Result<(), BuildError> {
+) -> Result<Option<tree_template::Plan>, BuildError> {
     let command =
         |seed_args: &[String]| configure_command(source, build_dir, toolchain, extra, seed_args);
     let launch_error = |source| BuildError::CmakeLaunch {
@@ -916,6 +959,43 @@ fn run_configure(
     } else {
         toolchain_seed::prepare(seed_root, toolchain)
     };
+    let template = match &seed {
+        Some(seed) if templates && !existing_tree => {
+            let arguments: Vec<String> = toolchain_seed::toolchain_args(
+                toolchain.generator,
+                toolchain.launcher,
+                toolchain.cc,
+                toolchain.flags,
+            )
+            .into_iter()
+            .chain([format!("-DCMAKE_BUILD_TYPE={BUILD_TYPE}")])
+            .chain(extra.iter().cloned())
+            .collect();
+            tree_template::plan(
+                seed_root,
+                seed.key(),
+                toolchain.cmake,
+                source,
+                build_dir,
+                &arguments,
+            )
+        }
+        _ => None,
+    };
+    if let Some(plan) = template.as_ref().filter(|plan| plan.is_ready()) {
+        timings.record("seed", phase);
+        let phase = Instant::now();
+        let written = plan.instantiate(build_dir).is_ok();
+        timings.record("template", phase);
+        if written {
+            timings.note("seed", "applied");
+            timings.note("template", "applied");
+            timings.note("configure_retry", "0");
+            return Ok(template);
+        }
+        timings.note("template", "unwritable");
+        remove_dir_all_quiet(build_dir);
+    }
     let seed_args = seed.as_ref().and_then(|seed| seed.apply(build_dir));
     timings.record("seed", phase);
     timings.note(
@@ -932,8 +1012,10 @@ fn run_configure(
     let output = configure.output().map_err(launch_error);
     timings.record("configure", phase);
     let mut output = output?;
+    let mut seeded = seed_args.is_some();
     if !output.status.success() && !missing_build_program(&output) {
         let phase = Instant::now();
+        seeded = false;
         timings.note("configure_retry", "1");
         remove_dir_all_quiet(build_dir);
         configure = command(&[]);
@@ -946,11 +1028,16 @@ fn run_configure(
             }
         }
     }
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(configure_error(&configure, toolchain.generator, &output))
+    if !output.status.success() {
+        return Err(configure_error(&configure, toolchain.generator, &output));
     }
+    // A retried configure ran unseeded, which no template describes.
+    if let Some(plan) = template.as_ref().filter(|_| seeded) {
+        let phase = Instant::now();
+        timings.note("template", plan.after_configure(build_dir).note());
+        timings.record("template", phase);
+    }
+    Ok(None)
 }
 
 fn remove_dir_all_quiet(dir: &Path) {
@@ -1196,6 +1283,7 @@ fn prepare_runtime_cache(
         toolchain,
         &[],
         &cache_root,
+        false,
         &mut timings::BuildTimings::default(),
     )?;
     let launch_error = |source| BuildError::CmakeLaunch {

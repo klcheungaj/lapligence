@@ -364,12 +364,17 @@ jobs:
       # setup runs after the MSVC environment because it self-checks with the
       # compiler and generator the tests will use (CMAKE_GENERATOR=Ninja, the
       # compiler on PATH) and silently disables itself if that does not hit.
+      # The Windows entries were full at the default 300M (41 cleanups in one
+      # x64 run), and the storage probes' MSVC Debug objects became cacheable
+      # once they switched from /Zi to /Z7; 500M adds 0.4 GB for the two
+      # Windows entries to the repository's cache budget.
       - name: Set up the generated-model compiler cache
         id: ccache
         uses: ./.github/actions/ccache-setup
         with:
           key: test-${{ inputs.target }}
           python: python
+          max-size: ${{ inputs.platform == 'windows' && '500M' || '300M' }}
 
       # The archive carries no build script run, so this fresh checkout still
       # holds the pristine vendor/libfst; the standalone CMake probes need the

@@ -195,6 +195,21 @@ def measure(args):
     if timings_file.is_file():
         records = ci_build_timings.parse(timings_file.read_text(encoding="utf-8", errors="replace").splitlines())
         print(ci_build_timings.summarize(records))
+    template_timings = work / f"timings-{args.label}-templates.tsv"
+    template_env = dict(env)
+    template_env.pop("LLG_CMAKE_PROFILE_DIR", None)
+    template_env["LLG_BUILD_TIMINGS"] = str(template_timings)
+    template_env["LLG_CMAKE_TREE_TEMPLATES"] = "1"
+    for index in range(args.runs + 2):
+        out_dir = work / f"{args.label}-t{index}"
+        result = subprocess.run(llg_command(args, out_dir), env=template_env, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, errors="replace")
+        if result.returncode != 0:
+            print(f"template build {index} failed with {result.returncode}:\n{result.stdout[-4000:]}")
+    if template_timings.is_file():
+        print("with LLG_CMAKE_TREE_TEMPLATES=1 (the first two builds capture and check the template):")
+        records = ci_build_timings.parse(template_timings.read_text(encoding="utf-8", errors="replace").splitlines())
+        print(ci_build_timings.summarize(records))
     loaded, unreadable = ci_build_timings.load_profiles(profiles)
     print(ci_build_timings.summarize_profiles(loaded))
     if unreadable:

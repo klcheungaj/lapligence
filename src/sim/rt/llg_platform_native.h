@@ -16,6 +16,7 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <time.h>
 #include <pthread.h>
 #endif
 
@@ -140,6 +141,28 @@ static inline void llg_dl_close(llg_dl_t library) {
     FreeLibrary((HMODULE)library);
 #else
     dlclose(library);
+#endif
+}
+
+// ── Process CPU time ────────────────────────────────────────────────────────
+
+// CPU seconds (user + kernel) consumed by this process so far, or a negative
+// value when the host cannot report it. The UCRT's clock() measures elapsed
+// wall time instead of processor time, so timing checks that compare CPU
+// costs use this service. Windows resolution is the scheduler tick (~15.6 ms).
+static inline double llg_process_cpu_seconds(void) {
+#if defined(_WIN32)
+    FILETIME created, exited, kernel, user;
+    if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) return -1.0;
+    ULARGE_INTEGER kernel_ticks, user_ticks;
+    kernel_ticks.LowPart = kernel.dwLowDateTime;
+    kernel_ticks.HighPart = kernel.dwHighDateTime;
+    user_ticks.LowPart = user.dwLowDateTime;
+    user_ticks.HighPart = user.dwHighDateTime;
+    return (double)(kernel_ticks.QuadPart + user_ticks.QuadPart) * 1e-7;
+#else
+    clock_t ticks = clock();
+    return ticks == (clock_t)-1 ? -1.0 : (double)ticks / CLOCKS_PER_SEC;
 #endif
 }
 
