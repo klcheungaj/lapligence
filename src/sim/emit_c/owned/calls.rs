@@ -286,10 +286,24 @@ impl Frame<'_, '_> {
         }
         // Tie retained queue-reference cells to the same lexical cleanup stack.
         // This covers normal return, named disable and nonlocal process exit.
-        if args
-            .iter()
-            .any(|arg| matches!(arg, IrCallArg::RefAddr { width, .. } if *width != 0))
-        {
+        // A descriptor of a variable, local cell, fixed-array element or
+        // forwarded formal retains no cell (only a container-element read
+        // binds one, see `reference_argument_with_scopes`), so such calls
+        // skip the scope.
+        if args.iter().any(|arg| match arg {
+            IrCallArg::RefAddr {
+                width, lhs, read, ..
+            } if *width != 0 => {
+                !matches!(
+                    lhs.as_ref(),
+                    IrLhs::Whole(_)
+                        | IrLhs::WholeRef { .. }
+                        | IrLhs::ArrayElem { .. }
+                        | IrLhs::Ref { .. }
+                ) || matches!(read.kind(), IrExprKind::Container(_))
+            }
+            _ => false,
+        }) {
             self.line("llg_ref_scope_begin_owned();");
         }
         // Coroutine frames hold argument descriptors; plain functions borrow
