@@ -1,0 +1,15 @@
+t0 a.triggered=1
+t0 #0 a.triggered=1
+t1 a.triggered=0
+1 wait triggered done
+null triggered=0
+compare 1 0 1 0 0 0
+n1 null
+al nonnull
+ternary 0 1
+2 merged got=1
+3 e1 now e2: 1
+8 order ok=1
+10 order ok=0
+12 order else only
+13 first event already triggered

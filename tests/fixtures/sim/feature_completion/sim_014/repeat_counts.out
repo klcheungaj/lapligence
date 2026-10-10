@@ -1,0 +1,13 @@
+6 int 3
+7 int 0
+7 int -2
+7 signed4 -1
+12 unsigned2 3
+13 x
+13 z
+14 real 1.4
+18 real 1.5
+19 real -0.4
+22 shortreal 2.0
+24 literal 0.5
+28 count fixed at start

@@ -206,3 +206,54 @@ fn ab_n3_disable_branch_status() {
         include_str!("fixtures/sim/lrm_decisions/AB-N3_disable_branch_status.out"),
     );
 }
+
+#[test]
+fn s14_d1_real_repeat_count() {
+    run_decision(
+        "S14-D1_real_repeat_count",
+        include_str!("fixtures/sim/lrm_decisions/S14-D1_real_repeat_count.out"),
+    );
+}
+
+#[test]
+fn s14_d2_nonpositive_repeat_immediate() {
+    run_decision(
+        "S14-D2_nonpositive_repeat_immediate",
+        include_str!("fixtures/sim/lrm_decisions/S14-D2_nonpositive_repeat_immediate.out"),
+    );
+}
+
+#[test]
+fn s14_d3_nb_trigger_target_at_issue() {
+    run_decision(
+        "S14-D3_nb_trigger_target_at_issue",
+        include_str!("fixtures/sim/lrm_decisions/S14-D3_nb_trigger_target_at_issue.out"),
+    );
+}
+
+#[test]
+fn s14_d4_wait_order_first_triggered() {
+    run_decision(
+        "S14-D4_wait_order_first_triggered",
+        include_str!("fixtures/sim/lrm_decisions/S14-D4_wait_order_first_triggered.out"),
+    );
+}
+
+#[test]
+fn s14_d5_class_property_nba() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!("fixtures/sim/lrm_decisions/S14-D5_class_property_nba.out").is_empty());
+    sim_cli::reject_case(
+        SUITE,
+        "S14-D5_class_property_nba",
+        "nonblocking assignment to class property `x`",
+    );
+}
+
+#[test]
+fn s14_d6_wait_order_error_continues() {
+    run_decision(
+        "S14-D6_wait_order_error_continues",
+        include_str!("fixtures/sim/lrm_decisions/S14-D6_wait_order_error_continues.out"),
+    );
+}
