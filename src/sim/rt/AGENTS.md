@@ -512,7 +512,8 @@ declaration order, clamps count at the high bound, and consumes/writes nothing f
 invalid/unknown bounds or negative count. Keep element owners across callbacks;
 this does not qualify multidimensional binary reads.
 Scans (`scanning.c`) assign a destination only after its conversion
-succeeds. `%u`/`%z` read 32-bit little-endian vecval words (aval then bval),
+succeeds. `%u`/`%z` read 32-bit little-endian vecval words (aval then bval; this assumes
+a little-endian host, true of every supported target),
 assign nothing on short data, and `$fwrite` writes the same encoding. `%t`
 scales in decimal through the `$timeformat` unit into the caller's unit.
 Integral `$sscanf` sources drop leading zero bytes; NUL is white space.

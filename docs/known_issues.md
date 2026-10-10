@@ -647,6 +647,15 @@ container string elements are staged. Add integer-key string reads to the
 associative-array read path. Count the output arguments of calls as driver writes in
 `core::lint::rules::analysis`.
 
+Binary input and output assume a little-endian host. `%u` and `%z` (in
+`$fscanf` and `$fwrite`) move 32-bit words as little-endian bytes. That is the
+"native endian format" of SV 21.3.4.3 on every supported target (x86_64 and
+arm64 on Linux, Windows and macOS). The `%u` writer and the `%u`/`%z` reader
+(`llg_scan_binary` in `src/sim/rt/scheduler/scanning.c`) shift bytes into
+little-endian order explicitly. The `%z` writer (`llg_format_raw4` in
+`src/sim/rt/scheduler/formatting.c`) copies host words with `memcpy`. A
+big-endian port must make all three follow the host order.
+
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_026/neg_string_character.sv`. The
