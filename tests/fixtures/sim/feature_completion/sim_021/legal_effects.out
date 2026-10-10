@@ -1,0 +1,6 @@
+call 3 ab late 0 spawned 0
+monitor 1
+after late 3 spawned 1
+event
+wait
+monitor 0

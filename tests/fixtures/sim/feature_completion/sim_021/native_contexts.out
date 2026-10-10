@@ -1,0 +1,9 @@
+assign 7 A:xy 10 B:xy
+arg 10 B:xy
+pattern 7 A:xy 10 B:xy
+array 10 B:xy
+cast 10 B:xy 7 A:xy
+port 10 B:xy
+cont 7 A:xy 10 B:xy 7 A:xy
+port 15 B:Xy
+cont 8 A:Xy 15 B:Xy 8 A:Xy
