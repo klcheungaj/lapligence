@@ -106,7 +106,22 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
         } else {
             "LLG_EV_NEGEDGE"
         };
-        if assertion.consequent_sequence().is_some() {
+        if assertion.property().is_some() {
+            out.push_str(&format!(
+                "    if (!llg_assertion_register_property(&{}, {}, {}, &{}, {}, {}, NULL, {}, {}ULL, {}, {}, {})) return 0;\n",
+                clock,
+                edge,
+                disable,
+                super::property::program_name(index),
+                pass_desc,
+                fail_desc,
+                kind,
+                assertion.identity(),
+                c_string_literal(assertion.label()),
+                c_string_literal(assertion.location()),
+                c_string_literal(assertion.scope()),
+            ));
+        } else if assertion.consequent_sequence().is_some() {
             let antecedent = assertion
                 .antecedent_sequence()
                 .map(|_| format!("&{}", assertion_sequence_name(index, "antecedent")))
@@ -199,6 +214,12 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
                 "    if (!llg_assertion_gate_clock({}ULL, {})) return 0;\n",
                 assertion.identity(),
                 sampled_clock_gate_name(clock),
+            ));
+        }
+        if assertion.single_attempt() {
+            out.push_str(&format!(
+                "    if (!llg_assertion_single_attempt({}ULL)) return 0;\n",
+                assertion.identity(),
             ));
         }
     }

@@ -286,6 +286,13 @@ impl Frame<'_, '_> {
                 1,
                 false,
             ),
+            IrRuntimeQuery::ExpectOutcome(identity) => self.value(
+                format!(
+                    "sv4_from_u64((uint64_t)llg_assertion_expect_outcome({identity}ULL), 2, 0)"
+                ),
+                2,
+                false,
+            ),
             IrRuntimeQuery::EventTriggerCount(event) => {
                 let event = self.event_address(&IrEventRef::Static(*event))?;
                 self.value(

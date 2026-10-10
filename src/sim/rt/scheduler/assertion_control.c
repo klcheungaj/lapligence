@@ -199,7 +199,7 @@ static int assertion_control_arg(const sv4_t* value, uint64_t* result) {
 
 static int assertion_has_attempts(const llg_concurrent_assertion_t* assertion) {
     return assertion->attempts || assertion->sequence_antecedents ||
-           assertion->sequence_consequents;
+           assertion->sequence_consequents || assertion->property_attempts;
 }
 
 static int deferred_selected(int kind, const char* label, const char* scope,
@@ -396,7 +396,7 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
     return 1;
 }
 
-int llg_assertion_expect_start(uint64_t identity) {
+int llg_assertion_expect_start(uint64_t identity, int has_fail_action) {
     if (!region_can_mutate("expect scheduling")) return 0;
     llg_concurrent_assertion_t* assertion = find_assertion(identity);
     llg_proc_t* current = llg_current();
@@ -406,9 +406,16 @@ int llg_assertion_expect_start(uint64_t identity) {
     free_assertion_attempts(assertion);
     assertion->expect_active = 1;
     assertion->expect_started = 0;
+    assertion->expect_outcome = 0;
+    assertion->expect_has_fail = has_fail_action ? 1 : 0;
     assertion->edge_pending = 0;
     assertion->sequence_cycle = 0;
     return 1;
+}
+
+int llg_assertion_expect_outcome(uint64_t identity) {
+    llg_concurrent_assertion_t* assertion = find_assertion(identity);
+    return assertion && assertion->kind == LLG_ASSERTION_EXPECT ? assertion->expect_outcome : 0;
 }
 
 static void assertion_attempt_enqueue(llg_concurrent_assertion_t* assertion) {

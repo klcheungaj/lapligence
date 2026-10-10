@@ -783,9 +783,13 @@ impl Frame<'_, '_> {
             IrStmt::AssertionControl { kind, args, scopes } => {
                 self.assertion_control(*kind, args, scopes)?
             }
-            IrStmt::Expect { identity } => {
+            IrStmt::Expect {
+                identity,
+                fail_action,
+            } => {
                 self.line(format!(
-                    "if (!llg_assertion_expect_start({identity}ULL)) {{"
+                    "if (!llg_assertion_expect_start({identity}ULL, {})) {{",
+                    u8::from(*fail_action)
                 ));
                 self.leave_activations(None);
                 self.line("goto _llg_return; }");

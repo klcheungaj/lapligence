@@ -1434,7 +1434,10 @@ mod tests {
                 target: None,
             },
             IrStmt::WaitFork,
-            IrStmt::Expect { identity: 1 },
+            IrStmt::Expect {
+                identity: 1,
+                fail_action: false,
+            },
             IrStmt::StopControl {
                 verbosity: 0,
                 location: "test.sv:1".into(),

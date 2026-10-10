@@ -1056,7 +1056,12 @@ uint64_t llg_assertion_vacuous_count(void);
 // before returning; generated callers perform an immediate Terminate check.
 int llg_assertion_control(int kind, const sv4_t* args, int n_args,
                           const char* const* scopes, int n_scopes);
-int llg_assertion_expect_start(uint64_t identity);
+// Arm a procedural expect (16.18). The caller runs the action block itself
+// after it resumes: `has_fail_action` is whether an else arm exists, which
+// replaces the default failure report. llg_assertion_expect_outcome then
+// returns 0 (ended without a result), 1 (success) or 2 (failure).
+int llg_assertion_expect_start(uint64_t identity, int has_fail_action);
+int llg_assertion_expect_outcome(uint64_t identity);
 
 // Concurrent assertion callbacks are generated as side-effect-free sampled
 // predicates and Reactive-region action processes. The runtime owns the
@@ -1198,6 +1203,67 @@ int llg_assertion_register_sequence_control(
     const llg_co_desc_t* fail_desc, void* data, int kind,
     int overlapped, int abort_reject, int abort_sync, uint64_t identity,
     const char* label, const char* location, const char* scope);
+
+/* A property program (IEEE 1800-2009 16.12-16.13) is a static node table
+ * whose operands index earlier nodes; `root` is evaluated once per attempt.
+ * Node operand fields by kind:
+ *   BOOLEAN       first = atom
+ *   SEQUENCE      first = sequence graph; STRONG flag
+ *   NOT           first = operand
+ *   AND/OR/IMPLIES/IFF  first, second = operands
+ *   IMPLICATION / FOLLOWED_BY  first = antecedent graph, second = consequent;
+ *                 OVERLAPPED for |-> and #-#
+ *   IF            first = condition atom, second = then, third = else or NONE
+ *   NEXTTIME      first = operand, min = tick count; STRONG flag
+ *   ALWAYS / EVENTUALLY  first = operand, [min, max] ticks; STRONG flag
+ *   UNTIL         first = left, second = right; STRONG, OVERLAPPED (until_with)
+ *   ABORT         first = condition atom, second = operand; ACCEPT, SYNC
+ * Atoms read Preponed sampled values. Ticks are counted on the assertion's
+ * leading clock from the tick at which the node starts. */
+#define LLG_PROPERTY_BOOLEAN 1u
+#define LLG_PROPERTY_SEQUENCE 2u
+#define LLG_PROPERTY_NOT 3u
+#define LLG_PROPERTY_AND 4u
+#define LLG_PROPERTY_OR 5u
+#define LLG_PROPERTY_IMPLIES 6u
+#define LLG_PROPERTY_IFF 7u
+#define LLG_PROPERTY_IMPLICATION 8u
+#define LLG_PROPERTY_FOLLOWED_BY 9u
+#define LLG_PROPERTY_IF 10u
+#define LLG_PROPERTY_NEXTTIME 11u
+#define LLG_PROPERTY_ALWAYS 12u
+#define LLG_PROPERTY_EVENTUALLY 13u
+#define LLG_PROPERTY_UNTIL 14u
+#define LLG_PROPERTY_ABORT 15u
+#define LLG_PROPERTY_STRONG 1u
+#define LLG_PROPERTY_OVERLAPPED 2u
+#define LLG_PROPERTY_ACCEPT 4u
+#define LLG_PROPERTY_SYNC 8u
+#define LLG_PROPERTY_NONE UINT32_MAX
+typedef int (*llg_property_atom_fn)(uint32_t atom, void* data);
+typedef struct {
+    uint32_t kind;
+    uint32_t flags;
+    uint32_t first;
+    uint32_t second;
+    uint32_t third;
+    uint64_t min;
+    uint64_t max;
+} llg_property_node_t;
+typedef struct {
+    uint32_t node_count;
+    const llg_property_node_t* nodes;
+    uint32_t root;
+    uint32_t sequence_count;
+    const llg_sequence_graph_t* const* sequences;
+    uint32_t atom_count;
+    llg_property_atom_fn atom;
+} llg_property_program_t;
+int llg_assertion_register_property(
+    sv4_t* clock, int edge, sv4_t* disable, const llg_property_program_t* program,
+    const llg_co_desc_t* pass_desc, const llg_co_desc_t* fail_desc, void* data,
+    int kind, uint64_t identity, const char* label, const char* location,
+    const char* scope);
 
 // ── Command-line plusargs ───────────────────────────────────────────────────
 //
@@ -2041,6 +2107,10 @@ int llg_sampled_clock_register_edge(uint64_t clock, sv4_t* signal, int edge,
  * `identity`: its clocking event `@(edge clk iff cond)` occurs only when
  * `gate` (reading current values, called with NULL) is true at the clock
  * write (IEEE 1800-2009 9.4.2.3). Call after the registration, before run. */
+// Restrict a registered assertion to one evaluation attempt, begun at its
+// first leading clock event (an assertion that is the whole body of an
+// initial procedure, IEEE 1800-2009 16.15.6).
+int llg_assertion_single_attempt(uint64_t identity);
 int llg_assertion_gate_clock(uint64_t identity, llg_sampled_gate_fn gate);
 int llg_sampled_clock_register_event(uint64_t clock, llg_sampled_gate_fn gate,
                                      void* data);

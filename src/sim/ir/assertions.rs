@@ -434,6 +434,240 @@ pub(in crate::sim) fn validate_sequence_joins(
     Ok(())
 }
 
+/// Two-operand property connective (IEEE 1800-2009 16.13.3, 16.13.4,
+/// 16.13.7). `Implies` and `Iff` are kept native rather than expanded, so
+/// each operand is evaluated once per attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrPropertyBinaryOp {
+    And,
+    Or,
+    Implies,
+    Iff,
+}
+
+/// One node of a property program. Operand fields index earlier nodes of the
+/// same [`IrProperty`], so a program is acyclic by construction and its root
+/// is the last node. `atom` fields index [`IrProperty::atoms`] (sampled
+/// Boolean expressions) and `sequence` fields index
+/// [`IrProperty::sequences`]. Ranges count clock ticks from the tick at which
+/// the node starts; `max: None` is `$`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrPropertyNode {
+    /// A Boolean evaluated at the node's starting tick.
+    Boolean {
+        atom: u32,
+    },
+    /// `strong(r)` or `weak(r)` (16.13.1); `r` admits no empty match.
+    Sequence {
+        sequence: u32,
+        strong: bool,
+    },
+    Not {
+        operand: u32,
+    },
+    Binary {
+        op: IrPropertyBinaryOp,
+        left: u32,
+        right: u32,
+    },
+    /// `r |-> p`, `r |=> p` or, with `followed_by`, `r #-# p` / `r #=# p`
+    /// (16.13.6, 16.13.9).
+    Implication {
+        antecedent: u32,
+        consequent: u32,
+        overlapped: bool,
+        followed_by: bool,
+    },
+    /// `if (b) p [else q]`; the case statement lowers to a chain of these
+    /// (16.13.5, 16.13.16, F.3.4.3.5).
+    If {
+        condition: u32,
+        then: u32,
+        otherwise: Option<u32>,
+    },
+    /// `nexttime[n] p` / `s_nexttime[n] p` (16.13.10).
+    Nexttime {
+        count: u32,
+        strong: bool,
+        operand: u32,
+    },
+    /// `always [m:n] p` / `s_always [m:n] p` (16.13.11).
+    Always {
+        min: u32,
+        max: Option<u32>,
+        strong: bool,
+        operand: u32,
+    },
+    /// `eventually [m:n] p` / `s_eventually [m:n] p` (16.13.13).
+    Eventually {
+        min: u32,
+        max: Option<u32>,
+        strong: bool,
+        operand: u32,
+    },
+    /// `p until q` and its strong (`s_until`) and overlapping (`until_with`)
+    /// forms (16.13.12).
+    Until {
+        left: u32,
+        right: u32,
+        strong: bool,
+        overlapping: bool,
+    },
+    /// `accept_on`/`reject_on` and their `sync_` forms (16.13.14).
+    Abort {
+        condition: u32,
+        accept: bool,
+        sync: bool,
+        operand: u32,
+    },
+}
+
+impl IrPropertyNode {
+    fn operands(&self) -> [Option<u32>; 2] {
+        match *self {
+            Self::Boolean { .. } | Self::Sequence { .. } => [None, None],
+            Self::Not { operand }
+            | Self::Nexttime { operand, .. }
+            | Self::Always { operand, .. }
+            | Self::Eventually { operand, .. }
+            | Self::Abort { operand, .. } => [Some(operand), None],
+            Self::Binary { left, right, .. } | Self::Until { left, right, .. } => {
+                [Some(left), Some(right)]
+            }
+            Self::Implication { consequent, .. } => [Some(consequent), None],
+            Self::If {
+                then, otherwise, ..
+            } => [Some(then), otherwise],
+        }
+    }
+}
+
+/// A property program evaluated per attempt by the runtime property engine.
+/// Assertions whose property is a plain sequence, a one-cycle Boolean form
+/// or a sequence implication keep the dedicated predicate/sequence paths;
+/// every other property operator is evaluated through this table.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrProperty {
+    pub(in crate::sim) nodes: Vec<IrPropertyNode>,
+    pub(in crate::sim) sequences: Vec<IrSequence>,
+    pub(in crate::sim) atoms: Vec<IrExpr>,
+}
+
+impl IrProperty {
+    pub(in crate::sim) fn new(
+        nodes: Vec<IrPropertyNode>,
+        sequences: Vec<IrSequence>,
+        atoms: Vec<IrExpr>,
+    ) -> Result<Self, IrValidationError> {
+        let property = Self {
+            nodes,
+            sequences,
+            atoms,
+        };
+        property.validate_shape()?;
+        Ok(property)
+    }
+
+    pub fn nodes(&self) -> &[IrPropertyNode] {
+        &self.nodes
+    }
+
+    pub fn sequences(&self) -> &[IrSequence] {
+        &self.sequences
+    }
+
+    pub fn atoms(&self) -> &[IrExpr] {
+        &self.atoms
+    }
+
+    /// The root is the last node; operands always precede their users.
+    pub fn root(&self) -> u32 {
+        self.nodes.len().saturating_sub(1) as u32
+    }
+
+    /// Index and range checks that need no model context.
+    pub(in crate::sim) fn validate_shape(&self) -> Result<(), IrValidationError> {
+        if self.nodes.is_empty() {
+            return Err(IrValidationError::new(
+                "property.nodes",
+                "property program has no nodes",
+            ));
+        }
+        if u32::try_from(self.nodes.len()).is_err() {
+            return Err(IrValidationError::new(
+                "property.nodes",
+                "property program has too many nodes",
+            ));
+        }
+        for (index, node) in self.nodes.iter().enumerate() {
+            let path = format!("property.nodes[{index}]");
+            for operand in node.operands().into_iter().flatten() {
+                if operand as usize >= index {
+                    return Err(IrValidationError::new(
+                        path,
+                        "property operand must precede its user",
+                    ));
+                }
+            }
+            let atom = match *node {
+                IrPropertyNode::Boolean { atom } => Some(atom),
+                IrPropertyNode::If { condition, .. } | IrPropertyNode::Abort { condition, .. } => {
+                    Some(condition)
+                }
+                _ => None,
+            };
+            if atom.is_some_and(|atom| atom as usize >= self.atoms.len()) {
+                return Err(IrValidationError::new(
+                    path,
+                    "property atom index is out of bounds",
+                ));
+            }
+            let sequence = match *node {
+                IrPropertyNode::Sequence { sequence, .. } => Some(sequence),
+                IrPropertyNode::Implication { antecedent, .. } => Some(antecedent),
+                _ => None,
+            };
+            if sequence.is_some_and(|sequence| sequence as usize >= self.sequences.len()) {
+                return Err(IrValidationError::new(
+                    path,
+                    "property sequence index is out of bounds",
+                ));
+            }
+            match *node {
+                IrPropertyNode::Sequence { sequence, .. } => {
+                    if self.sequences[sequence as usize].admits_empty {
+                        return Err(IrValidationError::new(
+                            path,
+                            "a sequence property must not admit an empty match",
+                        ));
+                    }
+                }
+                IrPropertyNode::Always {
+                    min, max, strong, ..
+                }
+                | IrPropertyNode::Eventually {
+                    min, max, strong, ..
+                } => {
+                    if max.is_some_and(|max| max < min) {
+                        return Err(IrValidationError::new(path, "property range is inverted"));
+                    }
+                    let weak_eventually =
+                        matches!(node, IrPropertyNode::Eventually { .. }) && !strong;
+                    let strong_always = matches!(node, IrPropertyNode::Always { .. }) && strong;
+                    if max.is_none() && (weak_eventually || strong_always) {
+                        return Err(IrValidationError::new(
+                            path,
+                            "s_always and weak eventually require a bounded range",
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+}
+
 /// One lowered concurrent assertion instance.
 ///
 /// The property itself is intentionally not represented as an ordinary
@@ -456,6 +690,9 @@ pub struct IrAssertion {
     pub(in crate::sim) consequent: Option<IrExpr>,
     pub(in crate::sim) antecedent_sequence: Option<IrSequence>,
     pub(in crate::sim) consequent_sequence: Option<IrSequence>,
+    /// Property program for operators outside the predicate and sequence
+    /// implication forms. When present, the four fields above are empty.
+    pub(in crate::sim) property: Option<IrProperty>,
     pub(in crate::sim) overlapped: bool,
     /// Optional accept_on/reject_on control. The expression is evaluated
     /// asynchronously for ordinary forms and in the assertion's sampled
@@ -466,6 +703,10 @@ pub struct IrAssertion {
     /// Sampled clock whose gate is the leading clock's `iff` condition; the
     /// leading clock ticks only while it holds (IEEE 1800-2009 9.4.2.3).
     pub(in crate::sim) clock_gate: Option<usize>,
+    /// The assertion is the whole body of an `initial` procedure: its one
+    /// queued instance begins a single evaluation attempt at the first
+    /// leading clock event (IEEE 1800-2009 16.15.6, F.5.3.1).
+    pub(in crate::sim) single_attempt: bool,
     pub(in crate::sim) pass_action: Option<String>,
     pub(in crate::sim) fail_action: Option<String>,
 }
@@ -500,9 +741,11 @@ impl IrAssertion {
             consequent: Some(consequent),
             antecedent_sequence: None,
             consequent_sequence: None,
+            property: None,
             overlapped,
             abort_condition: None,
             clock_gate: None,
+            single_attempt: false,
             abort_reject: false,
             abort_sync: false,
             pass_action,
@@ -539,9 +782,51 @@ impl IrAssertion {
             consequent: None,
             antecedent_sequence: antecedent,
             consequent_sequence: Some(consequent),
+            property: None,
             overlapped,
             abort_condition: None,
             clock_gate: None,
+            single_attempt: false,
+            abort_reject: false,
+            abort_sync: false,
+            pass_action,
+            fail_action,
+        }
+    }
+
+    /// An assertion evaluated by the runtime property engine.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::sim) fn new_property(
+        identity: u64,
+        scope: String,
+        label: String,
+        location: String,
+        kind: IrConcurrentAssertionKind,
+        clock_signal: usize,
+        posedge: bool,
+        disable_signal: Option<usize>,
+        property: IrProperty,
+        pass_action: Option<String>,
+        fail_action: Option<String>,
+    ) -> Self {
+        Self {
+            identity,
+            scope,
+            label,
+            location,
+            kind,
+            clock_signal,
+            posedge,
+            disable_signal,
+            antecedent: None,
+            consequent: None,
+            antecedent_sequence: None,
+            consequent_sequence: None,
+            property: Some(property),
+            overlapped: true,
+            abort_condition: None,
+            clock_gate: None,
+            single_attempt: false,
             abort_reject: false,
             abort_sync: false,
             pass_action,
@@ -597,6 +882,10 @@ impl IrAssertion {
         self.consequent_sequence.as_ref()
     }
 
+    pub fn property(&self) -> Option<&IrProperty> {
+        self.property.as_ref()
+    }
+
     pub fn overlapped(&self) -> bool {
         self.overlapped
     }
@@ -637,6 +926,10 @@ impl IrAssertion {
     pub(in crate::sim) fn with_clock_gate(mut self, clock: usize) -> Self {
         self.clock_gate = Some(clock);
         self
+    }
+
+    pub fn single_attempt(&self) -> bool {
+        self.single_attempt
     }
 
     pub fn pass_action(&self) -> Option<&str> {

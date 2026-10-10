@@ -241,6 +241,9 @@ fn render_assertion_sequence(
 pub(super) fn render_assertion_callbacks(model: &IrModel) -> Result<String, String> {
     let mut out = String::new();
     for (index, assertion) in model.assertions().iter().enumerate() {
+        if assertion.property().is_some() {
+            return Err("property operators require the owned model emitter".to_owned());
+        }
         if let Some(antecedent) = assertion.antecedent() {
             out.push_str(&render_assertion_predicate(
                 model,

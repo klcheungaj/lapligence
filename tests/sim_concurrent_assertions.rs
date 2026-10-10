@@ -303,7 +303,7 @@ fn concurrent_assertions_reject_unsupported_named_property_temporal_forms() {
     sim_cli::reject_case(
         "concurrent_assertions",
         "unsupported_instance",
-        "assertion binary operator Until is not supported",
+        "recursive property instances are not supported",
     );
 }
 
@@ -354,7 +354,11 @@ fn concurrent_assertions_resolve_abort_control_variants() {
     sim_cli::run_case(
         "concurrent_assertions",
         "h25_abort_variants",
-        "H25_SYNC_ACCEPT\nH25_SYNC_ACCEPT\n",
+        // Ticks at 2, 5 and 7: the attempt of tick 2 is aborted at tick 5,
+        // the attempt that begins on tick 5 sees the abort condition on its
+        // own first tick and is aborted there too (16.13.14; SIM-038 decision
+        // S38-D9), and the attempt of tick 7 succeeds vacuously.
+        "H25_SYNC_ACCEPT\nH25_SYNC_ACCEPT\nH25_SYNC_ACCEPT\n",
         "",
         &[],
     );

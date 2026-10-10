@@ -666,9 +666,15 @@ pub enum IrStmt {
         scopes: Vec<String>,
     },
     /// Procedural `expect` arms one registered property assertion and blocks
-    /// the calling process until its first bounded pass/fail endpoint.
+    /// the calling process until its first bounded pass/fail endpoint. The
+    /// action block runs in the calling process after it resumes (16.18), so
+    /// lowering follows this statement with branches on
+    /// [`IrRuntimeQuery::ExpectOutcome`](crate::sim::ir::IrRuntimeQuery).
+    /// `fail_action` records whether an `else` arm (possibly null) exists; it
+    /// replaces the default failure report.
     Expect {
         identity: u64,
+        fail_action: bool,
     },
     /// Immediate `assert`, `assume` or `cover`. The condition is evaluated
     /// once at this statement; omitted action arms remain `None` so codegen

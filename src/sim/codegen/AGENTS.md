@@ -654,7 +654,18 @@ operands become an `IrSequenceJoin`. Repeated non-Boolean sequences re-lower
 their body per literal copy (an unbounded bound loops the last copy), within
 `SEQUENCE_STATE_BUDGET`; never introduce a fixed unroll depth for `$`.
 Assignments to locals inside join operands and differently clocked join
-operands stay explicit rejections (SIM-039, ADV-013). Deferred
+operands stay explicit rejections (SIM-039, ADV-013). A property that the
+predicate/sequence forms cannot represent (`property_requires_engine`) lowers
+whole to an `IrProperty` node table (`assertions/property.rs`): sequence
+operands on the leading clock, single-tick operands as sampled atoms, the
+`strong`/`weak` default from the assertion kind; nested clocks other than the
+leading one (16.14) and recursive instances are rejected. A non-signal
+`disable iff` condition, and an inherited `default disable iff` (Db
+`default_disable`, not for `expect`), become a hidden net driven by a
+synthetic process and shared per instance and condition node. `expect` action
+blocks lower inline in the calling process after `IrStmt::Expect`, branching on
+`IrRuntimeQuery::ExpectOutcome`; other action blocks are spawned processes
+that may contain timing controls. Deferred
 assertions retain issue-time values (packed, real, string, chandle/class handle
 and method receiver captures) and Reactive actions under the single-call
 contract in process, subroutine, class-method and final contexts, rejecting

@@ -92,6 +92,12 @@ pub enum IrRuntimeQuery {
     /// resensitized it after withholding an event while it was suspended
     /// (1-bit unsigned two-state; see [`IrStmt::WaitAny::refresh`]).
     WaitRefreshed,
+    /// Result of the last evaluation of the procedural `expect` with this
+    /// assertion identity (2-bit unsigned two-state): 0 when it ended without
+    /// a result (killed or disabled), 1 on success, 2 on failure. Read by the
+    /// calling process right after [`IrStmt::Expect`](crate::sim::ir::IrStmt)
+    /// resumes to select its inline action arm.
+    ExpectOutcome(u64),
 }
 
 /// Structural expression kinds.  The self-determined width/signedness/fill of

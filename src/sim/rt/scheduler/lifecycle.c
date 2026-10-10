@@ -141,6 +141,8 @@ static void free_assertion_clock_events(llg_concurrent_assertion_t* assertion) {
 
 static void sequence_attempt_discard(llg_sequence_attempt_t* attempt);
 static void free_sequence_pools(void);
+static void free_property_pool(void);
+static void free_property_attempts(llg_concurrent_assertion_t* assertion);
 
 static void free_assertion_attempts(llg_concurrent_assertion_t* assertion) {
     free_assertion_clock_events(assertion);
@@ -167,6 +169,7 @@ static void free_assertion_attempts(llg_concurrent_assertion_t* assertion) {
         }
         *tails[list_index] = NULL;
     }
+    free_property_attempts(assertion);
 }
 
 static void free_assertions(void) {
@@ -175,6 +178,11 @@ static void free_assertions(void) {
         free_assertion_attempts(g.assertions);
         free(g.assertions->antecedent_rank);
         free(g.assertions->consequent_rank);
+        if (g.assertions->property_ranks) {
+            for (uint32_t index = 0; index < g.assertions->property->sequence_count; index++)
+                free(g.assertions->property_ranks[index]);
+            free(g.assertions->property_ranks);
+        }
         free(g.assertions);
         g.assertions = next;
     }

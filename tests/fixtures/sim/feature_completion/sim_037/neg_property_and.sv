@@ -1,6 +1,7 @@
 // llg-test-fixture: tests/fixtures/sim/feature_completion/sim_037/neg_property_and.sv
 // SIM-037 negative: a property-level `and` whose operand is an implication
-// is a property operator owned by SIM-038, not sequence composition.
+// is a property operator owned by SIM-038, not sequence composition. SIM-038
+// implements it; the attempt is pending (weak) at $finish.
 module tb;
   logic clk = 1'b0;
   logic a = 1'b1;

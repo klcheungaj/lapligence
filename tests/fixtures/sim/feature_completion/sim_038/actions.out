@@ -1,0 +1,19 @@
+18000 e1 ok=1 resumes=1
+25000 e2 ok=0 resumes=2
+25000 pa pass begin
+25000 pa pass begin
+35000 pa fail begin
+35000 pa pass begin
+37000 pa pass end
+37000 pa pass end
+42000 pa fail end
+45000 pa pass begin
+47000 pa pass end
+55000 pa pass begin
+55000 e3 pass
+55000 e3 resumed
+57000 pa pass end
+65000 pa pass begin
+67000 pa pass end
+75000 pa pass begin
+77000 pa pass end

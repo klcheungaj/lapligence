@@ -293,6 +293,20 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
     {
         return Err("`iff`-gated assertion clocks require the owned model emitter".to_owned());
     }
+    if model
+        .assertions()
+        .iter()
+        .any(|assertion| assertion.property().is_some())
+    {
+        return Err("property operators require the owned model emitter".to_owned());
+    }
+    if model
+        .assertions()
+        .iter()
+        .any(|assertion| assertion.single_attempt())
+    {
+        return Err("initial-procedure assertions require the owned model emitter".to_owned());
+    }
     for (index, assertion) in model.assertions().iter().enumerate() {
         let clock = model.signal(assertion.clock_signal()).c_name();
         let disable = assertion

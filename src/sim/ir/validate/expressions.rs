@@ -347,6 +347,18 @@ impl Validator<'_> {
                         64
                     }
                     IrRuntimeQuery::WaitRefreshed => 1,
+                    IrRuntimeQuery::ExpectOutcome(identity) => {
+                        if !self.model.assertions.iter().any(|assertion| {
+                            assertion.identity == *identity
+                                && assertion.kind == IrConcurrentAssertionKind::Expect
+                        }) {
+                            return self.fail(
+                                path,
+                                format!("expect outcome names unknown expect assertion {identity}"),
+                            );
+                        }
+                        2
+                    }
                     IrRuntimeQuery::ForceSourceActive(signal) => {
                         if self.model.signals.get(*signal).is_none() {
                             return self

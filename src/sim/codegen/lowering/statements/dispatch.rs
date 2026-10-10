@@ -1,7 +1,7 @@
 //! Dispatch.
 
 use super::*;
-use crate::sim::ir::IrProcessControl;
+use crate::sim::ir::{IrProcessControl, IrRuntimeQuery};
 
 impl EmitCtx<'_, '_> {
     /// Lower one statement (or construct) into its IR statements.  Mirrors
@@ -235,7 +235,13 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(assertion @ StmtKind::ImmediateAssertion { .. }) => {
                 self.lower_immediate_assertion(h, assertion)
             }
-            NodeKind::Stmt(StmtKind::ConcurrentAssertion { kind, .. }) => {
+            NodeKind::Stmt(StmtKind::ConcurrentAssertion {
+                kind,
+                if_true,
+                if_false,
+                ..
+            }) => {
+                let (if_true, if_false) = (*if_true, *if_false);
                 if matches!(kind, ConcurrentAssertionKind::Expect) {
                     if self.in_final {
                         return Err(format!(
@@ -253,9 +259,7 @@ impl EmitCtx<'_, '_> {
                 let path = self.path.clone();
                 self.cg.emit_concurrent_assertion(self.inst, &path, h)?;
                 if matches!(kind, ConcurrentAssertionKind::Expect) {
-                    Ok(vec![IrStmt::Expect {
-                        identity: h.index() as u64,
-                    }])
+                    self.lower_expect_actions(h.index() as u64, if_true, if_false)
                 } else {
                     Ok(Vec::new())
                 }
@@ -719,6 +723,69 @@ impl EmitCtx<'_, '_> {
                 self.path
             )),
         }
+    }
+
+    /// Block on a procedural `expect`, then run its action block in this
+    /// process (16.18): the pass statement on success, the else statement on
+    /// failure, neither when the evaluation ended without a result. The arms
+    /// see the assertion's leading clock for sampled-value functions.
+    fn lower_expect_actions(
+        &mut self,
+        identity: u64,
+        if_true: Option<NodeId>,
+        if_false: Option<NodeId>,
+    ) -> Result<Vec<IrStmt>, String> {
+        let clock = self.cg.take_expect_action_clock();
+        let previous_clock = std::mem::replace(&mut self.cg.sampled_clock, clock);
+        let arms = (|| {
+            let pass = if_true.map(|arm| self.lower_stmt(arm)).transpose()?;
+            let fail = if_false.map(|arm| self.lower_stmt(arm)).transpose()?;
+            Ok::<_, String>((pass, fail))
+        })();
+        self.cg.sampled_clock = previous_clock;
+        let (pass, fail) = arms?;
+        let mut statements = vec![IrStmt::Expect {
+            identity,
+            fail_action: fail.is_some(),
+        }];
+        let outcome_is = |value: u64| -> Result<IrExpr, String> {
+            let constant = IrConst::packed(vec![value], vec![], vec![], 2, false, None)
+                .map_err(|error| error.to_string())?;
+            Ok(IrExpr::new(
+                IrExprKind::Bin {
+                    op: IrBinOp::CaseEq,
+                    a: Box::new(IrExpr::new(
+                        IrExprKind::RuntimeQuery(IrRuntimeQuery::ExpectOutcome(identity)),
+                        2,
+                        false,
+                        None,
+                    )),
+                    b: Box::new(IrExpr::new(IrExprKind::Const(constant), 2, false, None)),
+                },
+                1,
+                false,
+                None,
+            ))
+        };
+        let fail = match fail {
+            Some(body) if !body.is_empty() => Some(vec![IrStmt::If {
+                cond: outcome_is(2)?,
+                then_: body,
+                els: None,
+                check: IrUniquePriorityCheck::None,
+            }]),
+            _ => None,
+        };
+        match pass {
+            Some(body) if !body.is_empty() => statements.push(IrStmt::If {
+                cond: outcome_is(1)?,
+                then_: body,
+                els: fail,
+                check: IrUniquePriorityCheck::None,
+            }),
+            _ => statements.extend(fail.into_iter().flatten()),
+        }
+        Ok(statements)
     }
 }
 

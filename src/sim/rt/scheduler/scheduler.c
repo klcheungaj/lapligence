@@ -384,6 +384,29 @@ void llg_rt_run_finals(void) {
     llg_n_finals = 0;
 }
 
+/* Settle property attempts still pending at the end of simulation and run
+ * the failure actions this reports in a Reactive pass without advancing time
+ * (llg decision S38-D1). Reactive work already queued when the run stopped
+ * stays abandoned, as after any $finish; an action that suspends does not
+ * resume. Runs only after a normal end, not after a runtime error. */
+static void run_end_of_simulation_assertions(void) {
+    if (llg_last_failure) return;
+    int saved_finish = g.finish;
+    llg_proc_queue_t abandoned = g.process_queues[LLG_REGION_REACTIVE];
+    g.process_queues[LLG_REGION_REACTIVE].head = NULL;
+    g.process_queues[LLG_REGION_REACTIVE].tail = NULL;
+    g.finish = 0;
+    if (settle_property_attempts_at_end() && !g.finish)
+        (void)run_region_queue(LLG_REGION_REACTIVE);
+    llg_proc_queue_t* queue = &g.process_queues[LLG_REGION_REACTIVE];
+    if (abandoned.head) {
+        if (queue->tail) queue->tail->next_region = abandoned.head;
+        else queue->head = abandoned.head;
+        queue->tail = abandoned.tail;
+    }
+    g.finish = saved_finish || g.finish;
+}
+
 void llg_rt_run(void) {
     if (g.config_error) {
         llg_rt_cleanup();
@@ -462,6 +485,7 @@ void llg_rt_run(void) {
         return;
     }
     run_deferred_assertions_now();
+    run_end_of_simulation_assertions();
     flush_assertion_attempts();
     // Finals ($time inside them) report when the scheduler loop ended.
     llg_final_time = g.now;

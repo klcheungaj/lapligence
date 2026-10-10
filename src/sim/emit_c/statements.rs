@@ -1032,8 +1032,12 @@ fn render_stmt_scoped(
             args,
             scopes: assertion_scopes,
         } => render_assertion_control(ctx, *kind, args, assertion_scopes)?,
-        IrStmt::Expect { identity } => format!(
-            "    if (!llg_assertion_expect_start({identity}ULL)) return;\n    llg_wait_assertion({identity}ULL);\n"
+        IrStmt::Expect {
+            identity,
+            fail_action,
+        } => format!(
+            "    if (!llg_assertion_expect_start({identity}ULL, {})) return;\n    llg_wait_assertion({identity}ULL);\n",
+            u8::from(*fail_action)
         ),
         IrStmt::ImmediateAssertion {
             kind,
