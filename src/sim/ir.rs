@@ -40,9 +40,9 @@ pub use patterns::{
 };
 mod validate;
 pub use containers::{
-    IrAssocKey, IrAssocTraversal, IrContainer, IrContainerElement, IrContainerExpr,
+    IrAssocKey, IrAssocTraversal, IrBitStream, IrContainer, IrContainerElement, IrContainerExpr,
     IrContainerKind, IrContainerMember, IrContainerMethod, IrContainerReduction, IrContainerStmt,
-    IrQueueBound, IrQueueSource, IrStreamSelector, IrValueItemRoot, IrValueSlot,
+    IrQueueBound, IrQueueSource, IrStreamSegment, IrStreamSelector, IrValueItemRoot, IrValueSlot,
     PROCESS_ELEMENT_KIND,
 };
 pub use objects::{

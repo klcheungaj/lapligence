@@ -1024,7 +1024,7 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
         | IrExprKind::Convert { a }
         | IrExprKind::BitStreamCast { a, .. }
         | IrExprKind::ToTwoState { a }
-        | IrExprKind::StreamToFixed { a }
+        | IrExprKind::StreamToFixed { a, .. }
         | IrExprKind::CastToReal { a, .. } => collect_expr_reads(a, model, rw),
         IrExprKind::Mux { sel, a, b }
         | IrExprKind::ArrayMux { sel, a, b, .. }

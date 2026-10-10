@@ -1243,6 +1243,9 @@ int64_t llg_fixed_image_element_lsb(int64_t declaration_left,
 /* Left-align a runtime-sized stream in a fixed-size bit-stream target; an
  * oversize stream is an error (IEEE 1800-2009 11.4.14). Borrows `value`. */
 sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int is_signed);
+/* Bit-stream cast of a dynamically sized source to a fixed-size type: the
+ * sizes must match (IEEE 1800-2009 6.24.3). Borrows `value`. */
+sv4_t llg_stream_cast_fixed(sv4_t value, uint32_t width, int is_signed);
 
 // ── File descriptors and output ─────────────────────────────────────────────
 // A mode-string fopen returns a bit-31-tagged FD. Preopened FDs 0x80000000,
@@ -2215,6 +2218,7 @@ void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declara
 void llg_stream_unpack_source_to(sv4_t* dst, const sv4_t* value, uint64_t bits, uint32_t slice, int right_to_left);
 void llg_fixed_image_stream_source_to(sv4_t* dst, const sv4_t* image, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);
 void llg_stream_to_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed);
+void llg_stream_cast_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed);
 
 #ifdef __cplusplus
 }

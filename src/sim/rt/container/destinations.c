@@ -14,6 +14,9 @@ void llg_fixed_image_stream_source_to(sv4_t* dst, const sv4_t* image, int64_t de
 void llg_stream_to_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed) {
     sv4_replace(dst, llg_stream_to_fixed(*value, width, is_signed));
 }
+void llg_stream_cast_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed) {
+    sv4_replace(dst, llg_stream_cast_fixed(*value, width, is_signed));
+}
 void llg_queue_value_get_to(sv4_t* dst, const llg_queue_value_array_t* queue, const sv4_t* index) {
     sv4_replace(dst, llg_queue_value_get(queue, *index));
 }

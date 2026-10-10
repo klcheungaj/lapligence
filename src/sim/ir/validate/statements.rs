@@ -356,9 +356,26 @@ impl Validator<'_> {
                         }
                     }
                 };
-                let mut dynamic_targets = 0usize;
+                // The first unselected resizable target takes every bit not
+                // needed by the static targets after it (SV 11.4.14.4), so no
+                // runtime-sized selection may follow it.
+                let mut greedy = false;
                 for (index, target) in targets.iter().enumerate() {
                     let target_path = format!("{path}.targets[{index}]");
+                    let selected = matches!(
+                        target,
+                        IrStreamTarget::Container {
+                            selector: Some(_),
+                            ..
+                        } | IrStreamTarget::FixedSelector { .. }
+                            | IrStreamTarget::FixedImageSelector { .. }
+                    );
+                    if greedy && selected {
+                        return self.fail(
+                            target_path,
+                            "a selected streaming target cannot follow an unbounded resizable target",
+                        );
+                    }
                     match target {
                         IrStreamTarget::Packed { lhs, width } => {
                             self.validate_width(*width, &format!("{target_path}.width"))?;
@@ -380,13 +397,7 @@ impl Validator<'_> {
                             container,
                             selector,
                         } => {
-                            dynamic_targets += 1;
-                            if dynamic_targets > 1 {
-                                return self.fail(
-                                    target_path,
-                                    "streaming assignment supports at most one resizable target",
-                                );
-                            }
+                            greedy |= selector.is_none();
                             if *nba {
                                 return self.fail(
                                     target_path,

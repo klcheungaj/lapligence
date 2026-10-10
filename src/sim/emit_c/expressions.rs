@@ -805,13 +805,15 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 fill: None,
             }
         }
-        IrExprKind::StreamToFixed { a } => {
+        IrExprKind::StreamToFixed { a, exact } => {
             let ra = w(a)?;
+            let function = if *exact {
+                "llg_stream_cast_fixed"
+            } else {
+                "llg_stream_to_fixed"
+            };
             RenderedExpr {
-                code: format!(
-                    "llg_stream_to_fixed({}, {}u, {})",
-                    ra.code, e.width, e.signed as u8
-                ),
+                code: format!("{function}({}, {}u, {})", ra.code, e.width, e.signed as u8),
                 width: e.width,
                 signed: e.signed,
                 fill: None,

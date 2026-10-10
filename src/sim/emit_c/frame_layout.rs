@@ -765,6 +765,7 @@ fn lp64_layout(
         ),
         "llg_value_scope_t" => (80, 8),
         "llg_string_t" => (32, 8),
+        "llg_bitstream_t" => (24, 8),
         "sv4_select_plan_t" => (20, 4),
         "llg_event_t" => (8, 8),
         "llg_event_spec_t" => (16, 8),

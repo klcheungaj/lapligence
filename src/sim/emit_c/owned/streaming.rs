@@ -116,6 +116,13 @@ struct FixedSelection {
     segment_width: String,
 }
 
+/// A `with` selection resolved before a `<<` unpack reorders its source.
+enum ResolvedSelection {
+    Fixed(FixedSelection),
+    /// Selector kind, bounds and segment width of a resizable target.
+    Container(i32, String, String, String),
+}
+
 /// One staged destination write of a streaming assignment.
 enum StreamWrite {
     Packed(Target, Value),
@@ -162,9 +169,11 @@ impl Frame<'_, '_> {
             .iter()
             .filter(|target| matches!(target, IrStreamTarget::Container { .. }))
             .count();
-        if containers > 1 {
-            return Err("streaming assignment supports at most one resizable target".to_owned());
-        }
+        // The first unselected resizable target takes the remaining source;
+        // later ones are left empty (SV 11.4.14.4).
+        let greedy_target = targets
+            .iter()
+            .any(|target| matches!(target, IrStreamTarget::Container { selector: None, .. }));
         if nba && containers != 0 {
             return Err("nonblocking streaming assignment cannot resize a container".to_owned());
         }
@@ -177,17 +186,40 @@ impl Frame<'_, '_> {
         let mut owners = Vec::new();
         // A `<<` unpack reorders only the bits it consumes from the left of
         // the source (SV 11.4.14.3), so their count must be known first:
-        // every fixed selector is resolved before any target is written.
-        // Lowering rejects a `<<` selector that reads an earlier target. A
-        // resizable target consumes the remaining source either way.
+        // every selector is resolved before any target is written.
+        // Lowering rejects a `<<` selector that reads an earlier target. An
+        // unselected resizable target consumes the remaining source either way.
         let mut resolved = Vec::new();
-        let (value, cursor) = if right_to_left && containers == 0 {
+        let (value, cursor) = if right_to_left && !greedy_target {
             let mut total = String::from("(uint64_t)0");
             for target in targets {
                 let selection = match target {
                     IrStreamTarget::Packed { width, .. } => {
                         total.push_str(&format!(" + {width}u"));
                         None
+                    }
+                    IrStreamTarget::Container {
+                        container,
+                        selector: Some(selector),
+                    } => {
+                        let Some((element_width, _, _)) =
+                            self.ctx.model.containers[*container].element.packed()
+                        else {
+                            return Err("streaming target requires packed elements".to_owned());
+                        };
+                        let (kind, first, second) =
+                            super::containers::stream_selector(self, &mut owners, Some(selector))?;
+                        let width = self.scalar(
+                            "uint32_t",
+                            format!(
+                                "llg_stream_selector_width({kind}, {first}, {second}, {element_width})"
+                            ),
+                        );
+                        total.push_str(&format!(" + {width}"));
+                        resolved.push(Some(ResolvedSelection::Container(
+                            kind, first, second, width,
+                        )));
+                        continue;
                     }
                     IrStreamTarget::FixedSelector { array, selector } => {
                         let array = self.ctx.model.array(*array).clone();
@@ -219,7 +251,7 @@ impl Frame<'_, '_> {
                 if let Some(selection) = &selection {
                     total.push_str(&format!(" + {}", selection.segment_width));
                 }
-                resolved.push(selection);
+                resolved.push(selection.map(ResolvedSelection::Fixed));
             }
             let total = self.scalar("uint64_t", total);
             let code = format!(
@@ -240,6 +272,7 @@ impl Frame<'_, '_> {
             (value, cursor)
         };
         let mut resolved = resolved.into_iter();
+        let mut greedy_done = false;
         for (position, target) in targets.iter().enumerate() {
             let selection = resolved.next().flatten();
             let mut writes = Vec::new();
@@ -271,26 +304,52 @@ impl Frame<'_, '_> {
                     let Some((element_width, _, _)) = container.element.packed() else {
                         return Err("streaming target requires packed elements".to_owned());
                     };
+                    // Later unselected resizable targets stay empty, so only
+                    // packed targets bound the greedy one.
                     let trailing =
-                        targets[position + 1..]
-                            .iter()
-                            .try_fold(0u32, |sum, target| {
-                                let IrStreamTarget::Packed { width, .. } = target else {
-                                    return Err("multiple resizable streaming targets".to_owned());
-                                };
-                                sum.checked_add(*width)
-                                    .ok_or_else(|| "streaming target width overflow".to_owned())
-                            })?;
-                    let (kind, first, second) =
-                        super::containers::stream_selector(self, &mut owners, selector.as_ref())?;
-                    let segment_width = if selector.is_some() {
-                        format!(
-                            "llg_stream_selector_width({kind}, {first}, {second}, {element_width})"
-                        )
-                    } else {
-                        format!("({cursor} > {trailing} ? (uint32_t)({cursor} - {trailing}) : 0)")
+                        targets[position + 1..].iter().try_fold(
+                            0u32,
+                            |sum, target| match target {
+                                IrStreamTarget::Packed { width, .. } => sum
+                                    .checked_add(*width)
+                                    .ok_or_else(|| "streaming target width overflow".to_owned()),
+                                IrStreamTarget::Container { selector: None, .. } => Ok(sum),
+                                _ => Err("a selected streaming target follows a resizable target"
+                                    .to_owned()),
+                            },
+                        )?;
+                    let (kind, first, second, segment_width) = match (selection, selector) {
+                        (Some(ResolvedSelection::Container(kind, first, second, width)), _) => {
+                            (kind, first, second, width)
+                        }
+                        (_, Some(_)) => {
+                            let (kind, first, second) = super::containers::stream_selector(
+                                self,
+                                &mut owners,
+                                selector.as_ref(),
+                            )?;
+                            let width = self.scalar(
+                                "uint32_t",
+                                format!(
+                                    "llg_stream_selector_width({kind}, {first}, {second}, {element_width})"
+                                ),
+                            );
+                            (kind, first, second, width)
+                        }
+                        (_, None) => {
+                            let (kind, first, second) =
+                                super::containers::stream_selector(self, &mut owners, None)?;
+                            let width = if greedy_done {
+                                "0u".to_owned()
+                            } else {
+                                format!(
+                                    "({cursor} > {trailing} ? (uint32_t)({cursor} - {trailing}) : 0)"
+                                )
+                            };
+                            greedy_done = true;
+                            (kind, first, second, self.scalar("uint32_t", width))
+                        }
                     };
-                    let segment_width = self.scalar("uint32_t", segment_width);
                     self.line(format!(
                         "llg_stream_require_bits({cursor}, {segment_width});"
                     ));
@@ -331,8 +390,8 @@ impl Frame<'_, '_> {
                         );
                     }
                     let selection = match selection {
-                        Some(selection) => selection,
-                        None => self.resolve_fixed_selector(
+                        Some(ResolvedSelection::Fixed(selection)) => selection,
+                        _ => self.resolve_fixed_selector(
                             &mut owners,
                             selector,
                             array.dims[0],
@@ -356,8 +415,8 @@ impl Frame<'_, '_> {
                     two_state_runs,
                 } => {
                     let selection = match selection {
-                        Some(selection) => selection,
-                        None => self.resolve_fixed_selector(
+                        Some(ResolvedSelection::Fixed(selection)) => selection,
+                        _ => self.resolve_fixed_selector(
                             &mut owners,
                             selector,
                             *bounds,
@@ -734,5 +793,118 @@ impl Frame<'_, '_> {
             self.discard(value);
         }
         Ok(result)
+    }
+}
+
+/// Operand code of one bit-stream segment, evaluated before the stream is built.
+enum SegmentCode {
+    /// A runtime append call and its arguments after the stream.
+    Append(&'static str, String),
+    Nested(Vec<SegmentCode>, u32, IrStreamDirection),
+}
+
+impl Frame<'_, '_> {
+    /// Build `stream` in a frame-declared `llg_bitstream_t` and return its
+    /// name; the caller consumes it and then calls `llg_bitstream_destroy`.
+    /// Every operand and selector is evaluated in stream order before the
+    /// first append, so no cancellation point separates the stream's
+    /// initialization from its destruction.
+    pub(super) fn bit_stream(
+        &mut self,
+        stream: &IrBitStream,
+        owners: &mut Vec<Value>,
+        strings: &mut Vec<native::NativeValue>,
+    ) -> Result<String, String> {
+        let segments = self.bit_stream_segments(&stream.segments, owners, strings)?;
+        let name = self.declare("llg_bitstream_t", "bits", "{0}".to_owned());
+        self.bit_stream_appends(&name, &segments, stream.slice, stream.direction);
+        if let Some((slice, IrStreamDirection::RightToLeft)) = stream.unpack {
+            self.line(format!("llg_bitstream_reverse(&{name}, {slice}u, 1);"));
+        }
+        Ok(name)
+    }
+
+    fn bit_stream_segments(
+        &mut self,
+        segments: &[IrStreamSegment],
+        owners: &mut Vec<Value>,
+        strings: &mut Vec<native::NativeValue>,
+    ) -> Result<Vec<SegmentCode>, String> {
+        let mut codes = Vec::with_capacity(segments.len());
+        for segment in segments {
+            codes.push(match segment {
+                IrStreamSegment::Packed(value) => {
+                    let value = self.expression(value)?;
+                    let code = value.code.clone();
+                    owners.push(value);
+                    SegmentCode::Append("llg_bitstream_append_value", format!(", {code}"))
+                }
+                IrStreamSegment::Container {
+                    container,
+                    selector,
+                } => {
+                    let name = self.container_name(*container)?;
+                    match &self.ctx.model.containers[*container].kind {
+                        IrContainerKind::Associative { .. } => {
+                            SegmentCode::Append("llg_bitstream_append_assoc", format!(", &{name}"))
+                        }
+                        kind => {
+                            let function = if matches!(kind, IrContainerKind::Dynamic) {
+                                "llg_bitstream_append_dyn"
+                            } else {
+                                "llg_bitstream_append_queue"
+                            };
+                            let (selector, first, second) = super::containers::stream_selector(
+                                self,
+                                owners,
+                                selector.as_ref(),
+                            )?;
+                            SegmentCode::Append(
+                                function,
+                                format!(", &{name}, {selector}, {first}, {second}"),
+                            )
+                        }
+                    }
+                }
+                IrStreamSegment::String(text) => {
+                    let value = self.string(text)?;
+                    let code = value.code();
+                    strings.push(value);
+                    SegmentCode::Append("llg_bitstream_append_string", format!(", {code}"))
+                }
+                IrStreamSegment::Nested(inner) => SegmentCode::Nested(
+                    self.bit_stream_segments(&inner.segments, owners, strings)?,
+                    inner.slice,
+                    inner.direction,
+                ),
+            });
+        }
+        Ok(codes)
+    }
+
+    fn bit_stream_appends(
+        &mut self,
+        name: &str,
+        segments: &[SegmentCode],
+        slice: u32,
+        direction: IrStreamDirection,
+    ) {
+        for segment in segments {
+            match segment {
+                SegmentCode::Append(function, arguments) => {
+                    self.line(format!("{function}(&{name}{arguments});"))
+                }
+                SegmentCode::Nested(inner, inner_slice, inner_direction) => {
+                    let nested = self.declare("llg_bitstream_t", "bits", "{0}".to_owned());
+                    self.bit_stream_appends(&nested, inner, *inner_slice, *inner_direction);
+                    self.line(format!("llg_bitstream_append_stream(&{name}, &{nested});"));
+                    self.line(format!("llg_bitstream_destroy(&{nested});"));
+                }
+            }
+        }
+        // `>>` ignores the slice size (SV 11.4.14.2).
+        if direction == IrStreamDirection::RightToLeft {
+            self.line(format!("llg_bitstream_reverse(&{name}, {slice}u, 0);"));
+        }
     }
 }

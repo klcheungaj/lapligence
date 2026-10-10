@@ -191,6 +191,11 @@ const OPERATIONS: &[(&str, &str, &[Param])] = &[
         &[P, S, S, S, P, S, P, P],
     ),
     ("llg_stream_to_fixed", "llg_stream_to_fixed_to", &[P, S, S]),
+    (
+        "llg_stream_cast_fixed",
+        "llg_stream_cast_fixed_to",
+        &[P, S, S],
+    ),
     ("llg_queue_value_get", "llg_queue_value_get_to", &[S, P]),
     (
         "llg_queue_value_get_nested",

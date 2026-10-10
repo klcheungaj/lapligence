@@ -337,6 +337,13 @@ sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int is_signed) {
     return result;
 }
 
+sv4_t llg_stream_cast_fixed(sv4_t value, uint32_t width, int is_signed) {
+    if (llg_sv4_width(value) != width)
+        llg_container_fatal(
+            "bit-stream cast source size does not match its fixed-size target");
+    return llg_stream_to_fixed(value, width, is_signed);
+}
+
 /* SV 11.4.14.3 consumes a wider unpack source from its left end, before the
  * stream operator reorders the consumed bits. */
 sv4_t llg_stream_unpack_source(sv4_t value, uint64_t bits, uint32_t slice,

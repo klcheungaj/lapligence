@@ -124,6 +124,23 @@ impl Frame<'_, '_> {
                 self.discard(count);
                 result
             }
+            BitStream { stream, exact } => {
+                let mut values = Vec::new();
+                let mut strings = Vec::new();
+                let bits = self.bit_stream(stream, &mut values, &mut strings)?;
+                let result = self.native_value(
+                    NativeKind::String,
+                    format!("llg_bitstream_string(&{bits}, {})", u8::from(*exact)),
+                );
+                self.line(format!("llg_bitstream_destroy(&{bits});"));
+                for value in values {
+                    self.discard(value);
+                }
+                for value in strings {
+                    self.native_discard(value);
+                }
+                result
+            }
             FromPacked(value) => {
                 let value = self.expression(value)?;
                 let result = self.native_value(

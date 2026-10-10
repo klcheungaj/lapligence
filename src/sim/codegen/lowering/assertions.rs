@@ -2329,7 +2329,7 @@ pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
         | IrExprKind::Resize { a }
         | IrExprKind::Convert { a }
         | IrExprKind::ToTwoState { a }
-        | IrExprKind::StreamToFixed { a } => sampled_compatible(a),
+        | IrExprKind::StreamToFixed { a, .. } => sampled_compatible(a),
         IrExprKind::Mux { sel, a, b }
         | IrExprKind::ArrayMux { sel, a, b, .. }
         | IrExprKind::StructMux { sel, a, b, .. } => {
@@ -2456,7 +2456,7 @@ pub(super) fn sampled_signal_reads(
             | IrExprKind::Resize { a }
             | IrExprKind::Convert { a }
             | IrExprKind::ToTwoState { a }
-            | IrExprKind::StreamToFixed { a }
+            | IrExprKind::StreamToFixed { a, .. }
             | IrExprKind::BitStreamCast { a, .. } => pending.push(a),
             IrExprKind::Mux { sel, a, b }
             | IrExprKind::ArrayMux { sel, a, b, .. }

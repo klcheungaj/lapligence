@@ -1016,9 +1016,14 @@ fn collect_statement_expression_effects(
                 collect_expression_effects(ir, finish, effects, visited_calls);
             }
         }
-        IrStmt::Container(operation) => operation.expressions(&mut |expression| {
-            collect_expression_effects(ir, expression, effects, visited_calls)
-        }),
+        IrStmt::Container(operation) => match operation.as_ref() {
+            IrContainerStmt::BitStreamAssign { stream, .. } => {
+                collect_bit_stream_effects(ir, stream, effects, visited_calls)
+            }
+            operation => operation.expressions(&mut |expression| {
+                collect_expression_effects(ir, expression, effects, visited_calls)
+            }),
+        },
         IrStmt::PlusArg(expression) => {
             collect_expression_effects(ir, expression, effects, visited_calls)
         }
@@ -1559,9 +1564,13 @@ fn collect_expression_effects(
             ) {
                 effects.push(ExecutionEffect::ImmediateStore);
             }
-            operation.expressions(&mut |child| {
-                collect_expression_effects(ir, child, effects, visited_calls)
-            });
+            if let IrContainerExpr::BitStream(stream) = operation.as_ref() {
+                collect_bit_stream_effects(ir, stream, effects, visited_calls);
+            } else {
+                operation.expressions(&mut |child| {
+                    collect_expression_effects(ir, child, effects, visited_calls)
+                });
+            }
         }
         IrExprKind::ObjectQuery(query) => {
             query.expressions(&mut |child| {
@@ -1591,7 +1600,7 @@ fn collect_expression_effects(
         | IrExprKind::Convert { a }
         | IrExprKind::BitStreamCast { a, .. }
         | IrExprKind::ToTwoState { a }
-        | IrExprKind::StreamToFixed { a }
+        | IrExprKind::StreamToFixed { a, .. }
         | IrExprKind::PartSel { base: a, .. }
         | IrExprKind::Stream { value: a, .. } => {
             collect_expression_effects(ir, a, effects, visited_calls)
@@ -2106,6 +2115,31 @@ fn collect_mailbox_expr_effects(
     }
 }
 
+/// Effects of every operand of a runtime-sized bit stream, including its
+/// string segments.
+fn collect_bit_stream_effects(
+    ir: &IrModel,
+    stream: &crate::sim::ir::IrBitStream,
+    effects: &mut Vec<ExecutionEffect>,
+    visited_calls: &mut CallVisits,
+) {
+    for segment in &stream.segments {
+        match segment {
+            crate::sim::ir::IrStreamSegment::String(value) => {
+                collect_string_effects(ir, value, effects, visited_calls)
+            }
+            crate::sim::ir::IrStreamSegment::Nested(inner) => {
+                collect_bit_stream_effects(ir, inner, effects, visited_calls)
+            }
+            crate::sim::ir::IrStreamSegment::Packed(_)
+            | crate::sim::ir::IrStreamSegment::Container { .. } => {}
+        }
+    }
+    stream.expressions(&mut |expression| {
+        collect_expression_effects(ir, expression, effects, visited_calls)
+    });
+}
+
 fn collect_string_effects(
     ir: &IrModel,
     value: &IrStringExpr,
@@ -2113,6 +2147,9 @@ fn collect_string_effects(
     visited_calls: &mut CallVisits,
 ) {
     match value {
+        IrStringExpr::BitStream { stream, .. } => {
+            collect_bit_stream_effects(ir, stream, effects, visited_calls)
+        }
         IrStringExpr::Conditional {
             predicate,
             then,

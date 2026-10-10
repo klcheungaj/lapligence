@@ -134,7 +134,7 @@ pub(in crate::sim) fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrEx
         | IrExprKind::Convert { a }
         | IrExprKind::BitStreamCast { a, .. }
         | IrExprKind::ToTwoState { a }
-        | IrExprKind::StreamToFixed { a } => walk_expr_mut(a, f),
+        | IrExprKind::StreamToFixed { a, .. } => walk_expr_mut(a, f),
         IrExprKind::CastToReal { a, .. } => walk_expr_mut(a, f),
         IrExprKind::Mux { sel, a, b }
         | IrExprKind::ArrayMux { sel, a, b, .. }

@@ -347,12 +347,346 @@ impl<'a> Codegen<'a> {
         )
     }
 
+    /// Whether a streaming operand or bit-stream cast source has a size known
+    /// only at run time and so streams through a runtime-sized bit stream: a
+    /// string, a resizable container, or a streaming concatenation with such
+    /// an operand.
+    pub(in super::super) fn is_runtime_stream_source(&self, path: &str, node: NodeId) -> bool {
+        if self.container_of(node).is_some()
+            || self.is_string_expr(path, node)
+            || self.native_record_stream_leaves(node).is_some()
+        {
+            return true;
+        }
+        if let NodeKind::Expr(ExprKind::Streaming { streams, .. }) = self.kind(node) {
+            return streams
+                .iter()
+                .any(|stream| self.is_runtime_stream_source(path, stream.value));
+        }
+        self.query_descriptor(node).is_some_and(|descriptor| {
+            matches!(
+                descriptor.shape,
+                TypeShape::String | TypeShape::Container { .. }
+            )
+        })
+    }
+
+    /// Lower a streaming concatenation into a runtime-sized bit stream whose
+    /// length is not bounded by the packed value width. `None` means `node`
+    /// is not a streaming concatenation.
+    pub(in super::super) fn lower_bit_stream(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrBitStream>, String> {
+        let NodeKind::Expr(ExprKind::Streaming {
+            direction,
+            slice_size,
+            streams,
+        }) = self.kind(node)
+        else {
+            return Ok(None);
+        };
+        let (direction, slice_size, streams) = (*direction, *slice_size, streams.clone());
+        if streams.is_empty() {
+            return Err(format!("empty streaming concatenation in `{path}`"));
+        }
+        let mut segments = Vec::with_capacity(streams.len());
+        for stream in streams {
+            segments.push(self.lower_stream_segment(path, stream.value, stream.with_expr)?);
+        }
+        Ok(Some(IrBitStream {
+            segments,
+            slice: Self::stream_slice(path, slice_size)?,
+            direction: match direction {
+                DbStreamingDirection::LeftToRight => IrStreamDirection::LeftToRight,
+                DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
+            },
+            unpack: None,
+        }))
+    }
+
+    /// A bit stream of one bit-stream cast source (SV 6.24.3).
+    pub(in super::super) fn lower_bit_stream_source(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<IrBitStream, String> {
+        if let Some(stream) = self.lower_bit_stream(path, node)? {
+            return Ok(stream);
+        }
+        Ok(IrBitStream {
+            segments: vec![self.lower_stream_segment(path, node, None)?],
+            slice: 1,
+            direction: IrStreamDirection::LeftToRight,
+            unpack: None,
+        })
+    }
+
+    pub(in super::super) fn stream_slice(path: &str, slice_size: u64) -> Result<u32, String> {
+        if slice_size == 0 {
+            return Ok(1);
+        }
+        u32::try_from(slice_size)
+            .map_err(|_| format!("streaming slice size is too large in `{path}`"))
+    }
+
+    /// Leaves of a module or static unpacked struct that has string or
+    /// resizable container members, in declaration order (SV 11.4.14.1
+    /// streams struct members in turn). `None` for every other operand.
+    fn native_record_stream_leaves(&self, node: NodeId) -> Option<Vec<AggregateMemberInfo>> {
+        let (_, aggregate) = self.unpacked_aggregate_info(node)?;
+        if aggregate.kind != AggregateKind::UnpackedStruct
+            || !aggregate
+                .leaves
+                .iter()
+                .any(|leaf| leaf.object.is_some() || leaf.container.is_some())
+        {
+            return None;
+        }
+        Some(aggregate.leaves)
+    }
+
+    /// The members of a struct with string or resizable members as one
+    /// nested stream of its leaves.
+    fn native_record_stream(
+        &mut self,
+        path: &str,
+        leaves: Vec<AggregateMemberInfo>,
+    ) -> Result<IrStreamSegment, String> {
+        let mut segments = Vec::with_capacity(leaves.len());
+        for leaf in leaves {
+            let segment = if let Some(object) = leaf.object {
+                if self.model.objects.get(object).map(|object| object.ty)
+                    != Some(IrObjectType::String)
+                {
+                    return Err(format!(
+                        "streaming struct member `{}` is not a bit-stream type in `{path}`",
+                        aggregate_path_suffix(&leaf.path)
+                    ));
+                }
+                IrStreamSegment::String(IrStringExpr::Read(object))
+            } else if let Some(container) = &leaf.container {
+                let info = self.model.containers.get(container.ir).ok_or_else(|| {
+                    format!("streaming struct member container is out of bounds in `{path}`")
+                })?;
+                if !info.element.is_packed() {
+                    return Err(format!(
+                        "streaming struct member `{}` with nested container, string or record elements is not supported in `{path}`",
+                        aggregate_path_suffix(&leaf.path)
+                    ));
+                }
+                IrStreamSegment::Container {
+                    container: container.ir,
+                    selector: None,
+                }
+            } else {
+                let value = self.aggregate_leaf_read(&leaf)?;
+                if value.is_real() {
+                    return Err(format!(
+                        "streaming struct member `{}` is real in `{path}`",
+                        aggregate_path_suffix(&leaf.path)
+                    ));
+                }
+                IrStreamSegment::Packed(value)
+            };
+            segments.push(segment);
+        }
+        Ok(IrStreamSegment::Nested(Box::new(IrBitStream {
+            segments,
+            slice: 1,
+            direction: IrStreamDirection::LeftToRight,
+            unpack: None,
+        })))
+    }
+
+    /// One operand of a runtime-sized bit stream, in stream order.
+    fn lower_stream_segment(
+        &mut self,
+        path: &str,
+        value: NodeId,
+        with_node: Option<NodeId>,
+    ) -> Result<IrStreamSegment, String> {
+        if with_node.is_none() {
+            if let Some(stream) = self.lower_bit_stream(path, value)? {
+                return Ok(IrStreamSegment::Nested(Box::new(stream)));
+            }
+        }
+        if let Some(container) = self.container_of(value) {
+            let info = self
+                .model
+                .containers
+                .get(container.ir)
+                .ok_or_else(|| format!("streaming container is out of bounds in `{path}`"))?;
+            if !info.element.is_packed() {
+                return Err(format!(
+                    "streaming operand with nested container, string or record elements is not supported in `{path}`"
+                ));
+            }
+            let associative = matches!(info.kind, IrContainerKind::Associative { .. });
+            if associative && with_node.is_some() {
+                return Err(format!(
+                    "streaming `with` selector requires a one-dimensional unpacked array in `{path}`"
+                ));
+            }
+            let selector = with_node
+                .map(|node| self.lower_stream_selector(path, node))
+                .transpose()?;
+            return Ok(IrStreamSegment::Container {
+                container: container.ir,
+                selector,
+            });
+        }
+        if with_node.is_none() {
+            if let Some(leaves) = self.native_record_stream_leaves(value) {
+                return self.native_record_stream(path, leaves);
+            }
+        }
+        if self.is_string_expr(path, value)
+            || self
+                .query_descriptor(value)
+                .is_some_and(|descriptor| descriptor.shape == TypeShape::String)
+        {
+            if with_node.is_some() {
+                return Err(format!(
+                    "streaming `with` selector requires a one-dimensional unpacked array in `{path}`"
+                ));
+            }
+            return Ok(IrStreamSegment::String(self.lower_string(path, value)?));
+        }
+        if self.query_descriptor(value).is_some_and(
+            |descriptor| matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "Class"),
+        ) {
+            return Err(format!(
+                "streaming a class object's members is not supported in `{path}`"
+            ));
+        }
+        if self
+            .query_descriptor(value)
+            .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::Container { .. }))
+        {
+            return Err(format!(
+                "streaming operand that is a resizable container without its own storage (a member, element or call result) is not supported in `{path}`"
+            ));
+        }
+        let value = self.lower_stream_operand(path, value, with_node)?;
+        if value.is_real() {
+            return Err(format!(
+                "streaming concatenation of real value in `{path}` is not supported"
+            ));
+        }
+        Ok(IrStreamSegment::Packed(value))
+    }
+
+    /// Bit-stream cast of a dynamically sized source (a resizable container,
+    /// or a string cast to an unpacked type) to a fixed-size type (`cast`):
+    /// the sizes must match, which is known only at run time (SV 6.24.3).
+    /// `None` leaves every other cast to the caller.
+    pub(in super::super) fn lower_dynamic_bitstream_cast(
+        &mut self,
+        path: &str,
+        cast: NodeId,
+        operand: NodeId,
+        ty: &TypeInfo,
+        two_state: bool,
+    ) -> Result<Option<IrExpr>, String> {
+        if matches!(
+            self.kind(operand),
+            NodeKind::Expr(ExprKind::Streaming { .. })
+        ) {
+            return Ok(None);
+        }
+        let unpacked_target = self.query_descriptor(cast).is_some_and(|descriptor| {
+            matches!(
+                descriptor.shape,
+                TypeShape::FixedArray { .. } | TypeShape::Aggregate(_)
+            )
+        });
+        let container = self.container_of(operand).is_some()
+            || self.native_record_stream_leaves(operand).is_some()
+            || self
+                .query_descriptor(operand)
+                .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::Container { .. }));
+        let string = self.is_string_expr(path, operand)
+            || self
+                .query_descriptor(operand)
+                .is_some_and(|descriptor| descriptor.shape == TypeShape::String);
+        // A string cast to an integral type is a string conversion, not a
+        // bit-stream cast (SV 6.16).
+        if !container && !(string && unpacked_target) {
+            return Ok(None);
+        }
+        let width = self
+            .fixed_value_width(cast)
+            .or(ty.width)
+            .filter(|width| *width > 0 && *width < LLG_MAX_WIDTH)
+            .ok_or_else(|| {
+                format!("bit-stream cast target has no supported fixed size in `{path}`")
+            })?;
+        let stream = self.lower_bit_stream_source(path, operand)?;
+        let value = IrExpr::new(
+            IrExprKind::StreamToFixed {
+                a: Box::new(Self::bit_stream_value(stream)),
+                exact: true,
+            },
+            width,
+            !unpacked_target && ty.signed,
+            None,
+        );
+        let value = if two_state || is_two_state_kind(&ty.kind) {
+            IrExpr::to_two_state(value)
+        } else {
+            value
+        };
+        self.convert_fixed_payload(cast, value).map(Some)
+    }
+
+    /// A runtime-sized bit stream as one packed value of runtime width.
+    fn bit_stream_value(stream: IrBitStream) -> IrExpr {
+        IrExpr::new(
+            IrExprKind::Container(Box::new(IrContainerExpr::BitStream(Box::new(stream)))),
+            LLG_MAX_WIDTH,
+            false,
+            None,
+        )
+    }
+
     pub(in super::super) fn lower_stream_operand(
         &mut self,
         path: &str,
         value_node: NodeId,
         with_node: Option<NodeId>,
     ) -> Result<IrExpr, String> {
+        // Strings and associative arrays have no packed stream form of their
+        // own; they stream through a runtime-sized bit stream.
+        let associative = self.container_of(value_node).is_some_and(|container| {
+            self.model
+                .containers
+                .get(container.ir)
+                .is_some_and(|info| matches!(info.kind, IrContainerKind::Associative { .. }))
+        });
+        let string = self.container_of(value_node).is_none()
+            && (self.is_string_expr(path, value_node)
+                || self
+                    .query_descriptor(value_node)
+                    .is_some_and(|descriptor| descriptor.shape == TypeShape::String));
+        if self.query_descriptor(value_node).is_some_and(
+            |descriptor| matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "Class"),
+        ) {
+            return Err(format!(
+                "streaming a class object's members is not supported in `{path}`"
+            ));
+        }
+        let record = with_node.is_none() && self.native_record_stream_leaves(value_node).is_some();
+        if associative || string || record {
+            let segment = self.lower_stream_segment(path, value_node, with_node)?;
+            return Ok(Self::bit_stream_value(IrBitStream {
+                segments: vec![segment],
+                slice: 1,
+                direction: IrStreamDirection::LeftToRight,
+                unpack: None,
+            }));
+        }
         if let Some(container) = self.container_of(value_node) {
             let element = self
                 .model

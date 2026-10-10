@@ -34,7 +34,7 @@ fn ident_children(e: &mut IrExpr) {
         | IrExprKind::Resize { a }
         | IrExprKind::Convert { a }
         | IrExprKind::ToTwoState { a }
-        | IrExprKind::StreamToFixed { a } => ident_expr(a),
+        | IrExprKind::StreamToFixed { a, .. } => ident_expr(a),
         IrExprKind::CastToReal { a, .. } => ident_expr(a),
         IrExprKind::Mux { sel, a, b }
         | IrExprKind::ArrayMux { sel, a, b, .. }

@@ -1441,6 +1441,11 @@ impl<'a> Codegen<'a> {
                         None,
                     ));
                 }
+                if let Some(value) =
+                    self.lower_dynamic_bitstream_cast(scope_path, h, *operand, ty, *two_state)?
+                {
+                    return Ok(value);
+                }
                 let bitstream_source = self.lower_bitstream_source(scope_path, *operand)?;
                 let source_value = match &bitstream_source {
                     Some(value) => value.clone(),
@@ -1493,7 +1498,15 @@ impl<'a> Codegen<'a> {
                     && w < LLG_MAX_WIDTH
                 {
                     let aligned =
-                        IrExpr::new(IrExprKind::StreamToFixed { a: Box::new(v) }, w, s, None);
+                        IrExpr::new(
+                        IrExprKind::StreamToFixed {
+                            a: Box::new(v),
+                            exact: false,
+                        },
+                        w,
+                        s,
+                        None,
+                    );
                     let aligned = if *two_state || is_two_state_kind(&ty.kind) {
                         IrExpr::to_two_state(aligned)
                     } else {

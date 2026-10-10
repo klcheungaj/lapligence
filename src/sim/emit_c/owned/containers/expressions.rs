@@ -28,6 +28,9 @@ pub(super) fn render(
                 matches!(direction, IrStreamDirection::RightToLeft) as u8
             )
         }
+        IrContainerExpr::BitStream(_) => {
+            return Err("bit stream values are emitted by the frame".into())
+        }
         IrContainerExpr::Size(index) => {
             let method = match ctx.model.containers[*index].kind {
                 IrContainerKind::Dynamic => {
