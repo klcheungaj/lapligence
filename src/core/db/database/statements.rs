@@ -26,6 +26,11 @@ pub enum StmtKind {
         if_true: Option<NodeId>,
         if_false: Option<NodeId>,
         label: String,
+        /// The `default disable iff` condition in effect for this assertion
+        /// statement (IEEE 1800-2009 16.16 b)), never set for `expect`. An
+        /// explicit `disable iff` in the property overrides it (16.16 a)).
+        /// One expression node is shared by every assertion it covers.
+        default_disable: Option<NodeId>,
     },
     /// An ordered predicate and role-resolved branches. Structural children
     /// are not a positional condition/then/else tuple (a predicate can have

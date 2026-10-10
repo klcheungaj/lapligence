@@ -670,7 +670,11 @@ fn sequential_predicate_pattern_edge_decodes_and_unknown_roles_still_fail() {
         .semantic_edges;
     assert_eq!(decoded[0].role, SemanticEdgeRole::ConditionPattern);
     assert_eq!(decoded[0].index, 2);
-    let message = invalid_native_message(stream(&tables(edge(39, 2, 0))));
+    let decoded = stream(&tables(edge(39, 0, 0)))
+        .expect("default disable role (ABI 19)")
+        .semantic_edges;
+    assert_eq!(decoded[0].role, SemanticEdgeRole::DefaultDisable);
+    let message = invalid_native_message(stream(&tables(edge(40, 2, 0))));
     assert!(message.contains("unknown role"), "{message}");
 }
 

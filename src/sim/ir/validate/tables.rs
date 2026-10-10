@@ -450,7 +450,7 @@ impl Validator<'_> {
                     "sequence assertion cannot mix direct and automaton expressions",
                 );
             }
-            if !has_sequence && assertion.consequent.is_none() {
+            if !has_sequence && assertion.consequent.is_none() && assertion.property.is_none() {
                 return self.fail(&path, "direct assertion must have a consequent expression");
             }
             for (name, sequence) in [
@@ -464,242 +464,45 @@ impl Validator<'_> {
                 ),
             ] {
                 let Some(sequence) = sequence else { continue };
-                if sequence.states == 0
-                    || sequence.start >= sequence.states
-                    || sequence.accept >= sequence.states
+                self.validate_assertion_sequence(assertion, &path, name, sequence)?;
+            }
+            if let Some(property) = &assertion.property {
+                if has_sequence || assertion.antecedent.is_some() || assertion.consequent.is_some()
                 {
                     return self.fail(
-                        format!("{path}.{name}"),
-                        "sequence automaton has invalid state or transition storage",
+                        &path,
+                        "property assertion cannot mix a property program with direct or sequence forms",
                     );
                 }
-                for (label, clock) in [
-                    ("leading_clock", sequence.leading_clock),
-                    ("trailing_clock", sequence.trailing_clock),
-                ] {
-                    if let Some(clock) = clock {
-                        if self
-                            .model
-                            .signals
-                            .get(clock)
-                            .is_none_or(|signal| signal.omit || signal.ty.width() == 0)
-                        {
-                            return self.fail(
-                                format!("{path}.{name}.{label}"),
-                                "sequence clock must be active packed storage",
-                            );
-                        }
-                    }
-                }
-                if sequence.initializer_slots.len() != sequence.initializers.len()
-                    || sequence
-                        .initializer_slots
-                        .iter()
-                        .any(|slot| *slot as usize >= sequence.locals.len())
-                {
-                    return Err(IrValidationError::new(
-                        format!("{path}.{name}.initializer_slots"),
-                        "invalid initializer slot",
-                    ));
-                }
-                if !sequence.first_match_states.is_empty() {
-                    return self.fail(
-                        format!("{path}.{name}.first_match_states"),
-                        "first_match requires scoped transitions",
-                    );
-                }
-                let mut declarations = std::collections::HashSet::new();
-                for local in &sequence.locals {
-                    if local.declaration == 0 || !declarations.insert(local.declaration) {
-                        return self.fail(
-                            format!("{path}.{name}.locals"),
-                            "invalid or duplicate local declaration identity",
-                        );
-                    }
-                }
-                let mut entries = std::collections::HashSet::new();
-                let mut exits = std::collections::HashSet::new();
-                for transition in &sequence.transitions {
-                    if transition.enter_scope.is_some() && transition.exit_scope.is_some() {
-                        return self.fail(
-                            format!("{path}.{name}.scope"),
-                            "one edge cannot both enter and exit a scope",
-                        );
-                    }
-                    for (scope, set) in [
-                        (transition.enter_scope, &mut entries),
-                        (transition.exit_scope, &mut exits),
-                    ] {
-                        if let Some(scope) = scope {
-                            if scope == 0 {
-                                return self.fail(
-                                    format!("{path}.{name}.scope"),
-                                    "zero scope identity is reserved",
-                                );
-                            }
-                            set.insert(scope);
-                        }
-                    }
-                }
-                if entries != exits {
-                    return self.fail(format!("{path}.{name}.scope"), "unpaired first_match scope");
-                }
-                crate::sim::ir::assertions::validate_sequence_joins(
-                    sequence.states,
-                    &sequence.transitions,
-                    &sequence.joins,
-                )?;
-                for (transition_index, transition) in sequence.transitions.iter().enumerate() {
-                    if transition.from >= sequence.states || transition.to >= sequence.states {
-                        return self.fail(
-                            format!("{path}.{name}.transitions[{transition_index}]"),
-                            "sequence transition state is out of bounds",
-                        );
-                    }
-                    if transition
-                        .delay
-                        .max
-                        .is_some_and(|max| max < transition.delay.min)
+                property.validate_shape().map_err(|error| {
+                    IrValidationError::new(format!("{path}.{}", error.path()), error.detail())
+                })?;
+                for (index, sequence) in property.sequences.iter().enumerate() {
+                    let name = format!("property.sequences[{index}]");
+                    self.validate_assertion_sequence(assertion, &path, &name, sequence)?;
+                    let on_clock = |clock: Option<usize>, posedge: bool| {
+                        clock.is_none_or(|clock| {
+                            clock == assertion.clock_signal && posedge == assertion.posedge
+                        })
+                    };
+                    if !on_clock(sequence.leading_clock, sequence.leading_posedge)
+                        || !on_clock(sequence.trailing_clock, sequence.trailing_posedge)
+                        || sequence.transitions.iter().any(|transition| {
+                            !on_clock(transition.clock_signal, transition.clock_posedge)
+                        })
                     {
                         return self.fail(
-                            format!("{path}.{name}.transitions[{transition_index}].delay"),
-                            "sequence transition delay range is inverted",
+                            format!("{path}.{name}"),
+                            "property-program sequences run on the assertion clock only",
                         );
-                    }
-                    if let Some(clock_signal) = transition.clock_signal {
-                        let Some(clock) = self.model.signals.get(clock_signal) else {
-                            return self.fail(
-                                format!(
-                                    "{path}.{name}.transitions[{transition_index}].clock_signal"
-                                ),
-                                "sequence transition clock signal is out of bounds",
-                            );
-                        };
-                        if clock.omit || clock.ty.width() == 0 {
-                            return self.fail(
-                                format!(
-                                    "{path}.{name}.transitions[{transition_index}].clock_signal"
-                                ),
-                                "sequence transition clock must be active packed storage",
-                            );
-                        }
-                    }
-                    if transition
-                        .atom
-                        .is_some_and(|atom| atom as usize >= sequence.atoms.len())
-                    {
-                        return self.fail(
-                            format!("{path}.{name}.transitions[{transition_index}].atom"),
-                            "sequence transition atom is out of bounds",
-                        );
-                    }
-                    match (transition.match_start, transition.match_count) {
-                        (None, 0) => {}
-                        (Some(start), count) => {
-                            let Some(end) = start.checked_add(count) else {
-                                return self.fail(
-                                    format!(
-                                        "{path}.{name}.transitions[{transition_index}].match_count"
-                                    ),
-                                    "sequence match-item range overflows",
-                                );
-                            };
-                            if end as usize > sequence.match_items.len() {
-                                return self.fail(
-                                    format!(
-                                        "{path}.{name}.transitions[{transition_index}].match_start"
-                                    ),
-                                    "sequence match-item range is out of bounds",
-                                );
-                            }
-                        }
-                        (None, _) => {
-                            return self.fail(
-                                format!(
-                                    "{path}.{name}.transitions[{transition_index}].match_count"
-                                ),
-                                "non-empty sequence match-item range has no start",
-                            );
-                        }
                     }
                 }
-                for (atom_index, atom) in sequence.atoms.iter().enumerate() {
-                    self.validate_expr(atom, &[], &format!("{path}.{name}.atoms[{atom_index}]"))?;
+                for (index, atom) in property.atoms.iter().enumerate() {
+                    self.validate_expr(atom, &[], &format!("{path}.property.atoms[{index}]"))?;
                     if atom.is_real() {
                         return self.fail(
-                            format!("{path}.{name}.atoms[{atom_index}]"),
-                            "sequence atom must be packed",
-                        );
-                    }
-                }
-                for (local_index, local) in sequence.locals.iter().enumerate() {
-                    if local.width == 0 {
-                        return self.fail(
-                            format!("{path}.{name}.locals[{local_index}].width"),
-                            "local assertion variable must have a packed width",
-                        );
-                    }
-                }
-                let root_domain = (assertion.clock_signal, assertion.posedge);
-                let leading_domain = sequence
-                    .leading_clock
-                    .map(|clock| (clock, sequence.leading_posedge))
-                    .unwrap_or(root_domain);
-                let mut outgoing = std::collections::HashMap::new();
-                for (index, transition) in sequence.transitions.iter().enumerate() {
-                    outgoing
-                        .entry(transition.from)
-                        .or_insert_with(Vec::new)
-                        .push((index, transition));
-                }
-                let mut pending = vec![(sequence.start, leading_domain)];
-                let mut reached = std::collections::HashSet::new();
-                while let Some((state, from_domain)) = pending.pop() {
-                    if !reached.insert((state, from_domain)) {
-                        continue;
-                    }
-                    for (index, transition) in outgoing.get(&state).into_iter().flatten() {
-                        let to_domain = transition
-                            .clock_signal
-                            .map(|clock| (clock, transition.clock_posedge))
-                            .unwrap_or(root_domain);
-                        if from_domain != to_domain
-                            && !matches!(
-                                (transition.delay.min, transition.delay.max),
-                                (0, Some(0)) | (1, Some(1))
-                            )
-                        {
-                            return self.fail(
-                                format!("{path}.{name}.transitions[{index}].delay"),
-                                "cross-clock sequence boundaries require an exact ##0 or ##1 delay",
-                            );
-                        }
-                        pending.push((transition.to, to_domain));
-                    }
-                }
-                for (item_index, item) in sequence.match_items.iter().enumerate() {
-                    self.validate_expr(
-                        item,
-                        &[],
-                        &format!("{path}.{name}.match_items[{item_index}]"),
-                    )?;
-                    if item.is_real() {
-                        return self.fail(
-                            format!("{path}.{name}.match_items[{item_index}]"),
-                            "sequence match item must be a packed expression",
-                        );
-                    }
-                }
-                for (initializer_index, initializer) in sequence.initializers.iter().enumerate() {
-                    self.validate_expr(
-                        initializer,
-                        &[],
-                        &format!("{path}.{name}.initializers[{initializer_index}]"),
-                    )?;
-                    if initializer.is_real() {
-                        return self.fail(
-                            format!("{path}.{name}.initializers[{initializer_index}]"),
-                            "sequence local initializer must be packed",
+                            format!("{path}.property.atoms[{index}]"),
+                            "property atom must be packed",
                         );
                     }
                 }
@@ -1181,6 +984,246 @@ impl Validator<'_> {
                 "final_spawns",
                 format!("process `{name}` is registered as both normal and final"),
             );
+        }
+        Ok(())
+    }
+    /// Checks shared by every automaton an assertion owns: the antecedent and
+    /// consequent graphs and the sequences of a property program.
+    fn validate_assertion_sequence(
+        &self,
+        assertion: &crate::sim::ir::IrAssertion,
+        path: &str,
+        name: &str,
+        sequence: &crate::sim::ir::IrSequence,
+    ) -> Result<(), IrValidationError> {
+        if sequence.states == 0
+            || sequence.start >= sequence.states
+            || sequence.accept >= sequence.states
+        {
+            return self.fail(
+                format!("{path}.{name}"),
+                "sequence automaton has invalid state or transition storage",
+            );
+        }
+        for (label, clock) in [
+            ("leading_clock", sequence.leading_clock),
+            ("trailing_clock", sequence.trailing_clock),
+        ] {
+            if let Some(clock) = clock {
+                if self
+                    .model
+                    .signals
+                    .get(clock)
+                    .is_none_or(|signal| signal.omit || signal.ty.width() == 0)
+                {
+                    return self.fail(
+                        format!("{path}.{name}.{label}"),
+                        "sequence clock must be active packed storage",
+                    );
+                }
+            }
+        }
+        if sequence.initializer_slots.len() != sequence.initializers.len()
+            || sequence
+                .initializer_slots
+                .iter()
+                .any(|slot| *slot as usize >= sequence.locals.len())
+        {
+            return Err(IrValidationError::new(
+                format!("{path}.{name}.initializer_slots"),
+                "invalid initializer slot",
+            ));
+        }
+        if !sequence.first_match_states.is_empty() {
+            return self.fail(
+                format!("{path}.{name}.first_match_states"),
+                "first_match requires scoped transitions",
+            );
+        }
+        let mut declarations = std::collections::HashSet::new();
+        for local in &sequence.locals {
+            if local.declaration == 0 || !declarations.insert(local.declaration) {
+                return self.fail(
+                    format!("{path}.{name}.locals"),
+                    "invalid or duplicate local declaration identity",
+                );
+            }
+        }
+        let mut entries = std::collections::HashSet::new();
+        let mut exits = std::collections::HashSet::new();
+        for transition in &sequence.transitions {
+            if transition.enter_scope.is_some() && transition.exit_scope.is_some() {
+                return self.fail(
+                    format!("{path}.{name}.scope"),
+                    "one edge cannot both enter and exit a scope",
+                );
+            }
+            for (scope, set) in [
+                (transition.enter_scope, &mut entries),
+                (transition.exit_scope, &mut exits),
+            ] {
+                if let Some(scope) = scope {
+                    if scope == 0 {
+                        return self.fail(
+                            format!("{path}.{name}.scope"),
+                            "zero scope identity is reserved",
+                        );
+                    }
+                    set.insert(scope);
+                }
+            }
+        }
+        if entries != exits {
+            return self.fail(format!("{path}.{name}.scope"), "unpaired first_match scope");
+        }
+        crate::sim::ir::assertions::validate_sequence_joins(
+            sequence.states,
+            &sequence.transitions,
+            &sequence.joins,
+        )?;
+        for (transition_index, transition) in sequence.transitions.iter().enumerate() {
+            if transition.from >= sequence.states || transition.to >= sequence.states {
+                return self.fail(
+                    format!("{path}.{name}.transitions[{transition_index}]"),
+                    "sequence transition state is out of bounds",
+                );
+            }
+            if transition
+                .delay
+                .max
+                .is_some_and(|max| max < transition.delay.min)
+            {
+                return self.fail(
+                    format!("{path}.{name}.transitions[{transition_index}].delay"),
+                    "sequence transition delay range is inverted",
+                );
+            }
+            if let Some(clock_signal) = transition.clock_signal {
+                let Some(clock) = self.model.signals.get(clock_signal) else {
+                    return self.fail(
+                        format!("{path}.{name}.transitions[{transition_index}].clock_signal"),
+                        "sequence transition clock signal is out of bounds",
+                    );
+                };
+                if clock.omit || clock.ty.width() == 0 {
+                    return self.fail(
+                        format!("{path}.{name}.transitions[{transition_index}].clock_signal"),
+                        "sequence transition clock must be active packed storage",
+                    );
+                }
+            }
+            if transition
+                .atom
+                .is_some_and(|atom| atom as usize >= sequence.atoms.len())
+            {
+                return self.fail(
+                    format!("{path}.{name}.transitions[{transition_index}].atom"),
+                    "sequence transition atom is out of bounds",
+                );
+            }
+            match (transition.match_start, transition.match_count) {
+                (None, 0) => {}
+                (Some(start), count) => {
+                    let Some(end) = start.checked_add(count) else {
+                        return self.fail(
+                            format!("{path}.{name}.transitions[{transition_index}].match_count"),
+                            "sequence match-item range overflows",
+                        );
+                    };
+                    if end as usize > sequence.match_items.len() {
+                        return self.fail(
+                            format!("{path}.{name}.transitions[{transition_index}].match_start"),
+                            "sequence match-item range is out of bounds",
+                        );
+                    }
+                }
+                (None, _) => {
+                    return self.fail(
+                        format!("{path}.{name}.transitions[{transition_index}].match_count"),
+                        "non-empty sequence match-item range has no start",
+                    );
+                }
+            }
+        }
+        for (atom_index, atom) in sequence.atoms.iter().enumerate() {
+            self.validate_expr(atom, &[], &format!("{path}.{name}.atoms[{atom_index}]"))?;
+            if atom.is_real() {
+                return self.fail(
+                    format!("{path}.{name}.atoms[{atom_index}]"),
+                    "sequence atom must be packed",
+                );
+            }
+        }
+        for (local_index, local) in sequence.locals.iter().enumerate() {
+            if local.width == 0 {
+                return self.fail(
+                    format!("{path}.{name}.locals[{local_index}].width"),
+                    "local assertion variable must have a packed width",
+                );
+            }
+        }
+        let root_domain = (assertion.clock_signal, assertion.posedge);
+        let leading_domain = sequence
+            .leading_clock
+            .map(|clock| (clock, sequence.leading_posedge))
+            .unwrap_or(root_domain);
+        let mut outgoing = std::collections::HashMap::new();
+        for (index, transition) in sequence.transitions.iter().enumerate() {
+            outgoing
+                .entry(transition.from)
+                .or_insert_with(Vec::new)
+                .push((index, transition));
+        }
+        let mut pending = vec![(sequence.start, leading_domain)];
+        let mut reached = std::collections::HashSet::new();
+        while let Some((state, from_domain)) = pending.pop() {
+            if !reached.insert((state, from_domain)) {
+                continue;
+            }
+            for (index, transition) in outgoing.get(&state).into_iter().flatten() {
+                let to_domain = transition
+                    .clock_signal
+                    .map(|clock| (clock, transition.clock_posedge))
+                    .unwrap_or(root_domain);
+                if from_domain != to_domain
+                    && !matches!(
+                        (transition.delay.min, transition.delay.max),
+                        (0, Some(0)) | (1, Some(1))
+                    )
+                {
+                    return self.fail(
+                        format!("{path}.{name}.transitions[{index}].delay"),
+                        "cross-clock sequence boundaries require an exact ##0 or ##1 delay",
+                    );
+                }
+                pending.push((transition.to, to_domain));
+            }
+        }
+        for (item_index, item) in sequence.match_items.iter().enumerate() {
+            self.validate_expr(
+                item,
+                &[],
+                &format!("{path}.{name}.match_items[{item_index}]"),
+            )?;
+            if item.is_real() {
+                return self.fail(
+                    format!("{path}.{name}.match_items[{item_index}]"),
+                    "sequence match item must be a packed expression",
+                );
+            }
+        }
+        for (initializer_index, initializer) in sequence.initializers.iter().enumerate() {
+            self.validate_expr(
+                initializer,
+                &[],
+                &format!("{path}.{name}.initializers[{initializer_index}]"),
+            )?;
+            if initializer.is_real() {
+                return self.fail(
+                    format!("{path}.{name}.initializers[{initializer_index}]"),
+                    "sequence local initializer must be packed",
+                );
+            }
         }
         Ok(())
     }

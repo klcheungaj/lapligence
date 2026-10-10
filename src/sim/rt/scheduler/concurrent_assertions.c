@@ -1,3 +1,7 @@
+struct llg_property_inst;
+static void run_property_assertion(llg_concurrent_assertion_t* assertion,
+                                   const llg_assertion_clock_event_t* event, int root_event);
+static void property_assertions_async(void);
 
 static void assertion_action(llg_concurrent_assertion_t* assertion,
                              const llg_co_desc_t* desc) {
@@ -48,7 +52,9 @@ static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
             if (assertion->fail_desc) {
                 // Even an explicit null else is a generated action function.
                 assertion_action(assertion, assertion->fail_desc);
-            } else {
+            } else if (!(assertion->kind == LLG_ASSERTION_EXPECT &&
+                         assertion->expect_has_fail)) {
+                // An expect's else arm runs inline in its resumed caller.
                 (void)llg_schedule_region_callback(
                     LLG_REGION_REACTIVE, assertion_default_failure_action,
                     assertion);
@@ -57,6 +63,7 @@ static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
     }
     if (assertion->kind == LLG_ASSERTION_EXPECT && assertion->expect_active) {
         assertion->expect_active = 0;
+        assertion->expect_outcome = success ? 1 : 2;
         wake_assertion_waiter(assertion->identity);
     }
 }
@@ -66,6 +73,11 @@ static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
  * (16.18); every other assertion starts one per event. */
 static int assertion_attempt_starts(llg_concurrent_assertion_t* assertion) {
     if (!assertion->enabled) return 0;
+    if (assertion->single_attempt) {
+        if (assertion->single_attempt_started) return 0;
+        assertion->single_attempt_started = 1;
+        return 1;
+    }
     if (assertion->kind != LLG_ASSERTION_EXPECT) return 1;
     if (!assertion->expect_active || assertion->expect_started) return 0;
     assertion->expect_started = 1;
@@ -121,6 +133,8 @@ static void assertion_abort_attempts(llg_concurrent_assertion_t* assertion) {
 }
 
 static void assertion_abort_condition_changed(void) {
+    property_assertions_async();
+    if (g.finish) return;
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
         if ((assertion->enabled || assertion_has_attempts(assertion)) &&
@@ -207,7 +221,7 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
             // pending threads alike: transitions on this edge are the
             // leading clocking event (lowering rejects other forms).
             if (assertion->clock_gate && !assertion->clock_gate(NULL)) continue;
-            if (assertion->consequent_sequence)
+            if (assertion->consequent_sequence || assertion->property)
                 assertion_clock_event_append(assertion, signal, assertion->edge,
                                              order);
             else
@@ -396,6 +410,19 @@ static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
     if (assertion->disable && sv4_to_bool(*assertion->disable)) {
         assertion->edge_pending = 0;
         free_assertion_attempts(assertion);
+        return;
+    }
+    if (assertion->property) {
+        while (assertion->clock_events) {
+            llg_assertion_clock_event_t* event = assertion->clock_events;
+            assertion->clock_events = event->next;
+            if (!assertion->clock_events) assertion->clock_events_tail = NULL;
+            int root_event = event->signal == assertion->clock &&
+                             event->edge == assertion->edge;
+            run_property_assertion(assertion, event, root_event);
+            assertion_clock_event_recycle(event);
+            if (g.finish) return;
+        }
         return;
     }
     if (assertion->consequent_sequence) {
@@ -688,6 +715,19 @@ int llg_assertion_register_sequence_control(
     else
         g.assertions = assertion;
     g.assertion_tail = assertion;
+    return 1;
+}
+
+int llg_assertion_single_attempt(uint64_t identity) {
+    llg_concurrent_assertion_t* assertion = g.assertion_tail;
+    if (!g.initialized || g.running || g.config_error || !assertion ||
+        assertion->identity != identity || assertion->kind == LLG_ASSERTION_EXPECT) {
+        fprintf(stderr, "llg: invalid single-attempt concurrent assertion\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return 0;
+    }
+    assertion->single_attempt = 1;
     return 1;
 }
 

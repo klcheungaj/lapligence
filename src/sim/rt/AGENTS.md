@@ -463,6 +463,26 @@ registers as `LLG_ASSERTION_COVER_SEQUENCE` and reports every nonempty match
 at the clock write, 9.4.2.3); a gated-off edge appends no clock event, and the
 assertion counts gated ticks itself so `##n` delays skip gated-off edges.
 
+General property operators (`properties.c`, `llg_assertion_register_property`)
+run per attempt as a tree of instances over the static `llg_property_node_t`
+table (operands precede users; the last node is the root). Each instance
+resolves once to true/false with its 16.15.8 nonvacuity; a parent may decide
+while an operand is pending, which then counts as vacuous (decision S38-D3).
+Sequence operands reuse the sequence engine on the leading clock with their
+own zero-delay ranks. Asynchronous `accept_on`/`reject_on` are checked once per
+time step from the write hook with sampled values; synchronous ones and every
+abort are checked first on each tick. At the end of simulation
+(`run_end_of_simulation_assertions`, after deferred reports) a pending attempt
+settles by its finite-trace verdict: unmet strong obligations fail (fail
+action in an isolated Reactive pass), weak ones end without a result (S38-D1);
+`cover` and `expect` are not settled. Instances count against
+`LLG_SEQUENCE_THREAD_LIMIT` and are recycled through `g.property_inst_pool`.
+An `expect` keeps its outcome (`llg_assertion_expect_outcome`: 0 none, 1 pass,
+2 fail) for the resumed caller, which runs the action block itself; an else arm
+(`has_fail_action`) suppresses the default failure report.
+`llg_assertion_single_attempt` limits an `initial`-procedure assertion to one
+attempt (16.15.6).
+
 Sequence joins (`and`/`intersect`, and `throughout`/`within` reduced to
 `intersect`) are static graph tables: the enter edge forks one thread per
 operand with its own side frame on the scope chain; exit edges pair endpoints

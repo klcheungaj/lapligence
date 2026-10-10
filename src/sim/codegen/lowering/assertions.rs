@@ -11,6 +11,8 @@
 use std::collections::HashSet;
 
 use super::*;
+
+mod property;
 use crate::core::db::{
     AssertionBinaryOp, AssertionExprKind, AssertionRange, AssertionRepetition,
     AssertionRepetitionKind, AssertionUnaryOp, ConcurrentAssertionKind, EventSpec,
@@ -442,39 +444,73 @@ impl Codegen<'_> {
         assertion: NodeId,
     ) -> Result<(), String> {
         self.inst = inst;
-        let (kind, property, if_true, if_false, label) = match self.kind(assertion) {
+        let (kind, property, label, default_disable) = match self.kind(assertion) {
             NodeKind::Stmt(StmtKind::ConcurrentAssertion {
                 kind,
                 property,
-                if_true,
-                if_false,
                 label,
-            }) => (*kind, *property, *if_true, *if_false, label.clone()),
+                default_disable,
+                ..
+            }) => (*kind, *property, label.clone(), *default_disable),
             other => return Err(format!("node is not a concurrent assertion: {other:?}")),
         };
         let location = self.source_location(assertion);
-        let parts = self.lower_property(path, property, assertion)?;
-        let sampled_clock = SampledClock {
-            signal: parts.clock_signal,
-            posedge: parts.posedge,
-            gate: parts.clock_gate,
-        };
-        let previous_clock = self.sampled_clock;
-        self.sampled_clock = Some(sampled_clock);
-        let actions = (|| {
-            let pass = self.lower_assertion_action(inst, path, assertion, "pass", if_true)?;
-            let fail = self.lower_assertion_action(inst, path, assertion, "fail", if_false)?;
-            Ok::<_, String>((pass, fail))
-        })();
-        self.sampled_clock = previous_clock;
-        let (pass_action, fail_action) = actions?;
-        let kind = match kind {
+        let ir_kind = match kind {
             ConcurrentAssertionKind::Assert => IrConcurrentAssertionKind::Assert,
             ConcurrentAssertionKind::Assume => IrConcurrentAssertionKind::Assume,
             ConcurrentAssertionKind::Cover => IrConcurrentAssertionKind::Cover,
             ConcurrentAssertionKind::CoverSequence => IrConcurrentAssertionKind::CoverSequence,
             ConcurrentAssertionKind::Expect => IrConcurrentAssertionKind::Expect,
         };
+        if self.property_requires_engine(property) {
+            let strong_default = matches!(
+                kind,
+                ConcurrentAssertionKind::Cover
+                    | ConcurrentAssertionKind::CoverSequence
+                    | ConcurrentAssertionKind::Expect
+            );
+            let mut program =
+                self.lower_property_program(path, property, assertion, strong_default)?;
+            // 16.16 a)-b): an explicit `disable iff` wins over the default.
+            if let (None, Some(condition)) = (program.disable, default_disable) {
+                program.disable = Some(self.lower_disable_condition(path, condition)?);
+            }
+            let (pass_action, fail_action) =
+                self.lower_assertion_actions(inst, path, assertion, kind, program.clock)?;
+            let mut lowered = IrAssertion::new_property(
+                assertion.index() as u64,
+                path.to_owned(),
+                label,
+                location,
+                ir_kind,
+                program.clock.signal,
+                program.clock.posedge,
+                program.disable,
+                program.property,
+                pass_action,
+                fail_action,
+            );
+            if program.clock.gate.is_some() {
+                let gate =
+                    self.intern_sampled_clock(path, SampledClockSource::Edge(program.clock), None)?;
+                lowered = lowered.with_clock_gate(gate);
+            }
+            self.model.assertions.push(lowered);
+            return Ok(());
+        }
+        let mut parts = self.lower_property(path, property, assertion)?;
+        // 16.16 a)-b): an explicit `disable iff` wins over the default.
+        if let (None, Some(condition)) = (parts.disable_signal, default_disable) {
+            parts.disable_signal = Some(self.lower_disable_condition(path, condition)?);
+        }
+        let sampled_clock = SampledClock {
+            signal: parts.clock_signal,
+            posedge: parts.posedge,
+            gate: parts.clock_gate,
+        };
+        let (pass_action, fail_action) =
+            self.lower_assertion_actions(inst, path, assertion, kind, sampled_clock)?;
+        let kind = ir_kind;
         let abort_condition = parts.abort_condition.clone();
         let abort_reject = parts.abort_reject;
         let abort_sync = parts.abort_sync;
@@ -612,7 +648,7 @@ impl Codegen<'_> {
                 NodeKind::AssertionExpr(AssertionExprKind::DisableIff {
                     condition, expr, ..
                 }) => {
-                    let signal = self.lower_assertion_signal(path, *condition, "disable iff")?;
+                    let signal = self.lower_disable_condition(path, *condition)?;
                     match disable {
                         None => disable = Some(signal),
                         Some(existing) if existing == signal => {}
@@ -1229,6 +1265,80 @@ impl Codegen<'_> {
             ));
         };
         Ok(*signal)
+    }
+
+    /// The signal whose truth disables a concurrent assertion. `disable iff`
+    /// reads current, not sampled, values and acts asynchronously (16.12):
+    /// a direct packed signal is watched at its own writes, and any other
+    /// condition becomes a hidden one-bit net continuously driven by the
+    /// expression, shared by every assertion of the instance that names the
+    /// same condition node (a `default disable iff` names one node for all).
+    pub(super) fn lower_disable_condition(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<usize, String> {
+        if let IrExprKind::SigRead(signal) = self.lower_expr(path, node)?.kind() {
+            if matches!(
+                self.model.signals.get(*signal),
+                Some(IrSignal {
+                    fixed_default: None,
+                    ty: IrType::Packed { .. },
+                    omit: false,
+                    ..
+                })
+            ) {
+                return Ok(*signal);
+            }
+        }
+        if let Some(signal) = self.disable_conditions.get(&(self.inst, node)) {
+            return Ok(*signal);
+        }
+        let condition = self.lower_boolean_expr(path, node)?;
+        if condition.is_real() || !sampled_compatible(&condition) {
+            return Err(format!(
+                "disable iff condition must be a side-effect-free packed expression at {path}"
+            ));
+        }
+        let value = property_truth(condition);
+        let signal = self.model.signals.len();
+        self.model.signals.push(IrSignal {
+            fixed_default: None,
+            c_name: format!("llg_disable_cond_{signal}"),
+            hdl_name: None,
+            ty: IrType::Packed {
+                width: 1,
+                signed: false,
+                two_state: false,
+            },
+            net_driver: None,
+            net_alias: Vec::new(),
+            alias: None,
+            omit: false,
+        });
+        self.disable_conditions.insert((self.inst, node), signal);
+        let reads = self.collect_read_signals(path, node)?;
+        let shape = if reads.is_empty() {
+            IrShape::RunOnce
+        } else {
+            IrShape::SensLoop { reads }
+        };
+        let process_name = self.new_fn_name(path, "disable_condition");
+        self.model.processes.push(IrProcess::new_with_origin(
+            process_name,
+            format!("{path}.disable_condition"),
+            shape,
+            Vec::new(),
+            vec![IrStmt::Assign {
+                lhs: IrLhs::Whole(signal),
+                rhs: value,
+                nba: false,
+            }],
+            crate::sim::semantic::Origin::Synthetic {
+                reason: format!("disable iff condition in {path}"),
+            },
+        ));
+        Ok(signal)
     }
 
     fn lower_simple_assertion_expr(
@@ -2275,6 +2385,44 @@ impl Codegen<'_> {
         })
     }
 
+    /// Lower the pass and fail arms of a concurrent assertion to Reactive
+    /// action processes, with `clock` for sampled-value functions. A
+    /// procedural `expect` runs its action block in the calling process
+    /// instead (16.18: the block may assign the caller's automatic
+    /// variables), so only its clock is recorded here.
+    fn lower_assertion_actions(
+        &mut self,
+        inst: NodeId,
+        path: &str,
+        assertion: NodeId,
+        kind: ConcurrentAssertionKind,
+        clock: SampledClock,
+    ) -> Result<(Option<String>, Option<String>), String> {
+        if matches!(kind, ConcurrentAssertionKind::Expect) {
+            self.expect_action_clock = Some(clock);
+            return Ok((None, None));
+        }
+        let (if_true, if_false) = match self.kind(assertion) {
+            NodeKind::Stmt(StmtKind::ConcurrentAssertion {
+                if_true, if_false, ..
+            }) => (*if_true, *if_false),
+            other => return Err(format!("node is not a concurrent assertion: {other:?}")),
+        };
+        let previous_clock = self.sampled_clock.replace(clock);
+        let actions = (|| {
+            let pass = self.lower_assertion_action(inst, path, assertion, "pass", if_true)?;
+            let fail = self.lower_assertion_action(inst, path, assertion, "fail", if_false)?;
+            Ok::<_, String>((pass, fail))
+        })();
+        self.sampled_clock = previous_clock;
+        actions
+    }
+
+    /// Take the leading clock recorded for the `expect` just registered.
+    pub(super) fn take_expect_action_clock(&mut self) -> Option<SampledClock> {
+        self.expect_action_clock.take()
+    }
+
     fn lower_assertion_action(
         &mut self,
         inst: NodeId,
@@ -2288,12 +2436,9 @@ impl Codegen<'_> {
         };
         let action_path = format!("{path}.assertion[{}].{arm}", assertion.index());
         let mut ctx = EmitCtx::new(self, action_path.clone(), inst, "0", None, None, false);
+        // Each action runs as its own spawned process (16.14.1 action blocks
+        // are procedural code); timing controls suspend only that process.
         let body = ctx.lower_stmt(statement)?;
-        if ctx.saw_wait {
-            return Err(format!(
-                "timing control is not supported in concurrent assertion {arm} action at {action_path}"
-            ));
-        }
         let mut pre_fns = std::mem::take(&mut ctx.pre_fns);
         pre_fns.extend(std::mem::take(&mut self.pending_container_pre_fns));
         let writes = self.ir_process_writes(self.collect_process_writes(statement)?);

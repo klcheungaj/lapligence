@@ -1,5 +1,6 @@
 //! Concurrent predicates, sequence-local mutations and sampled history callbacks.
 use super::*;
+mod property;
 mod registration;
 mod sequence;
 pub(in crate::sim::emit_c) use registration::render as registrations;
@@ -182,6 +183,11 @@ pub(in crate::sim::emit_c) fn callbacks(
                     model, constants, backend, index, role, expression, sampled,
                 )?);
             }
+        }
+        if let Some(property) = assertion.property() {
+            out.push_str(&property::render(
+                model, constants, backend, index, property,
+            )?);
         }
         for (role, graph) in [
             ("antecedent", assertion.antecedent_sequence()),

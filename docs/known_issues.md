@@ -1459,15 +1459,64 @@ real values" or "must be a static packed or real expression") instead of being
 flattened. Sampling them needs Preponed snapshots of unpacked storage, which
 assertions also lack.
 
-Concurrent assertions themselves still need one direct signal clock and a
-single-signal `disable iff` (SIM-038, ADV-013), so sampled-value functions in
-an assertion inherit those limits; explicit clocking-event arguments are not
-limited.
+Concurrent assertions themselves still need one direct signal clock
+(ADV-013), so sampled-value functions in an assertion inherit that limit;
+explicit clocking-event arguments are not limited.
 
 Reproduce with
 [`neg_unpacked_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_arg.sv),
 [`neg_unpacked_struct_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_struct_arg.sv) and
 [`neg_queue_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_queue_arg.sv).
+
+## Concurrent property limits after SIM-038
+
+**Status:** open (SIM-038 boundary).
+
+### Symptom
+
+- A concurrent assertion inside procedural code that also holds other
+  statements, conditions or loops is treated as a static assertion: llg does
+  not keep the 16.15.6 procedural assertion queue, its enabling conditions or
+  flush points. Only an assertion that is the whole body of an `always` or
+  `initial` procedure has its exact meaning (an `initial` one starts a single
+  attempt).
+- An `expect` property that reads an automatic variable (16.18 allows it, as
+  in the LRM's `wait_for` example) is rejected ("unsupported sampled ...
+  expression"); static variables work and the action block may assign
+  automatic variables.
+- Multiclock properties (a clock inside the property other than the leading
+  clock, 16.14) and recursive property instances (16.13.17) are rejected with
+  located diagnostics.
+- `accept_on`/`reject_on` are checked at the first signal update of each time
+  step (with that step's sampled values) and at every clock tick. A time step
+  in which no signal changes does not check them, so an abort whose condition
+  rose in an earlier step is reported at the next step with an update instead
+  of the first step in which its sampled value is 1. Only the action time can
+  differ; the verdict cannot.
+- An `expect` whose evaluation is disabled by its `disable iff` ends without
+  a result and leaves its caller blocked, as 16.18 literally says ("block
+  until the given property succeeds or fails").
+
+### Cause
+
+The property engine (`src/sim/rt/scheduler/properties.c`) evaluates one
+leading clock per assertion and has no per-process procedural queue; the
+expect property is lowered once per assertion instance, where automatic
+storage has no static location; asynchronous aborts are driven from the
+signal-write hook.
+
+### Intended direction
+
+Model the procedural assertion queue per process (with captured automatic and
+constant arguments, which would also serve `expect`), add multiclock property
+sequencing on top of the multiclock sequence boundaries, and drive the
+asynchronous abort check from the scheduler's time-step entry.
+
+### Reproduce
+
+`neg_multiclock_property.sv` and `neg_recursive_property.sv` in
+[sim_038](../tests/fixtures/sim/feature_completion/sim_038/readme.md); the
+other items need small hand-written cases.
 
 ## Legacy constructs unsupported by design
 

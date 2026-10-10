@@ -149,6 +149,7 @@ static void free_sequence_pools(void) {
         free(g.assertion_clock_event_pool);
         g.assertion_clock_event_pool = next;
     }
+    free_property_pool();
     g.sequence_threads = 0;
     g.sequence_current = NULL;
 }
@@ -432,9 +433,10 @@ static uint32_t* sequence_graph_rank(const llg_sequence_graph_t* graph) {
 }
 
 static const uint32_t* sequence_rank_for(const llg_concurrent_assertion_t* assertion,
-                                         const llg_sequence_graph_t* graph) {
-    return graph == assertion->antecedent_sequence ? assertion->antecedent_rank
-                                                   : assertion->consequent_rank;
+                                         const llg_sequence_attempt_t* attempt) {
+    if (attempt->rank) return attempt->rank;
+    return attempt->graph == assertion->antecedent_sequence ? assertion->antecedent_rank
+                                                            : assertion->consequent_rank;
 }
 
 static void sequence_endpoints_free(llg_sequence_endpoint_t* endpoint) {
@@ -654,7 +656,7 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
     attempt->endpoints = NULL;
     *accepted = 0;
     if (!attempt->started && !sequence_start(attempt, assertion, &current)) return !g.finish;
-    const uint32_t* rank = sequence_rank_for(assertion, graph);
+    const uint32_t* rank = sequence_rank_for(assertion, attempt);
     // Threads carried from earlier steps are distinct and run first; threads
     // created in this step follow in rank order (see sequence_work_push).
     llg_sequence_token_t* carried = attempt->tokens;

@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 18u
+#define LLG_SLANG_ABI_VERSION 19u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -886,7 +886,10 @@ enum {
   /* Implicit/extends-clause base-constructor invocation owned by a class. */
   LLG_SLANG_EDGE_BASE_CONSTRUCTOR = 37,
   // Optional pattern paired with CONDITION by its source clause index.
-  LLG_SLANG_EDGE_CONDITION_PATTERN = 38
+  LLG_SLANG_EDGE_CONDITION_PATTERN = 38,
+  /* `default disable iff` condition inferred for a concurrent assertion
+   * statement (IEEE 1800-2009 16.16); shared by every assertion it covers. */
+  LLG_SLANG_EDGE_DEFAULT_DISABLE = 39
 };
 
 typedef struct {

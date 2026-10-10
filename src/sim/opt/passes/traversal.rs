@@ -832,6 +832,22 @@ pub(super) fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut 
                 walk_expr_mut(initializer, f);
             }
         }
+        if let Some(property) = &mut assertion.property {
+            for atom in &mut property.atoms {
+                walk_expr_mut(atom, f);
+            }
+            for sequence in &mut property.sequences {
+                for atom in &mut sequence.atoms {
+                    walk_expr_mut(atom, f);
+                }
+                for item in &mut sequence.match_items {
+                    walk_expr_mut(item, f);
+                }
+                for initializer in &mut sequence.initializers {
+                    walk_expr_mut(initializer, f);
+                }
+            }
+        }
     }
     for clock in &mut model.sampled_clocks {
         if let Some(gate) = &mut clock.gate {

@@ -1821,8 +1821,17 @@ impl<'a> Codegen<'a> {
             _ => (Vec::new(), false),
         };
         if assertion_only_body {
+            let first = self.model.assertions.len();
             for assertion in concurrent_assertions {
                 self.emit_concurrent_assertion(inst, path, assertion)?;
+            }
+            // An `initial` procedure runs once, so its procedural assertion
+            // queues one instance that matures at time 0 and begins a single
+            // attempt at the next leading clock event (16.15.6, F.5.3.1).
+            if matches!(kind, ProcessKind::Initial) {
+                for assertion in &mut self.model.assertions[first..] {
+                    assertion.single_attempt = true;
+                }
             }
             return Ok(());
         }

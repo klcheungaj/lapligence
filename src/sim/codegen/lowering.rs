@@ -1596,6 +1596,9 @@ struct Codegen<'a> {
     /// Released variable signal -> hidden marker toggled by its `release`
     /// statements, so its continuous drivers re-evaluate (SV 10.6.2).
     release_markers: HashMap<usize, usize>,
+    /// Hidden nets that carry a non-signal `disable iff` condition, keyed by
+    /// instance and condition node.
+    disable_conditions: HashMap<(NodeId, NodeId), usize>,
     /// Structural source owner, source node and resolved-group index ->
     /// synthetic signal carrying that source's independent contribution slot.
     /// A source can feed more than one canonical group (for example a
@@ -1625,6 +1628,10 @@ struct Codegen<'a> {
     assertion_action_procs: HashSet<String>,
     /// Clock inferred while lowering a property or its Reactive action.
     sampled_clock: Option<SampledClock>,
+    /// Leading clock of the procedural `expect` just registered; its action
+    /// block is lowered inline in the calling process with this clock for
+    /// sampled-value functions.
+    expect_action_clock: Option<SampledClock>,
     /// Leading clock of the concurrent assertion being lowered, with its
     /// `iff` gate; nested sequence clocks are checked against it.
     assertion_leading_clock: Option<SampledClock>,
@@ -1845,6 +1852,7 @@ impl<'a> Codegen<'a> {
             clocking_net_drivers: HashMap::new(),
             feedback_storage: None,
             release_markers: HashMap::new(),
+            disable_conditions: HashMap::new(),
             structural_driver_sites: HashMap::new(),
             structural_driver_sources: HashSet::new(),
             structural_drivers: Vec::new(),
@@ -1852,6 +1860,7 @@ impl<'a> Codegen<'a> {
             final_procs: Vec::new(),
             assertion_action_procs: HashSet::new(),
             sampled_clock: None,
+            expect_action_clock: None,
             assertion_leading_clock: None,
             sampled_clock_keys: HashMap::new(),
             sampled_domain_keys: HashMap::new(),

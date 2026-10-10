@@ -137,13 +137,23 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         if let Some(consequent) = &assertion.consequent {
             collect_expr_reads(consequent, model, &mut rw);
         }
+        if let Some(property) = &assertion.property {
+            for atom in &property.atoms {
+                collect_expr_reads(atom, model, &mut rw);
+            }
+        }
         for sequence in [
             assertion.antecedent_sequence.as_ref(),
             assertion.consequent_sequence.as_ref(),
         ]
         .into_iter()
         .flatten()
-        {
+        .chain(
+            assertion
+                .property
+                .iter()
+                .flat_map(|property| property.sequences.iter()),
+        ) {
             for transition in &sequence.transitions {
                 if let Some(clock) = transition.clock_signal {
                     rw.read(clock);

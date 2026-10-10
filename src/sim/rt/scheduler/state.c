@@ -285,7 +285,40 @@ typedef struct llg_sequence_attempt {
     llg_sequence_endpoint_t* endpoints;
     uint8_t* inherited;
     sv4_t* locals;
+    /* Zero-delay processing rank of `graph` when it is owned by a property
+     * program rather than the assertion's antecedent/consequent slots. */
+    const uint32_t* rank;
 } llg_sequence_attempt_t;
+
+/* Local-variable values flowing from an antecedent match into a property
+ * consequent (16.10, 16.13.6), shared by the instances it starts. */
+typedef struct llg_property_locals {
+    size_t refs;
+    const llg_sequence_graph_t* graph;
+    sv4_t* values;
+} llg_property_locals_t;
+
+/* One live node of a property evaluation attempt. Children are kept in
+ * creation order; a resolved child stays until its parent consumes it. */
+typedef struct llg_property_inst {
+    struct llg_property_inst* next; /* sibling, attempt list or free list */
+    struct llg_property_inst* children;
+    struct llg_property_inst* children_tail;
+    const llg_property_node_t* node;
+    /* Leaf sequence of SEQUENCE, antecedent of IMPLICATION/FOLLOWED_BY. */
+    llg_sequence_attempt_t* sequence;
+    llg_property_locals_t* locals;
+    /* Ticks evaluated so far; the next evaluation is relative tick `ticks`. */
+    uint64_t ticks;
+    /* Simulation time + 1 of the last asynchronous abort check. */
+    uint64_t abort_checked;
+    uint8_t status;     /* 0 pending, 1 true, 2 false */
+    uint8_t nonvacuous; /* valid once resolved (16.15.8) */
+    uint8_t delay;      /* ticks to skip before the first evaluation */
+    uint8_t done;       /* no further children or antecedent matches */
+    uint8_t matched;    /* the antecedent matched at least once */
+    uint8_t accumulated; /* nonvacuity of consumed children */
+} llg_property_inst_t;
 
 /* A sequence can advance on a clock other than its leading assertion clock.
  * Keep each observed edge until the Observed pass consumes it so separate
@@ -326,6 +359,14 @@ typedef struct llg_concurrent_assertion {
     int expect_active;
     /* An armed expect starts exactly one attempt (IEEE 1800-2009 16.18). */
     int expect_started;
+    /* An initial-procedure assertion starts one attempt (16.15.6). */
+    int single_attempt;
+    int single_attempt_started;
+    /* Result of the last expect evaluation for its caller's inline action
+     * block: 0 none, 1 success, 2 failure. */
+    int expect_outcome;
+    /* The caller's expect has an else arm, so no default failure report. */
+    int expect_has_fail;
     uint64_t identity;
     const char* label;
     const char* location;
@@ -349,6 +390,16 @@ typedef struct llg_concurrent_assertion {
     llg_assertion_clock_event_t* clock_history;
     llg_assertion_clock_event_t* clock_history_tail;
     uint64_t sequence_cycle;
+    /* Property-engine assertion: its program, the per-sequence ranks, and
+     * the live attempts in start order. */
+    const llg_property_program_t* property;
+    uint32_t** property_ranks;
+    llg_property_inst_t* property_attempts;
+    llg_property_inst_t* property_attempts_tail;
+    /* The program has an asynchronous accept_on/reject_on, and the time + 1
+     * of the step whose sampled abort conditions were last checked. */
+    int property_async;
+    uint64_t property_async_checked;
 } llg_concurrent_assertion_t;
 
 typedef struct {
@@ -519,6 +570,9 @@ typedef struct {
     llg_sequence_attempt_t* sequence_attempt_pool;
     llg_assertion_eval_t* assertion_eval_pool;
     llg_assertion_clock_event_t* assertion_clock_event_pool;
+    llg_property_inst_t* property_inst_pool;
+    // Registered property assertions with an asynchronous abort condition.
+    uint64_t property_async_count;
     llg_deferred_trigger_t* deferred_triggers;
     llg_deferred_trigger_t* deferred_trigger_tail;
     // Pending deferred assertion reports of the current pass and the
