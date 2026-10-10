@@ -228,8 +228,9 @@
 //!   Continuous and gate drivers capture inertial updates independently of
 //!   their evaluation processes. See `docs/sim_features.md` for supported
 //!   timing forms and remaining boundaries. Program process identity is
-//!   retained in the IR so program initial processes launch in Reactive and
-//!   `$exit` remains a typed runtime operation.
+//!   retained in the IR so program initial and continuous-assignment
+//!   processes launch in Reactive and `$exit` remains a typed runtime
+//!   operation.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 

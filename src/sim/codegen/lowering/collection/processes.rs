@@ -357,7 +357,28 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
+    /// Emit one continuous assignment. In a program it is sensitive to its
+    /// operands like any continuous assignment but is scheduled in the
+    /// Reactive region (IEEE 1800-2009 24.3.1), so the processes it lowers to
+    /// carry the program instance; they are not program initials and never
+    /// extend the program's lifetime.
     fn emit_cont_assign(&mut self, inst: NodeId, path: &str, ca: NodeId) -> Result<(), String> {
+        let first = self.model.processes.len();
+        self.emit_cont_assign_driver(inst, path, ca)?;
+        if self.db.is_program_instance(inst) {
+            for process in &mut self.model.processes[first..] {
+                process.set_program(Some(inst.0));
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_cont_assign_driver(
+        &mut self,
+        inst: NodeId,
+        path: &str,
+        ca: NodeId,
+    ) -> Result<(), String> {
         let node = self.node(ca);
         if let NodeKind::ContAssign { net_decl: true, .. } = self.kind(ca) {
             // Array and variable declaration initializers are applied in
@@ -999,9 +1020,11 @@ impl<'a> Codegen<'a> {
     /// Enforce the structural restrictions that distinguish a program block
     /// from a module before any of its members are lowered.  The owned DB
     /// carries program identity from Slang, so this check never guesses from
-    /// source text or a definition name.  Generate scopes and nested module
-    /// instances are rejected as a whole; otherwise declaration bodies (for
-    /// example function assignments) remain legal program members.
+    /// source text or a definition name.  IEEE 1800-2009 24.3 forbids always
+    /// procedures, primitives and module/interface/program instances in a
+    /// program, including inside its generate constructs (Syntax 24-1 note
+    /// 5); continuous assignments and generate scopes are legal members and
+    /// execute with program (Reactive) scheduling.
     pub(in super::super) fn validate_program_constructs(&self) -> Result<(), String> {
         for program in self
             .design_nodes()
@@ -1009,23 +1032,26 @@ impl<'a> Codegen<'a> {
             .filter(|id| self.db.is_program_instance(*id))
         {
             let path = self.instance_path_of(program);
-            for child in &self.node(program).children {
-                let member = match self.kind(*child) {
+            let mut pending = self.node(program).children.clone();
+            while let Some(child) = pending.pop() {
+                let member = match self.kind(child) {
                     NodeKind::Process {
                         kind: ProcessKind::Always { .. },
                     } => Some("an always process"),
-                    NodeKind::ContAssign { .. } => Some("a continuous assignment"),
                     NodeKind::Gate { .. } => Some("a primitive or gate instance"),
                     NodeKind::ModuleInst { .. } | NodeKind::InstanceArray => {
                         Some("a nested module/interface/program instance")
                     }
-                    NodeKind::GenScope | NodeKind::GenScopeArray => Some("a generate scope"),
+                    NodeKind::GenScope | NodeKind::GenScopeArray => {
+                        pending.extend(self.node(child).children.iter().copied());
+                        None
+                    }
                     _ => None,
                 };
                 if let Some(member) = member {
                     return Err(format!(
                         "program `{path}` cannot contain {member} at {}",
-                        self.source_location(*child)
+                        self.source_location(child)
                     ));
                 }
             }

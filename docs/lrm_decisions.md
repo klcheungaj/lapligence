@@ -143,6 +143,13 @@ scripts/run-tests.sh -E 'test(/^sim_lrm_decisions::/)'
 | S25-D5 | **Pending reports at `$finish` are dropped.** The Postponed region of the slot that executes `$finish` does not run, so its `$strobe` and `$monitor` lines do not print. | 20.2 L34119; 21.2.2 L36482-36484 | `S25-D5_pending_report_at_finish` (the missing lines are policy) | llg policy |
 | S25-D6 | **Order of reports in a slot.** Strobes print in call order, then monitors (`$monitor` and `$fmonitor`) in registration order; a replaced `$monitor` takes the position of its replacement. | 4.4.2.9 L3210 | `S25-D6_report_order_in_slot` (the whole trace is policy) | llg policy |
 
+## Programs and program bind (SIM-032)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S32-D1 | **The implicit `$finish` of programs is immediate.** When the last thread originating in a program initial ends, llg calls `$finish` at that point, as if that thread had called it: events still pending in the same time slot (a Re-NBA update, the design processes it would wake) do not run, and final procedures see the last committed values. | 24.3 L43229-43232; 9.2.3 L11258-11261 | `S32-D1_implicit_finish_immediate` | llg choice (the text says "immediately after" the threads end without saying whether pending same-slot events run first) |
+| S32-D2 | **Programs can be bound into interfaces.** A `bind` whose target scope is an interface may instantiate a program; the program runs once per interface instance. | 23.11 L42888-42893, L42897-42901; A.1.4 L40954-40957 | `S32-D2_bind_program_into_interface` | llg choice (the prose names only interfaces as code bound into interfaces; the grammar allows a program instantiation as an interface item and an interface as a bind target) |
+
 ## Earlier decisions
 
 These predate the register. Their evidence lives in the feature fixtures named

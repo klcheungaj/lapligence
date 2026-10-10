@@ -648,7 +648,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   lowering error. Module injection into an interface or program is illegal. A
   module-type bind target names the definition its own library search resolves,
   an implementation-defined choice when several libraries define that name.
-  Checker/program/coverage injection is outside the selected scope.
+  Programs bind into module types, instance lists and single instances
+  (and, by decision S32-D2, into interfaces) and run in the target's context
+  ([sim_032](../tests/fixtures/sim/feature_completion/sim_032/readme.md)).
+  Checker/coverage injection is outside the selected scope.
   SV §23.11 **[SV-2005]**.
 
 ## 4. Scheduling & processes
@@ -1854,11 +1857,23 @@ These are bounded implementations, not full verification-infrastructure support.
   Dynamic clocking output/inout dispatch (SIM-034), modport expression ports
   and broader polymorphic/capture forms reject.
   SV §§25.5, 25.7, 25.9–25.10 **[SV-2009]**.
-- 🟨 **Programs** — Initials launch in Reactive; `#0`/NBA stay in the reactive
-  set. `$exit` cancels only its program-initial origin and is ignored outside
-  one. Last-initial completion cancels that program's detached descendants;
-  all program initials completing causes immediate implicit finish. The broader
-  program phase remains unaccepted. SV §§24.3, 24.7 **[SV-2005]**.
+- 🟨 **Programs** — Named, nested (implicitly instantiated) and bound
+  programs with module-style, interface and modport ports, package imports,
+  classes, generate constructs and hierarchical references between programs;
+  anonymous programs in packages and `$unit` declare programwide subroutines
+  and classes. Initials and continuous assignments run in Reactive; `#0`/NBA
+  stay in the reactive set (Re-Inactive/Re-NBA), and a module task keeps the
+  region set and program origin of the thread that calls it. `$exit` ends
+  every initial and descendant of its originating program (including
+  detached children forked by called module tasks) and is ignored outside
+  one. A program's last initial ending cancels its descendants; all program
+  initials ending calls `$finish` at once, without running the slot's pending
+  events (decision S32-D1). Always procedures, primitives and module,
+  interface or program instances in a program, and design references to
+  program items, are frontend errors
+  ([sim_032](../tests/fixtures/sim/feature_completion/sim_032/readme.md)).
+  With `--top`, an uninstantiated top-level program is elaborated only if it
+  is named. SV §§24.3-24.7 **[SV-2005]**.
 - 🟨 **Clocking** — Declarations, aliases, default/global clocks (also named
   by `default clocking cb;`, and nested per module), concrete interfaces,
   modport clocking ports, virtual-interface handles and views, and events

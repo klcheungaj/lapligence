@@ -369,10 +369,18 @@ impl Db {
                     children.push(high_expression);
                 }
             }
+            let anonymous_program = |node: &crate::ffi::slang::SemanticNode| {
+                node.kind == SemanticKind::Scope
+                    && node.subkind == crate::ffi::slang::SEMANTIC_SCOPE_ANONYMOUS_PROGRAM
+            };
             if matches!(
                 semantic.kind,
-                SemanticKind::Instance | SemanticKind::Scope | SemanticKind::GenerateScope
+                SemanticKind::Instance
+                    | SemanticKind::Scope
+                    | SemanticKind::GenerateScope
+                    | SemanticKind::Package
             ) && semantic.subkind != 194
+                && !anonymous_program(semantic)
             {
                 let mut flattened = Vec::new();
                 let mut expanded = HashSet::new();
@@ -380,8 +388,10 @@ impl Db {
                 pending.reverse();
                 while let Some(child) = pending.pop() {
                     let child_semantic = &snapshot.semantic_nodes[child.index()];
-                    let instance_body =
-                        child_semantic.kind == SemanticKind::Scope && child_semantic.subkind == 194;
+                    // An anonymous program's members belong to the
+                    // enclosing package or `$unit` namespace (SV 24.6).
+                    let instance_body = child_semantic.kind == SemanticKind::Scope
+                        && (child_semantic.subkind == 194 || anonymous_program(child_semantic));
                     let instance_array = child_semantic.kind == SemanticKind::Instance
                         && child_semantic.subkind == 193;
                     if instance_body || instance_array {
@@ -425,7 +435,9 @@ impl Db {
                     }
                 }
                 children = flattened;
-            } else if semantic.kind == SemanticKind::Scope && semantic.subkind == 194 {
+            } else if semantic.kind == SemanticKind::Scope
+                && (semantic.subkind == 194 || anonymous_program(semantic))
+            {
                 children.clear();
             }
             let mut seen_children = HashSet::new();

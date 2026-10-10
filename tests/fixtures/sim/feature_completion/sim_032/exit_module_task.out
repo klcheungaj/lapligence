@@ -1,0 +1,5 @@
+quit t=0
+module continues after ignored exit
+quit t=2
+q alive t=4
+final t=4

@@ -36,7 +36,8 @@ arena or validated test builder, never native pointers or source rereads.
 
 ## Database projections
 
-Keep native-kind metadata for unsupported-node reachability, program origin,
+Keep native-kind metadata for unsupported-node reachability, program origin
+(anonymous-program members flatten into their package or `$unit`),
 explicit storage lifetime/source qualification, enum declaration order and every
 `foreach` iterator slot (including omitted and packed dimensions). Subroutine
 bodies use explicit references. Fold index keys as expressions, not spelling.

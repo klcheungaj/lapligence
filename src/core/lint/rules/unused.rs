@@ -1,8 +1,10 @@
 //! `unused-signal` — signals that are never read or never used.
 //!
 //! Per instance (module instance or gen scope), every declared net/var/array
-//! is checked against the read/write sites of the instance's own processes,
-//! continuous assigns, and descendant gen scopes.  Port-connected signals are
+//! is checked against the read/write sites of every process, continuous
+//! assign and clocking block in the design, so a signal read only through a
+//! hierarchical reference (for example from a nested program, SV 24.3, or an
+//! interface port) counts as read.  Port-connected signals are
 //! exempt (the port binding is a use), as are signals with a continuous
 //! assignment driver (a driver exists — flagging them would hit every driven
 //! output that is only consumed at a port).
@@ -10,6 +12,8 @@
 //! Severity is Warning for both findings; the two cases are:
 //! - zero writes *and* zero reads → "never used" (dead declaration);
 //! - zero reads but at least one write → "never read" (driven but unconsumed).
+
+use std::collections::HashSet;
 
 use crate::core::db::{Db, Direction, NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
@@ -33,9 +37,18 @@ impl LintRule for UnusedSignalRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let port_connected = port_connected_signals(db);
+        let mut reads = HashSet::new();
+        let mut writes = HashSet::new();
+        let mut cont_writes = HashSet::new();
+        let instances: Vec<NodeId> = iter_instances(db).map(|(id, _)| id).collect();
+        for inst_id in &instances {
+            let (r, w, c) = instance_activity(db, *inst_id);
+            reads.extend(r);
+            writes.extend(w);
+            cont_writes.extend(c);
+        }
         let mut out = Vec::new();
-        for (inst_id, _) in iter_instances(db) {
-            let (reads, writes, cont_writes) = instance_activity(db, inst_id);
+        for inst_id in instances {
             for sig in &db.node(inst_id).children {
                 if !is_signal(db, *sig) {
                     continue;
@@ -174,6 +187,18 @@ mod tests {
         );
         let got = rule_diags(&diags, "unused-signal");
         // in_a/out_b are port-connected; a/b are connected ports; nothing unused.
+        assert!(got.is_empty(), "no unused findings: {:?}", diags);
+    }
+
+    #[test]
+    fn hierarchical_and_nested_program_reads_count_as_reads() {
+        let diags = lint_design(
+            "module top;\n  int shared = 7;\n  int peer = 3;\n  sub s0();\n\
+             program nested;\n    initial $display(shared);\n  endprogram\nendmodule\n\
+             module sub;\n  initial $display(top.peer);\nendmodule\n",
+            "top",
+        );
+        let got = rule_diags(&diags, "unused-signal");
         assert!(got.is_empty(), "no unused findings: {:?}", diags);
     }
 }

@@ -1,0 +1,4 @@
+cond N=3
+gen 0 t=1
+gen 1 t=2
+gen 2 t=3

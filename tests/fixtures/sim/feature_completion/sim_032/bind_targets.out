@@ -1,0 +1,6 @@
+tb.u0.c v=2 t=2
+tb.u1.c v=3 t=3
+tb.u2.c v=4 t=4
+tb.u0.t tagged v=2 t=12
+tb.u1.t1 tagged v=3 t=13
+tb.u2.t tagged v=4 t=14

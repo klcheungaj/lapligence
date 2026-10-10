@@ -1398,7 +1398,8 @@ uint32_t semanticSymbolKind(SymbolKind kind) {
     case SymbolKind::Definition: return LLG_SLANG_SEMANTIC_DEFINITION;
     case SymbolKind::Instance:
     case SymbolKind::InstanceArray: return LLG_SLANG_SEMANTIC_INSTANCE;
-    case SymbolKind::InstanceBody: return LLG_SLANG_SEMANTIC_SCOPE;
+    case SymbolKind::InstanceBody:
+    case SymbolKind::AnonymousProgram: return LLG_SLANG_SEMANTIC_SCOPE;
     case SymbolKind::Package: return LLG_SLANG_SEMANTIC_PACKAGE;
     case SymbolKind::ClassType:
     case SymbolKind::GenericClassDef: return LLG_SLANG_SEMANTIC_CLASS;
@@ -2257,6 +2258,8 @@ public:
         result.kind = LLG_SLANG_SEMANTIC_NAMED_EVENT;
       addExplicitVariableLifetime(result, symbol);
     }
+    if constexpr (std::same_as<T, AnonymousProgramSymbol>)
+      result.subkind = LLG_SLANG_SCOPE_ANONYMOUS_PROGRAM;
     if constexpr (std::same_as<T, ClockingBlockSymbol>) {
       result.subkind = LLG_SLANG_SCOPE_CLOCKING_BLOCK;
       if (symbol.isDefault)

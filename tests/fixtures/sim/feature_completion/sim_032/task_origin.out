@@ -1,0 +1,9 @@
+T1 S1 nb=0 last=0 t=5
+T1 after #0 last=0
+module saw last=1 t=5
+T2 S1 nb=1 last=1 t=5
+T2 after #0 last=1
+module saw last=2 t=5
+T1 after #2 last=2 t=7
+T2 after #2 last=2 t=7
+program done t=7

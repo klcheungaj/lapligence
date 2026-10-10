@@ -1,0 +1,4 @@
+worker 1 t=1
+pe exits t=10 hits=3
+worker 3 t=15
+po ends t=30 hits=3
