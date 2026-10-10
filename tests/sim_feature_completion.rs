@@ -82,6 +82,9 @@ mod sim_032;
 #[path = "sim_feature_completion/sim_033.rs"]
 mod sim_033;
 
+#[path = "sim_feature_completion/sim_034.rs"]
+mod sim_034;
+
 #[path = "sim_feature_completion/sim_035.rs"]
 mod sim_035;
 

@@ -1,0 +1,3 @@
+module process woken by cb
+program sees o=0
+o=7

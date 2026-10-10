@@ -689,3 +689,35 @@ fn s21_d2_record_result_overload_admitted() {
         include_str!("fixtures/sim/lrm_decisions/S21-D2_record_result_overload_admitted.out"),
     );
 }
+
+#[test]
+fn s34_d1_cycle_drive_maturation() {
+    run_decision(
+        "S34-D1_cycle_drive_maturation",
+        include_str!("fixtures/sim/lrm_decisions/S34-D1_cycle_drive_maturation.out"),
+    );
+}
+
+#[test]
+fn s34_d2_clocking_net_driver() {
+    run_decision(
+        "S34-D2_clocking_net_driver",
+        include_str!("fixtures/sim/lrm_decisions/S34-D2_clocking_net_driver.out"),
+    );
+}
+
+#[test]
+fn s34_d3_vif_drive_bound_at_issue() {
+    run_decision(
+        "S34-D3_vif_drive_bound_at_issue",
+        include_str!("fixtures/sim/lrm_decisions/S34-D3_vif_drive_bound_at_issue.out"),
+    );
+}
+
+#[test]
+fn s34_d4_observed_wakeup_before_reactive() {
+    run_decision(
+        "S34-D4_observed_wakeup_before_reactive",
+        include_str!("fixtures/sim/lrm_decisions/S34-D4_observed_wakeup_before_reactive.out"),
+    );
+}

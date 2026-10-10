@@ -1,0 +1,9 @@
+3 b1 b=00 c=zz n=0011
+4 b1 b=33 c=zz n=0011
+5 b2 b=00 c=xx n=zz10
+8 b2 b=22 c=xx n=zz10
+9 b1 b=33 c=c1 n=0011
+10 b2 b=22 c=f0 n=zz10
+15 sampled b1.c=c1
+22 b1 b=55 c=c1 n=0011
+31 b2 b=44 c=f0 n=zz10
