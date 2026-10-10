@@ -1,0 +1,7 @@
+0 loop i=0
+0 loop i=1
+0 loop i=2
+1 kept across #0
+2 resumed
+4 covered a=0 b=1
+5 glitches=0 hits=1

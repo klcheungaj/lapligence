@@ -1262,6 +1262,25 @@ body rules do not run there. Directives in trivia are checked by
 token, not by the syntax profile. Reproduce: compile `module tb(output real r); initial r = 1.0; endmodule`
 with `--edition v2001`.
 
+## Deferred assertion actions with container, event or virtual-interface arguments
+
+**Status:** open (SIM-036 deferral).
+
+A deferred assertion action (SV 16.4) whose call passes a queue, dynamic or
+associative array, or named event by value, or that calls a task or function
+through a virtual interface handle, rejects with "unpacked aggregate,
+container and event arguments of deferred immediate assertion actions are not
+supported" or "virtual-interface method calls are not supported as deferred
+immediate assertion actions", located at the action. The action frame
+captures packed, real, string and opaque (chandle/class handle) values
+(unpacked structs and fixed arrays already work); a container needs an owned frame object copied at issue time
+(`llg_frame_capture_object`) and an event needs its object identity captured
+like a method receiver. Fork-branch outermost blocks are also not treated as
+outermost procedure scopes for the 16.4.4 flush.
+
+Reproduce with `int q[$]; task show(input int x[$]); ... endtask` and
+`assert #0 (0) else show(q);`.
+
 ## Modport expression ports through virtual interfaces
 
 **Status:** open (RTL-102 deferral).

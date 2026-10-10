@@ -1,0 +1,5 @@
+0 static task a=3 v=2
+0 automatic task a=4 b=8
+0 method q=9 lim=5
+1 odd c=1
+4 odd c=1

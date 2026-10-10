@@ -1,0 +1,8 @@
+0 issued n=0
+0 note a=1 n=1
+0 note a=10 n=11
+0 note a=1000 n=1011
+0 tell a=1
+0 display v=1
+1 n=1011
+2 after stop
