@@ -31,10 +31,12 @@ legal built-in operation never changes meaning.
 - `descriptor_operands` overloads `+`, unary `-` and `=` on a 65,537-element
   `int` array (wider than the packed value capacity), so operands, results and
   the compound target cross the bound functions as descriptors.
-- `builtin_preserved` declares overloads for operations that are already
-  legal (packed and real arithmetic, same-type copy and equality, an increment,
-  a legal implicit conversion and a comparison); their sentinel results never
-  appear.
+- `builtin_preserved` declares overloads with record results for operations
+  that are already legal (packed and real arithmetic, same-type equality, an
+  increment and a comparison) and also uses a same-type copy and a legal
+  implicit conversion; their sentinel results never appear. Since SIM-021 a
+  prototype whose built-in result would already be assignable to its result
+  type is rejected at the declaration (see `../sim_021/readme.md`).
 - `operator_overload_witness` is the adopted FND-002 witness for L-F07-17-01.
 
 Nearest-illegal negatives: `neg_self_determined_ambiguous` and
