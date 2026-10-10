@@ -106,19 +106,19 @@ endmodule\n",
 fn pruning_and_inline_event_tasks_keep_definition_site_locations() {
     let database = database(&[OwnedSource::compilation_unit(
         "inline.sv",
-        "module tb;\n\
-event go; // A ref-formal select listed with a named event expands the task.\n\
-task automatic await_event(ref logic [1:0] e);\n\
-    @(e[0] or go);\n\
+        "interface ifc; logic [1:0] e; endinterface module tb;\n\
+ifc port(); virtual ifc handle; // A waited virtual-interface ref formal expands the task.\n\
+task automatic await_event(ref virtual ifc v);\n\
+    @(v.e[0]);\n\
     #2;\n\
 endtask\n\
-initial begin automatic logic [1:0] ready;\n\
+initial begin handle = port;\n\
     if (1) begin\n\
         #3;\n\
-        await_event(ready);\n\
+        await_event(handle);\n\
     end else #99;\n\
     #4;\n\
-    await_event(ready);\n\
+    await_event(handle);\n\
 end\n\
 endmodule\n",
     )]);

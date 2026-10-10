@@ -189,19 +189,22 @@ fn inline_expanded_task_storage_is_hoisted_into_its_host_frame() {
     let c = render_source_with_execution_options(
         "inline_event_frame.sv",
         r#"
+interface ifc;
+    logic [1:0] source;
+endinterface
 module tb;
-    // A block-local ref actual of a formal read by an evaluated event
-    // expression listed with a named event expands the task at its call
-    // site.
-    event go;
-    task automatic await_edge(ref logic [1:0] source);
+    // A virtual-interface `ref` formal read by an event control expands the
+    // task at its call site.
+    ifc port();
+    virtual ifc handle;
+    task automatic await_edge(ref virtual ifc v);
         integer local_value;
-        @(posedge source[0] or go);
+        @(posedge v.source[0]);
         local_value = 1;
     endtask
     initial begin
-        automatic logic [1:0] level;
-        await_edge(level);
+        handle = port;
+        await_edge(handle);
     end
 endmodule
 "#,
