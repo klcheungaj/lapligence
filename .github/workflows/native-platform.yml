@@ -172,6 +172,25 @@ jobs:
               }
           }
 
+      # Where Windows model-build time goes on this runner kind: tool image
+      # architectures, Defender state, process-spawn and new-file costs,
+      # per-phase timings and CMake configure profiles of fresh seeded model
+      # builds, and the processes one model build starts. Read-only
+      # diagnostics: the step never fails the job.
+      - name: Measure Windows model-build costs
+        if: inputs.platform == 'windows'
+        shell: bash
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          CMAKE_GENERATOR: Ninja
+        run: |
+          llg="target/${{ inputs.target }}/release/llg.exe"
+          python scripts/ci_windows_runner.py report --tool "$llg"
+          python scripts/ci_windows_runner.py measure --llg "$llg" \
+            --source tests/fixtures/sim/dynamic_ownership/numeric_loop.sv \
+            --work "$RUNNER_TEMP/llg-probe" --label build-job
+
       - name: Verify Windows architecture and static runtime linkage
         if: inputs.platform == 'windows'
         shell: pwsh
@@ -394,14 +413,13 @@ jobs:
         run: python scripts/ci_build_timings.py "$RUNNER_TEMP/llg-build-timings.tsv" || true
 
       # Real-time scanning of build trees would slow every compile; record the
-      # runner's Defender state so a slow run can be checked against it.
-      - name: Report Windows Defender state
+      # runner's Defender state and the image architecture of each tool the
+      # suite runs, so a slow run can be checked against them.
+      - name: Report Windows Defender state and tool architectures
         if: always() && inputs.platform == 'windows'
-        shell: pwsh
+        shell: bash
         continue-on-error: true
-        run: |
-          Get-MpComputerStatus | Format-List RealTimeProtectionEnabled, AntivirusEnabled, AMRunningMode
-          (Get-MpPreference).ExclusionPath
+        run: python scripts/ci_windows_runner.py report
 
       - name: Report runner resources
         if: always()

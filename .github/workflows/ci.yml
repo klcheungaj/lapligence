@@ -69,6 +69,7 @@ jobs:
           python3 -m unittest discover -s scripts -p test_run_tests.py
           python3 -m unittest discover -s scripts -p test_ci_cache.py
           python3 -m unittest discover -s scripts -p test_ci_build_timings.py
+          python3 -m unittest discover -s scripts -p test_ci_windows_runner.py
 
       - name: Check the bundled GMP tables against vendor/gmp
         run: python3 scripts/gmp_tables.py --check

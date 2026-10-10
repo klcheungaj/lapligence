@@ -239,7 +239,11 @@ extracted over the same path, so compile-time paths (`CARGO_MANIFEST_DIR`,
 `CARGO_BIN_EXE_*`) resolve; they install nextest, Python and (Windows) the MSVC
 tools, apply the libfst patch to the fresh checkout, and need no Rust toolchain.
 Archives are retained one day. CI selects the `ci` nextest profile (one test per
-logical CPU). Observed platform
+logical CPU). The Windows `build` job runs `scripts/ci_windows_runner.py measure`
+(tool image architectures, Defender state, spawn and new-file costs, timings,
+CMake configure profiles via `LLG_CMAKE_PROFILE_DIR` and the processes one model
+build starts); it and the test job's `report` step are read-only diagnostics
+that never fail a job. Observed platform
 differences and their portable fixes are in
 [shared source policies](../src/AGENTS.md#platform-differences).
 
