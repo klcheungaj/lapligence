@@ -27,6 +27,7 @@ docs/*
 !coding_practices.md
 !docs/known_issues.md
 !docs/sim_performance_tradeoffs.md
+!docs/lrm_decisions.md
 
 skills-lock.json
 temp

@@ -2,7 +2,9 @@
 
 This is the maintained `llg` simulation-feature inventory. Support is limited to
 the forms and contexts stated below; it does not imply full IEEE conformance or
-synthesis-tool acceptance.
+synthesis-tool acceptance. Semantic choices where the standard needed
+interpretation, with portable test cases, are in the
+[LRM decision register](lrm_decisions.md).
 
 <a id="dynamic-value-migration-acceptance-boundary"></a>
 
