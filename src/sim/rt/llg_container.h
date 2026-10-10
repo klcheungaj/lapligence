@@ -1103,8 +1103,12 @@ void llg_queue_value_sort_by_keys(llg_queue_value_array_t* queue,
  * `reverse` reorders `slice`-bit blocks: from the right for a pack and from
  * the left for the inverse unpack. Destinations with `exact` require whole
  * elements; otherwise the stream is left-aligned and zero-filled. */
+/* One 64-bit stream word per plane, indexed by LLG_SV4_BITS/X/Z. */
+typedef struct {
+    uint64_t plane[3];
+} llg_bitstream_word_t;
 typedef struct llg_bitstream_t {
-    llg_sv4_word_t* words;
+    llg_bitstream_word_t* words;
     uint64_t length;
     uint64_t capacity;
 } llg_bitstream_t;

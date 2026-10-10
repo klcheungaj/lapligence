@@ -2,8 +2,9 @@
  * growable sequence of {bits,x,z} words, independent of the packed value width
  * limit; only `llg_bitstream_value` materializes one packed value. Stream bit
  * `p` is bit `63 - p % 64` of word `p / 64`, so stream order is MSB-first and
- * whole words copy without per-bit work. Only public sv4 word accessors are
- * used, so both value backends share this code. */
+ * whole words copy without per-bit work. Only the public `llg_sv4_word` and
+ * `llg_sv4_set_word` accessors touch packed values, so both value backends
+ * share this code. */
 
 /* Fixed-capacity word scratch for element-sized values. */
 #define LLG_BITSTREAM_LOCAL_WORDS 4u
@@ -34,8 +35,8 @@ static void llg_bitstream_reserve(llg_bitstream_t* stream, uint64_t bits) {
         }
         capacity *= 2u;
     }
-    size_t count = llg_checked_count(capacity, sizeof(llg_sv4_word_t));
-    llg_sv4_word_t* grown = realloc(stream->words, count * sizeof(*grown));
+    size_t count = llg_checked_count(capacity, sizeof(llg_bitstream_word_t));
+    llg_bitstream_word_t* grown = realloc(stream->words, count * sizeof(*grown));
     if (!grown) llg_container_fatal("bit stream allocation failed");
     memset(grown + stream->capacity, 0,
            (count - (size_t)stream->capacity) * sizeof(*grown));
@@ -44,84 +45,86 @@ static void llg_bitstream_reserve(llg_bitstream_t* stream, uint64_t bits) {
 }
 
 /* Append the `count` (1..64) high bits of each plane of `chunk`. */
-static void llg_bitstream_push(llg_bitstream_t* stream, llg_sv4_word_t chunk,
+static void llg_bitstream_push(llg_bitstream_t* stream, llg_bitstream_word_t chunk,
                                unsigned count) {
     uint64_t mask = count == 64u ? UINT64_MAX : ~(UINT64_MAX >> count);
-    chunk.bits &= mask;
-    chunk.x &= mask;
-    chunk.z &= mask;
+    chunk.plane[LLG_SV4_BITS] &= mask;
+    chunk.plane[LLG_SV4_X] &= mask;
+    chunk.plane[LLG_SV4_Z] &= mask;
     llg_bitstream_reserve(stream, stream->length + count);
     uint64_t index = stream->length / 64u;
     unsigned offset = (unsigned)(stream->length % 64u);
-    llg_sv4_word_t* word = &stream->words[index];
-    word->bits |= chunk.bits >> offset;
-    word->x |= chunk.x >> offset;
-    word->z |= chunk.z >> offset;
+    llg_bitstream_word_t* word = &stream->words[index];
+    word->plane[LLG_SV4_BITS] |= chunk.plane[LLG_SV4_BITS] >> offset;
+    word->plane[LLG_SV4_X] |= chunk.plane[LLG_SV4_X] >> offset;
+    word->plane[LLG_SV4_Z] |= chunk.plane[LLG_SV4_Z] >> offset;
     if (offset && offset + count > 64u) {
-        llg_sv4_word_t* next = &stream->words[index + 1u];
-        next->bits |= chunk.bits << (64u - offset);
-        next->x |= chunk.x << (64u - offset);
-        next->z |= chunk.z << (64u - offset);
+        llg_bitstream_word_t* next = &stream->words[index + 1u];
+        next->plane[LLG_SV4_BITS] |= chunk.plane[LLG_SV4_BITS] << (64u - offset);
+        next->plane[LLG_SV4_X] |= chunk.plane[LLG_SV4_X] << (64u - offset);
+        next->plane[LLG_SV4_Z] |= chunk.plane[LLG_SV4_Z] << (64u - offset);
     }
     stream->length += count;
 }
 
 /* Read `count` (1..64) stream bits starting at `position`, MSB-aligned. */
-static llg_sv4_word_t llg_bitstream_peek(const llg_bitstream_t* stream,
+static llg_bitstream_word_t llg_bitstream_peek(const llg_bitstream_t* stream,
                                          uint64_t position, unsigned count) {
     uint64_t index = position / 64u;
     unsigned offset = (unsigned)(position % 64u);
-    llg_sv4_word_t word = stream->words[index];
-    llg_sv4_word_t chunk = {word.bits << offset, word.x << offset,
-                            word.z << offset};
+    llg_bitstream_word_t word = stream->words[index];
+    llg_bitstream_word_t chunk = {{word.plane[LLG_SV4_BITS] << offset,
+                                   word.plane[LLG_SV4_X] << offset,
+                                   word.plane[LLG_SV4_Z] << offset}};
     if (offset && offset + count > 64u) {
-        llg_sv4_word_t next = stream->words[index + 1u];
-        chunk.bits |= next.bits >> (64u - offset);
-        chunk.x |= next.x >> (64u - offset);
-        chunk.z |= next.z >> (64u - offset);
+        llg_bitstream_word_t next = stream->words[index + 1u];
+        chunk.plane[LLG_SV4_BITS] |= next.plane[LLG_SV4_BITS] >> (64u - offset);
+        chunk.plane[LLG_SV4_X] |= next.plane[LLG_SV4_X] >> (64u - offset);
+        chunk.plane[LLG_SV4_Z] |= next.plane[LLG_SV4_Z] >> (64u - offset);
     }
     uint64_t mask = count == 64u ? UINT64_MAX : ~(UINT64_MAX >> count);
-    chunk.bits &= mask;
-    chunk.x &= mask;
-    chunk.z &= mask;
+    chunk.plane[LLG_SV4_BITS] &= mask;
+    chunk.plane[LLG_SV4_X] &= mask;
+    chunk.plane[LLG_SV4_Z] &= mask;
     return chunk;
 }
 
 /* Bits [low, low + count) of little-endian words, LSB-aligned (count 1..64). */
-static llg_sv4_word_t llg_bitstream_word_bits(const llg_sv4_word_t* words,
+static llg_bitstream_word_t llg_bitstream_word_bits(const llg_bitstream_word_t* words,
                                               uint64_t low, unsigned count) {
     size_t index = (size_t)(low / 64u);
     unsigned offset = (unsigned)(low % 64u);
-    llg_sv4_word_t chunk = {words[index].bits >> offset,
-                            words[index].x >> offset,
-                            words[index].z >> offset};
+    llg_bitstream_word_t chunk = {{words[index].plane[LLG_SV4_BITS] >> offset,
+                                   words[index].plane[LLG_SV4_X] >> offset,
+                                   words[index].plane[LLG_SV4_Z] >> offset}};
     if (offset && offset + count > 64u) {
-        chunk.bits |= words[index + 1u].bits << (64u - offset);
-        chunk.x |= words[index + 1u].x << (64u - offset);
-        chunk.z |= words[index + 1u].z << (64u - offset);
+        chunk.plane[LLG_SV4_BITS] |= words[index + 1u].plane[LLG_SV4_BITS] << (64u - offset);
+        chunk.plane[LLG_SV4_X] |= words[index + 1u].plane[LLG_SV4_X] << (64u - offset);
+        chunk.plane[LLG_SV4_Z] |= words[index + 1u].plane[LLG_SV4_Z] << (64u - offset);
     }
     if (count < 64u) {
         uint64_t mask = (UINT64_C(1) << count) - 1u;
-        chunk.bits &= mask;
-        chunk.x &= mask;
-        chunk.z &= mask;
+        chunk.plane[LLG_SV4_BITS] &= mask;
+        chunk.plane[LLG_SV4_X] &= mask;
+        chunk.plane[LLG_SV4_Z] &= mask;
     }
     return chunk;
 }
 
 /* Append little-endian words holding a `width`-bit value, MSB first. */
 static void llg_bitstream_push_words(llg_bitstream_t* stream,
-                                     const llg_sv4_word_t* words,
+                                     const llg_bitstream_word_t* words,
                                      uint64_t width) {
     llg_bitstream_reserve(stream, stream->length + width);
     uint64_t remaining = width;
     while (remaining) {
         unsigned count = remaining > 64u ? 64u : (unsigned)remaining;
-        llg_sv4_word_t chunk =
+        llg_bitstream_word_t chunk =
             llg_bitstream_word_bits(words, remaining - count, count);
         unsigned shift = 64u - count;
-        llg_sv4_word_t aligned = {chunk.bits << shift, chunk.x << shift,
-                                  chunk.z << shift};
+        llg_bitstream_word_t aligned = {{chunk.plane[LLG_SV4_BITS] << shift,
+                                         chunk.plane[LLG_SV4_X] << shift,
+                                         chunk.plane[LLG_SV4_Z] << shift}};
         llg_bitstream_push(stream, aligned, count);
         remaining -= count;
     }
@@ -131,11 +134,13 @@ void llg_bitstream_append_value(llg_bitstream_t* stream, sv4_t value) {
     uint32_t width = llg_sv4_width(value);
     if (!width) return;
     size_t count = llg_sv4_words(value);
-    llg_sv4_word_t local[LLG_BITSTREAM_LOCAL_WORDS];
-    llg_sv4_word_t* words = count <= LLG_BITSTREAM_LOCAL_WORDS
+    llg_bitstream_word_t local[LLG_BITSTREAM_LOCAL_WORDS];
+    llg_bitstream_word_t* words = count <= LLG_BITSTREAM_LOCAL_WORDS
                                 ? local
                                 : llg_alloc_items(count, sizeof(*words));
-    llg_sv4_export_words(value, 0, words, count);
+    for (size_t index = 0; index < count; ++index)
+        for (unsigned plane = 0; plane < 3u; ++plane)
+            words[index].plane[plane] = llg_sv4_word(value, index, plane);
     llg_bitstream_push_words(stream, words, width);
     if (words != local) free(words);
 }
@@ -293,8 +298,8 @@ void llg_bitstream_append_queue_values(llg_bitstream_t* stream,
 void llg_bitstream_append_string(llg_bitstream_t* stream, llg_string_t value) {
     llg_bitstream_reserve(stream, stream->length + (uint64_t)value.len * 8u);
     for (size_t index = 0; index < value.len; ++index) {
-        llg_sv4_word_t chunk = {
-            (uint64_t)(unsigned char)value.data[index] << 56, 0, 0};
+        llg_bitstream_word_t chunk = {
+            {(uint64_t)(unsigned char)value.data[index] << 56, 0, 0}};
         llg_bitstream_push(stream, chunk, 8u);
     }
 }
@@ -363,8 +368,8 @@ static sv4_t llg_bitstream_slice(const llg_bitstream_t* stream,
                                  uint64_t position, uint32_t width) {
     sv4_t value = sv4_zero(width, 0);
     size_t count = llg_sv4_words(value);
-    llg_sv4_word_t local[LLG_BITSTREAM_LOCAL_WORDS];
-    llg_sv4_word_t* words = count <= LLG_BITSTREAM_LOCAL_WORDS
+    llg_bitstream_word_t local[LLG_BITSTREAM_LOCAL_WORDS];
+    llg_bitstream_word_t* words = count <= LLG_BITSTREAM_LOCAL_WORDS
                                 ? local
                                 : llg_alloc_items(count, sizeof(*words));
     for (size_t index = 0; index < count; ++index) {
@@ -372,14 +377,17 @@ static sv4_t llg_bitstream_slice(const llg_bitstream_t* stream,
         unsigned step = width - low > 64u ? 64u : (unsigned)(width - low);
         // Value bits [low, low + step) are the stream bits ending
         // `low` bits before the right end of the slice.
-        llg_sv4_word_t chunk = llg_bitstream_peek(
+        llg_bitstream_word_t chunk = llg_bitstream_peek(
             stream, position + (width - low - step), step);
         unsigned shift = 64u - step;
-        words[index].bits = chunk.bits >> shift;
-        words[index].x = chunk.x >> shift;
-        words[index].z = chunk.z >> shift;
+        words[index].plane[LLG_SV4_BITS] = chunk.plane[LLG_SV4_BITS] >> shift;
+        words[index].plane[LLG_SV4_X] = chunk.plane[LLG_SV4_X] >> shift;
+        words[index].plane[LLG_SV4_Z] = chunk.plane[LLG_SV4_Z] >> shift;
     }
-    llg_sv4_import_words(&value, 0, words, count);
+    for (size_t index = 0; index < count; ++index)
+        llg_sv4_set_word(&value, index, words[index].plane[LLG_SV4_BITS],
+                         words[index].plane[LLG_SV4_X],
+                         words[index].plane[LLG_SV4_Z]);
     if (words != local) free(words);
     return value;
 }
@@ -466,10 +474,10 @@ llg_string_t llg_bitstream_string(const llg_bitstream_t* stream, int exact) {
         uint64_t position = (uint64_t)index * 8u;
         uint64_t available = stream->length - position;
         unsigned step = available >= 8u ? 8u : (unsigned)available;
-        llg_sv4_word_t chunk = llg_bitstream_peek(stream, position, step);
+        llg_bitstream_word_t chunk = llg_bitstream_peek(stream, position, step);
         // X and Z bits become zero, as in a cast to a 2-state byte.
         unsigned char byte =
-            (unsigned char)((chunk.bits & ~(chunk.x | chunk.z)) >> 56);
+            (unsigned char)((chunk.plane[LLG_SV4_BITS] & ~(chunk.plane[LLG_SV4_X] | chunk.plane[LLG_SV4_Z])) >> 56);
         if (byte) bytes[length++] = (char)byte;
     }
     llg_string_t result = llg_string_bytes(bytes, length);
