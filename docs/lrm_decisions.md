@@ -34,8 +34,8 @@ Each `<ID>_<name>.sv` file is:
 ### On another simulator
 
 1. Compile and run the `.sv` file alone, with `tb` as the top module.
-2. If there is a `.c` companion of the same name (only B8), build it as a
-   shared DPI-C library and load it with the simulator's DPI library option.
+2. If there is a `.c` companion of the same name (B8 and S40-D1 to S40-D5),
+   build it as a shared DPI-C library (the S40 cases include `svdpi.h`) and load it with the simulator's DPI library option.
 3. Compare stdout with the `.out` file. Ignore the simulator's own banners and
    its `$finish` message.
 4. **Negative cases have an empty `.out`.** For AA-D7, S14-D5 and S23-D2, the
@@ -50,8 +50,10 @@ through the public `llg` command line:
 - in both optimizer modes;
 - requiring the exact `.out` stdout and identical stderr across backends.
 
-For B8, the test builds the `.c` companion with the host C compiler and passes
-it with `--dpi-lib`; this case runs on Unix hosts only. AA-D7 must fail to
+For B8 and S40-D1 to S40-D5, the test builds the `.c` companion with the host
+C compiler and passes it with `--dpi-lib`; these cases run on Unix hosts only.
+S40-D5 must stop with exit status 1 after its first line, reporting "DPI-C
+import task `d5_task` returned nonzero, but nothing disabled it". AA-D7 must fail to
 compile with "`$past` of a real expression is illegal", S14-D5 with
 "nonblocking assignment to class property `x`", and S23-D2 with "is an
 unpacked structure or union, which is not a singular variable". The scripted run is in
@@ -232,6 +234,16 @@ independent transcription in
 | S38-D7 | **Independent action blocks.** Each execution of an action block is its own thread: a timing control in it suspends only that execution while later attempts and their actions continue. | 16.15.1 L26464-26465 | `S38-D7_action_blocks_independent` | llg choice (llg formerly rejected timing controls in action blocks) |
 | S38-D8 | **`until_with` nonvacuity.** `p until_with q` is nonvacuous only through `p`, as 16.15.8 x) states, although unrolling the Annex F derivation would also count `q`. | 16.15.8 x) L27415-27417; F.3.4.3.8 L70674 | `S38-D8_until_with_vacuity` | LRM text (clause text over Annex F) |
 | S38-D9 | **Sync abort on a new attempt.** An attempt that begins on a tick where its `sync_accept_on` condition holds is aborted on that tick, like the pending attempts. | 16.13.14 L25255-25258, L25269-25271 | `S38-D9_sync_abort_new_attempt` | LRM text (llg formerly reported only the older attempts) |
+
+## DPI-C imports (SIM-040)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S40-D1 | **Output formals start at the type default.** At entry to the C function every bit of a 4-state output is X and a 2-state output is 0, element by element for arrays and structures, whatever the actual held. | 35.5.1.2 L55643-55644; H.6.3 L72017-72018 | `S40-D1_output_initial_values` (`.sv` and `.c`) | llg policy (the C lines labelled `llg`) |
+| S40-D2 | **Copy order.** Every input and inout is copied in before the call; after it, outputs and inouts are copied out one at a time in declaration order, and the function result is assigned last. With aliased actuals the last copy-out wins and a result assigned to the same variable replaces them. A string result is copied before any output is written. | 35.6.1 L56128-56131; H.6.4 L72022-72023 | `S40-D2_aliased_copy_out` (`.sv` and `.c`) | llg choice (the text does not order copy-outs) |
+| S40-D3 | **Open-array queries.** `svDimensions` counts the unpacked dimensions plus one when the element is integral, like `$dimensions`; dimension 0 is the normalized packed part. Queries of an absent dimension return 0. | H.12.2 L73284-73288; 20.7 L34712-34715, L34736-34737 | `S40-D3_open_array_queries` (`.sv` and `.c`) | LRM text; returning 0 instead of `'x` is an llg choice |
+| S40-D4 | **Invalid element indices.** An out-of-range index or a wrong index count gives a NULL element pointer, reads the element type's default (X for logic, 0 for bit) and makes writes do nothing. svBit reads of a logic element map X and Z to 0. | H.12.4 L73337-73340; 7.4.6 L8235-8237 | `S40-D4_invalid_element_access` (`.sv` and `.c`) | llg choice (7.4.6 applied to the C layer) |
+| S40-D5 | **Imported-task results.** An imported task that returns nonzero when no disable is in effect stops the simulation with a fatal error; nothing is copied out. Without exports nothing can disable an imported task during its call. | 35.9 L56272-56273, L56282-56284 | `S40-D5_task_disable_protocol` (`.sv` and `.c`; runtime fatal after the first line) | LRM text |
 
 ## Earlier decisions
 

@@ -1518,6 +1518,54 @@ asynchronous abort check from the scheduler's time-step entry.
 [sim_038](../tests/fixtures/sim/feature_completion/sim_038/readme.md); the
 other items need small hand-written cases.
 
+## DPI-C import limits (SIM-040)
+
+**Status:** open. SIM-040 marshals packed, sized unpacked and open-array
+formals of DPI-C imports; these forms remain outside it.
+
+### Symptom
+
+These legal imports reject with explicit diagnostics:
+
+- an unpacked array or structure formal (sized or open) with `real`,
+  `shortreal`, `string` or `chandle` elements or members: "unpacked aggregates
+  with real, shortreal, string or chandle elements are not supported
+  (SIM-040)";
+- a dynamic array, queue or associative array actual of an open-array formal:
+  "a dynamic array, queue or associative array actual of DPI-C open-array
+  formal ... is not supported (SIM-040)";
+- an unpacked aggregate formal wider than 1048575 payload bits.
+
+A library that calls `svGetScope`, `svSetScope`, `svPutUserData`,
+`svGetUserData`, `svGetCallerInfo`, `svIsDisabledState`,
+`svAckDisabledState`, `svGetTime*` or a deprecated SV3.1a routine (H.13)
+fails the model link with an error naming the routine. On Windows, a DPI DLL
+cannot import the `svdpi.h` routines from the model executable, so open-array
+imports have not been built there.
+
+The lint pass reports `undriven-signal` warnings for variables written only as
+DPI output or inout actuals.
+
+### Cause
+
+The thunk moves each aggregate through the packed payload, which has no
+representation for owned strings, doubles or handles inside a record. Open
+formals are specialized per actual shape at compile time, so a runtime-sized
+actual has no fixed shape. Scope, user-data and disable services need the
+context-import and export machinery of SIM-041. The lint driver analysis does
+not yet treat DPI output actuals as writes.
+
+### Intended direction
+
+Give aggregate leaves of native types their own C-layout slots in the layout
+tables; specialize open formals on container actuals by element type with a
+runtime-sized handle; implement the scope services with SIM-041; export the
+`svdpi.h` routines through an import library on Windows.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_040/neg_*.sv`.
+
 ## Legacy constructs unsupported by design
 
 **Status:** decided 2026-10-08; not planned. The rows are marked 🚫 in

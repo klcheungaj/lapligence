@@ -261,6 +261,14 @@ run at model `-O0`/`-O3` after Db destruction. Their decisions S34-D1-D4 are in
 `sim_lrm_decisions`; the component check is
 `sim::ir::validate::tests::clocking_drive_cycle_counts_and_instance_dispatch_are_checked`.
 
+SIM-040's DPI-C packed, sized and open-array fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_040::)'`. Each positive fixture
+builds its checked-in C companion into a shared library (strict C11, with
+`$LLG_CFLAGS`, Unix hosts) and runs in both optimizer modes on every backend;
+negatives cover frontend, codegen and link-time errors. Decisions S40-D1-D5,
+with `.c` companions, are in `sim_lrm_decisions`; component checks are the
+`sim::build::dpi_link::tests` unit tests.
+
 SIM-037's sequence-composition fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_037::)'`. `exhaustive` compares
 36 sequences on all 1024 two-signal traces of length 5 with the test-side

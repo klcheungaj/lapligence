@@ -519,7 +519,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 | Unpacked array element, slice | one-dimensional fixed array: yes ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); multidimensional: rejected | yes, elements, constant/indexed slices, patterns, conditional merges, untimed NBAs | yes, element-wise | yes | SIM-008 | owner scope or model close |
 | Queue/dynamic/associative element | yes (missing: default), including queue and dynamic-array members ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); associative members: rejected | yes, whole element and push/insert/pop | yes, element-wise, including container members (whole associative arrays of records: rejected, [known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | constant and run-time element index: yes; container members in assignment, call and system-task statements | SIM-008 | delete, resize, container close |
 | Class property | instance property: yes, one value per object with member defaults and a per-object initializer, through `this`, handles and handle chains ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)); static, or with container members: rejected | yes | yes | constant: yes | SIM-011 | with its object, when the collector reclaims it or at model close ([sim_018](../tests/fixtures/sim/feature_completion/sim_018/readme.md)) |
-| DPI argument | SIM-040 | SIM-040 | n/a | n/a | n/a | n/a |
+| DPI argument | sized unpacked structure formal of bit/logic/integral members, nested records and arrays: yes, in the C layout ([sim_040](../tests/fixtures/sim/feature_completion/sim_040/readme.md)); string, real, shortreal or chandle members: rejected ([known issue](known_issues.md#dpi-c-import-limits-sim-040)) | yes, copy-in/out through a thunk-owned buffer | n/a | n/a | n/a | end of the call |
 | Process-block local (static or automatic) | yes, including container members, member defaults and call initializers ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); automatic record that a `join_any`/`join_none` fork running again can keep live: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | yes | yes, including nested records and member arrays | constant and run-time index (at most 64 elements): yes | `ref`/`const ref` actual, whole or a constant selection: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)) | model close; automatic leaves reset at the next entry |
 
 ## 3. Modules, ports, parameters, hierarchy
@@ -2083,13 +2083,32 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
 
 ### Foreign interfaces and missing infrastructure
 
-- 🟨 **DPI-C imports** — Bounded scalar bit/logic/reg, integral, real/shortreal,
-  chandle/string signatures and explicit libraries retain owned outputs and
-  borrowed inputs. Foreign string results are copied before aliased copy-out,
-  which checks cancellation. Exports, packed/open arrays and context callbacks
-  are unsupported. DPI ref directions and event/class signature types are
-  prohibited by SV §§35.5.1.2, 35.5.6; they remain negative legality cases.
-  SV ch.35 **[SV-2005]**.
+- 🟨 **DPI-C imports** — Scalar bit/logic/reg, integral, real/shortreal,
+  chandle and string signatures; packed vectors of any width as canonical
+  `svBitVecVal`/`svLogicVecVal` chunks (integer, `time`, packed structures,
+  unions and enums included); sized unpacked arrays and structures in the C
+  compiler's layout (H.7.8); and open arrays with any number of open unpacked
+  dimensions, a sized or unsized packed part and structure elements, passed
+  as `svOpenArrayHandle` with the actual's ranges (35.5.6.1, H.12). Every
+  `svdpi.h` canonical-access, bit/part-select, array-query and open-array
+  element routine of H.11-H.12 is provided, plus `svDpiVersion`
+  ("1800-2005"). The C side gets a thunk-owned copy, never simulator storage;
+  inputs are copied in before the call, outputs and inouts copied out in
+  declaration order after it (each copy a cancellation boundary) and the
+  result assigned last; output formals start at X or 0 (decisions
+  S40-D1..D4 in [lrm_decisions.md](lrm_decisions.md)). An imported task that
+  returns nonzero without a disable is a fatal error (35.9, S40-D5). An import
+  no `--dpi-lib` library defines, or a library calling an `svdpi.h` routine
+  llg does not provide (scope, user-data, time and disable services, SIM-041;
+  the SV3.1a H.13 forms), fails the build with an error that names the
+  symbol. Remaining limits:
+  [known issue](known_issues.md#dpi-c-import-limits-sim-040). Exports and
+  context callbacks are SIM-041. Ref directions, event/class/unpacked-union
+  formals, packed or enum results, open arrays in exports and mismatched
+  signatures for one C name are rejected by the frontend (SV §§35.5.1.2,
+  35.5.4-35.5.6). Fixtures:
+  [sim_040](../tests/fixtures/sim/feature_completion/sim_040/readme.md).
+  SV ch.35, Annex H **[SV-2005]**.
 - 🚫 **PLI 1.0 TF/ACC** — The legacy `tf_*` and `acc_*` routines, the
   `veriusertfs` registration table and the `veriuser.h` / `acc_user.h` headers
   are unsupported by design; `llg` ships none of them. A DPI/VPI library given
