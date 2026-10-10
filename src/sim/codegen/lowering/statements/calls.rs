@@ -90,12 +90,12 @@ impl EmitCtx<'_, '_> {
             class: receiver,
             virtual_interface: virtual_call,
         };
-        // Remaining expansions (see `CallShape`): event controls reading
-        // string or handle `ref` formals, `ref` formals read by an evaluated
-        // event expression whose actual is not a whole module signal, `ref`
-        // formals waited on whose actual is not a whole variable. Event
-        // formals of every direction, including those of class methods,
-        // take the typed path.
+        // Remaining expansions (see `CallShape`): unpacked aggregate `ref`
+        // formals read by an event control or wait, and waited `ref` formals
+        // whose actual is a container element or an unpacked-structure
+        // member, which have no whole-variable descriptor. Event, string and
+        // handle formals of every direction, including those of class
+        // methods, take the typed path.
         let shape = self.cg.call_shape(ft, callee_inst);
         let mut expand = shape.inline_only;
         // Module, static and block records bound to native record `ref`
@@ -152,6 +152,12 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
+        if expand && method {
+            return Err(format!(
+                "method `{name}` waits on a `ref` formal of unpacked aggregate type, or one bound to a container element or an unpacked-structure member, which needs caller-environment expansion; not supported in `{}` (SIM-009)",
+                self.cg.source_path(&self.path)
+            ));
+        }
         if expand {
             return self.lower_task_inline(
                 ft,
@@ -161,6 +167,20 @@ impl EmitCtx<'_, '_> {
                 &bound,
                 call_receiver.class,
             );
+        }
+        for &index in &shape.native_refs {
+            let actual = bound[index].expr;
+            if !self.cg.native_ref_actual_observable(actual) {
+                let node = self.cg.node(actual);
+                return Err(format!(
+                    "`ref` actual of string or handle formal `{}` of task `{name}`, which waits on it, is a class property or an automatic variable a fork branch can change; its changes publish no marker the task can wait on (SIM-009) at {}:{}:{} in `{}`",
+                    self.cg.node(formals[index].0).name,
+                    node.file.as_deref().unwrap_or("<unknown>"),
+                    node.line,
+                    node.col,
+                    self.cg.source_path(&self.path)
+                ));
+            }
         }
         let can_be_disabled = is_task
             && (self.cg.task_has_disable(ft, callee_inst) || self.cg.task_is_disable_target(ft));
@@ -774,16 +794,11 @@ impl EmitCtx<'_, '_> {
     /// the caller's environment; every other call, timed or disabling
     /// included, uses the typed `IrFunc` path.
     ///
-    /// - Output, inout and ref event formals: the handle is rebound in the
-    ///   caller (`EventAssign` after the body) or aliases the actual.
-    /// - An event control reading subroutine-scoped storage (by-value formals,
-    ///   locals): its evaluator needs the copied activation slots that only
-    ///   the expansion provides.
-    /// - A `ref` formal read by an event control whose actual is not a whole
-    ///   module signal at this call (a caller local, a select, an array
-    ///   element): the evaluator needs the actual's dependencies
-    ///   (`arg_dependencies`), which a shared body cannot know. A whole-signal
-    ///   actual calls a specialization of the task instead.
+    /// - A `ref` formal read by an event control or wait whose type is an
+    ///   unpacked aggregate, or whose actual at this call is a container
+    ///   element or an unpacked-structure member: the waiting code needs the
+    ///   actual's dependencies (`arg_dependencies`), which a shared body
+    ///   cannot know. A whole-signal actual calls a specialization instead.
     fn lower_task_inline(
         &mut self,
         ft: NodeId,

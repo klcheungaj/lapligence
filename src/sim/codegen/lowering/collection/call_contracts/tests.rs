@@ -303,6 +303,7 @@ endmodule
 fn only_subroutine_scoped_event_reads_force_expansion() {
     let source = r#"
 module tb;
+    class C; endclass
     event ev;
     logic clk;
     logic [3:0] sig;
@@ -323,6 +324,14 @@ module tb;
     task automatic ref_select(ref logic [3:0] r); @(posedge r[0]); endtask
     task automatic ref_level(ref logic [3:0] r); wait (r[1] == 1'b1); endtask
     task automatic forwards_select(); automatic logic [3:0] l = 0; ref_select(l); endtask
+    task automatic ref_named_expression(ref logic [3:0] r); @(ev or (r > 4'd2)); endtask
+    task automatic ref_implicit(ref logic [3:0] r); @* if (r[0]) $display(r); endtask
+    task automatic string_ref(ref string s); wait (s == "go"); endtask
+    task automatic handle_ref(ref C h); @(h); endtask
+    task automatic forwards_string(ref string s); string_ref(s); endtask
+    task automatic forwards_element(); automatic logic [3:0] a [2]; ref_select(a[1]); endtask
+    task automatic array_ref(ref logic [3:0] a [2]); wait (a[0] == 4'd1); endtask
+    task automatic forwards_queue_element(); automatic logic [3:0] q [$]; ref_select(q[0]); endtask
     initial begin end
 endmodule
 "#;
@@ -368,6 +377,20 @@ endmodule
         // waiting process, which follows the descriptor's whole variable.
         ("ref_select", false),
         ("forwards_select", false),
+        // A list naming an event and implicit `@*` sensitivity are evaluated
+        // by the waiting process too.
+        ("ref_named_expression", false),
+        ("ref_implicit", false),
+        // String and handle `ref` formals wait on their actual's marker.
+        ("string_ref", false),
+        ("handle_ref", false),
+        ("forwards_string", false),
+        // An array element's descriptor names the element's own storage.
+        ("forwards_element", false),
+        // Remaining: an unpacked aggregate `ref` formal has no whole-variable
+        // descriptor, and a queue element is a retained cell.
+        ("array_ref", true),
+        ("forwards_queue_element", true),
     ] {
         let task = database
             .node_ids()
@@ -383,19 +406,28 @@ endmodule
     }
     // A `ref` formal read by an event control is bound by a specialization
     // when it (or a task it is forwarded to) has a whole-signal actual. A
-    // caller local is followed through its descriptor when every read of the
-    // formal is an explicit event control or level wait (`bound_refs`
-    // empty), and forces the expansion otherwise.
-    for (name, inline_only, static_refs, bound_refs) in [
-        ("ref_edge", false, vec![0], vec![]),
-        ("ref_level", false, vec![0], vec![]),
-        ("ref_select", false, vec![0], vec![]),
-        ("forwards_ref", false, vec![0], vec![]),
-        ("forwards_module", false, vec![], vec![]),
-        ("forwards_local", false, vec![], vec![]),
-        ("forwards_select", false, vec![], vec![]),
-        ("formal_expression", false, vec![], vec![]),
-        ("input_event", false, vec![], vec![]),
+    // caller local or array element is followed through its descriptor when
+    // the formal holds one packed or real value (`bound_refs` empty).
+    // String and handle `ref` formals wait on their actual's change marker
+    // (`native_refs`).
+    for (name, inline_only, static_refs, bound_refs, native_refs) in [
+        ("ref_edge", false, vec![0], vec![], vec![]),
+        ("ref_level", false, vec![0], vec![], vec![]),
+        ("ref_select", false, vec![0], vec![], vec![]),
+        ("forwards_ref", false, vec![0], vec![], vec![]),
+        ("forwards_module", false, vec![], vec![], vec![]),
+        ("forwards_local", false, vec![], vec![], vec![]),
+        ("forwards_select", false, vec![], vec![], vec![]),
+        ("formal_expression", false, vec![], vec![], vec![]),
+        ("input_event", false, vec![], vec![], vec![]),
+        ("ref_named_expression", false, vec![0], vec![], vec![]),
+        ("ref_implicit", false, vec![0], vec![], vec![]),
+        ("string_ref", false, vec![], vec![], vec![0]),
+        ("handle_ref", false, vec![], vec![], vec![0]),
+        ("forwards_string", false, vec![], vec![], vec![0]),
+        ("forwards_element", false, vec![], vec![], vec![]),
+        ("array_ref", false, vec![0], vec![0], vec![]),
+        ("forwards_queue_element", true, vec![], vec![], vec![]),
     ] {
         let task = database
             .node_ids()
@@ -407,5 +439,6 @@ endmodule
         assert_eq!(shape.inline_only, inline_only, "task `{name}`");
         assert_eq!(shape.static_refs, static_refs, "task `{name}`");
         assert_eq!(shape.bound_refs, bound_refs, "task `{name}`");
+        assert_eq!(shape.native_refs, native_refs, "task `{name}`");
     }
 }

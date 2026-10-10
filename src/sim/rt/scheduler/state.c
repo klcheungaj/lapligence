@@ -764,6 +764,9 @@ typedef struct llg_dependency_binding {
     struct llg_dependency_binding* bucket_next;
     sv4_t* target;
     double* real_target;
+    /* A class handle variable: looked up by `ref` waits, never written
+     * through the publication path (see llg_handle_dependency). */
+    void* const* handle_target;
     sv4_t* dependency;
 } llg_dependency_binding_t;
 

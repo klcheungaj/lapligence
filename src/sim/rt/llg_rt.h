@@ -1009,6 +1009,12 @@ void llg_object_set_randstate(llg_rng_state_t* object, llg_string_t state);
 // its backing storage. Bindings are cleared by llg_rt_cleanup.
 void llg_dependency_bind(sv4_t* target, sv4_t* dependency);
 void llg_dependency_bind_real(double* target, sv4_t* dependency);
+// Module and static class handle variables name their change marker so a
+// typed body waiting on a handle `ref` formal can find it from the address
+// the formal carries; any other address yields a marker that is never
+// written.
+void llg_dependency_bind_handle(void* const* target, sv4_t* dependency);
+sv4_t* llg_handle_dependency(const void* target);
 void llg_dependency_changed(sv4_t* dependency);
 // `dependency`, or a marker that is never written when it is NULL (an
 // activation container no other process can change).

@@ -663,6 +663,17 @@ impl EmitCtx<'_, '_> {
             for dependency in sens {
                 let source = match &dependency {
                     IrDependency::Real(name) => IrWaitSrc::Real(name.clone()),
+                    // The variable a typed body's `ref` descriptor names.
+                    IrDependency::RefFormal { index, real } => IrWaitSrc::RefFormal {
+                        index: *index,
+                        real: *real,
+                    },
+                    IrDependency::NativeRefFormal { index, handle } => {
+                        IrWaitSrc::NativeRefFormal {
+                            index: *index,
+                            handle: *handle,
+                        }
+                    }
                     other => match other.scalar_name() {
                         Some(name) => IrWaitSrc::Sig(name.to_owned()),
                         None => {
@@ -1174,11 +1185,25 @@ impl EmitCtx<'_, '_> {
                 ));
             }
         }
-        // A subroutine string or handle has no change marker.
+        // A string or handle `ref` formal waits on the marker of the storage
+        // its actual names; any other subroutine string or handle has none.
         if let NodeKind::Expr(ExprKind::Ref {
             target: Some(target),
         }) = self.cg.kind(expression)
         {
+            if let Some(IrDependency::NativeRefFormal { index, handle }) = condition
+                .is_none()
+                .then(|| self.cg.ref_formal_dependency(*target))
+                .flatten()
+            {
+                if edge != IrEdge::Any {
+                    return Err(format!(
+                        "edge control on a string or class handle is not supported in `{}`",
+                        self.cg.source_path(&self.path)
+                    ));
+                }
+                return Ok((IrWaitSrc::NativeRefFormal { index, handle }, edge));
+            }
             if self.func.as_ref().is_some_and(|func| {
                 func.string_read.contains_key(target) || func.chandle_read.contains_key(target)
             }) && self.cg.object_of(&self.path, expression).is_none()

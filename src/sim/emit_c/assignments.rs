@@ -366,7 +366,8 @@ fn clocking_drive_sources_text(
             | IrWaitSrc::EvaluatedReal { .. }
             | IrWaitSrc::FilteredEvent { .. }
             | IrWaitSrc::Real(_)
-            | IrWaitSrc::RefFormal { .. } => {
+            | IrWaitSrc::RefFormal { .. }
+            | IrWaitSrc::NativeRefFormal { .. } => {
                 Err("clocking drive requires a simple signal or named-event clocking event".into())
             }
         })

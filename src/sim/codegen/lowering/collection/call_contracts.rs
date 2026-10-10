@@ -7,20 +7,23 @@ mod tests;
 
 /// How calls to a subroutine reach its body.
 ///
-/// A subroutine is called through its typed `IrFunc` unless an output, inout
-/// or ref event formal, or an event control reading a formal or local other
-/// than an input event formal or a `ref` formal, needs the caller's
-/// environment (`inline_only`: the call site expands the body). A `ref`
-/// formal read by an event control (directly or through a callee it is
-/// forwarded to) is `static_refs`: its evaluator's dependencies are those of
-/// the actual, which a shared body cannot know, so each distinct static
-/// actual gets its own specialization of the task. When every such read is a
-/// level `wait` or an explicit event control without a named event (a plain
-/// or edge control on the whole formal waits on it directly; a select,
-/// operator or qualifier is evaluated by the waiting process), the typed
-/// body also follows the variable a whole-variable descriptor names
-/// (`IrDependency::RefFormal`), so calls with automatic actuals take it
-/// instead of expanding; `bound_refs` lists the formals with other reads.
+/// Every call reaches the typed `IrFunc` (a stackless coroutine when it can
+/// suspend, so it recurses on arena frames) unless a `ref` formal that an
+/// event control or wait reads needs the caller's environment
+/// (`inline_only`, or a call whose actual a typed body cannot follow: the
+/// call site expands the body). A `ref` formal read by an event control or
+/// wait (directly or through a callee it is forwarded to) is in
+/// `static_refs`: a whole module-signal actual binds a specialization of the
+/// task. When the formal holds one packed or real value, the typed body
+/// instead follows the variable its descriptor names
+/// (`IrDependency::RefFormal`): plain and edge controls wait on it directly,
+/// and selects, operators, qualifiers, lists that also name an event,
+/// implicit `@*` and level waits are evaluated by the waiting process. Calls
+/// whose actual is a whole variable, a fixed-array element, a module
+/// variable's hierarchical name or a class property take that body. A formal
+/// of an unpacked aggregate type has no such descriptor (`bound_refs`).
+/// String and handle `ref` formals wait on the change marker of the storage
+/// their actual names (`native_refs`).
 #[derive(Clone, Debug, Default)]
 pub(in super::super) struct CallShape {
     pub(in super::super) inline_only: bool,
@@ -29,6 +32,12 @@ pub(in super::super) struct CallShape {
     /// Members of `static_refs` that only a static binding or an expansion
     /// can follow.
     pub(in super::super) bound_refs: Vec<usize>,
+    /// String and handle `ref` formals read by a wait or event control
+    /// (directly or through a callee they are forwarded to). The typed body
+    /// waits on the change marker of the storage the actual names, so each
+    /// call checks that its actual has one (see
+    /// `Codegen::native_ref_actual_observable`).
+    pub(in super::super) native_refs: Vec<usize>,
 }
 
 /// Where an evaluated event expression is computed.
@@ -787,6 +796,8 @@ impl<'a> Codegen<'a> {
         shape.static_refs.dedup();
         shape.bound_refs.sort_unstable();
         shape.bound_refs.dedup();
+        shape.native_refs.sort_unstable();
+        shape.native_refs.dedup();
         shape
     }
 
@@ -806,34 +817,24 @@ impl<'a> Codegen<'a> {
             }) => {
                 // An explicit control on a whole formal waits on the variable
                 // its descriptor names; a select, operator or qualifier over
-                // it is evaluated by the waiting process, which re-reads the
-                // formal after every change of that variable. That process
-                // cannot share one atomic wait with a named event, so such a
-                // list, like implicit `@*` sensitivity, is evaluated with the
-                // actual's dependencies.
-                let named = specs.iter().any(|spec| self.event_spec_names_event(spec));
+                // it, implicit `@*` sensitivity and a list that also names an
+                // event are evaluated by the waiting process, which re-reads
+                // the formal after every change of that variable.
                 let mut roots = Vec::new();
                 for spec in specs {
-                    match spec {
-                        EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. }
-                            if matches!(self.kind(*sig), NodeKind::Expr(ExprKind::Ref { .. })) =>
-                        {
-                            self.note_static_reads(*sig, formals, shape, true)
-                        }
-                        _ => self.event_spec_expressions(spec, &mut roots),
-                    }
+                    self.event_spec_expressions(spec, &mut roots);
                 }
                 for root in roots {
-                    self.note_static_reads(root, formals, shape, !named);
+                    self.note_static_reads(root, formals, shape);
                 }
                 if let Some(body) = body.filter(|_| *implicit) {
-                    self.note_static_reads(body, formals, shape, false);
+                    self.note_static_reads(body, formals, shape);
                 }
             }
             // A level wait re-evaluates its condition in the waiting process
             // on the changes of the variables it reads.
             NodeKind::Stmt(StmtKind::Wait { cond }) => {
-                self.note_static_reads(*cond, formals, shape, true)
+                self.note_static_reads(*cond, formals, shape)
             }
             NodeKind::FuncCall {
                 name,
@@ -845,6 +846,20 @@ impl<'a> Codegen<'a> {
                     let inner = self.call_shape_of(function, owner, stack);
                     shape.inline_only |= inner.inline_only;
                     let arguments = self.call_argument_nodes(node);
+                    // A forwarded formal is checked at this task's own calls;
+                    // any other actual is checked where this call lowers.
+                    for index in &inner.native_refs {
+                        if let Some(NodeKind::Expr(ExprKind::Ref {
+                            target: Some(target),
+                        })) = arguments.get(*index).map(|actual| self.kind(*actual))
+                        {
+                            if let Some(outer) =
+                                formals.iter().position(|(formal, _)| formal == target)
+                            {
+                                shape.native_refs.push(outer);
+                            }
+                        }
+                    }
                     for index in inner.static_refs {
                         // The callee's clone binds this actual, so it must be a
                         // formal of this task or a module-level name, unless
@@ -864,16 +879,6 @@ impl<'a> Codegen<'a> {
         }
         for child in &self.node(node).children {
             self.call_shape_walk(*child, inst, formals, stack, shape);
-        }
-    }
-
-    /// Whether an event spec waits on a named event.
-    fn event_spec_names_event(&self, spec: &EventSpec) -> bool {
-        match spec {
-            EventSpec::Qualified { event, .. } => self.event_spec_names_event(event),
-            EventSpec::Named(_) => true,
-            EventSpec::AnyChange { sig } => self.event_target_of(*sig).is_some(),
-            EventSpec::Edge { .. } => false,
         }
     }
 
@@ -924,15 +929,10 @@ impl<'a> Codegen<'a> {
         out
     }
 
-    /// Record the `ref` formals that `node` reads; `followed` when the read
-    /// can follow a whole-variable descriptor (see [`CallShape`]).
-    fn note_static_reads(
-        &self,
-        node: NodeId,
-        formals: &[(NodeId, bool)],
-        shape: &mut CallShape,
-        followed: bool,
-    ) {
+    /// Record the `ref` formals that `node` reads; one whose type is not a
+    /// single packed or real value has no whole-variable descriptor to
+    /// follow (see [`CallShape`]).
+    fn note_static_reads(&self, node: NodeId, formals: &[(NodeId, bool)], shape: &mut CallShape) {
         let mut visit_target = |target: NodeId| {
             if let Some(index) = formals.iter().position(|(formal, _)| *formal == target) {
                 match self.kind(target) {
@@ -942,15 +942,24 @@ impl<'a> Codegen<'a> {
                         ..
                     } if ty.kind != "string" && !is_handle_kind(&ty.kind) => {
                         shape.static_refs.push(index);
-                        if !followed || !self.whole_value_declaration(target) {
+                        if !self.whole_value_declaration(target) {
                             shape.bound_refs.push(index);
                         }
                     }
-                    NodeKind::FuncArg { ty, .. } if ty.kind == "event" => {}
+                    // A virtual interface `ref` formal has no marker lookup.
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        ty,
+                        ..
+                    } if ty.kind == "virtual_interface" => shape.inline_only = true,
+                    // String and handle `ref` formals carry the address of
+                    // storage whose change marker the typed body finds at run
+                    // time (`IrDependency::NativeRefFormal`).
                     NodeKind::FuncArg {
                         direction: DbDirection::Ref,
                         ..
-                    } => shape.inline_only = true,
+                    } => shape.native_refs.push(index),
+                    // Event formals are typed parameters.
                     _ => {}
                 }
             }
@@ -967,7 +976,7 @@ impl<'a> Codegen<'a> {
             _ => {}
         }
         for child in &self.node(node).children {
-            self.note_static_reads(*child, formals, shape, followed);
+            self.note_static_reads(*child, formals, shape);
         }
     }
 
@@ -1006,25 +1015,104 @@ impl<'a> Codegen<'a> {
     }
 
     /// Whether a `ref` actual names a whole packed or real variable, whose
-    /// descriptor a typed body can follow, or forwards a `ref` formal.
+    /// descriptor a typed body can follow, or forwards a `ref` formal. An
+    /// element of a fixed unpacked array variable also qualifies: the call
+    /// binds its descriptor to the element's own storage or cell (SV 13.5.2
+    /// keeps the element selected at the call), and every store to that
+    /// element publishes at that address.
     pub(in super::super) fn whole_variable_actual(&self, actual: NodeId) -> bool {
-        let NodeKind::Expr(ExprKind::Ref {
-            target: Some(target),
-        }) = self.kind(actual)
-        else {
-            return false;
-        };
-        matches!(
-            self.kind(*target),
-            NodeKind::FuncArg {
-                direction: DbDirection::Ref,
-                ..
-            } | NodeKind::Var { .. }
-        ) && self.whole_value_declaration(*target)
+        match self.kind(actual) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => {
+                matches!(
+                    self.kind(*target),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        ..
+                    } | NodeKind::Var { .. }
+                ) && self.whole_value_declaration(*target)
+            }
+            // A hierarchical name of a module variable or a class property
+            // binds a descriptor to that variable's (or the object's
+            // property's) own storage.
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                refs.last().copied().flatten().is_some_and(|target| {
+                    matches!(self.kind(target), NodeKind::Var { .. })
+                        && self.whole_value_declaration(target)
+                        && self.hierarchical_storage_owner(target).is_some()
+                })
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { .. } | ExprKind::BitSelect { .. }) => {
+                self.whole_value_declaration(actual) && self.fixed_array_element_actual(actual)
+            }
+            _ => false,
+        }
     }
 
-    /// Whether a declaration holds one packed or real value, which a whole
-    /// `ref` descriptor (or a real cell address) names directly.
+    /// For a variable named through a hierarchical path: `Some(true)` for a
+    /// class property, `Some(false)` for module, interface or package
+    /// storage, `None` for a subroutine variable.
+    fn hierarchical_storage_owner(&self, target: NodeId) -> Option<bool> {
+        let mut current = self.node(target).parent;
+        while let Some(id) = current {
+            match self.kind(id) {
+                NodeKind::ClassDef => return Some(true),
+                NodeKind::FuncTask { .. } => return None,
+                NodeKind::ModuleInst { .. } => return Some(false),
+                _ if self.is_runtime_environment(id) => return Some(false),
+                _ => {}
+            }
+            current = self.node(id).parent;
+        }
+        None
+    }
+
+    /// Whether `select` picks one element of a fixed unpacked array variable
+    /// (through any number of whole-element selects). Members, class
+    /// properties, formals and containers are excluded: their element
+    /// descriptors are retained cells or views that a typed body cannot wait
+    /// on.
+    fn fixed_array_element_actual(&self, select: NodeId) -> bool {
+        let mut node = select;
+        loop {
+            match self.kind(node) {
+                NodeKind::Expr(
+                    ExprKind::ArraySelect { base, .. } | ExprKind::BitSelect { base, .. },
+                ) => {
+                    let fixed = self.query_descriptor(*base).is_some_and(|descriptor| {
+                        matches!(descriptor.shape, TypeShape::FixedArray { .. })
+                    });
+                    if !fixed {
+                        return false;
+                    }
+                    node = *base;
+                }
+                // The base names its declaration directly, through a
+                // reference expression or through a hierarchical name of
+                // module storage.
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) => node = *target,
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                    match refs.last().copied().flatten() {
+                        Some(target) if self.hierarchical_storage_owner(target) == Some(false) => {
+                            node = target
+                        }
+                        _ => return false,
+                    }
+                }
+                NodeKind::Var { .. } | NodeKind::Array { .. } => {
+                    return node != select;
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// Whether a declaration (or an expression's type) holds one packed or
+    /// real value, which a whole `ref` descriptor (or a real cell address)
+    /// names directly.
     fn whole_value_declaration(&self, declaration: NodeId) -> bool {
         self.query_descriptor(declaration)
             .is_some_and(|descriptor| match &descriptor.shape {
@@ -1035,6 +1123,36 @@ impl<'a> Codegen<'a> {
                 ),
                 _ => false,
             })
+    }
+
+    /// Whether the string or handle a `ref` actual names publishes every
+    /// change through a marker a typed body can find from its address: a
+    /// module, package, static or process-level variable (a persistent
+    /// object), or a forwarded `ref` formal, whose own actual its caller
+    /// checked. An automatic subroutine variable no fork branch can see is
+    /// changed only by the waiting process itself, so a marker that never
+    /// changes is exact. Fork-visible automatics and class properties have
+    /// no such marker.
+    pub(in super::super) fn native_ref_actual_observable(&mut self, actual: NodeId) -> bool {
+        let NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) = self.kind(actual)
+        else {
+            return false;
+        };
+        let target = *target;
+        if matches!(
+            self.kind(target),
+            NodeKind::FuncArg {
+                direction: DbDirection::Ref,
+                ..
+            }
+        ) || !self.is_subroutine_scoped(target)
+            || self.db.variable_lifetime(target) == VariableLifetime::Static
+        {
+            return true;
+        }
+        !self.fork_visible(target)
     }
 
     /// Whether a declaration lives in a subroutine activation (a formal or a

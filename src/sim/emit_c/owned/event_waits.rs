@@ -279,6 +279,22 @@ impl Frame<'_, '_> {
                 IrWaitSrc::RefFormal { index, real: false } => {
                     fields.push(format!(".sig = llg_ref_dependency(r{index})"));
                 }
+                IrWaitSrc::NativeRefFormal {
+                    index,
+                    handle: false,
+                } => {
+                    fields.push(format!(
+                        ".sig = llg_dependency_or_never(r{index}->dependency)"
+                    ));
+                }
+                IrWaitSrc::NativeRefFormal {
+                    index,
+                    handle: true,
+                } => {
+                    fields.push(format!(
+                        ".sig = llg_handle_dependency((const void*)r{index})"
+                    ));
+                }
                 IrWaitSrc::Evaluated { eval, reads, .. }
                 | IrWaitSrc::EvaluatedReal { eval, reads, .. } => {
                     let field = if matches!(source, IrWaitSrc::EvaluatedReal { .. }) {

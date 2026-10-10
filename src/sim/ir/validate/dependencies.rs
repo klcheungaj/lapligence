@@ -100,7 +100,7 @@ impl Validator<'_> {
             IrDependency::ContainerContents(container)
             | IrDependency::ContainerShape(container) => *container < self.model.containers.len(),
             IrDependency::SharedCell { local, .. } => !local.is_empty(),
-            IrDependency::RefFormal { .. } => true,
+            IrDependency::RefFormal { .. } | IrDependency::NativeRefFormal { .. } => true,
             IrDependency::NativeAccess(name) => self
                 .model
                 .native_accesses

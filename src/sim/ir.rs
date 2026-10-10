@@ -339,8 +339,14 @@ pub enum IrDependency {
     /// The storage behind `ref` formal `index` of the enclosing typed
     /// subroutine, named at run time through its descriptor (a real `ref`
     /// formal is the cell address itself). Calls bind such formals only to
-    /// whole variables.
+    /// storage that stores publish at its own address: whole variables,
+    /// fixed-array elements and class properties.
     RefFormal { index: usize, real: bool },
+    /// The change marker of the string (or, when `handle`, the class
+    /// handle variable) that string or handle `ref` formal `index` of the
+    /// enclosing typed subroutine names at run time. Storage without a
+    /// marker selects one that never changes.
+    NativeRefFormal { index: usize, handle: bool },
     /// The packed or real storage that native access `name` (a class
     /// property or virtual-interface member, see
     /// [`crate::sim::ir::IrNativeAccess`]) currently selects; for a class

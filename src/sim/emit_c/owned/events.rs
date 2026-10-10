@@ -99,6 +99,16 @@ impl Frame<'_, '_> {
             IrDependency::RefFormal { index, real: false } => {
                 format!("{{ .sig = llg_ref_dependency(r{index}) }}")
             }
+            // A string carries its own change marker (null for storage that
+            // publishes none, such as an unshared activation local).
+            IrDependency::NativeRefFormal {
+                index,
+                handle: false,
+            } => format!("{{ .sig = llg_dependency_or_never(r{index}->dependency) }}"),
+            IrDependency::NativeRefFormal {
+                index,
+                handle: true,
+            } => format!("{{ .sig = llg_handle_dependency((const void*)r{index}) }}"),
             IrDependency::Scalar(name)
             | IrDependency::Real(name)
             | IrDependency::SharedCell { local: name, .. } => {

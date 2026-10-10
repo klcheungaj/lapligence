@@ -168,6 +168,7 @@ impl Codegen<'_> {
             | IrDependency::Object(_)
             | IrDependency::SharedCell { .. }
             | IrDependency::RefFormal { .. }
+            | IrDependency::NativeRefFormal { .. }
             | IrDependency::NativeAccess(_) => {}
         }
     }
