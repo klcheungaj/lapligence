@@ -386,7 +386,7 @@ pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
     let dpi = dpi_import(f)?;
     let ret = if f.is_task { None } else { dpi.ret() };
     let mut tables = LayoutTables {
-        prefix: format!("_llg_dpi_{}_", f.c_name),
+        prefix: format!("llg_dpi_{}_", f.c_name),
         count: 0,
         out: String::new(),
     };
@@ -506,9 +506,14 @@ pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
             small_c_type(scalar)?
         ));
     } else if f.is_task {
-        // Without exported tasks nothing can be disabled inside the call, so
-        // the disable-protocol result carries no information (SV 35.9).
-        out.push_str(&format!("    (void){call};\n"));
+        // SV 35.9 b): an imported task returns 1 only when it returns because
+        // of a disable. Without exported subroutines nothing can disable it
+        // inside the call, so a nonzero result breaks the protocol, which
+        // 35.9 makes a fatal simulation error; nothing is copied out.
+        out.push_str(&format!(
+            "    if ({call} != 0) {{\n        llg_dpi_task_protocol_error(\"{}\");\n        goto _dpi_return;\n    }}\n",
+            dpi.c_name()
+        ));
     } else {
         out.push_str(&format!("    {call};\n"));
     }
@@ -597,7 +602,7 @@ pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
         out.push_str(&format!("    {statement}\n"));
     }
     // A label must precede a statement, not a declaration, in C11.
-    if f.formals.iter().any(|formal| formal.is_address()) {
+    if f.is_task || f.formals.iter().any(|formal| formal.is_address()) {
         out.push_str("_dpi_return: ;\n");
     }
     let result = match ret {

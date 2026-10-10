@@ -1,0 +1,13 @@
+c sum range [3:5]
+slice=42 twice=6
+c sum range [1:3]
+c sum range [1:3]
+pure=600 600
+c l=3/2
+enum=11
+enum out=BLUE
+c p=af/f i=fffffffe/0
+packed=5Z
+c bit=8c logic=cc/50
+c sum range [0:2]
+sub sum=18 twice=8

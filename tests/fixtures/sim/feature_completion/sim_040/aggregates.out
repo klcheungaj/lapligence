@@ -1,0 +1,16 @@
+i id=-7 tag=c/5 wide=abcdef0123 pair=1,-2
+n.r[c0] id=9 tag=5/0 wide=0000000001 pair=3,4
+n.r[c1] id=-7 tag=c/5 wide=abcdef0123 pair=1,-2
+n.n=-300
+ro=-14 10xz 42deadbeef -3 2
+n.r[2]=-7 xxzz n.r[1]=10 1111 0000000100 n=-301
+b=-4,-1,2,5 f=1001 l=032
+o[0][2]=0010
+o[0][1]=0001
+o[0][0]=0000
+o[1][2]=zxzx
+o[1][1]=0100
+o[1][0]=0011
+l=1zx
+i=input io=inout
+so=output sio=changed sret=ret:input

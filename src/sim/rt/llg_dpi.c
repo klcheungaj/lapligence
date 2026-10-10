@@ -286,6 +286,16 @@ void llg_dpi_init_c(const llg_dpi_type_t* type, void* out) {
 
 /* ---- svdpi.h: version and canonical bit/part selects (H.10.1.3, H.11.5) */
 
+void llg_dpi_task_protocol_error(const char* c_name) {
+    if (llg_rt_exiting()) return;
+    fprintf(stderr,
+            "llg: DPI-C import task `%s` returned nonzero, but nothing disabled it "
+            "(SV 35.9: an imported task returns 1 only after a disable)\n",
+            c_name);
+    llg_rt_mark_failed();
+    llg_rt_fatal_typed(0, "DPI-C disable protocol violation", NULL, 0, "", c_name);
+}
+
 const char* svDpiVersion(void) {
     return "1800-2005";
 }

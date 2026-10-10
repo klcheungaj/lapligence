@@ -1,0 +1,22 @@
+c i 00000029/0000000c ffff0000/ffff0000 12340000/0000ffff
+c o 0000003f/0000003f ffffffff/ffffffff ffffffff/ffffffff
+c io 00000019/0000002b 01234567/00000000 0000ffff/ffffffff
+lo=zxzx01_xxxx0000_zzzzxxxx
+lio=xxxxxx_xxffzz00_1234zzzz
+c init lo 000001ff/000001ff ffffffff/ffffffff
+c init bo 00000000 00000000
+c init la f/f f/f ba 0 0
+init l=xxx0000000X b=00000000000 la=xxxx,0zx1 ba=1010,0000
+c alias i=123456789a io=123456789a
+alias x=123456789c
+c alias i=ff00000001 io=0000000001
+select mem=00,00,02,00 y=0000000003
+c result o=0
+result r=22
+c string s=in
+string s=in-ret
+task lo=x11111_00000000_00000005
+c wide v0=a/3 v78=10/10 v156=0/80 b0=0
+wide v=z000..1z0..1x1x b=1..12345678
+c scalar a=2 b=3 c=3
+scalar sb=z sc=z

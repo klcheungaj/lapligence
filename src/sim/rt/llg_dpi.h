@@ -71,6 +71,11 @@ void llg_dpi_to_c(const llg_dpi_type_t* type, const sv4_t* payload, void* out);
 void llg_dpi_from_c(const llg_dpi_type_t* type, const void* in, sv4_t* payload);
 void llg_dpi_init_c(const llg_dpi_type_t* type, void* out);
 
+/* An imported task returned nonzero although nothing disabled it (SV 35.9
+ * item b): report a fatal simulation error naming `c_name` and request
+ * completion. The caller copies nothing out and returns. */
+void llg_dpi_task_protocol_error(const char* c_name);
+
 #ifdef __cplusplus
 }
 #endif

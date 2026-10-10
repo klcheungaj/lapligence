@@ -793,3 +793,98 @@ fn s34_d4_observed_wakeup_before_reactive() {
         include_str!("fixtures/sim/lrm_decisions/S34-D4_observed_wakeup_before_reactive.out"),
     );
 }
+
+/// Build the `.c` companion of a DPI-C decision case into a shared library in
+/// `directory`; `None` (with a SKIP note) on hosts without shared DPI fixtures.
+fn dpi_companion(directory: &crate::sim_harness::TempDir, case: &str) -> Option<String> {
+    if !cfg!(unix) {
+        eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
+        return None;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = root.join(format!("tests/fixtures/sim/lrm_decisions/{case}.c"));
+    let library = directory.path().join(format!("lib{case}.so"));
+    let compiler = std::env::var("LLG_CC")
+        .or_else(|_| std::env::var("CC"))
+        .unwrap_or_else(|_| "cc".to_owned());
+    let mut command = std::process::Command::new(compiler);
+    command
+        .args(["-shared", "-fPIC", "-I"])
+        .arg(root.join("vendor/slang/external/ieee1800"));
+    if cfg!(target_os = "macos") {
+        command.args(["-undefined", "dynamic_lookup"]);
+    }
+    if let Ok(flags) = std::env::var("LLG_CFLAGS") {
+        command.args(flags.split_whitespace());
+    }
+    command.arg(&source).arg("-o").arg(&library);
+    let output = crate::sim_harness::run_command(&mut command, std::time::Duration::from_secs(60))
+        .expect("C compiler for the DPI fixture");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Some(library.to_string_lossy().into_owned())
+}
+
+/// [`run_decision`] for a DPI-C case with a `.c` companion.
+fn run_dpi_decision(case: &str, expected: &str) {
+    let directory = crate::sim_harness::TempDir::new("lrm-s40").expect("temporary directory");
+    let Some(library) = dpi_companion(&directory, case) else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(SUITE, case, expected, &["--dpi-lib", &library], &[]);
+}
+
+#[test]
+fn s40_d1_output_initial_values() {
+    run_dpi_decision(
+        "S40-D1_output_initial_values",
+        include_str!("fixtures/sim/lrm_decisions/S40-D1_output_initial_values.out"),
+    );
+}
+
+#[test]
+fn s40_d2_aliased_copy_out() {
+    run_dpi_decision(
+        "S40-D2_aliased_copy_out",
+        include_str!("fixtures/sim/lrm_decisions/S40-D2_aliased_copy_out.out"),
+    );
+}
+
+#[test]
+fn s40_d3_open_array_queries() {
+    run_dpi_decision(
+        "S40-D3_open_array_queries",
+        include_str!("fixtures/sim/lrm_decisions/S40-D3_open_array_queries.out"),
+    );
+}
+
+#[test]
+fn s40_d4_invalid_element_access() {
+    run_dpi_decision(
+        "S40-D4_invalid_element_access",
+        include_str!("fixtures/sim/lrm_decisions/S40-D4_invalid_element_access.out"),
+    );
+}
+
+#[test]
+fn s40_d5_task_disable_protocol() {
+    let case = "S40-D5_task_disable_protocol";
+    let directory = crate::sim_harness::TempDir::new("lrm-s40-d5").expect("temporary directory");
+    let Some(library) = dpi_companion(&directory, case) else {
+        return;
+    };
+    let expected = include_str!("fixtures/sim/lrm_decisions/S40-D5_task_disable_protocol.out");
+    sim_cli::run_case_checked_matrix(SUITE, case, &["--dpi-lib", &library], &|label, output| {
+        assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(
+                "llg: DPI-C import task `d5_task` returned nonzero, but nothing disabled it"
+            ),
+            "{label}: {output:?}"
+        );
+    });
+}
