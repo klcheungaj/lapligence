@@ -1228,11 +1228,23 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   with side-effect-free targets build `A = op(A, B)` and `A = f(A)`;
   prefix/postfix values, compound values and
   side-effecting target selectors bind the target once and yield the new or
-  old value. Those once-bound forms need a target within the packed value
-  limit without native members
-  ([known issue](known_issues.md#operator-overload-update-values-on-oversized-or-native-targets));
-  V2001 rejects the syntax. Native/non-integral extensions are SIM-021.
-  SV §11.11 **[SV-2005]**.
+  old value. Operands and results may be records with string, queue,
+  dynamic-array and class-handle members (results are independently owned),
+  unpacked unions, real/shortreal values and mixed types; native-record
+  results also reach input ports and casts to their own type. On native
+  records (and, without postfix, fixed values above the packed limit) update
+  values are available as the right-hand side of an assignment with
+  side-effect-free target selectors; other once-bound forms on those targets
+  report their limit
+  ([known issue](known_issues.md#operator-overload-update-values-on-oversized-or-native-targets)).
+  A prototype whose operator is already legal for its formal types, with a
+  built-in result assignable to its result type, is rejected
+  ([S21-D1](lrm_decisions.md#operator-overloading-sim-021)). Bound functions
+  follow the ordinary function rules (no time control; nonblocking
+  assignments and fork-join_none allowed) and the effect restrictions of the
+  context they run in; overloaded calls on native records in `$monitor` or
+  event-control callbacks and in concurrent assertions share the general
+  limits of those contexts. V2001 rejects the syntax. SV §11.11 **[SV-2005]**.
 
 ## 8. Continuous assignments & structural
 

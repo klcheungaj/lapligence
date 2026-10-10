@@ -170,6 +170,13 @@ scripts/run-tests.sh -E 'test(/^sim_lrm_decisions::/)'
 | S26-D14 | **`$ungetc` returns 0 on success.** | 21.3.4.1 L36816-36818; V2001 17.2.4.1 L18994-18995 | `S26-D14_ungetc_returns_zero` | LRM text (llg returned the character before) |
 | S26-D15 | **`$fwrite("%z")` writes vecval bits.** X is aval 1, bval 1 and Z is aval 0, bval 1. | Table 21-8 L36988-36990; 38.15 L62602 | `S26-D15_fwrite_z_encoding` | LRM text (llg wrote Z as X before) |
 
+## Operator overloading (SIM-021)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S21-D1 | **Overloading an already-legal operator is an error.** A `bind` declaration whose operator is already legal for its formal types, and whose built-in result is assignable to its result type (`int + int` returning `int`, a same-type record `=` or `==`, `real` to `int` by `=`, `string < string`), is rejected at the declaration. | 11.11 L16473-16476, L16562-16563 | `S21-D1_builtin_legal_overload` | llg reading (the text says such operators "cannot be overloaded" but not whether the declaration is an error or has no effect; llg admitted it without effect before) |
+| S21-D2 | **A prototype with a result the built-in cannot produce is admitted.** Formals that are legal for the built-in operator with an unpacked-record result (the clause's own `fcopyi(int)` for unary `+`) are admitted; legal uses keep their built-in meaning. | 11.11 L16473-16476, L16488-16489 | `S21-D2_record_result_overload_admitted` | llg reading |
+
 ## Random streams and legacy distributions (SIM-028)
 
 The generator behind `$urandom`, process and object streams and `shuffle` is

@@ -387,8 +387,17 @@ RTL-104's operator-overload fixtures use
 values, once-evaluated targets, relational-operand expected types and package
 overloads run in both optimizer modes on both backends; nested or unmatched relational operands,
 explicit, late and re-exported imports, two imported candidates and a native
-update value reject. The package ruling is in
+update target with a side-effecting selector reject. The package ruling is in
 [sim_data_semantics](../docs/sim_data_semantics.md#project-rulings-where-the-lrm-is-silent).
+
+SIM-021's native operator-overload fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_021::)'`: records with string,
+queue, dynamic-array and handle members, unions, real operands, expected
+result types (including ports and casts), native and oversized update values
+and legal function effects run in both optimizer modes on all value backends;
+already-legal operators, time-consuming or non-function bindings, invisible or
+ambiguous prototypes and effectful callback uses reject. Their decisions are
+S21-D1/S21-D2 in `sim_lrm_decisions`.
 
 RTL-105's frontend-admission fixtures use
 `-E 'binary(sim_feature_completion) & test(rtl_105::)'`: `inout uwire` formals,
