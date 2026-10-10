@@ -854,35 +854,33 @@ binding, but the retained runtime-selector characterization has no adjudicated
 binding/rebinding oracle. Qualify that boundary before enabling runtime-selected
 connections. Static selected connections and nested packed projections execute.
 
-## Delayed and event-controlled native writes
+## Delayed native continuous writes
 
 **Status:** open; SIM-004 queues untimed and `#delay` nonblocking writes and
 drives zero-delay continuous assignments of strings and string records.
+SIM-014 executes event and repeated-event intra-assignment timing on string
+and handle targets (`s <= @(e) t;`, `s = repeat (2) @(e) t;`).
 
 ### Symptom
 
 These legal forms reject with explicit diagnostics: a delayed continuous
 assignment to a string or string record (`assign #1 s = t;`, SV 10.3.3), and
-event or repeat intra-assignment timing on a string target (`s <= @(e) t;`,
-`s = repeat (2) @(e) t;`). A blocking `#delay` assignment of a record with a
-conditional source also rejects.
+a blocking `#delay` assignment of a record with a conditional source.
 
 ### Cause
 
-A delayed continuous driver keeps an inertial pending value per driver, and
-event-controlled NBAs run a detached waiter that captures the value. Both
-records hold packed (`sv4_t`) payloads only; neither owns a string.
+A delayed continuous driver keeps an inertial pending value per driver, which
+holds a packed (`sv4_t`) payload only and owns no string.
 
 ### Intended direction
 
-Give the inertial driver and the detached event waiter an owned native payload
-(string or chandle) next to the packed one, reusing the `llg_nba_t` native
-member layout and its destroy path.
+Give the inertial driver an owned native payload (string or chandle) next to
+the packed one, reusing the `llg_nba_t` native member layout and its destroy
+path.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_004/neg_delayed_string_continuous.sv`;
-`module tb; string s; event e; initial begin s <= @(e) "x"; ->e; end endmodule`.
+`tests/fixtures/sim/feature_completion/sim_004/neg_delayed_string_continuous.sv`.
 
 ## `%l` in runtime-built format strings
 
@@ -1080,19 +1078,28 @@ The intended direction is one shared process body per array declaration,
 parameterized by the element's bit offsets, like the table-driven
 net-contribution batches.
 
-## Release does not restore a variable's continuous driver
+## Unsupported force and release targets
 
-**Status:** open; found by RTL-013, owned by the force/release feature.
+**Status:** open (SIM-023 deferral).
 
-IEEE 1800-2009 10.6.2: releasing a variable that is also driven by a continuous
-assignment re-establishes that assignment. The generated model keeps the forced
-value instead, both in ordinary `always` and in `always_ff`, until the
-continuous driver's operands next change. Nets are not affected: a released
-net recomputes its resolution immediately.
+These legal targets stop the run with a located error instead of being forced:
 
-Reproduce with `logic [7:0] r, src; assign r = src;`, a process that runs
-`force r = 8'haa;` and later `release r;`, and a `$display` of `r` after the
-release without changing `src`; the model prints `aa` instead of `src`.
+- string, class-handle and event variables, which are singular (IEEE 1800-2009
+  6.4) and therefore legal under 10.6.2. The force runtime overlays packed and
+  real storage only; a native value would need its own forced copy and
+  release rule. A chandle force is already rejected by the frontend;
+- a whole unpacked net array. Its elements can be forced one at a time;
+- an element of a static unpacked array variable in SV2009 (for example
+  `force mem[1] = 7;` on `int mem[2]`), which reads as a "reference to a
+  singular variable" under 10.6.2. The frontend rejects every select of a
+  variable as a force or release target (its `BadProceduralForce` check, which
+  llg promotes to an error), as IEEE 1364-2001 9.3.2 requires ("It cannot be a
+  memory word"). Admitting it needs a frontend patch and a force target for
+  array cells, including lazily allocated ones.
+
+Pinned by `neg_string`, `neg_class_handle`, `neg_whole_net_array` and
+`static_memory_force_witness` in
+[sim_023](../tests/fixtures/sim/feature_completion/sim_023/readme.md).
 
 ## Delayed enable gates drive X instead of L/H
 

@@ -305,8 +305,8 @@ that its body never reads. An input event formal is a by-value `llg_event_t` (fr
 coroutine callee) holding the object the actual named at the call: the caller
 snapshots `{ p ? p->object : NULL }` and the callee binds a private handle copy
 (`IrEventRef::Formal`), so rebinding the actual or the formal cannot move waits.
-Output, inout and ref event formals, event controls reading by-value formals or
-locals and class/virtual-interface event calls stay inline-expanded templates that
+Output, inout and ref event formals and event controls reading by-value formals or
+locals stay inline-expanded templates that
 are never emitted; a task whose event control reads a `ref` formal is a template
 whose per-signal specializations are emitted (`subroutine_requires_inline`,
 `CallShape`). Concrete interface members retain their

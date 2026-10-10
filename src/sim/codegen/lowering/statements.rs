@@ -326,6 +326,141 @@ fn force_constant_index(expr: &IrExpr) -> bool {
         && value.z_mask().iter().all(|mask| *mask == 0)
 }
 
+/// The integer value of a lowered net selector. Lowering normalizes declared
+/// ranges with conversions and `+`/`-`/`*` of constants; the frontend has
+/// already required the source selector to be a constant expression.
+fn force_constant_i64(expr: &IrExpr) -> Option<i64> {
+    let value = match expr.kind() {
+        IrExprKind::Const(value) => {
+            if value.real_value().is_some()
+                || value.fill().is_some()
+                || value.x_mask().iter().any(|mask| *mask != 0)
+                || value.z_mask().iter().any(|mask| *mask != 0)
+                || value.bits().iter().skip(1).any(|limb| *limb != 0)
+                || value.width() == 0
+                || value.width() > 64
+            {
+                return None;
+            }
+            let bits = value.bits().first().copied().unwrap_or(0);
+            let width = value.width();
+            if value.signed() && width < 64 && bits >> (width - 1) & 1 != 0 {
+                (bits | (u64::MAX << width)) as i64
+            } else {
+                i64::try_from(bits).ok()?
+            }
+        }
+        IrExprKind::Convert { a } => force_constant_i64(a)?,
+        IrExprKind::Bin { op, a, b } => {
+            let (a, b) = (force_constant_i64(a)?, force_constant_i64(b)?);
+            match op {
+                IrBinOp::Add => a.checked_add(b)?,
+                IrBinOp::Sub => a.checked_sub(b)?,
+                IrBinOp::Mul => a.checked_mul(b)?,
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    // A narrower result type would truncate; leave such selectors alone.
+    let width = expr.width();
+    let fits = width >= 64
+        || (width > 0
+            && if expr.signed() {
+                value >= -(1i64 << (width - 1)) && value < (1i64 << (width - 1))
+            } else {
+                value >= 0 && value < (1i64 << width)
+            });
+    fits.then_some(value)
+}
+
+/// Rewrite a constant indexed part-select or a constant packed member/element
+/// selection of a vector net into the fixed part descriptor the force runtime
+/// overlays (IEEE 1800-2009 10.6.2 admits "a constant bit-select of a vector
+/// net, a constant part-select of a vector net, or a concatenation of
+/// these"). Variables and non-constant selectors are returned unchanged, so
+/// `validate_force_lhs` keeps rejecting them.
+fn normalize_force_lhs(model: &IrModel, lhs: IrLhs) -> IrLhs {
+    let is_net = |index: usize| {
+        model
+            .signals
+            .get(index)
+            .is_some_and(|signal| signal.net_driver.is_some() || !signal.net_alias.is_empty())
+    };
+    match lhs {
+        IrLhs::IdxPart(index, base, width_expr, width, negative, two_state) => {
+            let span = i64::from(width) - 1;
+            let bounds = force_constant_i64(&base)
+                .filter(|_| is_net(index) && width > 0)
+                .and_then(|base| {
+                    if negative {
+                        Some((base, base.checked_sub(span)?))
+                    } else {
+                        Some((base.checked_add(span)?, base))
+                    }
+                });
+            match bounds {
+                Some((left, right)) => IrLhs::Part(index, left, right, two_state),
+                None => IrLhs::IdxPart(index, base, width_expr, width, negative, two_state),
+            }
+        }
+        IrLhs::PackedSelect {
+            target,
+            steps,
+            signed,
+            two_state,
+        } => {
+            let constant_part = match target.as_ref() {
+                IrLhs::Whole(index) if is_net(*index) => {
+                    let mut available = i64::from(model.signal(*index).ty.width());
+                    let mut lsb = 0i64;
+                    let mut selected = None;
+                    for step in &steps {
+                        let width = i64::from(step.width);
+                        match force_constant_i64(&step.base) {
+                            Some(base) if base >= 0 && width > 0 && base + width <= available => {
+                                lsb += base;
+                                available = width;
+                                selected = Some((*index, lsb + width - 1, lsb));
+                            }
+                            _ => {
+                                selected = None;
+                                break;
+                            }
+                        }
+                    }
+                    selected
+                }
+                _ => None,
+            };
+            match constant_part {
+                Some((index, left, right)) => IrLhs::Part(index, left, right, two_state),
+                None => IrLhs::PackedSelect {
+                    target,
+                    steps,
+                    signed,
+                    two_state,
+                },
+            }
+        }
+        IrLhs::Stream {
+            parts,
+            width,
+            slice,
+            direction,
+        } => IrLhs::Stream {
+            parts: parts
+                .into_iter()
+                .map(|(part, width)| (normalize_force_lhs(model, part), width))
+                .collect(),
+            width,
+            slice,
+            direction,
+        },
+        other => other,
+    }
+}
+
 /// Validate the force/release target shape shared by lowering and emission.
 /// Packed variable selects are intentionally rejected; constant selected nets
 /// are represented by fixed part descriptors and can therefore preserve all

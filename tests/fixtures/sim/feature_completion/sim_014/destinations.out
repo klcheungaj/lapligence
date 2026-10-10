@@ -1,0 +1,14 @@
+5 array m: 00 00 11 00
+9 member s.f=00100000
+17 part v=11000000
+25 queue q=0 0 0 7
+29 dynamic dyn=0 8
+33 associative a=0 b=9
+37 handle h1.x=0 h2.x=10
+41 real r=3.00
+49 string st=ab
+57 nba array n: 00 33 00 00
+65 nba member t.g=00000100
+69 nba part w=00000110
+73 nba real nr=5.00
+81 nba string ns=one!

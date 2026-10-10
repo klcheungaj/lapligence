@@ -972,7 +972,9 @@ cargo nextest run -E 'test(/^(sim_partial_features|sim_type_conformance|runtime_
 
 Inspect every `/tmp/llg-asan-model.*` file for errors. Stackless coroutine frames
 need no stack-switch suppression; file routing preserves exact program-stderr
-assertions without hiding sanitizer reports.
+assertions without hiding sanitizer reports. The CI sanitizer job also runs
+`sim_023::`, whose force/release fixtures kill and disable forcing processes and
+end the run with forces active.
 
 For SYN-039, use those same sanitizer/compiler settings with the worktree
 runner and the following filters:

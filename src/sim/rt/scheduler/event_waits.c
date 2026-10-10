@@ -235,6 +235,14 @@ llg_co_arm_t llg_arm_order(llg_proc_t* self,
     llg_runtime_service_enter(self, "wait_order");
     if (n <= 0 || !result || !self || !region_can_mutate("wait scheduling"))
         return LLG_CO_ARM_READY;
+    // SV 15.5.4: "Only the first event in the list can wait for the
+    // persistent triggered property." A first event already triggered in
+    // this time step counts as observed; the rest need new occurrences.
+    int first_done = llg_event_triggered(evs[0]);
+    if (first_done && n == 1) {
+        *result = 1;
+        return LLG_CO_ARM_READY;
+    }
     llg_wait_t* w = &self->wait;
     w->kind = W_EVENT_ORDER;
     w->resume_region = region_is_reactive(self->region)
@@ -243,7 +251,7 @@ llg_co_arm_t llg_arm_order(llg_proc_t* self,
     llg_wait_order_payload_t* order =
         &wait_rare_allocate(w, "wait_order payload")->order;
     order->n_order = n;
-    order->next = 0;
+    order->next = first_done;
     *result = 0;
     order->result = result;
     order->sequence = (llg_event_object_t**)llg_checked_malloc(

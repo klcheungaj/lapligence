@@ -395,13 +395,7 @@ impl EmitCtx<'_, '_> {
             }
             NodeKind::Stmt(StmtKind::DoWhile { cond, body }) => self.lower_do_while(*cond, *body),
             NodeKind::Stmt(StmtKind::Repeat { cond, body }) => {
-                let c = self.cg.lower_expr(&self.path, *cond)?;
-                if c.is_real() {
-                    return Err(format!(
-                        "real-valued repeat counts are not supported in `{}`",
-                        self.path
-                    ));
-                }
+                let c = self.lower_repeat_count(*cond)?;
                 if !matches!(c.kind, IrExprKind::Const(_)) {
                     self.cg.warnings.push(format!(
                         "repeat count in `{}` is not a constant; evaluated at runtime",
@@ -497,10 +491,20 @@ impl EmitCtx<'_, '_> {
                     .map(|body| self.lower_stmt(body))
                     .transpose()?
                     .unwrap_or_default();
-                let failure = if_false
-                    .map(|body| self.lower_stmt(body))
-                    .transpose()?
-                    .unwrap_or_default();
+                // SV 15.5.4: "If the fail statement is not specified, a
+                // failure generates a run-time error."
+                let failure = match if_false {
+                    Some(body) => self.lower_stmt(*body)?,
+                    None => vec![IrStmt::Severity {
+                        level: crate::sim::ir::IrSeverityLevel::Error,
+                        fmt: "\"wait_order: events triggered out of order\"".to_owned(),
+                        args: Vec::new(),
+                        scope: self.cg.format_scope(&self.path, h),
+                        location: self.finish_location(h),
+                        fatal_finish_number: None,
+                        runtime_failure: false,
+                    }],
+                };
                 self.saw_wait = true;
                 Ok(vec![IrStmt::WaitOrder {
                     events,

@@ -87,15 +87,14 @@ impl EmitCtx<'_, '_> {
             class: receiver,
             virtual_interface: virtual_call,
         };
-        let has_event_formal = bound.iter().any(|argument| argument.is_event);
         // Remaining expansions (see `CallShape`): event controls reading
         // string or handle `ref` formals, `ref` formals read by an evaluated
         // event expression whose actual is not a whole module signal, `ref`
-        // formals waited on whose actual is not a whole variable, and event
-        // formals of class-method and virtual-interface calls, whose
-        // receivers the typed event ABI does not carry.
+        // formals waited on whose actual is not a whole variable. Event
+        // formals of every direction, including those of class methods,
+        // take the typed path.
         let shape = self.cg.call_shape(ft, callee_inst);
-        let mut expand = shape.inline_only || (has_event_formal && call_receiver.class.is_some());
+        let mut expand = shape.inline_only;
         // Module, static and block records bound to native record `ref`
         // formals select a specialization (`record_refs`).
         let records = self.cg.record_ref_bindings(&formals, &bound);
@@ -782,8 +781,6 @@ impl EmitCtx<'_, '_> {
     ///   element): the evaluator needs the actual's dependencies
     ///   (`arg_dependencies`), which a shared body cannot know. A whole-signal
     ///   actual calls a specialization of the task instead.
-    /// - Event formals of class-method and virtual-interface calls, whose
-    ///   receivers the by-value event parameter does not carry.
     fn lower_task_inline(
         &mut self,
         ft: NodeId,

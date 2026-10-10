@@ -843,17 +843,35 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   targets (nets, selects, streams) keep Slang's own located error. Pinned by
   [adv_032](../tests/fixtures/sim/feature_completion/adv_032/readme.md).
   V §9.3.1 **[1995]**.
-- 🟨 **Force/release** — Persistent packed/real variables and admitted constant-selected, concatenated, resolved-net and canonical alias targets support live
-  RHS dependencies and wakeups, local or through hierarchical, generate,
-  instance-array, top-name and upward paths
-  ([adv_032](../tests/fixtures/sim/feature_completion/adv_032/readme.md)
-  `hier_force_release`). Release restores net resolution; variables retain
-  the forced value. Variable selects are language errors (V §9.3.2); dynamic
-  selects, automatic/array targets and unsupported indirect net forms reject. Live RHS sources include fixed-array elements and whole arrays
-  (through their change markers). A helper with visible writes, persistent
-  state or descriptor formals is evaluated by the force statement and then, while
-  the force is in effect, by a per-site guard process into a hidden source the
-  read-only evaluator reads; release or replacement stops it (§9).
+- 🟨 **Force/release** — Packed, enumerated, packed-structure and real
+  variables, every resolved net kind (`wire`, `wand`, `wor`, `tri`,
+  multi-driven), constant bit-, part- and indexed part-selects of nets, constant
+  member and element selects of packed-structure and packed-array nets, net-array
+  elements, true-net aliases and concatenations of these, local or through
+  hierarchical, generate, instance-array, interface, `$root` and upward paths,
+  from processes, tasks, functions, class methods and fork branches. The RHS is
+  live: a change of any operand, including another forced signal, re-evaluates
+  it at once in the writing process while ordinary drivers and procedural
+  writes continue underneath. Forces and releases act bit by bit (a later
+  overlapping force replaces only the overlapped bits; a partial release frees
+  only the named bits). Release recomputes a net from its current drivers
+  immediately; a variable keeps the forced value until its next procedural
+  write, except that a variable driven by a continuous assignment or an output
+  port is re-established by a scheduled reevaluation (SV §10.6.2). A force
+  outlives the process that applied it (kill, `disable`, task return), and the
+  model closes cleanly with forces active
+  ([sim_023](../tests/fixtures/sim/feature_completion/sim_023/readme.md),
+  decisions S23-D1–D4 in [lrm_decisions](lrm_decisions.md)). Live RHS sources
+  include fixed-array elements and whole arrays (through their change markers).
+  A helper with visible writes, persistent state or descriptor formals is
+  evaluated by the force statement and then, while the force is in effect, by a
+  per-site guard process into a hidden source the read-only evaluator reads;
+  release or replacement stops it (§9). Variable selects, memory words (V
+  §9.3.2), dynamic net selects, automatic targets or RHS references, class
+  properties, dynamic elements (SV §§6.21, 13.3.2) and unpacked aggregates (not
+  singular, SV §6.4) are located errors. Missing: string, class-handle and event
+  variables, whole net arrays and SV2009 static unpacked-array elements
+  ([known issue](known_issues.md#unsupported-force-and-release-targets)).
   V §9.3.2 **[1995]**.
 
 ## 6. Timing controls
@@ -915,26 +933,42 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   or virtual-interface handles, and virtual methods
   ([ki_lrm_audit_b](../tests/fixtures/sim/feature_completion/ki_lrm_audit_b/readme.md)).
   V §§9.7.2–9.7.4 **[1995]**.
-- 🟨 **Intra-assignment controls** — Packed/real/shortreal RHS values are captured
-  immediately. Blocking assignments suspend and use update-time selectors; NBAs
-  continue with issue-time destinations. Explicit event/repeated-event controls
-  preserve order and normalize zero/X/Z/negative repeat counts. Controls with
-  effectful helpers wait in the blocking process; NBA and `->>` forms arm at
-  issue and wait in a detached process outside `wait fork`/`disable fork`
-  (§9). Nested repeat
-  timing, queued automatic real/string writes, reference-formal NBAs and
-  unsupported storage forms remain restricted. V §9.7.7 **[1995]**.
-- 🟨 **Standalone repeated event waits** — `repeat(n) @ev;` is represented as a
-  repeat loop around an event wait, retaining one packed count across waits.
-  This does not admit every standalone repeated-timing-node form; real counts
-  and unsupported event captures reject. Dedicated post-change HDL acceptance
-  remains unverified. V §9.7.7 **[1995]**.
-- 🟨 **Named-event operations** — `->`, untimed/delayed `->>`, event-controlled/
-  repeated-event `->>`, `.triggered` and `wait_order` are represented. Nonblocking
-  triggers capture source/target identity and register at issue time without
-  suspending the issuer. Unsupported repeat forms, dynamic event storage and
-  event-formal numeric/virtual-interface dispatch remain restricted.
-  V §9.7.3; SV §15.5 **[1995/SV-2005]**.
+- 🟨 **Intra-assignment controls** — The RHS is captured before the delay,
+  event or repeated-event control. Blocking assignments suspend and resolve
+  their destination when the control completes, including selectors, the
+  object a class handle names, and whole elements of queues, dynamic,
+  associative and string arrays; NBAs resolve destinations at issue and do not
+  suspend. String and handle targets, records, real values, automatic and
+  recursive task bodies and static-task NBAs are covered. Repeat counts are
+  evaluated once after the RHS: X/Z and nonpositive signed counts do not wait,
+  real counts round (SV 6.12.2)
+  ([sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md)).
+  Controls with effectful helpers wait in the blocking process; NBA and `->>`
+  forms arm at issue and wait in a detached process outside `wait
+  fork`/`disable fork` (§9). NBAs to automatic storage, class properties and
+  dynamic elements reject as language rules (SV 6.21, 13.3.2); a select within
+  a resizable-container element (`q[i][3:0] = @e v`) and process-evaluated NBA
+  controls on string or handle expressions reject. V §9.7.7 **[1995]**.
+- 🟨 **Standalone repeated event waits** — `repeat (n) @ev;` is a repeat
+  loop around an event wait whose count is evaluated once; X/Z and
+  nonpositive signed counts run zero times and real counts round (SV 12.7.2,
+  6.12.2). Kill and `disable fork` end a partially counted wait, and a new
+  wait counts from zero
+  ([sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md)).
+  V §9.7.7 **[1995]**.
+- 🟨 **Named-event operations** — `->`, `->>` with delay, event and
+  repeated-event controls, `.triggered`, `wait_order`, event assignment,
+  null and comparison execute. Nonblocking triggers name their event at issue
+  and do not suspend the issuer; `.triggered` holds for the time step and is
+  false for null; events test false only when null; `wait_order` lets its
+  first event use the triggered state and reports a run-time error when it
+  fails without an `else`
+  ([sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md)).
+  Mixed event lists and event formals of tasks, functions (including
+  function-expression calls) and class methods execute. Event handles other
+  than declared named events in process-evaluated lists and output/ref event
+  formals of function-expression calls reject. V §9.7.3; SV §15.5
+  **[1995/SV-2005]**.
 - 🟨 **Cycle delays** — Procedural `##N` repeats the resolved default clocking
   event, including irregular periods; `##0` continues in a step where the
   event already occurred, and a default named by `default clocking cb;` or
@@ -1425,9 +1459,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   follows any whole-variable actual through its descriptor in the typed body,
   so such tasks recurse and take native formals with automatic actuals. Event
   expressions over by-value formals copy them when the control arms; event
-  controls reading string/handle `ref` formals, `ref`-formal expressions in
-  lists with named events and class-method event formals use inline task
-  paths; event-formal virtual dispatch and process-handle formal ABI remain unsupported. Unresolved environments and broader
+  controls reading string/handle `ref` formals and `ref`-formal expressions in
+  lists with named events use inline task paths; event formals of class
+  methods, virtual ones included, take the typed path
+  ([sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md));
+  the process-handle formal ABI remains unsupported. Unresolved environments and broader
   timing/native/aggregate combinations reject. V §12.4 **[1995]**.
 - 🟨 **Read-only helper calls** — Event, continuous, force and other read-only
   evaluators admit bounded numeric value/const-ref helpers with private locals,

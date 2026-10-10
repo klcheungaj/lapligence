@@ -142,10 +142,10 @@ impl<'a> Codegen<'a> {
             meta.ir,
             method,
         )?;
-        for (idx, (io, _is_out)) in formals.iter().enumerate() {
-            if bound[idx].is_event {
+        for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if bound[idx].is_event && (*is_out || self.is_ref_formal(*io)) {
                 return Err(format!(
-                    "event formal `{}` in function expression `{name}` has no typed value call path",
+                    "output, inout or ref event formal `{}` in function expression `{name}` has no typed value call path",
                     self.node(*io).name
                 ));
             }
@@ -166,6 +166,23 @@ impl<'a> Codegen<'a> {
         let mut record_out_args = Vec::new();
         let mut record_in_args = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if bound[idx].is_event {
+                // An input event formal receives the actual's handle, which
+                // shares its synchronization object (SV 15.5.5).
+                let event = if self.is_null_event_expression(bound[idx].expr) {
+                    IrEventRef::Null
+                } else {
+                    let target = self.event_target_of(bound[idx].expr).ok_or_else(|| {
+                        format!(
+                            "event actual for formal `{}` of `{name}` in `{scope_path}` is not an event handle",
+                            self.node(*io).name
+                        )
+                    })?;
+                    self.event_ref_of(&target, scope_path)?
+                };
+                in_args.push((idx, IrCallArg::EventVal(event)));
+                continue;
+            }
             if self.is_subroutine_container(*io) {
                 let argument =
                     self.container_call_argument(scope_path, *io, bound[idx].expr, None)?;
@@ -428,7 +445,8 @@ impl<'a> Codegen<'a> {
             }
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
-            if self.fixed_formal_array(*io).is_some()
+            if bound[idx].is_event
+                || self.fixed_formal_array(*io).is_some()
                 || self.is_native_declaration(*io)
                 || self.is_subroutine_container(*io)
                 || self.real_formal_array(*io).is_some()

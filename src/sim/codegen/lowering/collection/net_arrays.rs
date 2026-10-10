@@ -170,7 +170,10 @@ impl Codegen<'_> {
         Ok(())
     }
 
-    pub(super) fn array_net_target_parts(&self, node: NodeId) -> Option<(ArrayInfo, Vec<NodeId>)> {
+    pub(in super::super) fn array_net_target_parts(
+        &self,
+        node: NodeId,
+    ) -> Option<(ArrayInfo, Vec<NodeId>)> {
         match self.kind(node) {
             NodeKind::Array { .. } | NodeKind::Expr(ExprKind::Ref { .. }) => self
                 .array_of(node)

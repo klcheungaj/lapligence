@@ -81,9 +81,17 @@ impl Codegen<'_> {
                 None,
             ));
         }
-        if self.is_chandle_expr(path, node) {
+        let is_event = self.event_target_of(node).is_some();
+        if is_event || self.is_chandle_expr(path, node) {
+            // SV 15.5.5.3: an event's Boolean value is 0 for null and 1
+            // otherwise; events compare by synchronization-object identity.
+            let handle = if is_event {
+                self.lower_event_identity(path, node)?
+            } else {
+                self.lower_chandle(path, node)?
+            };
             let equal = object_query(
-                IrObjectQuery::ChandleEq(self.lower_chandle(path, node)?, IrChandleExpr::Null),
+                IrObjectQuery::ChandleEq(handle, IrChandleExpr::Null),
                 1,
                 false,
             );

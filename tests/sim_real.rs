@@ -4,9 +4,10 @@
 //! mixed real/integer conditional typing, shortreal rounding, `$display`'s
 //! real format precision, implicit real-to-integer rounding, and real-valued
 //! non-blocking assignment timing and wide packed conversion. The rejection
-//! cases retain unsupported procedural contexts such as real-valued repeat
-//! counts while the supported real-array, continuous-assignment, and function
-//! paths are tested below.
+//! cases keep the language-illegal real forms (real nets, selects, bitwise
+//! operators and edges) while the supported real-array, continuous-assignment,
+//! and function paths are tested below. Real repeat counts are covered by
+//! the SIM-014 feature fixtures.
 //!
 //! Each
 //! test uses a fresh temp directory and the process-wide mutex serializes
@@ -45,30 +46,6 @@ endmodule
 
 fn run_sim(sv: &str, tag: &str) -> Result<String, String> {
     sim_harness::run_sim(sv, "tb", tag)
-}
-
-/// Compile and codegen a design without building or running the C model.
-/// This preserves the codegen error for a negative case.
-fn codegen_result(
-    sv: &str,
-    tag: &str,
-) -> Result<Result<sim::codegen::GeneratedModel, String>, String> {
-    sim_harness::with_temp_cwd(tag, |dir| {
-        let src = dir.join("tb.sv");
-        std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let db =
-            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
-        Ok(sim::codegen::generate(&db).map_err(|error| error.to_string()))
-    })
 }
 
 #[test]
@@ -432,32 +409,6 @@ endmodule
                     && diagnostic.message.to_ascii_lowercase().contains(expected)
             }),
             "{tag} real form must remain a diagnostic: {diagnostics:?}"
-        );
-    }
-
-    let cases = [(
-        "repeat",
-        r#"module tb;
-    real count;
-    initial begin
-        count = 2.0;
-        repeat (count) count = count - 1.0;
-    end
-endmodule
-"#,
-        "repeat",
-    )];
-
-    for (tag, sv, expected) in cases {
-        let result = codegen_result(sv, tag).expect("Slang compile should succeed");
-        let err = match result {
-            Ok(_) => panic!("codegen should reject the unsupported real context"),
-            Err(err) => err,
-        };
-        assert!(
-            err.to_ascii_lowercase().contains("real")
-                && err.to_ascii_lowercase().contains(expected),
-            "{tag} rejection was not clear enough: {err}"
         );
     }
 }

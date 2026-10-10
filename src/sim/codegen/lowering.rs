@@ -580,6 +580,7 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
             break;
         }
     }
+    cg.attach_release_reevaluation();
     // Sampled-value event clocks may be requested by any body lowered above.
     let sampled_clock_processes = cg.emit_sampled_clock_processes();
     let mut model = std::mem::replace(
@@ -1577,6 +1578,9 @@ struct Codegen<'a> {
     /// Lazily built packed C storage name -> (readable signal index, true-net
     /// alias groups) for continuous-driver self-feedback analysis.
     feedback_storage: Option<HashMap<String, (usize, Vec<usize>)>>,
+    /// Released variable signal -> hidden marker toggled by its `release`
+    /// statements, so its continuous drivers re-evaluate (SV 10.6.2).
+    release_markers: HashMap<usize, usize>,
     /// Structural source owner, source node and resolved-group index ->
     /// synthetic signal carrying that source's independent contribution slot.
     /// A source can feed more than one canonical group (for example a
@@ -1824,6 +1828,7 @@ impl<'a> Codegen<'a> {
             design_precision_fs: Timescale::DEFAULT.precision_fs,
             wired_driver_sites: HashMap::new(),
             feedback_storage: None,
+            release_markers: HashMap::new(),
             structural_driver_sites: HashMap::new(),
             structural_driver_sources: HashSet::new(),
             structural_drivers: Vec::new(),
