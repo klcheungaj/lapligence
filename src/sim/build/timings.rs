@@ -9,14 +9,58 @@
 //! each line is one write. CI uses it to show where model-build time goes on
 //! each platform (`scripts/ci_build_timings.py`). Write failures are ignored:
 //! the timings are diagnostics and never change a build's outcome.
+//!
+//! When `$LLG_CMAKE_PROFILE_DIR` names a directory, every model and runtime
+//! configure also writes a CMake `--profiling-format=google-trace` file there
+//! (CMake 3.18 or newer), so a slow configure shows which CMake commands took
+//! the time. Profiles do not change the configured tree.
 
 use std::io::Write;
-use std::path::Path;
-use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Environment variable naming the file the timing lines are appended to.
 /// Unset or empty disables recording.
 pub const ENV: &str = "LLG_BUILD_TIMINGS";
+
+/// Environment variable naming the directory that receives one CMake
+/// configure profile per configure. Unset or empty disables profiling.
+pub const PROFILE_DIR_ENV: &str = "LLG_CMAKE_PROFILE_DIR";
+
+/// Distinguishes profiles of configures started by one process.
+static PROFILE_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+
+/// CMake arguments that write a configure profile into `$LLG_CMAKE_PROFILE_DIR`,
+/// or nothing when it is unset. The name is unique per process, configure and
+/// start time, because parallel test processes share the directory.
+pub(super) fn cmake_profile_args() -> Vec<String> {
+    let Some(dir) = std::env::var_os(PROFILE_DIR_ENV).filter(|value| !value.is_empty()) else {
+        return Vec::new();
+    };
+    let dir = PathBuf::from(dir);
+    // A missing directory would fail the configure; profiling never may.
+    if std::fs::create_dir_all(&dir).is_err() {
+        return Vec::new();
+    }
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    profile_args(
+        &dir,
+        std::process::id(),
+        PROFILE_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+        nanos,
+    )
+}
+
+fn profile_args(dir: &Path, pid: u32, sequence: usize, nanos: u128) -> Vec<String> {
+    let file = dir.join(format!("configure-{pid}-{sequence}-{nanos}.json"));
+    vec![
+        "--profiling-format=google-trace".to_owned(),
+        format!("--profiling-output={}", file.display()),
+    ]
+}
 
 /// Phase durations and cache outcomes of one model build.
 #[derive(Debug, Default)]
@@ -104,5 +148,21 @@ mod tests {
         assert!(line.contains("\tbuild_ms="), "{line}");
         let failed = BuildTimings::default().line(Path::new("x"), Duration::ZERO, false);
         assert_eq!(failed, "llg-build\tresult=error\ttotal_ms=0\tdir=x\n");
+    }
+
+    #[test]
+    fn profile_files_are_unique_per_process_and_configure() {
+        let dir = Path::new("profiles");
+        let args = profile_args(dir, 42, 3, 7);
+        assert_eq!(args[0], "--profiling-format=google-trace");
+        assert_eq!(
+            args[1],
+            format!(
+                "--profiling-output={}",
+                dir.join("configure-42-3-7.json").display()
+            )
+        );
+        assert_ne!(profile_args(dir, 42, 4, 7)[1], args[1]);
+        assert_ne!(profile_args(dir, 43, 3, 7)[1], args[1]);
     }
 }

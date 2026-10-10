@@ -829,7 +829,8 @@ fn configure_command(
         ))
         .arg(format!("-DCMAKE_BUILD_TYPE={BUILD_TYPE}"))
         .args(extra)
-        .args(seed_args);
+        .args(seed_args)
+        .args(timings::cmake_profile_args());
     command
 }
 
