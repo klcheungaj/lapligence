@@ -344,6 +344,20 @@ void llg_bitstream_reverse(llg_bitstream_t* stream, uint32_t slice,
     *stream = result;
 }
 
+/* Keep the leftmost `bits` of the stream: the bits an unpack consumes
+ * (IEEE 1800-2009 11.4.14.3). A shorter stream is an unpack error. */
+void llg_bitstream_take(llg_bitstream_t* stream, uint64_t bits) {
+    if (stream->length < bits)
+        llg_container_fatal("streaming unpack source has insufficient bits");
+    if (stream->length == bits) return;
+    llg_bitstream_t result;
+    llg_bitstream_init(&result);
+    llg_bitstream_reserve(&result, bits);
+    llg_bitstream_copy(&result, stream, 0, bits);
+    llg_bitstream_destroy(stream);
+    *stream = result;
+}
+
 /* Stream bits [position, position + width) as one packed value. */
 static sv4_t llg_bitstream_slice(const llg_bitstream_t* stream,
                                  uint64_t position, uint32_t width) {

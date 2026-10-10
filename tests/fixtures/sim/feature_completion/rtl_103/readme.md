@@ -36,6 +36,7 @@ after Db destruction.
 Negatives: `neg_copyout_dependence` (a copy-out selector reading an earlier
 target, owner policy), `neg_expression_copyout` (legal; a function call inside
 an expression keeps a diagnostic), `neg_inout_stream` (frontend: a stream is
-not an inout actual), `neg_descriptor_container` (a queue operand of an
-oversized stream, SIM-020) and `neg_stream_exceeds` (a run-time error when a
-runtime-sized stream is larger than its target).
+not an inout actual) and `neg_stream_exceeds` (a run-time error when a
+runtime-sized stream is larger than its target). A queue operand of an
+oversized stream, once a negative here, is legal since SIM-020
+(`feature_completion/sim_020/oversized_mixed`).

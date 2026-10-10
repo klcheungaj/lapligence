@@ -39,10 +39,13 @@ pub enum IrFixedValue {
     /// A runtime-sized bit stream operand (a string, resizable container or
     /// record with such members) as `cell_width`-bit cells, left cell first;
     /// it never forms one packed value, so it is not bounded by the packed
-    /// width. An empty stream contributes no bits.
+    /// width. An empty stream contributes no bits. With `consume`, it is the
+    /// source of an unpack (SV 11.4.14.3): its leftmost `consume` bits are
+    /// taken (fewer is a runtime error) before `stream.unpack` reorders them.
     BitStream {
         stream: Box<IrBitStream>,
         cell_width: u32,
+        consume: Option<u64>,
     },
     /// A view of dense (below-threshold, non-net) integral array storage,
     /// presented to descriptor transport cell for cell; the source code stays

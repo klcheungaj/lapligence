@@ -1134,6 +1134,7 @@ void llg_bitstream_append_queue_values(llg_bitstream_t* stream,
                                        int selector_kind, sv4_t first,
                                        sv4_t second);
 void llg_bitstream_append_string(llg_bitstream_t* stream, llg_string_t value);
+void llg_bitstream_take(llg_bitstream_t* stream, uint64_t bits);
 void llg_bitstream_reverse(llg_bitstream_t* stream, uint32_t slice,
                            int from_left);
 sv4_t llg_bitstream_value(const llg_bitstream_t* stream);

@@ -16,6 +16,11 @@ impl<'a> Codegen<'a> {
         {
             return Ok(Some(statement));
         }
+        if let Some(statement) =
+            self.lower_stream_into_fixed_descriptor(path, lhs, rhs, blocking, op)?
+        {
+            return Ok(Some(statement));
+        }
         if let Some(statement) = self.lower_stream_mixed_assignment(path, lhs, rhs, blocking, op)? {
             return Ok(Some(statement));
         }

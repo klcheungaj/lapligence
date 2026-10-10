@@ -65,10 +65,11 @@ impl Frame<'_, '_> {
         &mut self,
         stream: &IrBitStream,
         cell_width: u32,
+        consume: Option<u64>,
     ) -> Result<String, String> {
         let mut owners = Vec::new();
         let mut strings = Vec::new();
-        let bits = self.bit_stream(stream, &mut owners, &mut strings)?;
+        let bits = self.consumed_bit_stream(stream, consume, &mut owners, &mut strings)?;
         let object = self.fixed_scratch();
         self.line(format!(
             "(void)llg_fixed_array_bitstream_source({object}, &{bits}, {cell_width}u);"
@@ -112,8 +113,12 @@ impl Frame<'_, '_> {
                     ));
                     self.discard(value);
                 }
-                IrFixedValue::BitStream { stream, cell_width } => {
-                    let object = self.fixed_bit_stream_source(stream, *cell_width)?;
+                IrFixedValue::BitStream {
+                    stream,
+                    cell_width,
+                    consume,
+                } => {
+                    let object = self.fixed_bit_stream_source(stream, *cell_width, *consume)?;
                     self.line(format!(
                         "if ({object}->total) {sources}[{count}++] = {object};"
                     ));
@@ -238,9 +243,11 @@ impl Frame<'_, '_> {
                 self.discard(value);
                 Ok(object)
             }
-            IrFixedValue::BitStream { stream, cell_width } => {
-                self.fixed_bit_stream_source(stream, *cell_width)
-            }
+            IrFixedValue::BitStream {
+                stream,
+                cell_width,
+                consume,
+            } => self.fixed_bit_stream_source(stream, *cell_width, *consume),
             IrFixedValue::Selected { .. } => {
                 Err("a runtime `with` selection is only a descriptor stream operand".to_owned())
             }

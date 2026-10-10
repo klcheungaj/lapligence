@@ -815,9 +815,24 @@ impl Frame<'_, '_> {
         owners: &mut Vec<Value>,
         strings: &mut Vec<native::NativeValue>,
     ) -> Result<String, String> {
+        self.consumed_bit_stream(stream, None, owners, strings)
+    }
+
+    /// [`Self::bit_stream`] keeping only the leftmost `consume` bits, which an
+    /// unpack takes before it reorders them (SV 11.4.14.3).
+    pub(super) fn consumed_bit_stream(
+        &mut self,
+        stream: &IrBitStream,
+        consume: Option<u64>,
+        owners: &mut Vec<Value>,
+        strings: &mut Vec<native::NativeValue>,
+    ) -> Result<String, String> {
         let segments = self.bit_stream_segments(&stream.segments, owners, strings)?;
         let name = self.declare("llg_bitstream_t", "bits", "{0}".to_owned());
         self.bit_stream_appends(&name, &segments, stream.slice, stream.direction);
+        if let Some(bits) = consume {
+            self.line(format!("llg_bitstream_take(&{name}, {bits}ULL);"));
+        }
         if let Some((slice, IrStreamDirection::RightToLeft)) = stream.unpack {
             self.line(format!("llg_bitstream_reverse(&{name}, {slice}u, 1);"));
         }

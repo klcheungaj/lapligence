@@ -507,7 +507,7 @@ impl<'a> Codegen<'a> {
     }
 
     /// One operand of a runtime-sized bit stream, in stream order.
-    fn lower_stream_segment(
+    pub(in super::super) fn lower_stream_segment(
         &mut self,
         path: &str,
         value: NodeId,
