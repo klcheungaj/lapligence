@@ -353,3 +353,19 @@ fn s20_6_dynamic_cast_whole_elements() {
         },
     );
 }
+
+#[test]
+fn s32_d1_implicit_finish_immediate() {
+    run_decision(
+        "S32-D1_implicit_finish_immediate",
+        include_str!("fixtures/sim/lrm_decisions/S32-D1_implicit_finish_immediate.out"),
+    );
+}
+
+#[test]
+fn s32_d2_bind_program_into_interface() {
+    run_decision(
+        "S32-D2_bind_program_into_interface",
+        include_str!("fixtures/sim/lrm_decisions/S32-D2_bind_program_into_interface.out"),
+    );
+}

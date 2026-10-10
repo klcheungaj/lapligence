@@ -1,0 +1,4 @@
+dut valid=0 data=xx t=5
+dut valid=1 data=3c t=15
+dut valid=1 data=4d t=25
+drv done t=25

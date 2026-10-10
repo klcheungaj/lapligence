@@ -1,0 +1,4 @@
+box v=12 t=1
+b sees a.shared=11 t=2
+a sees b.x=22 t=3
+nested sees common=7 t=4

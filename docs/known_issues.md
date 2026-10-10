@@ -607,6 +607,32 @@ targets, and queue a whole-container commit for nonblocking unpacks.
 
 `tests/fixtures/sim/feature_completion/sim_020/unsupported_*.sv`.
 
+## Anonymous program members draw a spurious shadowing warning
+
+**Status:** open (SIM-032); cosmetic.
+
+### Symptom
+
+Each task, function or class declared in an anonymous program (SV 24.6)
+produces a frontend warning such as `'twice' shadows a declaration in an outer
+scope`, although nothing is shadowed. Compilation and simulation are not
+affected.
+
+### Cause
+
+Slang hoists every anonymous-program member into the enclosing package or
+compilation unit as a transparent member, and its shadowing analysis then
+finds the member's own hoisted copy in the outer scope.
+
+### Intended direction
+
+Skip transparent copies of the same symbol in Slang's shadow check, through a
+tracked `patches/slang/` patch.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_032/anonymous_programs.sv`.
+
 ## Process handles in plain handle storage stay allocated until teardown
 
 **Status:** open (SIM-015). The SIM-018 collector reclaims class objects but

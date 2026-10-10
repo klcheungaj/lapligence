@@ -132,6 +132,13 @@ scripts/run-tests.sh -E 'test(/^sim_lrm_decisions::/)'
 | S20-5 | **`<<` unpack consumes, then reverses.** A `<<` unpack first takes from the left of the source the bits its targets need, then reverses those blocks. `with` extents are resolved before the reordering. | 11.4.14.3 L15561-15566 | `S20-5_reverse_unpack_consumed` | llg choice (the text defines the consumed bits but not how `<<` orders a partial source) |
 | S20-6 | **Casts to dynamic types need whole elements.** An explicit bit-stream cast to a dynamic array or queue type needs a source that is a whole number of elements; any other size is a run-time error. An uncast stream assignment still zero-fills (S20-3). | 6.24.3 L7534-7537 | `S20-6_dynamic_cast_whole_elements` (negative at run time: the `.out` holds the output before the error) | llg choice |
 
+## Programs and program bind (SIM-032)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S32-D1 | **The implicit `$finish` of programs is immediate.** When the last thread originating in a program initial ends, llg calls `$finish` at that point, as if that thread had called it: events still pending in the same time slot (a Re-NBA update, the design processes it would wake) do not run, and final procedures see the last committed values. | 24.3 L43229-43232; 9.2.3 L11258-11261 | `S32-D1_implicit_finish_immediate` | llg choice (the text says "immediately after" the threads end without saying whether pending same-slot events run first) |
+| S32-D2 | **Programs can be bound into interfaces.** A `bind` whose target scope is an interface may instantiate a program; the program runs once per interface instance. | 23.11 L42888-42893, L42897-42901; A.1.4 L40954-40957 | `S32-D2_bind_program_into_interface` | llg choice (the prose names only interfaces as code bound into interfaces; the grammar allows a program instantiation as an interface item and an interface as a bind target) |
+
 ## Earlier decisions
 
 These predate the register. Their evidence lives in the feature fixtures named
