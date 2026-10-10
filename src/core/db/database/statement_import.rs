@@ -55,6 +55,7 @@ pub(super) fn statement_from_slang(
             if_true: first(SemanticEdgeRole::Then)?,
             if_false: first(SemanticEdgeRole::Else)?,
             label: node.name.to_string(),
+            default_disable: first(SemanticEdgeRole::DefaultDisable)?,
         },
         33 => {
             let predicate = predicate_from_slang(edges, ids)?;

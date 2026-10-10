@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 18;
+const ABI_VERSION: u32 = 19;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -938,6 +938,10 @@ pub enum SemanticEdgeRole {
     BaseConstructor,
     /// Optional pattern belonging to the condition at the same clause index.
     ConditionPattern,
+    /// `default disable iff` condition inferred for a concurrent assertion
+    /// statement (IEEE 1800-2009 16.16); one expression node may be named by
+    /// every assertion it covers.
+    DefaultDisable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

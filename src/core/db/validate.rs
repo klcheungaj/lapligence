@@ -711,10 +711,12 @@ fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
             property,
             if_true,
             if_false,
+            default_disable,
             ..
         } => {
             refs.push(*property);
             refs.extend(if_true.iter().chain(if_false.iter()).copied());
+            refs.extend(*default_disable);
         }
         StmtKind::IfElse {
             predicate,

@@ -2380,6 +2380,9 @@ public:
     }
 
     parents.push_back(id);
+    if constexpr (std::same_as<T, InstanceBodySymbol> ||
+                  std::same_as<T, GenerateBlockSymbol>)
+      disableScopes.push_back(&symbol);
     // Slang's visitor does not descend into a modport port expression
     // `.p(expr)`. Capture it under the port so the low-connection role
     // below names a fully captured expression rather than a placeholder.
@@ -2488,6 +2491,9 @@ public:
         }
       }
     }
+    if constexpr (std::same_as<T, InstanceBodySymbol> ||
+                  std::same_as<T, GenerateBlockSymbol>)
+      disableScopes.pop_back();
     parents.pop_back();
     captureSourceReferences(symbol);
     if constexpr (std::same_as<T, InstanceBodySymbol> ||
@@ -2917,8 +2923,24 @@ public:
       }
     }
     visitDefault(statement);
+    if constexpr (std::same_as<T, ConcurrentAssertionStatement>) {
+      if (const Expression* disable = defaultDisable(statement))
+        disable->visit(*this);
+    }
     parents.pop_back();
     addStatementRoles(statement, id);
+  }
+
+  // The `default disable iff` condition inferred for a concurrent assertion
+  // (IEEE 1800-2009 16.16 b)): Slang resolves it through the enclosing
+  // generate blocks, instance body and enclosing declarations but keeps it
+  // only in its compilation. An expect statement is not a concurrent
+  // assertion statement (16.15 vs. 16.18) and infers none.
+  const Expression* defaultDisable(const ConcurrentAssertionStatement& statement) const {
+    if (statement.assertionKind == AssertionKind::Expect || disableScopes.empty())
+      return nullptr;
+    const Scope& scope = *disableScopes.back();
+    return scope.getCompilation().getDefaultDisable(scope);
   }
 
   template<typename T>
@@ -3170,6 +3192,8 @@ private:
 
   Capture& capture;
   std::vector<uint64_t> parents;
+  // Instance bodies and generate blocks being captured, innermost last.
+  std::vector<const Scope*> disableScopes;
   std::vector<bool> visited;
   std::unordered_set<const syntax::SyntaxNode*> sourceBodies;
   std::unordered_set<const syntax::SyntaxNode*> sourceGenerateBlocks;
@@ -3897,6 +3921,8 @@ private:
         capture.semanticRole(id, statement.ifTrue, LLG_SLANG_EDGE_THEN);
       if (statement.ifFalse)
         capture.semanticRole(id, statement.ifFalse, LLG_SLANG_EDGE_ELSE);
+      if (const Expression* disable = defaultDisable(statement))
+        capture.semanticRole(id, disable, LLG_SLANG_EDGE_DEFAULT_DISABLE);
     }
     else if constexpr (std::same_as<T, CaseStatement>) {
       capture.semanticRole(id, &statement.expr, LLG_SLANG_EDGE_CASE_EXPRESSION);
