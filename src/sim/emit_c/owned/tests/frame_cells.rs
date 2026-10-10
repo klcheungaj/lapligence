@@ -40,9 +40,11 @@ fn nba_and_local_waits_exclude_only_their_cells() {
         },
         IrStmt::WaitEvents {
             specs: vec![(IrWaitSrc::Sig("event".into()), IrEdge::Any)],
+            refresh: false,
         },
         IrStmt::WaitAny {
             sens: vec![IrDependency::real("real_wait")],
+            refresh: false,
         },
     ];
     let eligibility = policy(&model, &statements);
@@ -204,6 +206,7 @@ fn context_free_wait_evaluators_exclude_their_typed_reads_only() {
             },
             IrEdge::Any,
         )],
+        refresh: false,
     };
     let eligibility = policy(&model, std::slice::from_ref(&statement));
     assert!(!eligibility.permits("observed"));

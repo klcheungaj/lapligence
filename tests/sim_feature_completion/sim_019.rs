@@ -20,11 +20,22 @@ fn index_results_keep_key_types_and_declared_indices() {
 }
 
 #[test]
-fn with_expressions_run_once_per_element_and_capture_state() {
+fn with_expressions_with_side_effects_and_captured_state() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_019/callbacks.out");
     sim_cli::run_case(SUITE, "callbacks", expected, "", &[]);
     sim_cli::run_case_backend_parity(SUITE, "callbacks", expected, &[], &[]);
     sim_cli::run_case_after_db_drop(SUITE, "callbacks", expected);
+}
+
+/// llg policy, not a conformance oracle: IEEE 1800-2009 7.12 L9255 and
+/// 7.12.1 L9267, L9297, L9300-9301 leave the number and order of `with`
+/// evaluations and the order and duplicate choice of `unique` results open.
+/// llg evaluates once per element in index/key order and keeps first
+/// occurrences; this test pins that choice (see the sim_019 readme).
+#[test]
+fn llg_policy_with_order_and_unique_first_occurrence() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_019/policy_callbacks.out");
+    sim_cli::run_case_backend_parity(SUITE, "policy_callbacks", expected, &[], &[]);
 }
 
 #[test]

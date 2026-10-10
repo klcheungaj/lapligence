@@ -1,0 +1,9 @@
+fx_wait: 1
+fx_event: 1 3 4 11
+fnx: 2
+fget: 3
+fwrap: 4
+method_nx: 5
+method_gvx: 6
+global_handle: 7
+static_property: 8

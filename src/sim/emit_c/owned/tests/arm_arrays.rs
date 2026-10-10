@@ -46,6 +46,7 @@ fn event_list_wait_passes_a_compound_literal() {
             .into_iter()
             .map(|event| (IrWaitSrc::Event(event), IrEdge::Any))
             .collect(),
+        refresh: false,
     }]);
     let line = arm_line(&source, "llg_arm_events(");
     assert!(
@@ -63,6 +64,7 @@ fn edge_list_wait_passes_a_compound_literal() {
             signal("G_value", IrEdge::Posedge),
             signal("G_other", IrEdge::Negedge),
         ],
+        refresh: false,
     }]);
     let line = arm_line(&source, "llg_arm_any_events(");
     assert!(
@@ -80,6 +82,7 @@ fn mixed_wait_passes_a_compound_literal() {
             signal("G_value", IrEdge::Posedge),
             (IrWaitSrc::Event(IrEventRef::Static(0)), IrEdge::Any),
         ],
+        refresh: false,
     }]);
     let line = arm_line(&source, "llg_arm_mixed(");
     assert!(line.contains("llg_arm_mixed(self, (llg_wait_src_t[]){ { .sig = &G_value,"));
@@ -95,10 +98,12 @@ fn dependency_wait_passes_a_compound_literal() {
             IrDependency::Scalar("G_value".to_owned()),
             IrDependency::Scalar("G_other".to_owned()),
         ],
+        refresh: false,
     }]);
-    let line = arm_line(&source, "llg_arm_any_dependencies(");
+    // An event control's dependency wait (SV 9.7 resensitization on resume).
+    let line = arm_line(&source, "llg_arm_event_dependencies(");
     assert!(
-        line.contains("llg_arm_any_dependencies(self, (llg_wait_dependency_t[]){ { .sig = &G_value }, { .sig = &G_other } }, 2)"),
+        line.contains("llg_arm_event_dependencies(self, (llg_wait_dependency_t[]){ { .sig = &G_value }, { .sig = &G_other } }, 2)"),
         "{line}"
     );
     assert_no_array_copy(&source);

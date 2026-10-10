@@ -110,8 +110,12 @@ static void proc_complete(llg_proc_t* self) {
     // and frame; their copied captures remain retained by the child process.
     start_pending_fork_children(self);
     self->completed = 1;
-    process_status_set(self, LLG_PROCESS_FINISHED);
-    process_handle_terminal(self, LLG_PROCESS_FINISHED);
+    // SV 9.7: "KILLED means the process was forcibly killed (via kill or
+    // disable)"; a disabled whole-branch block leaves nothing to resume at.
+    int terminal =
+        self->disabled_whole ? LLG_PROCESS_KILLED : LLG_PROCESS_FINISHED;
+    process_status_set(self, terminal);
+    process_handle_terminal(self, terminal);
     value_scopes_unwind(self);
     activation_unwind_proc(self);
     llg_frame_release(self->frame);
@@ -244,6 +248,23 @@ llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
     }
     register_wait();
     return LLG_CO_ARM_SUSPEND;
+}
+
+llg_co_arm_t llg_arm_event_dependencies(llg_proc_t* self,
+                                        const llg_wait_dependency_t* deps,
+                                        int n) {
+    if (self) self->next_wait_event = 1;
+    llg_co_arm_t arm = llg_arm_any_dependencies(self, deps, n);
+    if (self) self->next_wait_event = 0;
+    return arm;
+}
+
+void llg_wait_refresh_on_resume(llg_proc_t* self) {
+    if (self) self->next_wait_refresh = 1;
+}
+
+int llg_wait_refreshed(const llg_proc_t* self) {
+    return self && self->wait_refreshed;
 }
 
 llg_co_arm_t llg_arm_any_events(llg_proc_t* self,

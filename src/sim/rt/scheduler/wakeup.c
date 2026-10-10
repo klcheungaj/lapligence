@@ -44,6 +44,22 @@ static void wake_proc(llg_proc_t* p) {
     }
 }
 
+static int wait_is_event_control(llg_wait_kind_t kind) {
+    return kind == W_EVENTS || kind == W_EVENTS_INLINE || kind == W_EVENT ||
+           kind == W_MIXED || kind == W_EXPR;
+}
+
+/* Whether an occurrence that would wake `w` is withheld because its process
+ * is suspended on an event expression (SV 9.7 resensitization). The wait
+ * stays registered; snapshots the caller keeps current make resume see only
+ * later changes. */
+static int wait_held_by_suspension(llg_wait_t* w) {
+    llg_proc_t* p = w->proc;
+    if (!p || !p->suspended || p->wait_control == LLG_WAIT_CONDITION) return 0;
+    p->wait_missed = 1;
+    return 1;
+}
+
 static void wake_assertion_waiter(uint64_t identity) {
     llg_wait_t* wait = g.waiters;
     while (wait) {
@@ -70,6 +86,13 @@ static void register_wait(void) {
     start_pending_fork_children(p);
     llg_wait_t* w = &p->wait;
     w->proc = p;
+    p->wait_control = LLG_WAIT_CONDITION;
+    if (wait_is_event_control(w->kind) || (w->kind == W_DEPS && p->next_wait_event))
+        p->wait_control = p->next_wait_refresh ? LLG_WAIT_EVENT_REFRESH : LLG_WAIT_EVENT;
+    p->wait_missed = 0;
+    p->next_wait_event = 0;
+    p->next_wait_refresh = 0;
+    p->wait_refreshed = 0;
     w->next = g.waiters;
     w->prev_link = &g.waiters;
     if (w->next) w->next->prev_link = &w->next;

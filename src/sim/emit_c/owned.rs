@@ -171,6 +171,9 @@ pub(super) struct Frame<'a, 'm> {
     item_callback: bool,
     sequence_addresses: HashMap<String, Binding>,
     activations: Vec<Activation>,
+    /// The next activation scope is a fork branch's whole body
+    /// (`llg_activation_exit_terminal`); consumed by that scope.
+    terminal_activation: bool,
     cancellation_return: bool,
     /// Count of emitted cancellation points: resume points, `disable` and
     /// calls that may disable. A cancellation check is emitted only when this
@@ -348,6 +351,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             item_callback: false,
             sequence_addresses: HashMap::new(),
             activations: Vec::new(),
+            terminal_activation: false,
             cancellation_return: false,
             cancellation_points: 0,
             may_disable: HashMap::new(),

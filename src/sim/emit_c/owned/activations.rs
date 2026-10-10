@@ -8,6 +8,8 @@ impl Frame<'_, '_> {
         exit: &str,
         body: &[IrStmt],
     ) -> Result<(), String> {
+        // Only the outermost scope of a whole-branch body is terminal.
+        let terminal = std::mem::take(&mut self.terminal_activation);
         // The exit belongs to the wrapper, not its nested body: cancellation
         // must drop all body locals, including scopes created by a pending call.
         self.begin_block(&[IrStmt::Label(exit.to_owned())]);
@@ -35,7 +37,11 @@ impl Frame<'_, '_> {
             .activations
             .pop()
             .is_some_and(|activation| activation.checked);
-        self.line(format!("llg_activation_exit({handle});"));
+        if terminal {
+            self.line(format!("llg_activation_exit_terminal({handle});"));
+        } else {
+            self.line(format!("llg_activation_exit({handle});"));
+        }
         self.end_block();
         if checked {
             // Control reaches here from a check that found some activation

@@ -678,6 +678,8 @@ pub(crate) const SUBROUTINE_STATIC: u64 = 1 << 0;
 pub(crate) const SUBROUTINE_DPI_IMPORT: u64 = 1 << 8;
 pub(crate) const SUBROUTINE_DPI_CONTEXT: u64 = 1 << 9;
 pub(crate) const SUBROUTINE_DPI_PURE: u64 = 1 << 10;
+/// The subroutine is named by a DPI-C export declaration.
+pub(crate) const SUBROUTINE_DPI_EXPORT: u64 = 1 << 11;
 pub(crate) const SUBROUTINE_VIRTUAL: u64 = 1 << 1;
 pub(crate) const SUBROUTINE_PURE: u64 = 1 << 2;
 pub(crate) const SUBROUTINE_FINAL: u64 = 1 << 3;

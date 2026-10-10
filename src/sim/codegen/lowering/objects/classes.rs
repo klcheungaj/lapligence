@@ -217,7 +217,7 @@ impl Codegen<'_> {
         name
     }
 
-    fn class_receiver_for(
+    pub(in super::super) fn class_receiver_for(
         &mut self,
         path: &str,
         node: NodeId,

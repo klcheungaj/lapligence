@@ -88,7 +88,7 @@ static void event_trigger_object_unchecked(llg_event_object_t* ev) {
                     matched = 1;
             }
         }
-        if (matched) wake_proc(wake[i]);
+        if (matched && !wait_held_by_suspension(w)) wake_proc(wake[i]);
         else event_list_add(ev, wake[i], event_wait_slot(w, ev, -1));
     }
     free(wake);

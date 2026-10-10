@@ -425,6 +425,7 @@ module tb;
         @(first);
         @(first or second);
         @(a or first);
+        wait (a && b);
     end
     always @(a or b) b = a;
     assign c = a & b;
@@ -449,6 +450,7 @@ endmodule
         "llg_arm_time(",
         "llg_arm_any(",
         "llg_arm_any_dependencies(",
+        "llg_arm_event_dependencies(",
         "llg_arm_any_events(",
         "llg_arm_edge(",
         "llg_arm_event(",

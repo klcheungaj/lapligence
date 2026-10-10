@@ -24,6 +24,9 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   name) through a one-callback sink with the stream's panic/abort rules. It
   rejects library maps, unknown sources/roles, empty or repeated names, and
   bounds sources by `max_source_bytes`; parse diagnostics are discarded.
+- ABI v17 adds statement tag 68 (`LLG_SLANG_STMT_CONCURRENT_COVER_SEQUENCE`)
+  and subroutine auxiliary bit 11 (`LLG_SLANG_SUBROUTINE_DPI_EXPORT`); a new
+  tag or flag bit bumps the version on both sides together.
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;

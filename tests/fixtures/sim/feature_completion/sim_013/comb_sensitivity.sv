@@ -2,7 +2,7 @@
 // always_comb is sensitive to reads inside called functions, @* only to the
 // call's arguments; always_comb excludes storage it writes, including
 // through a called function; references to class objects add nothing to an
-// always_comb sensitivity list, so only the handle variable it reads wakes it.
+// always_comb sensitivity list, not even the handle variable of `h.x`.
 `timescale 1ns / 1ns
 module tb;
   class C;

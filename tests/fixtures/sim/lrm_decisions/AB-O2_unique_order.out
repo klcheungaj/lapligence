@@ -1,0 +1,4 @@
+llg unique 4: pear fig apple kiwi
+sorted unique 4: apple fig kiwi pear
+llg unique_index 3: 0 1 3
+sorted values 3: 7 8 9

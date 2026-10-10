@@ -1396,8 +1396,14 @@ mod tests {
             IrStmt::Delay {
                 ticks: IrDelay::Constant(1),
             },
-            IrStmt::WaitEvents { specs: vec![] },
-            IrStmt::WaitAny { sens: vec![] },
+            IrStmt::WaitEvents {
+                specs: vec![],
+                refresh: false,
+            },
+            IrStmt::WaitAny {
+                sens: vec![],
+                refresh: false,
+            },
             IrStmt::WaitCond {
                 cond: one(),
                 sens: vec![],

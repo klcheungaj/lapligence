@@ -199,6 +199,12 @@ void llg_activation_exit(llg_activation_t* activation) {
     activation_release(activation);
 }
 
+void llg_activation_exit_terminal(llg_activation_t* activation) {
+    if (activation && !activation->detached && activation->disabled && activation->proc)
+        activation->proc->disabled_whole = 1;
+    llg_activation_exit(activation);
+}
+
 int llg_activation_cancelled(void) {
     llg_proc_t* proc = llg_current();
     for (llg_activation_t* activation = proc ? proc->activation_top : NULL;

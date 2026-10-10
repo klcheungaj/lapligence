@@ -355,8 +355,14 @@ monitors on them reject. An `IrDependency::NativeAccess` renders its receiver
 with `quiet_receivers` (no null report: `llg_class_field_quiet`,
 `llg_vif_member_quiet`) and arms on the field/member storage or, for a handle
 property, on the object's lazily allocated `handle_dependency`, which
-`llg_class_handle_store` toggles on a changed blocking store; a null receiver
-arms on the never-changing marker. Calls give every container formal fresh storage and
+`llg_class_handle_store` toggles on a changed blocking store (in-place writers
+— task output/`ref` copy-out, mailbox `get`/`peek`, task-form `$cast` — compare
+the slot before and after and call `llg_class_handle_published`, as module
+handles toggle `<name>_llg_dep`; see `Frame::handle_store_publish`), or, for a string
+property, on the marker `llg_class_string_dependency` installs in the string
+itself (so every changed `llg_string_move` toggles it; freed with the object
+and an interior collector root while armed); a null receiver arms on the
+never-changing marker. Calls give every container formal fresh storage and
 copy back outputs after the cancellation check, like native values.
 
 ## Streaming and event captures

@@ -1654,6 +1654,9 @@ void llg_disable_fork(llg_proc_t* self);
 llg_activation_t* llg_activation_enter(uint32_t declaration,
                                        uint32_t instance);
 void llg_activation_exit(llg_activation_t* activation);
+// Exit of the named block that is a fork branch's whole body: when a disable
+// ended it, the branch process terminates KILLED rather than FINISHED (SV 9.7).
+void llg_activation_exit_terminal(llg_activation_t* activation);
 int llg_activation_cancelled(void);
 // Disabling an activation that reaches `self` completes cancellation
 // bookkeeping, sets LLG_EXIT_ABANDON, and returns for immediate propagation.
@@ -1691,6 +1694,18 @@ llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
                                       int n);
 llg_co_arm_t llg_arm_any_events(llg_proc_t* self,
                                 const llg_event_spec_t* specs, int n);
+// An implicit or process-evaluated event control's dependency wait: unlike
+// llg_arm_any_dependencies (a wait condition's), an occurrence while the
+// process is suspended is withheld and resume() resensitizes it (SV 9.7).
+llg_co_arm_t llg_arm_event_dependencies(llg_proc_t* self,
+                                        const llg_wait_dependency_t* deps,
+                                        int n);
+// Mark the next event-control wait of `self` as evaluated by the process: if
+// an occurrence was withheld while it was suspended, resume() wakes it with
+// llg_wait_refreshed() true so it takes its armed values again instead of
+// comparing against values from before the suspension.
+void llg_wait_refresh_on_resume(llg_proc_t* self);
+int llg_wait_refreshed(const llg_proc_t* self);
 llg_co_arm_t llg_arm_level(llg_proc_t* self, sv4_t* sig, sv4_t value);
 
 // Synchronization and process-control arms deliver before wake and therefore

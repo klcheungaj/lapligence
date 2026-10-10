@@ -1,8 +1,8 @@
-find 3 calls 5 trace 4 9 2 9 7
-sum 31 calls 5
-max 9 calls 5
+find 3 calls-ok 1
+sum 31 calls-ok 1
+max 9 calls-ok 1
 first 9 calls-ok 1
-assoc 9 calls 3 order amykimzed
+assoc 9 calls-ok 1 keys-seen 1
 sort a bb ccc calls-ok 1
 limit 3 count 4 capture 2
 limit 8 count 2 capture 4

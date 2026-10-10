@@ -480,6 +480,11 @@ pub enum IrStmt {
     /// indices), edges per entry.
     WaitEvents {
         specs: Vec<(IrWaitSrc, IrEdge)>,
+        /// The process evaluates the event expression itself: when an
+        /// occurrence is withheld while it is suspended (SV 9.7), resume()
+        /// wakes it with [`IrRuntimeQuery::WaitRefreshed`] set so it takes
+        /// its armed values again.
+        refresh: bool,
     },
     /// `-> ev;` — trigger the named event immediately (index into
     /// [`IrModel::events`]); wakes ALL current waiters.
@@ -526,6 +531,8 @@ pub enum IrStmt {
     /// precomputed read set (an empty set waits indefinitely).
     WaitAny {
         sens: Vec<IrDependency>,
+        /// See [`IrStmt::WaitEvents::refresh`].
+        refresh: bool,
     },
     /// `wait (cond) body` — spin on the condition, suspending on changes of
     /// its precomputed read set, then run the body once.

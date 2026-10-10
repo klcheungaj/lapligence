@@ -2867,7 +2867,10 @@ mod tests {
                 IrStmt::Delay {
                     ticks: crate::sim::ir::IrDelay::Constant(1),
                 },
-                IrStmt::WaitAny { sens: vec![] },
+                IrStmt::WaitAny {
+                    sens: vec![],
+                    refresh: false,
+                },
                 IrStmt::WaitCond {
                     cond: false_condition,
                     sens: vec![],

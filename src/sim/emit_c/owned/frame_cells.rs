@@ -422,12 +422,12 @@ impl CellEligibility {
                     self.body(ctx, item.body());
                 }
             }
-            IrStmt::WaitAny { sens } => {
+            IrStmt::WaitAny { sens, .. } => {
                 for dep in sens {
                     self.dependency(dep);
                 }
             }
-            IrStmt::WaitEvents { specs } => self.sources(ctx, specs),
+            IrStmt::WaitEvents { specs, .. } => self.sources(ctx, specs),
             IrStmt::Call(call) => {
                 self.arguments(
                     ctx,

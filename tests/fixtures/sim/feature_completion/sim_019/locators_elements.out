@@ -6,7 +6,7 @@ find_index 2 1 3
 first pear last 3
 min apple
 max-len 1 apple
-unique 4 pear fig apple kiwi
+unique 4 apple fig kiwi pear
 rmin -1.25
 rmax-sq 7.00
 runique 4
