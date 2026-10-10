@@ -1,0 +1,4 @@
+srandom 1
+urandom seed 1
+urandom_range 1
+object srandom 1

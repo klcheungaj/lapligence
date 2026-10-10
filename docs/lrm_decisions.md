@@ -139,6 +139,26 @@ scripts/run-tests.sh -E 'test(/^sim_lrm_decisions::/)'
 | S32-D1 | **The implicit `$finish` of programs is immediate.** When the last thread originating in a program initial ends, llg calls `$finish` at that point, as if that thread had called it: events still pending in the same time slot (a Re-NBA update, the design processes it would wake) do not run, and final procedures see the last committed values. | 24.3 L43229-43232; 9.2.3 L11258-11261 | `S32-D1_implicit_finish_immediate` | llg choice (the text says "immediately after" the threads end without saying whether pending same-slot events run first) |
 | S32-D2 | **Programs can be bound into interfaces.** A `bind` whose target scope is an interface may instantiate a program; the program runs once per interface instance. | 23.11 L42888-42893, L42897-42901; A.1.4 L40954-40957 | `S32-D2_bind_program_into_interface` | llg choice (the prose names only interfaces as code bound into interfaces; the grammar allows a program instantiation as an interface item and an interface as a bind target) |
 
+## Random streams and legacy distributions (SIM-028)
+
+The generator behind `$urandom`, process and object streams and `shuffle` is
+implementation dependent, so those cases check relations only. `$random` and
+`$dist_*` are fixed by Annex N, so their cases print numbers (computed by the
+independent transcription in
+[sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md)).
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S28-D1 | **`$random` without a seed starts from 0.** The implicit seed of `$random` starts at 0, so its first values are the Annex N values for seed 0 (303379748, -1064739199, ...). | 20.15.1 L35315-35316; N.1 Table N.1 L76887; N.2 L77212-77213 | `S28-D1_implicit_random_seed` | llg choice (the text does not give the implicit seed's initial value) |
+| S28-D2 | **Seed variables of other widths.** A seed variable is read as a 32-bit integer (truncated, or extended by its own signedness), and the signed 32-bit result seed is assigned back like an `integer` (sign-extended or truncated). | 20.15.1 L35315; 20.15.2 L35355-35356; Annex N.2 | `S28-D2_seed_writeback_width` | llg choice (the text does not say how a seed of another width converts) |
+| S28-D3 | **X/Z seed bits read as 0.** An X/Z bit of a `$random` or `$dist_*` seed reads as 0, as in a 4-state to 2-state conversion. | 20.15.2 L35355-35356; 6.11.2 L5489-5490 | `S28-D3_unknown_legacy_seed` | llg choice (the text does not say how an unknown seed is read) |
+| S28-D4 | **`new` takes one value from the creating thread.** Creating an object seeds its stream with the creating thread's next value, the value its next `$urandom` would have returned. An object created by a static declaration initializer takes the value from a stream of its instance's initialization RNG. | 18.14.1 L31161-31166; 18.13.3 L31089 | `S28-D4_object_creation_draw` | LRM text (that the value is the one `$urandom` would return is llg's reading) |
+| S28-D5 | **`shuffle` draws from the calling thread.** `shuffle()` uses the stream of the thread that calls it, also inside a class method; the object's own stream is not used. | 7.12.2 L9366; 18.14.1 L31152-31153; 18.15 L31270 | `S28-D5_shuffle_thread_stream` | llg choice (the text does not name the stream shuffle uses) |
+| S28-D6 | **A shallow copy copies the RNG state.** `new h` copies `h`'s stream state and takes no value from the creating thread. | 8.11 L9990-9998; 18.14.1 L31162-31163 | `S28-D6_shallow_copy_random_state` | LRM text for the copied state; taking no thread value is an llg choice (8.11 lists no seeding step) |
+| S28-D7 | **Each instance has its own initialization stream.** A static process is seeded from the initialization stream of the instance that declares it, in that instance's creation order. Each instance's stream derives from the default seed and the instance's hierarchical name, so identical instances draw different values, and processes added to one instance never move another instance's seeds. | 18.14.1 L31148-31156 | `S28-D7_instance_streams` | llg choice (the default seed is implementation dependent; the text says every initialization RNG starts from "the default seed") |
+| S28-D8 | **X/Z in 2-state random arguments read as 0.** `srandom`, `$urandom` seeds and `$urandom_range` bounds are 2-state `int`/`int unsigned` formals; X/Z bits read as 0. Real seeds round. | 18.13.1 L31018; 18.13.2 L31044-31045; 18.13.3 L31086; 6.11.2 L5489-5490 | `S28-D8_two_state_random_arguments` | LRM text |
+| S28-D9 | **A foreign state string is a run-time error.** `set_randstate` with a string not produced by llg's `get_randstate` prints `invalid randstate string`, leaves the stream unchanged, lets the run continue and makes it exit with status 1. | 18.13.5 L31117-31119 | no portable case: the text says the result is undefined; covered by the [sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md) `neg_randstate_invalid` fixture | llg choice |
+
 ## Earlier decisions
 
 These predate the register. Their evidence lives in the feature fixtures named

@@ -1149,8 +1149,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
   Generated loops over wildcard-index arrays, methods on nested container
   elements and member selection of a popped class handle (`q.pop_front().v`)
-  reject. Shuffle uses its container seed API, not full process/object RNG
-  integration.
+  reject. `shuffle` draws from the calling thread's random stream
+  ([sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md)).
   SV §7.12 **[SV-2005]**.
 - 🟨 **Bit-stream casts and streaming** — Fixed arrays/nested records, selected
   rows/members, call results and admitted ref/const-ref projections preserve
@@ -1673,11 +1673,26 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `$clog2` first appeared in **[1364-2005]**.
 - 🟨 **Random facilities** — Legacy `$random` and
   `$dist_uniform`, `$dist_normal`, `$dist_exponential`, `$dist_poisson`,
-  `$dist_chi_square`, `$dist_t` and `$dist_erlang` retain checked arguments,
-  writable seeds and the project's Annex N algorithm. Per-process
-  `$urandom/$urandom_range`, `srandom`, randstate and fork-derived streams have
-  paths. Class-object RNG, constrained/structured randomization and full
-  container-shuffle/process-stream integration remain absent.
+  `$dist_chi_square`, `$dist_t` and `$dist_erlang` match independent Annex N
+  reference vectors, including invalid parameters (result 0, seed unchanged);
+  seeds are written back through formals, elements, class properties and
+  variables of any width, and also in `void'(...)` statements. Every thread
+  owns a stream: a static process is seeded from its instance's
+  initialization stream, a forked child from its parent, so processes added to
+  another instance or later in the same instance leave existing streams
+  unchanged in both optimizer modes. Class objects own a stream seeded with
+  the creating thread's next value (a shallow copy copies it);
+  `srandom`/`get_randstate`/`set_randstate` act on threads, process handles
+  and objects, and a saved state replays the next values. `shuffle` draws from
+  the calling thread. 2-state seed and range arguments read X/Z as 0 and round
+  reals
+  ([sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md),
+  decisions S28-D1 to S28-D9 in [lrm_decisions](lrm_decisions.md)). A
+  `$urandom` in a static variable initializer draws from one model-wide
+  initialization stream; an unpacked-structure member as a legacy seed is
+  rejected
+  ([random stream limits](known_issues.md#random-stream-limits)).
+  Constrained and structured randomization are a separate row.
   V §17.9; SV ch.18 **[1995/SV-2005]**.
 - 🟨 **Stochastic queues** — `$q_initialize/$q_add/$q_remove/$q_full/$q_exam`
   support ID-indexed FIFO/LIFO state, job/information IDs, status codes,
@@ -1811,8 +1826,13 @@ These are bounded implementations, not full verification-infrastructure support.
   through `this`, handle variables, subroutine handle locals and formals, and
   handle-property chains (`n.next.val`). A shallow copy `new h` or `new this`
   (SV 8.11) allocates the source expression's class type without running
-  constructors or initializers and copies every property; handle properties
-  keep naming the same objects. A null receiver, property access or copy
+  constructors or initializers and copies every property and the random
+  stream; handle properties keep naming the same objects. Every object owns
+  a random stream seeded from its creating thread; the built-in
+  `srandom`/`get_randstate`/`set_randstate` act on it, through any handle or
+  `this`
+  ([sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md)).
+  A null receiver, property access or copy
   source is a run-time error at its source position
   ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)).
   Unreachable objects, including cycles through handle, container and record

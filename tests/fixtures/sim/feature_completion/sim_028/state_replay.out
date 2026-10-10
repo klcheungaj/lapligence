@@ -1,0 +1,8 @@
+self replay 1
+handle replay 1 1
+unknown srandom seed is zero 1
+unknown urandom seed is zero 1
+unknown range bound is zero 1 1
+real srandom seed rounds 1
+real urandom seed rounds 1
+real range bounds round 1
