@@ -71,8 +71,14 @@ if(LLG_STORAGE_TEST_VALUE_BACKEND STREQUAL "compact")
   if(selected_gmp_include)
     target_include_directories(selected_value_units PRIVATE ${selected_gmp_include})
   endif()
-  target_compile_definitions(selected_value_units PRIVATE malloc=llg_value_test_malloc
-    calloc=llg_value_test_calloc realloc=llg_value_test_realloc free=llg_value_test_free)
+  # Rename the allocator in a forced include, after <stdlib.h>: -Dmalloc=...
+  # would also rename the CRT's dllimport declarations under MSVC.
+  set(value_test_alloc_hooks "${CMAKE_CURRENT_SOURCE_DIR}/value_test_alloc_hooks.h")
+  if(MSVC)
+    target_compile_options(selected_value_units PRIVATE "/FI${value_test_alloc_hooks}")
+  else()
+    target_compile_options(selected_value_units PRIVATE -include "${value_test_alloc_hooks}")
+  endif()
 elseif(NOT LLG_STORAGE_TEST_VALUE_BACKEND STREQUAL "legacy")
   message(FATAL_ERROR "LLG_STORAGE_TEST_VALUE_BACKEND must be legacy or compact")
 endif()
