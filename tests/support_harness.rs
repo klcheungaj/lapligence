@@ -132,8 +132,12 @@ fn command_timeout_reports_the_output_printed_before_the_deadline() {
     )
     .unwrap_err();
     assert!(error.starts_with("timed out"), "{error}");
-    let stdout = error.find("started-step").expect("stdout tail in the error");
-    let stderr = error.find("failing-step").expect("stderr tail in the error");
+    let stdout = error
+        .find("started-step")
+        .expect("stdout tail in the error");
+    let stderr = error
+        .find("failing-step")
+        .expect("stderr tail in the error");
     assert!(stdout < stderr, "{error}");
 }
 
