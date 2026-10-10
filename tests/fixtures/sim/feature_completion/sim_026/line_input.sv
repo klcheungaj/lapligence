@@ -3,13 +3,15 @@
 // $ungetc, a final line without a newline, end of file, and $ftell, $fseek
 // and $rewind (IEEE 1800-2009 21.3.4.1, 21.3.4.2, 21.3.5, 21.3.6).
 // line_input.txt is "first line\nsecond\n\nlast" (23 bytes, no final newline).
+// It is opened with "rb": byte positions are only defined without the
+// newline mapping of text mode (21.3.1), which Windows applies.
 module tb;
   integer fd, c, c2, ch, pos;
   string s;
   logic [8*4-1:0] narrow;
   logic [8*12-1:0] wide;
   initial begin
-    fd = $fopen("line_input.txt", "r");
+    fd = $fopen("line_input.txt", "rb");
     c = $fgets(s, fd);
     $display("A c=%0d same=%0d", c, s == "first line\n");
     c = $fgets(narrow, fd);

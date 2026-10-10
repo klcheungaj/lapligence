@@ -104,6 +104,11 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
   `Url::to_file_path` or `Url::from_file_path` results instead.
 - Windows text-mode consoles and files write CRLF. Captured child output goes
   through `ffi::platform::native_text_to_lf` before comparison with LF oracles.
+  `$fopen` passes its mode to C `fopen` unchanged, so text-mode `$ftell`,
+  `$fseek` and `$rewind` positions differ there (UCRT's text-mode `ftell`
+  returned -1 after `$rewind` and `$fgetc` on an LF-only file). HDL fixtures and
+  `lrm_decisions` cases whose output depends on byte positions or unformatted
+  data open their files with `"rb"`/`"wb"` (IEEE 1800-2009 21.3.1).
 - Windows `abort()` ends a process with an NTSTATUS such as 0xC0000409, which an
   `ExitCode` byte would truncate (to 9); `llg` maps statuses outside 0-255, like
   Unix signals, to 1.
