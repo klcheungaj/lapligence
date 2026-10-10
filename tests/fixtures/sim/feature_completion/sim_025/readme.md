@@ -34,6 +34,12 @@ quotes are from `SystemVerilog-1800-2009.txt` (line numbers of the
 - `scope_time`: `$time` alone never triggers a report (L36517-36518); two
   `$fmonitor` lists registered by different instances stay active together
   (L36676-36677) and `%m` names each instance.
+- `dynamic_members`: storage chosen through a class or virtual-interface
+  handle has no fixed signal to watch, so a `$monitor` whose arguments call a
+  method, read a handle formal, print an object with `%p` or select a
+  virtual-interface member re-evaluates at every settled slot and reports when
+  the value differs (a rebound handle included). A process handle prints
+  `process` in the Postponed region.
 - `static_subroutines`: SV 13.3.2 bans only variables of automatic
   subroutines (L18646-18652). Static formals and locals and module variables
   are reported at the end of the slot. Within one slot strobes print before

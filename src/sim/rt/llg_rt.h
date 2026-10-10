@@ -478,6 +478,11 @@ typedef struct {
     void* ptr;
 } llg_display_read_t;
 
+// `kind` of a trigger entry that names no storage: the monitor re-evaluates
+// at every settled time slot because an argument reads through a class or
+// virtual-interface handle. Other kinds are llg_fmt_kind values.
+#define LLG_MONITOR_READ_POLL 100
+
 // ── Collapsed inout nets ──────────────────────────────────────────────────────
 //
 // An inout port collapses its parent and child nets into ONE simulated net
@@ -1470,6 +1475,10 @@ void llg_process_retain(llg_process_handle_t* handle);
 void llg_process_release(llg_process_handle_t* handle);
 void llg_process_assign(llg_process_handle_t** target,
                         llg_process_handle_t* source);
+// Same for a generated evaluation temporary, which may hold a handle in a
+// read-only region.
+void llg_process_assign_temp(llg_process_handle_t** target,
+                             llg_process_handle_t* source);
 // Register an automatic process-handle slot before its first assignment. The
 // runtime retains the slot's value until the owning process is completed or
 // killed, even when the C block that declared the slot has already unwound.

@@ -188,6 +188,26 @@ impl IrPattern {
         }
     }
 
+    /// Whether printing walks the contents of a class object, whose
+    /// properties change without any named storage being written.
+    pub(in crate::sim) fn reaches_class(&self, model: &IrModel) -> bool {
+        let mut pending = vec![self.ty];
+        let mut seen = vec![false; model.pattern_types.len()];
+        while let Some(index) = pending.pop() {
+            let Some(ty) = model.pattern_types.get(index) else {
+                continue;
+            };
+            if std::mem::replace(&mut seen[index], true) {
+                continue;
+            }
+            if matches!(ty, IrPatternType::Class) {
+                return true;
+            }
+            pending.extend(ty.children());
+        }
+        false
+    }
+
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match &self.source {
             IrPatternSource::Packed(value) => visit(value),

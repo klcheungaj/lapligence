@@ -274,15 +274,27 @@ static void process_local_release_all(llg_proc_t* proc) {
     }
 }
 
-void llg_process_assign(llg_process_handle_t** target,
-                        llg_process_handle_t* source) {
-    if (!target || !region_can_mutate("process handle write")) return;
+static void process_assign_slot(llg_process_handle_t** target,
+                                llg_process_handle_t* source) {
     if (source) llg_process_retain(source);
     if (*target) llg_process_release(*target);
     *target = source;
     llg_proc_t* proc = llg_current();
     llg_process_local_ref_t* local = process_local_find(proc, target);
     if (local) local->value = source;
+}
+
+void llg_process_assign(llg_process_handle_t** target,
+                        llg_process_handle_t* source) {
+    if (!target || !region_can_mutate("process handle write")) return;
+    process_assign_slot(target, source);
+}
+
+// Hold a handle in an evaluation temporary. Unlike a store to a design
+// variable this is legal in the read-only Postponed region (SV 4.4.2.9).
+void llg_process_assign_temp(llg_process_handle_t** target,
+                             llg_process_handle_t* source) {
+    if (target) process_assign_slot(target, source);
 }
 
 void llg_process_kill(llg_proc_t* self, llg_process_handle_t* handle) {

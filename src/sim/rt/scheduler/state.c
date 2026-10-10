@@ -9,6 +9,7 @@ typedef struct llg_monitor_state {
     struct llg_monitor_state* next;
     int primary;         // the `$monitor` display list
     int dead;            // every channel closed; swept at the next safe point
+    int poll;            // re-evaluate every slot (handle-selected reads)
     int dirty;           // a trigger signal changed since the last check
     int force_report;    // registration or enable requires one report
     char* fmt;           // strdup'd format string

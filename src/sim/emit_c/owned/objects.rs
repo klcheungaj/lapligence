@@ -255,7 +255,10 @@ impl Frame<'_, '_> {
             }
         };
         let result = self.native_reserve(NativeKind::Process);
-        self.line(format!("llg_process_assign({}, {source});", result.address));
+        self.line(format!(
+            "llg_process_assign_temp({}, {source});",
+            result.address
+        ));
         Ok(result)
     }
 

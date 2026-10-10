@@ -34,6 +34,13 @@ fn strobe_and_monitor_in_static_subroutines() {
     sim_cli::run_case_backend_parity(SUITE, "static_subroutines", expected, &[], &[]);
 }
 
+#[test]
+fn monitor_follows_handle_selected_storage() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_025/dynamic_members.out");
+    sim_cli::run_case(SUITE, "dynamic_members", expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "dynamic_members", expected, &[], &[]);
+}
+
 // A02: replacement, enable/disable and file outputs.
 #[test]
 fn monitor_replacement_and_enable_flag() {

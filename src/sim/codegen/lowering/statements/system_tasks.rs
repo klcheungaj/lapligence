@@ -870,12 +870,27 @@ impl EmitCtx<'_, '_> {
                         time_unit_fs: self.cg.timescale_of_node(h).unit_fs,
                         private_effects,
                     });
+                    // Handle-selected storage and `%p` of class objects change
+                    // without a named write, so those monitors look every slot.
+                    let poll = !strobe
+                        && (display_args_source
+                            .iter()
+                            .any(|argument| self.cg.reads_dynamic_storage(*argument))
+                            || display_args.iter().any(|argument| {
+                                matches!(
+                                    argument,
+                                    crate::sim::ir::IrDisplayArg::Text(
+                                        crate::sim::ir::IrStringExpr::Pattern(pattern)
+                                    ) if pattern.reaches_class(&self.cg.model)
+                                )
+                            }));
                     return Ok(vec![IrStmt::MonitorSet {
                         strobe,
                         fmt,
                         eval: eval_name,
                         n_args: display_args.len(),
                         reads,
+                        poll,
                         default_radix,
                         scope: self.cg.format_scope(&self.path, h),
                         descriptor: descriptor.map(Box::new),

@@ -889,7 +889,10 @@ reject:
   module-level handle. Admitting them needs a one-line frontend patch to the
   check and, in lowering, a handle-property dependency (the `@`/`wait`
   machinery already has one) plus a null-handle rule for the report.
-  Printing the handle itself (`%p` of `h`) works.
+  Reading them through a method (`h.get()`), a function with a handle
+  formal, a virtual-interface member or `%p` of the object works; such a
+  `$monitor` re-evaluates at every settled slot instead of watching fixed
+  storage, which costs one evaluation per slot.
 - **A static subroutine's string, chandle or process-handle formal.** The
   call activation holds it, so a report cannot read it later
   ([`neg_static_string_formal.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_static_string_formal.sv)).

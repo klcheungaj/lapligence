@@ -192,7 +192,6 @@ static void monitor_register_typed(int primary, uint32_t descriptor,
     m->typed = 1;
     m->descriptor = descriptor;
     m->typed_eval = eval;
-    m->n_typed_reads = n_reads;
     m->scope = (char*)llg_checked_malloc(strlen(scope ? scope : "") + 1, 1,
                                          "monitor scope");
     strcpy(m->scope, scope ? scope : "");
@@ -204,8 +203,10 @@ static void monitor_register_typed(int primary, uint32_t descriptor,
     if (n_reads > 0) {
         m->typed_reads = (llg_display_read_t*)llg_checked_malloc(
             (size_t)n_reads, sizeof(llg_display_read_t), "monitor trigger set");
-        memcpy(m->typed_reads, reads,
-               (size_t)n_reads * sizeof(llg_display_read_t));
+        for (int i = 0; i < n_reads; i++) {
+            if (reads[i].kind == LLG_MONITOR_READ_POLL) m->poll = 1;
+            else m->typed_reads[m->n_typed_reads++] = reads[i];
+        }
     }
 }
 
@@ -258,7 +259,7 @@ void llg_file_strobe_typed(uint32_t descriptor, const char* fmt, int n,
 // Re-print one dirty monitor at the settled observation point. The
 // registration and enable paths set force_report so equal values still print.
 static void check_monitor(llg_monitor_state_t* m) {
-    if (!m->dirty && !m->force_report) return;
+    if (!m->dirty && !m->force_report && !m->poll) return;
     if (m->primary && g.monitor_off) return;
     if (m->typed) {
         llg_fmt_args_destroy(m->typed_work, m->n);

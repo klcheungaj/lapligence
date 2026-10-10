@@ -1519,7 +1519,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   an invalid or closed descriptor registers nothing and sets `$ferror`. Packed,
   real, string and `%p` container/record arguments, nested expressions, function
   calls, `%m`/`%t`/`$time` work, also in static tasks and functions (module
-  variables, static formals and locals). Automatic variables stay illegal
+  variables, static formals and locals); arguments that read through a class or
+  virtual-interface handle make a `$monitor` re-evaluate every slot. Automatic variables stay illegal
   (SV 13.3.2); class properties, a static string formal, class methods and
   `final` blocks reject; pending reports are dropped at `$finish`
   ([known issue](known_issues.md#deferred-reports-that-name-class-state-or-activation-storage)).

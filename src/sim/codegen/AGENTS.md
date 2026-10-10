@@ -618,7 +618,9 @@ them, and caps text at `LLG_PATTERN_OUTPUT_LIMIT`. Monitors/strobes run after se
 (plus any number of `$fmonitor` lists), registration/enabling forces a report,
 time-only arguments do not retrigger. A deferred report in a static subroutine may
 name model storage (static formals and locals included); activation-bound storage
-(`activation_bound_ref`) and class methods reject.
+(`activation_bound_ref`) and class methods reject. A monitor whose arguments read
+handle-selected storage or `%p` a class object sets `IrStmt::MonitorSet::poll`:
+the runtime then re-evaluates it at every settled slot (`LLG_MONITOR_READ_POLL`).
 Deferred callbacks need owned environments. Waveform controls preserve source/depth
 identity against the fixed catalog; omit waveform/libfst when unused, reject
 `$dumpports`, warn/skip `$displayon`/`$displayoff`. Packed string literals remain
