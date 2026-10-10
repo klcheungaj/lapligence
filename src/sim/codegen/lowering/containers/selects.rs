@@ -23,6 +23,27 @@ struct ContainerElementSelect {
     element: IrContainerElement,
 }
 
+/// A selected container element staged in a lexical copy.
+/// A staged file-input destination selecting bits of a container element:
+/// `prelude` freezes the keys and copies the element, the input writes
+/// `target` (`width` bits of the copy), and `store` publishes the copy.
+pub(in super::super) struct ContainerSelectInput {
+    pub(in super::super) prelude: Vec<IrStmt>,
+    pub(in super::super) target: IrLhs,
+    pub(in super::super) width: u32,
+    pub(in super::super) store: IrStmt,
+}
+
+struct ContainerSelectStage {
+    /// Frozen key declarations, run first.
+    keys: Vec<IrStmt>,
+    /// Declaration of the element copy, initialized from the element.
+    element: IrStmt,
+    target: IrLhs,
+    width: u32,
+    store: IrStmt,
+}
+
 impl Codegen<'_> {
     /// Number of container indices that reach a non-container element.
     pub(super) fn container_index_depth(&self, container: usize) -> usize {
@@ -198,6 +219,137 @@ impl Codegen<'_> {
     /// or queue index ignores the write, `q[$+1]` appends, and a missing
     /// associative key is created from the value a read returns (the array's
     /// default) before the selected bits are replaced.
+    /// Freeze the keys of a selected container element and stage the element
+    /// in a lexical copy: `target` selects into the copy and `store` writes
+    /// the whole copy back through the ordinary element store. `tag` makes
+    /// the locals unique at the site.
+    fn container_select_stage(
+        &mut self,
+        path: &str,
+        select: ContainerElementSelect,
+        tag: &str,
+    ) -> Result<ContainerSelectStage, String> {
+        let container = select.container;
+        let element = select.element.clone();
+        let mut block = Vec::new();
+        let keys = match self.lower_element_keys(path, container, select.indices.clone())? {
+            ElementKeys::Integral(indices) => ElementKeys::Integral(
+                indices
+                    .into_iter()
+                    .enumerate()
+                    .map(|(position, index)| {
+                        let name = format!("_csi{tag}_{position}");
+                        let read = IrExpr::new(
+                            IrExprKind::LocalRead(name.clone()),
+                            index.width,
+                            index.signed,
+                            None,
+                        );
+                        block.push(IrStmt::DeclLocal {
+                            name,
+                            width: index.width,
+                            signed: index.signed,
+                            two_state: false,
+                            init: Some(Box::new(index)),
+                        });
+                        read
+                    })
+                    .collect(),
+            ),
+            ElementKeys::String(key) => {
+                let name = format!("_csk{tag}");
+                block.push(IrStmt::DeclString {
+                    name: name.clone(),
+                    init: Some(key),
+                });
+                ElementKeys::String(IrStringExpr::LocalRead(name))
+            }
+        };
+        let steps = self.container_select_steps(path, select)?;
+        let element_name = format!("_cse{tag}");
+        let target = IrLhs::PackedSelect {
+            target: Box::new(IrLhs::WholeRef {
+                addr: format!("&{element_name}"),
+                width: element.width(),
+                signed: element.signed(),
+                two_state: false,
+                shortreal: false,
+            }),
+            steps,
+            signed: false,
+            two_state: false,
+        };
+        let width = packed_lhs_width(&self.model, &target)
+            .ok_or_else(|| format!("container element select in `{path}` has no width"))?;
+        let element_decl = IrStmt::DeclLocal {
+            name: element_name.clone(),
+            width: element.width(),
+            signed: element.signed(),
+            two_state: false,
+            init: Some(Box::new(Self::container_element_read(
+                container,
+                &element,
+                keys.clone(),
+            ))),
+        };
+        let value = IrExpr::new(
+            IrExprKind::LocalRead(element_name),
+            element.width(),
+            element.signed(),
+            None,
+        );
+        let store = IrStmt::Container(match keys {
+            ElementKeys::String(key) => Box::new(IrContainerStmt::SetString {
+                container,
+                key,
+                value,
+            }),
+            ElementKeys::Integral(indices) => match <[IrExpr; 1]>::try_from(indices) {
+                Ok([index]) => Box::new(IrContainerStmt::Set {
+                    container,
+                    index,
+                    value,
+                }),
+                Err(indices) => Box::new(IrContainerStmt::SetNested {
+                    container,
+                    indices,
+                    value,
+                }),
+            },
+        });
+        Ok(ContainerSelectStage {
+            keys: block,
+            element: element_decl,
+            target,
+            width,
+            store,
+        })
+    }
+
+    /// A file-input destination selecting bits of a packed container element
+    /// (`d[i][3:0]`, SIM-026): the prelude freezes the keys and copies the
+    /// element, the input writes the selected bits of the copy, and `store`
+    /// publishes the copy. `None` when `node` is not such a select.
+    pub(in super::super) fn container_select_input_stage(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        tag: &str,
+    ) -> Result<Option<ContainerSelectInput>, String> {
+        let Some(select) = self.container_element_select(node) else {
+            return Ok(None);
+        };
+        let stage = self.container_select_stage(path, select, tag)?;
+        let mut prelude = stage.keys;
+        prelude.push(stage.element);
+        Ok(Some(ContainerSelectInput {
+            prelude,
+            target: stage.target,
+            width: stage.width,
+            store: stage.store,
+        }))
+    }
+
     /// The copy-out destination of an output or inout actual naming one
     /// whole packed or real element of a resizable container (SV 13.5): the
     /// element's keys are evaluated once into locals before the call and the
@@ -314,114 +466,26 @@ impl Codegen<'_> {
                 "compound assignment to resizable container element in `{path}` is not supported"
             ));
         }
-        let container = select.container;
-        let element = select.element.clone();
-        let mut block = Vec::new();
-        let keys = match self.lower_element_keys(path, container, select.indices.clone())? {
-            ElementKeys::Integral(indices) => ElementKeys::Integral(
-                indices
-                    .into_iter()
-                    .enumerate()
-                    .map(|(position, index)| {
-                        let name = format!("_csi{}_{position}", lhs.0);
-                        let read = IrExpr::new(
-                            IrExprKind::LocalRead(name.clone()),
-                            index.width,
-                            index.signed,
-                            None,
-                        );
-                        block.push(IrStmt::DeclLocal {
-                            name,
-                            width: index.width,
-                            signed: index.signed,
-                            two_state: false,
-                            init: Some(Box::new(index)),
-                        });
-                        read
-                    })
-                    .collect(),
-            ),
-            ElementKeys::String(key) => {
-                let name = format!("_csk{}", lhs.0);
-                block.push(IrStmt::DeclString {
-                    name: name.clone(),
-                    init: Some(key),
-                });
-                ElementKeys::String(IrStringExpr::LocalRead(name))
-            }
-        };
-        let steps = self.container_select_steps(path, select)?;
-        let element_name = format!("_cse{}", lhs.0);
-        let target = IrLhs::PackedSelect {
-            target: Box::new(IrLhs::WholeRef {
-                addr: format!("&{element_name}"),
-                width: element.width(),
-                signed: element.signed(),
-                two_state: false,
-                shortreal: false,
-            }),
-            steps,
-            signed: false,
-            two_state: false,
-        };
+        let stage = self.container_select_stage(path, select, &lhs.0.to_string())?;
+        let mut block = stage.keys;
         let value = self.lower_expr(path, rhs)?;
-        let value = apply_lhs_assignment_context(&self.model, &target, value);
-        let selected_width = packed_lhs_width(&self.model, &target)
-            .ok_or_else(|| format!("container element select in `{path}` has no width"))?;
-        let value = ir_to_storage(value, selected_width, false, false)?;
+        let value = apply_lhs_assignment_context(&self.model, &stage.target, value);
+        let value = ir_to_storage(value, stage.width, false, false)?;
         let value_name = format!("_csv{}", lhs.0);
         block.push(IrStmt::DeclLocal {
             name: value_name.clone(),
-            width: selected_width,
+            width: stage.width,
             signed: false,
             two_state: false,
             init: Some(Box::new(value)),
         });
-        let store_keys = keys.clone();
-        block.push(IrStmt::DeclLocal {
-            name: element_name.clone(),
-            width: element.width(),
-            signed: element.signed(),
-            two_state: false,
-            init: Some(Box::new(Self::container_element_read(
-                container, &element, keys,
-            ))),
-        });
+        block.push(stage.element);
         block.push(IrStmt::Assign {
-            lhs: target,
-            rhs: IrExpr::new(
-                IrExprKind::LocalRead(value_name),
-                selected_width,
-                false,
-                None,
-            ),
+            lhs: stage.target,
+            rhs: IrExpr::new(IrExprKind::LocalRead(value_name), stage.width, false, None),
             nba: false,
         });
-        let value = IrExpr::new(
-            IrExprKind::LocalRead(element_name),
-            element.width(),
-            element.signed(),
-            None,
-        );
-        block.push(IrStmt::Container(match store_keys {
-            ElementKeys::String(key) => Box::new(IrContainerStmt::SetString {
-                container,
-                key,
-                value,
-            }),
-            ElementKeys::Integral(indices) => match <[IrExpr; 1]>::try_from(indices) {
-                Ok([index]) => Box::new(IrContainerStmt::Set {
-                    container,
-                    index,
-                    value,
-                }),
-                Err(indices) => Box::new(IrContainerStmt::SetNested {
-                    container,
-                    indices,
-                    value,
-                }),
-            },
-        }));
+        block.push(stage.store);
         Ok(Some(IrStmt::Block(block)))
     }
 }

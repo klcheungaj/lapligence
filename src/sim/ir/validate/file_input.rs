@@ -117,6 +117,39 @@ impl Validator<'_> {
                             .fail(target_path, "file read array must contain packed elements");
                     }
                 }
+                IrFileReadTarget::Element {
+                    read,
+                    width,
+                    signed,
+                    two_state,
+                } => validate_target(
+                    &IrFileInputTarget::Element {
+                        read: read.clone(),
+                        width: *width,
+                        signed: *signed,
+                        two_state: *two_state,
+                    },
+                    target_path,
+                )?,
+                IrFileReadTarget::Container { container } => {
+                    let packed = self
+                        .model
+                        .containers
+                        .get(*container)
+                        .is_some_and(|container| {
+                            matches!(container.element, IrContainerElement::Packed { .. })
+                                && matches!(
+                                    container.kind,
+                                    IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+                                )
+                        });
+                    if !packed {
+                        return self.fail(
+                            target_path,
+                            "file read container must be a packed dynamic array or queue",
+                        );
+                    }
+                }
             }
             Ok(())
         };
@@ -140,6 +173,7 @@ impl Validator<'_> {
                 descriptor,
                 format,
                 targets,
+                ..
             } => {
                 validate_descriptor(descriptor, "descriptor")?;
                 self.validate_plusarg_text(format, formals, &format!("{path}.format"))?;
@@ -151,15 +185,9 @@ impl Validator<'_> {
                 source,
                 format,
                 targets,
+                ..
             } => {
-                source.validate(self.model, self.string_return.get())?;
-                let mut result = Ok(());
-                source.expressions(&mut |child| {
-                    result = result.clone().and_then(|_| {
-                        self.validate_expr(child, formals, &format!("{path}.source"))
-                    });
-                });
-                result?;
+                self.validate_plusarg_text(source, formals, &format!("{path}.source"))?;
                 self.validate_plusarg_text(format, formals, &format!("{path}.format"))?;
                 for (index, target) in targets.iter().enumerate() {
                     validate_target(target, &format!("{path}.targets[{index}]"))?;

@@ -287,8 +287,27 @@ pub(crate) fn invoke_with_env(
     envs: &[(&str, &str)],
     remove_env: &[&str],
 ) -> Output {
+    invoke_with_env_and_files(suite, fixture, optimized, args, envs, remove_env, &[])
+}
+
+/// [`invoke_with_env`] after writing checked-in input `files` (name,
+/// contents) into the child's working directory, where relative `$fopen`
+/// paths resolve.
+fn invoke_with_env_and_files(
+    suite: &str,
+    fixture: &str,
+    optimized: bool,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    remove_env: &[&str],
+    files: &[(&str, &str)],
+) -> Output {
     let source = fixture_path(suite, fixture);
     let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
+    for (name, contents) in files {
+        std::fs::write(directory.path().join(name), contents)
+            .unwrap_or_else(|error| panic!("{suite}/{fixture}: write {name}: {error}"));
+    }
     let label = format!("{suite}/{fixture}, optimized={optimized}");
     run_fixture_command(&source, &label, |lint_args| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
@@ -387,6 +406,19 @@ pub(crate) fn run_case_backend_parity(
     args: &[&str],
     envs: &[(&str, &str)],
 ) {
+    run_case_backend_parity_with_files(suite, fixture, expected, args, envs, &[]);
+}
+
+/// [`run_case_backend_parity`] with checked-in input `files` (name, contents)
+/// written into every run's working directory.
+pub(crate) fn run_case_backend_parity_with_files(
+    suite: &str,
+    fixture: &str,
+    expected: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    files: &[(&str, &str)],
+) {
     let gmp = sim_harness::test_gmp_root();
     for optimized in [false, true] {
         let mut controls = envs.to_vec();
@@ -394,7 +426,15 @@ pub(crate) fn run_case_backend_parity(
             ("LLG_DEV_VALUE_BACKEND", "legacy"),
             ("LLG_DEV_COMPACT_KERNELS", "portable"),
         ]);
-        let legacy = invoke_with_env(suite, fixture, optimized, args, &controls, &["GMP_ROOT"]);
+        let legacy = invoke_with_env_and_files(
+            suite,
+            fixture,
+            optimized,
+            args,
+            &controls,
+            &["GMP_ROOT"],
+            files,
+        );
         let stdout = legacy.stdout.clone();
         let stderr = legacy.stderr.clone();
         assert!(
@@ -414,7 +454,8 @@ pub(crate) fn run_case_backend_parity(
                 ("LLG_DEV_COMPACT_KERNELS", kernel),
                 ("GMP_ROOT", gmp.as_str()),
             ]);
-            let compact = invoke_with_env(suite, fixture, optimized, args, &controls, &[]);
+            let compact =
+                invoke_with_env_and_files(suite, fixture, optimized, args, &controls, &[], files);
             let label = format!("{suite}/{fixture}, compact/{kernel}, optimized={optimized}");
             assert!(
                 compact.status.success(),

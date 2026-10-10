@@ -773,6 +773,7 @@ fn lp64_layout(
         "llg_wait_dependency_t" => (32, 8),
         "llg_expr_event_spec_t" => (104, 8),
         "llg_ref_t" => (112, 8),
+        "llg_ref_view_t" => (56, 8),
         "llg_vpi_arg_t" => (
             if backend == crate::sim::value_backend::ValueBackend::Compact {
                 56

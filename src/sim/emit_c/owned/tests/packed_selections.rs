@@ -102,7 +102,7 @@ fn packed_selection_input_uses_a_synchronous_plan_descriptor() {
     let mut frame = Frame::new(&ctx);
     let result = frame
         .file_input(&IrFileInput::ScanString {
-            source: IrStringExpr::Literal(b"f".to_vec()),
+            source: IrPlusArgText::Literal("f".to_owned()),
             format: IrPlusArgText::Literal("%h".to_owned()),
             targets: vec![IrFileInputTarget::Packed {
                 lhs: Box::new(lhs()),
@@ -110,13 +110,18 @@ fn packed_selection_input_uses_a_synchronous_plan_descriptor() {
                 signed: false,
                 two_state: false,
             }],
+            scope: IrScanScope {
+                name: "tb".to_owned(),
+                time_unit_fs: 0,
+            },
         })
         .unwrap();
     frame.discard(result);
     let source = frame.body();
     assert!(source.contains(".kind = LLG_REF_PACKED_PLAN, .retained = &"));
     assert!(
-        source.find("sv4_select_plan_step(").unwrap() < source.find("llg_string_scanf(").unwrap()
+        source.find("sv4_select_plan_step(").unwrap()
+            < source.find("llg_string_scanf_scoped(").unwrap()
     );
     assert!(frame.slots.iter().all(|used| !used));
 }

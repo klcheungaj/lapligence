@@ -226,6 +226,12 @@ impl Validator<'_> {
                 });
                 result?;
             }
+            IrPlusArgText::Packed(value) => {
+                self.validate_expr(value, formals, path)?;
+                if value.is_real() {
+                    return self.fail(path, "packed scan text must be integral");
+                }
+            }
         }
         Ok(())
     }

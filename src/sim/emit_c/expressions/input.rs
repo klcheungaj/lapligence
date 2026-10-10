@@ -17,6 +17,7 @@ fn render_plusarg_text(
                 format!("llg_string_destroy(&{name}); "),
             ))
         }
+        IrPlusArgText::Packed(_) => Err("packed scan text outside an owned frame".to_owned()),
     }
 }
 
@@ -282,6 +283,7 @@ pub(super) fn render_file_input(
             descriptor,
             format,
             targets,
+            ..
         } => {
             let descriptor = render_expr_impl(ctx, descriptor)?;
             let (format, setup, cleanup) =
@@ -297,8 +299,19 @@ pub(super) fn render_file_input(
             source,
             format,
             targets,
+            ..
         } => {
-            let source_code = super::super::objects::string(ctx, source)?;
+            let source_code = match source {
+                IrPlusArgText::Literal(text) => format!(
+                    "llg_string_bytes({}, {})",
+                    c_string_literal(text),
+                    text.len()
+                ),
+                IrPlusArgText::Dynamic(source) => super::super::objects::string(ctx, source)?,
+                IrPlusArgText::Packed(_) => {
+                    return Err("packed scan source outside an owned frame".to_owned());
+                }
+            };
             let (format, setup, cleanup) =
                 render_plusarg_text(ctx, format, "_llg_string_input_format")?;
             let (target_setup, target_array) = render_file_input_targets(ctx, targets)?;
@@ -360,6 +373,9 @@ pub(super) fn render_file_input(
                         has_start as u8,
                         has_count as u8,
                     )
+                }
+                IrFileReadTarget::Element { .. } | IrFileReadTarget::Container { .. } => {
+                    return Err("binary input into a container outside an owned frame".to_owned());
                 }
             }
         }

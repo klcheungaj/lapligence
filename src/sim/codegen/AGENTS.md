@@ -583,6 +583,11 @@ Memory views evaluate each dynamic selector once, retaining static strides and H
 bounds; invalid views fail before writes. Binary rank-one reads advance numeric
 addresses independently of declaration order. Packed `$fread` optional bounds
 are evaluated/disposed but their values are ignored; memory bounds remain active.
+File-input destinations (`expressions/external_input.rs`) evaluate selectors once
+at call entry. String and real container elements and container selects are
+staged through locals declared in an `IrExprKind::Sequence`. The staged value is
+stored only when the call's result exceeds that destination's ordinal.
+Unpacked aggregates other than 1-D byte arrays reject before C generation.
 
 ## Time, output and native services
 

@@ -23,7 +23,7 @@ module tb;
     character = $fgetc(fd);
     status = $ungetc(character, fd);
     gets_status = $fgets(line, fd);
-    if (status !== 65 || gets_status !== 7 || line.len() !== 7 ||
+    if (status !== 0 || gets_status !== 7 || line.len() !== 7 ||
         line.getc(0) !== 8'h41 || line.getc(1) !== 8'h20 ||
         line.getc(2) !== 8'h6c || line.getc(3) !== 8'h69 ||
         line.getc(4) !== 8'h6e || line.getc(5) !== 8'h65 ||

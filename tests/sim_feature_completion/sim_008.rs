@@ -78,16 +78,8 @@ fn input_system_functions_store_into_container_elements() {
         &["--append-plusarg", "+N=4", "--append-plusarg", "+H=1f"],
         &[],
     );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_string_element_scan",
-        "string element of a queue, dynamic or associative array as a ref actual or input destination in `tb` is not supported (SIM-008)",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_real_element_scan",
-        "real element of a queue, dynamic or associative array as an input destination in `tb` is not supported (SIM-008)",
-    );
+    // String and real element destinations are staged since SIM-026
+    // (`sim_026/container_destinations`).
 }
 
 #[test]

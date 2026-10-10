@@ -258,6 +258,11 @@ int llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
         llg_file_slot_failure(slot, "file seek failed");
         return -1;
     }
+    // `$rewind` is `$fseek(fd, 0, 0)` (21.3.5); like the task form, a
+    // successful reposition leaves no stale error for `$ferror`.
+    clearerr(slot->stream);
+    slot->error = 0;
+    slot->message[0] = 0;
     slot->eof = 0;
     slot->pushback_len = 0;
     return 0;
@@ -341,16 +346,19 @@ int llg_file_ungetc(uint32_t descriptor, sv4_t character) {
         llg_file_global_failure("invalid file ungetc arguments");
         return EOF;
     }
-    return llg_file_ungetc_slot(slot, (int)value);
+    // IEEE 1364-2001 17.2.4.1 / 1800-2009 21.3.4.1: success returns zero.
+    return llg_file_ungetc_slot(slot, (int)value) == EOF ? EOF : 0;
 }
 
-int llg_file_gets(uint32_t descriptor, llg_string_t* target) {
+// Read one line, or at most `limit` characters, into a fresh string.
+static int llg_file_gets_bounded(uint32_t descriptor, llg_string_t* target, size_t limit) {
     llg_file_slot_t* slot;
     if (!target || !llg_file_single_ordinary(descriptor, &slot)) return 0;
-    size_t capacity = 128u;
+    if (limit == 0) return 0;
+    size_t capacity = limit < 128u ? limit : 128u;
     size_t length = 0;
     unsigned char* bytes = (unsigned char*)llg_checked_malloc(capacity, 1, "file input line");
-    for (;;) {
+    while (length < limit) {
         int value = llg_file_getc_slot(slot);
         if (value == EOF) break;
         if (length == capacity) {
@@ -358,7 +366,7 @@ int llg_file_gets(uint32_t descriptor, llg_string_t* target) {
                 free(bytes);
                 llg_fatal_allocation("file input line", capacity, 2u);
             }
-            capacity *= 2u;
+            capacity = capacity * 2u < limit ? capacity * 2u : limit;
             unsigned char* replacement = (unsigned char*)realloc(bytes, capacity);
             if (!replacement) {
                 free(bytes);
@@ -381,10 +389,16 @@ int llg_file_gets(uint32_t descriptor, llg_string_t* target) {
     return length > (size_t)INT_MAX ? INT_MAX : (int)length;
 }
 
+int llg_file_gets(uint32_t descriptor, llg_string_t* target) {
+    return llg_file_gets_bounded(descriptor, target, SIZE_MAX);
+}
+
 int llg_file_gets_packed(uint32_t descriptor, llg_ref_t* target) {
     if (!target || target->width == 0) return 0;
     llg_string_t value = {0};
-    int result = llg_file_gets(descriptor, &value);
+    // 17.2.4.2 / 21.3.4.2: the destination is filled with whole bytes; a most
+    // significant partial byte does not count toward its size.
+    int result = llg_file_gets_bounded(descriptor, &value, target->width / 8u);
     if (result) llg_ref_write_owned(target, llg_string_to_packed(value, target->width,
                                                             target->is_signed));
     else llg_string_destroy(&value);

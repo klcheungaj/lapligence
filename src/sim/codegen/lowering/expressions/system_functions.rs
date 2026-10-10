@@ -624,14 +624,8 @@ impl<'a> Codegen<'a> {
                     ));
                 };
                 let destination = self.file_input_actual(*destination)?;
-                let target = if self.is_string_expr(scope_path, destination) {
-                    self.ensure_string_actual_writable(scope_path, destination)?;
-                    IrFileInputTarget::String {
-                        address: self.lower_string_actual_address(scope_path, destination)?,
-                    }
-                } else {
-                    self.lower_file_input_target(scope_path, destination)?
-                };
+                let tag = format!("{}_0", call.0);
+                let (target, stage) = self.lower_scan_destination(scope_path, destination, &tag)?;
                 if matches!(target, IrFileInputTarget::Real { .. }) {
                     return Err(format!(
                         "$fgets destination must be packed or string storage in `{scope_path}`"
@@ -643,7 +637,7 @@ impl<'a> Codegen<'a> {
                         "$fgets requires a packed file descriptor in `{scope_path}`"
                     ));
                 }
-                Ok(IrExpr::new(
+                let call = IrExpr::new(
                     IrExprKind::SysFunc(Box::new(IrSysFunc::FileInput(IrFileInput::Gets {
                         descriptor: Box::new(descriptor),
                         target,
@@ -651,60 +645,105 @@ impl<'a> Codegen<'a> {
                     32,
                     true,
                     None,
+                );
+                Ok(Self::staged_input_call(
+                    call,
+                    stage.map(|stage| vec![(0, stage)]).unwrap_or_default(),
+                    &tag,
                 ))
             }
-            "$fscanf" => {
+            "$fscanf" | "$sscanf" => {
                 if args.len() < 2 {
-                    return Err(format!(
-                        "$fscanf requires a descriptor, format, and optional destinations in `{scope_path}`"
-                    ));
+                    return Err(if name == "$fscanf" {
+                        format!("$fscanf requires a descriptor, format, and optional destinations in `{scope_path}`")
+                    } else {
+                        format!("$sscanf requires a source string, format, and optional destinations in `{scope_path}`")
+                    });
                 }
-                let descriptor = self.lower_expr(scope_path, args[0])?;
-                if descriptor.is_real() {
-                    return Err(format!(
-                        "$fscanf requires a packed file descriptor in `{scope_path}`"
-                    ));
+                let descriptor = if name == "$fscanf" {
+                    let descriptor = self.lower_expr(scope_path, args[0])?;
+                    if descriptor.is_real() {
+                        return Err(format!(
+                            "$fscanf requires a packed file descriptor in `{scope_path}`"
+                        ));
+                    }
+                    Some(descriptor)
+                } else {
+                    None
+                };
+                let source = if name == "$sscanf" {
+                    Some(self.lower_scan_text(scope_path, args[0], "$sscanf source")?)
+                } else {
+                    None
+                };
+                let format_context = format!("{name} format");
+                let format = self.lower_scan_text(scope_path, args[1], &format_context)?;
+                let mut targets = Vec::with_capacity(args.len() - 2);
+                let mut stages = Vec::new();
+                for (ordinal, argument) in args[2..].iter().enumerate() {
+                    let actual = self.file_input_actual(*argument)?;
+                    let tag = format!("{}_{ordinal}", call.0);
+                    let (target, stage) = self.lower_scan_destination(scope_path, actual, &tag)?;
+                    targets.push(target);
+                    if let Some(stage) = stage {
+                        stages.push((ordinal, stage));
+                    }
                 }
-                let format = self.lower_plusarg_text(scope_path, args[1], "$fscanf format")?;
-                let targets = args[2..]
-                    .iter()
-                    .map(|argument| {
-                        let actual = self.file_input_actual(*argument)?;
-                        self.lower_file_input_target(scope_path, actual)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(IrExpr::new(
-                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileInput(IrFileInput::ScanFile {
+                let scope = crate::sim::ir::IrScanScope {
+                    name: self.format_scope(scope_path, call),
+                    time_unit_fs: self.timescale_of_node(call).unit_fs,
+                };
+                let input = match (descriptor, source) {
+                    (Some(descriptor), _) => IrFileInput::ScanFile {
                         descriptor: Box::new(descriptor),
                         format,
                         targets,
-                    }))),
-                    32,
-                    true,
-                    None,
-                ))
-            }
-            "$sscanf" => {
-                if args.len() < 2 {
-                    return Err(format!(
-                        "$sscanf requires a source string, format, and optional destinations in `{scope_path}`"
-                    ));
-                }
-                let source = self.lower_string(scope_path, args[0])?;
-                let format = self.lower_plusarg_text(scope_path, args[1], "$sscanf format")?;
-                let targets = args[2..]
-                    .iter()
-                    .map(|argument| {
-                        let actual = self.file_input_actual(*argument)?;
-                        self.lower_file_input_target(scope_path, actual)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(IrExpr::new(
-                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileInput(IrFileInput::ScanString {
+                        scope,
+                    },
+                    (None, Some(source)) => IrFileInput::ScanString {
                         source,
                         format,
                         targets,
-                    }))),
+                        scope,
+                    },
+                    (None, None) => unreachable!("scan has a descriptor or a source"),
+                };
+                let call_value = IrExpr::new(
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileInput(input))),
+                    32,
+                    true,
+                    None,
+                );
+                Ok(Self::staged_input_call(
+                    call_value,
+                    stages,
+                    &call.0.to_string(),
+                ))
+            }
+            "$rewind" => {
+                // IEEE 1800-2009 21.3.5: `$rewind(fd)` is `$fseek(fd, 0, 0)`.
+                let [descriptor] = args.as_slice() else {
+                    return Err(format!(
+                        "$rewind requires exactly one file descriptor in `{scope_path}`"
+                    ));
+                };
+                let descriptor = self.lower_expr(scope_path, *descriptor)?;
+                if descriptor.is_real() {
+                    return Err(format!(
+                        "$rewind requires a packed file descriptor in `{scope_path}`"
+                    ));
+                }
+                let zero = || {
+                    Box::new(super::super::containers::pattern_key_expr(
+                        0, 32, true, false,
+                    ))
+                };
+                Ok(IrExpr::new(
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileSeek {
+                        descriptor: Box::new(descriptor),
+                        offset: zero(),
+                        operation: zero(),
+                    })),
                     32,
                     true,
                     None,
@@ -717,7 +756,9 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 let destination = self.file_input_actual(args[0])?;
-                let target = self.lower_file_read_target(scope_path, destination)?;
+                let tag = format!("{}_0", call.0);
+                let (target, stage) =
+                    self.lower_file_read_destination(scope_path, destination, &tag)?;
                 let descriptor = self.lower_expr(scope_path, args[1])?;
                 if descriptor.is_real() {
                     return Err(format!(
@@ -745,7 +786,7 @@ impl<'a> Codegen<'a> {
                 // Both source editions allow start/count for a packed target
                 // but ignore their values. The owned emitter already releases
                 // these argument temporaries without applying memory bounds.
-                Ok(IrExpr::new(
+                let call = IrExpr::new(
                     IrExprKind::SysFunc(Box::new(IrSysFunc::FileInput(IrFileInput::Read {
                         descriptor: Box::new(descriptor),
                         target,
@@ -755,6 +796,11 @@ impl<'a> Codegen<'a> {
                     32,
                     true,
                     None,
+                );
+                Ok(Self::staged_input_call(
+                    call,
+                    stage.map(|stage| vec![(0, stage)]).unwrap_or_default(),
+                    &tag,
                 ))
             }
             "$dimensions" | "$unpacked_dimensions" => {
