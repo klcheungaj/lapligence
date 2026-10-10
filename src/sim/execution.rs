@@ -2926,11 +2926,13 @@ mod tests {
         assert!(indirect_effects.contains(&ExecutionEffect::Terminate));
 
         let mut dpi = IrFunc::new("dpi".into(), None, vec![], vec![], vec![], vec![]);
-        dpi.dpi = Some(IrDpiImport {
-            c_name: "dpi".into(),
-            context: true,
-            pure: false,
-        });
+        dpi.dpi = Some(IrDpiImport::new(
+            "dpi".into(),
+            true,
+            false,
+            Vec::new(),
+            None,
+        ));
         ir.funcs.push(dpi);
         let dpi_effects = effects_for_statements(
             &ir,

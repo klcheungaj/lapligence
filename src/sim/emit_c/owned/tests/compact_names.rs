@@ -85,11 +85,14 @@ fn complete_model_keeps_long_foreign_dpi_names_and_diagnostic_labels() {
         Vec::new(),
     );
     function.diagnostic_name = Some("original diagnostic spelling".to_owned());
-    function.dpi = Some(crate::sim::ir::IrDpiImport {
-        c_name: foreign.clone(),
-        context: false,
-        pure: false,
-    });
+    function.is_task = false;
+    function.dpi = Some(crate::sim::ir::IrDpiImport::new(
+        foreign.clone(),
+        false,
+        false,
+        Vec::new(),
+        None,
+    ));
     model.funcs.push(function);
     let execution = ExecutionModel::lower(model).unwrap();
     let source = super::super::super::model::render(&execution).unwrap();

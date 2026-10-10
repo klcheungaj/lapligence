@@ -551,6 +551,10 @@ pub enum TypeKind {
     Event,
     Void,
     VirtualInterface,
+    /// An unsized unpacked dimension of a DPI import formal (SV 35.5.6.1).
+    DpiOpenUnpacked,
+    /// The sole unsized packed dimension of a DPI import formal.
+    DpiOpenPacked,
     Other,
 }
 

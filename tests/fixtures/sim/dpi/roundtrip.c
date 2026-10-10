@@ -11,8 +11,11 @@ void dpi_transform(int32_t a, int32_t *b, int32_t *c) {
     *c += 20;
 }
 
-void dpi_task(int32_t a, int32_t *b) {
+/* An imported task is an int function of the disable protocol (SV 35.5.4);
+ * 0 reports a normal return. */
+int dpi_task(int32_t a, int32_t *b) {
     *b = a + 30;
+    return 0;
 }
 
 svLogic dpi_logic(svLogic value) {

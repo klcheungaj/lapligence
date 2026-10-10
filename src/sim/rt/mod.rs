@@ -25,15 +25,21 @@
 pub mod gmp;
 
 /// The bounded public VPI declarations and generated-model bridge.
+/// The DPI-C bridge and `svdpi.h` routines (`llg_dpi.c`) follow the VPI
+/// bridge in the same translation unit, which every model links, so user
+/// libraries always resolve them.
 pub fn vpi_sources() -> (&'static str, &'static str) {
-    (include_str!("vpi_user.h"), include_str!("llg_vpi.c"))
+    (
+        include_str!("vpi_user.h"),
+        concat!(include_str!("llg_vpi.c"), include_str!("llg_dpi.c")),
+    )
 }
 
 /// Internal bridge header included by generated models.  The public plugin
 /// header is emitted as `vpi_user.h`; keeping this header separate avoids
 /// exposing model metadata structures to applications.
 pub fn vpi_bridge_header() -> &'static str {
-    include_str!("llg_vpi.h")
+    concat!(include_str!("llg_vpi.h"), include_str!("llg_dpi.h"))
 }
 
 /// Scheduler-independent deterministic random-stream service.  It owns the

@@ -170,11 +170,16 @@ fn even_pure_dpi_and_spawning_callees_are_unproven() {
         Vec::new(),
     )));
     assert!(policy(&model, std::slice::from_ref(&call)).permits("private"));
-    model.funcs[0].dpi = Some(IrDpiImport {
-        c_name: "foreign".into(),
-        context: false,
-        pure: true,
-    });
+    model.funcs[0].dpi = Some(IrDpiImport::new(
+        "foreign".into(),
+        false,
+        true,
+        vec![crate::sim::ir::IrDpiType::Vector {
+            width: 65,
+            logic: true,
+        }],
+        None,
+    ));
     assert!(!policy(&model, std::slice::from_ref(&call)).permits("private"));
     model.funcs[0].dpi = None;
     model.funcs[0].body.push(IrStmt::Fork {

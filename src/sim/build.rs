@@ -81,6 +81,7 @@
 //!   (see `build/timings.rs`); unset or empty records nothing.
 
 mod compiler_probe;
+mod dpi_link;
 mod legacy_pli;
 mod timings;
 mod toolchain_seed;
@@ -440,6 +441,14 @@ pub enum BuildError {
     BuildProgramNotFound { generator: String, output: String },
     /// Compilation of the generated C project failed.
     Compile { output: String },
+    /// The model link left DPI-C symbols undefined: imports that no
+    /// `--dpi-lib` library defines, or `svdpi.h` routines llg does not
+    /// provide that a library calls.
+    MissingDpiSymbol {
+        imports: Vec<String>,
+        routines: Vec<String>,
+        output: String,
+    },
     /// CMake succeeded but no simulator executable was produced.
     ExecutableNotFound { directory: PathBuf, listing: String },
     /// CMake succeeded but no cached runtime archive was produced.
@@ -492,6 +501,37 @@ impl fmt::Display for BuildError {
                 }
             ),
             Self::Compile { output } => write!(f, "cmake build failed:\n{output}"),
+            Self::MissingDpiSymbol {
+                imports,
+                routines,
+                output,
+            } => {
+                let quoted = |names: &[String]| {
+                    names
+                        .iter()
+                        .map(|name| format!("`{name}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                if !imports.is_empty() {
+                    write!(
+                        f,
+                        "DPI-C import symbol {} is not defined by any --dpi-lib library",
+                        quoted(imports)
+                    )?;
+                }
+                if !routines.is_empty() {
+                    if !imports.is_empty() {
+                        write!(f, "; ")?;
+                    }
+                    write!(
+                        f,
+                        "a DPI-C library calls svdpi.h routine {}, which llg does not provide (scope, user-data, caller and time services: SIM-041; SV3.1a packed access, SV H.13: not provided)",
+                        quoted(routines)
+                    )?;
+                }
+                write!(f, "\nlinker output:\n{output}")
+            }
             Self::ExecutableNotFound { directory, listing } => write!(
                 f,
                 "sim executable not found under {}: {listing}",
@@ -605,6 +645,18 @@ fn build_model_cmake_timed(
     timings.record("build", phase);
     let output = output?;
     if !output.status.success() {
+        let transcript = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if let Some(missing) = dpi_link::missing_dpi_symbols(out_dir, &transcript) {
+            return Err(BuildError::MissingDpiSymbol {
+                imports: missing.imports,
+                routines: missing.routines,
+                output: output_tail(&output),
+            });
+        }
         return Err(BuildError::Compile {
             output: output_tail(&output),
         });

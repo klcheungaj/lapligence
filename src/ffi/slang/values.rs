@@ -171,6 +171,8 @@ pub(super) fn decode_type(
             17 => TypeKind::Event,
             18 => TypeKind::Void,
             19 => TypeKind::VirtualInterface,
+            20 => TypeKind::DpiOpenUnpacked,
+            21 => TypeKind::DpiOpenPacked,
             255 => TypeKind::Other,
             _ => return Err(invalid_native("type has an unknown kind")),
         },

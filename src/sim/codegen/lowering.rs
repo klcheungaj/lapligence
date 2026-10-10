@@ -1237,6 +1237,9 @@ struct Codegen<'a> {
     /// protects the owned/lowered boundary when cloned declarations arrive
     /// through different semantic paths.
     dpi_signatures: HashMap<String, String>,
+    /// Open-array DPI import specializations keyed by template function
+    /// and the concrete foreign types of the call's actuals.
+    dpi_specializations: HashMap<(usize, String), usize>,
     /// Interned combinational UDP definitions → `model.udp_tables` index, so
     /// every instance of one definition shares a table without rescanning.
     udp_table_indices: HashMap<crate::sim::ir::IrUdpTable, usize>,
@@ -1727,6 +1730,7 @@ impl<'a> Codegen<'a> {
             cur_fn_ir: None,
             func_meta: HashMap::new(),
             dpi_signatures: HashMap::new(),
+            dpi_specializations: HashMap::new(),
             udp_table_indices: HashMap::new(),
             static_formals: HashMap::new(),
             static_string_formals: HashMap::new(),

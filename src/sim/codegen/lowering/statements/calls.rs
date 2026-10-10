@@ -173,6 +173,7 @@ impl EmitCtx<'_, '_> {
                 .map(|m| m.ir)
                 .ok_or_else(|| format!("task `{name}` has no C name"))?,
         };
+        let fidx = self.cg.dpi_open_callee(fidx, &formals, &bound)?;
         let call = self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound, call_receiver)?;
         if can_be_disabled && !self.cg.class_nodes.contains_key(&callee_inst) {
             // Keep cancellation visible after the callee retires its own

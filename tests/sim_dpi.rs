@@ -179,7 +179,12 @@ fn dpi_missing_symbol_fails_during_model_link() {
     let stderr = crate::sim_harness::strip_lint_reports(&output.stderr);
     assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
     assert!(output.stdout.is_empty(), "unexpected simulation output");
-    assert!(stderr.contains("cmake build failed"), "stderr: {stderr}");
+    // The link failure names the imports no library defines (SIM-040).
+    assert!(
+        stderr.contains("DPI-C import symbol `")
+            && stderr.contains("is not defined by any --dpi-lib library"),
+        "stderr: {stderr}"
+    );
     assert!(!stderr.contains("llg: $finish"), "simulation ran: {stderr}");
 }
 
@@ -202,11 +207,11 @@ fn dpi_conflicting_aliases_fail_before_codegen() {
 }
 
 #[test]
-fn dpi_packed_vector_is_rejected_at_the_scalar_boundary() {
-    let directory = sim_harness::TempDir::new("dpi-vector").expect("temporary directory");
+fn dpi_aggregate_with_native_members_is_rejected_before_codegen() {
+    let directory = sim_harness::TempDir::new("dpi-native-member").expect("temporary directory");
     let output = run_llg(
         directory.path(),
-        &fixture("unsupported_vector.sv"),
+        &fixture("unsupported_native_member.sv"),
         None,
         false,
     );
@@ -214,8 +219,10 @@ fn dpi_packed_vector_is_rejected_at_the_scalar_boundary() {
     assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
     assert!(output.stdout.is_empty());
     assert!(
-        stderr.contains("outside the supported scalar ABI"),
-        "boundary rejection missing: {stderr}"
+        stderr.contains(
+            "unpacked aggregates with real, shortreal, string or chandle elements are not supported"
+        ),
+        "aggregate rejection missing: {stderr}"
     );
 }
 

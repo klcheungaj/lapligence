@@ -20,7 +20,7 @@ fn packed_const(value: u64) -> IrExpr {
 
 #[test]
 fn dpi_string_snapshots_precede_copyouts_and_preserve_borrowed_inputs() {
-    use crate::sim::ir::{IrDpiImport, IrFormal, IrFormalMode};
+    use crate::sim::ir::{IrDpiImport, IrDpiType, IrFormal, IrFormalMode};
 
     for return_kind in 0..3 {
         let mut input = IrFormal::new(false, 1, false).unwrap();
@@ -47,11 +47,22 @@ fn dpi_string_snapshots_precede_copyouts_and_preserve_borrowed_inputs() {
             Vec::new(),
         );
         function.ret_string = return_kind == 0;
-        function.dpi = Some(IrDpiImport {
-            c_name: "foreign_alias".to_owned(),
-            context: false,
-            pure: false,
-        });
+        // A DPI function, not a task (whose C result is the disable code).
+        function.is_task = false;
+        function.dpi = Some(IrDpiImport::new(
+            "foreign_alias".to_owned(),
+            false,
+            false,
+            vec![IrDpiType::String; 4],
+            match return_kind {
+                0 => Some(IrDpiType::String),
+                1 => Some(IrDpiType::Int {
+                    bytes: 4,
+                    signed: true,
+                }),
+                _ => None,
+            },
+        ));
         let c = render_dpi_thunk(&function).unwrap();
         let call = c.find("foreign_alias(").unwrap();
         let first_copyout = c.find("llg_string_move_take(o1, _dpi_s1)").unwrap();

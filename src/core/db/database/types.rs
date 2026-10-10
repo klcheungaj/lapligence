@@ -371,6 +371,20 @@ pub struct DpiImportInfo {
     pub pure: bool,
 }
 
+/// A DPI import formal declared as an open array (SV 35.5.6.1): its unsized
+/// dimensions take their ranges from each call's actual argument.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DpiOpenType {
+    /// Unpacked dimensions, slowest varying first; `None` marks an unsized
+    /// one, `Some((left, right))` a sized one.
+    pub unpacked: Vec<Option<(i32, i32)>>,
+    /// The sole packed dimension is unsized (`bit []`); `element` is then
+    /// its bit or logic base type.
+    pub packed_open: bool,
+    /// The element below every unpacked dimension.
+    pub element: TypeDescriptor,
+}
+
 /// Unpacked-array metadata captured at build time, kept out of the
 /// [`NodeKind::Array`] variant so `core::model` (which binds the variant's
 /// `ty` field) does not have to change.

@@ -785,6 +785,11 @@ struct Capture {
       case SymbolKind::VirtualInterfaceType:
         kind = LLG_SLANG_TYPE_VIRTUAL_INTERFACE;
         break;
+      case SymbolKind::DPIOpenArrayType:
+        kind = canonical.as<DPIOpenArrayType>().isPacked
+                   ? LLG_SLANG_TYPE_DPI_OPEN_PACKED
+                   : LLG_SLANG_TYPE_DPI_OPEN_UNPACKED;
+        break;
       default:
         if (canonical.isIntegral())
           kind = LLG_SLANG_TYPE_INTEGRAL;
@@ -849,6 +854,9 @@ struct Capture {
       }
       case SymbolKind::DynamicArrayType:
         elementType = type(canonical.as<DynamicArrayType>().elementType);
+        break;
+      case SymbolKind::DPIOpenArrayType:
+        elementType = type(canonical.as<DPIOpenArrayType>().elementType);
         break;
       case SymbolKind::AssociativeArrayType: {
         const auto& array = canonical.as<AssociativeArrayType>();

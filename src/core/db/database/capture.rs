@@ -282,6 +282,7 @@ impl Db {
         let mut method_call_iterators = HashMap::new();
         let mut packed_members = HashMap::new();
         let mut aggregate_layouts = HashMap::new();
+        let mut dpi_open_types = HashMap::new();
         let mut type_descriptors = DenseSharedBuilder::new(snapshot.semantic_nodes.len());
         // A projection depends only on its frontend type record, so each
         // distinct type is projected once and shared by every typed node.
@@ -715,6 +716,9 @@ impl Db {
                 }
                 if let Some(layout) = &projection.aggregate_layout {
                     aggregate_layouts.insert(id, layout.clone());
+                }
+                if let Some(open) = &projection.dpi_open {
+                    dpi_open_types.insert(id, open.clone());
                 }
             }
             if semantic.kind == SemanticKind::EnumConstant {
@@ -1184,6 +1188,7 @@ impl Db {
             method_call_iterators,
             packed_members,
             aggregate_layouts,
+            dpi_open_types,
             type_descriptors: type_descriptors.finish(),
             packed_pattern_elements,
             mailbox_elements,
