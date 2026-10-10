@@ -61,6 +61,13 @@ impl Frame<'_, '_> {
                 self.native_discard(target);
                 value
             }
+            ObjectRandState(target) => {
+                let target = self.chandle(target)?;
+                self.native_value(
+                    NativeKind::String,
+                    format!("llg_object_get_randstate(llg_class_rng({target}, \"get_randstate\"))"),
+                )
+            }
             Read(index) => self.native_value(
                 NativeKind::String,
                 format!(

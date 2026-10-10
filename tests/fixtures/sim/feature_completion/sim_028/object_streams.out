@@ -1,0 +1,16 @@
+same seed same state 1
+other seed other state 1
+reseeded 1
+restored 1
+independent of thread and objects 1
+seeded from thread 1
+siblings differ 1
+creation takes one value 1
+base handle 1
+implicit this 1
+element states 1 1
+unknown seed is zero 1
+real seed rounds 1
+wide seed truncates 1
+copy keeps state 1 1
+copy independent 1

@@ -403,15 +403,12 @@ impl<'a> Codegen<'a> {
                     .first()
                     .map(|arg| self.lower_expr(scope_path, *arg))
                     .transpose()?;
+                // 2-state `int` and `int unsigned` formals (18.13.1-18.13.2):
+                // reals round and X/Z bits read as 0 (6.11.2).
                 let seed = seed
-                    .map(|value| {
-                        if value.is_real() {
-                            Err(format!("$urandom seed must be integral in `{scope_path}`"))
-                        } else {
-                            Ok(IrExpr::convert_to(value, 32, false))
-                        }
-                    })
+                    .map(|value| ir_to_storage(value, 32, false, true))
                     .transpose()?;
+                self.model.random.threads = true;
                 Ok(IrExpr::new(
                     IrExprKind::SysFunc(Box::new(IrSysFunc::Urandom {
                         seed: seed.map(Box::new),
@@ -428,24 +425,19 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 let max = self.lower_expr(scope_path, args[0])?;
-                if max.is_real() {
-                    return Err(format!(
-                        "$urandom_range maximum must be integral in `{scope_path}`"
-                    ));
-                }
+                let max = ir_to_storage(max, 32, false, true)?;
                 let min = args
                     .get(1)
-                    .map(|arg| self.lower_expr(scope_path, *arg))
+                    .map(|arg| {
+                        self.lower_expr(scope_path, *arg)
+                            .and_then(|value| ir_to_storage(value, 32, false, true))
+                    })
                     .transpose()?;
-                if min.as_ref().is_some_and(IrExpr::is_real) {
-                    return Err(format!(
-                        "$urandom_range minimum must be integral in `{scope_path}`"
-                    ));
-                }
+                self.model.random.threads = true;
                 Ok(IrExpr::new(
                     IrExprKind::SysFunc(Box::new(IrSysFunc::UrandomRange {
-                        max: Box::new(IrExpr::convert_to(max, 32, false)),
-                        min: min.map(|value| Box::new(IrExpr::convert_to(value, 32, false))),
+                        max: Box::new(max),
+                        min: min.map(Box::new),
                     })),
                     32,
                     false,

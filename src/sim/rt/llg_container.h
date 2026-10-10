@@ -4,6 +4,7 @@
 
 #include "llg_value.h"
 #include "llg_string.h"
+#include "llg_rng.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -621,7 +622,11 @@ void llg_dyn_method_assign(llg_queue_t* dst, const llg_dyn_array_t* src,
                            void* context);
 void llg_dyn_method(llg_dyn_array_t* array, int method,
                     llg_container_eval_fn eval, void* context);
+/* `shuffle` draws from the stream `source` returns (a generated model passes
+ * the calling thread's stream, IEEE 1800-2009 18.14). Without a source it
+ * uses a private stream that llg_container_seed reseeds. */
 void llg_container_seed(uint64_t seed);
+void llg_container_set_rng_source(llg_rng_state_t* (*source)(void));
 
 /* Fixed-array sort workspace for generated models. The model evaluates each
  * element's key once, in declaration order, into `keys`; llg_fixed_order_sort

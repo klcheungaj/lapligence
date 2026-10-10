@@ -1,5 +1,7 @@
 //! Feature completion acceptance: explicit task modules and independent fixture oracles.
 
+#[path = "support/c_compiler.rs"]
+mod c_compiler;
 #[path = "support/sim_cli.rs"]
 mod sim_cli;
 #[path = "support/sim.rs"]
@@ -67,6 +69,9 @@ mod sim_014;
 
 #[path = "sim_feature_completion/sim_023.rs"]
 mod sim_023;
+
+#[path = "sim_feature_completion/sim_028.rs"]
+mod sim_028;
 
 #[path = "sim_feature_completion/sim_032.rs"]
 mod sim_032;

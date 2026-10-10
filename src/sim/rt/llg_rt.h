@@ -973,17 +973,31 @@ void llg_q_exam(sv4_t q_id, sv4_t stat_code, sv4_t* stat_value,
 
 // ── Process/object random streams ───────────────────────────────────────────
 //
-// Every generated process owns one stream. Top-level processes derive from
-// the model root in creation order; forked children derive from their parent
-// in branch-creation order. A draw mutates only its owning stream. The
-// scheduler-independent llg_rng_state_t API is also used by future class
-// objects and constrained-random services.
+// Every generated process owns one stream. A static process derives from the
+// initialization stream of the instance that declares it, in that instance's
+// creation order; forked children derive from their parent in branch-creation
+// order. A draw mutates only its owning stream. Seeds and range bounds read
+// X/Z bits as 0 (2-state `int` formals). Shuffle draws from the calling
+// thread's stream.
 sv4_t llg_urandom(void);
 sv4_t llg_urandom_seed(sv4_t seed);
 sv4_t llg_urandom_range(sv4_t max, sv4_t min, int has_min);
 void llg_process_srandom(sv4_t seed);
 llg_string_t llg_process_get_randstate(void);
 int llg_process_set_randstate(llg_string_t state);
+// Class-object streams. A generated class layout owns the state when the
+// model inspects object streams; `llg_object_rng_create` seeds it from the
+// creating thread (or only consumes that draw when `object` is NULL). The
+// srandom/get/set operations take the object's state; NULL is a no-op for a
+// receiver already reported as null. set_randstate consumes `state`.
+// A model that observes random streams calls this before spawning: static
+// processes then seed from their instance's initialization stream (18.14.1)
+// instead of the root stream in model spawn order. Reset by llg_rt_cleanup.
+void llg_rt_use_instance_random_streams(void);
+void llg_object_rng_create(llg_rng_state_t* object);
+void llg_object_srandom(llg_rng_state_t* object, sv4_t seed);
+llg_string_t llg_object_get_randstate(const llg_rng_state_t* object);
+void llg_object_set_randstate(llg_rng_state_t* object, llg_string_t state);
 
 // Stable dependency markers used by generated fixed-array and container
 // readers. A marker's address remains valid when a resizable container moves

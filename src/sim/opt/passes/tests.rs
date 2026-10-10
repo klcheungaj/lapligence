@@ -194,6 +194,7 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
         final_spawns: Vec::new(),
         vpi_objects: Vec::new(),
         vpi_compile_calls: Vec::new(),
+        random: Default::default(),
     }
 }
 

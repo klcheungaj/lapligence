@@ -91,3 +91,44 @@ fn another_processes_random_state_is_a_runtime_string() {
     .validate()
     .expect_err("a chandle object is not a process object");
 }
+
+fn object_random(op: IrProcessRandom) -> IrStmt {
+    IrStmt::Object(Box::new(IrObjectStmt::ObjectRandom {
+        target: IrChandleExpr::Read(1),
+        op,
+    }))
+}
+
+#[test]
+fn object_random_methods_require_object_stream_storage() {
+    let statements = || {
+        vec![
+            object_random(IrProcessRandom::Seed(packed_const(7, 32))),
+            IrStmt::Object(Box::new(IrObjectStmt::StringPrint(
+                IrStringExpr::ObjectRandState(Box::new(IrChandleExpr::Read(1))),
+            ))),
+        ]
+    };
+    let error = process_model(statements())
+        .validate()
+        .expect_err("object streams need per-object storage in the class layout");
+    assert!(
+        error.detail().contains("object stream storage"),
+        "{error:?}"
+    );
+
+    let mut model = process_model(statements());
+    model.random.objects = true;
+    model
+        .validate()
+        .expect("a 32-bit seed and a handle receiver are valid");
+
+    let mut narrow = process_model(vec![object_random(IrProcessRandom::Seed(packed_const(
+        7, 16,
+    )))]);
+    narrow.random.objects = true;
+    let error = narrow
+        .validate()
+        .expect_err("a seed narrower than 32 bits must fail");
+    assert!(error.detail().contains("32-bit"), "{error:?}");
+}

@@ -1,0 +1,12 @@
+queue permutation 1
+dynamic permutation 1
+fixed permutation 1
+strings abcd
+reals 0.5 1.5 2.5
+handles 43210
+empty 0
+single 42
+thread seed reproduces 1 1
+shuffle draws from the thread 1
+child shuffle isolated 1
+method uses thread 1

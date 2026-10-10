@@ -537,3 +537,67 @@ fn s25_d6_report_order_in_slot() {
         include_str!("fixtures/sim/lrm_decisions/S25-D6_report_order_in_slot.out"),
     );
 }
+
+#[test]
+fn s28_d1_implicit_random_seed() {
+    run_decision(
+        "S28-D1_implicit_random_seed",
+        include_str!("fixtures/sim/lrm_decisions/S28-D1_implicit_random_seed.out"),
+    );
+}
+
+#[test]
+fn s28_d2_seed_writeback_width() {
+    run_decision(
+        "S28-D2_seed_writeback_width",
+        include_str!("fixtures/sim/lrm_decisions/S28-D2_seed_writeback_width.out"),
+    );
+}
+
+#[test]
+fn s28_d3_unknown_legacy_seed() {
+    run_decision(
+        "S28-D3_unknown_legacy_seed",
+        include_str!("fixtures/sim/lrm_decisions/S28-D3_unknown_legacy_seed.out"),
+    );
+}
+
+#[test]
+fn s28_d4_object_creation_draw() {
+    run_decision(
+        "S28-D4_object_creation_draw",
+        include_str!("fixtures/sim/lrm_decisions/S28-D4_object_creation_draw.out"),
+    );
+}
+
+#[test]
+fn s28_d5_shuffle_thread_stream() {
+    run_decision(
+        "S28-D5_shuffle_thread_stream",
+        include_str!("fixtures/sim/lrm_decisions/S28-D5_shuffle_thread_stream.out"),
+    );
+}
+
+#[test]
+fn s28_d6_shallow_copy_random_state() {
+    run_decision(
+        "S28-D6_shallow_copy_random_state",
+        include_str!("fixtures/sim/lrm_decisions/S28-D6_shallow_copy_random_state.out"),
+    );
+}
+
+#[test]
+fn s28_d7_instance_streams() {
+    run_decision(
+        "S28-D7_instance_streams",
+        include_str!("fixtures/sim/lrm_decisions/S28-D7_instance_streams.out"),
+    );
+}
+
+#[test]
+fn s28_d8_two_state_random_arguments() {
+    run_decision(
+        "S28-D8_two_state_random_arguments",
+        include_str!("fixtures/sim/lrm_decisions/S28-D8_two_state_random_arguments.out"),
+    );
+}

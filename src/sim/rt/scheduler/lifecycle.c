@@ -308,6 +308,8 @@ void llg_rt_cleanup(void) {
     // releases counted handles held by containers.
     free_dynamic_events();
     reap_retired_procs();
+    rng_scopes_free();
+    llg_container_set_rng_source(NULL);
     while (g.programs) {
         llg_program_t* next = g.programs->next;
         free(g.programs);
@@ -399,6 +401,7 @@ void llg_rt_init_with_args_and_precision(int argc, char** argv,
     install_value_handle_hooks();
     g.current_region = LLG_REGION_PREPONED;
     llg_rng_state_seed(&g.rng_root, LLG_RNG_DEFAULT_SEED);
+    llg_container_set_rng_source(llg_container_thread_rng);
     g.argc = argc > 0 ? argc : 0;
     g.argv = g.argc > 0 ? argv : NULL;
 }

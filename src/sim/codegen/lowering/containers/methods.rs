@@ -37,6 +37,10 @@ impl<'a> Codegen<'a> {
                 return Ok(Some(statement));
             }
         }
+        if name == "shuffle" {
+            // Shuffle draws from the calling thread's stream (SV 18.14).
+            self.model.random.threads = true;
+        }
         if name == "shuffle" && !self.db.method_call_has_with_clause(node) {
             // Shuffle a stored packed or real fixed array through a queue copy
             // and store the permutation back in declared order.

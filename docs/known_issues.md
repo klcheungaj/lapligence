@@ -663,6 +663,42 @@ initial begin
 end
 ```
 
+## Random stream limits
+
+**Status:** open (SIM-028); static processes, static class-object
+initializers, threads and objects follow SV 18.14.
+
+### Symptom
+
+- A `$urandom` or `$urandom_range` in a static variable declaration
+  initializer (`int x = $urandom;` in a module) draws from one model-wide
+  initialization stream in initializer order, not from its instance's
+  initialization RNG (SV 18.14.1 L31148-31151). Adding such an initializer to
+  one instance can change the values of initializers in other instances.
+- An unpacked-structure member as the seed of `$random` or `$dist_*` stops
+  code generation with `legacy random seed must be an integral variable`.
+  Whole variables, array elements, class properties and formals work.
+
+### Cause
+
+Static variable initializers run in `llg_model_initializers` before any
+process exists and without their instance's identity; the per-instance
+streams are keyed by the process label at spawn time. The legacy seed
+writeback lowers only packed variables, elements, class properties and
+formals as in/out targets.
+
+### Intended direction
+
+Emit each instance's variable initializers inside that instance's
+initialization stream (the table in `scheduler/process_registry.c`), and
+route the seed writeback through the native member writer.
+
+### Reproduce
+
+`module m; int x = $urandom; endmodule` instantiated twice next to another
+instance that gains a `$urandom` initializer; for the seed,
+`struct { integer s; } st; initial r = $random(st.s);`.
+
 ## Anonymous program members draw a spurious shadowing warning
 
 **Status:** open (SIM-032); cosmetic.

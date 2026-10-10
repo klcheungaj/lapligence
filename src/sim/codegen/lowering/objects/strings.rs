@@ -14,6 +14,9 @@ impl Codegen<'_> {
         {
             return Ok(value);
         }
+        if let Some(value) = self.lower_object_random_state(path, node)? {
+            return Ok(value);
+        }
         if let Some(value) = self.native_tagged_string(path, node)? {
             return Ok(value);
         }
@@ -59,12 +62,14 @@ impl Codegen<'_> {
                 && self.is_process_rng_receiver(*receiver)
                 && self.node(node).children.len() == 1
             {
+                self.model.random.threads = true;
                 return Ok(IrStringExpr::RandomState);
             }
             if name == "get_randstate"
                 && self.is_process_value(path, *receiver)
                 && self.node(node).children.len() == 1
             {
+                self.model.random.threads = true;
                 return Ok(IrStringExpr::ProcessRandState(Box::new(
                     self.lower_process(path, *receiver)?,
                 )));

@@ -520,6 +520,20 @@ pub struct IrModel {
     /// Type-only VPI call sites run through compiletf/sizetf before the
     /// generated scheduler starts. Empty for hand-built IR fixtures.
     pub(in crate::sim) vpi_compile_calls: Vec<IrVpiCompileCall>,
+    /// Random streams the model observes; set by lowering.
+    pub(in crate::sim) random: IrRandomUse,
+}
+
+/// Which random streams a model observes (SV 18.14). Each flag enables a
+/// per-object cost only in models that can observe its effect.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IrRandomUse {
+    /// Thread streams are drawn or inspected, so object creation consumes
+    /// the creating thread's next value (18.14.1 object stability).
+    pub threads: bool,
+    /// Object streams are seeded or inspected, so every class object keeps
+    /// its own stream state.
+    pub objects: bool,
 }
 
 /// Staging tables for constructing an [`IrModel`].
@@ -601,6 +615,7 @@ impl IrModel {
             final_spawns: parts.final_spawns,
             vpi_objects: Vec::new(),
             vpi_compile_calls: Vec::new(),
+            random: IrRandomUse::default(),
         };
         model.validate()?;
         Ok(model)

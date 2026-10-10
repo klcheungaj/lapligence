@@ -53,6 +53,13 @@ void llg_rng_state_child(llg_rng_state_t* parent, llg_rng_state_t* child) {
     llg_rng_state_seed(child, seed);
 }
 
+void llg_rng_state_skip_child(llg_rng_state_t* parent) {
+    if (!parent) rng_fail("creating a child of a null stream");
+    if (parent->child_count == UINT64_MAX) rng_fail("child counter overflow");
+    (void)llg_rng_state_next(parent);
+    parent->child_count++;
+}
+
 uint32_t llg_rng_state_next(llg_rng_state_t* state) {
     if (!state) rng_fail("drawing from a null stream");
     uint64_t old = state->state;

@@ -114,6 +114,41 @@ storage. Runtime ticks are integer design-precision units; lowering supplies
 per-module scaling. Memory text loading and binary reads keep their distinct
 address-order rules.
 
+## Random streams
+
+`llg_random.c` is the Annex N algorithm for `$random` and `$dist_*`; the seed is
+a caller-owned in/out 32-bit integer and the implicit `$random` seed starts at
+0. `llg_rng.c` owns every other stream (`llg_rng_state_t`: PCG state,
+odd stream increment, child count):
+
+- A static process (spawned by the model) is seeded with the next value of its
+  instance's initialization stream. `scheduler/process_registry.c` keeps one
+  stream per instance in an open-addressing table keyed by the process label
+  without its kind component (`tb.u.always` -> `tb.u`, `tb.class_initializer.3`
+  -> `tb`); each derives from the root stream and the instance name. The model
+  enables this with `llg_rt_use_instance_random_streams` when it observes any
+  stream; other models seed static processes from the root stream in spawn
+  order and skip the table. A forked or detached child is seeded with its
+  parent's next value.
+- A class object keeps a stream only when the model inspects object streams
+  (`IrRandomUse::objects`): `llg_object_rng_create` seeds it with the creating
+  thread's next value; a model that only draws thread values consumes that
+  value without keeping state (`IrRandomUse::threads`), and other models pay
+  nothing. A shallow copy copies the state and takes no thread value.
+- `shuffle` draws from the stream `llg_container_set_rng_source` names; the
+  scheduler installs the current thread's stream.
+
+`get_randstate` returns the versioned, host-independent text
+`LLG_RNG_V1:<state>:<increment>:<child count>` (three 16-digit hexadecimal
+fields, 61 bytes). V1 names the algorithm: PCG-XSH-RR 64/32 output, splitmix64
+seeding (`llg_rng_state_seed`) and child seeding with the parent's next 32-bit
+value. The string holds no host pointer, so a saved state reproduces the same
+values in another build or process of the same version, which is what later
+constraint solving or checkpointing can rely on. `set_randstate` accepts only a
+well-formed V1 string with an odd increment and otherwise leaves the stream
+unchanged and reports `invalid randstate string`. A future algorithm must use a
+new version tag and either accept V1 strings or reject them the same way.
+
 ## Embedding and build
 
 `mod.rs` returns header/flat-source pairs through `value_sources`,

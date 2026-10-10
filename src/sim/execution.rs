@@ -1995,6 +1995,19 @@ fn collect_object_statement_effects(
                 }
             }
         }
+        // A null receiver ends the simulation (SV 8.4).
+        IrObjectStmt::ObjectRandom { target, op } => {
+            effects.push(ExecutionEffect::Terminate);
+            collect_chandle_effects(ir, target, effects, visited_calls);
+            match op {
+                crate::sim::ir::IrProcessRandom::Seed(seed) => {
+                    collect_expression_effects(ir, seed, effects, visited_calls)
+                }
+                crate::sim::ir::IrProcessRandom::SetState(state) => {
+                    collect_string_effects(ir, state, effects, visited_calls)
+                }
+            }
+        }
         IrObjectStmt::ProcessDeclareLocal(_, _)
         | IrObjectStmt::ProcessAssign(_, _)
         | IrObjectStmt::ProcessAssignLocal(_, _)
@@ -2281,6 +2294,11 @@ fn collect_string_effects(
         }
         IrStringExpr::RandomState | IrStringExpr::ProcessRandState(_) => {
             effects.push(ExecutionEffect::RuntimeService)
+        }
+        IrStringExpr::ObjectRandState(target) => {
+            effects.push(ExecutionEffect::RuntimeService);
+            effects.push(ExecutionEffect::Terminate);
+            collect_chandle_effects(ir, target, effects, visited_calls);
         }
         IrStringExpr::LocalRead(name) => {
             collect_native_access_effects(ir, name, effects, visited_calls)

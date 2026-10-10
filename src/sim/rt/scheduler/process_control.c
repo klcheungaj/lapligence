@@ -481,13 +481,7 @@ static llg_rng_state_t* process_handle_rng(const llg_process_handle_t* handle,
 void llg_process_handle_srandom(llg_process_handle_t* handle, sv4_t seed) {
     llg_rng_state_t* rng = process_handle_rng(handle, "srandom");
     if (!rng) return;
-    uint32_t value = 0;
-    if (!llg_rng_argument(seed, &value)) {
-        fprintf(stderr, "llg: random runtime: srandom seed is unknown or real\n");
-        llg_last_failure = 1;
-        return;
-    }
-    llg_rng_state_seed(rng, value);
+    llg_rng_state_seed(rng, llg_rng_argument(seed));
 }
 
 llg_string_t llg_process_handle_get_randstate(llg_process_handle_t* handle) {
