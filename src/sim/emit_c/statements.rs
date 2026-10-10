@@ -1081,6 +1081,7 @@ fn render_stmt_scoped(
             eval,
             n_args,
             reads,
+            poll,
             scope,
             descriptor,
             ..
@@ -1099,12 +1100,15 @@ fn render_stmt_scoped(
                     format!("    llg_strobe_typed({fmt}, {n_args}, {eval}, {scope});\n")
                 }
             } else {
-                let read_ptrs = reads
+                let mut read_entries = reads
                     .iter()
                     .map(|read| display_dependency_pointer(ctx, read))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let read_count = reads.len();
+                    .collect::<Vec<_>>();
+                if *poll {
+                    read_entries.push("{ LLG_MONITOR_READ_POLL, NULL }".to_owned());
+                }
+                let read_count = read_entries.len();
+                let read_ptrs = read_entries.join(", ");
                 let declaration = if read_ptrs.is_empty() {
                     "        llg_display_read_t* monitor_reads = NULL;\n".to_string()
                 } else {

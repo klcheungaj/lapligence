@@ -1,0 +1,18 @@
+mon a=1 b=4 c=1
+mon a=1 b=5 c=1
+mon a=2 b=5 c=1
+mon a=2 b=6 c=1
+mon a=2 b=6 c=2
+mon a=2 b=6 c=3
+mon a=3 b=7 c=3
+mon a=3 b=7 c=4
+s25d2_1.txt: one a=1
+s25d2_1.txt: both c=1
+s25d2_1.txt: one a=2
+s25d2_1.txt: both c=2
+s25d2_2.txt: two b=5
+s25d2_2.txt: both c=1
+s25d2_2.txt: two b=6
+s25d2_2.txt: both c=2
+s25d2_2.txt: both c=3
+s25d2_2.txt: two b=7

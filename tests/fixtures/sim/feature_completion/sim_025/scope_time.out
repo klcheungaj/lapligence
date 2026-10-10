@@ -1,0 +1,6 @@
+tb.s1: t=0 ns time=0 v=0
+tb.s2: t=5 ns time=5 v=0
+tb.s1: t=10 ns time=10 v=1
+tb.s2: t=20 ns time=20 v=2
+tb.s1: t=30 ns time=30 v=3
+tb.s2: t=50 ns time=50 v=3

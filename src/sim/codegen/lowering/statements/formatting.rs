@@ -49,6 +49,40 @@ impl EmitCtx<'_, '_> {
         Ok(reads)
     }
 
+    /// A formal, local or return variable of the subroutine being lowered
+    /// that lives in the activation rather than in model storage, if `node`
+    /// reads one. Static subroutine variables have persistent storage and are
+    /// not reported.
+    pub(super) fn activation_bound_ref(&self, node: NodeId) -> Option<NodeId> {
+        let function = self.func.as_ref()?;
+        if let NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) = self.cg.kind(node)
+        {
+            let target = *target;
+            let bound = function.arg_ir.contains_key(&target)
+                || function.arg_read.contains_key(&target)
+                || function.arg_write.contains_key(&target)
+                || function.event_args.contains_key(&target)
+                || function.const_refs.contains(&target)
+                || function.string_read.contains_key(&target)
+                || function.string_write.contains_key(&target)
+                || function.string_addr.contains_key(&target)
+                || function.chandle_read.contains_key(&target)
+                || function.process_read.contains_key(&target)
+                || function.locals.contains_key(&target)
+                || function.ret_node == Some(target);
+            if bound && !function.persistent.contains_key(&target) {
+                return Some(target);
+            }
+        }
+        self.cg
+            .node(node)
+            .children
+            .iter()
+            .find_map(|child| self.activation_bound_ref(*child))
+    }
+
     /// Parse a display-family call into a C format string and typed values.
     /// Values remain packed, real, or owned strings until the shared runtime
     /// formatter consumes them. Every string-literal argument is a format

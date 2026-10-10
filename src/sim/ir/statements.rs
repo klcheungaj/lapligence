@@ -700,6 +700,10 @@ pub enum IrStmt {
         eval: String,
         n_args: usize,
         reads: Vec<IrDependency>,
+        /// An argument reads storage chosen through a class or
+        /// virtual-interface handle (or a synchronization object), which no
+        /// fixed `reads` entry can name: the monitor re-evaluates every slot.
+        poll: bool,
         default_radix: IrDisplayRadix,
         /// HDL hierarchy used by `%m`; never a generated C identifier.
         scope: String,

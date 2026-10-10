@@ -777,10 +777,25 @@ impl EmitCtx<'_, '_> {
                     }]);
                 }
                 DisplayTaskKind::Deferred { strobe, file } => {
-                    if self.func.is_some() || self.inline.is_some() {
+                    // A static subroutine's variables are model storage, so a
+                    // deferred report may read them at Postponed. Formals,
+                    // automatics and class receivers die with the activation
+                    // (SV 13.3.2), so naming one rejects at its location.
+                    if let Some(function) = &self.func {
+                        if function.class_receiver.is_some() {
+                            return Err(format!(
+                                "{name} in class method `{}` cannot defer a report: \
+                                 the object may not outlive the activation (`{}`)",
+                                function.name, self.path
+                            ));
+                        }
+                    }
+                    if let Some(local) = args.iter().find_map(|arg| self.activation_bound_ref(*arg))
+                    {
                         return Err(format!(
-                            "{name} in `{}` cannot escape a function or task activation",
-                            self.path
+                            "{name} in `{}` cannot defer a reference to `{}`: the call activation, not model storage, holds it",
+                            self.path,
+                            self.cg.node(local).name
                         ));
                     }
                     if let Some(local) = args
@@ -855,12 +870,27 @@ impl EmitCtx<'_, '_> {
                         time_unit_fs: self.cg.timescale_of_node(h).unit_fs,
                         private_effects,
                     });
+                    // Handle-selected storage and `%p` of class objects change
+                    // without a named write, so those monitors look every slot.
+                    let poll = !strobe
+                        && (display_args_source
+                            .iter()
+                            .any(|argument| self.cg.reads_dynamic_storage(*argument))
+                            || display_args.iter().any(|argument| {
+                                matches!(
+                                    argument,
+                                    crate::sim::ir::IrDisplayArg::Text(
+                                        crate::sim::ir::IrStringExpr::Pattern(pattern)
+                                    ) if pattern.reaches_class(&self.cg.model)
+                                )
+                            }));
                     return Ok(vec![IrStmt::MonitorSet {
                         strobe,
                         fmt,
                         eval: eval_name,
                         n_args: display_args.len(),
                         reads,
+                        poll,
                         default_radix,
                         scope: self.cg.format_scope(&self.path, h),
                         descriptor: descriptor.map(Box::new),

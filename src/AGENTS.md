@@ -124,6 +124,38 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
   or `_Noreturn` function as unreachable (C4702); GCC/Clang do not. `llg_co.h`
   omits such defensive returns only for MSVC with its default noreturn handler
   or an override that defines `LLG_CO_BAD_STATE_NORETURN` (as `llg_rt.h` does).
+- MSVC `/W4 /WX` also rejects what GCC/Clang accept by default: C4701 for a
+  variable assigned only inside a `while` loop (at `/O2`; use `do`), C4702 for a
+  `return` after an `abort()` helper that `/O2` inlines (declare it `_Noreturn`),
+  and C4090 for `memset` on an array of pointers to const (assign elements).
+  Clang `-Wconditional-uninitialized`/`-Wunreachable-code` approximate the first
+  two. Details: [runtime guide](sim/rt/AGENTS.md).
+- `cl` writes its diagnostics to stdout, not stderr: print both streams when a
+  compile fails. A Ninja build stops at the first failing source, so one CI run
+  can hide further MSVC-only errors behind it.
+- Unsequenced operands (`f() | g()`, C11 6.5p3) run in a different order under
+  MSVC than under GCC/Clang. Sequence calls with side effects, such as printing
+  checks, as separate statements.
+- CMake's Windows-MSVC platform file makes single-config generators (Ninja,
+  NMake) default to Debug: `/Od` keeps dead calls, so a subset library can fail
+  to link, and `/Zi` writes PDBs. Pass `CMAKE_BUILD_TYPE` and
+  `CMAKE_TRY_COMPILE_CONFIGURATION` explicitly.
+- Windows paths are limited to `MAX_PATH` (260 characters). CMake `try_compile`
+  object paths under a deep test directory exceed it, and `cl` fails with C1083
+  or C1041, which surfaces as unrelated errors such as a failed type-size check.
+  Keep scratch directory names short (`tests/readme.md`).
+- CMake output differs on Windows in ways a textual comparison must allow:
+  `build.ninja` escapes paths (`D$:\...`, `$ `, `$$`), configured headers are
+  written with CRLF, `CMakeFiles/ShowIncludes/` is scratch, and the default
+  `CMAKE_INSTALL_PREFIX` depends on whether `CMAKE_SIZEOF_VOID_P` is known yet.
+  The toolchain seed handles these ([sim guide](sim/AGENTS.md)).
+- Git for Windows' MSYS `make`/`sh` rewrites `/option` arguments into paths
+  (`/nologo` becomes `C:/Program Files/Git/nologo`); use the NMake or Ninja
+  generator with MSVC, never `Unix Makefiles`.
+- Paths built from configured relative parts get native separators on Windows
+  (`out\w\dump.vcd`); tests build expected paths with `Path::join`.
+- `ilammy/msvc-dev-cmd` with `amd64_arm64` runs x64 cross tools under emulation
+  on arm64 runners, several times slower; use the native `arm64` tools.
 - Without zlib's configure step `Z_HAVE_UNISTD_H` is unset, so its `gz*` code
   calls undeclared `read`/`write`/`lseek`/`close`, which GCC 14 and Clang reject;
   the bundled zlib defines it outside Windows.

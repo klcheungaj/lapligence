@@ -1,9 +1,15 @@
 
 // ── $monitor / $strobe state ──────────────────────────────────────────────────
 
-typedef struct {
-    int active;          // a monitor is registered
-    int enabled;         // $monitoron / $monitoroff
+// One registered display list that re-prints when a value it reads changes.
+// `$monitor` owns the single `primary` entry (a new call replaces it and the
+// `$monitoron/$monitoroff` flag governs it); every `$fmonitor` is independent
+// and lives until `$fclose` removes its last channel (SV 21.3.1, 21.3.2).
+typedef struct llg_monitor_state {
+    struct llg_monitor_state* next;
+    int primary;         // the `$monitor` display list
+    int dead;            // every channel closed; swept at the next safe point
+    int poll;            // re-evaluate every slot (handle-selected reads)
     int dirty;           // a trigger signal changed since the last check
     int force_report;    // registration or enable requires one report
     char* fmt;           // strdup'd format string
@@ -23,6 +29,11 @@ typedef struct {
     uint32_t descriptor;
     llg_region_t region;
 } llg_monitor_state_t;
+
+// Defined with the monitors; the write paths and run teardown call them.
+static void llg_monitor_target_changed(const void* target, int kind);
+static void llg_monitors_free_all(void);
+static void llg_monitors_cancel_slot(unsigned slot);
 
 typedef struct llg_strobe {
     struct llg_strobe* next;
@@ -516,7 +527,10 @@ typedef struct {
     struct llg_dynamic_event_t* dynamic_events; // container event objects, owned until cleanup
     llg_fork_group_t* zombie_groups; // completed/killed groups awaiting teardown
     llg_activation_t* activations; // active named block/task invocations
-    llg_monitor_state_t mon;   // the active $monitor (at most one)
+    llg_monitor_state_t* monitors;      // registration order; `$monitor` is one entry
+    llg_monitor_state_t* monitors_tail;
+    int monitor_off;                    // `$monitoroff` flag (default on, SV 21.2.3)
+    int monitors_sweeping;              // a check is walking the list
     llg_strobe_t* strobes;     // pending $strobe lines for this time step
     llg_strobe_t* strobe_tail; // preserves source issue order
     // Active procedural forces. Entries own copied target/source descriptors;

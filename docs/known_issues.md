@@ -967,6 +967,39 @@ member, and handle kinds for the two runtime records. Reproduce with
 [`neg_tagged_union_pattern.sv`](../tests/fixtures/sim/feature_completion/sim_024/neg_tagged_union_pattern.sv)
 or `semaphore s = new; initial $display("%p", s);`.
 
+## Deferred reports that name class state or activation storage
+
+`$strobe`, `$monitor` and the file variants re-evaluate their arguments in the
+Postponed region, so every value they read must live in model storage. SIM-025
+admits module variables, static formals and locals of static tasks and
+functions, containers, strings and `%p` aggregates there. Three forms still
+reject:
+
+- **Class properties** (`$monitor("%0d", h.v)`, `this.x`). The frontend raises
+  "automatic variable 'v' cannot be traced" because Slang treats a class
+  property as an automatic variable in its `$monitor`/`$strobe` check (it
+  exempts only struct and union fields). SV §13.3.2 bars variables of
+  automatic subroutines, not properties of an object reached through a
+  module-level handle. Admitting them needs a one-line frontend patch to the
+  check and, in lowering, a handle-property dependency (the `@`/`wait`
+  machinery already has one) plus a null-handle rule for the report.
+  Reading them through a method (`h.get()`), a function with a handle
+  formal, a virtual-interface member or `%p` of the object works; such a
+  `$monitor` re-evaluates at every settled slot instead of watching fixed
+  storage, which costs one evaluation per slot.
+- **A static subroutine's string, chandle or process-handle formal.** The
+  call activation holds it, so a report cannot read it later
+  ([`neg_static_string_formal.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_static_string_formal.sv)).
+  Packed, real and container static variables work.
+- **A deferred report inside a class method**
+  ([`neg_class_method_strobe.sv`](../tests/fixtures/sim/feature_completion/sim_025/neg_class_method_strobe.sv)):
+  the evaluator has no receiver, so even arguments naming only module
+  variables reject. Move the report to module code.
+
+`$finish` also drops the reports still pending in its own slot
+([S25-D5](lrm_decisions.md)); a `$strobe` in a `final` block rejects because no
+Postponed region runs after finals.
+
 ## Effectful helpers in runtime-callback evaluators
 
 **Status:** narrowed by RTL-007b; two list forms remain.

@@ -181,6 +181,7 @@ impl Frame<'_, '_> {
             eval,
             n_args,
             reads,
+            poll,
             scope,
             descriptor,
             ..
@@ -282,6 +283,10 @@ impl Frame<'_, '_> {
                 };
                 pointers.push(format!("{{ {kind}, {address} }}"));
             }
+            if *poll {
+                pointers.push("{ LLG_MONITOR_READ_POLL, NULL }".to_owned());
+            }
+            let pointers_len = pointers.len();
             let pointer = if pointers.is_empty() {
                 "NULL".to_owned()
             } else {
@@ -292,7 +297,7 @@ impl Frame<'_, '_> {
                     &pointers.join(", "),
                 )
             };
-            self.line(format!("{prefix}monitor_with_typed_reads({descriptor}{fmt}, {n_args}, {eval}, {scope}, {pointer}, {});", reads.len()));
+            self.line(format!("{prefix}monitor_with_typed_reads({descriptor}{fmt}, {n_args}, {eval}, {scope}, {pointer}, {});", pointers_len));
         }
         Ok(())
     }

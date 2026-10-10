@@ -1,0 +1,3 @@
+strobe a=1
+mon a=1
+before finish

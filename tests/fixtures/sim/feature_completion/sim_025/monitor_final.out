@@ -1,0 +1,6 @@
+M a=01 b=00 x=0000 r=1.00 s=a! len=1 tw=2 sum=1
+M a=30 b=31 x=1x0z r=2.50 s=bc! len=2 tw=96 sum=97
+M a=30 b=31 x=zzzz r=2.50 s=bc! len=2 tw=96 sum=97
+M a=30 b=31 x=zzzz r=2.50 s=ddd! len=3 tw=96 sum=97
+M a=30 b=31 x=zzzz r=0.13 s=ddd! len=3 tw=96 sum=97
+done

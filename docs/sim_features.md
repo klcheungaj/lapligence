@@ -1529,12 +1529,24 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Tagged unions and semaphore/mailbox handles reject under `%p`; non-`%p`
   conversions of unpacked values or handles reject; run-time formats keep
   `%l` approximate. V §17.1.1.2; SV §21.2 **[1995/SV-2005]**.
-- 🟨 **Postponed output** — Strobe observes settled values after Active/Inactive/
-  NBA iteration. One active monitor coalesces same-slot changes; registration and
-  re-enable queue one report. Packed, real, string and `%p` container/record
-  changes are supported; automatic monitor dependencies reject.
+- 🟨 **Postponed output** — Strobes print once at the end of their slot, after
+  Active/Inactive/NBA iteration, in call order; `$monitor` keeps one list
+  (a new call replaces it) that reports once per slot when an argument's settled
+  value differs from the printed one, governed by the `$monitoron/$monitoroff`
+  flag, which outlives the list. Any number of `$fmonitor` lists are
+  independent, and `$fclose` cancels them per channel (also pending `$fstrobe`s);
+  an invalid or closed descriptor registers nothing and sets `$ferror`. Packed,
+  real, string and `%p` container/record arguments, nested expressions, function
+  calls, `%m`/`%t`/`$time` work, also in static tasks and functions (module
+  variables, static formals and locals); arguments that read through a class or
+  virtual-interface handle make a `$monitor` re-evaluate every slot. Automatic variables stay illegal
+  (SV 13.3.2); class properties, a static string formal, class methods and
+  `final` blocks reject; pending reports are dropped at `$finish`
+  ([known issue](known_issues.md#deferred-reports-that-name-class-state-or-activation-storage)).
   Helpers may keep their own static state or take descriptor arrays; visible
-  helper writes reject (§9). V §§17.1.2–17.1.3 **[1995]**.
+  helper writes reject (§9). Hand-derived oracles:
+  [sim_025](../tests/fixtures/sim/feature_completion/sim_025/readme.md); decisions
+  S25-D1 to D6. V §§17.1.2–17.1.3 **[1995]**.
 - 🟦 **String formatting** — `$sformat/$swrite` and radix variants write native
   strings or packed string-like destinations with normal padding/truncation.
   `$sformatf` returns an owned string. Dynamic/nested formats and arguments

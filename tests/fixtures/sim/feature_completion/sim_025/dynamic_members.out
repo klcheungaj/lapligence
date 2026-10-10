@@ -1,0 +1,6 @@
+get=1 peek=1 obj='{v:1} s=0 pr=process
+get=2 peek=2 obj='{v:2} s=0 pr=process
+get=1 peek=1 obj='{v:1} s=0 pr=process
+get=7 peek=7 obj='{v:7} s=0 pr=process
+get=7 peek=7 obj='{v:7} s=3 pr=process
+strobe pr=process get=7

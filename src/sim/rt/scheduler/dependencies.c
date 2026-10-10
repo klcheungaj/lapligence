@@ -616,21 +616,7 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
     // value. This keeps a clock that also changes an accept/reject condition
     // from being discarded before its sampled control can resolve it.
     assertion_clock_signal_changed(target, old, value);
-    if (g.mon.active) {
-        for (int i = 0; i < g.mon.n_reads; i++) {
-            if (g.mon.reads[i] == target) {
-                g.mon.dirty = 1;
-                break;
-            }
-        }
-        for (int i = 0; i < g.mon.n_typed_reads; i++) {
-            if (g.mon.typed_reads[i].kind == LLG_FMT_PACKED &&
-                g.mon.typed_reads[i].ptr == target) {
-                g.mon.dirty = 1;
-                break;
-            }
-        }
-    }
+    if (g.monitors) llg_monitor_target_changed(target, LLG_FMT_PACKED);
 #ifdef LLG_WAVEFORM
     llg_wave_changed_sv4(target, &published, g.now);
 #endif
@@ -819,15 +805,7 @@ static void real_write(double* target, double value) {
      * Keep the slot alive if a callback cancels its receiving process. */
     llg_value_scope_t* target_pin = value_target_pin(target);
     *target = value;
-    if (g.mon.active) {
-        for (int i = 0; i < g.mon.n_typed_reads; i++) {
-            if (g.mon.typed_reads[i].kind == LLG_FMT_REAL &&
-                g.mon.typed_reads[i].ptr == target) {
-                g.mon.dirty = 1;
-                break;
-            }
-        }
-    }
+    if (g.monitors) llg_monitor_target_changed(target, LLG_FMT_REAL);
 #ifdef LLG_WAVEFORM
     llg_wave_changed_real(target, value, g.now);
 #endif
