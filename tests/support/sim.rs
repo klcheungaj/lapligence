@@ -8,7 +8,7 @@ use std::process::{Command, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use llg::core::compile;
 use llg::sim;
@@ -44,16 +44,9 @@ impl TempDir {
             Some(path) => Path::new(env!("CARGO_MANIFEST_DIR")).join(path),
             None => std::env::temp_dir(),
         };
-        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|error| format!("clock before epoch: {error}"))?
-            .as_nanos();
         std::fs::create_dir_all(&root)
             .map_err(|error| format!("create test build root {}: {error}", root.display()))?;
-        let path = root.join(format!("llg-{prefix}-{}-{nonce}-{id}", std::process::id()));
-        std::fs::create_dir(&path)
-            .map_err(|error| format!("create temp dir {}: {error}", path.display()))?;
+        let path = create_unique_dir(&root, prefix)?;
         // Tools report resolved paths (macOS /var/... is /private/var/...;
         // Windows expands 8.3 short names such as RUNNER~1).
         let path = llg::ffi::platform::canonicalize(&path)
@@ -63,6 +56,43 @@ impl TempDir {
 
     pub(crate) fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+/// Create a fresh directory under `root` named after `prefix`, the process
+/// and a clock nonce (`llg-<prefix>-<pid>-<nanos>-<n>`).
+#[cfg(not(windows))]
+fn create_unique_dir(root: &Path, prefix: &str) -> Result<PathBuf, String> {
+    let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("clock before epoch: {error}"))?
+        .as_nanos();
+    let path = root.join(format!("llg-{prefix}-{}-{nonce}-{id}", std::process::id()));
+    std::fs::create_dir(&path)
+        .map_err(|error| format!("create temp dir {}: {error}", path.display()))?;
+    Ok(path)
+}
+
+/// Windows variant: a short `llg-<pid>-<n>` name (hex), skipping names a
+/// dead process left behind. MSVC's `cl` cannot write outputs whose path
+/// exceeds `MAX_PATH` (260): a runtime cache inside a test directory under
+/// `%TEMP%` (40 characters on CI) puts CMake's `try_compile` objects
+/// (`<cache>\<69-character entry>\build\CMakeFiles\CMakeScratch\TryCompile-*
+/// \CMakeFiles\cmTC_*.dir\<check>.c.obj`) about 200 characters below the
+/// test directory, which left no room for `<prefix>-<pid>-<nanos>` names
+/// (C1083 "Cannot open compiler generated file", C1041 for the PDB).
+#[cfg(windows)]
+fn create_unique_dir(root: &Path, prefix: &str) -> Result<PathBuf, String> {
+    let _ = prefix;
+    loop {
+        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let path = root.join(format!("llg-{:x}-{id:x}", std::process::id()));
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("create temp dir {}: {error}", path.display())),
+        }
     }
 }
 

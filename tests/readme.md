@@ -898,6 +898,10 @@ cargo nextest run --locked --test-threads 8
 
 Both overrides are optional; `/build` is only an example. Without
 `LLG_TEST_BUILD_DIR`, the harness continues to use the system temporary directory.
+On Windows the harness names its directories `llg-<pid>-<n>` (hex) instead of
+`llg-<tag>-<pid>-<nanos>-<n>`: MSVC cannot write `try_compile` objects past
+`MAX_PATH` (260 characters), and a runtime cache inside a test directory already
+puts them about 200 characters below it. Keep Windows roots short.
 A relative `LLG_TEST_BUILD_DIR` resolves from the Cargo workspace, including
 inside nested temporary CWDs; give `LLG_RUNTIME_CACHE_DIR` as an absolute path.
 Missing directories are created; an empty or unusable `LLG_TEST_BUILD_DIR` fails
