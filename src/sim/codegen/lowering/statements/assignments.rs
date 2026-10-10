@@ -288,6 +288,7 @@ impl EmitCtx<'_, '_> {
             });
         }
         if !blocking {
+            self.reject_class_property_nba(lhs)?;
             if let Some(local) = self.cg.proc_local_target(lhs) {
                 return Err(format!(
                     "nonblocking assignment to inline loop variable `{}` in `{}` is not supported because the update can outlive its lexical storage",
@@ -472,6 +473,39 @@ impl EmitCtx<'_, '_> {
 
     /// Capture a delayed assignment's RHS immediately. Blocking assignments
     /// suspend; nonblocking assignments enqueue a future NBA and continue.
+    /// Reject a nonblocking write to an instance class property. SV 6.21:
+    /// "members or elements of dynamic variables—class properties and
+    /// dynamically sized variables—shall not be written with nonblocking,
+    /// continuous, or procedural continuous assignments." The frontend
+    /// already rejects dynamically sized elements; static properties are not
+    /// members of a dynamic object and stay legal.
+    pub(super) fn reject_class_property_nba(&self, lhs: NodeId) -> Result<(), String> {
+        let mut node = lhs;
+        while let NodeKind::Expr(
+            ExprKind::BitSelect { base, .. }
+            | ExprKind::PartSelect { base, .. }
+            | ExprKind::IndexedPartSelect { base, .. }
+            | ExprKind::ArraySelect { base, .. },
+        ) = self.cg.kind(node)
+        {
+            node = *base;
+        }
+        let Some(field) = self
+            .cg
+            .class_field_target(node)
+            .filter(|field| self.cg.class_fields.contains_key(field))
+        else {
+            return Ok(());
+        };
+        Err(format!(
+            "nonblocking assignment to class property `{}` at {} in `{}` is illegal \
+             (IEEE 1800-2009 6.21: class properties shall not be written with nonblocking assignments)",
+            self.cg.node(field).name,
+            self.cg.source_location(lhs),
+            self.path
+        ))
+    }
+
     pub(super) fn lower_delayed_assignment(
         &mut self,
         h: NodeId,
@@ -499,12 +533,23 @@ impl EmitCtx<'_, '_> {
             .get(1)
             .copied()
             .ok_or_else(|| "assignment without RHS".to_string())?;
+        if blocking {
+            return self.lower_blocking_timed_assignment(
+                h,
+                lhs,
+                rhs,
+                vec![IrStmt::Delay {
+                    ticks: scaled_ticks,
+                }],
+            );
+        }
+        self.reject_class_property_nba(lhs)?;
         if self.cg.native_record_target(lhs) {
-            return self.lower_delayed_native_record(h, lhs, rhs, blocking, scaled_ticks);
+            return self.lower_delayed_native_record(h, lhs, rhs, false, scaled_ticks);
         }
         let string_target = self.cg.is_string_expr(&self.path, lhs);
         let chandle_target = !string_target && self.cg.is_chandle_expr(&self.path, lhs);
-        if !blocking && (string_target || chandle_target) {
+        if string_target || chandle_target {
             return Ok(vec![self.cg.lower_native_nba(
                 &self.path,
                 lhs,
@@ -512,6 +557,54 @@ impl EmitCtx<'_, '_> {
                 scaled_ticks,
             )?]);
         }
+        let lh = self.cg.lower_lhs(&self.path, lhs)?;
+        let op = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::Assign { op, .. }) => *op,
+            _ => unreachable!("non-assignment passed to lower_delayed_assignment"),
+        };
+        let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
+        let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
+        if self.cg.proc_local_target(lhs).is_some()
+            || self.cg.subroutine_auto_target(lhs)
+            || lh.has_activation_root()
+        {
+            return Err("nonblocking delayed assignment requires persistent target storage".into());
+        }
+        Ok(vec![IrStmt::DelayedAssign {
+            lhs: lh,
+            rhs: rhs_ir,
+            ticks: scaled_ticks,
+        }])
+    }
+
+    /// Lower a blocking assignment with intra-assignment timing whose
+    /// timing control is already lowered into `wait` (a delay, an event
+    /// control or a repeated event control). The right-hand side is evaluated
+    /// into a temporary before `wait` and the destination, including its
+    /// selectors and the object a handle names, when `wait` completes:
+    /// SV 9.4.5 ("the right-hand expression shall be evaluated before the
+    /// delay") and 10.4.1 ("If variable_lvalue requires an evaluation, it
+    /// shall be evaluated at the time specified by the intra-assignment
+    /// timing control").
+    pub(super) fn lower_blocking_timed_assignment(
+        &mut self,
+        h: NodeId,
+        lhs: NodeId,
+        rhs: NodeId,
+        wait: Vec<IrStmt>,
+    ) -> Result<Vec<IrStmt>, String> {
+        let op = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::Assign { op, .. }) => *op,
+            _ => unreachable!("non-assignment passed to lower_blocking_timed_assignment"),
+        };
+        if self.cg.native_record_target(lhs) {
+            return self.lower_blocking_native_record(h, lhs, rhs, op, wait);
+        }
+        if self.container_write_target(lhs) {
+            return self.lower_blocking_timed_container_element(h, lhs, rhs, op, wait);
+        }
+        let string_target = self.cg.is_string_expr(&self.path, lhs);
+        let chandle_target = !string_target && self.cg.is_chandle_expr(&self.path, lhs);
         if chandle_target {
             // The blocking form captures the value before suspending and
             // resolves its destination when the delay completes.
@@ -550,9 +643,7 @@ impl EmitCtx<'_, '_> {
                     tmp,
                     Some(value),
                 ))),
-                IrStmt::Delay {
-                    ticks: scaled_ticks,
-                },
+                IrStmt::Block(wait),
                 IrStmt::Object(Box::new(write)),
             ])]);
         }
@@ -571,9 +662,7 @@ impl EmitCtx<'_, '_> {
                     name: tmp.clone(),
                     init: Some(value),
                 },
-                IrStmt::Delay {
-                    ticks: scaled_ticks,
-                },
+                IrStmt::Block(wait),
                 IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
                     target,
                     IrStringExpr::LocalRead(tmp.clone()),
@@ -585,27 +674,8 @@ impl EmitCtx<'_, '_> {
             ])]);
         }
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
-        let op = match self.cg.kind(h) {
-            NodeKind::Stmt(StmtKind::Assign { op, .. }) => *op,
-            _ => unreachable!("non-assignment passed to lower_delayed_assignment"),
-        };
         let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
         let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
-        if !blocking {
-            if self.cg.proc_local_target(lhs).is_some()
-                || self.cg.subroutine_auto_target(lhs)
-                || lh.has_activation_root()
-            {
-                return Err(
-                    "nonblocking delayed assignment requires persistent target storage".into(),
-                );
-            }
-            return Ok(vec![IrStmt::DelayedAssign {
-                lhs: lh,
-                rhs: rhs_ir,
-                ticks: scaled_ticks,
-            }]);
-        }
         self.saw_wait = true;
         // The temp name is unique per assignment node; each site's Block keeps
         // re-declarations (loops, repeated task inlining) out of one C scope.
@@ -619,14 +689,264 @@ impl EmitCtx<'_, '_> {
                 two_state: false,
                 init: Some(Box::new(rhs_ir)),
             },
-            IrStmt::Delay {
-                ticks: scaled_ticks,
-            },
+            IrStmt::Block(wait),
             IrStmt::Assign {
                 lhs: lh,
                 rhs: IrExpr::new(IrExprKind::LocalRead(tmp), w, s, None),
-                nba: !blocking,
+                nba: false,
             },
+        ])])
+    }
+
+    /// Whether a destination writes into a resizable container element,
+    /// directly or through a select of one.
+    fn container_write_target(&self, lhs: NodeId) -> bool {
+        let mut node = lhs;
+        loop {
+            if self.cg.is_container_element(node) {
+                return true;
+            }
+            match self.cg.kind(node) {
+                NodeKind::Expr(
+                    ExprKind::BitSelect { base, .. }
+                    | ExprKind::PartSelect { base, .. }
+                    | ExprKind::IndexedPartSelect { base, .. }
+                    | ExprKind::ArraySelect { base, .. },
+                ) => node = *base,
+                _ => return false,
+            }
+        }
+    }
+
+    /// Blocking timed write of one whole element of a resizable container
+    /// (`q[i] = @e v`, `aa[key] = #1 s`). The ordinary element store is
+    /// lowered and its value moved into a temporary evaluated before `wait`;
+    /// the index or key expression stays in the store, which runs after it.
+    /// Stores that need temporaries of their own (a select inside an
+    /// element) cannot be split this way and are rejected.
+    fn lower_blocking_timed_container_element(
+        &mut self,
+        h: NodeId,
+        lhs: NodeId,
+        rhs: NodeId,
+        op: Operation,
+        wait: Vec<IrStmt>,
+    ) -> Result<Vec<IrStmt>, String> {
+        let path = self.path.clone();
+        let unsupported = || {
+            format!(
+                "intra-assignment timing on a select within a resizable container element or a compound container update in `{path}` is not supported"
+            )
+        };
+        if op != Operation::Assignment {
+            return Err(unsupported());
+        }
+        let mut statement = self.lower_assignment_operands(lhs, rhs, true, op, false)?;
+        while let IrStmt::Located {
+            statement: inner, ..
+        } = statement
+        {
+            statement = *inner;
+        }
+        let IrStmt::Container(store) = statement else {
+            return Err(unsupported());
+        };
+        let tmp = format!("_t{}", h.0);
+        let packed = |value: IrExpr| {
+            let (width, signed) = (value.width, value.signed);
+            (
+                IrStmt::DeclLocal {
+                    name: tmp.clone(),
+                    width,
+                    signed,
+                    two_state: false,
+                    init: Some(Box::new(value)),
+                },
+                IrExpr::new(IrExprKind::LocalRead(tmp.clone()), width, signed, None),
+            )
+        };
+        let string = |value: IrStringExpr| {
+            (
+                IrStmt::DeclString {
+                    name: tmp.clone(),
+                    init: Some(value),
+                },
+                IrStringExpr::LocalRead(tmp.clone()),
+            )
+        };
+        let chandle = |value: IrChandleExpr| {
+            (
+                IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                    tmp.clone(),
+                    Some(value),
+                ))),
+                IrChandleExpr::LocalRead(tmp.clone()),
+            )
+        };
+        let (capture, store) = match *store {
+            IrContainerStmt::Set {
+                container,
+                index,
+                value,
+            } => {
+                let (capture, value) = packed(value);
+                let store = IrContainerStmt::Set {
+                    container,
+                    index,
+                    value,
+                };
+                (capture, store)
+            }
+            IrContainerStmt::SetReal {
+                container,
+                index,
+                value,
+            } => {
+                let (capture, value) = packed(value);
+                let store = IrContainerStmt::SetReal {
+                    container,
+                    index,
+                    value,
+                };
+                (capture, store)
+            }
+            IrContainerStmt::SetNested {
+                container,
+                indices,
+                value,
+            } => {
+                let (capture, value) = packed(value);
+                let store = IrContainerStmt::SetNested {
+                    container,
+                    indices,
+                    value,
+                };
+                (capture, store)
+            }
+            IrContainerStmt::SetNestedReal {
+                container,
+                indices,
+                value,
+            } => {
+                let (capture, value) = packed(value);
+                let store = IrContainerStmt::SetNestedReal {
+                    container,
+                    indices,
+                    value,
+                };
+                (capture, store)
+            }
+            IrContainerStmt::SetString {
+                container,
+                key,
+                value,
+            } => {
+                let (capture, value) = packed(value);
+                let store = IrContainerStmt::SetString {
+                    container,
+                    key,
+                    value,
+                };
+                (capture, store)
+            }
+            IrContainerStmt::SetStringReal {
+                container,
+                key,
+                value,
+            } => {
+                let (capture, value) = packed(value);
+                let store = IrContainerStmt::SetStringReal {
+                    container,
+                    key,
+                    value,
+                };
+                (capture, store)
+            }
+            IrContainerStmt::SetStringValue {
+                container,
+                index,
+                value,
+            } => {
+                let (capture, value) = string(value);
+                let store = IrContainerStmt::SetStringValue {
+                    container,
+                    index,
+                    value,
+                };
+                (capture, store)
+            }
+            IrContainerStmt::SetNestedString {
+                container,
+                indices,
+                value,
+            } => {
+                let (capture, value) = string(value);
+                let store = IrContainerStmt::SetNestedString {
+                    container,
+                    indices,
+                    value,
+                };
+                (capture, store)
+            }
+            IrContainerStmt::SetStringString {
+                container,
+                key,
+                value,
+            } => {
+                let (capture, value) = string(value);
+                let store = IrContainerStmt::SetStringString {
+                    container,
+                    key,
+                    value,
+                };
+                (capture, store)
+            }
+            IrContainerStmt::SetChandleValue {
+                container,
+                index,
+                value,
+            } => {
+                let (capture, value) = chandle(value);
+                let store = IrContainerStmt::SetChandleValue {
+                    container,
+                    index,
+                    value,
+                };
+                (capture, store)
+            }
+            IrContainerStmt::SetNestedChandle {
+                container,
+                indices,
+                value,
+            } => {
+                let (capture, value) = chandle(value);
+                let store = IrContainerStmt::SetNestedChandle {
+                    container,
+                    indices,
+                    value,
+                };
+                (capture, store)
+            }
+            IrContainerStmt::SetStringChandle {
+                container,
+                key,
+                value,
+            } => {
+                let (capture, value) = chandle(value);
+                let store = IrContainerStmt::SetStringChandle {
+                    container,
+                    key,
+                    value,
+                };
+                (capture, store)
+            }
+            _ => return Err(unsupported()),
+        };
+        self.saw_wait = true;
+        Ok(vec![IrStmt::Block(vec![
+            capture,
+            IrStmt::Block(wait),
+            IrStmt::Container(Box::new(store)),
         ])])
     }
 
@@ -646,10 +966,10 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
-        if self.func.is_some() && self.inline.is_none() {
+        if self.timing_forbidden() {
             return Err(format!(
-                "event/repeat intra-assignment timing inside a function/task body in `{}` is not supported \
-                 (delay-bearing tasks are inlined at their call sites)",
+                "event/repeat intra-assignment timing inside a function body in `{}` is not allowed \
+                 (functions cannot suspend)",
                 self.path
             ));
         }
@@ -673,58 +993,46 @@ impl EmitCtx<'_, '_> {
             }
             _ => unreachable!("non-assignment passed to lower_event_assignment"),
         };
+        if !blocking {
+            self.reject_class_property_nba(lhs)?;
+        }
         if op != Operation::Assignment {
             return Err(format!(
                 "compound event/repeat intra-assignment timing in `{}` is not supported",
                 self.path
             ));
         }
-        if self.cg.is_string_expr(&self.path, lhs) {
-            return Err(format!(
-                "event/repeat intra-assignment timing for string storage in `{}` is not supported",
-                self.path
-            ));
-        }
         if let Some((specs, count)) = self.process_evaluated_intra_event(timing) {
             return self.lower_process_event_assignment(h, blocking, lhs, rhs, op, &specs, count);
+        }
+        if blocking {
+            // The count and event expressions are evaluated when the control
+            // is reached, after the RHS (Table 9-3 equivalence).
+            let (specs, repeat) = self.lower_intra_event_timing(timing)?;
+            let wait = IrStmt::WaitEvents {
+                specs,
+                refresh: false,
+            };
+            let wait = match repeat {
+                Some(count) => IrStmt::Repeat {
+                    count,
+                    body: vec![wait],
+                },
+                None => wait,
+            };
+            return self.lower_blocking_timed_assignment(h, lhs, rhs, vec![wait]);
+        }
+        if self.native_nba_target(lhs) {
+            let (specs, count) = self.intra_event_specs(timing)?;
+            let count = count
+                .map(|count| self.lower_repeat_count(count))
+                .transpose()?;
+            return self.lower_native_event_nba(h, lhs, rhs, &specs, count);
         }
         let (specs, repeat) = self.lower_intra_event_timing(timing)?;
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
         let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
         let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
-
-        if blocking {
-            let tmp = format!("_event_rhs_{}", h.0);
-            let (w, s) = (rhs_ir.width, rhs_ir.signed);
-            let wait = IrStmt::WaitEvents {
-                specs,
-                refresh: false,
-            };
-            let wait = if let Some(count) = repeat {
-                IrStmt::Repeat {
-                    count,
-                    body: vec![wait],
-                }
-            } else {
-                wait
-            };
-            self.saw_wait = true;
-            return Ok(vec![IrStmt::Block(vec![
-                IrStmt::DeclLocal {
-                    name: tmp.clone(),
-                    width: w,
-                    signed: s,
-                    two_state: false,
-                    init: Some(Box::new(rhs_ir)),
-                },
-                wait,
-                IrStmt::Assign {
-                    lhs: lh,
-                    rhs: IrExpr::new(IrExprKind::LocalRead(tmp), w, s, None),
-                    nba: false,
-                },
-            ])]);
-        }
 
         if self.cg.proc_local_target(lhs).is_some()
             || self.cg.subroutine_auto_target(lhs)
@@ -802,23 +1110,9 @@ impl EmitCtx<'_, '_> {
         count: Option<NodeId>,
     ) -> Result<Vec<IrStmt>, String> {
         let count = count
-            .map(|count| {
-                let count = self.cg.lower_expr(&self.path, count)?;
-                if count.is_real() {
-                    return Err(format!(
-                        "real-valued repeat event count in `{}` is not supported",
-                        self.path
-                    ));
-                }
-                Ok(count)
-            })
+            .map(|count| self.lower_repeat_count(count))
             .transpose()?;
-        let lh = self.cg.lower_lhs(&self.path, lhs)?;
-        let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
-        let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
         if blocking {
-            let tmp = format!("_event_rhs_{}", h.0);
-            let (width, signed) = (rhs_ir.width, rhs_ir.signed);
             let wait = self.process_event_plan(h, specs)?.blocking();
             let wait = match count {
                 Some(count) => IrStmt::Repeat {
@@ -827,23 +1121,14 @@ impl EmitCtx<'_, '_> {
                 },
                 None => wait,
             };
-            self.saw_wait = true;
-            return Ok(vec![IrStmt::Block(vec![
-                IrStmt::DeclLocal {
-                    name: tmp.clone(),
-                    width,
-                    signed,
-                    two_state: false,
-                    init: Some(Box::new(rhs_ir)),
-                },
-                wait,
-                IrStmt::Assign {
-                    lhs: lh,
-                    rhs: IrExpr::new(IrExprKind::LocalRead(tmp), width, signed, None),
-                    nba: false,
-                },
-            ])]);
+            return self.lower_blocking_timed_assignment(h, lhs, rhs, vec![wait]);
         }
+        if self.native_nba_target(lhs) {
+            return self.lower_native_event_nba(h, lhs, rhs, specs, count);
+        }
+        let lh = self.cg.lower_lhs(&self.path, lhs)?;
+        let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
+        let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
         if self.cg.proc_local_target(lhs).is_some()
             || self.cg.subroutine_auto_target(lhs)
             || lh.has_activation_root()
@@ -953,6 +1238,119 @@ impl EmitCtx<'_, '_> {
         })
     }
 
+    /// Whether a nonblocking destination is a string or handle object,
+    /// which queues an owned native value rather than a packed one.
+    fn native_nba_target(&self, lhs: NodeId) -> bool {
+        self.cg.is_string_expr(&self.path, lhs) || self.cg.is_chandle_expr(&self.path, lhs)
+    }
+
+    /// The explicit event list and optional repeat count of an
+    /// intra-assignment event control, with the same shape rules as
+    /// [`Self::lower_intra_event_timing`].
+    fn intra_event_specs(
+        &self,
+        timing: &IntraControl,
+    ) -> Result<(Vec<EventSpec>, Option<NodeId>), String> {
+        match timing {
+            IntraControl::Event {
+                specs, implicit, ..
+            } if !*implicit && !specs.is_empty() => Ok((specs.clone(), None)),
+            IntraControl::Repeat { count, event, .. } => match event.as_ref() {
+                IntraControl::Event {
+                    specs, implicit, ..
+                } if !*implicit && !specs.is_empty() => Ok((specs.clone(), Some(*count))),
+                _ => Err(format!(
+                    "intra-assignment event control in `{}` must contain an explicit event",
+                    self.path
+                )),
+            },
+            _ => Err(format!(
+                "intra-assignment event control in `{}` must contain an explicit event",
+                self.path
+            )),
+        }
+    }
+
+    /// A nonblocking string or handle assignment with an event or repeated
+    /// event control (`s <= repeat (2) @(e) t;`). The value is evaluated and
+    /// copied at issue (SV 9.4.5) and the issuer continues (SV 10.4.2). The
+    /// control is armed at issue and waited for by a detached process that
+    /// owns the copied value, then queues the native NBA in the current time
+    /// step. Native NBA destinations are whole persistent objects, so no
+    /// selector state needs capturing.
+    fn lower_native_event_nba(
+        &mut self,
+        h: NodeId,
+        lhs: NodeId,
+        rhs: NodeId,
+        specs: &[EventSpec],
+        count: Option<IrExpr>,
+    ) -> Result<Vec<IrStmt>, String> {
+        let write = self
+            .cg
+            .lower_native_nba(&self.path, lhs, rhs, IrDelay::Constant(0))?;
+        let frame = self.cg.new_frame_id()?;
+        let value = format!("_nbv{}", h.0);
+        let (declare, kind, initial, write) = match write {
+            IrStmt::DelayedStringAssign { target, rhs, ticks } => (
+                IrStmt::DeclString {
+                    name: value.clone(),
+                    init: Some(rhs),
+                },
+                StorageKind::String,
+                IrExpr::new(IrExprKind::LocalRead(value.clone()), 0, false, None),
+                IrStmt::DelayedStringAssign {
+                    target,
+                    rhs: IrStringExpr::LocalRead(value),
+                    ticks,
+                },
+            ),
+            IrStmt::DelayedChandleAssign { target, rhs, ticks } => (
+                IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                    value.clone(),
+                    Some(rhs),
+                ))),
+                StorageKind::Opaque,
+                IrExpr::new(
+                    IrExprKind::ObjectQuery(Box::new(IrObjectQuery::HandleCapture(
+                        IrChandleExpr::LocalRead(value.clone()),
+                    ))),
+                    1,
+                    false,
+                    None,
+                ),
+                IrStmt::DelayedChandleAssign {
+                    target,
+                    rhs: IrChandleExpr::LocalRead(value),
+                    ticks,
+                },
+            ),
+            _ => {
+                return Err(format!(
+                "nonblocking event-controlled native assignment in `{}` has no native destination",
+                self.path
+            ))
+            }
+        };
+        let storage = StorageRef::new(
+            frame,
+            0,
+            StorageLifetime::Automatic,
+            StorageOwnership::Owned,
+        )
+        .with_kind(kind);
+        let spawn = self.spawn_process_evaluated_action(
+            h,
+            specs,
+            count,
+            frame,
+            vec![IrCapture::new(storage, initial)],
+            vec![write],
+            "event_native_nba",
+        )?;
+        Ok(vec![IrStmt::Block(vec![declare, spawn])])
+    }
+
     #[allow(clippy::type_complexity)]
     fn lower_intra_event_timing(
         &mut self,
@@ -971,13 +1369,7 @@ impl EmitCtx<'_, '_> {
                 Ok((self.lower_event_specs(specs)?, None))
             }
             IntraControl::Repeat { count, event, .. } => {
-                let count = self.cg.lower_expr(&self.path, *count)?;
-                if count.is_real() {
-                    return Err(format!(
-                        "real-valued repeat event count in `{}` is not supported",
-                        self.path
-                    ));
-                }
+                let count = self.lower_repeat_count(*count)?;
                 let (specs, nested) = self.lower_intra_event_timing(event)?;
                 if nested.is_some() {
                     return Err(format!(

@@ -23,14 +23,35 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(StmtKind::Assign { op, .. }) => *op,
             _ => unreachable!("non-assignment passed to lower_delayed_native_record"),
         };
-        let statement = self.lower_assignment_operands(lhs, rhs, blocking, op, false)?;
-        let mut before = Vec::new();
-        if !blocking {
-            // One runtime delay value serves every queued leaf.
-            let ticks = capture_delay(ticks, &format!("_nd{}", h.0), &mut before);
-            before.push(retime_nonblocking(statement, &ticks, &self.path)?);
-            return Ok(vec![IrStmt::Block(before)]);
+        if blocking {
+            return self.lower_blocking_native_record(
+                h,
+                lhs,
+                rhs,
+                op,
+                vec![IrStmt::Delay { ticks }],
+            );
         }
+        let statement = self.lower_assignment_operands(lhs, rhs, false, op, false)?;
+        let mut before = Vec::new();
+        // One runtime delay value serves every queued leaf.
+        let ticks = capture_delay(ticks, &format!("_nd{}", h.0), &mut before);
+        before.push(retime_nonblocking(statement, &ticks, &self.path)?);
+        Ok(vec![IrStmt::Block(before)])
+    }
+
+    /// Blocking timed record assignment: every leaf value is captured before
+    /// `wait` (a delay or an event control) and written after it.
+    pub(super) fn lower_blocking_native_record(
+        &mut self,
+        h: NodeId,
+        lhs: NodeId,
+        rhs: NodeId,
+        op: Operation,
+        wait: Vec<IrStmt>,
+    ) -> Result<Vec<IrStmt>, String> {
+        let statement = self.lower_assignment_operands(lhs, rhs, true, op, false)?;
+        let mut before = Vec::new();
         let mut after = Vec::new();
         let mut sequence = 0usize;
         split_blocking_writes(
@@ -42,7 +63,7 @@ impl EmitCtx<'_, '_> {
             &self.path,
         )?;
         self.saw_wait = true;
-        before.push(IrStmt::Delay { ticks });
+        before.extend(wait);
         before.extend(after);
         Ok(vec![IrStmt::Block(before)])
     }
