@@ -57,11 +57,14 @@ fn deferred_assertions_report_defaults_and_cover_in_reactive() {
     );
 }
 
+/// SV 16.4.1/16.4.2: each execution queues a report and only a flush point
+/// clears the queue, so the loop's failing execution still reports. It is
+/// pending when `$finish` runs and executes before teardown (S36-D6).
 #[test]
-fn deferred_assertions_coalesce_same_process_glitches() {
+fn deferred_assertions_queue_each_execution_until_a_flush_point() {
     run_case_with_stderr(
         "deferred_assertions_glitch",
-        "reports=0\n",
+        "reports=0\nglitch=0\n",
         concat!(
             "llg: $finish at time 0 at tb:16:5\n",
             "llg: simulation statistics: processes=1\n",

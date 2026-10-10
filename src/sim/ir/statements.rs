@@ -585,6 +585,16 @@ pub enum IrStmt {
     DisableTarget {
         target: IrActivationTarget,
     },
+    /// Deferred assertion side of a `disable` (SV 16.4.4), emitted before
+    /// the matching `DisableTarget`: cancel the pending reports of the
+    /// disabled deferred assertion (`assertion`, its report identity) and,
+    /// when the target is a procedure's outermost scope, flush the report
+    /// queues of the processes executing it.
+    DeferredAssertionDisable {
+        target: IrActivationTarget,
+        flush_scope: bool,
+        assertion: Option<u64>,
+    },
     /// `wait fork;`
     WaitFork,
     /// `disable fork;`

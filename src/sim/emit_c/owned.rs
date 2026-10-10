@@ -167,6 +167,9 @@ pub(super) struct Frame<'a, 'm> {
     return_address: Option<String>,
     allow_calls: bool,
     read_only_callback: bool,
+    /// Emitting a deferred assertion action (SV 16.4): a Reactive callback
+    /// with no process turn, so `$stop` uses the action entry point.
+    deferred_action: bool,
     sampled_reads: bool,
     item_callback: bool,
     sequence_addresses: HashMap<String, Binding>,
@@ -347,6 +350,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             return_address: None,
             allow_calls: true,
             read_only_callback: false,
+            deferred_action: false,
             sampled_reads: ctx.sampled,
             item_callback: false,
             sequence_addresses: HashMap::new(),

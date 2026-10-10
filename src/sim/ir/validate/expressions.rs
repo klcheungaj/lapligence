@@ -96,6 +96,7 @@ impl Validator<'_> {
                 let expected = match query.as_ref() {
                     IrObjectQuery::ChandleEq(..)
                     | IrObjectQuery::HandleCapture(..)
+                    | IrObjectQuery::StringCapture(..)
                     | IrObjectQuery::EventCapture(..) => Some((1, false)),
                     IrObjectQuery::SemaphoreTryGet(..) => Some((32, true)),
                     IrObjectQuery::ProcessEq(..) => Some((1, false)),

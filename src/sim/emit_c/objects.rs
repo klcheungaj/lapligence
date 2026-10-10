@@ -553,7 +553,7 @@ pub(super) fn query(
     signed: bool,
 ) -> Result<String, String> {
     Ok(match query {
-        IrObjectQuery::HandleCapture(_) | IrObjectQuery::EventCapture(_) => return Err("opaque captures require whole-model ownership emission".to_owned()),
+        IrObjectQuery::HandleCapture(_) | IrObjectQuery::EventCapture(_) | IrObjectQuery::StringCapture(_) => return Err("opaque captures require whole-model ownership emission".to_owned()),
         IrObjectQuery::StringLen(value) => format!("llg_string_len({})", string(ctx, value)?),
         IrObjectQuery::StringGetc(value, index) => format!(
             "llg_string_getc({}, {})",

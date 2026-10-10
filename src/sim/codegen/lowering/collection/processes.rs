@@ -1756,17 +1756,23 @@ impl<'a> Codegen<'a> {
         // user-written `always` loop; use the assertion condition as its
         // implicit trigger set so a constant member runs once and a signal-
         // driven member re-evaluates only when that condition changes.
-        let deferred_assertion_condition = match self.kind(stmt) {
-            NodeKind::Stmt(StmtKind::ImmediateAssertion {
-                cond,
-                deferred: true,
-                ..
-            }) if self.node(proc).line == self.node(stmt).line
-                && self.node(proc).col == self.node(stmt).col =>
-            {
-                Some(*cond)
-            }
-            _ => None,
+        let deferred_assertion_member = {
+            let at_process = |node: NodeId| {
+                self.node(proc).line == self.node(node).line
+                    && self.node(proc).col == self.node(node).col
+            };
+            let is_deferred = |node: NodeId| {
+                matches!(
+                    self.kind(node),
+                    NodeKind::Stmt(StmtKind::ImmediateAssertion { deferred: true, .. })
+                )
+            };
+            // A labeled member is wrapped in a named block at the same
+            // location (the label scope).
+            (at_process(stmt)
+                && (is_deferred(stmt) || self.deferred_assertion_of_label(stmt).is_some()))
+            .then_some(stmt)
+            .filter(|_| matches!(kind, ProcessKind::Always { .. }))
         };
         let always_type = match kind {
             ProcessKind::Always { always_type } => Some(*always_type),
@@ -1891,8 +1897,13 @@ impl<'a> Codegen<'a> {
                 // `initial` and `final` bodies run exactly once (finals after
                 // the scheduler exits — the spawn phase is decided below).
                 IrShape::RunOnce
-            } else if let Some(condition) = deferred_assertion_condition {
-                let reads = ctx.cg.collect_read_signals(path, condition)?;
+            } else if let Some(member) = deferred_assertion_member {
+                // SV 16.4.3: the member behaves as if contained in an
+                // always_comb procedure, so it re-executes when anything it
+                // reads changes, including by-value action arguments.
+                let reads =
+                    ctx.cg
+                        .collect_process_sensitivity(path, member, Some(AlwaysKind::Comb))?;
                 if reads.is_empty() {
                     IrShape::RunOnce
                 } else {

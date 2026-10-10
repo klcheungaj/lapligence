@@ -125,9 +125,64 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
     pub(super) fn lower_disable(&mut self, target: Option<NodeId>) -> Result<Vec<IrStmt>, String> {
         let target = target
             .ok_or_else(|| format!("cannot resolve the target of `disable` in `{}`", self.path))?;
-        Ok(vec![IrStmt::DisableTarget {
-            target: self.cg.activation_target(target)?,
-        }])
+        let activation = self.cg.activation_target(target)?;
+        let assertion = self.cg.deferred_assertion_of_label(target);
+        let flush_scope = self.cg.is_outermost_procedure_scope(target);
+        let mut lowered = Vec::with_capacity(2);
+        if assertion.is_some() || flush_scope {
+            lowered.push(IrStmt::DeferredAssertionDisable {
+                target: activation,
+                flush_scope,
+                assertion,
+            });
+        }
+        lowered.push(IrStmt::DisableTarget { target: activation });
+        Ok(lowered)
+    }
+}
+
+impl Codegen<'_> {
+    /// The report identity of the deferred assertion a `disable` target
+    /// names (SV 16.4.4). Slang wraps a labeled assertion in a named block
+    /// holding the assertion and its empty label scope.
+    pub(in super::super) fn deferred_assertion_of_label(&self, target: NodeId) -> Option<u64> {
+        if !matches!(self.kind(target), NodeKind::Stmt(StmtKind::Begin)) {
+            return None;
+        }
+        let mut found = None;
+        for child in &self.node(target).children {
+            match self.kind(*child) {
+                NodeKind::Stmt(StmtKind::ImmediateAssertion { deferred: true, .. })
+                    if found.is_none() =>
+                {
+                    found = Some(child.index() as u64)
+                }
+                NodeKind::Stmt(StmtKind::Begin) if self.node(*child).children.is_empty() => {}
+                _ => return None,
+            }
+        }
+        found
+    }
+
+    /// Whether `target` is the outermost scope of a procedure: the block a
+    /// procedure executes, possibly behind its leading timing control
+    /// (`always @(a) begin : b ... end`). Disabling it flushes the deferred
+    /// assertion report queue (SV 16.4.4); inner scopes and tasks do not.
+    pub(in super::super) fn is_outermost_procedure_scope(&self, target: NodeId) -> bool {
+        if !matches!(self.kind(target), NodeKind::Stmt(StmtKind::Begin)) {
+            return false;
+        }
+        let mut node = self.node(target).parent;
+        while let Some(id) = node {
+            match self.kind(id) {
+                NodeKind::Process { .. } => return true,
+                NodeKind::Stmt(StmtKind::EventControl { .. } | StmtKind::DelayControl { .. }) => {
+                    node = self.node(id).parent
+                }
+                _ => return false,
+            }
+        }
+        false
     }
 }
 

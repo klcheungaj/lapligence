@@ -145,6 +145,18 @@ void llg_rt_request_stop(int verbosity, const char* location) {
     g.deferred_stop = 1;
 }
 
+void llg_rt_action_stop(int verbosity, const char* location) {
+    if (verbosity < 0 || verbosity > 2) {
+        fprintf(stderr, "llg runtime fatal: invalid $stop verbosity %d\n", verbosity);
+        abort();
+    }
+    report_stop(verbosity, location);
+    if (!g.running || g.finish || g.suspended || g.stop_proc) return;
+    g.stop_proc = NULL;
+    g.stop_region = g.current_region;
+    g.suspended = 1;
+}
+
 int llg_rt_set_stop_policy(int policy) {
     if (policy != LLG_STOP_POLICY_RESUME && policy != LLG_STOP_POLICY_EXIT) return 0;
     if (g.running) return 0;

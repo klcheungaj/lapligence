@@ -33,22 +33,10 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             ImmediateAssertionKind::Cover => IrImmediateAssertionKind::Cover,
         };
         if *deferred {
-            if self.in_final {
-                return Err(format!(
-                    "deferred immediate assertions inside a final block are not supported at {}",
-                    self.finish_location(h)
-                ));
-            }
-            // A deferred action outlives the statement activation. Ordinary
-            // process storage is safe only after its by-value arguments have
-            // been copied into the action frame; function/task contexts have
-            // no stable callback depth or activation lifetime here.
-            if self.func.is_some() || self.inline.is_some() {
-                return Err(format!(
-                    "deferred immediate assertions inside a function or task are not supported at {}",
-                    self.finish_location(h)
-                ));
-            }
+            // A deferred action outlives the statement activation: its
+            // by-value arguments are copied into an owned action frame, so
+            // procedural, subroutine, class-method and final contexts share
+            // one path. Each executing process owns its own report queue.
             let if_true = (*if_true)
                 .map(|statement| self.lower_deferred_assertion_action(statement))
                 .transpose()?;
@@ -137,7 +125,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             Ok(body) => body,
             Err(error) => {
                 self.pre_fns.truncate(pre_fn_start);
-                return Err(error);
+                return Err(format!("{error} at {}", self.finish_location(statement)));
             }
         };
         let action = IrDeferredAction::new(
@@ -223,21 +211,56 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                     self.finish_location(statement)
                 ));
             }
+            if self.dynamic_ref_actual(actual) {
+                return Err(format!(
+                    "deferred immediate assertion action cannot pass a dynamic variable to ref argument `{}` at {} (SV 16.4)",
+                    self.cg.node(formals[idx].0).name,
+                    self.finish_location(statement)
+                ));
+            }
         }
         Ok(())
     }
 
+    /// Whether a ref actual names dynamically allocated storage: an element
+    /// or member reached through a dynamic array, queue or associative array
+    /// (SV 16.4: "It shall be an error to pass automatic or dynamic variables
+    /// as actuals to a ref or const ref formal"). Only the selected prefix
+    /// chain is examined, not index expressions.
+    fn dynamic_ref_actual(&self, actual: NodeId) -> bool {
+        let mut node = actual;
+        loop {
+            if self
+                .cg
+                .query_descriptor(node)
+                .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::Container { .. }))
+                && node != actual
+            {
+                return true;
+            }
+            match self.cg.kind(node) {
+                NodeKind::Expr(ExprKind::Ref { .. }) => return false,
+                NodeKind::Expr(_) => match self.cg.node(node).children.first() {
+                    Some(child) => node = *child,
+                    None => return false,
+                },
+                _ => return false,
+            }
+        }
+    }
+
     /// Replace action-time by-value expressions with frame reads. Reference
-    /// descriptors and control-only actions remain untouched so their storage
-    /// lookup occurs when Reactive executes the callback.
+    /// descriptors remain untouched so their storage lookup occurs when
+    /// Reactive executes the callback (SV 16.4: by-value actuals use their
+    /// values when the assertion is evaluated, ref actuals the Reactive-time
+    /// values). A method call's receiver handle is captured with the inputs
+    /// (llg decision S36-D3).
     fn capture_deferred_assertion_stmt(
         &self,
         frame: FrameId,
         captures: &mut Vec<IrCapture>,
         stmt: IrStmt,
     ) -> Result<IrStmt, String> {
-        let mut capture =
-            |expression: IrExpr| self.capture_deferred_assertion_expr(frame, captures, expression);
         match stmt {
             IrStmt::Located { origin, statement } => self
                 .capture_deferred_assertion_stmt(frame, captures, *statement)
@@ -251,7 +274,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 fmt,
                 args: args
                     .into_iter()
-                    .map(|(value, real)| (capture(value), real))
+                    .map(|(value, real)| {
+                        (Self::capture_deferred_value(frame, captures, value), real)
+                    })
                     .collect(),
                 newline,
                 default_radix,
@@ -264,36 +289,19 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 default_radix,
                 descriptor,
                 time_unit_fs,
-            } => {
-                let args = args
+            } => Ok(IrStmt::DisplayTyped {
+                fmt,
+                args: args
                     .into_iter()
-                    .map(|arg| match arg {
-                        crate::sim::ir::IrDisplayArg::Packed(value) => {
-                            Ok(crate::sim::ir::IrDisplayArg::Packed(capture(value)))
-                        }
-                        crate::sim::ir::IrDisplayArg::Real(value) => {
-                            Ok(crate::sim::ir::IrDisplayArg::Real(capture(value)))
-                        }
-                        crate::sim::ir::IrDisplayArg::Strength(value) => {
-                            Ok(crate::sim::ir::IrDisplayArg::Strength(capture(value)))
-                        }
-                        crate::sim::ir::IrDisplayArg::String(_)
-                        | crate::sim::ir::IrDisplayArg::Text(_) => Err(
-                            "string value arguments in deferred immediate assertion actions are not supported"
-                                .to_owned(),
-                        ),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(IrStmt::DisplayTyped {
-                    fmt,
-                    args,
-                    scope,
-                    newline,
-                    default_radix,
-                    descriptor: descriptor.map(capture),
-                    time_unit_fs,
-                })
-            }
+                    .map(|arg| Self::capture_deferred_display_arg(frame, captures, arg))
+                    .collect(),
+                scope,
+                newline,
+                default_radix,
+                descriptor: descriptor
+                    .map(|value| Self::capture_deferred_value(frame, captures, value)),
+                time_unit_fs,
+            }),
             IrStmt::Severity {
                 level,
                 fmt,
@@ -302,47 +310,27 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 location,
                 fatal_finish_number,
                 runtime_failure,
-            } => {
-                if level.is_fatal() {
-                    return Err(
-                        "$fatal is not supported as a deferred immediate assertion action"
-                            .to_owned(),
-                    );
-                }
-                let args = args
+            } => Ok(IrStmt::Severity {
+                level,
+                fmt,
+                args: args
                     .into_iter()
-                    .map(|arg| match arg {
-                        crate::sim::ir::IrDisplayArg::Packed(value) => {
-                            Ok(crate::sim::ir::IrDisplayArg::Packed(capture(value)))
-                        }
-                        crate::sim::ir::IrDisplayArg::Real(value) => {
-                            Ok(crate::sim::ir::IrDisplayArg::Real(capture(value)))
-                        }
-                        crate::sim::ir::IrDisplayArg::Strength(value) => {
-                            Ok(crate::sim::ir::IrDisplayArg::Strength(capture(value)))
-                        }
-                        crate::sim::ir::IrDisplayArg::String(_)
-                        | crate::sim::ir::IrDisplayArg::Text(_) => Err(
-                            "string value arguments in deferred immediate assertion actions are not supported"
-                                .to_owned(),
-                        ),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(IrStmt::Severity {
-                    level,
-                    fmt,
-                    args,
-                    scope,
-                    location,
-                    fatal_finish_number,
-                    runtime_failure,
-                })
-            }
+                    .map(|arg| Self::capture_deferred_display_arg(frame, captures, arg))
+                    .collect(),
+                scope,
+                location,
+                fatal_finish_number,
+                runtime_failure,
+            }),
             IrStmt::FileControl { op, descriptor } => Ok(IrStmt::FileControl {
                 op,
-                descriptor: descriptor.map(|descriptor| Box::new(capture(*descriptor))),
+                descriptor: descriptor.map(|descriptor| {
+                    Box::new(Self::capture_deferred_value(frame, captures, *descriptor))
+                }),
             }),
-            IrStmt::WaveLimit(value) => Ok(IrStmt::WaveLimit(capture(value))),
+            IrStmt::WaveLimit(value) => Ok(IrStmt::WaveLimit(Self::capture_deferred_value(
+                frame, captures, value,
+            ))),
             IrStmt::Call(mut call) => {
                 if !call.temps.is_empty() || !call.copyouts.is_empty() {
                     return Err(
@@ -350,24 +338,54 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                             .to_owned(),
                     );
                 }
+                if call.virtual_call.is_some() {
+                    return Err(
+                        "virtual-interface method calls are not supported as deferred immediate assertion actions"
+                            .to_owned(),
+                    );
+                }
+                if let Some(receiver) = call.receiver.take() {
+                    call.receiver = Some(Self::capture_deferred_handle(frame, captures, receiver));
+                }
                 for arg in &mut call.args {
                     match arg {
                         IrCallArg::Val(value) => {
-                            *value = capture(value.clone());
+                            *value = Self::capture_deferred_value(frame, captures, value.clone());
                         }
-                        IrCallArg::RefAddr { .. } | IrCallArg::StringRefAddr { .. } => {}
-                        IrCallArg::StringVal(_)
-                        | IrCallArg::ChandleVal(_)
-                        | IrCallArg::FixedValue(_) | IrCallArg::FixedArray(_) | IrCallArg::RealArray(_) | IrCallArg::RealArrayValues(_) | IrCallArg::NativeValue(_) | IrCallArg::NativeRefBound | IrCallArg::Container(_) | IrCallArg::ContainerValues { .. } | IrCallArg::NativeLeaves { .. } | IrCallArg::NativeCall { .. } | IrCallArg::RealArrayCall { .. } | IrCallArg::EventVal(_)
-                        | IrCallArg::EventAddr(_)
-                        | IrCallArg::ChandleAddr(_)
-                        | IrCallArg::ChandleRefAddr(_)
+                        IrCallArg::StringVal(value) => {
+                            *value = Self::capture_deferred_string(frame, captures, value.clone());
+                        }
+                        IrCallArg::ChandleVal(value) => {
+                            *value = Self::capture_deferred_handle(frame, captures, value.clone());
+                        }
+                        IrCallArg::RefAddr { .. }
+                        | IrCallArg::StringRefAddr { .. }
+                        | IrCallArg::ChandleRefAddr(_) => {}
+                        IrCallArg::FixedValue(_)
+                        | IrCallArg::FixedArray(_)
+                        | IrCallArg::RealArray(_)
+                        | IrCallArg::RealArrayValues(_)
+                        | IrCallArg::NativeValue(_)
+                        | IrCallArg::NativeRefBound
+                        | IrCallArg::Container(_)
+                        | IrCallArg::ContainerValues { .. }
+                        | IrCallArg::NativeLeaves { .. }
+                        | IrCallArg::NativeCall { .. }
+                        | IrCallArg::RealArrayCall { .. }
+                        | IrCallArg::EventVal(_)
+                        | IrCallArg::EventAddr(_) => {
+                            return Err(
+                                "unpacked aggregate, container and event arguments of deferred immediate assertion actions are not supported"
+                                    .to_owned(),
+                            )
+                        }
+                        IrCallArg::ChandleAddr(_)
                         | IrCallArg::OutAddr(_)
                         | IrCallArg::OutTemp { .. }
                         | IrCallArg::StringOutAddr(_)
                         | IrCallArg::StringOutTemp { .. } => {
                             return Err(
-                                "deferred immediate assertion actions support only value and static ref arguments"
+                                "deferred immediate assertion actions cannot use output or inout arguments"
                                     .to_owned(),
                             )
                         }
@@ -377,10 +395,11 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             }
             IrStmt::System(None) => Ok(IrStmt::System(None)),
             IrStmt::Nop => Ok(IrStmt::Nop),
-            IrStmt::Finish | IrStmt::FinishControl { .. } | IrStmt::StopControl { .. } => Err(
-                "simulation termination/control tasks are not supported as deferred immediate assertion actions"
-                    .to_owned(),
-            ),
+            // Simulation control tasks are legal single-call actions (SV
+            // 16.4); they execute once, in the Reactive region.
+            statement @ (IrStmt::Finish
+            | IrStmt::FinishControl { .. }
+            | IrStmt::StopControl { .. }) => Ok(statement),
             IrStmt::Block(mut body) if body.len() == 1 => {
                 let inner = body
                     .pop()
@@ -396,31 +415,110 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         }
     }
 
-    fn capture_deferred_assertion_expr(
-        &self,
+    fn capture_deferred_display_arg(
+        frame: FrameId,
+        captures: &mut Vec<IrCapture>,
+        arg: crate::sim::ir::IrDisplayArg,
+    ) -> crate::sim::ir::IrDisplayArg {
+        use crate::sim::ir::IrDisplayArg;
+        match arg {
+            IrDisplayArg::Packed(value) => {
+                IrDisplayArg::Packed(Self::capture_deferred_value(frame, captures, value))
+            }
+            IrDisplayArg::Real(value) => {
+                IrDisplayArg::Real(Self::capture_deferred_value(frame, captures, value))
+            }
+            IrDisplayArg::Strength(value) => {
+                IrDisplayArg::Strength(Self::capture_deferred_value(frame, captures, value))
+            }
+            IrDisplayArg::String(value) => {
+                IrDisplayArg::String(Self::capture_deferred_string(frame, captures, value))
+            }
+            IrDisplayArg::Text(value) => {
+                IrDisplayArg::Text(Self::capture_deferred_string(frame, captures, value))
+            }
+        }
+    }
+
+    fn capture_deferred_slot(
+        frame: FrameId,
+        captures: &[IrCapture],
+        kind: StorageKind,
+    ) -> StorageRef {
+        StorageRef::new(
+            frame,
+            captures.len() as u32,
+            StorageLifetime::Automatic,
+            StorageOwnership::Owned,
+        )
+        .with_kind(kind)
+    }
+
+    fn capture_deferred_value(
         frame: FrameId,
         captures: &mut Vec<IrCapture>,
         expression: IrExpr,
     ) -> IrExpr {
-        let slot = captures.len() as u32;
-        let storage = StorageRef::new(
+        // Literals need no issue-time copy.
+        if matches!(expression.kind(), IrExprKind::Const(_)) {
+            return expression;
+        }
+        let storage = Self::capture_deferred_slot(
             frame,
-            slot,
-            StorageLifetime::Automatic,
-            StorageOwnership::Owned,
-        )
-        .with_kind(if expression.is_real() {
-            StorageKind::Real
-        } else {
-            StorageKind::Packed
-        });
+            captures,
+            if expression.is_real() {
+                StorageKind::Real
+            } else {
+                StorageKind::Packed
+            },
+        );
         let local = Codegen::capture_local_name(storage);
-        captures.push(IrCapture::new(storage, expression.clone()));
-        IrExpr::new(
-            IrExprKind::LocalRead(local),
-            expression.width,
-            expression.signed,
-            None,
-        )
+        let (width, signed) = (expression.width, expression.signed);
+        captures.push(IrCapture::new(storage, expression));
+        IrExpr::new(IrExprKind::LocalRead(local), width, signed, None)
+    }
+
+    fn capture_deferred_string(
+        frame: FrameId,
+        captures: &mut Vec<IrCapture>,
+        value: IrStringExpr,
+    ) -> IrStringExpr {
+        if matches!(value, IrStringExpr::Literal(_)) {
+            return value;
+        }
+        let storage = Self::capture_deferred_slot(frame, captures, StorageKind::String);
+        let local = Codegen::capture_local_name(storage);
+        captures.push(IrCapture::new(
+            storage,
+            IrExpr::new(
+                IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringCapture(value))),
+                1,
+                false,
+                None,
+            ),
+        ));
+        IrStringExpr::LocalRead(local)
+    }
+
+    fn capture_deferred_handle(
+        frame: FrameId,
+        captures: &mut Vec<IrCapture>,
+        value: IrChandleExpr,
+    ) -> IrChandleExpr {
+        if matches!(value, IrChandleExpr::Null) {
+            return value;
+        }
+        let storage = Self::capture_deferred_slot(frame, captures, StorageKind::Opaque);
+        let local = Codegen::capture_local_name(storage);
+        captures.push(IrCapture::new(
+            storage,
+            IrExpr::new(
+                IrExprKind::ObjectQuery(Box::new(IrObjectQuery::HandleCapture(value))),
+                1,
+                false,
+                None,
+            ),
+        ));
+        IrChandleExpr::LocalRead(local)
     }
 }

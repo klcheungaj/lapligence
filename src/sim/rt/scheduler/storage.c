@@ -455,6 +455,9 @@ struct llg_proc {
     // A disable ended the named block that is this fork branch's whole body
     // (llg_activation_exit_terminal): the process ends KILLED (SV 9.7).
     uint8_t disabled_whole;
+    // Woken from an event control or wait statement while it had pending
+    // deferred assertion reports: flush them when it resumes (SV 16.4.2).
+    uint8_t deferred_flush;
     llg_process_handle_t* handle;
     llg_process_local_ref_t* process_locals;
     llg_proc_t* next_retired;
@@ -472,6 +475,9 @@ struct llg_proc {
     uint64_t assertion_owner;      // stable per-run identity for deferred reports
     uint64_t action_assertion;     // assertion whose Reactive action spawned us
     int is_assertion_action;
+    // Index + 1 of this process's newest pending deferred assertion report
+    // (validated against the report owner; fits the existing padding).
+    uint32_t deferred_last;
     // The granted semaphore request (owner and keys) this process has not
     // resumed to take yet; its keys return to the semaphore if the process
     // dies first (SV 15.3). Generated code releases it after the get.
@@ -562,6 +568,7 @@ static void llg_kill_proc_tree_internal(llg_proc_t* p, int notify_parent);
 static void llg_fork_group_child_done(llg_fork_group_t* grp);
 static void flush_deferred_assertions(void);
 static void run_deferred_assertions_now(void);
+static void deferred_resume_flush(llg_proc_t* proc);
 llg_proc_t* llg_current(void);
 
 static llg_frame_slot_t* frame_slot(llg_frame_t* frame, size_t slot) {

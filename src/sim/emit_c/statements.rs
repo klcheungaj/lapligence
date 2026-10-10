@@ -932,6 +932,9 @@ fn render_stmt_scoped(
         }
         IrStmt::WaitFork => "    llg_wait_fork();\n".to_string(),
         IrStmt::DisableFork => "    llg_disable_fork();\n".to_string(),
+        IrStmt::DeferredAssertionDisable { .. } => {
+            return Err("deferred assertion disable requires whole-model ownership emission".to_owned())
+        }
         IrStmt::ActivationScope { target, exit, body } => {
             let activation = format!("_llg_act_{}", exit);
             let child = RCtx {

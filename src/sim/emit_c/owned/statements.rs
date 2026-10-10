@@ -729,6 +729,22 @@ impl Frame<'_, '_> {
                 ));
                 self.cancellation_point();
             }
+            IrStmt::DeferredAssertionDisable {
+                target,
+                flush_scope,
+                assertion,
+            } => {
+                if let Some(identity) = assertion {
+                    self.line(format!("llg_deferred_assertion_cancel({identity}ULL);"));
+                }
+                if *flush_scope {
+                    self.line(format!(
+                        "llg_deferred_assertion_flush_scope({}u, {}u);",
+                        target.declaration(),
+                        target.instance()
+                    ));
+                }
+            }
             IrStmt::WaitFork => {
                 self.await_arm(SuspensionOperation::WaitFork, "llg_arm_wait_fork(self)")?
             }
@@ -955,7 +971,12 @@ impl Frame<'_, '_> {
                 location,
             } => {
                 let function_stop = self.ctx.func.is_some_and(|function| !function.is_task());
-                if function_stop {
+                if self.deferred_action {
+                    self.line(format!(
+                        "llg_rt_action_stop({verbosity}, {});",
+                        c_string_literal(location)
+                    ));
+                } else if function_stop {
                     self.line(format!(
                         "llg_rt_request_stop({verbosity}, {});",
                         c_string_literal(location)

@@ -796,7 +796,10 @@ fn collect_effects(
                     effects.push(ExecutionEffect::Suspend);
                 }
             }
-            IrStmt::DisableFork | IrStmt::DisableTarget { .. } | IrStmt::ActivationScope { .. } => {
+            IrStmt::DisableFork
+            | IrStmt::DisableTarget { .. }
+            | IrStmt::DeferredAssertionDisable { .. }
+            | IrStmt::ActivationScope { .. } => {
                 effects.push(ExecutionEffect::RuntimeService);
                 if matches!(statement, IrStmt::DisableTarget { .. }) {
                     effects.push(ExecutionEffect::Terminate);
@@ -2024,6 +2027,7 @@ fn collect_object_query_effects(
 ) {
     match query {
         IrObjectQuery::StringLen(value)
+        | IrObjectQuery::StringCapture(value)
         | IrObjectQuery::StringGetc(value, _)
         | IrObjectQuery::StringAtoi(value, _)
         | IrObjectQuery::StringAtoreal(value)
