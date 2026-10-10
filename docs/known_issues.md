@@ -822,35 +822,33 @@ binding, but the retained runtime-selector characterization has no adjudicated
 binding/rebinding oracle. Qualify that boundary before enabling runtime-selected
 connections. Static selected connections and nested packed projections execute.
 
-## Delayed and event-controlled native writes
+## Delayed native continuous writes
 
 **Status:** open; SIM-004 queues untimed and `#delay` nonblocking writes and
 drives zero-delay continuous assignments of strings and string records.
+SIM-014 executes event and repeated-event intra-assignment timing on string
+and handle targets (`s <= @(e) t;`, `s = repeat (2) @(e) t;`).
 
 ### Symptom
 
 These legal forms reject with explicit diagnostics: a delayed continuous
 assignment to a string or string record (`assign #1 s = t;`, SV 10.3.3), and
-event or repeat intra-assignment timing on a string target (`s <= @(e) t;`,
-`s = repeat (2) @(e) t;`). A blocking `#delay` assignment of a record with a
-conditional source also rejects.
+a blocking `#delay` assignment of a record with a conditional source.
 
 ### Cause
 
-A delayed continuous driver keeps an inertial pending value per driver, and
-event-controlled NBAs run a detached waiter that captures the value. Both
-records hold packed (`sv4_t`) payloads only; neither owns a string.
+A delayed continuous driver keeps an inertial pending value per driver, which
+holds a packed (`sv4_t`) payload only and owns no string.
 
 ### Intended direction
 
-Give the inertial driver and the detached event waiter an owned native payload
-(string or chandle) next to the packed one, reusing the `llg_nba_t` native
-member layout and its destroy path.
+Give the inertial driver an owned native payload (string or chandle) next to
+the packed one, reusing the `llg_nba_t` native member layout and its destroy
+path.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_004/neg_delayed_string_continuous.sv`;
-`module tb; string s; event e; initial begin s <= @(e) "x"; ->e; end endmodule`.
+`tests/fixtures/sim/feature_completion/sim_004/neg_delayed_string_continuous.sv`.
 
 ## `%l` in runtime-built format strings
 

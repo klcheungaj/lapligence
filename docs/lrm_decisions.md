@@ -38,8 +38,8 @@ Each `<ID>_<name>.sv` file is:
    shared DPI-C library and load it with the simulator's DPI library option.
 3. Compare stdout with the `.out` file. Ignore the simulator's own banners and
    its `$finish` message.
-4. **Negative cases have an empty `.out`.** For AA-D7, the expected result is
-   a compile error, and no simulation should run.
+4. **Negative cases have an empty `.out`.** For AA-D7 and S14-D5, the
+   expected result is a compile error, and no simulation should run.
 
 ### In llg
 
@@ -52,7 +52,8 @@ through the public `llg` command line:
 
 For B8, the test builds the `.c` companion with the host C compiler and passes
 it with `--dpi-lib`; this case runs on Unix hosts only. AA-D7 must fail to
-compile with "`$past` of a real expression is illegal". The scripted run is in
+compile with "`$past` of a real expression is illegal", and S14-D5 with
+"nonblocking assignment to class property `x`". The scripted run is in
 [tests/readme.md](../tests/readme.md):
 
 ```sh
@@ -98,6 +99,17 @@ scripts/run-tests.sh -E 'test(/^sim_lrm_decisions::/)'
 | AB-O1 | **`with` evaluation order.** Each locator or reduction method evaluates its `with` expression exactly once per element, in index order (key order for associative arrays). | 7.12 L9255; 7.12.1 L9267 | `AB-O1_with_evaluation_order` (the whole trace is policy) | llg policy |
 | AB-O2 | **`unique` order.** `unique()`/`unique_index()` keep the first occurrence of each value, in index order. | 7.12.1 L9295-9301 | `AB-O2_unique_order` (`llg` lines are policy, `sorted` lines are portable) | llg policy |
 | AB-O3 | **Killing a woken receiver.** A mailbox message leaves the queue when `put` hands it to a waiting receiver. Killing that receiver before it runs returns the message to the head of the queue. | 9.7 L12630-12634 | `AB-O3_kill_woken_receiver` (`llg` lines are policy, the `conserved` line is portable) | llg policy |
+
+## Repeated waits, intra-assignment timing and event triggers (SIM-014)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S14-D1 | **Real repeat counts round.** A real count of a repeat loop or a repeated event control (standalone, intra-assignment or `->>`) converts to an integer by rounding, ties away from zero; a result of zero or less waits for nothing. | 9.4.5 L12140-12141; 12.7.2 L18159-18160; 6.12.2 L5531-5533 | `S14-D1_real_repeat_count` | llg choice (the repeat clauses do not mention real counts; llg applies the 6.12.2 conversion) |
+| S14-D2 | **Nonpositive and X/Z counts do not wait.** A repeated intra-assignment or `->>` control whose count is zero, negative (signed) or contains X/Z waits for no event: a blocking assignment completes at once; an NBA or nonblocking trigger takes effect in the current time step. | 9.4.5 L12140-12149; 12.7.2 L18159-18160 | `S14-D2_nonpositive_repeat_immediate` | llg choice ("as if there is no repeat construct" is read with the `repeat (-3)` example as "no event is waited for"; the repeat-loop X/Z rule is applied to repeat event controls) |
+| S14-D3 | **`->>` names its event at issue.** A timed nonblocking trigger triggers the event its operand names when the statement executes; rebinding or nulling that event variable while the trigger is pending does not redirect it. | 15.5.1 L20708-20711; 10.4.2 L13070-13071 | `S14-D3_nb_trigger_target_at_issue` | llg choice (15.5.1 does not say when "the referenced event" is resolved; llg treats it like an NBA target) |
+| S14-D4 | **The first `wait_order` event may already be triggered.** An event triggered earlier in the same time step satisfies the first position of `wait_order`; the later events need new triggers. | 15.5.4 L20826; 15.5.3 L20735-20736 | `S14-D4_wait_order_first_triggered` | LRM text (llg's reading of "can wait for the persistent triggered property") |
+| S14-D5 | **No NBA to class properties.** A nonblocking assignment to a class property, with or without timing control, is a compile error with the property name and location. | 6.21 L7007-7008 | `S14-D5_class_property_nba` (negative: compile error, empty `.out`) | LRM text (1800-2009; 1800-2012 relaxed the rule) |
+| S14-D6 | **A failing `wait_order` without `else` continues.** The run-time error is reported like `$error` (an error message on stderr) and the process continues with the next statement. | 15.5.4 L20828-20830 | `S14-D6_wait_order_error_continues` | llg choice (the text does not say whether the error ends the simulation) |
 
 ## Earlier decisions
 

@@ -112,8 +112,8 @@ once in hidden model storage; automatic locals initialize per lexical entry,
 including inherited lifetimes and loop/block scopes.
 Subroutine calls use the typed `IrFunc`, timed or disabling included; a call is
 expanded (`lower_task_inline`) only where `CallShape` says the caller's environment
-is needed: output/inout/ref event formals, event controls reading by-value formals
-or locals, and class/virtual-interface event calls. A `ref` formal read by an event
+is needed: output/inout/ref event formals and event controls reading by-value
+formals or locals; class-method event formals are typed. A `ref` formal read by an event
 control binds a whole-signal actual statically: each distinct actual signal gets one
 cloned task (`task_specialization`, lowered after all call sites); a level wait or
 an explicit control without named events follows a whole-variable actual through
@@ -388,7 +388,15 @@ virtual-interface (§25.9) storage; chandle event expressions reject (§6.14). C
 transitively reject disallowed callback effects/captures. Named/mixed events retain
 identity and atomic registration. `->>` captures delay at issue and queues NBA;
 event/repeat timing uses an independent detached waiter, whose final trigger is
-still NBA. Detached repeat counts remain constant until capture is represented.
+still NBA. Every repeat count (loop, intra-assignment, `->>`) goes through
+`lower_repeat_count`: real counts convert by rounding (SV 6.12.2) and the
+runtime's `sv4_repeat_count` maps X/Z and nonpositive signed counts to zero.
+Blocking delay and event intra-assignment timing share
+`lower_blocking_timed_assignment`: the RHS (or each record leaf, or a container
+element's value) is captured before the wait and the destination store runs
+after it. Event-controlled string/handle NBAs copy the value at issue into a
+detached process frame (`lower_native_event_nba`) that waits through
+`ProcessEventPlan` and then queues the native NBA.
 
 Sequential predicates evaluate clauses once, left-to-right, continuing only on
 definite true. Preserve explicit branches/pattern bindings and short-circuit
