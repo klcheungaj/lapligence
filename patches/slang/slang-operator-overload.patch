@@ -255,10 +255,10 @@ index e283d6d2c..29f8a9b16 100644
      static bool isPossibleExpression(TokenKind kind);
  
 diff --git a/scripts/diagnostics.txt b/scripts/diagnostics.txt
-index 670b3f2ab..42af26f26 100644
+index 670b3f2ab..4932a043f 100644
 --- a/scripts/diagnostics.txt
 +++ b/scripts/diagnostics.txt
-@@ -813,6 +813,10 @@ warning nonstandard-string-concat NonstandardStringConcat "string concatenation
+@@ -813,6 +813,11 @@ warning nonstandard-string-concat NonstandardStringConcat "string concatenation
  warning inc-dec-bit IncDecBit "increment/decrement of a 1-bit operand"
  warning string-int-concat ConcatWithStringInt "cannot mix strings and integers in a concatenation (use a cast if this is desired)"
  warning range-select-reversed RangeSelectReversed "range of selection [{}:{}] from {} is reversed"
@@ -266,6 +266,7 @@ index 670b3f2ab..42af26f26 100644
 +error OverloadFunctionNotFound "operator overload declaration binds '{}', which is not a visible function"
 +error OverloadPrototypeMismatch "function '{}' does not match its operator overload prototype"
 +error OverloadAmbiguous "ambiguous overload of operator '{}'; use a cast to select the result type"
++error OverloadBuiltinLegal "operator '{}' is already legal for the types of this overload prototype and cannot be overloaded"
  
  subsystem Statements
  error ReturnNotInSubroutine "return statement is only valid inside task and function blocks"
@@ -429,7 +430,7 @@ index ce6e371c6..d4886952c 100644
          serializer.write("timingControl", *timingControl);
  }
 diff --git a/source/ast/expressions/CallExpression.cpp b/source/ast/expressions/CallExpression.cpp
-index 18ed6845d..c5293a203 100644
+index 18ed6845d..5901945ee 100644
 --- a/source/ast/expressions/CallExpression.cpp
 +++ b/source/ast/expressions/CallExpression.cpp
 @@ -7,6 +7,8 @@
@@ -456,7 +457,7 @@ index 18ed6845d..c5293a203 100644
  #include "slang/syntax/AllSyntax.h"
  
  namespace slang::ast {
-@@ -924,4 +929,477 @@ void CallExpression::serializeTo(ASTSerializer& serializer) const {
+@@ -924,4 +929,536 @@ void CallExpression::serializeTo(ASTSerializer& serializer) const {
      }
  }
  
@@ -475,6 +476,59 @@ index 18ed6845d..c5293a203 100644
 +            return arity == 1;
 +        default:
 +            return arity == 2;
++    }
++}
++
++// IEEE 1800-2009 11.11: overloading "does not change the meaning of the
++// operators for data types where it is legal to apply them", so the operator
++// that is already legal for a prototype's types "cannot be overloaded" (the
++// float-to-float assignment and float equality of the example). A prototype
++// counts as already legal when the built-in operator accepts its formal types
++// and the built-in result (numeric for arithmetic, a 1-bit integral for
++// comparisons, the target itself for assignment) is assignable to the
++// prototype's result type. Pairs the check cannot judge are left admitted.
++static bool isBuiltinOperatorLegal(TokenKind op, std::span<const Type* const> formals,
++                                   const Type& result) {
++    if (result.isError())
++        return false;
++    for (auto formal : formals) {
++        if (formal->isError())
++            return false;
++    }
++
++    auto& first = *formals[0];
++    auto bothNumeric = [&] {
++        return formals.size() == 2 && first.isNumeric() && formals[1]->isNumeric();
++    };
++    switch (op) {
++        case TokenKind::Equals:
++            return result.isAssignmentCompatible(first);
++        case TokenKind::Plus:
++        case TokenKind::Minus:
++            if (formals.size() == 1)
++                return first.isNumeric() && result.isNumeric();
++            return bothNumeric() && result.isNumeric();
++        case TokenKind::DoublePlus:
++        case TokenKind::DoubleMinus:
++            return first.isNumeric() && result.isNumeric();
++        case TokenKind::Star:
++        case TokenKind::Slash:
++        case TokenKind::DoubleStar:
++            return bothNumeric() && result.isNumeric();
++        case TokenKind::Percent:
++            return formals.size() == 2 && first.isIntegral() && formals[1]->isIntegral() &&
++                   result.isNumeric();
++        case TokenKind::LessThan:
++        case TokenKind::LessThanEquals:
++        case TokenKind::GreaterThan:
++        case TokenKind::GreaterThanEquals:
++            return (bothNumeric() || (first.isString() && formals[1]->isString())) &&
++                   result.isNumeric();
++        case TokenKind::DoubleEquals:
++        case TokenKind::ExclamationEquals:
++            return (bothNumeric() || first.isEquivalent(*formals[1])) && result.isNumeric();
++        default:
++            return false;
 +    }
 +}
 +
@@ -525,6 +579,12 @@ index 18ed6845d..c5293a203 100644
 +        for (auto arg : syntax->as<OverloadDeclarationSyntax>().args)
 +            types.push_back(&comp.getType(*arg, context));
 +        formalTypes = types.copy(comp);
++
++        if (isValidOverloadArity(op, types.size()) &&
++            isBuiltinOperatorLegal(op, *formalTypes, getReturnType())) {
++            scope->addDiag(diag::OverloadBuiltinLegal, location)
++                << LexerFacts::getTokenKindText(op);
++        }
 +    }
 +    return *formalTypes;
 +}

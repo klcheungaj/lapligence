@@ -1280,37 +1280,47 @@ Reproduce with `bufif1 #1 (w, d, e); pulldown (w);`, `d = 0; e = 1'bx;` and
 
 ## Operator-overload update values on oversized or native targets
 
-**Status:** RTL-017 and RTL-104 execute fixed operator overloads (SV §11.11),
-including increment values, once-evaluated targets, relational expected types
-and package overloads. One target class is left.
+**Status:** RTL-017, RTL-104 and SIM-021 execute operator overloads (SV
+§11.11), including increment values, once-evaluated targets, relational
+expected types, package overloads, and native-record and oversized update
+values on the right-hand side of an assignment. Three forms are left.
 
 ### Symptom
 
-An overloaded increment or compound assignment whose value is used
-(`y = x++;`, `y = (x += b);`) or whose target selector has side effects
-(`a[next()]++;`) reports "an overloaded operator update whose value is used or
-whose target selector has side effects requires a target within the
-1048575-bit packed value limit without native members" when the target is
-wider than the packed value limit (a 65,537-element `int` array) or a record
-with a string, real or other native member. Statement forms with
-side-effect-free targets (`x++;`, `x += b;`, and the same updates as `for`
-steps) run for every target.
+These report "an overloaded operator update on a target above the
+1048575-bit packed value limit or with native members yields a value only as
+the right-hand side of an assignment, needs side-effect-free target
+selectors, and has a postfix value only for native records" when the target
+is a record with a string, real, handle or container member, or a fixed value
+wider than the packed value limit (a 65,537-element `int` array):
+
+- a target selector with side effects (`a[next()]++;`, `a[next()] += b;`);
+- an update used as a value anywhere other than the right-hand side of an
+  assignment (`show(x++)`, `while (x++ < lim)`);
+- the postfix value of an oversized target (`y = big++;`).
+
+Statement forms with side-effect-free targets (`x++;`, `x += b;`, `for`
+steps) and `y = x++;`, `y = ++x;`, `y = (x += b);` on native records (and the
+prefix and compound values on oversized targets) run.
 
 ### Cause
 
-These forms lower to the packed `Mutation` expression, which captures the
-target's current value once. Descriptor-backed fixed values and native records
-have no such capture: the statement forms re-read the target as an ordinary
-call argument instead.
+Packed targets lower to the `Mutation` expression, which captures the
+target's current value once. Native records and descriptor-backed fixed
+values have no such capture: SIM-021 runs their assignment-value forms as
+`A = f(A, B)` with the target read again (and a native temporary for a
+postfix value), which needs side-effect-free selectors and a statement
+context.
 
 ### Direction
 
 Give `IrFixedValue` and native record roots a once-resolved read/modify/write
-form whose old value can be kept.
+form whose old value can be kept, usable inside expressions.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/rtl_104/limit_native_value.sv`.
+`tests/fixtures/sim/feature_completion/rtl_104/limit_native_value.sv` and
+`tests/fixtures/sim/feature_completion/sim_021/limit_native_value_argument.sv`.
 
 ## Strict 2001 profile checks grammar and listed semantics
 

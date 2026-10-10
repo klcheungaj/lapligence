@@ -740,3 +740,24 @@ fn s38_d9_sync_abort_new_attempt() {
         include_str!("fixtures/sim/lrm_decisions/S38-D9_sync_abort_new_attempt.out"),
     );
 }
+
+#[test]
+fn s21_d1_builtin_legal_overload() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/S21-D1_builtin_legal_overload.out").is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "S21-D1_builtin_legal_overload",
+        "operator '+' is already legal for the types of this overload prototype and cannot be overloaded",
+    );
+}
+
+#[test]
+fn s21_d2_record_result_overload_admitted() {
+    run_decision(
+        "S21-D2_record_result_overload_admitted",
+        include_str!("fixtures/sim/lrm_decisions/S21-D2_record_result_overload_admitted.out"),
+    );
+}

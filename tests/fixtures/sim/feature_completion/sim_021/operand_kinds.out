@@ -1,0 +1,10 @@
+union 7 1 0
+conv 1.250 0.500
+real 3.750 0.500
+shortreal 3.750 0.750
+record 5.000 1.250 1 0
+neg -5.000 -1.250
+mi 3 xi
+im 4 ix
+mbyte 6 xi
+ms 1 xS

@@ -1,0 +1,9 @@
+post xi 1 x 0
+copy xi changed
+pre xii 2 xii 2
+compound xii+ 7 xii+ 7 1
+element ed 6 e 7
+local Li 11 L 10
+local Lid 10 Lid 10
+big 4 5 4 5
+calls 7

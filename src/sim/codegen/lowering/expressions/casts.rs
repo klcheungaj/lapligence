@@ -114,6 +114,7 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
+        let node = self.overload_operand(node);
         // Callers lower a conversion as an expression. Looking through it for
         // a storage array would erase the cast, even when its result is packed.
         if matches!(self.kind(node), NodeKind::Expr(ExprKind::Cast { .. })) {

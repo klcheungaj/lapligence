@@ -173,6 +173,30 @@ impl<'a> Codegen<'a> {
         Ok(value)
     }
 
+    /// The operand of a cast to its own unpacked aggregate type
+    /// (`T'(e)` where `e` already has type `T`, such as an overload result
+    /// selected by the cast, IEEE 1800-2009 11.11). Such a cast changes no
+    /// value (6.24.1), so it is not a bit-stream cast; any other node is
+    /// returned unchanged.
+    pub(in super::super) fn identity_unpacked_cast_operand(&self, node: NodeId) -> NodeId {
+        let NodeKind::Expr(ExprKind::Cast { operand, .. }) = self.kind(node) else {
+            return node;
+        };
+        let (Some(target), Some(source)) = (
+            self.db.type_descriptor(node),
+            self.db.type_descriptor(*operand),
+        ) else {
+            return node;
+        };
+        if target.id == source.id
+            && matches!(&target.shape, TypeShape::Aggregate(layout)
+                if !matches!(layout.kind, AggregateKind::PackedStruct | AggregateKind::PackedUnion))
+        {
+            return self.identity_unpacked_cast_operand(*operand);
+        }
+        node
+    }
+
     pub(in super::super) fn lower_unpacked_aggregate_assignment(
         &mut self,
         path: &str,
@@ -181,6 +205,7 @@ impl<'a> Codegen<'a> {
         nba: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        let rhs = self.identity_unpacked_cast_operand(rhs);
         if matches!(self.kind(rhs), NodeKind::Expr(ExprKind::Cast { .. }))
             && self.is_dynamic_member_record(lhs)
             && self

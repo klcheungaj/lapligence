@@ -89,7 +89,7 @@ fn native_update_values_report_their_limit() {
     sim_cli::reject_case(
         SUITE,
         "limit_native_value",
-        "an overloaded operator update whose value is used or whose target selector has side effects requires a target within the",
+        "an overloaded operator update on a target above the 1048575-bit packed value limit or with native members yields a value only as the right-hand side of an assignment",
     );
 }
 
