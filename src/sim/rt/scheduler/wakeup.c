@@ -17,6 +17,8 @@ static int expression_qualifies(const llg_expr_event_spec_t* spec) {
 static void wake_proc(llg_proc_t* p) {
     llg_wait_t* w = &p->wait;
     if (w->kind == W_NONE) return;
+    if (p->deferred_last && wait_is_deferred_flush_point(w->kind))
+        p->deferred_flush = 1;
     remove_waiters_entry(w);
     if (w->kind == W_TIME) {
         remove_timed_entry(w);

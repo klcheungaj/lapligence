@@ -285,32 +285,18 @@ static void assertion_kill_actions(llg_concurrent_assertion_t* assertion) {
     }
 }
 
+// $assertkill flushes the selected deferred reports that have not matured
+// (SV 20.11). Matured reports can no longer be flushed (SV 16.4.1), so a
+// kill issued by a Reactive action leaves them to execute.
 static void assertion_kill_deferred(uint64_t types, uint64_t directives,
                                     const char* const* scopes, int count) {
-    llg_deferred_assertion_report_t** link = &g.deferred_assertions;
-    g.deferred_assertion_tail = NULL;
-    while (*link) {
-        llg_deferred_assertion_report_t* report = *link;
-        if (deferred_selected(report->kind, report->label, report->scope,
-                              types, directives, scopes, count)) {
-            *link = report->next;
-            free_deferred_assertion_report(report);
-        } else {
-            g.deferred_assertion_tail = report;
-            link = &report->next;
-        }
-    }
-    llg_region_callback_t** callback = &g.callbacks;
-    while (*callback) {
-        llg_region_callback_t* entry = *callback;
-        llg_deferred_assertion_report_t* report = entry->data;
-        if (entry->callback == deferred_assertion_callback && report &&
+    if (!g.deferred_pending_live) return;
+    for (uint32_t i = 0; i < g.deferred_pending.count; i++) {
+        llg_deferred_assertion_report_t* report = &g.deferred_pending.items[i];
+        if (report->live &&
             deferred_selected(report->kind, report->label, report->scope,
-                              types, directives, scopes, count)) {
-            *callback = entry->next;
-            free_deferred_assertion_report(report);
-            free(entry);
-        } else callback = &entry->next;
+                              types, directives, scopes, count))
+            deferred_report_drop(report);
     }
 }
 

@@ -1543,6 +1543,7 @@ impl Validator<'_> {
             | IrStmt::WaitFork
             | IrStmt::DisableFork
             | IrStmt::DisableTarget { .. }
+            | IrStmt::DeferredAssertionDisable { .. }
             | IrStmt::MonitorEnable(_)
             | IrStmt::WaveFile(_)
             | IrStmt::WaveDumpVars(_)

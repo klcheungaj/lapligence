@@ -603,6 +603,73 @@ fn s28_d8_two_state_random_arguments() {
 }
 
 #[test]
+fn s36_d1_report_per_execution() {
+    run_decision(
+        "S36-D1_report_per_execution",
+        include_str!("fixtures/sim/lrm_decisions/S36-D1_report_per_execution.out"),
+    );
+}
+
+#[test]
+fn s36_d2_flush_point_kinds() {
+    run_decision(
+        "S36-D2_flush_point_kinds",
+        include_str!("fixtures/sim/lrm_decisions/S36-D2_flush_point_kinds.out"),
+    );
+}
+
+#[test]
+fn s36_d3_receiver_at_issue() {
+    run_decision(
+        "S36-D3_receiver_at_issue",
+        include_str!("fixtures/sim/lrm_decisions/S36-D3_receiver_at_issue.out"),
+    );
+}
+
+#[test]
+fn s36_d4_final_procedure_reports() {
+    run_decision(
+        "S36-D4_final_procedure_reports",
+        include_str!("fixtures/sim/lrm_decisions/S36-D4_final_procedure_reports.out"),
+    );
+}
+
+#[test]
+fn s36_d5_kill_spares_matured() {
+    run_decision(
+        "S36-D5_kill_spares_matured",
+        include_str!("fixtures/sim/lrm_decisions/S36-D5_kill_spares_matured.out"),
+    );
+}
+
+#[test]
+fn s36_d6_pending_reports_at_finish() {
+    run_decision(
+        "S36-D6_pending_reports_at_finish",
+        include_str!("fixtures/sim/lrm_decisions/S36-D6_pending_reports_at_finish.out"),
+    );
+}
+
+#[test]
+fn s36_d7_module_item_sensitivity() {
+    run_decision(
+        "S36-D7_module_item_sensitivity",
+        include_str!("fixtures/sim/lrm_decisions/S36-D7_module_item_sensitivity.out"),
+    );
+}
+
+#[test]
+fn s36_d8_dynamic_ref_actual() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!("fixtures/sim/lrm_decisions/S36-D8_dynamic_ref_actual.out").is_empty());
+    sim_cli::reject_case(
+        SUITE,
+        "S36-D8_dynamic_ref_actual",
+        "cannot pass a dynamic variable to ref argument `x`",
+    );
+}
+
+#[test]
 fn s21_d1_builtin_legal_overload() {
     // Negative case: the expected stdout is empty because compilation fails.
     assert!(

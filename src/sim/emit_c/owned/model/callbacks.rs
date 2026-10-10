@@ -239,6 +239,7 @@ fn render_with_frame(
             body,
             ..
         } => {
+            frame.deferred_action = true;
             frame.line("(void)frame;");
             for capture in captures {
                 let storage = capture.storage();

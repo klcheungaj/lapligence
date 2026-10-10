@@ -534,6 +534,9 @@ pub enum IrObjectQuery {
     HandleCapture(IrChandleExpr),
     /// A typed event handle initializer. Legal only in event capture slots.
     EventCapture(IrEventRef),
+    /// A string value copied into an owned string capture slot (deferred
+    /// assertion action arguments, SV 16.4). Legal only in such slots.
+    StringCapture(IrStringExpr),
     StringLen(IrStringExpr),
     StringGetc(IrStringExpr, Box<IrExpr>),
     StringCompare(IrStringExpr, IrStringExpr, bool),
@@ -1371,6 +1374,7 @@ impl IrObjectQuery {
                 super::IrValidationError::new("string", "invalid numeric base"),
             ),
             Self::StringLen(value)
+            | Self::StringCapture(value)
             | Self::StringGetc(value, _)
             | Self::StringAtoi(value, _)
             | Self::StringAtoreal(value)
@@ -1446,6 +1450,7 @@ impl IrObjectQuery {
             }
             Self::EventCapture(_) => {}
             Self::StringLen(value)
+            | Self::StringCapture(value)
             | Self::StringAtoi(value, _)
             | Self::StringAtoreal(value)
             | Self::StringPacked(value) => value.expressions(visit),
@@ -1505,6 +1510,7 @@ impl IrObjectQuery {
             }
             Self::EventCapture(_) => {}
             Self::StringLen(value)
+            | Self::StringCapture(value)
             | Self::StringAtoi(value, _)
             | Self::StringAtoreal(value)
             | Self::StringPacked(value) => value.expressions_mut(visit),

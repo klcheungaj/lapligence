@@ -1989,19 +1989,28 @@ These are bounded implementations, not full verification-infrastructure support.
   condition once with four-state truth and executes the selected admitted action.
   Actions inherit the restrictions of their containing process/subroutine and
   statement kinds. SV §16.3 **[SV-2005]**.
-- 🟨 **Deferred immediate assertions** — `#0` forms retain copied issue-time
-  values, admitted action-time references, same-slot coalescing and Reactive
-  actions; module-level members are represented. The
-  [deferred-action lowerer](../src/sim/codegen/lowering/statements/assertions.rs)
-  rejects function/task/final-block contexts. An action must lower to one
-  supported call (or an empty action); packed/real values and admitted static
-  packed/string references have capture paths. Native-string value arguments,
-  chandle arguments, output/inout copy-out, `$fatal`, `$finish` and `$stop`
-  actions reject. A literal formatting string is not a captured native-string
-  value argument. Output/inout action formals and multi-statement action blocks
-  are prohibited by SV §16.4; their rejection is a legality boundary.
-  Post-2009 `assert final` remains edition-gated and unsupported
-  by this lowerer. SV §16.4 **[SV-2009]**.
+- 🟨 **Deferred immediate assertions** — `assert/assume/cover #0` run in
+  processes, static and automatic tasks and functions called from any number
+  of processes, class methods, programs, final procedures and as module items
+  (always_comb sensitivity, S36-D7). Each execution queues one report on its
+  process's queue with issue-time copies of by-value arguments (packed, real,
+  string, chandle, class handle, packed/unpacked structs, fixed arrays and a
+  method call's receiver, S36-D3); `ref`/`const ref` actuals are read in the
+  Reactive region. Resuming from an event control or wait statement,
+  re-triggering, `disable` of the assertion or of the procedure's outermost
+  scope flush pending reports; Observed matures them and the
+  [deferred-action lowerer](../src/sim/codegen/lowering/statements/assertions.rs)'s
+  single calls (tasks, void functions, display/severity tasks, `$fatal`,
+  `$finish`, `$stop`) execute once in Reactive. `$assertoff` keeps queued
+  reports; `$assertkill` flushes unmatured ones (S36-D5). Final-procedure
+  reports run when the procedure returns (S36-D4)
+  ([sim_036](../tests/fixtures/sim/feature_completion/sim_036/readme.md)).
+  Queue, dynamic/associative array and event value arguments and
+  virtual-interface method actions reject
+  ([known issue](known_issues.md#deferred-assertion-actions-with-container-event-or-virtual-interface-arguments)).
+  Output/inout formals, automatic or dynamic `ref` actuals and multi-statement
+  actions are prohibited by SV §16.4 and stay located errors; post-2009
+  `assert final` remains edition-gated. SV §16.4 **[SV-2009]**.
 
 🟨 **Concurrent assertions** support the following bounded forms (SV ch.16, Annex F):
 

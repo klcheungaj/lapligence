@@ -356,6 +356,10 @@ void llg_disable_target(llg_proc_t* self, uint32_t declaration,
             if (activation->disabled && activation->proc &&
                 activation->proc->wait.kind != W_NONE) {
                 wake_proc(activation->proc);
+                // Resuming to unwind a disable is not an event-control
+                // resumption; only an outermost-scope disable flushes
+                // (llg_deferred_assertion_flush_scope, SV 16.4.4).
+                activation->proc->deferred_flush = 0;
             }
         }
     }

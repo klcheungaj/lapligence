@@ -346,6 +346,7 @@ impl CellEligibility {
             | IrStmt::FinishControl { .. }
             | IrStmt::StopControl { .. }
             | IrStmt::DisableTarget { .. }
+            | IrStmt::DeferredAssertionDisable { .. }
             | IrStmt::DisableFork
             | IrStmt::WaitFork
             | IrStmt::ProgramExit

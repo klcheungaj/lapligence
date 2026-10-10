@@ -47,10 +47,7 @@ static void clocking_copy_observed(void* data);
 static void free_region_callbacks(void) {
     while (g.callbacks) {
         llg_region_callback_t* next = g.callbacks->next;
-        if (g.callbacks->callback == deferred_assertion_callback)
-            free_deferred_assertion_report(
-                (llg_deferred_assertion_report_t*)g.callbacks->data);
-        else if (g.callbacks->callback == clocking_copy_observed)
+        if (g.callbacks->callback == clocking_copy_observed)
             free(g.callbacks->data);
         free(g.callbacks);
         g.callbacks = next;

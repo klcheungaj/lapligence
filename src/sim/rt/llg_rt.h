@@ -905,6 +905,11 @@ int llg_rt_exiting(void);
 // reported request is ignored with a warning. Coroutine-body `$stop` uses
 // llg_arm_stop so it can preserve its exact continuation.
 void llg_rt_request_stop(int verbosity, const char* location);
+// `$stop` as a deferred assertion action (SV 16.4), which runs as a Reactive
+// callback rather than a process turn. Reports the stop and suspends the
+// scheduler after the action returns; the remaining matured reports run when
+// it resumes. During $finish/final draining it only reports.
+void llg_rt_action_stop(int verbosity, const char* location);
 
 enum {
     LLG_STOP_POLICY_RESUME = 0,
@@ -1167,6 +1172,11 @@ int llg_deferred_assertion_enabled(int kind, const char* label, const char* scop
 void llg_deferred_assertion_scoped(int kind, int passed, uint64_t identity,
     const char* label, const char* location, const char* scope,
     llg_deferred_assertion_fn action, llg_frame_t* frame);
+// `disable` of a deferred assertion cancels its pending reports; `disable`
+// of a procedure's outermost scope flushes the executing processes' report
+// queues (SV 16.4.4). Emitted before the matching llg_disable_target.
+void llg_deferred_assertion_cancel(uint64_t identity);
+void llg_deferred_assertion_flush_scope(uint32_t declaration, uint32_t instance);
 void llg_deferred_assertion(int kind, int passed, uint64_t identity,
                             const char* label, const char* location,
                             llg_deferred_assertion_fn action,

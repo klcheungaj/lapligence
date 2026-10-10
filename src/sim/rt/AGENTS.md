@@ -430,10 +430,16 @@ uses exact pointer equality, and must be updated on removal/reset/teardown. This
 private layout/additive API leaves process ABI 3 and value ABI 4 unchanged;
 embedded runtime-content hashing invalidates earlier cache archives.
 
-Deferred immediate assertions keep issue-time sampled values;
-Reactive refs resolve at action time, coalesced per process. OFF prevents new
-checks but does not cancel pending actions; KILL/flush does. Drain actions before
-cleanup.
+Deferred immediate assertions keep issue-time sampled values; Reactive refs
+resolve at action time. Every execution appends one report to its process's
+queue (`deferred_assertions.c`: one retained pending array, per-process chains
+through `llg_proc_t::deferred_last`); resuming from an event control or wait
+statement (`deferred_flush`, set by `wake_proc`, applied before `llg_co_run`),
+an outermost-scope disable and a specific-assertion disable flush pending
+reports. Observed matures reports into a retained array run by one Reactive
+callback in issue order. OFF prevents new checks but does not cancel pending
+actions; KILL flushes only unmatured reports. Drain actions before cleanup and
+after each final procedure. These fields fit existing `llg_proc_t` padding.
 
 Sequence tokens own a transition, local snapshot and retained first-match scope
 chain. Each scope belongs to an invocation; completion cannot discard outer

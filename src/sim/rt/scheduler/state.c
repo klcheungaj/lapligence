@@ -68,25 +68,40 @@ typedef struct llg_region_callback {
     void* data;
 } llg_region_callback_t;
 
-// One deferred immediate-assertion result remains pending until the
-// Observed-to-Reactive handoff. Repeated evaluations of one assertion from
-// one process in a single time slot replace this record, suppressing transient
-// glitches while retaining the last sampled condition/action. The owner is a
-// stable per-run process identity rather than a process pointer, because a
-// completed process can be reclaimed before the Reactive callback runs.
+// One pending or matured deferred immediate-assertion report (SV 16.4.1).
+// Each execution of `assert #0` that has something to report appends one
+// record to the process's deferred assertion report queue. All pending
+// records of a time-step pass live in one issue-ordered array; `owner_prev`
+// links the records of one process (index + 1, 0 = none) so a flush point
+// (SV 16.4.2) clears that process's queue without scanning the others. The
+// owner is a stable per-run process identity rather than a process pointer,
+// because a completed process can be reclaimed before its reports execute.
 typedef struct llg_deferred_assertion_report {
-    struct llg_deferred_assertion_report* next;
     uint64_t owner;
-    uint64_t time;
-    int kind;
-    int passed;
     uint64_t identity;
     const char* label;
     const char* location;
     const char* scope;
     llg_deferred_assertion_fn action;
     llg_frame_t* frame;
+    // Outermost named activation of the issuing process at issue time, so a
+    // `disable` of that scope can flush the report even after the process
+    // has left the block (SV 16.4.4). Zero when it has none.
+    uint32_t scope_declaration;
+    uint32_t scope_instance;
+    uint32_t owner_prev;
+    uint8_t kind;
+    uint8_t passed;
+    uint8_t live; // cleared when flushed, cancelled or killed before maturing
 } llg_deferred_assertion_report_t;
+
+// Growable report array; capacity is retained across time steps so a steady
+// stream of reports allocates nothing.
+typedef struct llg_deferred_report_queue {
+    llg_deferred_assertion_report_t* items;
+    uint32_t count;
+    uint32_t capacity;
+} llg_deferred_report_queue_t;
 
 // Deferred assertions can be controlled before their first execution. Retain
 // selector rules, not only entries for reports that happen to exist already.
@@ -492,8 +507,13 @@ typedef struct {
     llg_assertion_clock_event_t* assertion_clock_event_pool;
     llg_deferred_trigger_t* deferred_triggers;
     llg_deferred_trigger_t* deferred_trigger_tail;
-    llg_deferred_assertion_report_t* deferred_assertions;
-    llg_deferred_assertion_report_t* deferred_assertion_tail;
+    // Pending deferred assertion reports of the current pass and the
+    // matured reports awaiting their Reactive execution (SV 16.4.1).
+    llg_deferred_report_queue_t deferred_pending;
+    llg_deferred_report_queue_t deferred_matured;
+    uint32_t deferred_pending_live;
+    uint32_t deferred_matured_next;
+    int deferred_matured_scheduled;
     uint64_t next_process_identity;
     int in_deferred_action;
     // Set while Postponed display evaluators run. Lowering admits only

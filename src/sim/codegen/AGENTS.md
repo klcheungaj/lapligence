@@ -655,8 +655,13 @@ their body per literal copy (an unbounded bound loops the last copy), within
 `SEQUENCE_STATE_BUDGET`; never introduce a fixed unroll depth for `$`.
 Assignments to locals inside join operands and differently clocked join
 operands stay explicit rejections (SIM-039, ADV-013). Deferred
-assertions retain issue-time values and Reactive actions under the single-call
-contract, rejecting unowned automatic/dynamic refs or timing/control actions.
+assertions retain issue-time values (packed, real, string, chandle/class handle
+and method receiver captures) and Reactive actions under the single-call
+contract in process, subroutine, class-method and final contexts, rejecting
+automatic/dynamic ref actuals, timing actions and container/event/virtual-
+interface action arguments. `disable` of a labeled deferred assertion or of a
+procedure's outermost block also emits `DeferredAssertionDisable` (SV 16.4.4).
+A module-item deferred assertion uses always_comb sensitivity (SV 16.4.3).
 Mailboxes preserve typed copy/identity semantics and delegate waits/cancellation to
 runtime queues. Aggregate messages (records, unpacked arrays, queues, dynamic
 arrays) go through a lexical native value of the message type

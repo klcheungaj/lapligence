@@ -197,6 +197,19 @@ independent transcription in
 | S28-D8 | **X/Z in 2-state random arguments read as 0.** `srandom`, `$urandom` seeds and `$urandom_range` bounds are 2-state `int`/`int unsigned` formals; X/Z bits read as 0. Real seeds round. | 18.13.1 L31018; 18.13.2 L31044-31045; 18.13.3 L31086; 6.11.2 L5489-5490 | `S28-D8_two_state_random_arguments` | LRM text |
 | S28-D9 | **A foreign state string is a run-time error.** `set_randstate` with a string not produced by llg's `get_randstate` prints `invalid randstate string`, leaves the stream unchanged, lets the run continue and makes it exit with status 1. | 18.13.5 L31117-31119 | no portable case: the text says the result is undefined; covered by the [sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md) `neg_randstate_invalid` fixture | llg choice |
 
+## Deferred immediate assertions (SIM-036)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S36-D1 | **One report per execution.** Every execution of a deferred assertion queues its own report with its own issue-time arguments; only a flush point clears the process's queue. A loop that fails three times reports three times. | 16.4.1 L21243-21250; 16.4.2 L21276-21281 | `S36-D1_report_per_execution` | LRM text (llg formerly kept only the last result of one assertion per process and time step) |
+| S36-D2 | **Flush points.** Resuming after `wait (...)`, `@(...)`, `wait fork` or `wait_order` flushes the whole queue of the process, as does re-triggering an `always_comb`/`always_latch`. A delay control (`#0`, `#n`), a fork-join and blocking built-in methods (semaphore, mailbox, process `await`) are not flush points. | 16.4.2 L21276-21281 | `S36-D2_flush_point_kinds` | LRM text; the exclusions are llg's reading of "event control or wait statement" |
+| S36-D3 | **Method-call receiver at issue time.** A method-call action runs on the object the handle referred to when the assertion executed. | 16.4 L21220-21226; 16.4.1 L21244-21246 | `S36-D3_receiver_at_issue` | llg choice (the text covers arguments only) |
+| S36-D4 | **Final procedures.** A report queued by a final procedure executes, with its issue-time arguments, when that final procedure returns. | 9.2.3 L11256-11259; 16.4.1 L21262-21265 | `S36-D4_final_procedure_reports` | llg choice (no Observed region follows the finals; the text is silent) |
+| S36-D5 | **`$assertkill` spares matured reports.** A kill flushes only reports that have not matured. When a Reactive action calls `$assertkill`, the other matured reports of the step still execute. | 20.11 L35054-35057; 16.4.1 L21263-21264 | `S36-D5_kill_spares_matured` | LRM text (llg's reading of "currently executing") |
+| S36-D6 | **Reports pending at `$finish` execute.** Reports queued in the step that calls `$finish` (or issued before an action's `$finish`/`$fatal`) execute in issue order before the final procedures. | 20.2 L34119 (silent) | `S36-D6_pending_reports_at_finish` | llg policy (existing behaviour, now recorded; contrast S25-D5) |
+| S36-D7 | **Module-item sensitivity.** A deferred assertion used as a module item behaves as an `always_comb`: it re-executes when its condition or its action's arguments change, and the re-execution flushes the earlier report. | 16.4.3 L21341-21342; 9.2.2.2.1 L11184-11186 | `S36-D7_module_item_sensitivity` | LRM text (llg formerly watched only the condition) |
+| S36-D8 | **Dynamic ref actuals.** An element of a dynamic array, queue or associative array (like a class property) passed to a `ref`/`const ref` action formal is a compile error. | 16.4 L21226-21227; 6.21 L7007-7008 | `S36-D8_dynamic_ref_actual` (negative: compile error, empty `.out`) | LRM text |
+
 ## Earlier decisions
 
 These predate the register. Their evidence lives in the feature fixtures named

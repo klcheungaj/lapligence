@@ -10,6 +10,9 @@ pub(super) enum CapturedValue {
     Shared(String, u32),
     /// The address of a string copied into the frame.
     String(String),
+    /// A string evaluated for the capture; copied into the frame, then
+    /// released by the issuing frame.
+    OwnedString(super::native::NativeValue),
 }
 
 fn check_capture(storage: StorageRef) -> Result<(), String> {
@@ -80,6 +83,13 @@ impl Frame<'_, '_> {
             if storage.kind() == StorageKind::String
                 && storage.ownership() == StorageOwnership::Owned
             {
+                if let IrExprKind::ObjectQuery(query) = initial.kind() {
+                    if let IrObjectQuery::StringCapture(value) = query.as_ref() {
+                        let value = self.string(value)?;
+                        values.push((storage, CapturedValue::OwnedString(value)));
+                        continue;
+                    }
+                }
                 let IrExprKind::LocalRead(name) = initial.kind() else {
                     return Err("string fork capture requires a local source".to_owned());
                 };
@@ -197,6 +207,14 @@ impl Frame<'_, '_> {
                     "llg_frame_alias_slot({access}, {}u, {frame}, {slot}u);",
                     storage.slot()
                 )),
+                CapturedValue::OwnedString(value) => {
+                    self.line(format!(
+                        "llg_frame_capture_string({access}, {}u, {});",
+                        storage.slot(),
+                        value.address
+                    ));
+                    self.native_discard(value);
+                }
                 CapturedValue::String(address) => self.line(format!(
                     "llg_frame_capture_string({access}, {}u, {address});",
                     storage.slot()
@@ -264,6 +282,17 @@ impl Frame<'_, '_> {
             return Ok(());
         }
         if storage.kind() == StorageKind::String {
+            if let IrExprKind::ObjectQuery(query) = initial.kind() {
+                if matches!(query.as_ref(), IrObjectQuery::StringCapture(_)) {
+                    let address = self.declare(
+                        "llg_string_t*",
+                        "capture_string",
+                        format!("llg_frame_string_address({source}, {}u)", storage.slot()),
+                    );
+                    self.bind_native(name, address, NativeKind::String);
+                    return Ok(());
+                }
+            }
             // A captured string keeps its source local's name, so the
             // branch's string reads and writes resolve unchanged.
             let IrExprKind::LocalRead(local) = initial.kind() else {

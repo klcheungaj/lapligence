@@ -55,6 +55,8 @@ static int run_region_queue(llg_region_t region) {
             if (LLG_CO_UNLIKELY(llg_gc_pending)) gc_safe_point();
         } else {
             g.last_process_name = process->name;
+            if (LLG_CO_UNLIKELY(process->deferred_flush))
+                deferred_resume_flush(process);
             process->region = region;
             g.current = process;
             g.process_turn_active = 1;
@@ -234,7 +236,7 @@ static int drain_reactive_set(void) {
         // A deferred assertion can itself be evaluated by a Reactive
         // callback. Keep that newly coalesced report in the same Reactive
         // fixed-point pass, after the current queue has drained.
-        if (g.deferred_assertions) {
+        if (g.deferred_pending.count) {
             flush_deferred_assertions();
             if (g.finish) return 0;
             continue;
@@ -356,6 +358,10 @@ void llg_rt_run_finals(void) {
         register_proc(&process);
         g.current = &process;
         llg_finals[i].fn();
+        // A final procedure is never suspended and no Observed region
+        // follows it; its deferred reports execute when it returns (llg
+        // policy S36-D4).
+        run_deferred_assertions_now();
         g.current = NULL;
         if (process.wait.kind != W_NONE) {
             fprintf(stderr,
