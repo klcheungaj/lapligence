@@ -1107,6 +1107,7 @@ fn opt_in_tree_templates_replace_checked_fresh_configures() {
         eprintln!("SKIP: temporary directory not eligible for templates: {text}");
         return;
     }
+    // A rejection names its first differing files and lines (template_reason).
     assert_eq!(templates, expected, "{text}");
     for line in &lines[2..] {
         assert_eq!(
@@ -1156,6 +1157,12 @@ fn opt_in_tree_templates_replace_checked_fresh_configures() {
     assert_eq!(
         field(lines[5], "template").as_deref(),
         Some("failed-build"),
+        "{text}"
+    );
+    // The record says why the key stopped using templates.
+    assert_eq!(
+        field(lines[5], "template_reason").as_deref(),
+        Some("a build from the template failed where a configured tree built"),
         "{text}"
     );
     assert_eq!(field(lines[6], "template"), None, "{text}");

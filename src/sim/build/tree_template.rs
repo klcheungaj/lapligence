@@ -93,16 +93,25 @@ enum State {
 pub(super) enum Outcome {
     Captured,
     Verified,
-    Rejected,
+    /// The reason, as the `rejected` marker records it.
+    Rejected(String),
     Unchanged,
 }
 
 impl Outcome {
+    /// Why the key was rejected, for the timing record.
+    pub(super) fn reason(&self) -> Option<&str> {
+        match self {
+            Outcome::Rejected(reason) => Some(reason),
+            _ => None,
+        }
+    }
+
     pub(super) fn note(&self) -> &'static str {
         match self {
             Outcome::Captured => "captured",
             Outcome::Verified => "verified",
-            Outcome::Rejected => "rejected",
+            Outcome::Rejected(_) => "rejected",
             Outcome::Unchanged => "staged",
         }
     }
@@ -203,12 +212,9 @@ impl Plan {
                     }
                     Some(_) => Outcome::Unchanged,
                     None => {
-                        write_marker(
-                            &self.entry,
-                            "rejected",
-                            &format!("tree files are not plain text\n{}", self.key),
-                        );
-                        Outcome::Rejected
+                        let reason = "tree files are not plain text".to_owned();
+                        write_marker(&self.entry, "rejected", &format!("{reason}\n{}", self.key));
+                        Outcome::Rejected(reason)
                     }
                 }
             }
@@ -225,16 +231,12 @@ impl Plan {
                     write_marker(&self.entry, "ready", &self.key);
                     Outcome::Verified
                 } else {
-                    write_marker(
-                        &self.entry,
-                        "rejected",
-                        &format!(
-                            "template differs from a real configure: {}\n{}",
-                            differences.join("; "),
-                            self.key
-                        ),
+                    let reason = format!(
+                        "template differs from a real configure: {}",
+                        differences.join("; ")
                     );
-                    Outcome::Rejected
+                    write_marker(&self.entry, "rejected", &format!("{reason}\n{}", self.key));
+                    Outcome::Rejected(reason)
                 }
             }
         }
@@ -672,6 +674,48 @@ mod tests {
         assert_eq!(
             rewritten.files["build.ninja"],
             b"cmake_ninja_workdir = C$:\\t\\llg-2f-3\\sim\\tb\\build\\\ninclude C:/t/llg-2f-3/sim/tb/x.cmake\ncd /D C:\\t\\llg-2f-3\\sim\\tb\\build\n"
+        );
+    }
+
+    /// A Windows donor tree in every spelling CMake and Ninja use, rewritten
+    /// for a target whose name has another length, matches the target's real
+    /// tree exactly; a spelling the template does not cover (a lower-case
+    /// drive) is a named difference, never silently accepted.
+    #[test]
+    fn windows_trees_compare_exactly_and_name_each_difference() {
+        let windows_tree = |root: &str| {
+            let forward = root.replace('\\', "/");
+            let escaped = root.replacen(':', "$:", 1);
+            tree(&[
+                (
+                    "CMakeCache.txt",
+                    &format!("CMAKE_CACHEFILE_DIR:INTERNAL={forward}/build\nCMAKE_HOME_DIRECTORY:INTERNAL={forward}\n"),
+                ),
+                (
+                    "build.ninja",
+                    &format!("cmake_ninja_workdir = {escaped}\\build\\\nbuild CMakeFiles\\sim.dir\\model.c.obj: C_COMPILER__sim {escaped}\\model.c\n  command = cmake.exe -S{root} -B{root}\\build\n"),
+                ),
+                (
+                    "CMakeFiles/TargetDirectories.txt",
+                    &format!("{forward}/build/CMakeFiles/sim.dir\n"),
+                ),
+            ])
+        };
+        let first = r"C:\Users\runneradmin\AppData\Local\Temp\llg-22f8-0\first";
+        let second = r"C:\Users\runneradmin\AppData\Local\Temp\llg-22f8-0\second";
+        let template = Template::capture(&windows_tree(first), &spellings(first)).unwrap();
+        let expected = template.tree_for(&spellings(second)).expect("same pattern");
+        assert!(tree_differences(&expected, &windows_tree(second)).is_empty());
+
+        let mut lower = windows_tree(second);
+        lower.files.insert(
+            "CMakeFiles/TargetDirectories.txt".to_owned(),
+            b"c:/Users/runneradmin/AppData/Local/Temp/llg-22f8-0/second/build/CMakeFiles/sim.dir\n"
+                .to_vec(),
+        );
+        assert_eq!(
+            tree_differences(&expected, &lower),
+            ["CMakeFiles/TargetDirectories.txt: line 1: `C:/Users/runneradmin/AppData/Local/Temp/llg-22f8-0/second/build/CMakeFiles/sim.dir` vs `c:/Users/runneradmin/AppData/Local/Temp/llg-22f8-0/second/build/CMakeFiles/sim.dir`"]
         );
     }
 

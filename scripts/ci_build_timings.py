@@ -70,6 +70,9 @@ def summarize(records):
             configure_text = f"{configure[3]}ms" if configure else "none"
             out.append(f"template={template}: builds={len(group)} configure median={configure_text} "
                        f"total median={total[3]}ms")
+    reasons = Counter(r["template_reason"] for r in records if r.get("template_reason"))
+    for reason, count in sorted(reasons.items()):
+        out.append(f"template rejected ({count}): {reason}")
     return "\n".join(out)
 
 

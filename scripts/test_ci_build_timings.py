@@ -47,6 +47,14 @@ class BuildTimingsTest(unittest.TestCase):
         template = next(line for line in text.splitlines() if line.startswith("template "))
         self.assertEqual(template.split()[1:3], ["2", "0.0"])
 
+    def test_template_rejection_reasons_are_listed(self):
+        lines = LINES + [
+            "llg-build\tresult=ok\ttotal_ms=1300\ttemplate=rejected\ttemplate_reason=template differs from a real configure: CMakeCache.txt: line 3: `a` vs `b`\tdir=C:\\x",
+        ]
+        text = timings.summarize(timings.parse(lines))
+        self.assertIn("template: -=3, rejected=1", text)
+        self.assertIn("template rejected (1): template differs from a real configure: CMakeCache.txt: line 3: `a` vs `b`", text)
+
     def test_missing_file_is_not_an_error(self):
         with tempfile.TemporaryDirectory() as directory:
             output = io.StringIO()
