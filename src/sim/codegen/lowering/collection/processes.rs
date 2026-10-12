@@ -1891,7 +1891,7 @@ impl<'a> Codegen<'a> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let (body_stmts, mut pre_fns, shape) = {
-            let mut ctx = EmitCtx::new(self, path.to_string(), inst, "0", None, None, is_final);
+            let mut ctx = EmitCtx::new(self, path.to_string(), inst, "0", None, is_final);
             ctx.process_kind = always_type;
             let mut body_stmts = pattern_decls;
             body_stmts.extend(ctx.lower_stmt(stmt)?);

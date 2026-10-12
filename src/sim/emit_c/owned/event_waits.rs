@@ -213,9 +213,9 @@ impl Frame<'_, '_> {
             }
         }
         let mut prepared = Vec::new();
-        // An evaluator copy of a local that lives in a shared frame cell (as
-        // in a call-site expansion whose `ref` actual is such a local) would
-        // miss other processes' stores: alias the cell and subscribe to it.
+        // An evaluator copy of a local that lives in a shared frame cell
+        // would miss other processes' stores: alias the cell and subscribe
+        // to it.
         let mut shared_reads: HashMap<_, Vec<String>> = HashMap::new();
         for context in &contexts {
             let mut values = self.prepare_captures(
@@ -276,8 +276,11 @@ impl Frame<'_, '_> {
                 IrWaitSrc::RefFormal { index, real: true } => {
                     fields.push(format!(".real_sig = r{index}, .real = 1"));
                 }
+                // The runtime fills the whole descriptor (see
+                // `llg_ref_wait_spec`).
                 IrWaitSrc::RefFormal { index, real: false } => {
-                    fields.push(format!(".sig = llg_ref_dependency(r{index})"));
+                    entries.push(format!("llg_ref_wait_spec(r{index}, {edge})"));
+                    continue;
                 }
                 IrWaitSrc::NativeRefFormal {
                     index,
@@ -311,8 +314,7 @@ impl Frame<'_, '_> {
                     if let Some(cells) = context_for(model, eval)
                         .and_then(|context| shared_reads.get(&context.frame()))
                     {
-                        // A read can already name the cell (an expanded `ref`
-                        // formal bound to a shared automatic).
+                        // A read can already name the cell.
                         for cell in cells {
                             if !dependencies.contains(cell) {
                                 dependencies.push(cell.clone());

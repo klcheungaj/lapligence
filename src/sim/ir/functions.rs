@@ -361,8 +361,10 @@ pub struct IrFunc {
     pub(in crate::sim) c_name: String,
     /// Runtime diagnostic spelling, independent of the internal C symbol.
     pub(in crate::sim) diagnostic_name: Option<String>,
-    /// The retained definition is a lowering template whose body is expanded
-    /// into each caller. It is not an independently callable execution frame.
+    /// The retained definition is only a lowering template: every call
+    /// reaches a specialization of it (an open-array DPI import, or a task
+    /// waiting on a native record `ref` formal). It is not an independently
+    /// callable execution frame.
     pub(in crate::sim) inline_expanded: bool,
     /// Automatic subprograms use fresh C locals per call; static subprograms
     /// retain their return/local storage across calls.
@@ -481,7 +483,8 @@ impl IrFunc {
             .as_deref()
             .unwrap_or("unnamed function")
     }
-    /// Whether calls expand this definition into their owning execution body.
+    /// Whether the definition is only a template that every call reaches
+    /// through a specialization.
     pub fn is_inline_expanded(&self) -> bool {
         self.inline_expanded
     }

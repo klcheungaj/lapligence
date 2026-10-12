@@ -96,8 +96,10 @@ impl Frame<'_, '_> {
     pub(super) fn dependency(&mut self, dependency: &IrDependency) -> Result<String, String> {
         Ok(match dependency {
             IrDependency::RefFormal { index, real: true } => format!("{{ .real = r{index} }}"),
-            IrDependency::RefFormal { index, real: false } => {
-                format!("{{ .sig = llg_ref_dependency(r{index}) }}")
+            // A packed descriptor may name several storages; only the
+            // dependency arm expands it (`wait_any`).
+            IrDependency::RefFormal { real: false, .. } => {
+                return Err(pending("a packed `ref` formal outside a dependency wait"))
             }
             // A string carries its own change marker (null for storage that
             // publishes none, such as an unshared activation local).
@@ -260,7 +262,47 @@ impl Frame<'_, '_> {
                 region.runtime_symbol()
             ));
         }
-        if sens.is_empty() {
+        // Packed `ref` descriptors expand into every storage they name when
+        // the wait arms.
+        let references = sens
+            .iter()
+            .filter_map(|item| match item {
+                IrDependency::RefFormal { index, real: false } => Some(format!("r{index}")),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !references.is_empty() {
+            let values = sens
+                .iter()
+                .filter(|item| !matches!(item, IrDependency::RefFormal { real: false, .. }))
+                .map(|item| self.dependency(item))
+                .collect::<Result<Vec<_>, _>>()?;
+            let array = if values.is_empty() {
+                "NULL".to_owned()
+            } else {
+                self.arm_array(
+                    "llg_wait_dependency_t",
+                    "dependencies",
+                    values.len(),
+                    &values.join(", "),
+                )
+            };
+            let count = references.len();
+            let references = self.arm_array(
+                "const llg_ref_t*",
+                "references",
+                count,
+                &references.join(", "),
+            );
+            let event = i32::from(operation != SuspensionOperation::ConditionWait);
+            self.await_arm(
+                operation,
+                format!(
+                    "llg_arm_ref_dependencies(self, {array}, {}, {references}, {count}, {event})",
+                    values.len()
+                ),
+            )?;
+        } else if sens.is_empty() {
             self.await_arm(operation, "llg_arm_any(self, NULL, 0)")?;
         } else {
             let values = sens

@@ -20,8 +20,13 @@ static void llg_queue_reserve(llg_queue_t* queue, size_t needed) {
     queue->capacity = capacity;
 }
 
+/* `dependency` is the queue's contents marker, which a `ref` wait on the
+ * cell follows (llg_ref_wait_spec); writes to a removed element's cell
+ * publish it too. Destroying the queue clears it. */
 struct llg_queue_cell {
     llg_queue_t* owner;
+    sv4_t* dependency;
+    llg_container_notify_fn notify;
     struct llg_queue_cell* next;
     uint64_t identity;
     size_t refs;
@@ -66,6 +71,10 @@ void llg_queue_init(llg_queue_t* queue, uint32_t element_width,
 }
 
 void llg_queue_destroy(llg_queue_t* queue) {
+    for (struct llg_queue_cell* cell = queue->references; cell; cell = cell->next) {
+        cell->dependency = NULL;
+        cell->notify = NULL;
+    }
     llg_queue_disconnect(queue, 0);
     sv4_destroy_array(queue->data, queue->size);
     free(queue->data);

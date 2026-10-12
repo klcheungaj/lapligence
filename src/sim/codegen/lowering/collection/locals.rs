@@ -909,8 +909,8 @@ impl<'a> Codegen<'a> {
             .map(|target| {
                 self.capture_source(*target)
                     .or_else(|| {
-                        // A subroutine string (such as an expansion's copy of a
-                        // string formal) is copied into the context.
+                        // A subroutine string or handle local is copied into
+                        // the context.
                         let (name, kind) = self
                             .event_string_local(*target)
                             .map(|name| (name, StorageKind::String))

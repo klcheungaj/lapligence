@@ -7,9 +7,7 @@ impl EmitCtx<'_, '_> {
     /// Lower a `task_call` statement (or a function call used as a statement).
     /// Tasks and functions become IR calls with caller-side temps for output
     /// formals; timed callees are stackless coroutines and a call that may
-    /// disable is followed by a cancellation check that skips copy-out. Only
-    /// the constructs named by `subroutine_requires_inline` are expanded at
-    /// the call site.
+    /// disable is followed by a cancellation check that skips copy-out.
     pub(super) fn lower_task_call(
         &mut self,
         h: NodeId,
@@ -90,14 +88,11 @@ impl EmitCtx<'_, '_> {
             class: receiver,
             virtual_interface: virtual_call,
         };
-        // Remaining expansions (see `CallShape`): unpacked aggregate `ref`
-        // formals read by an event control or wait, and waited `ref` formals
-        // whose actual is a container element or an unpacked-structure
-        // member, which have no whole-variable descriptor. Event, string and
-        // handle formals of every direction, including those of class
-        // methods, take the typed path.
+        // Every call reaches the typed body (see `CallShape`): a waited
+        // `ref` formal whose actuals are whole module signals selects a
+        // specialization that binds them; any other actual is followed
+        // through its descriptor.
         let shape = self.cg.call_shape(ft, callee_inst);
-        let mut expand = shape.inline_only;
         // Module, static and block records bound to native record `ref`
         // formals select a specialization (`record_refs`).
         let records = self.cg.record_ref_bindings(&formals, &bound);
@@ -105,27 +100,18 @@ impl EmitCtx<'_, '_> {
         self.cg
             .reject_method_record_refs(&self.path, ft, &records, method)?;
         let mut specialized = None;
-        if !expand && !shape.static_refs.is_empty() {
-            match self.static_ref_actuals(&formals, &bound, &shape.static_refs, &records)? {
-                Some(statics) => {
-                    specialized = Some(self.cg.task_specialization(
-                        ft,
-                        callee_inst,
-                        statics,
-                        records.clone(),
-                    )?);
-                }
-                // Whole-variable actuals are followed through their
-                // descriptors by the typed body (see `CallShape`).
-                None if shape.bound_refs.is_empty()
-                    && shape
-                        .static_refs
-                        .iter()
-                        .all(|index| self.cg.whole_variable_actual(bound[*index].expr)) => {}
-                None => expand = true,
+        if !shape.static_refs.is_empty() {
+            if let Some(statics) =
+                self.static_ref_actuals(&formals, &bound, &shape.static_refs, &records)?
+            {
+                specialized =
+                    Some(
+                        self.cg
+                            .task_specialization(ft, callee_inst, statics, records.clone())?,
+                    );
             }
         }
-        if !expand && specialized.is_none() && !records.is_empty() {
+        if specialized.is_none() && !records.is_empty() {
             let template = self
                 .cg
                 .func_meta
@@ -142,31 +128,17 @@ impl EmitCtx<'_, '_> {
                 method,
             )?);
         }
-        if expand
-            && formals.iter().any(|(formal, _)| {
-                self.cg.is_native_declaration(*formal) || self.cg.is_subroutine_container(*formal)
-            })
-        {
+        if specialized.is_none() && self.cg.waits_on_record_ref(ft, callee_inst) {
+            // The body reads the record's leaves, which only a module,
+            // static or procedural-block actual binds (SIM-008).
+            let node = self.cg.node(h);
             return Err(format!(
-                "task `{name}` with native record or container formals needs caller-environment expansion, which is not supported in `{}`",
-                self.path
-            ));
-        }
-        if expand && method {
-            return Err(format!(
-                "method `{name}` waits on a `ref` formal of unpacked aggregate type, or one bound to a container element or an unpacked-structure member, which needs caller-environment expansion; not supported in `{}` (SIM-009)",
+                "task `{name}` waits on a native record `ref` formal, so each of its record actuals must be a module, static or procedural-block record (SIM-009) at {}:{}:{} in `{}`",
+                node.file.as_deref().unwrap_or("<unknown>"),
+                node.line,
+                node.col,
                 self.cg.source_path(&self.path)
             ));
-        }
-        if expand {
-            return self.lower_task_inline(
-                ft,
-                callee_inst,
-                h,
-                &formals,
-                &bound,
-                call_receiver.class,
-            );
         }
         for &index in &shape.native_refs {
             let actual = bound[index].expr;
@@ -210,9 +182,9 @@ impl EmitCtx<'_, '_> {
 
     /// The whole-signal actuals of the `ref` formals `needed` at one call, or
     /// `None` when any of them cannot be bound statically (a caller local, a
-    /// select or an array element) or the call would not be accepted by the
-    /// expansion either, which then reports the precise error. A native
-    /// record formal is bound by its entry in `records` instead.
+    /// select, an element or a member), so the typed body follows the
+    /// descriptors instead. A native record formal is bound by its entry in
+    /// `records` instead.
     fn static_ref_actuals(
         &mut self,
         formals: &[(NodeId, bool)],
@@ -788,788 +760,15 @@ impl EmitCtx<'_, '_> {
         }
     }
 
-    /// Lower a task body inlined at its call site: the task's io_decls are
-    /// bound to the caller's argument expressions (writes go straight to the
-    /// bound actuals through the func-context remap), locals get fresh names,
-    /// and the body lowers under the inline context. The remaining cases need
-    /// the caller's environment; every other call, timed or disabling
-    /// included, uses the typed `IrFunc` path.
-    ///
-    /// - A `ref` formal read by an event control or wait whose type is an
-    ///   unpacked aggregate, or whose actual at this call is a container
-    ///   element or an unpacked-structure member: the waiting code needs the
-    ///   actual's dependencies (`arg_dependencies`), which a shared body
-    ///   cannot know. A whole-signal actual calls a specialization instead.
-    fn lower_task_inline(
-        &mut self,
-        ft: NodeId,
-        callee_inst: NodeId,
-        h: NodeId,
-        formals: &[(NodeId, bool)],
-        bound: &[BoundArg],
-        class_receiver: Option<IrChandleExpr>,
-    ) -> Result<IrStmt, String> {
-        let tname = self.cg.node(ft).name.clone();
-        let activation_target = self.cg.activation_target(ft)?;
-        let automatic = matches!(
-            self.cg.kind(ft),
-            NodeKind::FuncTask {
-                automatic: true,
-                ..
-            }
-        );
-        if let Some(inl) = &self.inline {
-            if inl.chain.contains(&tname) {
-                return Err(format!(
-                    "recursive delay-bearing task `{tname}` is not supported"
-                ));
-            }
-        }
-        let body = self
-            .cg
-            .func_body(ft)
-            .ok_or_else(|| format!("task `{tname}` without a body"))?;
-
-        // Resolve each declaration's lifetime independently: automatic locals
-        // get fresh C names per inline site, while static locals map to
-        // model-global storage below even in an automatic task.
-        let mut locals: HashMap<NodeId, (String, u32, bool, bool, bool)> = HashMap::new();
-        let mut chandle_locals: HashMap<NodeId, String> = HashMap::new();
-        let mut process_locals: HashMap<NodeId, String> = HashMap::new();
-        let mut local_seq = 0usize;
-        let prefix = format!("_i{}", h.0);
-        self.cg.collect_func_locals(
-            body,
-            &mut locals,
-            &mut chandle_locals,
-            &mut process_locals,
-            &mut local_seq,
-            &prefix,
-        )?;
-
-        // Formals bound to the caller's argument expressions.
-        let mut arg_read: HashMap<NodeId, ArgMap> = HashMap::new();
-        let mut arg_ir: HashMap<NodeId, IrExpr> = HashMap::new();
-        let mut event_args: HashMap<NodeId, IrEventRef> = HashMap::new();
-        let mut arg_dependencies: HashMap<NodeId, Vec<IrDependency>> = HashMap::new();
-        let mut arg_write: HashMap<NodeId, String> = HashMap::new();
-        let mut arg_lhs: HashMap<NodeId, Lhs> = HashMap::new();
-        let mut const_refs: HashSet<NodeId> = HashSet::new();
-        let mut const_ref_lhs: HashMap<NodeId, Lhs> = HashMap::new();
-        let mut persistent = HashMap::new();
-        let mut chandle_read = HashMap::new();
-        let mut chandle_write = HashMap::new();
-        let mut process_read = HashMap::new();
-        let mut process_write = HashMap::new();
-        let mut string_read = HashMap::new();
-        let mut string_write = HashMap::new();
-        let mut string_addr = HashMap::new();
-        let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
-        let mut before = Vec::new();
-        let mut after = Vec::new();
-        let mut string_cleanups = Vec::new();
-        // Automatic input formals bound to caller rvalue expressions need a
-        // writable local copy. Static formals use their persistent signal.
-        let mut input_copies: Vec<(String, IrExpr, bool)> = Vec::new();
-        for (idx, (io, is_out)) in formals.iter().enumerate() {
-            let b = &bound[idx];
-            if b.is_event {
-                let output_only = *is_out
-                    && matches!(
-                        self.cg.kind(*io),
-                        NodeKind::FuncArg {
-                            direction: DbDirection::Output,
-                            ..
-                        }
-                    );
-                // Output event formals have no input value, but their actual
-                // still supplies the destination that receives the handle on
-                // return. Resolve it independently from the input capture so
-                // `task(..., output event e)` can rebind a caller handle.
-                let actual = (!self.cg.is_null_event_expression(b.expr))
-                    .then(|| self.cg.event_target_of(b.expr))
-                    .flatten();
-                let event = if output_only {
-                    IrEventRef::Null
-                } else if let Some(target) = actual.as_ref() {
-                    self.cg.event_ref_of(target, &self.path)?
-                } else {
-                    IrEventRef::Null
-                };
-                if !output_only && actual.is_none() && !self.cg.is_null_event_expression(b.expr) {
-                    return Err(format!(
-                        "event actual for formal `{}` in task `{tname}` is not a named event (node kind: {:?})",
-                        self.cg.node(*io).name,
-                        self.cg.kind(b.expr)
-                    ));
-                }
-                let captured = format!("_ievent_{}_{}", h.0, idx);
-                before.push(IrStmt::EventCapture {
-                    name: captured.clone(),
-                    source: event,
-                });
-                if *is_out {
-                    let Some(target) = actual else {
-                        return Err(format!(
-                            "event output formal `{}` in task `{tname}` requires an event actual",
-                            self.cg.node(*io).name
-                        ));
-                    };
-                    let target = self.cg.event_ref_of(&target, &self.path)?;
-                    after.push(IrStmt::EventAssign {
-                        target,
-                        source: Some(IrEventRef::Captured(captured.clone())),
-                    });
-                }
-                event_args.insert(*io, IrEventRef::Captured(captured));
-                continue;
-            }
-            if matches!(self.cg.kind(*io), NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind))
-            {
-                let is_ref = matches!(
-                    self.cg.kind(*io),
-                    NodeKind::FuncArg {
-                        direction: DbDirection::Ref,
-                        ..
-                    }
-                );
-                let const_ref = matches!(
-                    self.cg.kind(*io),
-                    NodeKind::FuncArg {
-                        direction: DbDirection::Ref,
-                        const_ref: true,
-                        ..
-                    }
-                );
-                if is_ref || *is_out {
-                    let (target, read) = self.cg.lower_chandle_lvalue(&self.path, b.expr)?;
-                    chandle_read.insert(*io, read);
-                    if !const_ref {
-                        chandle_write.insert(*io, target);
-                    }
-                } else {
-                    let cname = format!("_il{}_{}", h.0, idx);
-                    let value = self.cg.lower_chandle(&self.path, b.expr)?;
-                    before.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
-                        cname.clone(),
-                        Some(value),
-                    ))));
-                    chandle_read.insert(*io, IrChandleExpr::LocalRead(cname.clone()));
-                    chandle_write.insert(*io, ChandleTarget::Local(cname));
-                }
-                continue;
-            }
-            if b.string {
-                let is_ref = matches!(
-                    self.cg.kind(*io),
-                    NodeKind::FuncArg {
-                        direction: DbDirection::Ref,
-                        ..
-                    }
-                );
-                let const_ref = matches!(
-                    self.cg.kind(*io),
-                    NodeKind::FuncArg {
-                        const_ref: true,
-                        ..
-                    }
-                );
-                if is_ref {
-                    if !const_ref {
-                        self.cg.ensure_string_actual_writable(&self.path, b.expr)?;
-                    }
-                    let address = self.cg.lower_string_actual_address(&self.path, b.expr)?;
-                    let target = address.trim_start_matches('&').to_owned();
-                    string_read.insert(*io, self.cg.lower_string(&self.path, b.expr)?);
-                    string_addr.insert(*io, target.clone());
-                    if !const_ref {
-                        string_write.insert(*io, target);
-                    }
-                } else if let Some(object) = (!automatic)
-                    .then(|| {
-                        self.cg
-                            .static_string_formals
-                            .get(&(callee_inst, *io))
-                            .copied()
-                    })
-                    .flatten()
-                {
-                    let name = self.cg.model.objects[object].c_name.clone();
-                    string_read.insert(*io, IrStringExpr::Read(object));
-                    string_addr.insert(*io, name.clone());
-                    string_write.insert(*io, name);
-                    if !*is_out
-                        || matches!(
-                            self.cg.kind(*io),
-                            NodeKind::FuncArg {
-                                direction: DbDirection::Inout,
-                                ..
-                            }
-                        )
-                    {
-                        before.push(IrStmt::Object(Box::new(IrObjectStmt::StringAssign(
-                            object,
-                            self.cg.lower_string(&self.path, b.expr)?,
-                        ))));
-                    }
-                    if *is_out {
-                        self.cg.ensure_string_actual_writable(&self.path, b.expr)?;
-                        let actual = self
-                            .cg
-                            .lower_string_actual_address(&self.path, b.expr)?
-                            .trim_start_matches('&')
-                            .to_owned();
-                        after.push(IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
-                            actual,
-                            IrStringExpr::Read(object),
-                        ))));
-                    }
-                } else if *is_out {
-                    self.cg.ensure_string_actual_writable(&self.path, b.expr)?;
-                    let cname = format!("_is{}_{}", h.0, idx);
-                    let init = if matches!(
-                        self.cg.kind(*io),
-                        NodeKind::FuncArg {
-                            direction: DbDirection::Inout,
-                            ..
-                        }
-                    ) {
-                        Some(self.cg.lower_string(&self.path, b.expr)?)
-                    } else {
-                        None
-                    };
-                    before.push(IrStmt::DeclString {
-                        name: cname.clone(),
-                        init,
-                    });
-                    let actual = self
-                        .cg
-                        .lower_string_actual_address(&self.path, b.expr)?
-                        .trim_start_matches('&')
-                        .to_owned();
-                    string_read.insert(*io, IrStringExpr::LocalRead(cname.clone()));
-                    string_write.insert(*io, cname.clone());
-                    string_addr.insert(*io, cname.clone());
-                    after.push(IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
-                        actual,
-                        IrStringExpr::LocalRead(cname.clone()),
-                    ))));
-                    string_cleanups.push(cname);
-                } else {
-                    let cname = format!("_il{}_{}", h.0, idx);
-                    before.push(IrStmt::DeclString {
-                        name: cname.clone(),
-                        init: Some(self.cg.lower_string(&self.path, b.expr)?),
-                    });
-                    string_read.insert(*io, IrStringExpr::LocalRead(cname.clone()));
-                    string_write.insert(*io, cname.clone());
-                    string_addr.insert(*io, cname.clone());
-                    string_cleanups.push(cname);
-                }
-                continue;
-            }
-            let is_ref = matches!(
-                self.cg.kind(*io),
-                NodeKind::FuncArg {
-                    direction: DbDirection::Ref,
-                    ..
-                }
-            );
-            if is_ref {
-                let actual_lhs = self.cg.lower_lhs(&self.path, b.expr)?;
-                let (actual_lhs, read_ir) = match actual_lhs {
-                    IrLhs::ArrayElem {
-                        arr,
-                        indices,
-                        elem_sel: IrElemSel::Whole,
-                    } => {
-                        let array = self.cg.model.arrays.get(arr).ok_or_else(|| {
-                            format!("ref actual array {arr} for task `{tname}` is out of bounds")
-                        })?;
-                        let mut frozen = Vec::with_capacity(indices.len());
-                        for (index_no, index) in indices.into_iter().enumerate() {
-                            let name = format!("_ref_idx_{}_{}_{}", h.0, idx, index_no);
-                            let (width, signed) = (index.width, index.signed);
-                            before.push(IrStmt::DeclLocal {
-                                name: name.clone(),
-                                width,
-                                signed,
-                                two_state: false,
-                                init: Some(Box::new(index)),
-                            });
-                            frozen.push(IrExpr::new(
-                                IrExprKind::LocalRead(name),
-                                width,
-                                signed,
-                                None,
-                            ));
-                        }
-                        let read = IrExpr::new(
-                            IrExprKind::ArrayRead {
-                                arr,
-                                indices: frozen.clone(),
-                                elem_sel: IrElemSel::Whole,
-                            },
-                            array.elem_width,
-                            array.signed,
-                            None,
-                        );
-                        (
-                            IrLhs::ArrayElem {
-                                arr,
-                                indices: frozen,
-                                elem_sel: IrElemSel::Whole,
-                            },
-                            read,
-                        )
-                    }
-                    actual_lhs => {
-                        let read_ir = self.cg.lower_expr(&self.path, b.expr)?;
-                        (actual_lhs, read_ir)
-                    }
-                };
-                let (width, signed, two_state, actual_const) =
-                    self.cg.ref_lhs_type(&actual_lhs).ok_or_else(|| {
-                        format!("ref actual for task `{tname}` is not an integral lvalue")
-                    })?;
-                if (width, signed, two_state) != (b.width, b.signed, b.two_state) {
-                    return Err(format!(
-                        "ref actual for task `{tname}` does not exactly match its formal"
-                    ));
-                }
-                let const_ref = matches!(
-                    self.cg.kind(*io),
-                    NodeKind::FuncArg {
-                        direction: DbDirection::Ref,
-                        const_ref: true,
-                        ..
-                    }
-                );
-                if actual_const && !const_ref {
-                    return Err(format!(
-                        "const ref actual cannot bind to writable ref formal in `{tname}`"
-                    ));
-                }
-                arg_ir.insert(*io, read_ir.clone());
-                // A fork-visible automatic actual has no signal; level waits
-                // in the body subscribe to its shared cell.
-                let mut dependencies = self.cg.collect_read_signals(&self.path, b.expr)?;
-                dependencies.extend(self.cg.shared_event_dependencies(b.expr));
-                arg_dependencies.insert(*io, dependencies);
-                arg_read.insert(
-                    *io,
-                    ArgMap {
-                        width,
-                        signed,
-                        two_state,
-                    },
-                );
-                if const_ref {
-                    const_refs.insert(*io);
-                    const_ref_lhs.insert(*io, Lhs::Canonical(actual_lhs));
-                } else {
-                    arg_lhs.insert(*io, Lhs::Canonical(actual_lhs));
-                }
-                continue;
-            }
-            if let Some(storage) = (!automatic)
-                .then(|| self.cg.static_formals.get(&(callee_inst, *io)).cloned())
-                .flatten()
-            {
-                let storage_lhs = IrLhs::Whole(storage.ir);
-                let storage_read = sig_read_expr_full(&storage);
-                arg_write.insert(*io, format!("&{}", storage.global));
-                persistent.insert(*io, storage.clone());
-                arg_ir.insert(*io, storage_read.clone());
-                arg_dependencies.insert(*io, vec![self.cg.signal_dependency(&storage)]);
-                arg_read.insert(
-                    *io,
-                    ArgMap {
-                        width: storage.width,
-                        signed: storage.signed,
-                        two_state: storage.two_state,
-                    },
-                );
-                let is_inout = matches!(
-                    self.cg.kind(*io),
-                    NodeKind::FuncArg {
-                        direction: DbDirection::Inout,
-                        ..
-                    }
-                );
-                if !*is_out {
-                    let value =
-                        self.cg
-                            .lower_bound_arg(&self.path, formals, bound, idx, &mut arg_irs)?;
-                    arg_irs[idx] = Some(storage_read.clone());
-                    before.push(IrStmt::Assign {
-                        rhs: apply_lhs_assignment_context(&self.cg.model, &storage_lhs, value),
-                        lhs: storage_lhs,
-                        nba: false,
-                    });
-                } else {
-                    let (mut writeback, actual_read, selector_inits) =
-                        self.cg.lower_call_writeback(
-                            &self.path,
-                            b.expr,
-                            &format!("{}_{}", h.0, idx),
-                            is_inout,
-                        )?;
-                    for (name, width, signed, two_state, init) in selector_inits {
-                        before.push(IrStmt::DeclLocal {
-                            name,
-                            width,
-                            signed,
-                            two_state,
-                            init: Some(Box::new(init)),
-                        });
-                    }
-                    before.extend(writeback.take_prelude());
-                    if is_inout {
-                        before.push(IrStmt::Assign {
-                            rhs: apply_lhs_assignment_context(
-                                &self.cg.model,
-                                &storage_lhs,
-                                actual_read.ok_or_else(|| {
-                                    "inout subroutine actual has no caller-side input value"
-                                        .to_owned()
-                                })?,
-                            ),
-                            lhs: storage_lhs,
-                            nba: false,
-                        });
-                    }
-                    after.push(writeback.store(&self.cg.model, storage_read)?);
-                }
-            } else if *is_out {
-                let is_inout = matches!(
-                    self.cg.kind(*io),
-                    NodeKind::FuncArg {
-                        direction: DbDirection::Inout,
-                        ..
-                    }
-                );
-                let (mut writeback, actual_read, selector_inits) = self.cg.lower_call_writeback(
-                    &self.path,
-                    b.expr,
-                    &format!("{}_{}", h.0, idx),
-                    is_inout,
-                )?;
-                for (name, width, signed, two_state, init) in selector_inits {
-                    before.push(IrStmt::DeclLocal {
-                        name,
-                        width,
-                        signed,
-                        two_state,
-                        init: Some(Box::new(init)),
-                    });
-                }
-                before.extend(writeback.take_prelude());
-                let cname = format!("_io{}_{}", h.0, idx);
-                let init = if is_inout {
-                    self.cg
-                        .lower_call_temp_init_from_expr(*io, b, actual_read)?
-                } else {
-                    None
-                };
-                before.push(IrStmt::DeclLocal {
-                    name: cname.clone(),
-                    width: b.width,
-                    signed: b.signed,
-                    two_state: b.two_state,
-                    init: init
-                        .map(Box::new)
-                        .or_else(|| default_real_local_initializer(b.width)),
-                });
-                let read_ir = IrExpr::new(
-                    IrExprKind::LocalRead(cname.clone()),
-                    b.width,
-                    b.signed,
-                    None,
-                );
-                arg_write.insert(*io, format!("&{cname}"));
-                arg_ir.insert(*io, read_ir.clone());
-                if is_inout {
-                    arg_dependencies.insert(*io, self.cg.collect_read_signals(&self.path, b.expr)?);
-                }
-                after.push(writeback.store(&self.cg.model, read_ir.clone())?);
-                arg_read.insert(
-                    *io,
-                    ArgMap {
-                        width: b.width,
-                        signed: b.signed,
-                        two_state: b.two_state,
-                    },
-                );
-                arg_irs[idx] = Some(read_ir.clone());
-            } else {
-                let ir = self
-                    .cg
-                    .lower_bound_arg(&self.path, formals, bound, idx, &mut arg_irs)?;
-                let cname = format!("_il{}_{}", h.0, idx);
-                arg_write.insert(*io, format!("&{cname}"));
-                arg_ir.insert(
-                    *io,
-                    IrExpr::new(
-                        IrExprKind::LocalRead(cname.clone()),
-                        b.width,
-                        b.signed,
-                        None,
-                    ),
-                );
-                arg_read.insert(
-                    *io,
-                    ArgMap {
-                        width: b.width,
-                        signed: b.signed,
-                        two_state: b.two_state,
-                    },
-                );
-                arg_irs[idx] = Some(IrExpr::new(
-                    IrExprKind::LocalRead(cname.clone()),
-                    b.width,
-                    b.signed,
-                    None,
-                ));
-                input_copies.push((cname, ir, b.two_state));
-            }
-        }
-
-        for (local, cname) in &chandle_locals {
-            match self.cg.db.variable_lifetime(*local) {
-                VariableLifetime::Automatic => {
-                    chandle_read.insert(*local, IrChandleExpr::LocalRead(cname.clone()));
-                    chandle_write.insert(*local, ChandleTarget::Local(cname.clone()));
-                }
-                VariableLifetime::Static => {}
-                VariableLifetime::Unavailable => {
-                    return Err(format!(
-                        "resolved lifetime is unavailable for task local `{}`",
-                        self.cg.node(*local).name
-                    ));
-                }
-            }
-        }
-
-        for (local, cname) in &process_locals {
-            if self.cg.fork_shared(*local) {
-                // Shared with fork branches through an opaque frame slot.
-                chandle_read.insert(*local, IrChandleExpr::LocalRead(cname.clone()));
-                chandle_write.insert(*local, ChandleTarget::Local(cname.clone()));
-                continue;
-            }
-            process_read.insert(
-                *local,
-                crate::sim::ir::IrProcessExpr::LocalRead(cname.clone()),
-            );
-            process_write.insert(*local, ProcessTarget::Local(cname.clone()));
-        }
-
-        for (local, (cname, ..)) in &locals {
-            if matches!(self.cg.kind(*local), NodeKind::Var { ty } if ty.kind == "string")
-                && self.cg.db.variable_lifetime(*local) == VariableLifetime::Automatic
-            {
-                string_read.insert(*local, IrStringExpr::LocalRead(cname.clone()));
-                string_write.insert(*local, cname.clone());
-                string_addr.insert(*local, cname.clone());
-            }
-        }
-
-        let mut persistent_locals = locals
-            .keys()
-            .copied()
-            .filter(|local| self.cg.db.variable_lifetime(*local) == VariableLifetime::Static)
-            .collect::<Vec<_>>();
-        persistent_locals.sort_by_key(|local| local.index());
-        for local in persistent_locals {
-            if matches!(self.cg.kind(local), NodeKind::Var { ty } if ty.kind == "string") {
-                let object = self
-                    .cg
-                    .static_string_task_locals
-                    .get(&(callee_inst, local))
-                    .copied()
-                    .ok_or_else(|| {
-                        format!("static string task `{tname}` local has no persistent storage")
-                    })?;
-                let name = self.cg.model.objects[object].c_name.clone();
-                string_read.insert(local, IrStringExpr::Read(object));
-                string_write.insert(local, name.clone());
-                string_addr.insert(local, name);
-                locals.remove(&local);
-                continue;
-            }
-            let storage = self
-                .cg
-                .static_task_locals
-                .get(&(callee_inst, local))
-                .cloned()
-                .ok_or_else(|| format!("static task `{tname}` local has no persistent storage"))?;
-            arg_write.insert(local, format!("&{}", storage.global));
-            persistent.insert(local, storage.clone());
-            arg_ir.insert(local, sig_read_expr_full(&storage));
-            arg_read.insert(
-                local,
-                ArgMap {
-                    width: storage.width,
-                    signed: storage.signed,
-                    two_state: storage.two_state,
-                },
-            );
-            locals.remove(&local);
-        }
-        let mut persistent_chandle_locals = chandle_locals
-            .keys()
-            .copied()
-            .filter(|local| self.cg.db.variable_lifetime(*local) == VariableLifetime::Static)
-            .collect::<Vec<_>>();
-        persistent_chandle_locals.sort_by_key(|local| local.index());
-        for local in persistent_chandle_locals {
-            let object = if let Some(object) = self
-                .cg
-                .static_task_chandle_locals
-                .get(&(callee_inst, local))
-                .copied()
-            {
-                object
-            } else {
-                let object = self.cg.model.objects.len();
-                self.cg.model.objects.push(crate::sim::ir::IrObject {
-                    c_name: format!(
-                        "O_f{}_{}_l{}",
-                        callee_inst.index(),
-                        ft.index(),
-                        local.index()
-                    ),
-                    ty: crate::sim::ir::IrObjectType::Chandle,
-                    initial: None,
-                });
-                self.cg
-                    .static_task_chandle_locals
-                    .insert((callee_inst, local), object);
-                object
-            };
-            chandle_read.insert(local, IrChandleExpr::Read(object));
-            chandle_write.insert(local, ChandleTarget::Object(object));
-            chandle_locals.remove(&local);
-        }
-
-        let done_label = format!("_id{}", h.0);
-        let mut chain = match &self.inline {
-            Some(inl) => inl.chain.clone(),
-            None => Vec::new(),
-        };
-        chain.push(tname.clone());
-        let func = FuncCtx {
-            name: tname.clone(),
-            is_task: true,
-            ret: None,
-            arg_read,
-            arg_ir,
-            event_args,
-            arg_dependencies,
-            arg_write,
-            arg_lhs,
-            const_refs,
-            const_ref_lhs,
-            persistent,
-            chandle_read,
-            chandle_write,
-            process_read,
-            process_write,
-            string_read,
-            string_write,
-            string_addr,
-            locals,
-            ret_node: None,
-            class_receiver,
-            // This expansion has no separate C function identity. Runtime
-            // activation targets implement disable; only return uses done_label.
-            def_node: None,
-        };
-        let inline = InlineCtx {
-            done_label: done_label.clone(),
-            chain,
-            used: false,
-        };
-
-        // Swap in the inline context (and sync the codegen for expression
-        // resolution), then restore on the way out.
-        let saved_cg = (self.cg.func.take(), self.cg.depth_arg.clone(), self.cg.inst);
-        let saved_ctx = (self.func.take(), self.inline.take(), self.depth_arg.clone());
-        let depth = format!("({}) + 1", saved_ctx.2);
-        self.cg.func = Some(func.clone());
-        self.cg.depth_arg = depth.clone();
-        self.func = Some(func);
-        self.inline = Some(inline);
-        self.depth_arg = depth;
-
-        let mut stmts: Vec<IrStmt> = before;
-        for (cname, ir, two_state) in input_copies {
-            let (width, signed) = (ir.width, ir.signed);
-            stmts.push(IrStmt::DeclLocal {
-                name: cname,
-                width,
-                signed,
-                two_state,
-                init: Some(Box::new(ir)),
-            });
-        }
-        // The body expands within the caller's control stack; the TaskBody
-        // barrier keeps a `break`/`continue` inside it from binding to one
-        // of the caller's loops (it must resolve within the task body or be
-        // rejected cleanly).
-        self.ctrl.push(CtrlScope::TaskBody);
-        // Actual expressions were lowered in the caller context above. The
-        // task body must resolve nested calls, locals, and instance storage
-        // in the callee's concrete environment.
-        let saved_inst = self.inst;
-        self.inst = callee_inst;
-        self.cg.inst = callee_inst;
-        let task_body_result = self.lower_stmt(body);
-        self.inst = saved_inst;
-        self.cg.inst = saved_cg.2;
-        let mut task_body = task_body_result?;
-        match self.ctrl.pop() {
-            Some(CtrlScope::TaskBody) => {}
-            _ => unreachable!("task-body scope stack imbalance"),
-        }
-        if self.inline.as_ref().map(|i| i.used).unwrap_or(false) {
-            task_body.push(IrStmt::Label(done_label));
-        }
-        // Copy-out and event-formal rebinding are part of the activation's
-        // normal return path. Keeping them inside the scope lets the emitted
-        // cancellation guard jump over them when `disable` unwinds a task.
-        task_body.extend(after);
-        stmts.push(IrStmt::ActivationScope {
-            target: activation_target,
-            exit: self.new_label("xt"),
-            body: task_body,
-        });
-        for cname in string_cleanups {
-            stmts.push(IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
-                cname,
-                IrStringExpr::Literal(Vec::new()),
-            ))));
-        }
-
-        self.cg.func = saved_cg.0;
-        self.cg.depth_arg = saved_cg.1;
-        self.func = saved_ctx.0;
-        self.inline = saved_ctx.1;
-        self.depth_arg = saved_ctx.2;
-        Ok(IrStmt::Block(stmts))
-    }
-
     /// Lower a `return` statement.  In a non-void function the value becomes
     /// the `_ret` conversion + C return (rendered); in a void function/task it
-    /// is a bare return.  Inside an inlined task body it jumps to the done
-    /// label.
+    /// is a bare return.
     pub(super) fn lower_return(&mut self, value: Option<NodeId>) -> Result<IrStmt, String> {
         if let Some(result) = self
             .func
             .as_ref()
             .and_then(|function| function.ret_node)
-            .filter(|node| self.cg.native_return(*node) && self.inline.is_none())
+            .filter(|node| self.cg.native_return(*node))
         {
             let mut statements = Vec::new();
             if let Some(value) = value {
@@ -1592,7 +791,7 @@ impl EmitCtx<'_, '_> {
             .func
             .as_ref()
             .and_then(|function| function.ret_node)
-            .filter(|node| self.cg.container_return(*node) && self.inline.is_none())
+            .filter(|node| self.cg.container_return(*node))
         {
             let mut statements = Vec::new();
             if let Some(value) = value {
@@ -1615,7 +814,7 @@ impl EmitCtx<'_, '_> {
             .func
             .as_ref()
             .and_then(|function| function.ret_node)
-            .filter(|node| self.cg.record_declaration(*node) && self.inline.is_none())
+            .filter(|node| self.cg.record_declaration(*node))
         {
             let mut statements = Vec::new();
             if let Some(value) = value {
@@ -1659,44 +858,6 @@ impl EmitCtx<'_, '_> {
             }
             statements.push(IrStmt::Return { value: None });
             return Ok(IrStmt::Block(statements));
-        }
-        if let Some(inline) = self.inline.as_mut() {
-            if let Some(result) = self
-                .func
-                .as_ref()
-                .and_then(|function| function.ret_node)
-                .filter(|node| {
-                    self.cg
-                        .array_globals
-                        .get(node)
-                        .is_some_and(|array| self.cg.model.arrays[array.ir].activation)
-                })
-            {
-                let mut statements = Vec::new();
-                if let Some(value) = value {
-                    let statement = self
-                        .cg
-                        .lower_p30_fixed_array_assignment(
-                            &self.path,
-                            result,
-                            value,
-                            true,
-                            Operation::Assignment,
-                        )?
-                        .ok_or("fixed return has no array assignment")?;
-                    statements.push(statement);
-                }
-                inline.used = true;
-                statements.push(IrStmt::Goto(inline.done_label.clone()));
-                return Ok(IrStmt::Block(statements));
-            }
-        }
-        if let Some(inl) = self.inline.as_mut() {
-            if value.is_some() {
-                return Err("return with a value inside a task".to_string());
-            }
-            inl.used = true;
-            return Ok(IrStmt::Goto(inl.done_label.clone()));
         }
         let returns_string = self.func.as_ref().is_some_and(|function| {
             function.ret_node.is_some_and(|node| {

@@ -9,8 +9,7 @@ impl EmitCtx<'_, '_> {
     /// mirroring the pre-IR emission order.
     ///
     /// Detached branches may retain automatic subroutine storage through an
-    /// activation frame.  A synchronous function can only use `join_none`,
-    /// while an inlined task body may use the ordinary join variants.
+    /// activation frame.  A synchronous function can only use `join_none`.
     pub(super) fn lower_fork(
         &mut self,
         target: Option<NodeId>,
@@ -104,8 +103,7 @@ impl EmitCtx<'_, '_> {
         let enclosing_func = self.func.clone();
         let detached_function_branch = enclosing_func
             .as_ref()
-            .is_some_and(|function| !function.is_task && function.def_node.is_some())
-            || self.inline.is_some();
+            .is_some_and(|function| !function.is_task && function.def_node.is_some());
         let process_kind = self.process_kind;
         let mut names = Vec::with_capacity(branches.len());
         let mut captured_branches = Vec::with_capacity(branches.len());
@@ -126,7 +124,6 @@ impl EmitCtx<'_, '_> {
                         (!detached_function_branch)
                             .then(|| enclosing_func.clone())
                             .flatten(),
-                        None,
                         false,
                     );
                     bctx.process_kind = process_kind;
@@ -243,7 +240,6 @@ impl EmitCtx<'_, '_> {
                     (!detached_function_branch)
                         .then(|| enclosing_func.clone())
                         .flatten(),
-                    None,
                     false,
                 );
                 bctx.process_kind = process_kind;

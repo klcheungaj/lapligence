@@ -291,53 +291,28 @@ pub struct IrVirtualCall {
 }
 
 /// Recursion depth argument of a call site: `"0"` in process contexts,
-/// `"depth + 1"` inside C function bodies, wrapped once per enclosing inlined
-/// task (`(0) + 1`, `(depth + 1) + 1`, …) exactly like the pre-IR emitter.
+/// `"depth + 1"` inside C function bodies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IrDepth {
-    /// `true` when the innermost non-inline scope is a C function body.
+    /// `true` when the call sits in a C function body.
     pub(in crate::sim) func_base: bool,
-    /// Number of enclosing inlined task bodies.
-    pub(in crate::sim) nest: u32,
 }
 
 impl IrDepth {
-    pub const PROC: IrDepth = IrDepth {
-        func_base: false,
-        nest: 0,
-    };
-    pub const FUNC: IrDepth = IrDepth {
-        func_base: true,
-        nest: 0,
-    };
-
-    /// One more level of task inlining around this context.
-    pub fn inline(self) -> IrDepth {
-        IrDepth {
-            nest: self.nest + 1,
-            ..self
-        }
-    }
+    pub const PROC: IrDepth = IrDepth { func_base: false };
+    pub const FUNC: IrDepth = IrDepth { func_base: true };
 
     /// The C expression spelling this depth.
     pub fn code(&self) -> String {
-        let mut s = if self.func_base {
+        if self.func_base {
             "depth + 1".to_string()
         } else {
             "0".to_string()
-        };
-        for _ in 0..self.nest {
-            s = format!("({s}) + 1");
         }
-        s
     }
 
     pub fn is_function_based(&self) -> bool {
         self.func_base
-    }
-
-    pub fn inline_nesting(&self) -> u32 {
-        self.nest
     }
 }
 

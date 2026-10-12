@@ -300,7 +300,7 @@ endmodule
 }
 
 #[test]
-fn only_subroutine_scoped_event_reads_force_expansion() {
+fn waited_ref_formals_take_the_typed_call_path() {
     let source = r#"
 module tb;
     class C; endclass
@@ -353,44 +353,33 @@ endmodule
     let mut cg = Codegen::new(&semantic);
     let tops = cg.collect_design().unwrap();
     let top = tops[0];
-    for (name, expanded) in [
-        ("module_edge", false),
-        ("module_expression", false),
-        ("input_event", false),
-        ("input_event_or", false),
-        ("delay_disable", false),
-        ("calls_typed", false),
-        // Event formals of every direction take the typed call path.
-        ("output_event", false),
-        ("formal_expression", false),
-        // A whole `ref` formal waited on directly (edge, any change or a
-        // level wait) is followed through its descriptor by the typed body.
-        ("ref_edge", false),
-        ("ref_level", false),
-        // Locals are read through their (fork-shared) cells.
-        ("local_expression", false),
-        ("calls_expanded", false),
-        ("forwards_ref", false),
-        ("forwards_local", false),
-        ("forwards_module", false),
-        // An evaluated expression over a `ref` formal is evaluated by the
-        // waiting process, which follows the descriptor's whole variable.
-        ("ref_select", false),
-        ("forwards_select", false),
-        // A list naming an event and implicit `@*` sensitivity are evaluated
-        // by the waiting process too.
-        ("ref_named_expression", false),
-        ("ref_implicit", false),
-        // String and handle `ref` formals wait on their actual's marker.
-        ("string_ref", false),
-        ("handle_ref", false),
-        ("forwards_string", false),
-        // An array element's descriptor names the element's own storage.
-        ("forwards_element", false),
-        // Remaining: an unpacked aggregate `ref` formal has no whole-variable
-        // descriptor, and a queue element is a retained cell.
-        ("array_ref", true),
-        ("forwards_queue_element", true),
+    // A `ref` formal read by an event control is bound by a specialization
+    // when it (or a task it is forwarded to) has a whole-signal actual; any
+    // other actual, an unpacked aggregate or a container element included,
+    // is followed through its descriptor. String and handle `ref` formals
+    // wait on their actual's change marker (`native_refs`).
+    for (name, static_refs, native_refs) in [
+        ("module_edge", vec![], vec![]),
+        ("input_event", vec![], vec![]),
+        ("output_event", vec![], vec![]),
+        ("calls_typed", vec![], vec![]),
+        ("ref_edge", vec![0], vec![]),
+        ("ref_level", vec![0], vec![]),
+        ("ref_select", vec![0], vec![]),
+        ("forwards_ref", vec![0], vec![]),
+        ("forwards_module", vec![], vec![]),
+        ("forwards_local", vec![], vec![]),
+        ("forwards_select", vec![], vec![]),
+        ("formal_expression", vec![], vec![]),
+        ("local_expression", vec![], vec![]),
+        ("ref_named_expression", vec![0], vec![]),
+        ("ref_implicit", vec![0], vec![]),
+        ("string_ref", vec![], vec![0]),
+        ("handle_ref", vec![], vec![0]),
+        ("forwards_string", vec![], vec![0]),
+        ("forwards_element", vec![], vec![]),
+        ("array_ref", vec![0], vec![]),
+        ("forwards_queue_element", vec![], vec![]),
     ] {
         let task = database
             .node_ids()
@@ -398,47 +387,8 @@ endmodule
                 matches!(cg.kind(*node), NodeKind::FuncTask { .. }) && cg.node(*node).name == name
             })
             .unwrap_or_else(|| panic!("task `{name}` is missing"));
-        assert_eq!(
-            cg.subroutine_requires_inline(task, top),
-            expanded,
-            "task `{name}`"
-        );
-    }
-    // A `ref` formal read by an event control is bound by a specialization
-    // when it (or a task it is forwarded to) has a whole-signal actual. A
-    // caller local or array element is followed through its descriptor when
-    // the formal holds one packed or real value (`bound_refs` empty).
-    // String and handle `ref` formals wait on their actual's change marker
-    // (`native_refs`).
-    for (name, inline_only, static_refs, bound_refs, native_refs) in [
-        ("ref_edge", false, vec![0], vec![], vec![]),
-        ("ref_level", false, vec![0], vec![], vec![]),
-        ("ref_select", false, vec![0], vec![], vec![]),
-        ("forwards_ref", false, vec![0], vec![], vec![]),
-        ("forwards_module", false, vec![], vec![], vec![]),
-        ("forwards_local", false, vec![], vec![], vec![]),
-        ("forwards_select", false, vec![], vec![], vec![]),
-        ("formal_expression", false, vec![], vec![], vec![]),
-        ("input_event", false, vec![], vec![], vec![]),
-        ("ref_named_expression", false, vec![0], vec![], vec![]),
-        ("ref_implicit", false, vec![0], vec![], vec![]),
-        ("string_ref", false, vec![], vec![], vec![0]),
-        ("handle_ref", false, vec![], vec![], vec![0]),
-        ("forwards_string", false, vec![], vec![], vec![0]),
-        ("forwards_element", false, vec![], vec![], vec![]),
-        ("array_ref", false, vec![0], vec![0], vec![]),
-        ("forwards_queue_element", true, vec![], vec![], vec![]),
-    ] {
-        let task = database
-            .node_ids()
-            .find(|node| {
-                matches!(cg.kind(*node), NodeKind::FuncTask { .. }) && cg.node(*node).name == name
-            })
-            .unwrap();
         let shape = cg.call_shape(task, top);
-        assert_eq!(shape.inline_only, inline_only, "task `{name}`");
         assert_eq!(shape.static_refs, static_refs, "task `{name}`");
-        assert_eq!(shape.bound_refs, bound_refs, "task `{name}`");
         assert_eq!(shape.native_refs, native_refs, "task `{name}`");
     }
 }

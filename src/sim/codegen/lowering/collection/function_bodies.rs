@@ -914,8 +914,8 @@ impl<'a> Codegen<'a> {
                 );
             }
         }
-        // A specialization reads and writes the bound actual directly, exactly
-        // as an expansion does, and waits on its dependencies.
+        // A specialization reads and writes the bound actual directly and
+        // waits on its dependencies.
         for bound in specialization.iter().flat_map(|spec| &spec.statics) {
             arg_ir.insert(bound.formal, bound.read.clone());
             arg_dependencies.insert(bound.formal, bound.dependencies.clone());
@@ -1020,7 +1020,6 @@ impl<'a> Codegen<'a> {
                 inst,
                 "depth + 1",
                 Some(func_ctx),
-                None,
                 false,
             );
             let mut body_stmts = pattern_decls;
@@ -1277,9 +1276,7 @@ impl<'a> Codegen<'a> {
 
     /// Collect the local variables declared by a function/task body's begin
     /// blocks (recursively) into `locals`, keyed by the var arena node.
-    /// `prefix` disambiguates the C local names across inline sites (each
-    /// inlined task body gets its own prefix); pass `""` for C function
-    /// bodies, whose locals are scoped per function.
+    /// `prefix` names the C locals after their function (`_f<inst>_<ft>_`).
     #[allow(clippy::too_many_arguments)]
     pub(in super::super) fn collect_func_locals(
         &self,

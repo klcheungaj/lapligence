@@ -1162,7 +1162,7 @@ impl Codegen<'_> {
                 }
                 let inst = self.inst;
                 let (specs, pre_fns) = {
-                    let mut ctx = EmitCtx::new(self, path.to_owned(), inst, "0", None, None, false);
+                    let mut ctx = EmitCtx::new(self, path.to_owned(), inst, "0", None, false);
                     // The gate joins every event's qualifier, so the waiting
                     // process wakes only for events whose gate held when they
                     // occurred; the tick itself is then ungated.
@@ -2435,7 +2435,7 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let action_path = format!("{path}.assertion[{}].{arm}", assertion.index());
-        let mut ctx = EmitCtx::new(self, action_path.clone(), inst, "0", None, None, false);
+        let mut ctx = EmitCtx::new(self, action_path.clone(), inst, "0", None, false);
         // Each action runs as its own spawned process (16.14.1 action blocks
         // are procedural code); timing controls suspend only that process.
         let body = ctx.lower_stmt(statement)?;

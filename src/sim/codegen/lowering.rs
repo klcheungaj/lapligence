@@ -2530,9 +2530,9 @@ enum ProcessTarget {
     Local(String),
 }
 
-/// Context for emitting a function/task definition body (or an inlined task
-/// body at a call site): formals mapped to their C expressions, locals to C
-/// locals, and the return variable.
+/// Context for emitting a function/task definition body (or a specialization
+/// that binds some `ref` formals to whole module signals): formals mapped to
+/// their C expressions, locals to C locals, and the return variable.
 #[derive(Clone, Default)]
 struct FuncCtx {
     /// The Verilog function/task name.
@@ -2550,22 +2550,22 @@ struct FuncCtx {
     /// io_decl arena node → the IR expression reading the formal (mirrors
     /// `arg_read`; `FormalRead`/substituted bound arguments).
     arg_ir: HashMap<NodeId, IrExpr>,
-    /// Event formal → caller handle identity for inlined task activations.
+    /// Event formal → the typed parameter naming its event object.
     event_args: HashMap<NodeId, IrEventRef>,
     /// io_decl arena node -> dependencies of a live actual binding. By-value
     /// inputs intentionally have no entry: their event expressions read the
     /// copied activation slot, not the caller's source after invocation.
     arg_dependencies: HashMap<NodeId, Vec<IrDependency>>,
     /// io_decl arena node → complete C address/lvalue expression for output
-    /// and inout formals (`o0` for a C-function parameter, `&G_x` for an
-    /// inlined task's bound argument).
+    /// and inout formals (`o0` for a C-function parameter, `&G_x` for static
+    /// storage).
     arg_write: HashMap<NodeId, String>,
-    /// Structured actual lvalues used by inlined reference formals.
+    /// Actual lvalues of `ref` formals a specialization binds statically.
     arg_lhs: HashMap<NodeId, Lhs>,
     /// Const-ref formals are readable but deliberately lack a writable
     /// binding so an attempted assignment is rejected during lowering.
     const_refs: HashSet<NodeId>,
-    /// Canonical actual lvalues for const-ref formals in inlined task bodies.
+    /// Canonical actual lvalues of const-ref formals a specialization binds.
     /// These are used only when rebinding the alias for a nested call; writes
     /// still consult `const_refs` and are rejected.
     const_ref_lhs: HashMap<NodeId, Lhs>,
@@ -2592,34 +2592,15 @@ struct FuncCtx {
     /// Arena node of the function-name return variable (when captured).
     ret_node: Option<NodeId>,
     /// Arena node of the separately emitted function/task definition, used
-    /// when resolving lexical storage. Inlined task contexts have no separate
-    /// C function identity; disable targets are runtime activation identities.
+    /// when resolving lexical storage; disable targets are runtime activation
+    /// identities.
     def_node: Option<NodeId>,
 }
 
-/// Context for a delay-bearing task body inlined at a call site.  The
-/// argument remapping itself lives in the inline's [`FuncCtx`] (`arg_read` /
-/// `arg_write` bound to the caller's expressions); this carries the early-
-/// `return` `goto` target and the chain of enclosing inlined tasks (used to
-/// reject recursive delay-bearing tasks).
-#[derive(Clone)]
-struct InlineCtx {
-    /// Label for early `return;` statements in the inlined body.
-    done_label: String,
-    /// Names of the enclosing inlined tasks, innermost last.
-    chain: Vec<String>,
-    /// Whether a `return;` actually emitted a `goto` to `done_label` (the
-    /// label is only emitted when set, to keep `-Wall` clean).
-    used: bool,
-}
-
 /// One entry of the control-flow scope stack while lowering statements:
-/// either a named begin block (its runtime activation handles disable),
-/// a loop construct (`break`/`continue` jump to their
-/// labels), or an inlined task body (a lexical barrier `break`/`continue`
-/// must not cross into the caller's loops).  The `*_used` flags keep
-/// unused labels out of the C output (`-Wall` warns on them), mirroring
-/// [`InlineCtx::used`].
+/// either a named begin block (its runtime activation handles disable) or a
+/// loop construct (`break`/`continue` jump to their labels). The `*_used`
+/// flags keep unused labels out of the C output (`-Wall` warns on them).
 enum CtrlScope {
     Block,
     Loop {
@@ -2628,11 +2609,6 @@ enum CtrlScope {
         cont: String,
         cont_used: bool,
     },
-    /// Body of a delay-bearing task inlined at a call site: it expands
-    /// within the caller's `ctrl` stack, so this marker stops `break`/
-    /// `continue` resolution from silently binding to one of the CALLER's
-    /// loops (jumping out of the expansion).
-    TaskBody,
 }
 
 struct EmitCtx<'c, 'a> {
@@ -2649,22 +2625,17 @@ struct EmitCtx<'c, 'a> {
     /// C expression for the recursion depth at a call site (`"0"` in
     /// processes, `"depth + 1"` in function bodies).
     depth_arg: String,
-    /// Function/task body context while emitting a definition or an inlined
-    /// task body.
+    /// Function/task body context while emitting a definition.
     func: Option<FuncCtx>,
-    /// Inline context while emitting a delay-bearing task body at a call site.
-    inline: Option<InlineCtx>,
     /// Fork-branch coroutines and monitor/strobe eval fns created while
     /// lowering this body, in encounter order (rendered ahead of the owning
     /// function/process).
     pre_fns: Vec<crate::sim::ir::IrPreFn>,
     /// Control-flow scope stack (named blocks = `disable` targets, loops =
-    /// break/continue targets, inlined task bodies = break/continue
-    /// barriers).  Fresh per emitted C function — each
-    /// process, function/task definition and fork branch starts its own
-    /// context — while inlined task bodies expand within the caller's
-    /// context; combined with the sequential [`EmitCtx::label_seq`] this
-    /// keeps every emitted label text unique within one C function.
+    /// break/continue targets). Fresh per emitted C function (each process,
+    /// function/task definition and fork branch starts its own context);
+    /// with the sequential [`EmitCtx::label_seq`] this keeps every emitted
+    /// label text unique within one C function.
     ctrl: Vec<CtrlScope>,
     label_seq: usize,
     /// `true` while lowering a `final begin … end` body (SV 1800-2005
@@ -2707,8 +2678,8 @@ enum Lhs {
         two_state: bool,
         const_ref: bool,
     },
-    /// A fully lowered lvalue retained while an inlined reference formal is
-    /// mapped to its caller's actual.  Keeping the typed IR here avoids
+    /// A fully lowered lvalue, such as the actual a specialization binds to a
+    /// reference formal.  Keeping the typed IR here avoids
     /// rebuilding (or stringifying) selected lvalues during body lowering.
     Canonical(IrLhs),
     Bit(SignalInfo, IrExpr, bool),
@@ -3432,18 +3403,11 @@ fn formal_read_expr(idx: usize, width: u32, signed: bool) -> IrExpr {
     IrExpr::new(IrExprKind::FormalRead(idx), width, signed, None)
 }
 
-/// Parse a depth-argument string (`"0"`, `"depth + 1"`, `"(…) + 1"` nests)
-/// back into its structured form.
+/// Parse a depth-argument string (`"0"` or `"depth + 1"`) back into its
+/// structured form.
 fn parse_depth(s: &str) -> IrDepth {
-    let mut nest = 0u32;
-    let mut cur = s;
-    while let Some(rest) = cur.strip_prefix('(').and_then(|r| r.strip_suffix(") + 1")) {
-        nest += 1;
-        cur = rest;
-    }
     IrDepth {
-        func_base: cur == "depth + 1",
-        nest,
+        func_base: s == "depth + 1",
     }
 }
 

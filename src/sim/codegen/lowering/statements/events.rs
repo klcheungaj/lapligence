@@ -277,10 +277,11 @@ impl EmitCtx<'_, '_> {
     }
 
     /// Whether `expression` reads a `ref` formal of the typed body being
-    /// lowered that no specialization or expansion bound: only the waiting
-    /// process can evaluate it, through the formal's descriptor, while the
-    /// wait follows the whole variable the descriptor names
-    /// (`IrDependency::RefFormal`).
+    /// lowered that no specialization bound, or a subroutine container: only
+    /// the waiting process can evaluate it, through the formal's descriptor
+    /// or the activation's container, while the wait follows the storage the
+    /// descriptor names (`IrDependency::RefFormal`) or the container's
+    /// markers.
     fn reads_unbound_ref_formal(&self, expression: NodeId) -> bool {
         let Some(func) = self.func.as_ref() else {
             return false;
@@ -294,6 +295,12 @@ impl EmitCtx<'_, '_> {
                 if !func.arg_dependencies.contains_key(target)
                     && self.cg.ref_formal_dependency(*target).is_some()
                 {
+                    return true;
+                }
+                // A subroutine container (a container `ref` formal names the
+                // caller's) is addressed through the activation, or the
+                // fork's shared frame, which a runtime callback cannot reach.
+                if self.cg.is_subroutine_container(*target) {
                     return true;
                 }
             }
@@ -1102,8 +1109,9 @@ impl EmitCtx<'_, '_> {
         let selected_aggregate_member = self.cg.packed_member_read_info(expression).is_some()
             || self.cg.unpacked_member_info(expression).is_some()
             || self.cg.packed_element_member_select(expression).is_some();
-        // A `ref` formal of a typed body that no specialization or expansion
-        // bound waits on the whole variable its descriptor names.
+        // A `ref` formal of a typed body that no specialization bound waits on
+        // the storage its descriptor names and compares the value it reads
+        // (`llg_ref_wait_spec`).
         if condition.is_none() {
             if let NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),

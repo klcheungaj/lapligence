@@ -55,6 +55,7 @@ void llg_assoc_delete(llg_assoc_t* array) {
 }
 
 void llg_assoc_destroy(llg_assoc_t* array) {
+    llg_element_cells_forget_dependency(array->references);
     llg_container_notify_fn notify = array->notify;
     array->notify = NULL;
     llg_assoc_delete(array);

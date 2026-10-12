@@ -107,9 +107,6 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                         vec![IrStmt::Goto(cont.clone())]
                     });
                 }
-                // Inlined task expansion: its body must resolve jumps within
-                // itself only.
-                CtrlScope::TaskBody => break,
                 CtrlScope::Block => {}
             }
         }

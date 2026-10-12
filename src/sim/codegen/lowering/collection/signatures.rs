@@ -469,11 +469,13 @@ impl<'a> Codegen<'a> {
                     )
                 });
                 // An open-array import is a template: each call selects a
-                // specialization for its actuals (`dpi_open_callee`).
-                let inline_expanded = dpi_import.as_ref().map_or(
-                    is_task_f && self.subroutine_requires_inline(*c, inst),
-                    |dpi| dpi.is_open_template(),
-                );
+                // specialization for its actuals (`dpi_open_callee`). So is a
+                // task waiting on a native record `ref` formal: each call
+                // binds its record actual (`waits_on_record_ref`).
+                let inline_expanded = match dpi_import.as_ref() {
+                    Some(dpi) => dpi.is_open_template(),
+                    None => self.waits_on_record_ref(*c, inst),
+                };
                 // Register the model entry (call-site lowering and the C
                 // renderers resolve through it).
                 let ir = self.model.funcs.len();
@@ -568,11 +570,8 @@ impl<'a> Codegen<'a> {
                 && self.func_names.contains_key(c)
                 && self.db.dpi_import(*c).is_none()
             {
-                if matches!(self.kind(*c), NodeKind::FuncTask { is_task: true, .. })
-                    && self.subroutine_requires_inline(*c, inst)
-                {
-                    // Calls take the inline path; do not build a detached
-                    // evaluator containing an unbound FormalRead.
+                if self.waits_on_record_ref(*c, inst) {
+                    // Only its record-binding specializations have bodies.
                     continue;
                 }
                 let path = self.instance_path_of(inst);

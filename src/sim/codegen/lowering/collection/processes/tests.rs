@@ -434,7 +434,7 @@ fn real_edge_rejections_use_source_storage_names() {
                 _ => None,
             })
             .unwrap();
-        let mut context = EmitCtx::new(&mut cg, "tb".to_owned(), top, "0", None, None, false);
+        let mut context = EmitCtx::new(&mut cg, "tb".to_owned(), top, "0", None, false);
         let error = context
             .lower_event_specs(&[EventSpec::Edge {
                 sig: expression,

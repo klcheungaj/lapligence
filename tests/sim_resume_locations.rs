@@ -103,11 +103,11 @@ endmodule\n",
 }
 
 #[test]
-fn pruning_and_inline_event_tasks_keep_definition_site_locations() {
+fn pruning_and_typed_event_tasks_keep_definition_site_locations() {
     let database = database(&[OwnedSource::compilation_unit(
-        "inline.sv",
+        "typed.sv",
         "interface ifc; logic [1:0] e; endinterface module tb;\n\
-ifc port(); virtual ifc handle; // A waited virtual-interface ref formal expands the task.\n\
+ifc port(); virtual ifc handle; // A waited virtual-interface ref formal is a typed parameter.\n\
 task automatic await_event(ref virtual ifc v);\n\
     @(v.e[0]);\n\
     #2;\n\
@@ -122,29 +122,29 @@ initial begin handle = port;\n\
 end\n\
 endmodule\n",
     )]);
+    // The task's own table keeps its waits' definition sites; the process
+    // table keeps its call sites, and the optimizer prunes the dead branch.
     let unoptimized = render(&database, OptConfig::none());
+    assert_table(&unoptimized, &["typed.sv:4:1", "typed.sv:5:1"]);
     assert_table(
         &unoptimized,
         &[
-            "inline.sv:9:1",
-            "inline.sv:4:1",
-            "inline.sv:5:1",
-            "inline.sv:11:10",
-            "inline.sv:12:1",
-            "inline.sv:4:1",
-            "inline.sv:5:1",
+            "typed.sv:9:1",
+            "typed.sv:10:1",
+            "typed.sv:11:10",
+            "typed.sv:12:1",
+            "typed.sv:13:1",
         ],
     );
     let optimized = render(&database, OptConfig::default());
+    assert_table(&optimized, &["typed.sv:4:1", "typed.sv:5:1"]);
     assert_table(
         &optimized,
         &[
-            "inline.sv:9:1",
-            "inline.sv:4:1",
-            "inline.sv:5:1",
-            "inline.sv:12:1",
-            "inline.sv:4:1",
-            "inline.sv:5:1",
+            "typed.sv:9:1",
+            "typed.sv:10:1",
+            "typed.sv:12:1",
+            "typed.sv:13:1",
         ],
     );
 }

@@ -797,9 +797,9 @@ pub enum IrStmt {
     Return {
         value: Option<Box<IrExpr>>,
     },
-    /// Early-exit target label of an inlined task body.
+    /// A jump target (loop `break`/`continue` and block exits).
     Label(String),
-    /// Jump to an inlined task's done label (a `return;` inside it).
+    /// Jump to a [`IrStmt::Label`] of the same body.
     Goto(String),
     /// Placeholder (source-level `;` or an empty construct).
     Nop,

@@ -183,8 +183,7 @@ impl EmitCtx<'_, '_> {
                 }
                 // A named block is a potential `disable` target: its exit
                 // label is allocated before the body lowers so disables
-                // inside (including inside inlined task expansions) can
-                // reference it.
+                // inside can reference it.
                 let named = !self.cg.node(h).name.is_empty();
                 let activation_target = named.then(|| self.cg.activation_target(h)).transpose()?;
                 let mut activation_exit = None;

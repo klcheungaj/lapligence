@@ -29,8 +29,7 @@ enum ProcessWriteMode {
 
 impl<'a> Codegen<'a> {
     /// The descriptor dependency of `ref` formal `target` in a typed body,
-    /// where no specialization or expansion bound its actual: calls bind such
-    /// a formal only to a whole variable (see `CallShape`).
+    /// where no specialization bound its actual (see `CallShape`).
     pub(in super::super) fn ref_formal_dependency(&self, target: NodeId) -> Option<IrDependency> {
         if !matches!(
             self.kind(target),

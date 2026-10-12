@@ -339,9 +339,13 @@ pub enum IrDependency {
     SharedCell { local: String, real: bool },
     /// The storage behind `ref` formal `index` of the enclosing typed
     /// subroutine, named at run time through its descriptor (a real `ref`
-    /// formal is the cell address itself). Calls bind such formals only to
-    /// storage that stores publish at its own address: whole variables,
-    /// fixed-array elements and class properties.
+    /// formal is the cell address itself): the variables, element cells or
+    /// class properties it names, the leaves of a view's or composite's
+    /// storage, or the contents marker of the container whose element it
+    /// retains. A packed descriptor may name several storages (an unpacked
+    /// aggregate formal, or a view into one), so only dependency waits,
+    /// which expand it when they arm, name it as a dependency; plain and
+    /// edge controls use [`IrWaitSrc::RefFormal`].
     RefFormal { index: usize, real: bool },
     /// The change marker of the string (or, when `handle`, the class
     /// handle variable) that string or handle `ref` formal `index` of the

@@ -252,7 +252,130 @@ void llg_ba_d(double* target, double value) {
     real_write(target, value);
 }
 
-sv4_t* llg_ref_dependency(const llg_ref_t* ref) {
-    if (ref && ref->base && (llg_ref_kind_t)ref->kind == LLG_REF_WHOLE) return ref->base;
-    return llg_dependency_or_never(NULL);
+/* Wait sources of `ref` descriptors. Every store publishes at its variable,
+ * element cell or class-property address, and container element stores
+ * publish their container's contents marker. A view selects bits of its
+ * parent; a composite (an unpacked aggregate) concatenates its parts, the
+ * first part most significant. A dependency walk names the storage behind
+ * bits [lsb, lsb + count) of a descriptor's value: its depth is the nesting
+ * of the actual's aggregate type. */
+static sv4_t* ref_leaf_dependency(const llg_ref_t* ref) {
+    switch ((llg_ref_kind_t)ref->kind) {
+    case LLG_REF_WHOLE:
+    case LLG_REF_BIT:
+    case LLG_REF_PART:
+    case LLG_REF_INDEXED:
+        return llg_dependency_or_never(ref->base);
+    case LLG_REF_QUEUE:
+        if (ref->retained_read == llg_queue_cell_read)
+            return llg_dependency_or_never(llg_queue_cell_dependency(ref->retained));
+        if (ref->retained_read == llg_element_cell_read)
+            return llg_dependency_or_never(llg_element_cell_dependency(ref->retained));
+        return llg_dependency_or_never(ref->queue ? ref->queue->contents_dependency : NULL);
+    default:
+        return llg_dependency_or_never(NULL);
+    }
+}
+
+static size_t ref_dependency_range(const llg_ref_t* ref, uint32_t lsb, uint32_t count,
+                                   llg_wait_dependency_t* out) {
+    if (!ref || !count) return 0;
+    llg_ref_kind_t kind = (llg_ref_kind_t)ref->kind;
+    if (kind == LLG_REF_COMPOSITE && ref->retained) {
+        const llg_ref_composite_t* composite = (const llg_ref_composite_t*)ref->retained;
+        size_t found = 0;
+        uint32_t remaining = ref->width;
+        for (size_t i = 0; i < composite->count; i++) {
+            const llg_ref_t* part = composite->parts[i];
+            uint32_t width = part ? part->width : 0;
+            if (width > remaining) break;
+            remaining -= width;
+            uint64_t low = lsb > remaining ? lsb : remaining;
+            uint64_t high = (uint64_t)lsb + count < (uint64_t)remaining + width
+                                ? (uint64_t)lsb + count : (uint64_t)remaining + width;
+            if (low < high)
+                found += ref_dependency_range(part, (uint32_t)(low - remaining),
+                                              (uint32_t)(high - low),
+                                              out ? out + found : NULL);
+        }
+        return found;
+    }
+    if ((kind == LLG_REF_VIEW || kind == LLG_REF_TAGGED_VIEW) && ref->retained) {
+        const llg_ref_view_t* view = (const llg_ref_view_t*)ref->retained;
+        if (!view->parent) return 0;
+        // A tagged view's validity also depends on its tag bits.
+        if (kind == LLG_REF_TAGGED_VIEW)
+            return ref_dependency_range(view->parent, 0, view->parent->width, out);
+        uint64_t low = lsb > view->plan.value_lsb ? lsb : view->plan.value_lsb;
+        uint64_t high = (uint64_t)lsb + count;
+        uint64_t end = (uint64_t)view->plan.value_lsb + view->plan.count;
+        if (end < high) high = end;
+        if (low >= high) return 0; // only bits the selection leaves undefined
+        return ref_dependency_range(
+            view->parent, (uint32_t)(view->plan.storage_lsb + (low - view->plan.value_lsb)),
+            (uint32_t)(high - low), out);
+    }
+    if (out) *out = (llg_wait_dependency_t){ .sig = ref_leaf_dependency(ref) };
+    return 1;
+}
+
+static size_t ref_dependencies(const llg_ref_t* ref, llg_wait_dependency_t* out) {
+    return ref ? ref_dependency_range(ref, 0, ref->width, out) : 0;
+}
+
+static void ref_wait_eval(sv4_t* out, void* context) {
+    const llg_ref_t* ref = *llg_frame_opaque_address((llg_frame_t*)context, 0);
+    llg_rt_ref_read_to(out, ref);
+}
+
+llg_expr_event_spec_t llg_ref_wait_spec(const llg_ref_t* ref, int kind) {
+    llg_expr_event_spec_t spec = { .kind = kind };
+    if (ref && (llg_ref_kind_t)ref->kind == LLG_REF_WHOLE) {
+        spec.sig = llg_dependency_or_never(ref->base);
+        return spec;
+    }
+    size_t count = ref_dependencies(ref, NULL);
+    if (count > INT_MAX) {
+        fprintf(stderr, "llg: `ref` wait names too many storage locations\n");
+        abort();
+    }
+    llg_frame_t* frame = llg_frame_new(2);
+    llg_frame_capture_opaque(frame, 0, (void*)ref);
+    llg_wait_dependency_t* dependencies = (llg_wait_dependency_t*)llg_frame_capture_object(
+        frame, 1, (count ? count : 1) * sizeof(*dependencies), NULL);
+    ref_dependencies(ref, dependencies);
+    spec.eval = ref_wait_eval;
+    spec.eval_context = frame;
+    spec.dependencies = dependencies;
+    spec.n_dependencies = (int)count;
+    // Nothing can change a value whose selection is out of range.
+    if (!count) spec.sig = llg_dependency_or_never(NULL);
+    return spec;
+}
+
+enum { REF_WAIT_INLINE_DEPENDENCIES = 8 };
+
+llg_co_arm_t llg_arm_ref_dependencies(llg_proc_t* self, const llg_wait_dependency_t* deps,
+                                      int n, const llg_ref_t* const* refs, int n_refs,
+                                      int event) {
+    if (n < 0 || n_refs < 0) abort();
+    size_t total = (size_t)n;
+    for (int i = 0; i < n_refs; i++) total += ref_dependencies(refs[i], NULL);
+    if (total > INT_MAX) {
+        fprintf(stderr, "llg: `ref` wait names too many storage locations\n");
+        abort();
+    }
+    // The arm copies the list; whole descriptors fit the inline buffer.
+    llg_wait_dependency_t inline_buffer[REF_WAIT_INLINE_DEPENDENCIES];
+    llg_wait_dependency_t* all = total <= REF_WAIT_INLINE_DEPENDENCIES
+        ? inline_buffer
+        : (llg_wait_dependency_t*)llg_checked_malloc(total, sizeof(*all),
+                                                     "reference wait dependencies");
+    if (n) memcpy(all, deps, (size_t)n * sizeof(*all));
+    size_t used = (size_t)n;
+    for (int i = 0; i < n_refs; i++) used += ref_dependencies(refs[i], all + used);
+    llg_co_arm_t arm = event ? llg_arm_event_dependencies(self, all, (int)total)
+                             : llg_arm_any_dependencies(self, all, (int)total);
+    if (all != inline_buffer) free(all);
+    return arm;
 }
