@@ -115,20 +115,73 @@ fn string_and_handle_ref_waits_follow_the_actual_marker() {
 }
 
 #[test]
-fn waited_string_refs_to_fork_visible_automatics_are_explicit() {
+fn container_element_ref_waits_follow_the_element() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/container_element_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "container_element_refs", expected, &[], &[]);
+}
+
+#[test]
+fn member_view_ref_waits_follow_the_member() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_009/member_view_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "member_view_refs", expected, &[], &[]);
+}
+
+#[test]
+fn unpacked_array_ref_formals_follow_the_elements_read() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_009/aggregate_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "aggregate_refs", expected, &[], &[]);
+}
+
+#[test]
+fn virtual_interface_ref_formals_are_typed_handles() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_009/vif_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "vif_refs", expected, &[], &[]);
+}
+
+#[test]
+fn fork_shared_strings_and_handles_publish_to_waiters() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/fork_shared_native_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "fork_shared_native_refs", expected, &[], &[]);
+}
+
+#[test]
+fn class_property_string_and_handle_refs_wake_waiters() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/class_property_native_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "class_property_native_refs", expected, &[], &[]);
+}
+
+#[test]
+fn handle_stores_through_ref_formals_wake_waiters_at_once() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/handle_ref_store_wakeups.out");
+    sim_cli::run_case_backend_parity(SUITE, "handle_ref_store_wakeups", expected, &[], &[]);
+}
+
+#[test]
+fn fork_visible_array_elements_are_ref_actuals() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/fork_visible_element_refs.out");
+    sim_cli::run_case_backend_parity(SUITE, "fork_visible_element_refs", expected, &[], &[]);
+}
+
+#[test]
+fn waited_record_refs_to_subroutine_records_are_explicit() {
     sim_cli::reject_case(
         SUITE,
-        "neg_shared_string_ref_wait",
-        "`ref` actual of string or handle formal `s` of task `ws`, which waits on it, is a class property or an automatic variable a fork branch can change; its changes publish no marker the task can wait on (SIM-009)",
+        "neg_record_ref_wait_actual",
+        "task `worker` waits on a native record `ref` formal, so each of its record actuals must be a module, static or procedural-block record (SIM-009) at ",
     );
 }
 
 #[test]
-fn waited_handle_refs_to_class_properties_are_explicit() {
+fn waited_string_refs_to_array_elements_are_explicit() {
     sim_cli::reject_case(
         SUITE,
-        "neg_handle_property_ref_wait",
-        "`ref` actual of string or handle formal `h` of task `wh`, which waits on it, is a class property or an automatic variable a fork branch can change; its changes publish no marker the task can wait on (SIM-009)",
+        "neg_native_element_ref_wait",
+        "`ref` actual of string or handle formal `s` of task `ws`, which waits on it, is neither a variable nor a class property; its changes publish no marker the task can wait on (SIM-009) at ",
     );
 }
 

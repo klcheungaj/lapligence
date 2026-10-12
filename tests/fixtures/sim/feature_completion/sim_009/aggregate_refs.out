@@ -1,0 +1,6 @@
+seek 0 at 1
+seek 1 at 3
+seek 2 at 4
+seek 1 at 5
+seek 2 at 7
+total 33 at 8

@@ -1,0 +1,4 @@
+tick 2 at 1 data 1
+tick 1 at 5 data 5
+settle 7 at 7
+tick 0 at 8 data 7

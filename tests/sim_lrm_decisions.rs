@@ -920,3 +920,27 @@ fn s09_d4_class_property_ref_wait() {
         include_str!("fixtures/sim/lrm_decisions/S09-D4_class_property_ref_wait.out"),
     );
 }
+
+#[test]
+fn s09_d5_handle_ref_store_immediate() {
+    run_decision(
+        "S09-D5_handle_ref_store_immediate",
+        include_str!("fixtures/sim/lrm_decisions/S09-D5_handle_ref_store_immediate.out"),
+    );
+}
+
+#[test]
+fn s09_d6_vif_ref_rebinding() {
+    run_decision(
+        "S09-D6_vif_ref_rebinding",
+        include_str!("fixtures/sim/lrm_decisions/S09-D6_vif_ref_rebinding.out"),
+    );
+}
+
+#[test]
+fn s09_d7_fork_shared_native_wait() {
+    run_decision(
+        "S09-D7_fork_shared_native_wait",
+        include_str!("fixtures/sim/lrm_decisions/S09-D7_fork_shared_native_wait.out"),
+    );
+}
