@@ -372,20 +372,27 @@ impl Frame<'_, '_> {
                     storage.slot()
                 ),
             );
-            self.bindings
+            let binding = Binding {
+                address: pointer,
+                width: initial.width,
+                signed: initial.signed,
+                two_state: false,
+                shortreal: false,
+                automatic: true,
+            };
+            let scope = self
+                .bindings
                 .last_mut()
-                .expect("frame always has a binding scope")
-                .insert(
-                    name.to_owned(),
-                    Binding {
-                        address: pointer,
-                        width: initial.width,
-                        signed: initial.signed,
-                        two_state: false,
-                        shortreal: false,
-                        automatic: true,
-                    },
-                );
+                .expect("frame always has a binding scope");
+            // Selected and projected accesses (an element of a captured
+            // automatic array) name the variable by its source local, as
+            // captured strings and handles do.
+            if let IrExprKind::LocalRead(local) = initial.kind() {
+                if local != name {
+                    scope.insert(local.clone(), binding.clone());
+                }
+            }
+            scope.insert(name.to_owned(), binding);
             return Ok(());
         }
         if storage.kind() == StorageKind::Opaque {
