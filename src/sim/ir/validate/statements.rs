@@ -696,8 +696,18 @@ impl Validator<'_> {
                 }
             }
             IrStmt::ClockingDrive {
-                lhs, rhs, specs, ..
+                lhs,
+                rhs,
+                specs,
+                cycles,
+                ..
             } => {
+                if let Some(cycles) = cycles {
+                    if cycles.is_real() {
+                        return self.fail(path, "clocking drive cycle count must be integral");
+                    }
+                    self.validate_expr(cycles, formals, &format!("{path}.cycles"))?;
+                }
                 if specs.is_empty() {
                     return self.fail(path, "clocking drive requires an associated event");
                 }

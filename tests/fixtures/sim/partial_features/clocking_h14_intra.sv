@@ -3,7 +3,7 @@ module tb;
   timeprecision 1ns;
 
   logic clk = 0;
-  logic data = 0;
+  logic data = 1;
   logic out = 0;
 
   default clocking cb @(posedge clk);
@@ -11,13 +11,16 @@ module tb;
   endclocking
 
   initial begin
-    #1 data = 1;
     #3 data = 0;
   end
 
+  // The drive does not block (SV 14.16): it keeps the issue-time value and
+  // matures on the second clocking event after the off-event issue (t=9),
+  // then applies the #1 output skew.
   initial begin
     #1 cb.out <= ##2 data;
     $display("issued t=%0t out=%0d data=%0d", $time, out, data);
+    #8 $display("matured t=%0t out=%0d data=%0d", $time, out, data);
     #2 $display("after t=%0t out=%0d data=%0d", $time, out, data);
     #1 $finish;
   end

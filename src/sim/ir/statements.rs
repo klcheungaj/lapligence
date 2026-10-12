@@ -467,6 +467,10 @@ pub enum IrStmt {
         /// issued off-event is held until the next matching event before its
         /// output skew is applied.
         specs: Vec<(IrWaitSrc, IrEdge)>,
+        /// The `##n` of `cb.x <= ##n v`, evaluated when the drive issues. The
+        /// drive matures `n` cycles of the target's own clocking event later
+        /// (SV 14.16); the issuing process does not block.
+        cycles: Option<Box<IrExpr>>,
     },
     /// Wait for a bounded number of resolved clocking events. A zero count
     /// waits for the current-slot event only when that event has not already

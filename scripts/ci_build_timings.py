@@ -5,8 +5,8 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-PHASES = ("generate", "probe", "runtime", "seed", "configure", "build", "total")
-OUTCOMES = ("result", "runtime", "seed", "configure_retry")
+PHASES = ("generate", "probe", "runtime", "seed", "template", "configure", "build", "total")
+OUTCOMES = ("result", "runtime", "seed", "template", "configure_retry")
 
 
 def parse(lines):
@@ -58,6 +58,18 @@ def summarize(records):
         total = rows.get("total")
         if configure and total:
             out.append(f"seed={seed}: builds={len(group)} configure median={configure[3]}ms total median={total[3]}ms")
+    templates = defaultdict(list)
+    for r in records:
+        if "template" in r:
+            templates[r["template"]].append(r)
+    for template, group in sorted(templates.items()):
+        rows = {row[0]: row for row in phase_rows(group)}
+        total = rows.get("total")
+        if total:
+            configure = rows.get("configure")
+            configure_text = f"{configure[3]}ms" if configure else "none"
+            out.append(f"template={template}: builds={len(group)} configure median={configure_text} "
+                       f"total median={total[3]}ms")
     return "\n".join(out)
 
 

@@ -1,0 +1,15 @@
+10 P cb.d=00 d=01 o=00
+10 P #0 o=00 a=0a b=00
+10 R o=00 a=0a b=00
+10 M o=50 p=00 q=00 s=00 a=a1 b=0a
+10 S o=50 p=00 a=a1 b=0a
+12 M o=50 p=11 q=00 s=00 a=a1 b=0a
+20 P ##1 cb.d=01
+20 P ##0 same step
+20 M o=50 p=11 q=55 s=87 a=a1 b=0a
+22 M o=50 p=12 q=55 s=87 a=a1 b=0a
+25 P ##0 waited
+25 M o=60 p=12 q=44 s=87 a=a1 b=0a
+40 M o=99 p=12 q=44 s=87 a=a1 b=0a
+42 M o=99 p=77 q=44 s=87 a=a1 b=0a
+50 P ##2 done

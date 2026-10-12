@@ -34,8 +34,8 @@ Each `<ID>_<name>.sv` file is:
 ### On another simulator
 
 1. Compile and run the `.sv` file alone, with `tb` as the top module.
-2. If there is a `.c` companion of the same name (only B8), build it as a
-   shared DPI-C library and load it with the simulator's DPI library option.
+2. If there is a `.c` companion of the same name (B8 and S40-D1 to S40-D5),
+   build it as a shared DPI-C library (the S40 cases include `svdpi.h`) and load it with the simulator's DPI library option.
 3. Compare stdout with the `.out` file. Ignore the simulator's own banners and
    its `$finish` message.
 4. **Negative cases have an empty `.out`.** For AA-D7, S14-D5 and S23-D2, the
@@ -50,8 +50,10 @@ through the public `llg` command line:
 - in both optimizer modes;
 - requiring the exact `.out` stdout and identical stderr across backends.
 
-For B8, the test builds the `.c` companion with the host C compiler and passes
-it with `--dpi-lib`; this case runs on Unix hosts only. AA-D7 must fail to
+For B8 and S40-D1 to S40-D5, the test builds the `.c` companion with the host
+C compiler and passes it with `--dpi-lib`; these cases run on Unix hosts only.
+S40-D5 must stop with exit status 1 after its first line, reporting "DPI-C
+import task `d5_task` returned nonzero, but nothing disabled it". AA-D7 must fail to
 compile with "`$past` of a real expression is illegal", S14-D5 with
 "nonblocking assignment to class property `x`", and S23-D2 with "is an
 unpacked structure or union, which is not a singular variable". The scripted run is in
@@ -150,6 +152,15 @@ scripts/run-tests.sh -E 'test(/^sim_lrm_decisions::/)'
 | S32-D1 | **The implicit `$finish` of programs is immediate.** When the last thread originating in a program initial ends, llg calls `$finish` at that point, as if that thread had called it: events still pending in the same time slot (a Re-NBA update, the design processes it would wake) do not run, and final procedures see the last committed values. | 24.3 L43229-43232; 9.2.3 L11258-11261 | `S32-D1_implicit_finish_immediate` | llg choice (the text says "immediately after" the threads end without saying whether pending same-slot events run first) |
 | S32-D2 | **Programs can be bound into interfaces.** A `bind` whose target scope is an interface may instantiate a program; the program runs once per interface instance. | 23.11 L42888-42893, L42897-42901; A.1.4 L40954-40957 | `S32-D2_bind_program_into_interface` | llg choice (the prose names only interfaces as code bound into interfaces; the grammar allows a program instantiation as an interface item and an interface as a bind target) |
 
+## Synchronous drives and clocking (SIM-034)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S34-D1 | **A cycle-delayed drive does not block.** `cb.v <= ##n e` evaluates `e` and `n` when it executes and matures `n` events of the target's own clocking block later; issued away from an event it counts from the next event (`##0` has no effect). Drives that mature in the same Re-NBA region commit in issue order, so the last issued value is driven. | 14.16 L20103-20108, L20144-20147; 14.16.2 L20194-20195, L20244-20260; 14.11 L19824-19828 | `S34-D1_cycle_drive_maturation` | LRM text (the clause's own example; llg blocked the process for the cycle count before) |
+| S34-D2 | **A clocking output on a net has its own driver.** The driver starts at `'z`, has strong strength and resolves with the net's other drivers. | 14.16 L20069-20074 | `S34-D2_clocking_net_driver` | LRM text (llg wrote into the net's existing driver before) |
+| S34-D3 | **A drive through a virtual interface is bound when it executes.** It drives the clockvar of the instance the handle names at that moment, with that instance's clocking event and skew; rebinding the handle before the drive matures does not redirect it. | 25.9 L44891-44893; 14.16 L20144-20147 | `S34-D3_vif_drive_bound_at_issue` | llg choice (the text does not say when the handle of a pending drive is resolved; llg treats it like an NBA target) |
+| S34-D4 | **Design processes woken in Observed run before the reactive set.** A module process waiting for a clocking block event resumes in the Active region of the same pass, before program processes woken by the same event run in Reactive; its drives commit in the following Re-NBA region. | 14.13 L19921-19923; 4.5 L3386-3392; 24.3.1 L43248-43249 | `S34-D4_observed_wakeup_before_reactive` | LRM text (llg ran the reactive set first before) |
+
 ## File input (SIM-026)
 
 | ID | Decision | Clause (SV) | Case | Kind |
@@ -232,6 +243,16 @@ independent transcription in
 | S09-D2 | **`@` on a handle `ref` formal follows the handle variable.** It resumes when the variable the actual names is written with a different handle (including `null`); a store to a property of the referenced object, or writing the same handle, is no event. | 9.4.2 L11822-11823, L11830-11831 | `S09-D2_handle_ref_event` | LRM text (llg rejected `@` on a handle `ref` formal and never woke a `wait` on one before) |
 | S09-D3 | **`@*` includes the variable a `ref` formal names.** Implicit sensitivity of a statement reading a `ref` formal waits on the actual's variable. | 9.4.2.2 L11892-11894; 13.5.2 L19138-19140 | `S09-D3_ref_implicit_sensitivity` | llg reading (the text lists nets and variables; llg treats the formal as the variable it names, as it did for module actuals; automatic actuals no longer force an expansion) |
 | S09-D4 | **A `ref` formal bound to a class property or array element is waited on through it.** A `wait` resumes when that property or element changes; stores to other elements do not satisfy it. | 13.5.2 L19140-19147; 9.4.3 L12032-12033 | `S09-D4_class_property_ref_wait` | LRM text (llg never woke a task waiting on a class property before) |
+
+## DPI-C imports (SIM-040)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S40-D1 | **Output formals start at the type default.** At entry to the C function every bit of a 4-state output is X and a 2-state output is 0, element by element for arrays and structures, whatever the actual held. | 35.5.1.2 L55643-55644; H.6.3 L72017-72018 | `S40-D1_output_initial_values` (`.sv` and `.c`) | llg policy (the C lines labelled `llg`) |
+| S40-D2 | **Copy order.** Every input and inout is copied in before the call; after it, outputs and inouts are copied out one at a time in declaration order, and the function result is assigned last. With aliased actuals the last copy-out wins and a result assigned to the same variable replaces them. A string result is copied before any output is written. | 35.6.1 L56128-56131; H.6.4 L72022-72023 | `S40-D2_aliased_copy_out` (`.sv` and `.c`) | llg choice (the text does not order copy-outs) |
+| S40-D3 | **Open-array queries.** `svDimensions` counts the unpacked dimensions plus one when the element is integral, like `$dimensions`; dimension 0 is the normalized packed part. Queries of an absent dimension return 0. | H.12.2 L73284-73288; 20.7 L34712-34715, L34736-34737 | `S40-D3_open_array_queries` (`.sv` and `.c`) | LRM text; returning 0 instead of `'x` is an llg choice |
+| S40-D4 | **Invalid element indices.** An out-of-range index or a wrong index count gives a NULL element pointer, reads the element type's default (X for logic, 0 for bit) and makes writes do nothing. svBit reads of a logic element map X and Z to 0. | H.12.4 L73337-73340; 7.4.6 L8235-8237 | `S40-D4_invalid_element_access` (`.sv` and `.c`) | llg choice (7.4.6 applied to the C layer) |
+| S40-D5 | **Imported-task results.** An imported task that returns nonzero when no disable is in effect stops the simulation with a fatal error; nothing is copied out. Without exports nothing can disable an imported task during its call. | 35.9 L56272-56273, L56282-56284 | `S40-D5_task_disable_protocol` (`.sv` and `.c`; runtime fatal after the first line) | LRM text |
 
 ## Earlier decisions
 

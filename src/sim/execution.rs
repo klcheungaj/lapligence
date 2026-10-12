@@ -1081,9 +1081,17 @@ fn collect_statement_expression_effects(
         IrStmt::RealArrayOrder(order) => order.expressions(&mut |child| {
             collect_expression_effects(ir, child, effects, visited_calls)
         }),
+        IrStmt::ClockingDrive {
+            lhs, rhs, cycles, ..
+        } => {
+            collect_expression_effects(ir, rhs, effects, visited_calls);
+            if let Some(cycles) = cycles {
+                collect_expression_effects(ir, cycles, effects, visited_calls);
+            }
+            collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
+        }
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
-        | IrStmt::ClockingDrive { lhs, rhs, .. }
         | IrStmt::InertialAssign { lhs, rhs, .. } => {
             collect_expression_effects(ir, rhs, effects, visited_calls);
             collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
@@ -2072,6 +2080,9 @@ fn collect_object_query_effects(
             collect_chandle_effects(ir, a, effects, visited_calls);
             collect_chandle_effects(ir, b, effects, visited_calls);
         }
+        IrObjectQuery::VirtualInterfaceInstance { handle, .. } => {
+            collect_chandle_effects(ir, handle, effects, visited_calls);
+        }
         IrObjectQuery::SemaphoreTryGet(receiver, keys) => {
             collect_chandle_effects(ir, receiver, effects, visited_calls);
             collect_expression_effects(ir, keys, effects, visited_calls);
@@ -2916,11 +2927,13 @@ mod tests {
         assert!(indirect_effects.contains(&ExecutionEffect::Terminate));
 
         let mut dpi = IrFunc::new("dpi".into(), None, vec![], vec![], vec![], vec![]);
-        dpi.dpi = Some(IrDpiImport {
-            c_name: "dpi".into(),
-            context: true,
-            pure: false,
-        });
+        dpi.dpi = Some(IrDpiImport::new(
+            "dpi".into(),
+            true,
+            false,
+            Vec::new(),
+            None,
+        ));
         ir.funcs.push(dpi);
         let dpi_effects = effects_for_statements(
             &ir,

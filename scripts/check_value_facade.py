@@ -9,6 +9,8 @@ METADATA = {
     'rt/container/dynamic_arrays.c': ('changes',),
     'rt/container/queues.c': ('changes',),
     'rt/llg_container_prelude.c': ('record',),
+    # llg_dpi_type_t layout tables: `width` is a DPI payload bit count.
+    'rt/llg_dpi.c': ('element', 'type', 'type->element', 'type->members[m].type'),
     'rt/llg_rt_selftest.c': ('net', ''),
     'rt/llg_vpi.c': ('args[i]', 'argument', 'call->args[i]', 'object', 'site->args[i]'),
     'rt/llg_wave.c': ('g_wave.regs[alias]', 'g_wave.regs[i]', 'reg'),
@@ -27,6 +29,7 @@ METADATA = {
     'rt/scheduler/stochastic.c': ('target',),
     'rt/scheduler/wait_queues.c': ('single',),
     'emit_c/expressions/input.rs': ('',),
+    'emit_c/model/dpi.rs': ('',),
     'emit_c/model/storage.rs': ('',),
     'emit_c/model.rs': ('',),
     'emit_c/owned/events.rs': ('',),

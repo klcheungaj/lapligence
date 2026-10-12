@@ -20,6 +20,15 @@ a choice the text leaves open; each one has a portable case in
 | `binary_input.dat` | 26 | `48 44 52 20 37 0a` (`"HDR 7\n"`), the raw bytes `01 02 03 04 05 06 07 08 09 0a`, then `74 61 69 6c 20 6c 69 6e 65 0a` (`"tail line\n"`). |
 | `line_input.txt` | 23 | `"first line\nsecond\n\nlast"`: no newline after `last`. |
 
+Fixtures whose expected output depends on byte positions (`$ftell`, `$fseek`,
+`$rewind`) or reads unformatted data open their files in binary mode (`"rb"`,
+`"wb"`). SV L36629-36631: "The "b" in the above types exists to distinguish
+binary files from text files. Many systems make no distinction between binary
+and text files, and on these systems the "b" is ignored. However, some systems
+perform data mappings on certain binary values written to and read from files
+that are opened for text access." llg passes the mode to C `fopen` unchanged,
+so Windows text mode maps newlines and its positions differ.
+
 `binary_input.sv` also writes `generated.dat` itself. It contains `ef cd ab 89`
 (`$fwrite("%u", 32'h89abcdef)`), the `%z` pair `c6 00 00 00 53 00 00 00`
 for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`

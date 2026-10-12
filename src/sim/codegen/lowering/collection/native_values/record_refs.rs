@@ -112,7 +112,9 @@ impl Codegen<'_> {
     ) -> Result<usize, String> {
         let records = self.record_ref_bindings(formals, bound);
         if records.is_empty() {
-            return Ok(template);
+            // An open-array DPI import calls the specialization for its
+            // actuals; every other callee is the template itself.
+            return self.dpi_open_callee(template, formals, bound);
         }
         self.reject_method_record_refs(path, function, &records, method)?;
         self.task_specialization(function, inst, Vec::new(), records)

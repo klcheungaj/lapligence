@@ -40,9 +40,10 @@ use std::fmt;
 mod types;
 pub use types::{
     AggregateKind, AggregateLayout, AggregateMember, ArrayKind, ArrayMeta,
-    AssignmentPatternKeyType, AssociativeIndex, ClassMetadata, DpiImportInfo, ElaboratedTypeRanges,
-    EnumMember, EnumTypeMetadata, PackedMember, PackedRange, TypeDescriptor, TypeId, TypeShape,
-    ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics, ValueEqualitySemantics,
+    AssignmentPatternKeyType, AssociativeIndex, ClassMetadata, DpiImportInfo, DpiOpenType,
+    ElaboratedTypeRanges, EnumMember, EnumTypeMetadata, PackedMember, PackedRange, TypeDescriptor,
+    TypeId, TypeShape, ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics,
+    ValueEqualitySemantics,
 };
 mod nodes;
 pub use nodes::{
@@ -250,6 +251,8 @@ pub struct Db {
     packed_members: HashMap<NodeId, Vec<PackedMember>>,
     /// Structure/union category and members keyed by the declared object.
     aggregate_layouts: HashMap<NodeId, AggregateLayout>,
+    /// DPI import formals declared with an unsized dimension.
+    dpi_open_types: HashMap<NodeId, DpiOpenType>,
     /// Complete recursive type descriptors keyed by the declared object.
     /// Nodes of one frontend type share its single descriptor.
     type_descriptors: DenseShared<TypeDescriptor>,
@@ -346,6 +349,7 @@ impl Db {
             method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
+            dpi_open_types: HashMap::new(),
             type_descriptors: DenseShared::default(),
             packed_pattern_elements: HashMap::new(),
             mailbox_elements: HashMap::new(),
@@ -417,6 +421,7 @@ impl Db {
             method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
+            dpi_open_types: HashMap::new(),
             type_descriptors: DenseShared::default(),
             packed_pattern_elements: HashMap::new(),
             mailbox_elements: HashMap::new(),
@@ -833,6 +838,12 @@ impl Db {
 
     pub fn aggregate_layout(&self, id: NodeId) -> Option<&AggregateLayout> {
         self.aggregate_layouts.get(&id)
+    }
+
+    /// The open-array type of a DPI import formal (SV 35.5.6.1), or `None`
+    /// for every other declaration.
+    pub fn dpi_open_type(&self, id: NodeId) -> Option<&DpiOpenType> {
+        self.dpi_open_types.get(&id)
     }
 
     /// Return the complete recursive type descriptor captured for a

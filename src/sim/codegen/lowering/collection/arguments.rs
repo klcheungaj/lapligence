@@ -33,7 +33,10 @@ impl<'a> Codegen<'a> {
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             let (w, s, two_state, real, shortreal, is_event, is_string) = match self.kind(*io) {
                 NodeKind::FuncArg { ty, .. } => {
-                    if self.fixed_formal_array(*io).is_some()
+                    // An open-array formal's payload follows the actual;
+                    // see below once the actual is known.
+                    if self.db.dpi_open_type(*io).is_some()
+                        || self.fixed_formal_array(*io).is_some()
                         || self.is_native_declaration(*io)
                         || self.is_subroutine_container(*io)
                         || self.real_formal_array(*io).is_some()
@@ -124,6 +127,10 @@ impl<'a> Codegen<'a> {
                     }
                 }
             }
+            let (w, two_state) = match self.db.dpi_open_type(*io) {
+                Some(open) => self.dpi_open_payload(*io, open, expr)?,
+                None => (w, two_state),
+            };
             bound.push(BoundArg {
                 width: w,
                 signed: s,

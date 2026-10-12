@@ -197,6 +197,11 @@ pub(super) fn prepare(root: &Path, toolchain: &Toolchain<'_>) -> Option<Seed> {
 }
 
 impl Seed {
+    /// The exact key this seed was published under.
+    pub(super) fn key(&self) -> &str {
+        &self.key
+    }
+
     /// Copy the platform files into the fresh `build_dir` and return the
     /// extra configure arguments, or `None` (with `build_dir` removed) when
     /// the copy fails.
@@ -256,7 +261,7 @@ fn key_text(
     key
 }
 
-fn entry_name(key: &str) -> String {
+pub(super) fn entry_name(key: &str) -> String {
     let hash = key.bytes().fold(0xcbf29ce484222325u64, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
     });

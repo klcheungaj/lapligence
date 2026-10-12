@@ -1237,6 +1237,9 @@ struct Codegen<'a> {
     /// protects the owned/lowered boundary when cloned declarations arrive
     /// through different semantic paths.
     dpi_signatures: HashMap<String, String>,
+    /// Open-array DPI import specializations keyed by template function
+    /// and the concrete foreign types of the call's actuals.
+    dpi_specializations: HashMap<(usize, String), usize>,
     /// Interned combinational UDP definitions → `model.udp_tables` index, so
     /// every instance of one definition shares a table without rescanning.
     udp_table_indices: HashMap<crate::sim::ir::IrUdpTable, usize>,
@@ -1587,6 +1590,9 @@ struct Codegen<'a> {
     /// Whole-net continuous assignment node -> synthetic signal index carrying
     /// that wired net driver's distinct runtime slot.
     wired_driver_sites: HashMap<NodeId, usize>,
+    /// Clocking output/inout node -> synthetic signal of the net driver that
+    /// SV 14.16 creates for it when its clocking signal is a wired net.
+    clocking_net_drivers: HashMap<NodeId, usize>,
     /// Lazily built packed C storage name -> (readable signal index, true-net
     /// alias groups) for continuous-driver self-feedback analysis.
     feedback_storage: Option<HashMap<String, (usize, Vec<usize>)>>,
@@ -1724,6 +1730,7 @@ impl<'a> Codegen<'a> {
             cur_fn_ir: None,
             func_meta: HashMap::new(),
             dpi_signatures: HashMap::new(),
+            dpi_specializations: HashMap::new(),
             udp_table_indices: HashMap::new(),
             static_formals: HashMap::new(),
             static_string_formals: HashMap::new(),
@@ -1846,6 +1853,7 @@ impl<'a> Codegen<'a> {
             frame_seq: 0,
             design_precision_fs: Timescale::DEFAULT.precision_fs,
             wired_driver_sites: HashMap::new(),
+            clocking_net_drivers: HashMap::new(),
             feedback_storage: None,
             release_markers: HashMap::new(),
             disable_conditions: HashMap::new(),

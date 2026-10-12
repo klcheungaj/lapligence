@@ -166,8 +166,8 @@ Never bake build-machine paths (`CARGO_MANIFEST_DIR`) into runtime defaults;
 sources/incompatible partial builds and retry failed configuration once cleanly.
 Root children are runtime archive entries (ready once they hold a `ready`
 marker) except the auxiliary directories listed once in
-`sim::build::RUNTIME_CACHE_AUX_DIRS`: `cmake-toolchain/` (seeds) and
-`compiler-probe/` (MSVC probe memos). Code that enumerates or prunes the root
+`sim::build::RUNTIME_CACHE_AUX_DIRS`: `cmake-toolchain/` (seeds),
+`compiler-probe/` (MSVC probe memos) and `cmake-tree/` (tree templates). Code that enumerates or prunes the root
 skips those names; add any new auxiliary directory to that list.
 
 Fresh trees (model and runtime archive) are seeded with cached toolchain
@@ -185,6 +185,17 @@ otherwise a `rejected` marker stops probing. A seeded configure that fails is
 retried clean and rejects the seed. Published files never change; ready/rejected
 markers are renamed into place with the exact key. Projects keep the shared
 `PROJECT_PREAMBLE` before `project()`. `LLG_CMAKE_TOOLCHAIN_SEED=0` disables it.
+Opt-in configured-tree templates (`LLG_CMAKE_TREE_TEMPLATES=1`,
+`build/tree_template.rs`) go one step further for seeded fresh model trees: a
+template keyed by the seed key, configure arguments and `CMakeLists.txt`
+stores one configured tree with its source-directory spellings replaced by
+placeholders. The first tree is captured, a second tree in another directory
+must match the template rewritten for its paths byte for byte (else
+`rejected`), and later fresh trees are written from it without a configure
+(no `cmake` configure, `ninja --version`, linker checks or `restat`). Only
+plain ASCII paths without spaces, `$` or `@` qualify; a build from a template
+that fails is rebuilt from a real configure and rejects the template when that
+succeeds. Runtime-archive trees always configure.
 Detection `try_compile`s use `CMAKE_TRY_COMPILE_CONFIGURATION=Release` (no MSVC
 `/Zi` PDBs). Every configure passes an empty `CMAKE_INSTALL_PREFIX` (with
 `CMAKE_FIND_NO_INSTALL_PREFIX=ON`): CMake's Windows default prefix depends on

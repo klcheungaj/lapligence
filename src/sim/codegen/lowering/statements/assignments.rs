@@ -261,6 +261,9 @@ impl EmitCtx<'_, '_> {
                     ));
                 }
             }
+            if let Some(drive) = self.lower_virtual_clocking_drive(lhs, rhs, op, None)? {
+                return Ok(drive);
+            }
             let lh = self.cg.lower_lhs(&self.path, lhs)?;
             let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
             let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
@@ -288,6 +291,7 @@ impl EmitCtx<'_, '_> {
                 rhs: rhs_ir,
                 ticks,
                 specs: drive_specs,
+                cycles: None,
             });
         }
         if !blocking {
@@ -1624,114 +1628,6 @@ impl EmitCtx<'_, '_> {
             },
             other => other,
         })
-    }
-
-    /// Capture selectors of a cycle-delayed clocking drive before its event
-    /// wait. Unlike an ordinary blocking event assignment, the clocking drive
-    /// uses an NBA-style update after the wait, so dynamic indices must retain
-    /// their issue-time values without needing a detached callback frame.
-    pub(super) fn capture_cycle_lhs(&self, h: NodeId, lhs: IrLhs) -> (Vec<IrStmt>, IrLhs) {
-        fn selector(h: NodeId, slots: &mut Vec<IrStmt>, expr: IrExpr) -> IrExpr {
-            let name = format!("_cycle_sel_{}_{}", h.0, slots.len());
-            slots.push(IrStmt::DeclLocal {
-                name: name.clone(),
-                width: expr.width,
-                signed: expr.signed,
-                two_state: false,
-                init: Some(Box::new(expr.clone())),
-            });
-            IrExpr::new(IrExprKind::LocalRead(name), expr.width, expr.signed, None)
-        }
-
-        fn target(h: NodeId, slots: &mut Vec<IrStmt>, lhs: IrLhs) -> IrLhs {
-            match lhs {
-                IrLhs::PackedSelect {
-                    target: root,
-                    steps,
-                    signed,
-                    two_state,
-                } => IrLhs::PackedSelect {
-                    target: Box::new(target(h, slots, *root)),
-                    steps: steps
-                        .into_iter()
-                        .map(|mut step| {
-                            step.base = selector(h, slots, step.base);
-                            step
-                        })
-                        .collect(),
-                    signed,
-                    two_state,
-                },
-                IrLhs::Bit(index, select, two_state) => {
-                    IrLhs::Bit(index, Box::new(selector(h, slots, *select)), two_state)
-                }
-                IrLhs::IdxPart(index, base, width, selected_width, negative, two_state) => {
-                    IrLhs::IdxPart(
-                        index,
-                        Box::new(selector(h, slots, *base)),
-                        Box::new(selector(h, slots, *width)),
-                        selected_width,
-                        negative,
-                        two_state,
-                    )
-                }
-                IrLhs::ArrayElem {
-                    arr,
-                    indices,
-                    elem_sel,
-                } => IrLhs::ArrayElem {
-                    arr,
-                    indices: indices
-                        .into_iter()
-                        .map(|index| selector(h, slots, index))
-                        .collect(),
-                    elem_sel: match elem_sel {
-                        IrElemSel::PackedChain(steps) => IrElemSel::PackedChain(
-                            steps
-                                .into_iter()
-                                .map(|mut step| {
-                                    step.base = selector(h, slots, step.base);
-                                    step
-                                })
-                                .collect(),
-                        ),
-                        IrElemSel::Whole => IrElemSel::Whole,
-                        IrElemSel::Part(left, right) => IrElemSel::Part(left, right),
-                        IrElemSel::Bit(index) => {
-                            IrElemSel::Bit(Box::new(selector(h, slots, *index)))
-                        }
-                        IrElemSel::Indexed {
-                            base,
-                            width,
-                            negative,
-                        } => IrElemSel::Indexed {
-                            base: Box::new(selector(h, slots, *base)),
-                            width,
-                            negative,
-                        },
-                    },
-                },
-                IrLhs::Stream {
-                    parts,
-                    width,
-                    slice,
-                    direction,
-                } => IrLhs::Stream {
-                    parts: parts
-                        .into_iter()
-                        .map(|(part, width)| (target(h, slots, part), width))
-                        .collect(),
-                    width,
-                    slice,
-                    direction,
-                },
-                other => other,
-            }
-        }
-
-        let mut slots = Vec::new();
-        let lhs = target(h, &mut slots, lhs);
-        (slots, lhs)
     }
 }
 

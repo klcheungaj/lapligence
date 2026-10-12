@@ -1429,6 +1429,30 @@ Reproduce with
 [`neg_input_edge_skew.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_input_edge_skew.sv) and
 [`neg_vif_clocking_event.sv`](../tests/fixtures/sim/feature_completion/sim_033/neg_vif_clocking_event.sv).
 
+## Synchronous drive forms outside the driver model
+
+**Status:** open (SIM-034 boundary).
+
+Synchronous drives reach their target through the clockvar's signal, the
+clocking block's own net driver, or the lvalue a clocking expression names.
+Two legal forms reject explicitly:
+
+- an output or inout clockvar bound to an expression over a wired net
+  (`output x = w[3:0]` on a `wire`): the clocking driver would have to cover
+  only the selected bits of a separate driver slot ("bound to an expression
+  over wired net ... is not supported");
+- a select of an expression-bound clockvar through a virtual interface
+  (`v.cb.x[1] <= ...` when `x` is declared `output x = s[3:0]`): the
+  per-instance arm has no unselected root to apply the select to.
+
+A drive through a virtual interface dispatches on the bound instance with a
+`case` over the descriptor's instances, so each drive site carries one drive
+per instance of that interface type: code size grows with the instance count
+(execution stays a single dispatch). Off-event and `##n` drives keep one heap
+record each until they mature.
+
+Reproduce with a clocking block `output x = w[3:0];` over a `wire [7:0] w`.
+
 ## Sampled-value arguments without sampled storage
 
 **Status:** open (SIM-035 boundary).
@@ -1502,6 +1526,54 @@ asynchronous abort check from the scheduler's time-step entry.
 `neg_multiclock_property.sv` and `neg_recursive_property.sv` in
 [sim_038](../tests/fixtures/sim/feature_completion/sim_038/readme.md); the
 other items need small hand-written cases.
+
+## DPI-C import limits (SIM-040)
+
+**Status:** open. SIM-040 marshals packed, sized unpacked and open-array
+formals of DPI-C imports; these forms remain outside it.
+
+### Symptom
+
+These legal imports reject with explicit diagnostics:
+
+- an unpacked array or structure formal (sized or open) with `real`,
+  `shortreal`, `string` or `chandle` elements or members: "unpacked aggregates
+  with real, shortreal, string or chandle elements are not supported
+  (SIM-040)";
+- a dynamic array, queue or associative array actual of an open-array formal:
+  "a dynamic array, queue or associative array actual of DPI-C open-array
+  formal ... is not supported (SIM-040)";
+- an unpacked aggregate formal wider than 1048575 payload bits.
+
+A library that calls `svGetScope`, `svSetScope`, `svPutUserData`,
+`svGetUserData`, `svGetCallerInfo`, `svIsDisabledState`,
+`svAckDisabledState`, `svGetTime*` or a deprecated SV3.1a routine (H.13)
+fails the model link with an error naming the routine. On Windows, a DPI DLL
+cannot import the `svdpi.h` routines from the model executable, so open-array
+imports have not been built there.
+
+The lint pass reports `undriven-signal` warnings for variables written only as
+DPI output or inout actuals.
+
+### Cause
+
+The thunk moves each aggregate through the packed payload, which has no
+representation for owned strings, doubles or handles inside a record. Open
+formals are specialized per actual shape at compile time, so a runtime-sized
+actual has no fixed shape. Scope, user-data and disable services need the
+context-import and export machinery of SIM-041. The lint driver analysis does
+not yet treat DPI output actuals as writes.
+
+### Intended direction
+
+Give aggregate leaves of native types their own C-layout slots in the layout
+tables; specialize open formals on container actuals by element type with a
+runtime-sized handle; implement the scope services with SIM-041; export the
+`svdpi.h` routines through an import library on Windows.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_040/neg_*.sv`.
 
 ## Legacy constructs unsupported by design
 

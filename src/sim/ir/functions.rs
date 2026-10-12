@@ -72,20 +72,44 @@ pub struct IrFormal {
     pub(in crate::sim) shared_local: Option<String>,
 }
 
-/// Owned DPI-C linkage qualifiers attached to one imported subroutine.
+/// Owned DPI-C linkage qualifiers and foreign C-layer types attached to one
+/// imported subroutine.
 ///
 /// The generated wrapper keeps this metadata separate from the internal
-/// simulator calling convention.  `c_name` is emitted only after lowering has
-/// validated the bounded scalar ABI, while `pure` and `context` remain
+/// simulator calling convention: each formal still travels as its internal
+/// value (a packed payload for aggregates), and the thunk converts it to the
+/// foreign representation in [`Self::formals`]. `pure` and `context` remain
 /// available to effect analysis and diagnostics.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IrDpiImport {
     pub(in crate::sim) c_name: String,
     pub(in crate::sim) context: bool,
     pub(in crate::sim) pure: bool,
+    /// Foreign type of each declared formal, in declaration order.
+    pub(in crate::sim) formals: Vec<IrDpiType>,
+    /// Foreign result type; `None` for a void function. An imported task
+    /// returns the C `int` of the disable protocol (SV 35.5.4), which this
+    /// does not record.
+    pub(in crate::sim) ret: Option<IrDpiType>,
 }
 
 impl IrDpiImport {
+    pub fn new(
+        c_name: String,
+        context: bool,
+        pure: bool,
+        formals: Vec<IrDpiType>,
+        ret: Option<IrDpiType>,
+    ) -> Self {
+        Self {
+            c_name,
+            context,
+            pure,
+            formals,
+            ret,
+        }
+    }
+
     pub fn c_name(&self) -> &str {
         &self.c_name
     }
@@ -97,6 +121,118 @@ impl IrDpiImport {
     pub fn is_pure(&self) -> bool {
         self.pure
     }
+
+    pub fn formals(&self) -> &[IrDpiType] {
+        &self.formals
+    }
+
+    pub fn ret(&self) -> Option<&IrDpiType> {
+        self.ret.as_ref()
+    }
+
+    /// Whether an open-array formal still has an unsized dimension: such an
+    /// import is a template that each call specializes for its actuals.
+    pub fn is_open_template(&self) -> bool {
+        self.formals.iter().any(IrDpiType::is_unsized)
+    }
+}
+
+/// The C-layer representation of one DPI value (SV Annex H.7).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum IrDpiType {
+    /// Scalar `bit`: an `svBit` code.
+    Bit,
+    /// Scalar `logic`/`reg`: an `svLogic` code.
+    Logic,
+    /// `byte`, `shortint`, `int`, `longint` (also as an enumeration base):
+    /// the C integer of `bytes` bytes.
+    Int {
+        bytes: u8,
+        signed: bool,
+    },
+    Real,
+    ShortReal,
+    Chandle,
+    String,
+    /// Any other packed type, in canonical `svBitVecVal`/`svLogicVecVal`
+    /// chunks (H.7.7).
+    Vector {
+        width: u32,
+        logic: bool,
+    },
+    /// A sized unpacked array, dimensions slowest first with their declared
+    /// ranges; C layout in natural order (H.7.6).
+    Array {
+        dims: Vec<(i32, i32)>,
+        element: Box<IrDpiType>,
+    },
+    /// An unpacked structure with the C compiler's layout (H.7.8).
+    Struct(Vec<IrDpiType>),
+    /// An open-array formal passed by `svOpenArrayHandle` (H.12). A template
+    /// marks an unsized unpacked dimension with `None`; a call
+    /// specialization carries the actual's ranges.
+    Open {
+        dims: Vec<Option<(i32, i32)>>,
+        element: Box<IrDpiType>,
+    },
+    /// The unsized packed dimension of a template open array; a call
+    /// specialization replaces it with the actual's linearized `Vector`.
+    OpenPacked {
+        logic: bool,
+    },
+}
+
+impl IrDpiType {
+    /// Whether a dimension or packed width is still unsized.
+    pub fn is_unsized(&self) -> bool {
+        match self {
+            Self::OpenPacked { .. } => true,
+            Self::Open { dims, element } => {
+                dims.iter().any(Option::is_none) || element.is_unsized()
+            }
+            Self::Array { element, .. } => element.is_unsized(),
+            Self::Struct(members) => members.iter().any(Self::is_unsized),
+            _ => false,
+        }
+    }
+
+    /// Bits of this value in the internal packed payload, or `None` for a
+    /// type outside the payload (real, string, chandle) or still unsized.
+    pub fn payload_width(&self) -> Option<u64> {
+        match self {
+            Self::Bit | Self::Logic => Some(1),
+            Self::Int { bytes, .. } => Some(u64::from(*bytes) * 8),
+            Self::Vector { width, .. } => Some(u64::from(*width)),
+            Self::Array { dims, element } => {
+                let mut total = element.payload_width()?;
+                for (left, right) in dims {
+                    total = total.checked_mul(dimension_size(*left, *right))?;
+                }
+                Some(total)
+            }
+            Self::Open { dims, element } => {
+                let mut total = element.payload_width()?;
+                for dim in dims {
+                    let (left, right) = (*dim)?;
+                    total = total.checked_mul(dimension_size(left, right))?;
+                }
+                Some(total)
+            }
+            Self::Struct(members) => members
+                .iter()
+                .try_fold(0u64, |sum, member| sum.checked_add(member.payload_width()?)),
+            Self::Real
+            | Self::ShortReal
+            | Self::Chandle
+            | Self::String
+            | Self::OpenPacked { .. } => None,
+        }
+    }
+}
+
+/// Element count of one `[left:right]` dimension.
+pub(in crate::sim) fn dimension_size(left: i32, right: i32) -> u64 {
+    (i64::from(left) - i64::from(right)).unsigned_abs() + 1
 }
 
 impl IrFormal {

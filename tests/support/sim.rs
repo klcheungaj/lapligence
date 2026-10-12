@@ -281,9 +281,16 @@ pub(crate) fn run_command(command: &mut Command, timeout: Duration) -> Result<Ou
                     .status();
                 let _ = child.kill();
                 let _ = child.wait();
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
-                return Err(format!("timed out after {timeout:?}"));
+                // What the command printed before the deadline names the
+                // step that was slow or hung (e.g. ctest's last started test).
+                let stdout = stdout_reader.join().ok().and_then(Result::ok);
+                let stderr = stderr_reader.join().ok().and_then(Result::ok);
+                return Err(format!(
+                    "timed out after {timeout:?}\n--- stdout before the timeout (tail) ---\n{}\n\
+                     --- stderr before the timeout (tail) ---\n{}",
+                    output_tail(stdout.as_deref()),
+                    output_tail(stderr.as_deref())
+                ));
             }
         }
     };
@@ -300,6 +307,16 @@ pub(crate) fn run_command(command: &mut Command, timeout: Duration) -> Result<Ou
         stdout: host_text_to_lf(stdout),
         stderr: host_text_to_lf(stderr),
     })
+}
+
+/// The last `TIMEOUT_OUTPUT_TAIL_BYTES` of a partial capture, lossily decoded.
+fn output_tail(bytes: Option<&[u8]>) -> String {
+    const TIMEOUT_OUTPUT_TAIL_BYTES: usize = 16 * 1024;
+    let Some(bytes) = bytes else {
+        return "<unavailable>".to_owned();
+    };
+    let start = bytes.len().saturating_sub(TIMEOUT_OUTPUT_TAIL_BYTES);
+    String::from_utf8_lossy(&bytes[start..]).into_owned()
 }
 
 /// Simulators keep the OS-native newline: on Windows the console and files

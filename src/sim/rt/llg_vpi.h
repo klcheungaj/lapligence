@@ -83,4 +83,10 @@ int llg_vpi_failed(void);
 void llg_vpi_call_function_to(sv4_t* dst, const char* name, llg_vpi_arg_t* args, int arg_count, uint32_t fallback_width, int8_t fallback_signed);
 void llg_vpi_call_function_site_to(sv4_t* dst, uint64_t site, const char* name, llg_vpi_arg_t* args, int count, uint32_t fallback_width, int8_t fallback_signed);
 
+/* The DPI-C bridge. Generated models receive it in the same header, ahead of
+ * this text (so the guard skips the include); in-tree users find the file. */
+#ifndef LLG_DPI_H
+#include "llg_dpi.h"
+#endif
+
 #endif /* LLG_VPI_H */

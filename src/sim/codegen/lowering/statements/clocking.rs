@@ -211,14 +211,19 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 ));
             }
         }
-        let lh = self.cg.lower_lhs(&self.path, lhs)?;
-        let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
-        let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
-        let (lhs_captures, lh) = self.capture_cycle_lhs(h, lh);
-        let tmp = format!("_cycle_rhs_{}", h.0);
-        let (width, signed) = (rhs_ir.width, rhs_ir.signed);
-        let wait = self.lower_cycle_wait(count_node)?;
-        let final_stmt = if let Some(target) = clocking_targets.first().copied() {
+        if let Some(target) = clocking_targets.first().copied() {
+            // A synchronous drive with a cycle delay does not block: the
+            // value and count are taken now and the drive matures on the
+            // target clockvar's own clocking events (SV 14.16).
+            if let Some(drive) =
+                self.lower_virtual_clocking_drive(lhs, rhs, op, Some(count_node))?
+            {
+                return Ok(vec![drive]);
+            }
+            let lh = self.cg.lower_lhs(&self.path, lhs)?;
+            let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
+            let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
+            let cycles = self.lower_drive_cycle_count(count_node)?;
             let drive_specs = self.lower_clocking_drive_specs(target)?;
             for other_target in clocking_targets.iter().skip(1) {
                 if self.lower_clocking_drive_specs(*other_target)? != drive_specs {
@@ -237,29 +242,140 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                     ));
                 }
             }
-            IrStmt::ClockingDrive {
+            return Ok(vec![IrStmt::ClockingDrive {
                 lhs: lh,
-                rhs: IrExpr::new(IrExprKind::LocalRead(tmp.clone()), width, signed, None),
+                rhs: rhs_ir,
                 ticks,
                 specs: drive_specs,
-            }
-        } else {
-            IrStmt::Assign {
-                lhs: lh,
-                rhs: IrExpr::new(IrExprKind::LocalRead(tmp.clone()), width, signed, None),
-                nba: !blocking,
-            }
+                cycles: Some(Box::new(cycles)),
+            }]);
+        }
+        // SV 14.11: a cycle delay is not a legal intra-assignment delay of
+        // an ordinary blocking or nonblocking assignment.
+        Err(format!(
+            "intra-assignment cycle delay in `{}` requires a clocking output/inout target",
+            self.path
+        ))
+    }
+
+    /// The cycle count of a synchronous drive's `##n`, which counts the
+    /// target's clocking events and needs no default clocking.
+    fn lower_drive_cycle_count(&mut self, count_node: NodeId) -> Result<IrExpr, String> {
+        let count = self.cg.lower_expr(&self.path, count_node)?;
+        if count.is_real() {
+            return Err(format!(
+                "`##` cycle delay count in `{}` must be integral",
+                self.path
+            ));
+        }
+        Ok(count)
+    }
+
+    /// Lower a synchronous drive through a virtual-interface handle (SV
+    /// 14.16, 25.9). The handle selects the bound instance when the drive
+    /// issues; that instance's arm drives its own clockvar with its own
+    /// clocking event, skew and net driver, so rebinding the handle later
+    /// never redirects a queued drive. Only the selected arm evaluates the
+    /// value, selectors and cycle count.
+    pub(super) fn lower_virtual_clocking_drive(
+        &mut self,
+        lhs: NodeId,
+        rhs: NodeId,
+        op: Operation,
+        cycles: Option<NodeId>,
+    ) -> Result<Option<IrStmt>, String> {
+        let Some(target) = self.cg.virtual_clocking_target(&self.path, lhs)? else {
+            return Ok(None);
         };
-        self.saw_wait = true;
-        let mut body = vec![IrStmt::DeclLocal {
-            name: tmp,
-            width,
-            signed,
-            two_state: false,
-            init: Some(Box::new(rhs_ir)),
-        }];
-        body.extend(lhs_captures);
-        body.extend([wait, final_stmt]);
-        Ok(vec![IrStmt::Block(body)])
+        if op != Operation::Assignment {
+            return Err(format!(
+                "compound assignment to a clocking output/inout in `{}` is not supported",
+                self.path
+            ));
+        }
+        let Some(first) = target.instances.first().copied() else {
+            return Err(format!(
+                "virtual interface clocking drive in `{}` has no interface instance to bind",
+                self.path
+            ));
+        };
+        let steps = if target.selects.is_empty() {
+            None
+        } else {
+            let dimensions = self
+                .cg
+                .db
+                .packed_dimensions(target.clockvar)
+                .or_else(|| {
+                    self.cg
+                        .db
+                        .clocking_var(first)
+                        .and_then(|var| var.source)
+                        .and_then(|source| self.cg.db.packed_dimensions(source))
+                })
+                .map(<[_]>::to_vec)
+                .unwrap_or_default();
+            Some(self.cg.packed_selection_steps_over(
+                &self.path,
+                &dimensions,
+                target.selects,
+                target.width,
+            )?)
+        };
+        let cycles = cycles
+            .map(|count| self.lower_drive_cycle_count(count))
+            .transpose()?;
+        let mut rhs_ir = None;
+        let mut items = Vec::with_capacity(target.instances.len());
+        for (instance, clockvar) in target.instances.iter().copied().enumerate() {
+            let root = self
+                .cg
+                .clocking_drive_root(&self.path, clockvar, steps.is_some())?;
+            let lh = match &steps {
+                Some(steps) => IrLhs::PackedSelect {
+                    target: Box::new(root),
+                    steps: steps.clone(),
+                    signed: false,
+                    two_state: target.two_state,
+                },
+                None => root,
+            };
+            let value = match &rhs_ir {
+                Some(value) => IrExpr::clone(value),
+                None => {
+                    let value = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
+                    let value = apply_lhs_assignment_context(&self.cg.model, &lh, value);
+                    rhs_ir = Some(value.clone());
+                    value
+                }
+            };
+            let specs = self.lower_clocking_drive_specs(clockvar)?;
+            let ticks = self.cg.clocking_output_delay(clockvar, &self.path)?;
+            items.push(IrCaseItem::new(
+                vec![lhs_integer_expr(instance as i128)],
+                vec![IrStmt::ClockingDrive {
+                    lhs: lh,
+                    rhs: value,
+                    ticks,
+                    specs,
+                    cycles: cycles.clone().map(Box::new),
+                }],
+            ));
+        }
+        Ok(Some(IrStmt::Case {
+            sel: IrExpr::new(
+                IrExprKind::ObjectQuery(Box::new(IrObjectQuery::VirtualInterfaceInstance {
+                    handle: target.handle,
+                    interface: target.descriptor,
+                    site: target.site,
+                })),
+                32,
+                false,
+                None,
+            ),
+            kind: IrCaseKind::Exact,
+            items,
+            check: IrUniquePriorityCheck::None,
+        }))
     }
 }

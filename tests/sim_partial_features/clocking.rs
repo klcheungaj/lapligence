@@ -120,20 +120,20 @@ fn clocking_cycle_delay_statement_executes_its_body_after_the_wait() {
 }
 
 #[test]
-fn clocking_intra_assignment_cycle_delay_captures_rhs_before_wait() {
+fn clocking_intra_assignment_cycle_delay_captures_rhs_without_blocking() {
     run_case_with_stderr(
         "clocking_h14_intra",
-        "issued t=9 out=0 data=0\nafter t=11 out=1 data=0\n",
-        "llg: $finish at time 12 at tb:22:8\n",
+        "issued t=1 out=0 data=1\nmatured t=9 out=0 data=0\nafter t=11 out=1 data=0\n",
+        "llg: $finish at time 12 at tb:25:8\n",
     );
 }
 
 #[test]
-fn clocking_intra_assignment_cycle_delay_captures_selectors_before_wait() {
+fn clocking_intra_assignment_cycle_delay_captures_selectors_at_issue() {
     run_case_with_stderr(
         "clocking_h14_intra_select",
-        "selected issued t=9 out=00 sel=1\nselected after t=10 out=01 sel=1\n",
-        "llg: $finish at time 11 at tb:23:8\n",
+        "selected issued t=1 out=00 sel=0\nselected after t=10 out=01 sel=1\n",
+        "llg: $finish at time 11 at tb:25:8\n",
     );
 }
 

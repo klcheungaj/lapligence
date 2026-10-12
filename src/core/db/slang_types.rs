@@ -1,7 +1,7 @@
 //! Projection of Slang's typed snapshot records into owned database metadata.
 
 use super::{
-    AggregateKind, AggregateLayout, AggregateMember, ArrayKind, AssociativeIndex,
+    AggregateKind, AggregateLayout, AggregateMember, ArrayKind, AssociativeIndex, DpiOpenType,
     ElaboratedTypeRanges, NodeId, PackedMember, PackedRange, TypeDescriptor, TypeId, TypeShape,
 };
 use crate::core::model::TypeInfo;
@@ -32,6 +32,8 @@ pub(super) struct TypeProjection {
     pub packed_members: Option<Vec<PackedMember>>,
     pub aggregate_layout: Option<AggregateLayout>,
     pub array: Option<ArrayTypeProjection>,
+    /// Present only for a DPI import formal with an unsized dimension.
+    pub dpi_open: Option<DpiOpenType>,
 }
 
 /// Indexed, reusable view over the snapshot's validated type tables.
@@ -71,6 +73,7 @@ impl<'a> SlangTypeProjector<'a> {
         let aggregate_layout = self.aggregate_layout(packed_base, &mut visiting)?;
         let descriptor = self.descriptor(ty, &mut HashSet::new())?;
         let array = self.array(ty)?;
+        let dpi_open = self.dpi_open(ty)?;
         Ok(TypeProjection {
             type_info,
             descriptor,
@@ -79,7 +82,51 @@ impl<'a> SlangTypeProjector<'a> {
             packed_members,
             aggregate_layout,
             array,
+            dpi_open,
         })
+    }
+
+    /// Peel the sized and unsized unpacked dimensions of a DPI formal type
+    /// and its optional unsized packed dimension. `None` unless at least one
+    /// dimension is unsized.
+    fn dpi_open(&self, ty: &'a SlangType) -> Result<Option<DpiOpenType>, String> {
+        let mut unpacked = Vec::new();
+        let mut current = ty;
+        let mut open = false;
+        let mut seen = HashSet::new();
+        loop {
+            if !seen.insert(current.id) {
+                return Err(format!("cycle in Slang DPI array type {}", current.id));
+            }
+            match current.kind {
+                TypeKind::FixedUnpackedArray => {
+                    let range = self.one_range(current, TypeRangeKind::Unpacked)?;
+                    let bound = |value: i64| {
+                        i32::try_from(value)
+                            .map_err(|_| format!("array type {} bound is outside i32", current.id))
+                    };
+                    unpacked.push(Some((bound(range.left)?, bound(range.right)?)));
+                }
+                TypeKind::DpiOpenUnpacked => {
+                    unpacked.push(None);
+                    open = true;
+                }
+                _ => break,
+            }
+            current = self.element_type(current, "DPI unpacked array")?;
+        }
+        let packed_open = current.kind == TypeKind::DpiOpenPacked;
+        if packed_open {
+            current = self.element_type(current, "DPI packed open array")?;
+        }
+        if !open && !packed_open {
+            return Ok(None);
+        }
+        Ok(Some(DpiOpenType {
+            unpacked,
+            packed_open,
+            element: self.descriptor(current, &mut HashSet::new())?,
+        }))
     }
 
     pub fn packed_pattern_element(&self, type_id: u64) -> Result<Option<TypeDescriptor>, String> {
@@ -190,6 +237,7 @@ impl<'a> SlangTypeProjector<'a> {
             TypeKind::Event => "event".to_owned(),
             TypeKind::Void => "void".to_owned(),
             TypeKind::VirtualInterface => "virtual_interface".to_owned(),
+            TypeKind::DpiOpenUnpacked | TypeKind::DpiOpenPacked => "dpi_open".to_owned(),
             TypeKind::Other => "other".to_owned(),
         };
         let width = if ty.is_fixed_size {
@@ -464,6 +512,8 @@ impl<'a> SlangTypeProjector<'a> {
             | TypeKind::Event
             | TypeKind::Void
             | TypeKind::VirtualInterface
+            | TypeKind::DpiOpenUnpacked
+            | TypeKind::DpiOpenPacked
             | TypeKind::Aggregate
             | TypeKind::Other => TypeShape::Opaque {
                 kind: format!("{:?}", ty.kind),

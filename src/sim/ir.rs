@@ -106,7 +106,8 @@ pub use assertions::{
 mod processes;
 pub use processes::{IrPreFn, IrProcess, IrProcessKind, IrShape};
 mod functions;
-pub use functions::{IrDpiImport, IrFormal, IrFormalMode, IrFunc, IrLocal};
+pub(in crate::sim) use functions::dimension_size;
+pub use functions::{IrDpiImport, IrDpiType, IrFormal, IrFormalMode, IrFunc, IrLocal};
 mod initialization;
 pub use initialization::{IrInitPhase, IrInitStep, IrInitTarget, IrInitialization};
 mod storage;

@@ -109,7 +109,14 @@ impl<'a> Codegen<'a> {
                                         || is_real_kind(&ty.kind)
                                     {
                                         0
-                                    } else if dpi.is_some() {
+                                    } else if self.db.dpi_open_type(*io).is_some() {
+                                        // An open-array template formal; each
+                                        // call specialization carries the
+                                        // actual's payload width.
+                                        1
+                                    } else if dpi.is_some()
+                                        && !matches!(ty.kind.as_str(), "array" | "struct" | "union")
+                                    {
                                         ty.width.unwrap_or(0)
                                     } else {
                                         self.formal_value_width(*io).or(ty.width).unwrap_or(0)
@@ -161,8 +168,10 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 formals_ir.extend(record_columns);
+                let mut dpi_types = None;
                 if let Some(dpi) = &dpi {
-                    self.validate_dpi_import(*c, inst, dpi, &formals_ir)?;
+                    dpi_types =
+                        Some(self.validate_dpi_import(*c, inst, dpi, &formals, &formals_ir)?);
                     if self
                         .func_names
                         .values()
@@ -450,8 +459,21 @@ impl<'a> Codegen<'a> {
                     })?;
                 // Event formals of every direction are typed parameters
                 // (`IrCallArg::EventVal`/`EventAddr`), class methods included.
-                let inline_expanded =
-                    dpi.is_none() && is_task_f && self.subroutine_requires_inline(*c, inst);
+                let dpi_import = dpi.as_ref().zip(dpi_types).map(|(dpi, (formals, ret))| {
+                    crate::sim::ir::IrDpiImport::new(
+                        dpi.c_name.clone(),
+                        dpi.context,
+                        dpi.pure,
+                        formals,
+                        ret,
+                    )
+                });
+                // An open-array import is a template: each call selects a
+                // specialization for its actuals (`dpi_open_callee`).
+                let inline_expanded = dpi_import.as_ref().map_or(
+                    is_task_f && self.subroutine_requires_inline(*c, inst),
+                    |dpi| dpi.is_open_template(),
+                );
                 // Register the model entry (call-site lowering and the C
                 // renderers resolve through it).
                 let ir = self.model.funcs.len();
@@ -471,11 +493,7 @@ impl<'a> Codegen<'a> {
                         } if is_handle_kind(&ty.kind)
                     ),
                     ret_string: self.is_string_return(*c),
-                    dpi: dpi.as_ref().map(|dpi| crate::sim::ir::IrDpiImport {
-                        c_name: dpi.c_name.clone(),
-                        context: dpi.context,
-                        pure: dpi.pure,
-                    }),
+                    dpi: dpi_import,
                     ret: ret.map(|(w, s, two_state, shortreal)| {
                         if w == 0 {
                             IrType::Real { shortreal }
@@ -701,7 +719,10 @@ impl<'a> Codegen<'a> {
     /// functions and tasks.
     // The tuple mirrors the semantic function/task signature without introducing a
     // public one-off type solely for this private lowering boundary.
-    fn dpi_return_info(&self, ft: NodeId) -> Result<Option<(u32, bool, bool, bool)>, String> {
+    pub(super) fn dpi_return_info(
+        &self,
+        ft: NodeId,
+    ) -> Result<Option<(u32, bool, bool, bool)>, String> {
         let NodeKind::FuncTask { is_task, ret, .. } = self.kind(ft) else {
             return Err("non-FuncTask passed to dpi_return_info".to_owned());
         };
@@ -834,16 +855,25 @@ impl<'a> Codegen<'a> {
             .collect()
     }
 
-    /// Validate and register the bounded DPI-C ABI supported by H27.  The
-    /// simulator's internal `sv4_t`/owned-string ABI remains private; only
-    /// scalar canonical DPI types cross the generated thunk boundary.
+    /// Validate a DPI-C import and register its signature, returning the
+    /// foreign types of its formals and result. The simulator's internal
+    /// `sv4_t`/owned-string ABI remains private; only canonical DPI values
+    /// cross the generated thunk boundary.
+    #[allow(clippy::type_complexity)]
     fn validate_dpi_import(
         &mut self,
         ft: NodeId,
         inst: NodeId,
         dpi: &crate::core::db::DpiImportInfo,
-        formals: &[IrFormal],
-    ) -> Result<(), String> {
+        formals: &[(NodeId, bool)],
+        formals_ir: &[IrFormal],
+    ) -> Result<
+        (
+            Vec<crate::sim::ir::IrDpiType>,
+            Option<crate::sim::ir::IrDpiType>,
+        ),
+        String,
+    > {
         if dpi.c_name.is_empty()
             || !dpi.c_name.chars().enumerate().all(|(index, ch)| {
                 if index == 0 {
@@ -869,45 +899,26 @@ impl<'a> Codegen<'a> {
             NodeKind::FuncTask { is_task, .. } => *is_task,
             _ => return Err("non-FuncTask passed to validate_dpi_import".to_owned()),
         };
-        let ret = self.dpi_return_info(ft)?;
         if dpi.pure && is_task {
             return Err(format!(
                 "DPI-C import task `{}` cannot be pure",
                 self.node(ft).name
             ));
         }
-        let ret_key = match self.kind(ft) {
-            NodeKind::FuncTask { ret: Some(ty), .. } if ty.kind != "void" => {
-                let width = if is_real_kind(&ty.kind) || is_handle_kind(&ty.kind) {
-                    0
-                } else {
-                    ty.width.unwrap_or(0)
-                };
-                let two_state = ret.is_some_and(|(_, _, two_state, _)| two_state);
-                dpi_type_key(ty, width, two_state)?
-            }
-            _ => "void".to_owned(),
-        };
+        let ret = self.dpi_return_type(ft)?;
+        let types = self.dpi_formal_types(ft, formals, formals_ir)?;
         // C linkage is global, and these qualifiers are part of the owned
         // declaration contract even though they do not change the C ABI.
         // Treat a qualifier mismatch as a conflict rather than silently
         // assigning one optimizer/effect interpretation to both imports.
         let mut key = format!(
-            "context={};pure={};return={ret_key}",
-            dpi.context as u8, dpi.pure as u8
+            "context={};pure={};task={};return={ret:?}",
+            dpi.context as u8, dpi.pure as u8, is_task as u8
         );
-        for (index, ((formal, _), ir)) in self
-            .node(ft)
-            .children
-            .iter()
-            .filter_map(|child| match self.kind(*child) {
-                NodeKind::FuncArg { direction, ty, .. } => Some(((*direction, ty), *child)),
-                _ => None,
-            })
-            .zip(formals)
-            .enumerate()
-        {
-            let (direction, ty) = formal;
+        for (index, (((io, _), ir), ty)) in formals.iter().zip(formals_ir).zip(&types).enumerate() {
+            let NodeKind::FuncArg { direction, .. } = self.kind(*io) else {
+                return Err("non-FuncArg DPI formal".to_owned());
+            };
             if matches!(direction, DbDirection::Ref) || ir.is_ref() {
                 return Err(format!(
                     "DPI-C import `{}` formal {index} uses unsupported ref direction",
@@ -920,19 +931,13 @@ impl<'a> Codegen<'a> {
                     self.node(ft).name
                 ));
             }
-            let width = if ir.real || ir.chandle || ir.string {
-                0
-            } else {
-                ir.width
-            };
-            let type_key = dpi_type_key(ty, width, ir.two_state)?;
             if dpi.pure && !matches!(direction, DbDirection::Input) {
                 return Err(format!(
                     "pure DPI-C import `{}` formal {index} must be input",
                     self.node(ft).name
                 ));
             }
-            key.push_str(&format!(";arg{index}={direction:?}:{type_key}"));
+            key.push_str(&format!(";arg{index}={direction:?}:{ty:?}"));
         }
         if let Some(previous) = self.dpi_signatures.get(&dpi.c_name) {
             if previous != &key {
@@ -944,7 +949,7 @@ impl<'a> Codegen<'a> {
         } else {
             self.dpi_signatures.insert(dpi.c_name.clone(), key);
         }
-        Ok(())
+        Ok((types, ret))
     }
 
     /// The body statement identified by Slang's semantic `Body` relationship.

@@ -23,6 +23,7 @@ mod constants;
 mod continuous_feedback;
 mod dependencies;
 mod design;
+mod dpi;
 mod dynamic_reads;
 mod events;
 mod fixed_calls;
@@ -262,38 +263,6 @@ fn port_array_index_vectors(dims: &[(i32, i32)]) -> Vec<Vec<i32>> {
 /// Return the canonical scalar spelling used in a generated DPI-C prototype.
 /// Packed vectors wider than one bit, 4-state integer atoms beyond scalar
 /// `logic`/`reg`, and all aggregates remain reserved for later work.
-fn dpi_type_key(ty: &TypeInfo, width: u32, two_state: bool) -> Result<String, String> {
-    let key = match ty.kind.as_str() {
-        "bit" if width == 1 && two_state => "svBit".to_owned(),
-        "logic" | "reg" if width == 1 && !two_state => "svLogic".to_owned(),
-        "byte" if width == 8 && two_state => {
-            if ty.signed { "int8_t" } else { "uint8_t" }.to_owned()
-        }
-        "shortint" if width == 16 && two_state => {
-            if ty.signed { "int16_t" } else { "uint16_t" }.to_owned()
-        }
-        "int" if width == 32 && two_state => {
-            if ty.signed { "int32_t" } else { "uint32_t" }.to_owned()
-        }
-        "longint" if width == 64 && two_state => {
-            if ty.signed { "int64_t" } else { "uint64_t" }.to_owned()
-        }
-        "real" if width == 0 => "real".to_owned(),
-        "shortreal" if width == 0 => "shortreal".to_owned(),
-        "chandle" if width == 0 => "chandle".to_owned(),
-        "string" if width == 0 => "string".to_owned(),
-        _ => {
-            return Err(format!(
-                "DPI-C type `{}` ({} bits, {}) is outside the supported scalar ABI",
-                ty.render(),
-                width,
-                if two_state { "2-state" } else { "4-state" }
-            ));
-        }
-    };
-    Ok(key)
-}
-
 #[derive(Default)]
 struct ProcessContractScan {
     event_controls: Vec<NodeId>,

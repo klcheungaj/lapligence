@@ -1,0 +1,3 @@
+1 before any drive w=0001
+6 both drivers w=00x1
+7 clocking driver only w=0011

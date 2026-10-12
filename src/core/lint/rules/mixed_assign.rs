@@ -22,12 +22,15 @@
 //!
 //! Only [`StmtKind::Assign`] counts as an assignment flavour: procedural
 //! continuous assignments (`assign`/`deassign`), `force`/`release` and
-//! declaration initializers are different constructs and are ignored.
+//! declaration initializers are different constructs and are ignored. A
+//! synchronous drive (`cb.x <= v`) is not a nonblocking assignment either
+//! (IEEE 1800-2009 14.16.1): it is scheduled by its clocking block, so a
+//! testbench may mix it with blocking stimulus.
 //! Nested begin/if/case/loop/fork bodies stay part of their enclosing
 //! process; function/task bodies are separate nodes outside the process tree
 //! and are not reached.
 
-use crate::core::db::{Db, NodeId, NodeKind, StmtKind};
+use crate::core::db::{Db, ExprKind, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::{all_nodes, scope_path};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -86,12 +89,43 @@ fn collect_assign_kinds(db: &Db, root: NodeId, out: &mut AssignKinds) {
     if let NodeKind::Stmt(StmtKind::Assign { blocking, .. }) = db.node_kind(root) {
         if *blocking {
             out.blocking = true;
-        } else {
+        } else if !db
+            .node(root)
+            .children
+            .first()
+            .is_some_and(|lhs| names_clockvar(db, *lhs))
+        {
             out.nonblocking = true;
         }
     }
     for c in &db.node(root).children {
         collect_assign_kinds(db, *c, out);
+    }
+}
+
+/// Whether an assignment target is a clockvar or a select of one, i.e. the
+/// assignment is a synchronous drive.
+fn names_clockvar(db: &Db, lhs: NodeId) -> bool {
+    match db.node_kind(lhs) {
+        NodeKind::Expr(
+            ExprKind::BitSelect { base, .. }
+            | ExprKind::PartSelect { base, .. }
+            | ExprKind::IndexedPartSelect { base, .. }
+            | ExprKind::ArraySelect { base, .. },
+        ) => names_clockvar(db, *base),
+        NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        })
+        | NodeKind::Expr(ExprKind::ScopeRef { target }) => db.is_clocking_var(*target),
+        NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+            db.resolve_clocking_member(lhs).is_some()
+                || refs
+                    .last()
+                    .copied()
+                    .flatten()
+                    .is_some_and(|target| db.is_clocking_var(target))
+        }
+        _ => false,
     }
 }
 
@@ -247,6 +281,33 @@ mod tests {
             rule_diags(&diags, "nba-in-always_comb").len(),
             1,
             "{diags:?}"
+        );
+    }
+
+    /// A synchronous drive is not a nonblocking assignment (IEEE 1800-2009
+    /// 14.16.1), so blocking stimulus beside it is not mixing.
+    #[test]
+    fn synchronous_drives_do_not_count_as_nonblocking() {
+        let diags = lint_design(
+            "module sd;\n  logic clk, a;\n  logic [3:0] o;\n\
+             clocking cb @(posedge clk); output o; endclocking\n\
+             initial begin\n    a = 1'b0;\n    cb.o <= 4'd1;\n    cb.o[0] <= a;\n  end\nendmodule\n",
+            "sd",
+        );
+        assert!(
+            rule_diags(&diags, "mixed-assignments").is_empty(),
+            "{diags:?}"
+        );
+        let diags = lint_design(
+            "module sn;\n  logic clk, a, b;\n  logic [3:0] o;\n\
+             clocking cb @(posedge clk); output o; endclocking\n\
+             initial begin\n    a = 1'b0;\n    cb.o <= 4'd1;\n    b <= a;\n  end\nendmodule\n",
+            "sn",
+        );
+        assert_eq!(
+            rule_diags(&diags, "mixed-assignments").len(),
+            1,
+            "an ordinary NBA beside a synchronous drive still mixes: {diags:?}"
         );
     }
 

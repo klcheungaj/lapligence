@@ -82,6 +82,9 @@ mod sim_032;
 #[path = "sim_feature_completion/sim_033.rs"]
 mod sim_033;
 
+#[path = "sim_feature_completion/sim_034.rs"]
+mod sim_034;
+
 #[path = "sim_feature_completion/sim_035.rs"]
 mod sim_035;
 
@@ -201,6 +204,9 @@ mod sim_001;
 
 #[path = "sim_feature_completion/sim_002.rs"]
 mod sim_002;
+
+#[path = "sim_feature_completion/sim_040.rs"]
+mod sim_040;
 
 #[test]
 fn component_fixture_integrity() {

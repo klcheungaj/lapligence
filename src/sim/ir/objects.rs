@@ -563,6 +563,15 @@ pub enum IrObjectQuery {
     ProcessEq(IrProcessExpr, IrProcessExpr),
     ProcessStatus(IrProcessExpr),
     ArrayQuery(IrArrayQuery),
+    /// The concrete instance a virtual-interface handle of descriptor
+    /// `interface` is bound to, as an unsigned 32-bit index into that
+    /// descriptor's instances. A null or mismatched handle reports a runtime
+    /// access failure at `site` and yields no valid index.
+    VirtualInterfaceInstance {
+        handle: IrChandleExpr,
+        interface: usize,
+        site: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1438,6 +1447,17 @@ impl IrObjectQuery {
             }
             Self::ProcessStatus(value) => value.validate(model, formals),
             Self::ArrayQuery(query) => query.validate(model, string_return),
+            Self::VirtualInterfaceInstance {
+                handle, interface, ..
+            } => {
+                if *interface >= model.virtual_interfaces.len() {
+                    return Err(super::IrValidationError::new(
+                        "virtual interface",
+                        "instance query names an unknown virtual interface descriptor",
+                    ));
+                }
+                handle.validate(model, formals, chandle_return)
+            }
         }
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
@@ -1498,6 +1518,7 @@ impl IrObjectQuery {
             }
             Self::ProcessStatus(value) => value.expressions(visit),
             Self::ArrayQuery(query) => query.expressions(visit),
+            Self::VirtualInterfaceInstance { handle, .. } => handle.expressions(visit),
         }
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
@@ -1558,6 +1579,7 @@ impl IrObjectQuery {
             }
             Self::ProcessStatus(value) => value.expressions_mut(visit),
             Self::ArrayQuery(query) => query.expressions_mut(visit),
+            Self::VirtualInterfaceInstance { handle, .. } => handle.expressions_mut(visit),
         }
     }
 }

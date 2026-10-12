@@ -35,6 +35,18 @@ class BuildTimingsTest(unittest.TestCase):
         configure = next(line for line in text.splitlines() if line.startswith("configure "))
         self.assertEqual(configure.split()[1:3], ["2", "5.9"])
 
+    def test_template_outcomes_are_grouped(self):
+        lines = LINES + [
+            "llg-build\tresult=ok\ttotal_ms=300\tseed_ms=1\tseed=applied\ttemplate_ms=4\ttemplate=applied\tbuild_ms=290",
+            "llg-build\tresult=ok\ttotal_ms=1300\tseed_ms=1\tseed=applied\tconfigure_ms=900\ttemplate_ms=6\ttemplate=captured",
+        ]
+        text = timings.summarize(timings.parse(lines))
+        self.assertIn("template: -=3, applied=1, captured=1", text)
+        self.assertIn("template=applied: builds=1 configure median=none total median=300ms", text)
+        self.assertIn("template=captured: builds=1 configure median=900ms total median=1300ms", text)
+        template = next(line for line in text.splitlines() if line.startswith("template "))
+        self.assertEqual(template.split()[1:3], ["2", "0.0"])
+
     def test_missing_file_is_not_an_error(self):
         with tempfile.TemporaryDirectory() as directory:
             output = io.StringIO()

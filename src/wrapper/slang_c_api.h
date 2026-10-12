@@ -255,6 +255,11 @@ enum {
   LLG_SLANG_TYPE_EVENT = 17,
   LLG_SLANG_TYPE_VOID = 18,
   LLG_SLANG_TYPE_VIRTUAL_INTERFACE = 19,
+  /* DPI import formal open arrays (SV 35.5.6.1): an unsized unpacked
+     dimension, or the sole unsized packed dimension. The element type id
+     names the declared element. */
+  LLG_SLANG_TYPE_DPI_OPEN_UNPACKED = 20,
+  LLG_SLANG_TYPE_DPI_OPEN_PACKED = 21,
   LLG_SLANG_TYPE_OTHER = 255
 };
 
