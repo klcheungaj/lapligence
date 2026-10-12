@@ -417,6 +417,21 @@ if(LLG_STORAGE_TEST_SCHEDULER)
       add_test(NAME fork_group_scale_${mode} COMMAND fork_group_scale_${mode}_probe)
       set_tests_properties(fork_group_scale_${mode} PROPERTIES TIMEOUT 120)
     endforeach()
+    # The release probe on a CPU clock quantized like Windows GetProcessTimes
+    # (15.625 ms), so every host checks that a scaling sample spans enough
+    # ticks to judge a ratio; only the reverse-removal case, the shortest.
+    add_executable(fork_group_scale_coarse_clock_probe fork_group_scale_probe.c
+      probe_cpu_time_coarse.c)
+    if(MSVC)
+      target_compile_options(fork_group_scale_coarse_clock_probe PRIVATE /ULLG_CO_DEBUG)
+    else()
+      target_compile_options(fork_group_scale_coarse_clock_probe PRIVATE -ULLG_CO_DEBUG)
+    endif()
+    target_link_libraries(fork_group_scale_coarse_clock_probe PRIVATE owner_probe_release_rt
+      owner_probe_container)
+    strict_c(fork_group_scale_coarse_clock_probe)
+    add_test(NAME fork_group_scale_coarse_clock COMMAND fork_group_scale_coarse_clock_probe removal)
+    set_tests_properties(fork_group_scale_coarse_clock PROPERTIES TIMEOUT 120)
     add_executable(coroutine_chunk_cache_probe coroutine_chunk_cache_probe.c
       "${LLG_RT}/llg_rt.c" "${LLG_RT}/llg_co.c")
     target_compile_definitions(coroutine_chunk_cache_probe PRIVATE

@@ -15,10 +15,17 @@ typedef struct {
     short n;
 } nest_t;
 
+/* SV byte is C char (Table H.1), unsigned on some ABIs (AArch64 Linux,
+ * PowerPC, RISC-V); read it as the signed SV value explicitly. */
+static int sv_byte(char c) {
+    return (int)((unsigned char)c ^ 0x80u) - 0x80;
+}
+
 static void show(const char *name, const rec_t *r) {
     printf("%s id=%d tag=%x/%x wide=%02x%08x pair=%d,%d\n", name, r->id,
            (unsigned)(r->tag[0].aval & 0xfu), (unsigned)(r->tag[0].bval & 0xfu),
-           (unsigned)(r->wide[1] & 0xffu), (unsigned)r->wide[0], r->pair[0], r->pair[1]);
+           (unsigned)(r->wide[1] & 0xffu), (unsigned)r->wide[0], sv_byte(r->pair[0]),
+           sv_byte(r->pair[1]));
 }
 
 void ag_rec(const rec_t *i, rec_t *o, nest_t *n) {
@@ -31,8 +38,8 @@ void ag_rec(const rec_t *i, rec_t *o, nest_t *n) {
     o->tag[0].bval = 0x3u;
     o->wide[0] = 0xdeadbeefu;
     o->wide[1] = 0x42u;
-    o->pair[0] = (char)(i->pair[1] - 1);
-    o->pair[1] = (char)(i->pair[0] + 1);
+    o->pair[0] = (char)(sv_byte(i->pair[1]) - 1);
+    o->pair[1] = (char)(sv_byte(i->pair[0]) + 1);
     n->r[0].id += 1;
     n->r[0].tag[0].aval = 0xfu;
     n->r[0].tag[0].bval = 0x0u;
@@ -43,7 +50,8 @@ void ag_rec(const rec_t *i, rec_t *o, nest_t *n) {
 
 void ag_arrays(const char *b, svLogicVecVal *o, const svBit *f, svLogic *l) {
     int k;
-    printf("b=%d,%d,%d,%d f=%u%u%u%u l=%u%u%u\n", b[0], b[1], b[2], b[3], (unsigned)f[0],
+    printf("b=%d,%d,%d,%d f=%u%u%u%u l=%u%u%u\n", sv_byte(b[0]), sv_byte(b[1]), sv_byte(b[2]),
+           sv_byte(b[3]), (unsigned)f[0],
            (unsigned)f[1], (unsigned)f[2], (unsigned)f[3], (unsigned)l[0], (unsigned)l[1],
            (unsigned)l[2]);
     for (k = 0; k < 6; k++) {

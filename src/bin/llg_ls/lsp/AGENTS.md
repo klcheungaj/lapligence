@@ -11,7 +11,9 @@ debounce, reloads and watchers; `staging.rs` owns bounded snapshots, authorized
 includes and private mirrors; `diagnostics.rs` owns publication/shared-file unions.
 
 Build Slang, owned DB/model/indexes in one `spawn_blocking` closure. Hold no backend
-lock across discovery, cleanup, admission or compilation. Discard stale generations;
+lock across discovery, cleanup, admission or compilation. tower-lsp runs
+notifications concurrently, so rescans overlap: apply a discovery only when no
+later-started one was applied (`DiscoveryOrder`). Discard stale generations;
 triggers during a run arm one dirty-root follow-up. Always publish diagnostics.
 Valid analysis replaces `last_good`; compile/admission failures retain navigation.
 Snapshot replacement/clearing advances the process-wide epoch and invalidates caches.

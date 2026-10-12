@@ -147,7 +147,9 @@ ccache needs this variable; an empty variable is none and an explicit empty libr
 option suppresses it; the `llg` driver's order is CLI > `LLG_C_LAUNCHER` >
 `build.launcher`, resolved in `settings::layered` before it fills the option). It reaches the runtime archive and model compiles, is part of the
 runtime cache key, and never touches the root `build.rs` Slang build (`LLG_CCACHE`). Repeatable `dpi_libraries`/`--dpi-lib` accepts validated explicit link
-files; include `svdpi.h` in generated output. `generate_model_sources`/`--gen-only`
+files; include `svdpi.h` (llg's Annex I copy, `rt/svdpi.h`) in generated output. SV `byte` is C `char`
+(Table H.1), signed or not by ABI: thunks keep `char` prototypes and sign-extend each
+foreign byte explicitly. `generate_model_sources`/`--gen-only`
 writes sources/CMake without building. `CmakeBuildOpts` `cmake`/`cc`/`cflags`
 (`--cmake`/`--cc`/`--cflags`) win over `LLG_CMAKE`, `LLG_CC`/`CC` and
 `LLG_CFLAGS`; without a compiler selection `DEFAULT_C_COMPILER` is MSVC `cl` on
@@ -195,7 +197,9 @@ must match the template rewritten for its paths byte for byte (else
 (no `cmake` configure, `ninja --version`, linker checks or `restat`). Only
 plain ASCII paths without spaces, `$` or `@` qualify; a build from a template
 that fails is rebuilt from a real configure and rejects the template when that
-succeeds. Runtime-archive trees always configure.
+succeeds. A rejection's reason (first differing files and lines) goes to the
+`rejected` marker and the timing record's `template_reason`. Both Windows runners
+still reject the second tree (cause unknown). Runtime-archive trees always configure.
 Detection `try_compile`s use `CMAKE_TRY_COMPILE_CONFIGURATION=Release` (no MSVC
 `/Zi` PDBs). Every configure passes an empty `CMAKE_INSTALL_PREFIX` (with
 `CMAKE_FIND_NO_INSTALL_PREFIX=ON`): CMake's Windows default prefix depends on

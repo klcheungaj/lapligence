@@ -39,10 +39,15 @@ fn formal_type(dpi: &IrDpiImport, index: usize) -> Result<&IrDpiType, String> {
     })
 }
 
+/// C type of a DPI integer (H.7.4, Table H.1). `byte` is plain `char`,
+/// whose signedness is the ABI's (unsigned on AArch64 Linux, PowerPC and
+/// RISC-V), so a foreign `char` is sign-extended explicitly when it becomes
+/// an SV value ([`dpi_packed_result`]); declaring `int8_t` instead would give
+/// the import a prototype that differs from the foreign definition.
 fn int_c_type(bytes: u8, signed: bool) -> Result<&'static str, String> {
     Ok(match (bytes, signed) {
-        (1, true) => "int8_t",
-        (1, false) => "uint8_t",
+        (1, true) => "char",
+        (1, false) => "unsigned char",
         (2, true) => "int16_t",
         (2, false) => "uint16_t",
         (4, true) => "int32_t",
@@ -171,6 +176,10 @@ static sv4_t llg_dpi_sv4_from_logic(svLogic value, int8_t is_signed) {\n\
 }\n\
 static void llg_dpi_sv4_from_logic_to(sv4_t* dst, svLogic value, int8_t is_signed) {\n\
     sv4_replace(dst, llg_dpi_sv4_from_logic(value, is_signed));\n\
+}\n\
+/* SV byte from a C char (Table H.1) whatever the ABI's char signedness. */\n\
+static int64_t llg_dpi_byte_value(char value) {\n\
+    return (int64_t)((unsigned char)value ^ 0x80u) - 0x80;\n\
 }\n\n"
 }
 
@@ -365,6 +374,10 @@ fn dpi_packed_result(ty: &IrDpiType, source: &str, signed: bool) -> Result<Strin
     Ok(match ty {
         IrDpiType::Bit => format!("sv4_from_u64((uint64_t){source}, 1, {})", u8::from(signed)),
         IrDpiType::Logic => format!("llg_dpi_sv4_from_logic({source}, {})", u8::from(signed)),
+        IrDpiType::Int {
+            bytes: 1,
+            signed: true,
+        } => format!("sv4_from_i64(llg_dpi_byte_value({source}), 8)"),
         IrDpiType::Int {
             bytes,
             signed: true,

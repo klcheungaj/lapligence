@@ -36,7 +36,7 @@ pub(crate) use staging::{emergency_shadow_cleanup, emergency_shadow_cleanup_and_
 pub(crate) use state::Backend;
 #[cfg(test)]
 use state::RootState;
-use state::{BackendState, CommitOutcome, CompileResult, RescanResult, RootJob};
+use state::{BackendState, CommitOutcome, CompileResult, DiscoveryOutcome, RescanResult, RootJob};
 
 /// Trailing-edge quiet period for root re-analyses.  Bursts of didOpen/
 /// didChange/didClose and watched-file events collapse into ONE scheduled

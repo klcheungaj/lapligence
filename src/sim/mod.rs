@@ -64,10 +64,7 @@ pub(crate) fn write_sim_sources(
         ("llg_container.c", container_c),
         ("llg_string.h", string_h),
         ("llg_string.c", string_c),
-        (
-            "svdpi.h",
-            include_str!("../../vendor/slang/external/ieee1800/svdpi.h"),
-        ),
+        ("svdpi.h", rt::svdpi_header()),
     ];
     files.extend_from_slice(rt::platform_headers());
     files.extend_from_slice(rt::value_backend_sources(config.backend));

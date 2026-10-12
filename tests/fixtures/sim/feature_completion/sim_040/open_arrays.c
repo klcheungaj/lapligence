@@ -80,6 +80,11 @@ void oa_sized(const svOpenArrayHandle s) {
 
 typedef struct { char b; int i; } pair_t;
 
+/* SV byte is C char (Table H.1), unsigned on some ABIs; read it signed. */
+static int sv_byte(char c) {
+    return (int)((unsigned char)c ^ 0x80u) - 0x80;
+}
+
 int oa_records(const svOpenArrayHandle s, const svOpenArrayHandle d) {
     int i, total = 0;
     printf("records [%d:%d] dims=%d bytes=%d\n", svLeft(s, 1), svRight(s, 1),
@@ -87,8 +92,8 @@ int oa_records(const svOpenArrayHandle s, const svOpenArrayHandle d) {
     for (i = svLow(s, 1); i <= svHigh(s, 1); i++) {
         const pair_t *in = (const pair_t *)svGetArrElemPtr1(s, i);
         pair_t *out = (pair_t *)svGetArrElemPtr1(d, i);
-        total += in->i + in->b;
-        out->b = (char)(in->b * 2);
+        total += in->i + sv_byte(in->b);
+        out->b = (char)(sv_byte(in->b) * 2);
         out->i = -in->i;
     }
     return total;

@@ -67,7 +67,12 @@ fn profile_args(dir: &Path, pid: u32, sequence: usize, nanos: u128) -> Vec<Strin
 pub(super) struct BuildTimings {
     phases: Vec<(&'static str, Duration)>,
     notes: Vec<(&'static str, &'static str)>,
+    details: Vec<(&'static str, String)>,
 }
+
+/// A free-text detail is cut to this many characters, so a record stays one
+/// readable line.
+const MAX_DETAIL_CHARS: usize = 1000;
 
 impl BuildTimings {
     /// Add the time since `started` to `phase`.
@@ -87,6 +92,21 @@ impl BuildTimings {
         }
     }
 
+    /// Set the free-text detail `name=text` (for example why a template was
+    /// rejected), replacing an earlier value. Tabs and line breaks become
+    /// spaces and long text is cut, so the record stays one line.
+    pub(super) fn detail(&mut self, name: &'static str, text: &str) {
+        let flat = text.replace(['\t', '\n', '\r'], " ");
+        let text = match flat.char_indices().nth(MAX_DETAIL_CHARS) {
+            Some((cut, _)) => format!("{}...", &flat[..cut]),
+            None => flat,
+        };
+        match self.details.iter_mut().find(|(stored, _)| *stored == name) {
+            Some((_, stored)) => *stored = text,
+            None => self.details.push((name, text)),
+        }
+    }
+
     /// The record line for a build of `out_dir` that took `total`.
     fn line(&self, out_dir: &Path, total: Duration, ok: bool) -> String {
         let mut line = format!(
@@ -99,6 +119,9 @@ impl BuildTimings {
         }
         for (name, value) in &self.notes {
             line.push_str(&format!("\t{name}={value}"));
+        }
+        for (name, text) in &self.details {
+            line.push_str(&format!("\t{name}={text}"));
         }
         // Tabs and newlines in a path would break the record format.
         let dir = out_dir
@@ -148,6 +171,23 @@ mod tests {
         assert!(line.contains("\tbuild_ms="), "{line}");
         let failed = BuildTimings::default().line(Path::new("x"), Duration::ZERO, false);
         assert_eq!(failed, "llg-build\tresult=error\ttotal_ms=0\tdir=x\n");
+    }
+
+    #[test]
+    fn details_follow_notes_on_one_line() {
+        let mut timings = BuildTimings::default();
+        timings.note("template", "rejected");
+        timings.detail("template_reason", "first");
+        timings.detail("template_reason", "a\tb\r\nc");
+        let line = timings.line(Path::new("d"), Duration::ZERO, true);
+        assert!(
+            line.ends_with("\ttemplate=rejected\ttemplate_reason=a b  c\tdir=d\n"),
+            "{line}"
+        );
+        timings.detail("template_reason", &"x".repeat(MAX_DETAIL_CHARS + 5));
+        let line = timings.line(Path::new("d"), Duration::ZERO, true);
+        let kept = format!("template_reason={}...\t", "x".repeat(MAX_DETAIL_CHARS));
+        assert!(line.contains(&kept), "{line}");
     }
 
     #[test]

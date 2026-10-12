@@ -102,10 +102,7 @@ fn frame_sizes(compiler: &str, level: &str, model: &str, scratch: &Path) -> Vec<
                 .kernel
                 .selector()
         ))
-        .arg(format!(
-            "-I{}",
-            root.join("vendor/slang/external/ieee1800").display()
-        ))
+        .arg(format!("-I{}", root.join("src/sim/rt").display()))
         .arg("-o")
         .arg(scratch.join("model.o"))
         .arg(&source)

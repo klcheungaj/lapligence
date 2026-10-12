@@ -183,11 +183,19 @@ jobs:
 
       # After every step that reads target/: keep only third-party dependency
       # artifacts (no llg, no target/slang, no test executables or archives).
-      # The container ran as root, so the files need sudo to delete.
+      # The container ran as root, so the files need sudo to delete. Cargo
+      # also extracted the registry as root with each crate archive's modes
+      # (fnv-1.0.7 ships owner-only files), which the runner user's cache-save
+      # tar could not read ("Cannot open: Permission denied"), failing the
+      # whole save; hand both trees to the runner user.
       - name: Keep only third-party dependencies in target/
         if: always()
         shell: bash
-        run: sudo python3 scripts/ci_prune_cargo_cache.py --target-dir target
+        run: |
+          sudo python3 scripts/ci_prune_cargo_cache.py --target-dir target
+          for dir in target "$RUNNER_TEMP/cargo-registry"; do
+            if [ -e "$dir" ]; then sudo chown -R "$(id -u):$(id -g)" "$dir"; fi
+          done
 
       # Only the default branch saves; a successful build is required.
       - name: Save compiled dependencies

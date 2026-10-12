@@ -383,9 +383,10 @@ pub(super) fn watcher_options_from_state(state: &BackendState) -> LSPAny {
 impl Backend {
     pub(super) async fn rescan(&self) -> BTreeSet<RootKey> {
         let started = std::time::Instant::now();
-        let (descriptors, previous) = {
-            let state = self.lock_state();
+        let (ticket, descriptors, previous) = {
+            let mut state = self.lock_state();
             (
+                state.discovery.start(),
                 state
                     .roots
                     .iter()
@@ -409,7 +410,7 @@ impl Backend {
         })
         .await;
         let Ok(RescanResult {
-            discovered: mut groups,
+            discovered: groups,
             warnings,
         }) = discovery
         else {
@@ -425,19 +426,67 @@ impl Backend {
         };
 
         let mut state = self.lock_state();
+        let outcome = Self::apply_discovery(
+            &mut state,
+            ticket,
+            &descriptors,
+            &previous,
+            RescanResult {
+                discovered: groups,
+                warnings,
+            },
+        );
+        let DiscoveryOutcome::Applied { changed, warnings } = outcome else {
+            crate::llg_debug!(
+                "event=workspace.discovery.end outcome={} roots={} elapsed_us={}",
+                if outcome == DiscoveryOutcome::Stale {
+                    "stale"
+                } else {
+                    "superseded"
+                },
+                descriptors.len(),
+                started.elapsed().as_micros()
+            );
+            return BTreeSet::new();
+        };
+        let discovered_files: usize = state.roots.values().map(|root| root.discovered.len()).sum();
+        crate::llg_debug!(
+            "event=workspace.discovery.end outcome=ok roots={} discovered_files={} changed_roots={} warnings={} elapsed_us={}",
+            state.roots.len(),
+            discovered_files,
+            changed.len(),
+            warnings,
+            started.elapsed().as_micros()
+        );
+        changed
+    }
+
+    /// Apply the file sets of the walk with `ticket`, which started from
+    /// `descriptors` and `previous`; returns the roots whose sets changed.
+    /// Nothing is applied when the roots changed since the walk started
+    /// (their own rescan follows) or a later-started walk was already applied.
+    pub(super) fn apply_discovery(
+        state: &mut BackendState,
+        ticket: u64,
+        descriptors: &BTreeMap<RootKey, RootDescriptor>,
+        previous: &BTreeMap<RootKey, Vec<PathBuf>>,
+        result: RescanResult,
+    ) -> DiscoveryOutcome {
         let current_descriptors: BTreeMap<RootKey, RootDescriptor> = state
             .roots
             .iter()
             .map(|(key, root)| (key.clone(), root.descriptor.clone()))
             .collect();
-        if current_descriptors != descriptors {
-            crate::llg_debug!(
-                "event=workspace.discovery.end outcome=stale roots={} elapsed_us={}",
-                descriptors.len(),
-                started.elapsed().as_micros()
-            );
-            return BTreeSet::new();
+        if &current_descriptors != descriptors {
+            return DiscoveryOutcome::Stale;
         }
+        if !state.discovery.admit(ticket) {
+            return DiscoveryOutcome::Superseded;
+        }
+        let RescanResult {
+            discovered: mut groups,
+            warnings,
+        } = result;
         let warning_count = warnings.len();
         state.pending_logs.extend(warnings);
         let mut changed = BTreeSet::new();
@@ -447,16 +496,10 @@ impl Backend {
                 changed.insert(key.clone());
             }
         }
-        let discovered_files: usize = state.roots.values().map(|root| root.discovered.len()).sum();
-        crate::llg_debug!(
-            "event=workspace.discovery.end outcome=ok roots={} discovered_files={} changed_roots={} warnings={} elapsed_us={}",
-            state.roots.len(),
-            discovered_files,
-            changed.len(),
-            warning_count,
-            started.elapsed().as_micros()
-        );
-        changed
+        DiscoveryOutcome::Applied {
+            changed,
+            warnings: warning_count,
+        }
     }
 
     pub(super) fn discover_snapshot(descriptors: Vec<RootDescriptor>) -> RescanResult {

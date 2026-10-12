@@ -79,6 +79,23 @@ H.7.8 (L72330-72332):
 > guaranteed to be compatible with the C compiler's layout on the given
 > operating system.
 
+H.7.4 Table H.1 (L72189-72193):
+
+> Table H.1—Mapping data types
+> SystemVerilog type C type
+> byte char
+
+Plain `char` is unsigned on some ABIs (AArch64 Linux, PowerPC, RISC-V), so the
+companions read `byte` members through an explicit sign extension (`sv_byte`)
+and print the signed SV value on every host; `sim_040.rs` also runs
+`aggregates` with `-funsigned-char`.
+
+I.2 (L73970-73971), for the `svdpi.h` the
+companions include (llg's copy defines the types with `<inttypes.h>`):
+
+> Implementations shall define the types uint8_t and uint32_t, but the exact
+> method of doing so is not prescribed by this standard.
+
 H.12.2 (L73284-73288):
 
 > These functions are modeled upon the SystemVerilog array querying functions

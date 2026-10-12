@@ -1,6 +1,7 @@
 #include "llg_rt.c"
 #include "probe.h"
 #include "probe_co.h"
+#include <string.h>
 
 #define GROUP_COUNT 100000u
 /* Removal alone finishes in ~10 ms at GROUP_COUNT, where scheduler jitter is a
@@ -11,6 +12,10 @@
  * scaling measures about 2-3 (cache growth included); quadratic list walks
  * give about 4. */
 #define SCALE_LIMIT 3.6
+/* Doubling the population costs at least this factor: every case does work
+ * proportional to N beyond a small fixed setup. A lower ratio means the CPU
+ * clock did not resolve the samples (a coarse clock read 1.000 and 4.000). */
+#define SCALE_MIN_RATIO 1.3
 /* The minima over interleaved small/large measurements only improve as rounds
  * accumulate. A case passes as soon as its minima satisfy the limit after
  * SCALE_MIN_ROUNDS; contention noise is rejected by re-measuring up to
@@ -19,11 +24,37 @@
 #define SCALE_MIN_ROUNDS 3u
 #define SCALE_MAX_ROUNDS 16u
 #define SCALE_BUDGET_SECONDS 20.0
+/* Each sample repeats its measurement until it spans this many ticks of the
+ * CPU clock, so one tick of quantization moves a sample by at most 1/32 and a
+ * ratio by at most about 6%: a quadratic 4 still reads above SCALE_LIMIT and
+ * a linear 3 below it. Windows process CPU time ticks every 15.625 ms, where a
+ * single removal sample (one tick) gave ratio 4.000; clock() on Linux and
+ * macOS ticks every microsecond, so one run per sample suffices there. */
+#define SCALE_RESOLUTION_MULTIPLE 32.0
 
 /* Process CPU time (probe_cpu_time.c): the UCRT's clock() is wall time, which
  * counts time other processes run and so inflates both the ratios and the
  * budget under a parallel test load. */
 double probe_cpu_seconds(void);
+
+/* The smallest step of probe_cpu_seconds observed over a few ticks while this
+ * process spins, i.e. the clock's resolution on this host. */
+static double cpu_clock_resolution(void) {
+    double resolution = 1e30;
+    double last = probe_cpu_seconds();
+    CHECK(last >= 0);
+    for (unsigned ticks = 0; ticks < 4u;) {
+        double now = probe_cpu_seconds();
+        if (now > last) {
+            if (now - last < resolution) resolution = now - last;
+            last = now;
+            ++ticks;
+        }
+    }
+    return resolution;
+}
+
+static double min_sample_seconds;
 
 static unsigned count;
 static unsigned started;
@@ -197,46 +228,76 @@ static void event_positions(void) {
     llg_event_object_reset(&park_object);
 }
 
+/* CPU time of one `measure(n, mode)`: the mean over as many back-to-back runs
+ * as fill min_sample_seconds, timed as one span. */
+static double sample(double (*measure)(unsigned, fork_mode_t), unsigned n, fork_mode_t mode) {
+    double begin = probe_cpu_seconds(), spent;
+    unsigned runs = 0;
+    do {
+        (void)measure(n, mode);
+        ++runs;
+        spent = probe_cpu_seconds() - begin;
+    } while (spent < min_sample_seconds);
+    return spent / runs;
+}
+
 /* Measures `measure` at n and 2n, alternating which size goes first so a
  * burst of load does not systematically hit one of them. Returns whether the
- * minima stay below SCALE_LIMIT; *small and *large receive the minima. */
+ * minima's ratio lies between SCALE_MIN_RATIO and SCALE_LIMIT; *small and
+ * *large receive the minima. */
 static int scales_linearly(double (*measure)(unsigned, fork_mode_t), unsigned n,
                            fork_mode_t mode, double* small, double* large, unsigned* rounds) {
-    double spent = 0;
+    double begin = probe_cpu_seconds();
     *small = *large = 1e30;
-    for (*rounds = 0; *rounds < SCALE_MAX_ROUNDS && spent < SCALE_BUDGET_SECONDS;) {
+    for (*rounds = 0; *rounds < SCALE_MAX_ROUNDS &&
+                      probe_cpu_seconds() - begin < SCALE_BUDGET_SECONDS;) {
         double a, b;
         if (*rounds % 2) {
-            b = measure(2u * n, mode);
-            a = measure(n, mode);
+            b = sample(measure, 2u * n, mode);
+            a = sample(measure, n, mode);
         } else {
-            a = measure(n, mode);
-            b = measure(2u * n, mode);
+            a = sample(measure, n, mode);
+            b = sample(measure, 2u * n, mode);
         }
         ++*rounds;
-        spent += a + b;
         if (a < *small) *small = a;
         if (b < *large) *large = b;
-        if (*rounds >= SCALE_MIN_ROUNDS && *small > 0 && *large < SCALE_LIMIT * *small)
+        if (*rounds >= SCALE_MIN_ROUNDS && *small > 0 && *large < SCALE_LIMIT * *small &&
+            *large > SCALE_MIN_RATIO * *small)
             return 1;
     }
     return 0;
 }
 
-int main(void) {
+/* A scaling failure is a timing verdict, not an ownership check. */
+static void require_linear(int ok, const char* name) {
+    if (ok) return;
+    fprintf(stderr,
+            "%s: the 2N/N CPU-time ratio above stayed outside (%.1f, %.1f): at or above the "
+            "upper bound is superlinear growth, at or below the lower one an unresolved clock\n",
+            name, SCALE_MIN_RATIO, SCALE_LIMIT);
+    exit(2);
+}
+
+/* `removal` checks only the reverse-removal case (the coarse-clock test). */
+int main(int argc, char** argv) {
+    int removal_only = argc > 1 && strcmp(argv[1], "removal") == 0;
     event_positions();
+    double resolution = cpu_clock_resolution();
+    min_sample_seconds = SCALE_RESOLUTION_MULTIPLE * resolution;
+    printf("cpu clock resolution=%.6f min sample=%.6f\n", resolution, min_sample_seconds);
     double small, large;
     unsigned rounds;
     int ok = scales_linearly(removal_order, REMOVAL_COUNT, (fork_mode_t){0, 0}, &small, &large, &rounds);
     printf("reverse removal N=%u cpu=%.6f 2N=%.6f ratio=%.3f rounds=%u\n",
            REMOVAL_COUNT, small, large, large / small, rounds);
-    CHECK(ok);
-    for (int mode = 0; mode < 6; mode++) {
+    require_linear(ok, "reverse removal");
+    for (int mode = 0; mode < 6 && !removal_only; mode++) {
         fork_mode_t shape = {mode >= 3 ? mode - 1 : mode != 0, mode == 2};
         ok = scales_linearly(run, GROUP_COUNT, shape, &small, &large, &rounds);
         printf("fork scale mode=%d N=%u cpu=%.6f 2N=%.6f ratio=%.3f rounds=%u\n",
                mode, GROUP_COUNT, small, large, large / small, rounds);
-        CHECK(ok);
+        require_linear(ok, "fork scale");
     }
     return 0;
 }

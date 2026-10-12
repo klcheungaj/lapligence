@@ -35,7 +35,8 @@ svBit dpi_bit(svBit value) {
     return value;
 }
 
-int8_t dpi_byte(int8_t value) {
+/* SV byte is C char (IEEE 1800-2009 Table H.1). */
+char dpi_byte(char value) {
     return value;
 }
 

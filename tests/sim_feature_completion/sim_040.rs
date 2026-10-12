@@ -13,6 +13,15 @@ const SUITE: &str = "feature_completion/sim_040";
 /// on hosts where shared DPI fixtures are not built (Windows DLLs cannot
 /// import the svdpi.h routines from the model executable).
 fn companion(directory: &sim_harness::TempDir, stem: &str) -> Option<String> {
+    companion_with_flags(directory, stem, &[])
+}
+
+/// [`companion`] with extra compiler `flags` after `$LLG_CFLAGS`.
+fn companion_with_flags(
+    directory: &sim_harness::TempDir,
+    stem: &str,
+    flags: &[&str],
+) -> Option<String> {
     if !cfg!(unix) {
         eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
         return None;
@@ -26,14 +35,14 @@ fn companion(directory: &sim_harness::TempDir, stem: &str) -> Option<String> {
             "-std=c11", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC",
         ])
         .arg("-I")
-        .arg(root.join("vendor/slang/external/ieee1800"));
+        .arg(root.join("src/sim/rt"));
     if cfg!(target_os = "macos") {
         command.args(["-undefined", "dynamic_lookup"]);
     }
     if let Ok(flags) = std::env::var("LLG_CFLAGS") {
         command.args(flags.split_whitespace());
     }
-    command.arg(&source).arg("-o").arg(&library);
+    command.args(flags).arg(&source).arg("-o").arg(&library);
     let output = sim_harness::run_command(&mut command, std::time::Duration::from_secs(60))
         .expect("C compiler for the DPI fixture");
     assert!(
@@ -42,6 +51,58 @@ fn companion(directory: &sim_harness::TempDir, stem: &str) -> Option<String> {
         String::from_utf8_lossy(&output.stderr)
     );
     Some(library.to_string_lossy().into_owned())
+}
+
+/// The `svdpi.h` written beside every model is self-contained strict C11: a
+/// DPI-C file that includes nothing before it compiles. `-U__linux` stands in
+/// for a host outside the Annex I sample's Linux and Windows branches, whose
+/// `<sys/types.h>` fallback lacks `uint8_t`/`uint32_t` (macOS).
+#[test]
+fn svdpi_header_is_self_contained_strict_c11() {
+    let compiler = c_compiler::host_c_compiler();
+    if c_compiler::is_msvc(&compiler) {
+        eprintln!("SKIP: the strict svdpi.h check uses GCC/Clang options");
+        return;
+    }
+    let directory = sim_harness::TempDir::new("sim040-svdpi").expect("temporary directory");
+    std::fs::write(
+        directory.path().join("svdpi.h"),
+        llg::sim::rt::svdpi_header(),
+    )
+    .expect("write svdpi.h");
+    let source = directory.path().join("only_svdpi.c");
+    std::fs::write(
+        &source,
+        "#include \"svdpi.h\"\n\
+         uint64_t only_svdpi_wide(const svBitVecVal *v) { return (uint64_t)v[0]; }\n\
+         svLogic only_svdpi_scalar(const svLogicVecVal *v) { return (svLogic)(v->aval & 1u); }\n\
+         int32_t only_svdpi_time(const svTimeVal *t) { return t->type; }\n",
+    )
+    .expect("write probe");
+    for extra in [None, Some("-U__linux")] {
+        let mut command = std::process::Command::new(&compiler);
+        command
+            .args([
+                "-std=c11",
+                "-Wall",
+                "-Wextra",
+                "-pedantic",
+                "-Werror",
+                "-fsyntax-only",
+            ])
+            .args(extra)
+            .arg("-I")
+            .arg(directory.path())
+            .arg(&source);
+        let output = sim_harness::run_command(&mut command, std::time::Duration::from_secs(60))
+            .expect("C compiler for the svdpi.h check");
+        assert!(
+            output.status.success(),
+            "svdpi.h {extra:?}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 #[test]
@@ -86,6 +147,40 @@ fn sized_aggregates_and_strings_use_the_c_layout() {
         include_str!("../fixtures/sim/feature_completion/sim_040/aggregates.out"),
         &["--dpi-lib", &library],
         &[],
+    );
+}
+
+/// SV `byte` is C `char` (Table H.1), whose signedness is the ABI's: plain
+/// `char` is unsigned on AArch64 Linux, PowerPC and RISC-V. `-funsigned-char`
+/// (GCC and Clang, the Unix hosts that build these companions) reproduces
+/// that ABI here for the companion and the model, which must print the same
+/// signed values.
+#[test]
+fn byte_members_keep_their_sign_when_char_is_unsigned() {
+    let directory = sim_harness::TempDir::new("sim040-uchar").expect("temporary directory");
+    let Some(library) = companion_with_flags(&directory, "aggregates", &["-funsigned-char"]) else {
+        return;
+    };
+    let cflags = std::env::var("LLG_CFLAGS").map_or_else(
+        |_| "-funsigned-char".to_owned(),
+        |flags| format!("{flags} -funsigned-char"),
+    );
+    let output = sim_cli::invoke_with_env(
+        SUITE,
+        "aggregates",
+        true,
+        &["--dpi-lib", &library],
+        &[("LLG_CFLAGS", &cflags)],
+        &[],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        include_str!("../fixtures/sim/feature_completion/sim_040/aggregates.out")
     );
 }
 

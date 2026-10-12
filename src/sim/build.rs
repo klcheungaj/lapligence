@@ -677,7 +677,9 @@ fn build_model_cmake_timed(
             timings.record("build", phase);
             output = retried?;
             if output.status.success() {
-                template.reject("a build from the template failed where a configured tree built");
+                let reason = "a build from the template failed where a configured tree built";
+                template.reject(reason);
+                timings.detail("template_reason", reason);
             }
         }
     }
@@ -1034,7 +1036,11 @@ fn run_configure(
     // A retried configure ran unseeded, which no template describes.
     if let Some(plan) = template.as_ref().filter(|_| seeded) {
         let phase = Instant::now();
-        timings.note("template", plan.after_configure(build_dir).note());
+        let outcome = plan.after_configure(build_dir);
+        timings.note("template", outcome.note());
+        if let Some(reason) = outcome.reason() {
+            timings.detail("template_reason", reason);
+        }
         timings.record("template", phase);
     }
     Ok(None)
@@ -1422,7 +1428,7 @@ fn runtime_cache_key_with_compiler(
         super::rt::container_sources().1,
         super::rt::string_sources().0,
         super::rt::string_sources().1,
-        include_str!("../../vendor/slang/external/ieee1800/svdpi.h"),
+        super::rt::svdpi_header(),
         cc,
         flags,
         cmake_prog,
