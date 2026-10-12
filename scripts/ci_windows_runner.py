@@ -75,7 +75,7 @@ def tool_lines(extra=()):
     candidates.extend((Path(path).name, path) for path in extra)
     for name, path in candidates:
         if not path:
-            lines.append(f"{name}: not found")
+            lines.append(f"{name}: not on PATH")
         elif os.name == "nt":
             lines.append(f"{name}: {pe_machine(path)} {path}")
         else:
@@ -152,6 +152,30 @@ def llg_command(args, out_dir):
     return [args.llg, "--top", args.top, "--out-dir", str(out_dir), args.source]
 
 
+def concurrent_builds(args, env, work):
+    count = args.concurrency if args.concurrency > 0 else (os.cpu_count() or 1)
+    records = []
+    for round_index in range(args.concurrent_rounds):
+        running = []
+        for slot in range(count):
+            timings = work / f"timings-{args.label}-c{round_index}-{slot}.tsv"
+            slot_env = dict(env)
+            slot_env.pop("LLG_CMAKE_PROFILE_DIR", None)
+            slot_env["LLG_BUILD_TIMINGS"] = str(timings)
+            command = llg_command(args, work / f"{args.label}-c{round_index}-{slot}")
+            running.append((slot, timings, subprocess.Popen(command, env=slot_env, stdout=subprocess.PIPE,
+                                                            stderr=subprocess.STDOUT, text=True,
+                                                            errors="replace")))
+        for slot, timings, process in running:
+            output, _ = process.communicate()
+            if process.returncode != 0:
+                print(f"concurrent build {round_index}/{slot} failed with {process.returncode}:\n{output[-4000:]}")
+            if timings.is_file():
+                records.extend(ci_build_timings.parse(
+                    timings.read_text(encoding="utf-8", errors="replace").splitlines()))
+    return count, records
+
+
 def measure(args):
     work = Path(args.work).resolve()
     work.mkdir(parents=True, exist_ok=True)
@@ -210,6 +234,11 @@ def measure(args):
         print("with LLG_CMAKE_TREE_TEMPLATES=1 (the first two builds capture and check the template):")
         records = ci_build_timings.parse(template_timings.read_text(encoding="utf-8", errors="replace").splitlines())
         print(ci_build_timings.summarize(records))
+    if args.concurrent_rounds > 0:
+        count, records = concurrent_builds(args, env, work)
+        print(f"{count} fresh seeded builds at once, {args.concurrent_rounds} rounds (contention, compare with "
+              f"the sequential medians above):")
+        print(ci_build_timings.summarize(records))
     loaded, unreadable = ci_build_timings.load_profiles(profiles)
     print(ci_build_timings.summarize_profiles(loaded))
     if unreadable:
@@ -241,6 +270,8 @@ def main(argv=None):
     mes.add_argument("--runs", type=int, default=5)
     mes.add_argument("--spawns", type=int, default=10)
     mes.add_argument("--files", type=int, default=200)
+    mes.add_argument("--concurrency", type=int, default=0, help="parallel builds per round; 0 = CPU count")
+    mes.add_argument("--concurrent-rounds", type=int, default=2)
     mes.set_defaults(handler=measure)
     args = parser.parse_args(argv)
     return args.handler(args)
