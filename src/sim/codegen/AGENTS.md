@@ -112,19 +112,22 @@ resolved defaults/delayed driver X contributions retain their separate phases.
 A time-zero process write must win over initialization. Static locals initialize
 once in hidden model storage; automatic locals initialize per lexical entry,
 including inherited lifetimes and loop/block scopes.
-Subroutine calls use the typed `IrFunc`, timed or disabling included; a call is
-expanded (`lower_task_inline`) only where `CallShape` says the caller's environment
-is needed: a waited `ref` formal of unpacked aggregate type, or one whose actual
-is a container element or unpacked member (`whole_variable_actual` fails). A
-`ref` formal read by an event control binds a whole-signal actual statically:
-each distinct actual signal gets one cloned task (`task_specialization`, lowered
-after all call sites); otherwise the typed body follows a whole variable,
-fixed-array element or class property through its descriptor
-(`IrDependency::RefFormal`; selects, qualifiers, named-event lists and `@*` are
-process-evaluated). String and handle `ref` formals wait on their actual's marker
-(`IrDependency::NativeRefFormal`); each call checks its actual has one
-(`native_ref_actual_observable`). Keep those cases in that one predicate and
-record new ones there.
+Subroutine calls always use the typed `IrFunc`, timed or disabling included;
+there is no call-site expansion (removed by SIM-009-A03). A `ref` formal read by
+an event control binds a whole-signal actual statically: each distinct actual
+signal gets one cloned task (`task_specialization`, lowered after all call
+sites); otherwise the typed body follows whatever its descriptor names
+(`IrDependency::RefFormal`): a variable, fixed-array element, class property,
+container element (its container's contents marker), member view or unpacked
+aggregate (range-precise leaves). Selects, qualifiers, named-event lists, `@*`
+and controls reading a subroutine container are process-evaluated. A task
+waiting on a native record `ref` formal is a template reached only through
+record specializations (`waits_on_record_ref`). String and handle `ref` formals
+wait on their actual's marker (`IrDependency::NativeRefFormal`); each call
+checks its actual has one (`native_ref_actual_observable`). Keep those cases in
+that one predicate and record new ones there. A fork-shared string keeps a
+marker only when `native_observed` finds a wait that can observe it; waits on
+fork-shared strings and handles use `IrDependency::SharedNative`.
 Fixed aggregate projections of static function locals use that persistent signal
 as their read/write owner, including tagged-member guards; activation locals do
 not name the persistent cell.

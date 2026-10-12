@@ -1476,16 +1476,19 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `wait (cond)`, explicit event control or implicit `@*` on a packed or real
   `ref` formal (a select, operator, qualifier or list naming an event being
   evaluated by the waiting process, SIM-013) follows the actual through its
-  descriptor in the typed body when the actual is a whole variable, a
-  fixed-array element (static, automatic, multidimensional or hierarchical)
-  or a class property, so such tasks recurse, run as class methods and take
-  native formals. Waits and `@` on string and class-handle `ref` formals
-  follow the change marker of the module, package, static or process
-  variable the actual names (SIM-009-A03, decisions S09-D1..D4); fork-visible
-  automatic and class-property actuals of such formals reject explicitly.
-  Unpacked aggregate `ref` formals and container-element or unpacked-member
-  actuals of waited `ref` formals still use the inline path, which rejects
-  them ([known issue](known_issues.md#event-controls-on-subroutine-storage-in-expanded-tasks)).
+  descriptor in the typed body: a whole variable, a fixed-array, queue,
+  dynamic or associative array element, an unpacked-structure member, a class
+  property or a whole unpacked aggregate; virtual-interface `ref` formals are
+  typed handles. There is no call-site expansion (SIM-009-A03), so such tasks
+  recurse, run as class methods and take native formals. Waits and `@` on
+  string and class-handle `ref` formals follow the change marker of the
+  module, package, static, process or fork-shared variable or class property
+  the actual names, and a handle store through a `ref` formal wakes waiters at
+  the store (decisions S09-D1..D7); branches waiting on a parent's automatic
+  string or handle wake on its writes. Native record `ref` formals waited on
+  with class-property or task-automatic records, and string or handle array
+  elements as waited `ref` actuals, reject explicitly
+  ([known issue](known_issues.md#waited-ref-formals-with-unobservable-actuals)).
   Event expressions over by-value formals copy them when the control arms;
   event formals of class methods, virtual ones included, take the typed path
   ([sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md));

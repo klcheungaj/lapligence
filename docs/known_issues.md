@@ -1081,49 +1081,50 @@ target of such a `->>`. Stores a `$monitor`/`$strobe` helper makes to its own
 static storage publish no event, so a hierarchical wait on that storage does
 not wake.
 
-## Event controls on subroutine storage in expanded tasks
+## Waited `ref` formals with unobservable actuals
 
-**Status:** narrowed by SIM-013 and SIM-009-A03.
+**Status:** narrowed by SIM-013 and SIM-009-A03 (the call-site expansion is
+gone; every remaining form rejects at the call with its location).
 
 ### Symptom
 
-A task whose event control or `wait` reads a `ref` formal of an unpacked
-aggregate type (fixed array, unpacked structure), or whose waited packed `ref`
-formal is bound to a queue, dynamic or associative array element or to an
-unpacked-structure member, is expanded at each call site; these expansions
-reject ("ref actual ... is not an integral lvalue", "cannot resolve array
-base of select") and cannot recurse ("recursive delay-bearing task"), and a
-class method in that situation rejects explicitly. A waited string or handle
-`ref` formal whose actual is a class property or an automatic variable that a
-fork branch can change rejects explicitly ("its changes publish no marker").
-`@(s)` on a subroutine string or handle other than a `ref` formal rejects
-explicitly; an `iff` qualifier reads a string or handle copied when the
-control arms. Event controls and waits on the task's own locals, by-value
-formals of every type, module signals, event formals of every direction,
-packed and real `ref` formals bound to whole variables, fixed-array elements
-and class properties (including selects, operators, qualifiers, named-event
-lists and `@*`), and string and handle `ref` formals bound to module, static
-or process variables take the typed call path.
+Three legal forms reject explicitly instead of running:
+
+- A task waiting on a member of a native record `ref` formal (an unpacked
+  structure with a string, container or class member) called with a record
+  that is a class property or a task-automatic variable ("waits on a native
+  record `ref` formal, so each of its record actuals must be a module, static
+  or procedural-block record").
+- A waited string or handle `ref` formal whose actual is an element of an
+  unpacked array of strings or handles ("is neither a variable nor a class
+  property; its changes publish no marker").
+- `@(s)` on a subroutine string or handle that is neither a `ref` formal nor
+  shared with a fork branch (only the waiting process could change it).
+
+Everything else takes the typed call path: packed and real `ref` formals
+bound to variables, fixed-array, queue, dynamic and associative array
+elements, unpacked-structure members and class properties, unpacked
+aggregate and virtual-interface `ref` formals, and string and handle `ref`
+formals bound to module, static, process or fork-shared variables and class
+properties. Handle stores through a `ref` formal publish at the store.
 
 ### Cause
 
-Retained container-element cells and unpacked-member views carry no change
-marker a typed body could wait on, and aggregate `ref` formals have no
-whole-variable descriptor. Fork-visible subroutine strings and handles, and
-class string/handle properties reached through a `ref` address, have no
-marker the waiting body can find. Expansion cannot carry these actuals and
-cannot recurse.
+A native record `ref` formal's body reads leaves that only a record
+specialization binds; class-property and automatic records have no static
+leaves. Elements of unpacked string and handle arrays carry no change marker a
+`ref` formal can name.
 
 ### Intended direction
 
-Give retained element cells and member views a dependency their descriptor
-names; give fork-shared subroutine strings and handles change markers; then
-remove the expansion path.
+Pass a native record's leaf markers with the record value, and give string
+and handle array elements markers when a wait can observe them (as fork-shared
+strings get one).
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_009/neg_string_event_control.sv`,
-`neg_shared_string_ref_wait.sv`, `neg_handle_property_ref_wait.sv`.
+`tests/fixtures/sim/feature_completion/sim_009/neg_record_ref_wait_actual.sv`,
+`neg_native_element_ref_wait.sv`, `neg_string_event_control.sv`.
 
 ## Waits on storage without a change notification
 
