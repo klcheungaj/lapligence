@@ -26,7 +26,7 @@ fn companion(directory: &sim_harness::TempDir, stem: &str) -> Option<String> {
             "-std=c11", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC",
         ])
         .arg("-I")
-        .arg(root.join("vendor/slang/external/ieee1800"));
+        .arg(root.join("src/sim/rt"));
     if cfg!(target_os = "macos") {
         command.args(["-undefined", "dynamic_lookup"]);
     }
@@ -42,6 +42,58 @@ fn companion(directory: &sim_harness::TempDir, stem: &str) -> Option<String> {
         String::from_utf8_lossy(&output.stderr)
     );
     Some(library.to_string_lossy().into_owned())
+}
+
+/// The `svdpi.h` written beside every model is self-contained strict C11: a
+/// DPI-C file that includes nothing before it compiles. `-U__linux` stands in
+/// for a host outside the Annex I sample's Linux and Windows branches, whose
+/// `<sys/types.h>` fallback lacks `uint8_t`/`uint32_t` (macOS).
+#[test]
+fn svdpi_header_is_self_contained_strict_c11() {
+    let compiler = c_compiler::host_c_compiler();
+    if c_compiler::is_msvc(&compiler) {
+        eprintln!("SKIP: the strict svdpi.h check uses GCC/Clang options");
+        return;
+    }
+    let directory = sim_harness::TempDir::new("sim040-svdpi").expect("temporary directory");
+    std::fs::write(
+        directory.path().join("svdpi.h"),
+        llg::sim::rt::svdpi_header(),
+    )
+    .expect("write svdpi.h");
+    let source = directory.path().join("only_svdpi.c");
+    std::fs::write(
+        &source,
+        "#include \"svdpi.h\"\n\
+         uint64_t only_svdpi_wide(const svBitVecVal *v) { return (uint64_t)v[0]; }\n\
+         svLogic only_svdpi_scalar(const svLogicVecVal *v) { return (svLogic)(v->aval & 1u); }\n\
+         int32_t only_svdpi_time(const svTimeVal *t) { return t->type; }\n",
+    )
+    .expect("write probe");
+    for extra in [None, Some("-U__linux")] {
+        let mut command = std::process::Command::new(&compiler);
+        command
+            .args([
+                "-std=c11",
+                "-Wall",
+                "-Wextra",
+                "-pedantic",
+                "-Werror",
+                "-fsyntax-only",
+            ])
+            .args(extra)
+            .arg("-I")
+            .arg(directory.path())
+            .arg(&source);
+        let output = sim_harness::run_command(&mut command, std::time::Duration::from_secs(60))
+            .expect("C compiler for the svdpi.h check");
+        assert!(
+            output.status.success(),
+            "svdpi.h {extra:?}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 #[test]

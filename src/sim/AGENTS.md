@@ -147,7 +147,7 @@ ccache needs this variable; an empty variable is none and an explicit empty libr
 option suppresses it; the `llg` driver's order is CLI > `LLG_C_LAUNCHER` >
 `build.launcher`, resolved in `settings::layered` before it fills the option). It reaches the runtime archive and model compiles, is part of the
 runtime cache key, and never touches the root `build.rs` Slang build (`LLG_CCACHE`). Repeatable `dpi_libraries`/`--dpi-lib` accepts validated explicit link
-files; include `svdpi.h` in generated output. `generate_model_sources`/`--gen-only`
+files; include `svdpi.h` (llg's Annex I copy, `rt/svdpi.h`) in generated output. `generate_model_sources`/`--gen-only`
 writes sources/CMake without building. `CmakeBuildOpts` `cmake`/`cc`/`cflags`
 (`--cmake`/`--cc`/`--cflags`) win over `LLG_CMAKE`, `LLG_CC`/`CC` and
 `LLG_CFLAGS`; without a compiler selection `DEFAULT_C_COMPILER` is MSVC `cl` on

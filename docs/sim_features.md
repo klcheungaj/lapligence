@@ -2092,7 +2092,10 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   as `svOpenArrayHandle` with the actual's ranges (35.5.6.1, H.12). Every
   `svdpi.h` canonical-access, bit/part-select, array-query and open-array
   element routine of H.11-H.12 is provided, plus `svDpiVersion`
-  ("1800-2005"). The C side gets a thunk-owned copy, never simulator storage;
+  ("1800-2005"). DPI-C libraries compile against the `svdpi.h` that llg
+  writes beside the generated model (`--gen-only` shows it); it is the Annex I
+  header with `<inttypes.h>` for the fixed-width types on every host (I.2).
+  The C side gets a thunk-owned copy, never simulator storage;
   inputs are copied in before the call, outputs and inouts copied out in
   declaration order after it (each copy a cancellation boundary) and the
   result assigned last; output formals start at X or 0 (decisions

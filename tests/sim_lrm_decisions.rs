@@ -810,7 +810,7 @@ fn dpi_companion(directory: &crate::sim_harness::TempDir, case: &str) -> Option<
     let mut command = std::process::Command::new(compiler);
     command
         .args(["-shared", "-fPIC", "-I"])
-        .arg(root.join("vendor/slang/external/ieee1800"));
+        .arg(root.join("src/sim/rt"));
     if cfg!(target_os = "macos") {
         command.args(["-undefined", "dynamic_lookup"]);
     }

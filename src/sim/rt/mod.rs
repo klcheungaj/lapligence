@@ -35,6 +35,13 @@ pub fn vpi_sources() -> (&'static str, &'static str) {
     )
 }
 
+/// The `svdpi.h` (IEEE 1800-2009 Annex I) written beside every generated
+/// model, for the model and for DPI-C libraries compiled against it. It
+/// defines the fixed-width types through `<inttypes.h>` on every host (I.2).
+pub fn svdpi_header() -> &'static str {
+    include_str!("svdpi.h")
+}
+
 /// Internal bridge header included by generated models: the DPI-C bridge
 /// declarations (`llg_dpi.h`), then the VPI bridge, which includes them.  The public plugin
 /// header is emitted as `vpi_user.h`; keeping this header separate avoids

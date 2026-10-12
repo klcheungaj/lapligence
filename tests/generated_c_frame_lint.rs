@@ -54,10 +54,6 @@ fn syntax_check(compiler: &str, model: &str, fixture: &Path, mode: &str) {
     let mut child = command
         .args(["-fsyntax-only", "-"])
         .arg(format!("-I{}", root.join("src/sim/rt").display()))
-        .arg(format!(
-            "-I{}",
-            root.join("vendor/slang/external/ieee1800").display()
-        ))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

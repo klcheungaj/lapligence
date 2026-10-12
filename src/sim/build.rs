@@ -1422,7 +1422,7 @@ fn runtime_cache_key_with_compiler(
         super::rt::container_sources().1,
         super::rt::string_sources().0,
         super::rt::string_sources().1,
-        include_str!("../../vendor/slang/external/ieee1800/svdpi.h"),
+        super::rt::svdpi_header(),
         cc,
         flags,
         cmake_prog,

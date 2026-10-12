@@ -45,7 +45,7 @@ fn compile_shared_library(directory: &Path, source: &Path, name: &str) -> Option
             .or_else(|_| std::env::var("CC"))
             .unwrap_or_else(|_| "cc".to_owned());
         let output = directory.join(format!("lib{name}.so"));
-        let include = Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/slang/external/ieee1800");
+        let include = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/sim/rt");
         let mut command = Command::new(compiler);
         command
             .args(["-shared", "-fPIC"])
