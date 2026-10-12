@@ -191,6 +191,36 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
 - ccache refuses MSVC `/Zi` (shared PDB) as an unsupported compiler option;
   Debug CMake projects that should be cached embed debug information
   (`/Z7`, `CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded`, CMP0141).
+- Plain C `char` is unsigned on AArch64 Linux (also PowerPC, RISC-V and MSVC with
+  `/J`) and signed on x86, Apple arm64 and Windows. SV `byte` is C `char` (IEEE
+  1800-2009 Table H.1), so DPI thunks keep `char` prototypes and sign-extend each
+  foreign byte explicitly, and C code (companions included) reads a `byte` through
+  an explicit sign extension, never `%d` of a plain `char`. GCC/Clang
+  `-funsigned-char` reproduces the AArch64 behaviour on x86_64.
+- The Annex I sample `svdpi.h` defines the fixed-width types per OS and falls back
+  to `<sys/types.h>`, which lacks `uint8_t`/`uint32_t`/`uint64_t` on macOS. llg
+  writes its own `rt/svdpi.h` (the same header with `<inttypes.h>`, allowed by
+  I.2) beside every model; DPI-C tests compile against it. `-U__linux` on Linux
+  reproduces the macOS failure of the sample header.
+- Windows process CPU time (`GetProcessTimes`) advances in 15.625 ms ticks;
+  `clock()` on Linux and macOS in 1 µs steps. A CPU-time comparison must span many
+  ticks of the measured resolution (the fork-group scale probe repeats each sample
+  until it spans 32), or one or four ticks read as a ratio of 4.
+- MSVC Debug (`/Od /RTC1`) runs call-heavy probes 6-14x slower than GCC `-O0`
+  (Windows CI: `array_conditional` 12.6 s against 0.9 s, the per-bit word-copy
+  oracle over 60 s against 10 s). Keep per-bit reference work in plain arrays,
+  not in calls into the runtime under test.
+- On both Windows runners an opt-in configured-tree template
+  (`LLG_CMAKE_TREE_TEMPLATES`) is rejected when the second tree is compared with
+  it; Linux and macOS verify it. The cause is not known yet: the timing record
+  now carries the first differing files and lines as `template_reason`.
+- tower-lsp 0.20 runs notifications concurrently, so slower runners (Rocky arm64)
+  interleave handlers that are sequential elsewhere; state written after an
+  `await` must not let an older result replace a newer one (workspace rescans
+  carry a start ticket).
+- The Linux build container runs as root and Cargo extracts crates with their
+  archive modes (`fnv-1.0.7` is owner-only), so the runner user's cache-save `tar`
+  cannot read them; the workflow hands the registry back to the runner user.
 - Linux CI builds only in static-musl Alpine; glibc Ubuntu/Rocky containers run
   those binaries. Minimal images lack clang, which `generated_c_frame_lint`
   requires alongside gcc; install test tools explicitly. zlib is bundled, never
