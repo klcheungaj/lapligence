@@ -72,6 +72,40 @@ pub(super) struct BackendState {
     /// Monotonic job-generation counter; bumped only while creating a job
     /// under the state lock (which is exactly when staleness is decided).
     pub(super) next_generation: u64,
+    /// Start order of workspace discoveries, so an older walk never replaces
+    /// the file sets of a newer one (see [`DiscoveryOrder`]).
+    pub(super) discovery: DiscoveryOrder,
+}
+
+/// Orders workspace discoveries ([`Backend::rescan`]). tower-lsp runs
+/// notifications concurrently, so two rescans can overlap: a folder removal's
+/// walk that began before a file was created can finish after the walk a
+/// watched-file event started later. Applying it last would drop the new file
+/// from `discovered`, and with no further event the root would never index it.
+/// Each walk takes a ticket when it starts; a result is applied only when no
+/// later-started walk has been applied already.
+#[derive(Debug, Default)]
+pub(super) struct DiscoveryOrder {
+    started: u64,
+    applied: u64,
+}
+
+impl DiscoveryOrder {
+    /// The ticket of a walk starting now.
+    pub(super) fn start(&mut self) -> u64 {
+        self.started += 1;
+        self.started
+    }
+
+    /// Whether the walk with `ticket` may replace the current file sets;
+    /// records it as applied when it may.
+    pub(super) fn admit(&mut self, ticket: u64) -> bool {
+        if ticket < self.applied {
+            return false;
+        }
+        self.applied = ticket;
+        true
+    }
 }
 pub(super) struct RootJob {
     pub(super) key: RootKey,
@@ -114,6 +148,20 @@ pub(super) struct CommitOutcome {
     /// and do not cause clients to refetch it.
     pub(super) module_explorer_changed: bool,
 }
+/// What [`Backend::apply_discovery`] did with one walk's file sets.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum DiscoveryOutcome {
+    /// The roots changed while the walk ran.
+    Stale,
+    /// A walk that started later was applied first.
+    Superseded,
+    /// Applied; `changed` roots have new file sets.
+    Applied {
+        changed: BTreeSet<RootKey>,
+        warnings: usize,
+    },
+}
+
 pub(super) struct RescanResult {
     pub(super) discovered: BTreeMap<RootKey, BTreeSet<PathBuf>>,
     pub(super) warnings: Vec<String>,
@@ -184,6 +232,7 @@ impl Backend {
                 dep_dependents: BTreeMap::new(),
                 published_shared: BTreeMap::new(),
                 next_generation: 0,
+                discovery: DiscoveryOrder::default(),
             })),
             definition_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
             hover_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),

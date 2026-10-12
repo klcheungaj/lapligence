@@ -74,6 +74,7 @@ fn empty_backend_state() -> BackendState {
         dep_dependents: BTreeMap::new(),
         published_shared: BTreeMap::new(),
         next_generation: 0,
+        discovery: Default::default(),
     }
 }
 
@@ -706,6 +707,7 @@ fn oversized_compile_job_publishes_limit_and_retains_last_good_snapshot() {
         dep_dependents: BTreeMap::new(),
         published_shared: BTreeMap::new(),
         next_generation: 0,
+        discovery: Default::default(),
     }));
     let job = RootJob {
         key: root.clone(),
@@ -773,6 +775,7 @@ fn open_token_freshness_barrier_rejects_stale_revision_before_admission() {
         dep_dependents: BTreeMap::new(),
         published_shared: BTreeMap::new(),
         next_generation: 0,
+        discovery: Default::default(),
     }));
     let registry = Arc::new(OpenTokenFlightRegistry::new());
 
@@ -1129,6 +1132,7 @@ fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
         dep_dependents: BTreeMap::new(),
         published_shared: BTreeMap::new(),
         next_generation: 0,
+        discovery: Default::default(),
     }));
     let mut analysis = features::empty_analysis();
     analysis.diagnostics.push(Diag {
@@ -1235,6 +1239,7 @@ fn commit_job_serves_features_from_partial_analyses() {
         dep_dependents: BTreeMap::new(),
         published_shared: BTreeMap::new(),
         next_generation: 0,
+        discovery: Default::default(),
     }));
     let commit = |generation: u64, analysis: Option<Analysis>| {
         state
@@ -1393,6 +1398,7 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
         dep_dependents: BTreeMap::new(),
         published_shared: BTreeMap::new(),
         next_generation: 0,
+        discovery: Default::default(),
     }));
 
     let files = vec![
@@ -2127,6 +2133,7 @@ fn watcher_options_cover_config_sources_and_include_deps() {
         dep_dependents: BTreeMap::new(),
         published_shared: BTreeMap::new(),
         next_generation: 0,
+        discovery: Default::default(),
     };
     state.roots.insert(
         root.clone(),
@@ -2189,6 +2196,7 @@ fn reload_keeps_last_valid_config_on_malformed_reload() {
         dep_dependents: BTreeMap::new(),
         published_shared: BTreeMap::new(),
         next_generation: 0,
+        discovery: Default::default(),
     };
     state.roots.insert(
         root.clone(),
@@ -2312,6 +2320,7 @@ fn dep_dependents_maps_every_dependent_root() {
         dep_dependents: BTreeMap::new(),
         published_shared: BTreeMap::new(),
         next_generation: 0,
+        discovery: Default::default(),
     };
     state.roots.insert(
         root_a.clone(),
@@ -2516,6 +2525,7 @@ fn two_root_state_with_shared_file(
         dep_dependents: BTreeMap::new(),
         published_shared: BTreeMap::new(),
         next_generation: 0,
+        discovery: Default::default(),
     };
     state.roots.insert(
         root_a.clone(),
@@ -2702,4 +2712,128 @@ fn shutdown_cleanup_removes_process_shadow_base() {
         "shutdown cleanup must remove the whole process shadow base"
     );
     let _ = std::fs::remove_dir_all(root);
+}
+
+fn single_root_state(root: &Path, discovered: Vec<PathBuf>) -> BackendState {
+    let mut state = empty_backend_state();
+    state.roots.insert(
+        root.to_path_buf(),
+        RootState {
+            descriptor: RootDescriptor::from_absolute(root).expect("descriptor"),
+            shadow: ShadowPaths::new(),
+            discovered,
+            include_deps: BTreeSet::new(),
+            lint_config: LintConfig::default(),
+            config_errors: Vec::new(),
+            config_warnings: Vec::new(),
+            last_good: None,
+            diagnostics: BTreeMap::new(),
+            published_digests: BTreeMap::new(),
+            all_diagnostics: BTreeMap::new(),
+            generation: 1,
+            pending_parent_id: None,
+            scheduler: SchedulerState::default(),
+            analysis_epoch: 0,
+        },
+    );
+    state
+}
+
+/// Overlapping rescans (tower-lsp runs notifications concurrently): a folder
+/// removal's walk that began before `dynamic.sv` was created finishes after
+/// the walk of the watched-file event. The older file sets must not replace
+/// the newer ones, or the root never indexes the new file (Rocky arm64 CI:
+/// `WatchedCreated` never appeared).
+#[test]
+fn an_older_discovery_never_replaces_a_newer_one() {
+    let root = PathBuf::from(hp("/tmp/llg_rescan_order"));
+    let old_file = root.join("top.sv");
+    let new_file = root.join("watched").join("dynamic.sv");
+    let mut state = single_root_state(&root, vec![old_file.clone()]);
+    let snapshot = |state: &BackendState| {
+        (
+            state
+                .roots
+                .iter()
+                .map(|(key, root)| (key.clone(), root.descriptor.clone()))
+                .collect::<BTreeMap<_, _>>(),
+            state
+                .roots
+                .iter()
+                .map(|(key, root)| (key.clone(), root.discovered.clone()))
+                .collect::<BTreeMap<_, _>>(),
+        )
+    };
+    let walk = |files: &[&PathBuf]| RescanResult {
+        discovered: BTreeMap::from([(
+            root.clone(),
+            files.iter().map(|file| (*file).clone()).collect(),
+        )]),
+        warnings: Vec::new(),
+    };
+
+    let older = state.discovery.start();
+    let (older_descriptors, older_previous) = snapshot(&state);
+    let newer = state.discovery.start();
+    let (newer_descriptors, newer_previous) = snapshot(&state);
+    assert_eq!(
+        Backend::apply_discovery(
+            &mut state,
+            newer,
+            &newer_descriptors,
+            &newer_previous,
+            walk(&[&old_file, &new_file]),
+        ),
+        DiscoveryOutcome::Applied {
+            changed: BTreeSet::from([root.clone()]),
+            warnings: 0
+        }
+    );
+    assert_eq!(
+        Backend::apply_discovery(
+            &mut state,
+            older,
+            &older_descriptors,
+            &older_previous,
+            walk(&[&old_file]),
+        ),
+        DiscoveryOutcome::Superseded
+    );
+    assert_eq!(
+        state.roots[&root].discovered,
+        vec![old_file.clone(), new_file.clone()]
+    );
+
+    // In start order both apply, the later one last.
+    let first = state.discovery.start();
+    let second = state.discovery.start();
+    let (descriptors, previous) = snapshot(&state);
+    assert!(matches!(
+        Backend::apply_discovery(
+            &mut state,
+            first,
+            &descriptors,
+            &previous,
+            walk(&[&old_file])
+        ),
+        DiscoveryOutcome::Applied { .. }
+    ));
+    assert!(matches!(
+        Backend::apply_discovery(
+            &mut state,
+            second,
+            &descriptors,
+            &previous,
+            walk(&[&old_file, &new_file]),
+        ),
+        DiscoveryOutcome::Applied { .. }
+    ));
+    assert_eq!(state.roots[&root].discovered, vec![old_file, new_file]);
+
+    // Roots that changed during the walk leave the sets alone.
+    let stale = state.discovery.start();
+    assert_eq!(
+        Backend::apply_discovery(&mut state, stale, &BTreeMap::new(), &previous, walk(&[])),
+        DiscoveryOutcome::Stale
+    );
 }
