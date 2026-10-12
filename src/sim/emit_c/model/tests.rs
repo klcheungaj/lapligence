@@ -90,6 +90,74 @@ fn dpi_string_snapshots_precede_copyouts_and_preserve_borrowed_inputs() {
     }
 }
 
+/// SV `byte` is C `char` (IEEE 1800-2009 Table H.1), whose signedness the
+/// ABI chooses: the prototype keeps `char`, and every foreign byte becomes an
+/// SV value through the explicit sign extension, never a plain widening.
+#[test]
+fn dpi_byte_is_plain_char_and_sign_extended_explicitly() {
+    use crate::sim::ir::{IrDpiImport, IrDpiType, IrFormal};
+
+    let byte = IrDpiType::Int {
+        bytes: 1,
+        signed: true,
+    };
+    let unsigned_byte = IrDpiType::Int {
+        bytes: 1,
+        signed: false,
+    };
+    let mut function = IrFunc::new(
+        "byte_thunk".to_owned(),
+        Some(IrType::Packed {
+            width: 8,
+            signed: true,
+            two_state: true,
+        }),
+        vec![
+            IrFormal::new(false, 8, true).unwrap(),
+            IrFormal::new(true, 8, true).unwrap(),
+            IrFormal::new(true, 8, false).unwrap(),
+        ],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    function.is_task = false;
+    function.dpi = Some(IrDpiImport::new(
+        "foreign_byte".to_owned(),
+        false,
+        false,
+        vec![byte.clone(), byte.clone(), unsigned_byte],
+        Some(byte),
+    ));
+    let prototype = dpi_external_prototype(&function).unwrap();
+    assert!(
+        prototype.contains("extern char foreign_byte(char p0, char *p1, unsigned char *p2);"),
+        "{prototype}"
+    );
+    let thunk = render_dpi_thunk(&function).unwrap();
+    assert!(!thunk.contains("int8_t"), "{thunk}");
+    assert!(
+        !thunk.contains("(int64_t)_dpi"),
+        "a foreign char must not be widened by its own signedness: {thunk}"
+    );
+    assert!(
+        thunk.contains("char _dpi_ret = foreign_byte((char)sv4_to_i64(*a0), &_dpi_o1, &_dpi_o2);"),
+        "{thunk}"
+    );
+    assert!(
+        thunk.contains("llg_dpi_byte_value(_dpi_o1), 8)")
+            && thunk.contains("llg_dpi_byte_value(_dpi_ret), 8)"),
+        "result and signed output: {thunk}"
+    );
+    assert!(thunk.contains("(uint64_t)_dpi_o2, 8, 0)"), "{thunk}");
+    let helpers = dpi_helpers();
+    assert!(
+        helpers.contains("static int64_t llg_dpi_byte_value(char value) {")
+            && helpers.contains("return (int64_t)((unsigned char)value ^ 0x80u) - 0x80;"),
+        "{helpers}"
+    );
+}
+
 #[test]
 fn non_waveform_model_has_no_waveform_integration() {
     let model = IrModel::new("plain".to_string(), 1).unwrap();

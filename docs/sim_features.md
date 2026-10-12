@@ -2095,6 +2095,10 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   ("1800-2005"). DPI-C libraries compile against the `svdpi.h` that llg
   writes beside the generated model (`--gen-only` shows it); it is the Annex I
   header with `<inttypes.h>` for the fixed-width types on every host (I.2).
+  `byte` is C `char` (Table H.1) in llg's prototypes; its signedness is the
+  ABI's (unsigned on AArch64 Linux, PowerPC and RISC-V), so C code reads a
+  `byte` through `signed char` or an explicit sign extension, while llg
+  converts every foreign byte to the signed SV value itself.
   The C side gets a thunk-owned copy, never simulator storage;
   inputs are copied in before the call, outputs and inouts copied out in
   declaration order after it (each copy a cancellation boundary) and the
