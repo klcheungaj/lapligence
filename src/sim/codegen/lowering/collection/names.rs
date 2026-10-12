@@ -229,7 +229,9 @@ impl<'a> Codegen<'a> {
                     name
                 }
             }
-            IrDependency::SharedCell { .. } => "fork-shared automatic storage".to_owned(),
+            IrDependency::SharedCell { .. } | IrDependency::SharedNative { .. } => {
+                "fork-shared automatic storage".to_owned()
+            }
             IrDependency::RefFormal { .. } | IrDependency::NativeRefFormal { .. } => {
                 "`ref` formal storage".to_owned()
             }

@@ -277,6 +277,11 @@ static sv4_t* ref_leaf_dependency(const llg_ref_t* ref) {
     }
 }
 
+/* A descriptor's own bit count (metadata, not a value width). */
+static uint32_t ref_metadata_width(const llg_ref_t* ref) {
+    return ref->width;
+}
+
 static size_t ref_dependency_range(const llg_ref_t* ref, uint32_t lsb, uint32_t count,
                                    llg_wait_dependency_t* out) {
     if (!ref || !count) return 0;
@@ -305,7 +310,8 @@ static size_t ref_dependency_range(const llg_ref_t* ref, uint32_t lsb, uint32_t 
         if (!view->parent) return 0;
         // A tagged view's validity also depends on its tag bits.
         if (kind == LLG_REF_TAGGED_VIEW)
-            return ref_dependency_range(view->parent, 0, view->parent->width, out);
+            return ref_dependency_range(view->parent, 0, ref_metadata_width(view->parent),
+                                        out);
         uint64_t low = lsb > view->plan.value_lsb ? lsb : view->plan.value_lsb;
         uint64_t high = (uint64_t)lsb + count;
         uint64_t end = (uint64_t)view->plan.value_lsb + view->plan.count;

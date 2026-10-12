@@ -1009,12 +1009,10 @@ void llg_object_set_randstate(llg_rng_state_t* object, llg_string_t state);
 // its backing storage. Bindings are cleared by llg_rt_cleanup.
 void llg_dependency_bind(sv4_t* target, sv4_t* dependency);
 void llg_dependency_bind_real(double* target, sv4_t* dependency);
-// Module and static class handle variables name their change marker so a
-// typed body waiting on a handle `ref` formal can find it from the address
-// the formal carries; any other address yields a marker that is never
-// written.
-void llg_dependency_bind_handle(void* const* target, sv4_t* dependency);
-sv4_t* llg_handle_dependency(const void* target);
+// Destroy hook (llg_frame_capture_object) of a change marker that a frame
+// slot owns: a fork-shared string that a wait observes. It does not free the
+// marker's own storage.
+void llg_dependency_marker_destroy(void* marker);
 void llg_dependency_changed(sv4_t* dependency);
 // `dependency`, or a marker that is never written when it is NULL (an
 // activation container no other process can change).
@@ -1763,6 +1761,11 @@ void* llg_frame_capture_object(llg_frame_t* frame, size_t slot, size_t size,
 void* llg_frame_object_address(llg_frame_t* frame, size_t slot);
 // The handle cell of an opaque slot (following frame-to-frame aliases).
 void** llg_frame_opaque_address(llg_frame_t* frame, size_t slot);
+// The change marker of an opaque handle slot (following frame-to-frame
+// aliases): allocated by the first call with `allocate` set (a fork-shared
+// handle that a wait can observe) and released with the frame; NULL while
+// none was allocated, so stores through other aliases publish nothing.
+sv4_t* llg_frame_opaque_marker(llg_frame_t* frame, size_t slot, int allocate);
 // The frame that owns a slot's storage (following frame-to-frame aliases), so
 // a branch can reach the other slots of a shared environment frame.
 llg_frame_t* llg_frame_slot_frame(llg_frame_t* frame, size_t slot);

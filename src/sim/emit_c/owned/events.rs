@@ -93,6 +93,30 @@ impl Frame<'_, '_> {
         })
     }
 
+    /// The change marker of the fork-shared string or handle bound to
+    /// `local`: the string carries the marker its frame owns; a handle's
+    /// slot marker is allocated when a wait first arms on it, after which
+    /// changing stores through every alias publish it.
+    pub(super) fn shared_native_marker(
+        &mut self,
+        local: &str,
+        handle: bool,
+    ) -> Result<String, String> {
+        if handle {
+            let (frame, slot) = self
+                .shared_cells
+                .get(local)
+                .cloned()
+                .ok_or_else(|| pending(&format!("shared handle {local} has no shared cell")))?;
+            Ok(format!("llg_frame_opaque_marker({frame}, {slot}u, 1)"))
+        } else {
+            let string = self
+                .native_lookup(local, super::native::NativeKind::String)?
+                .address;
+            Ok(format!("llg_dependency_or_never(({string})->dependency)"))
+        }
+    }
+
     pub(super) fn dependency(&mut self, dependency: &IrDependency) -> Result<String, String> {
         Ok(match dependency {
             IrDependency::RefFormal { index, real: true } => format!("{{ .real = r{index} }}"),
@@ -110,7 +134,13 @@ impl Frame<'_, '_> {
             IrDependency::NativeRefFormal {
                 index,
                 handle: true,
-            } => format!("{{ .sig = llg_handle_dependency((const void*)r{index}) }}"),
+            } => format!("{{ .sig = llg_dependency_or_never(d{index}) }}"),
+            IrDependency::SharedNative { local, handle } => {
+                format!(
+                    "{{ .sig = {} }}",
+                    self.shared_native_marker(local, *handle)?
+                )
+            }
             IrDependency::Scalar(name)
             | IrDependency::Real(name)
             | IrDependency::SharedCell { local: name, .. } => {

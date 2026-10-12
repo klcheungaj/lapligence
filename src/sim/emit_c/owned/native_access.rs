@@ -197,10 +197,130 @@ pub(super) struct HandleStorePublish {
 }
 
 impl Frame<'_, '_> {
+    /// The handle `ref` formal whose storage IR address `address` (`r{idx}`)
+    /// names in the function being emitted.
+    fn handle_ref_formal(&self, address: &str) -> Option<usize> {
+        let index = address.strip_prefix('r')?.parse::<usize>().ok()?;
+        let formal = self.ctx.func?.formals.get(index)?;
+        (formal.chandle && formal.is_ref()).then_some(index)
+    }
+
+    /// The change marker a store to handle storage named `name` (a native
+    /// local, `*r{idx}` for a handle `ref` formal) publishes, when it is not
+    /// a module object or class property: the formal's marker parameter, or
+    /// the marker of a fork-shared handle's frame slot (NULL until a wait
+    /// observes it, see `llg_frame_opaque_marker`).
+    pub(super) fn handle_store_marker(&self, name: &str) -> Option<String> {
+        if let Some(index) = name
+            .strip_prefix('*')
+            .and_then(|formal| self.handle_ref_formal(formal))
+        {
+            return Some(super::super::model::handle_marker_param(index));
+        }
+        let (frame, slot) = self.shared_cells.get(name)?;
+        (self.bound_native_kind(name) == Some(NativeKind::Chandle))
+            .then(|| format!("llg_frame_opaque_marker({frame}, {slot}u, 0)"))
+    }
+
+    /// The change marker a handle `ref` actual at IR address `address`
+    /// (resolved to `slot`) passes beside its address: a module handle's
+    /// marker, the object marker of a class handle property, a forwarded
+    /// formal's own marker parameter or a fork-shared handle's slot marker,
+    /// allocated now since the callee may wait on it. Other storage (an
+    /// activation handle no other process can name) passes NULL.
+    pub(super) fn handle_ref_marker(
+        &mut self,
+        address: &str,
+        slot: &str,
+    ) -> Result<String, String> {
+        if let Some(object) =
+            self.ctx.model.objects.iter().find(|object| {
+                object.ty.has_change_marker() && slot == format!("&{}", object.c_name)
+            })
+        {
+            return Ok(format!("&{}_llg_dep", object.c_name));
+        }
+        if let Some(index) = self.handle_ref_formal(address) {
+            return Ok(super::super::model::handle_marker_param(index));
+        }
+        let Some(name) = address.strip_prefix('&') else {
+            return Ok("NULL".to_owned());
+        };
+        if let Some(receiver) = self.class_handle_property_receiver(name)? {
+            return Ok(format!("llg_class_handle_dependency({receiver})"));
+        }
+        if let Some((frame, slot)) = self.shared_cells.get(name).cloned() {
+            if self.bound_native_kind(name) == Some(NativeKind::Chandle) {
+                return Ok(format!("llg_frame_opaque_marker({frame}, {slot}u, 1)"));
+            }
+        }
+        Ok("NULL".to_owned())
+    }
+
+    /// Give class string property access `name` its change marker
+    /// (`llg_class_string_dependency`) before a callee waits on the string
+    /// through a `ref` formal; other storage is left unchanged.
+    pub(super) fn observe_class_string_property(&mut self, name: &str) -> Result<(), String> {
+        let Some(access) = self
+            .ctx
+            .model
+            .native_accesses
+            .iter()
+            .find(|access| access.name == name)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let IrNativeAccessKind::ClassField { class, field } = access.kind else {
+            return Ok(());
+        };
+        if self.ctx.model.classes[class].fields[field].ty != IrClassFieldType::String {
+            return Ok(());
+        }
+        let previous = std::mem::replace(&mut self.quiet_receivers, true);
+        let receiver = self.chandle(&access.receiver);
+        self.quiet_receivers = previous;
+        self.line(format!(
+            "(void)llg_class_string_dependency({}, {class}, {field});",
+            receiver?
+        ));
+        Ok(())
+    }
+
+    /// The receiver of class handle property access `name`, rendered quietly
+    /// (the access itself reports a null receiver).
+    fn class_handle_property_receiver(&mut self, name: &str) -> Result<Option<String>, String> {
+        let Some(access) = self
+            .ctx
+            .model
+            .native_accesses
+            .iter()
+            .find(|access| access.name == name)
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let IrNativeAccessKind::ClassField { class, field } = access.kind else {
+            return Ok(None);
+        };
+        let layout = &self.ctx.model.classes[class].fields[field];
+        if layout.ty != IrClassFieldType::Chandle
+            || layout.container.is_some()
+            || layout.native_value.is_some()
+        {
+            return Ok(None);
+        }
+        let previous = std::mem::replace(&mut self.quiet_receivers, true);
+        let receiver = self.chandle(&access.receiver);
+        self.quiet_receivers = previous;
+        Ok(Some(self.scalar("void*", receiver?)))
+    }
+
     /// Capture what a store through `slot` (resolved from IR address
-    /// `address`) must publish: a module handle object's change marker, or
-    /// the marker of the object holding a handle property. Call it before
-    /// the store; other handle storage publishes nothing.
+    /// `address`) must publish: a module handle object's change marker, the
+    /// marker of the object holding a handle property, or the marker of a
+    /// handle `ref` formal or fork-shared handle. Call it before the store;
+    /// other handle storage publishes nothing.
     pub(super) fn handle_store_publish(
         &mut self,
         address: &str,
@@ -210,35 +330,25 @@ impl Frame<'_, '_> {
             object.ty == IrObjectType::Chandle && slot == format!("&{}", object.c_name)
         }) {
             format!("llg_dependency_changed(&{}_llg_dep);", object.c_name)
+        } else if let Some(marker) = self
+            .handle_ref_formal(address)
+            .map(super::super::model::handle_marker_param)
+            .or_else(|| {
+                address
+                    .strip_prefix('&')
+                    .filter(|name| self.shared_cells.contains_key(*name))
+                    .and_then(|name| self.handle_store_marker(name))
+            })
+        {
+            format!("llg_dependency_changed({marker});")
         } else {
             let Some(name) = address.strip_prefix('&') else {
                 return Ok(None);
             };
-            let Some(access) = self
-                .ctx
-                .model
-                .native_accesses
-                .iter()
-                .find(|access| access.name == name)
-                .cloned()
-            else {
-                return Ok(None);
-            };
-            let IrNativeAccessKind::ClassField { class, field } = access.kind else {
-                return Ok(None);
-            };
-            let layout = &self.ctx.model.classes[class].fields[field];
-            if layout.ty != IrClassFieldType::Chandle
-                || layout.container.is_some()
-                || layout.native_value.is_some()
-            {
-                return Ok(None);
-            }
             // The store itself already reported a null receiver.
-            let previous = std::mem::replace(&mut self.quiet_receivers, true);
-            let receiver = self.chandle(&access.receiver);
-            self.quiet_receivers = previous;
-            let receiver = self.scalar("void*", receiver?);
+            let Some(receiver) = self.class_handle_property_receiver(name)? else {
+                return Ok(None);
+            };
             format!("llg_class_handle_published({receiver});")
         };
         let previous = self.scalar("void*", format!("*(void**)({slot})"));

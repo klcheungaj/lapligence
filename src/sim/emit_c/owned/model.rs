@@ -475,6 +475,7 @@ fn render_function(
             frame.statement(&IrStmt::SharedString {
                 name: local.clone(),
                 init: Some(IrStringExpr::FormalRead(index)),
+                observed: formal.shared_observed,
             })?;
             continue;
         }

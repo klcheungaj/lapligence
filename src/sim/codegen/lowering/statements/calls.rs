@@ -145,7 +145,7 @@ impl EmitCtx<'_, '_> {
             if !self.cg.native_ref_actual_observable(actual) {
                 let node = self.cg.node(actual);
                 return Err(format!(
-                    "`ref` actual of string or handle formal `{}` of task `{name}`, which waits on it, is a class property or an automatic variable a fork branch can change; its changes publish no marker the task can wait on (SIM-009) at {}:{}:{} in `{}`",
+                    "`ref` actual of string or handle formal `{}` of task `{name}`, which waits on it, is neither a variable nor a class property; its changes publish no marker the task can wait on (SIM-009) at {}:{}:{} in `{}`",
                     self.cg.node(formals[index].0).name,
                     node.file.as_deref().unwrap_or("<unknown>"),
                     node.line,
@@ -482,15 +482,35 @@ impl EmitCtx<'_, '_> {
                     _ => unreachable!("ref formal"),
                 };
                 if bound[idx].string {
-                    if !const_ref {
+                    // A class string property is passed by the address of
+                    // its object's field (SV 13.5.2).
+                    let property = if self.cg.class_storage_field(bound[idx].expr).is_some() {
+                        self.cg
+                            .class_field_string_lvalue(&self.path, bound[idx].expr)?
+                            .map(|name| format!("&{name}"))
+                    } else {
+                        None
+                    };
+                    if !const_ref && property.is_none() {
                         self.cg
                             .ensure_string_actual_writable(&self.path, bound[idx].expr)?;
                     }
-                    out_args.push(IrCallArg::StringRefAddr {
-                        addr: self
+                    let observed = self.cg.enclosing_func_task(*io).is_some_and(|task| {
+                        self.cg
+                            .call_shape(task, callee_inst)
+                            .native_refs
+                            .contains(&idx)
+                    });
+                    let addr = match property {
+                        Some(addr) => addr,
+                        None => self
                             .cg
                             .lower_string_actual_address(&self.path, bound[idx].expr)?,
+                    };
+                    out_args.push(IrCallArg::StringRefAddr {
+                        addr,
                         const_ref,
+                        observed,
                     });
                 } else {
                     out_args.push(self.cg.lower_ref_arg(

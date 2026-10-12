@@ -12,7 +12,7 @@
 //!
 //! The graph has one node per subprogram that has a body and is neither
 //! suspendable (suspendable recursion already uses the arena, D17) nor
-//! inline-expanded. Dynamic dispatch contributes an edge to every possible
+//! a template reached only through specializations. Dynamic dispatch contributes an edge to every possible
 //! implementation: class virtual calls to every method with the same slot and
 //! virtual-interface calls to every instance implementation. Re-entry through
 //! foreign DPI code is invisible here and keeps native recursion.

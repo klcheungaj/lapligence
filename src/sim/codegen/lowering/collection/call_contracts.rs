@@ -781,6 +781,96 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    /// Whether a wait can observe fork-shared native storage `declaration`
+    /// through a change marker: an event control or level wait in its scope
+    /// reads it, or a call there binds it to a string or handle `ref` formal
+    /// that the callee waits on ([`CallShape::native_refs`]). Only such
+    /// storage keeps a marker, so stores to any other shared string publish
+    /// nothing.
+    pub(in super::super) fn native_observed(&self, declaration: NodeId, inst: NodeId) -> bool {
+        let scope = match self.enclosing_func_task(declaration) {
+            Some(function) => self.func_body(function),
+            None => {
+                // The outermost procedural ancestor below the instance.
+                let mut scope = declaration;
+                while let Some(parent) = self.node(scope).parent {
+                    if matches!(self.kind(parent), NodeKind::ModuleInst { .. }) {
+                        break;
+                    }
+                    scope = parent;
+                }
+                Some(scope)
+            }
+        };
+        let Some(scope) = scope else {
+            return false;
+        };
+        let reads = |root: NodeId| {
+            let mut pending = vec![root];
+            while let Some(node) = pending.pop() {
+                if matches!(
+                    self.kind(node),
+                    NodeKind::Expr(ExprKind::Ref { target: Some(target) }) if *target == declaration
+                ) {
+                    return true;
+                }
+                pending.extend(self.node(node).children.iter().copied());
+            }
+            false
+        };
+        let mut pending = vec![scope];
+        let mut visited = HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node) {
+                continue;
+            }
+            match self.kind(node) {
+                NodeKind::Stmt(StmtKind::EventControl { specs, .. }) => {
+                    let mut roots = Vec::new();
+                    for spec in specs {
+                        self.event_spec_expressions(spec, &mut roots);
+                    }
+                    if roots.into_iter().any(reads) {
+                        return true;
+                    }
+                }
+                NodeKind::Stmt(StmtKind::Wait { cond }) if reads(*cond) => return true,
+                NodeKind::FuncCall {
+                    name,
+                    is_task: true,
+                    callee,
+                    ..
+                } => {
+                    if let Ok((function, owner)) =
+                        self.resolve_callee_env(inst, name, true, *callee)
+                    {
+                        let arguments = self.call_argument_nodes(node);
+                        if self
+                            .call_shape(function, owner)
+                            .native_refs
+                            .iter()
+                            .any(|index| {
+                                matches!(
+                                    arguments.get(*index).map(|actual| self.kind(*actual)),
+                                    Some(NodeKind::Expr(ExprKind::Ref { target: Some(target) }))
+                                        if *target == declaration
+                                )
+                            })
+                        {
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            pending.extend(self.node(node).children.iter().copied());
+            if let NodeKind::Stmt(statement) = self.kind(node) {
+                statement.referenced_nodes(&mut pending);
+            }
+        }
+        false
+    }
+
     fn call_shape_of(&self, ft: NodeId, inst: NodeId, stack: &mut Vec<NodeId>) -> CallShape {
         let mut shape = CallShape::default();
         // A recursive call adds nothing its outer activation does not.
@@ -984,42 +1074,24 @@ impl<'a> Codegen<'a> {
     }
 
     /// Whether the string or handle a `ref` actual names publishes every
-    /// change through a marker a typed body can find from its address: a
-    /// module, package, static or process-level variable (a persistent
-    /// object), or a forwarded `ref` formal, whose own actual its caller
-    /// checked. An automatic subroutine variable no fork branch can see is
+    /// change through a marker the callee receives: a variable (module,
+    /// package and static storage keep a marker; a fork-shared automatic's
+    /// frame keeps one once a wait can observe it, see
+    /// [`Self::native_observed`]; an automatic no fork branch can see is
     /// changed only by the waiting process itself, so a marker that never
-    /// changes is exact. Fork-visible automatics and class properties have
-    /// no such marker.
-    pub(in super::super) fn native_ref_actual_observable(&mut self, actual: NodeId) -> bool {
-        let NodeKind::Expr(ExprKind::Ref {
-            target: Some(target),
-        }) = self.kind(actual)
-        else {
-            return false;
-        };
-        let target = *target;
-        if matches!(
-            self.kind(target),
-            NodeKind::FuncArg {
-                direction: DbDirection::Ref,
-                ..
-            }
-        ) || !self.is_subroutine_scoped(target)
-            || self.db.variable_lifetime(target) == VariableLifetime::Static
-        {
-            return true;
+    /// changes is exact), a forwarded `ref` formal, or a class property
+    /// (its object's handle marker, or the string's own marker).
+    pub(in super::super) fn native_ref_actual_observable(&self, actual: NodeId) -> bool {
+        match self.kind(actual) {
+            NodeKind::Expr(ExprKind::Ref { target: Some(_) }) => true,
+            // A hierarchical name of module or package storage.
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
+                .last()
+                .copied()
+                .flatten()
+                .is_some_and(|target| matches!(self.kind(target), NodeKind::Var { .. })),
+            _ => self.class_storage_field(actual).is_some(),
         }
-        !self.fork_visible(target)
-    }
-
-    /// Whether a declaration lives in a subroutine activation (a formal or a
-    /// local), as opposed to module, package or compilation-unit storage.
-    fn is_subroutine_scoped(&self, target: NodeId) -> bool {
-        matches!(
-            self.kind(target),
-            NodeKind::FuncArg { .. } | NodeKind::Var { .. } | NodeKind::Array { .. }
-        ) && self.enclosing_func_task(target).is_some()
     }
 
     /// Whether a task can cancel its activation through a named `disable`.

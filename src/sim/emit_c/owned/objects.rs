@@ -465,7 +465,16 @@ impl Frame<'_, '_> {
             ChandleAssignLocal(name, value) => {
                 let address = self.native_lookup(name, NativeKind::Chandle)?.address;
                 let value = self.chandle(value)?;
-                self.line(format!("*({address}) = {value};"));
+                // A handle `ref` formal or fork-shared handle publishes a
+                // change at the store, so waiters on the storage it names
+                // wake now (SV 9.4.2, 13.5.2).
+                if let Some(marker) = self.handle_store_marker(name) {
+                    self.line(format!(
+                        "{{ void *_llg_handle = {value}; if (*({address}) != _llg_handle) {{ *({address}) = _llg_handle; llg_dependency_changed({marker}); }} }}"
+                    ));
+                } else {
+                    self.line(format!("*({address}) = {value};"));
+                }
             }
             ProcessDeclareLocal(name, initializer) => {
                 let binding = self.native_local(name, NativeKind::Process);

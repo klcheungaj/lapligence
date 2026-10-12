@@ -426,14 +426,6 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             initialize.push_str(&format!("    {{ sv4_t size = sv4_from_u64({size}ULL, 64, 0); {function}(&{name}, size, NULL); sv4_destroy(&size); }}\n"));
         }
     }
-    // A typed body waiting on a handle `ref` formal finds the actual
-    // variable's marker from its address (`llg_handle_dependency`).
-    let handle_refs = model.funcs.iter().any(|function| {
-        function
-            .formals
-            .iter()
-            .any(|formal| formal.chandle && formal.mode == IrFormalMode::Ref)
-    });
     for object in &model.objects {
         let name = &object.c_name;
         match object.ty {
@@ -459,11 +451,6 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
                     false,
                     true,
                 );
-                if handle_refs {
-                    initialize.push_str(&format!(
-                        "    llg_dependency_bind_handle((void* const*)&{name}, &{name}_llg_dep);\n"
-                    ));
-                }
             }
             IrObjectType::Process => {
                 initialize.push_str(&format!("    {name} = NULL;\n"));

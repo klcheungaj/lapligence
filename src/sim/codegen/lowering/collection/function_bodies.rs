@@ -690,6 +690,7 @@ impl<'a> Codegen<'a> {
                     static_input_copies.push(IrStmt::SharedString {
                         name: name.clone(),
                         init: Some(IrStringExpr::FormalRead(idx)),
+                        observed: self.native_observed(*io, inst),
                     });
                     string_read.insert(*io, IrStringExpr::LocalRead(name.clone()));
                     string_write.insert(*io, name.clone());
@@ -1149,6 +1150,15 @@ impl<'a> Codegen<'a> {
             || (static_local_signals.is_empty()
                 && static_return_signal.is_none()
                 && self.static_return_is_callback_independent(body, ft));
+        let observed_outputs = shared_outputs
+            .iter()
+            .map(|(index, _)| {
+                formals.get(*index).is_some_and(|(io, _)| {
+                    matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "string")
+                        && self.native_observed(*io, inst)
+                })
+            })
+            .collect::<Vec<_>>();
         let no_entry = format!("function `{}` has no model entry", self.node(ft).name);
         let entry = self.model.funcs.get_mut(meta_ir).ok_or(no_entry)?;
         entry.locals = ir_locals;
@@ -1158,9 +1168,10 @@ impl<'a> Codegen<'a> {
         entry.callback_return_independent = callback_return_independent;
         entry.pre_fns = pre_fns;
         entry.body = body_stmts;
-        for (index, name) in shared_outputs {
+        for ((index, name), observed) in shared_outputs.into_iter().zip(observed_outputs) {
             if let Some(formal) = entry.formals.get_mut(index) {
                 formal.shared_local = Some(name);
+                formal.shared_observed = observed;
             }
         }
         let _ = (guard, decl, has_ret, ret_x, c_name.as_str());

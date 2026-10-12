@@ -776,9 +776,7 @@ typedef struct llg_dependency_binding {
     struct llg_dependency_binding* next;
     /* Chain of bindings whose target hashes to the same bucket. */
     struct llg_dependency_binding* bucket_next;
-    /* The bound storage: a packed value, a real cell or a class handle
-     * variable (`kind`). Handle bindings are only looked up by `ref` waits
-     * (llg_handle_dependency), never by the publication path. */
+    /* The bound storage: a packed value or a real cell (`kind`). */
     const void* key;
     sv4_t* dependency;
     uint8_t kind;
@@ -787,7 +785,6 @@ typedef struct llg_dependency_binding {
 enum {
     LLG_DEPENDENCY_BINDING_PACKED = 0,
     LLG_DEPENDENCY_BINDING_REAL = 1,
-    LLG_DEPENDENCY_BINDING_HANDLE = 2,
 };
 
 /* The list owns every binding; the bucket index borrows them. Each write

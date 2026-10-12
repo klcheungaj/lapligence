@@ -353,7 +353,12 @@ impl EmitCtx<'_, '_> {
                             .transpose()?;
                         if self.cg.fork_shared(declaration) {
                             self.cg.shared_locals.insert(declaration);
-                            return Ok(vec![IrStmt::SharedString { name, init }]);
+                            let observed = self.cg.native_observed(declaration, self.inst);
+                            return Ok(vec![IrStmt::SharedString {
+                                name,
+                                init,
+                                observed,
+                            }]);
                         }
                         return Ok(vec![IrStmt::DeclString { name, init }]);
                     }

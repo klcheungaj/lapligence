@@ -681,6 +681,10 @@ impl EmitCtx<'_, '_> {
                             handle: *handle,
                         }
                     }
+                    IrDependency::SharedNative { local, handle } => IrWaitSrc::SharedNative {
+                        local: local.clone(),
+                        handle: *handle,
+                    },
                     other => match other.scalar_name() {
                         Some(name) => IrWaitSrc::Sig(name.to_owned()),
                         None => {
@@ -1162,6 +1166,7 @@ impl EmitCtx<'_, '_> {
                 .and_then(|function| function.persistent.get(&target))
                 .or_else(|| self.cg.static_formals.get(&(self.inst, target)))
                 .or_else(|| self.cg.static_task_locals.get(&(self.inst, target)))
+                .cloned()
         });
         // A member of an unpacked-structure net has no signal of its own;
         // it waits through the evaluated path like other projections.
@@ -1199,9 +1204,10 @@ impl EmitCtx<'_, '_> {
             target: Some(target),
         }) = self.cg.kind(expression)
         {
+            let target = *target;
             if let Some(IrDependency::NativeRefFormal { index, handle }) = condition
                 .is_none()
-                .then(|| self.cg.ref_formal_dependency(*target))
+                .then(|| self.cg.ref_formal_dependency(target))
                 .flatten()
             {
                 if edge != IrEdge::Any {
@@ -1212,13 +1218,32 @@ impl EmitCtx<'_, '_> {
                 }
                 return Ok((IrWaitSrc::NativeRefFormal { index, handle }, edge));
             }
+            // A fork-shared string or handle waits on the change marker its
+            // frame keeps (see `Codegen::native_observed`).
+            if condition.is_none() {
+                if let Some(IrDependency::SharedNative { local, handle }) = self
+                    .cg
+                    .shared_event_dependencies(expression)
+                    .into_iter()
+                    .next()
+                    .filter(|_| self.cg.shared_locals.contains(&target))
+                {
+                    if edge != IrEdge::Any {
+                        return Err(format!(
+                            "edge control on a string or class handle is not supported in `{}`",
+                            self.cg.source_path(&self.path)
+                        ));
+                    }
+                    return Ok((IrWaitSrc::SharedNative { local, handle }, edge));
+                }
+            }
             if self.func.as_ref().is_some_and(|func| {
-                func.string_read.contains_key(target) || func.chandle_read.contains_key(target)
+                func.string_read.contains_key(&target) || func.chandle_read.contains_key(&target)
             }) && self.cg.object_of(&self.path, expression).is_none()
             {
                 return Err(format!(
                     "event control on subroutine string or handle `{}` in `{}` is not supported (SIM-009)",
-                    self.cg.node(*target).name,
+                    self.cg.node(target).name,
                     self.cg.source_path(&self.path)
                 ));
             }

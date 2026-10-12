@@ -337,6 +337,11 @@ pub enum IrDependency {
     /// `local` (packed, or real when `real`). Sharing processes write it
     /// through publishing stores, so its address is a wait source.
     SharedCell { local: String, real: bool },
+    /// The change marker of the fork-shared string (or, when `handle`, the
+    /// handle) the waiting process names `local`: a string carries the
+    /// marker its frame owns; a handle's frame slot keeps it beside the
+    /// handle (`llg_frame_opaque_marker`).
+    SharedNative { local: String, handle: bool },
     /// The storage behind `ref` formal `index` of the enclosing typed
     /// subroutine, named at run time through its descriptor (a real `ref`
     /// formal is the cell address itself): the variables, element cells or

@@ -89,22 +89,12 @@ void llg_dependency_bind_real(double* target, sv4_t* dependency) {
     dependency_bind(target, LLG_DEPENDENCY_BINDING_REAL, dependency, "real dependency binding");
 }
 
-void llg_dependency_bind_handle(void* const* target, sv4_t* dependency) {
-    if (!target || !dependency) {
-        fprintf(stderr, "llg: invalid handle dependency binding\n");
-        abort();
-    }
-    dependency_bind(target, LLG_DEPENDENCY_BINDING_HANDLE, dependency,
-                    "handle dependency binding");
-}
-
-sv4_t* llg_handle_dependency(const void* target) {
-    for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
-         binding; binding = binding->bucket_next) {
-        if (binding->key == target && binding->kind == LLG_DEPENDENCY_BINDING_HANDLE)
-            return binding->dependency;
-    }
-    return llg_dependency_or_never(NULL);
+/* Destroy hook of a change marker owned by a frame object slot. */
+void llg_dependency_marker_destroy(void* object) {
+    sv4_t* marker = (sv4_t*)object;
+    if (!marker) return;
+    llg_clocking_forget_signal(marker);
+    sv4_destroy(marker);
 }
 
 sv4_t* llg_dependency_or_never(sv4_t* dependency) {

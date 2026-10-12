@@ -34,6 +34,7 @@ use storage::{render_signal_decls, render_static_local_decls};
 mod vpi;
 use vpi::{render_vpi_compile_calls, render_vpi_metadata};
 mod functions;
+pub(super) use functions::handle_marker_param;
 pub(super) use functions::native_companion_param;
 use functions::{block_stmts_of, func_params, func_prototype, packed_result};
 mod dpi;

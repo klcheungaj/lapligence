@@ -61,7 +61,8 @@ impl CellEligibility {
         match dependency {
             IrDependency::Scalar(name)
             | IrDependency::Real(name)
-            | IrDependency::SharedCell { local: name, .. } => {
+            | IrDependency::SharedCell { local: name, .. }
+            | IrDependency::SharedNative { local: name, .. } => {
                 self.retained.insert(name.clone());
             }
             IrDependency::PackedRange { storage, .. } => self.dependency(storage),

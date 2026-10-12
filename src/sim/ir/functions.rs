@@ -57,7 +57,8 @@ pub struct IrFormal {
     pub(in crate::sim) chandle: bool,
     /// Named-event formal. An input is a by-value `llg_event_t` naming the
     /// caller's event object (`IrCallArg::EventVal`, `IrEventRef::Formal`); an
-    /// output, inout or ref event formal is resolved by inline call lowering.
+    /// output, inout or ref event formal is the caller's handle address
+    /// (`IrCallArg::EventAddr`).
     pub(in crate::sim) event: bool,
     /// Native arbitrary-byte string formal. String formals use
     /// `llg_string_t` values/pointers rather than packed storage.
@@ -70,6 +71,9 @@ pub struct IrFormal {
     /// the callee copies the caller's container into a shared frame the same
     /// way.
     pub(in crate::sim) shared_local: Option<String>,
+    /// For a shared string formal: a wait can observe it, so its shared
+    /// frame owns a change marker (see [`super::IrStmt::SharedString`]).
+    pub(in crate::sim) shared_observed: bool,
 }
 
 /// Owned DPI-C linkage qualifiers and foreign C-layer types attached to one
@@ -263,6 +267,7 @@ impl IrFormal {
             event: false,
             string: false,
             shared_local: None,
+            shared_observed: false,
         })
     }
 

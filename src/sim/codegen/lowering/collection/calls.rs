@@ -324,9 +324,11 @@ impl<'a> Codegen<'a> {
                     if !const_ref {
                         self.ensure_string_actual_writable(scope_path, bound[idx].expr)?;
                     }
+                    // Functions cannot wait on their formals.
                     out_args.push(IrCallArg::StringRefAddr {
                         addr: self.lower_string_actual_address(scope_path, bound[idx].expr)?,
                         const_ref,
+                        observed: false,
                     });
                 } else {
                     out_args.push(self.lower_ref_arg(

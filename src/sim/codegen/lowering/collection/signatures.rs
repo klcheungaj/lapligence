@@ -130,6 +130,7 @@ impl<'a> Codegen<'a> {
                                     event: ty.kind == "event",
                                     string: ty.kind == "string",
                                     shared_local: None,
+                                    shared_observed: false,
                                 })
                             }
                             _ => unreachable!("formal kind"),

@@ -187,13 +187,20 @@ impl Frame<'_, '_> {
                     self.string_assign(&binding.address, value)?;
                 }
             }
-            IrStmt::SharedString { name, init } => {
+            IrStmt::SharedString {
+                name,
+                init,
+                observed,
+            } => {
                 let owner = self.scalar(
                     "llg_frame_t**",
                     "(llg_frame_t**)llg_value_scope_object(llg_value_scope_begin_object(sizeof(llg_frame_t*), llg_owned_frame_drop))"
                         .to_owned(),
                 );
-                self.line(format!("*{owner} = llg_frame_new(1ULL);"));
+                self.line(format!(
+                    "*{owner} = llg_frame_new({}ULL);",
+                    if *observed { 2 } else { 1 }
+                ));
                 self.line(format!(
                     "llg_frame_capture_string(*{owner}, 0u, &(llg_string_t){{0}});"
                 ));
@@ -201,6 +208,14 @@ impl Frame<'_, '_> {
                     "llg_string_t*",
                     format!("llg_frame_string_address(*{owner}, 0u)"),
                 );
+                if *observed {
+                    // The frame owns the marker; the string carries it, so
+                    // stores through any alias (a branch or a `ref` formal)
+                    // publish the change (SV 9.4.2, 13.5.2).
+                    self.line(format!(
+                        "{{ sv4_t* _llg_marker = (sv4_t*)llg_frame_capture_object(*{owner}, 1u, sizeof(sv4_t), llg_dependency_marker_destroy); sv4_t _llg_empty = SV4_EMPTY; *_llg_marker = _llg_empty; {address}->dependency = _llg_marker; {address}->notify = llg_dependency_changed; }}"
+                    ));
+                }
                 self.shared_cells
                     .insert(name.clone(), (format!("(*{owner})"), 0));
                 self.bind_native(name, address.clone(), super::native::NativeKind::String);

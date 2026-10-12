@@ -156,6 +156,14 @@ impl Frame<'_, '_> {
                 },
             );
     }
+    /// The kind of the innermost native binding named `name`, if any.
+    pub(super) fn bound_native_kind(&self, name: &str) -> Option<NativeKind> {
+        self.native_bindings
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .map(|binding| binding.kind)
+    }
     pub(super) fn native_lookup(
         &mut self,
         name: &str,

@@ -84,6 +84,7 @@ fn dependency_pointer(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
             format!("&{}_llg_dep", ctx.model.objects[*object].c_name)
         }
         IrDependency::SharedCell { .. }
+        | IrDependency::SharedNative { .. }
         | IrDependency::RefFormal { .. }
         | IrDependency::NativeRefFormal { .. }
         | IrDependency::NativeAccess(_) => {
@@ -154,6 +155,7 @@ fn dependency_entry(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
             )
         }
         IrDependency::SharedCell { .. }
+        | IrDependency::SharedNative { .. }
         | IrDependency::RefFormal { .. }
         | IrDependency::NativeRefFormal { .. }
         | IrDependency::NativeAccess(_) => {
@@ -423,7 +425,9 @@ pub(super) fn wait_events_text(
                 IrWaitSrc::Real(name) => {
                     format!("{{ .kind = {kind}, .real_sig = &{name}, .real = 1 }}")
                 }
-                IrWaitSrc::RefFormal { .. } | IrWaitSrc::NativeRefFormal { .. } => {
+                IrWaitSrc::RefFormal { .. }
+                | IrWaitSrc::NativeRefFormal { .. }
+                | IrWaitSrc::SharedNative { .. } => {
                     return Err("`ref` formal event sources require the owned emitter".into())
                 }
                 IrWaitSrc::Event(event) => format!(
@@ -591,7 +595,9 @@ pub(super) fn wait_events_text(
             IrWaitSrc::Event(event) => {
                 entries.push(format!("{{ 0, 0, {} }}", event_ref_code(ctx, event)?));
             }
-            IrWaitSrc::RefFormal { .. } | IrWaitSrc::NativeRefFormal { .. } => {
+            IrWaitSrc::RefFormal { .. }
+            | IrWaitSrc::NativeRefFormal { .. }
+            | IrWaitSrc::SharedNative { .. } => {
                 return Err("`ref` formal event sources require the owned emitter".into())
             }
             IrWaitSrc::Real(_)
@@ -717,7 +723,8 @@ pub(super) fn nonblocking_event_trigger_when_text(
             | IrWaitSrc::FilteredEvent { .. }
             | IrWaitSrc::Real(_)
             | IrWaitSrc::RefFormal { .. }
-            | IrWaitSrc::NativeRefFormal { .. } => {
+            | IrWaitSrc::NativeRefFormal { .. }
+            | IrWaitSrc::SharedNative { .. } => {
                 Err("internal: complex event source missed descriptor rendering".into())
             }
         })
@@ -817,7 +824,8 @@ pub(super) fn nonblocking_event_assignment_when_text(
             | IrWaitSrc::FilteredEvent { .. }
             | IrWaitSrc::Real(_)
             | IrWaitSrc::RefFormal { .. }
-            | IrWaitSrc::NativeRefFormal { .. } => {
+            | IrWaitSrc::NativeRefFormal { .. }
+            | IrWaitSrc::SharedNative { .. } => {
                 Err("internal: complex event source missed descriptor rendering".into())
             }
         })

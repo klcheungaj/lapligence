@@ -213,7 +213,11 @@ impl Codegen<'_> {
                         self.ensure_string_actual_writable(path, bound[idx].expr)?;
                     }
                     let addr = self.lower_string_actual_address(path, bound[idx].expr)?;
-                    out_args.push(IrCallArg::StringRefAddr { addr, const_ref });
+                    out_args.push(IrCallArg::StringRefAddr {
+                        addr,
+                        const_ref,
+                        observed: false,
+                    });
                 } else if *is_out {
                     if !bound[idx].string {
                         return Err(format!(

@@ -326,6 +326,8 @@ impl Frame<'_, '_> {
             self.bind_native(local, pointer, NativeKind::Chandle);
             self.shared_cells
                 .insert(local.clone(), (source.to_owned(), storage.slot()));
+            self.shared_cells
+                .insert(name.to_owned(), (source.to_owned(), storage.slot()));
             return Ok(());
         }
         if storage.kind() == StorageKind::Event {

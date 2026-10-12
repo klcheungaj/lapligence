@@ -294,9 +294,11 @@ impl Frame<'_, '_> {
                     index,
                     handle: true,
                 } => {
-                    fields.push(format!(
-                        ".sig = llg_handle_dependency((const void*)r{index})"
-                    ));
+                    fields.push(format!(".sig = llg_dependency_or_never(d{index})"));
+                }
+                IrWaitSrc::SharedNative { local, handle } => {
+                    let marker = self.shared_native_marker(local, *handle)?;
+                    fields.push(format!(".sig = {marker}"));
                 }
                 IrWaitSrc::Evaluated { eval, reads, .. }
                 | IrWaitSrc::EvaluatedReal { eval, reads, .. } => {
