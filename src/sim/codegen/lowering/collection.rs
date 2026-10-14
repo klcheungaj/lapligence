@@ -19,6 +19,7 @@ pub(super) use call_contracts::{EventEvaluation, PostponedEvaluation};
 mod calls;
 mod captures;
 mod classes;
+mod const_writes;
 mod constants;
 mod continuous_feedback;
 mod dependencies;

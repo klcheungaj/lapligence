@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 19;
+const ABI_VERSION: u32 = 20;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -677,6 +677,10 @@ pub enum SemanticKind {
 
 const ARGUMENT_CONST_REF: u64 = 1 << 0;
 const ARGUMENT_REF_STATIC: u64 = 1 << 1;
+/// Low byte of a variable's `auxiliary`: its resolved lifetime code.
+pub(crate) const VARIABLE_LIFETIME_MASK: u64 = 0xff;
+/// A variable or class property declared `const` (SV 6.20.6).
+pub(crate) const VARIABLE_CONST: u64 = 1 << 8;
 pub(crate) const SUBROUTINE_STATIC: u64 = 1 << 0;
 /// DPI-C import metadata copied from Slang's method flags and syntax.
 pub(crate) const SUBROUTINE_DPI_IMPORT: u64 = 1 << 8;

@@ -1450,3 +1450,31 @@ fn assertion_metadata_is_boxed_only_when_it_differs_from_the_defaults() {
     assert!(unbounded.assertion.is_none());
     assert_eq!(unbounded.assertion_range_max(), None);
 }
+
+#[test]
+fn variable_auxiliary_carries_the_lifetime_byte_and_only_the_const_bit() {
+    let variable = |auxiliary: u64| {
+        let mut raw = raw_semantic_node(0);
+        raw.kind = 9;
+        raw.auxiliary = auxiliary;
+        stream(&nodes(vec![raw]))
+    };
+    for lifetime in 0..=2 {
+        assert!(variable(lifetime).is_ok(), "lifetime {lifetime}");
+        let node = variable(lifetime | VARIABLE_CONST).expect("const variable");
+        assert_eq!(
+            node.semantic_nodes[0].auxiliary & VARIABLE_LIFETIME_MASK,
+            lifetime
+        );
+        assert_ne!(node.semantic_nodes[0].auxiliary & VARIABLE_CONST, 0);
+    }
+    assert!(variable(3).is_err(), "unknown lifetime code");
+    assert!(
+        variable(VARIABLE_CONST << 1).is_err(),
+        "unknown qualifier bit"
+    );
+    assert!(
+        variable(3 | VARIABLE_CONST).is_err(),
+        "const does not mask a bad lifetime"
+    );
+}

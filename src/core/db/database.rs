@@ -243,6 +243,8 @@ pub struct Db {
     net_delays: HashMap<NodeId, DriverDelay>,
     var_lifetimes: HashMap<NodeId, VariableLifetime>,
     var_lifetime_qualifiers: HashMap<NodeId, VariableLifetimeQualifier>,
+    /// Variables and class properties declared `const` (SV 6.20.6).
+    const_variables: HashSet<NodeId>,
     method_calls_with_clause: HashSet<NodeId>,
     /// Method-call node → the frontend-owned iterator declaration used by its
     /// `with` expression.  Slang visits the expression itself as a structural
@@ -346,6 +348,7 @@ impl Db {
             net_delays: HashMap::new(),
             var_lifetimes: HashMap::new(),
             var_lifetime_qualifiers: HashMap::new(),
+            const_variables: HashSet::new(),
             method_calls_with_clause: HashSet::new(),
             method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
@@ -418,6 +421,7 @@ impl Db {
             net_delays: HashMap::new(),
             var_lifetimes: HashMap::new(),
             var_lifetime_qualifiers: HashMap::new(),
+            const_variables: HashSet::new(),
             method_calls_with_clause: HashSet::new(),
             method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
@@ -806,6 +810,13 @@ impl Db {
 
     pub(crate) fn variable_lifetime_nodes(&self) -> &HashMap<NodeId, VariableLifetime> {
         &self.var_lifetimes
+    }
+
+    /// Whether a variable or class property is declared `const` (SV
+    /// 6.20.6): after its initialization nothing may write it, including a
+    /// method that modifies its value.
+    pub fn is_const_variable(&self, id: NodeId) -> bool {
+        self.const_variables.contains(&id)
     }
 
     pub fn variable_lifetime_qualifier(&self, id: NodeId) -> VariableLifetimeQualifier {

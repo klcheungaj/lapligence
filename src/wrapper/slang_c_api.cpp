@@ -2301,6 +2301,8 @@ public:
         result.auxiliary = symbol.lifetime == VariableLifetime::Automatic
             ? LLG_SLANG_VARIABLE_LIFETIME_AUTOMATIC
             : LLG_SLANG_VARIABLE_LIFETIME_STATIC;
+        if (symbol.flags.has(VariableFlags::Const))
+          result.auxiliary |= LLG_SLANG_VARIABLE_CONST;
       }
     }
     if constexpr (std::same_as<T, SubroutineSymbol>) {

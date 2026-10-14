@@ -518,6 +518,7 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
     cg.collect_timescales();
     cg.build_net_groups()?;
     cg.collect_clocking_storage()?;
+    cg.validate_const_method_writes()?;
     cg.validate_process_semantics()?;
     // Functions/tasks become static C functions (prototypes first so bodies
     // may call each other regardless of declaration order), lowered before any

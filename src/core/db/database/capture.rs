@@ -278,6 +278,7 @@ impl Db {
         let mut implicit_conversions = HashSet::new();
         let mut var_lifetimes = HashMap::new();
         let mut var_lifetime_qualifiers = HashMap::new();
+        let mut const_variables = HashSet::new();
         let mut method_calls_with_clause = HashSet::new();
         let mut method_call_iterators = HashMap::new();
         let mut packed_members = HashMap::new();
@@ -607,16 +608,20 @@ impl Db {
             ) && semantic.subkind != 229
                 && semantic.subkind != SEMANTIC_VARIABLE_CLOCKING
             {
-                let resolved_lifetime = match semantic.auxiliary {
-                    0 => VariableLifetime::Unavailable,
-                    1 => VariableLifetime::Static,
-                    2 => VariableLifetime::Automatic,
-                    _ => {
-                        return Err(DbError::InvalidSnapshot(
-                            "variable has an unknown resolved lifetime".into(),
-                        ));
-                    }
-                };
+                if semantic.auxiliary & crate::ffi::slang::VARIABLE_CONST != 0 {
+                    const_variables.insert(id);
+                }
+                let resolved_lifetime =
+                    match semantic.auxiliary & crate::ffi::slang::VARIABLE_LIFETIME_MASK {
+                        0 => VariableLifetime::Unavailable,
+                        1 => VariableLifetime::Static,
+                        2 => VariableLifetime::Automatic,
+                        _ => {
+                            return Err(DbError::InvalidSnapshot(
+                                "variable has an unknown resolved lifetime".into(),
+                            ));
+                        }
+                    };
                 var_lifetimes.insert(id, resolved_lifetime);
                 let lifetime = if semantic.is_automatic() {
                     VariableLifetimeQualifier::Automatic
@@ -1184,6 +1189,7 @@ impl Db {
             net_delays,
             var_lifetimes,
             var_lifetime_qualifiers,
+            const_variables,
             method_calls_with_clause,
             method_call_iterators,
             packed_members,
@@ -1303,6 +1309,50 @@ mod tests {
         assert_eq!(
             db.semantic_details.slot_count(),
             snapshot.semantic_nodes.len()
+        );
+    }
+
+    #[test]
+    fn const_qualifier_is_captured_for_variables_and_class_properties() {
+        let source = "module top; class C; const int k = 1; int v; endclass \
+            const int cq[$] = '{1}; const string cs = \"a\"; int plain = 2; \
+            const C ch = new; \
+            function automatic int f(); const int local_c = 3; int local_v = 4; \
+            return local_c + local_v; endfunction \
+            initial $display(\"%0d %0d %s %0d\", cq.size(), plain, cs, f()); endmodule";
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "const_variables.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let named = |name: &str| {
+            db.node_ids()
+                .find(|id| {
+                    matches!(
+                        db.node_kind(*id),
+                        NodeKind::Var { .. } | NodeKind::Array { .. }
+                    ) && db.node(*id).name == name
+                })
+                .unwrap_or_else(|| panic!("variable `{name}`"))
+        };
+        for name in ["k", "cq", "cs", "ch", "local_c"] {
+            assert!(db.is_const_variable(named(name)), "`{name}` is const");
+        }
+        for name in ["v", "plain", "local_v"] {
+            assert!(!db.is_const_variable(named(name)), "`{name}` is not const");
+        }
+        // The qualifier bit leaves the resolved lifetime intact.
+        assert_eq!(db.variable_lifetime(named("cq")), VariableLifetime::Static);
+        assert_eq!(
+            db.variable_lifetime(named("local_c")),
+            VariableLifetime::Automatic
         );
     }
 }

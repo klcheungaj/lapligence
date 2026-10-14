@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 19u
+#define LLG_SLANG_ABI_VERSION 20u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -846,6 +846,14 @@ enum {
   LLG_SLANG_VARIABLE_LIFETIME_NONE = 0,
   LLG_SLANG_VARIABLE_LIFETIME_STATIC = 1,
   LLG_SLANG_VARIABLE_LIFETIME_AUTOMATIC = 2
+};
+
+/* Variable qualifiers carried in LlgSlangSemanticNode::auxiliary above the
+ * LLG_SLANG_VARIABLE_LIFETIME_* value (low byte). */
+enum {
+  LLG_SLANG_VARIABLE_LIFETIME_MASK = 0xffull,
+  /* Declared `const` (SV 6.20.6), including const class properties. */
+  LLG_SLANG_VARIABLE_CONST = 1ull << 8
 };
 
 enum {
