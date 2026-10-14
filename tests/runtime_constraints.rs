@@ -1201,6 +1201,9 @@ fn chi_square_ok(counts: &BTreeMap<Vec<u128>, u64>, k: usize, n: u64) -> bool {
 enum Mode {
     Exact,
     Fallback,
+    /// Only the CDCL search runs: it must decide every small problem
+    /// exactly, like the exact engine, but its samples are not uniform.
+    Search,
 }
 
 fn check(problems: &[Problem], outcomes: &[Outcome], mode: Mode) -> (usize, usize, usize) {
@@ -1288,6 +1291,67 @@ fn constraint_solver_matches_an_exhaustive_enumerator_on_small_problems() {
     let outcomes = parse(&output, problems.len());
     let (sat, unsat, error) = check(&problems, &outcomes, Mode::Fallback);
     eprintln!("fallback: sat={sat} unsat={unsat} error={error}");
+
+    // Search only: no component fits the exact engine's zero-bit bound and
+    // rejection is off, so the CDCL fallback alone decides every constrained
+    // component. It must find a solution or prove UNSAT exactly as the
+    // enumerator says; its samples need not be uniform (S29-D10) but must vary.
+    let search_only = [("LLG_RAND_BDD_BITS", "0"), ("LLG_RAND_REJECT_TRIES", "0")];
+    let output = run_probe(&executable, 40, &search_only);
+    let outcomes = parse(&output, problems.len());
+    let (sat, unsat, error) = check(&problems, &outcomes, Mode::Search);
+    let (mut searched, mut several, mut varied) = (0, 0, 0);
+    for (p, o) in problems.iter().zip(&outcomes) {
+        if o.engines & 0x8 == 0 || p.random_call {
+            continue;
+        }
+        searched += 1;
+        if let Expect::Sat(solutions) = expected(p) {
+            if solutions.len() >= 4 {
+                several += 1;
+                let distinct: std::collections::BTreeSet<&Vec<u128>> = o.samples.iter().collect();
+                if distinct.len() > 1 {
+                    varied += 1;
+                }
+            }
+        }
+    }
+    eprintln!(
+        "search: sat={sat} unsat={unsat} error={error} searched={searched} \
+         varied={varied}/{several}"
+    );
+    assert!(
+        searched > 100 && unsat > 10,
+        "searched={searched} unsat={unsat}"
+    );
+    assert!(varied * 10 >= several * 9, "varied={varied}/{several}");
+
+    // A one-conflict budget: whatever the search cannot finish is a resource
+    // outcome naming the conflict budget, never a wrong status (A03).
+    let output = run_probe(
+        &executable,
+        4,
+        &[
+            ("LLG_RAND_BDD_BITS", "0"),
+            ("LLG_RAND_REJECT_TRIES", "0"),
+            ("LLG_RAND_CONFLICTS", "1"),
+        ],
+    );
+    let outcomes = parse(&output, problems.len());
+    check(&problems, &outcomes, Mode::Fallback);
+    let resource: Vec<&str> = outcomes
+        .iter()
+        .filter(|o| o.statuses.last() == Some(&2))
+        .map(|o| o.detail.as_str())
+        .collect();
+    eprintln!("one conflict: resource={}", resource.len());
+    assert!(!resource.is_empty());
+    assert!(
+        resource
+            .iter()
+            .all(|budget| *budget == "LLG_RAND_CONFLICTS"),
+        "{resource:?}"
+    );
 }
 
 /// Wide operands (multi-word values, up to 100-bit variables): too large to

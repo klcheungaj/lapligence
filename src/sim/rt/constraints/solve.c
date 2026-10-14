@@ -298,6 +298,7 @@ typedef struct {
     const char* budget;   /* first budget exhausted in this solve */
     uint64_t bdd_nodes;   /* statistics */
     uint64_t reject_tries;
+    uint64_t conflicts;
     uint32_t components;
 } cr_solve_t;
 
@@ -391,22 +392,98 @@ static int cr_eval_cone(llg_cr_session_t* s, const uint8_t* in_cone, const uint3
     return 1;
 }
 
-static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, uint32_t nvars,
-                                          const uint32_t* conj, uint32_t ncon) {
+/* A component bit-blasted into one AIG, shared by the exact engine and the
+ * CDCL fallback. Level l (BDD order: bit positions most significant first,
+ * variables interleaved in index order) is AIG input l + 1. */
+typedef struct {
+    cr_blast_t blast;
+    uint32_t* level_var;
+    uint32_t* level_bit;
+    uint32_t levels;
+    uint32_t out;       /* AIG literal of the conjunction */
+    int built;
+    int overflow;       /* the AIG exceeded its node bound */
+} cr_comp_aig_t;
+
+static void cr_comp_aig_build(cr_solve_t* st, cr_comp_aig_t* c, const uint32_t* vars,
+                              uint32_t nvars, const uint32_t* conj, uint32_t ncon,
+                              const uint8_t* in_cone) {
     llg_cr_session_t* s = st->s;
     const llg_cr_problem_t* p = s->p;
-    st->components++;
     uint64_t bits = 0;
     uint32_t maxw = 0;
     for (uint32_t i = 0; i < nvars; ++i) {
         bits += p->vars[vars[i]].bit_width;
         if (p->vars[vars[i]].bit_width > maxw) maxw = p->vars[vars[i]].bit_width;
     }
+    if (bits >= (uint64_t)(UINT32_MAX >> 2)) {
+        c->built = c->overflow = 1;
+        return;
+    }
+    uint32_t levels = (uint32_t)bits;
+    c->levels = levels;
+    c->level_var = (uint32_t*)cr_alloc(levels ? levels : 1u, sizeof(uint32_t));
+    c->level_bit = (uint32_t*)cr_alloc(levels ? levels : 1u, sizeof(uint32_t));
+    uint32_t* var_base = (uint32_t*)cr_alloc(p->var_count, sizeof(uint32_t));
+    uint32_t* bit_input = (uint32_t*)cr_alloc(levels ? levels : 1u, sizeof(uint32_t));
+    uint32_t base = 0;
+    for (uint32_t i = 0; i < nvars; ++i) {
+        var_base[vars[i]] = base;
+        base += p->vars[vars[i]].bit_width;
+    }
+    uint32_t l = 0;
+    for (uint32_t pos = maxw; pos-- > 0;) {
+        for (uint32_t i = 0; i < nvars; ++i) {
+            uint32_t v = vars[i];
+            if (pos >= p->vars[v].bit_width) continue;
+            c->level_var[l] = v;
+            c->level_bit[l] = pos;
+            bit_input[var_base[v] + pos] = l + 1u;
+            ++l;
+        }
+    }
+    uint64_t aig_limit = st->t->bdd_nodes > (UINT64_MAX / 8u) ? UINT64_MAX : st->t->bdd_nodes * 8u;
+    if (aig_limit < 4096u) aig_limit = 4096u;
+    cr_aig_init(&c->blast.aig, levels, aig_limit + levels);
+    c->blast.lit_off = (uint32_t*)cr_alloc(p->node_count ? p->node_count : 1u, sizeof(uint32_t));
+    for (uint32_t n = 0; n < p->node_count; ++n) c->blast.lit_off[n] = UINT32_MAX;
+    c->blast.lits.data = NULL;
+    c->blast.lits.len = c->blast.lits.cap = 0;
+    for (uint32_t n = 0; n < p->node_count && !c->blast.aig.overflow; ++n)
+        if (in_cone[n]) cr_blast_node(s, &c->blast, n, var_base, bit_input);
+    uint32_t out = CR_TRUE;
+    for (uint32_t i = 0; i < ncon && !c->blast.aig.overflow; ++i)
+        out = cr_and(&c->blast.aig, out, cr_operand_truth(s, &c->blast, conj[i]));
+    c->out = out;
+    c->built = 1;
+    c->overflow = c->blast.aig.overflow;
+    free(var_base);
+    free(bit_input);
+}
+
+static void cr_comp_aig_free(cr_comp_aig_t* c) {
+    if (c->blast.aig.left || c->blast.aig.table) cr_aig_free(&c->blast.aig);
+    free(c->blast.lit_off);
+    free(c->blast.lits.data);
+    free(c->level_var);
+    free(c->level_bit);
+    memset(c, 0, sizeof(*c));
+}
+
+static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, uint32_t nvars,
+                                          const uint32_t* conj, uint32_t ncon) {
+    llg_cr_session_t* s = st->s;
+    const llg_cr_problem_t* p = s->p;
+    st->components++;
+    uint64_t bits = 0;
+    for (uint32_t i = 0; i < nvars; ++i) bits += p->vars[vars[i]].bit_width;
     uint8_t* in_cone = (uint8_t*)cr_alloc(p->node_count ? p->node_count : 1u, 1u);
     cr_u32vec_t stack = {0, 0, 0};
     cr_mark_cone(s, conj, ncon, in_cone, &stack);
     llg_cr_status_t result = LLG_CR_RESOURCE;
     int done = 0;
+    cr_comp_aig_t aig;
+    memset(&aig, 0, sizeof(aig));
 
     if (bits <= st->t->bdd_bits) {
         cr_u64vec_t key = {0, 0, 0};
@@ -430,86 +507,44 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
             done = 1;
         }
         if (!done && !known_failure) {
-            /* Level order: bit positions most significant first, variables
-             * interleaved in index order. */
-            uint32_t levels = (uint32_t)bits;
-            uint32_t* level_var = (uint32_t*)cr_alloc(levels ? levels : 1u, sizeof(uint32_t));
-            uint32_t* level_bit = (uint32_t*)cr_alloc(levels ? levels : 1u, sizeof(uint32_t));
-            uint32_t* var_base = (uint32_t*)cr_alloc(p->var_count, sizeof(uint32_t));
-            uint32_t* bit_input = (uint32_t*)cr_alloc(levels ? levels : 1u, sizeof(uint32_t));
-            uint32_t base = 0;
-            for (uint32_t i = 0; i < nvars; ++i) {
-                var_base[vars[i]] = base;
-                base += p->vars[vars[i]].bit_width;
-            }
-            uint32_t l = 0;
-            for (uint32_t pos = maxw; pos-- > 0;) {
-                for (uint32_t i = 0; i < nvars; ++i) {
-                    uint32_t v = vars[i];
-                    if (pos >= p->vars[v].bit_width) continue;
-                    level_var[l] = v;
-                    level_bit[l] = pos;
-                    bit_input[var_base[v] + pos] = l + 1u;
-                    ++l;
-                }
-            }
-            cr_blast_t blast;
-            uint64_t aig_limit = st->t->bdd_nodes > (UINT64_MAX / 8u) ? UINT64_MAX : st->t->bdd_nodes * 8u;
-            if (aig_limit < 4096u) aig_limit = 4096u;
-            cr_aig_init(&blast.aig, levels, aig_limit + levels);
-            blast.lit_off = (uint32_t*)cr_alloc(p->node_count ? p->node_count : 1u, sizeof(uint32_t));
-            for (uint32_t n = 0; n < p->node_count; ++n) blast.lit_off[n] = UINT32_MAX;
-            blast.lits.data = NULL;
-            blast.lits.len = blast.lits.cap = 0;
-            for (uint32_t n = 0; n < p->node_count && !blast.aig.overflow; ++n)
-                if (in_cone[n]) cr_blast_node(s, &blast, n, var_base, bit_input);
-            uint32_t out = CR_TRUE;
-            for (uint32_t i = 0; i < ncon && !blast.aig.overflow; ++i)
-                out = cr_and(&blast.aig, out, cr_operand_truth(s, &blast, conj[i]));
-            if (!blast.aig.overflow) {
-                if (out == CR_FALSE) {
-                    result = LLG_CR_UNSAT;
-                    done = 1;
-                } else {
-                    cr_bdd_t m;
-                    cr_bdd_init(&m, levels, st->t->bdd_nodes);
-                    uint32_t root = cr_bdd_from_aig(&m, &blast.aig, out);
-                    st->bdd_nodes += m.count;
-                    if (!m.overflow) {
-                        if (root == 0u) {
-                            result = LLG_CR_UNSAT;
-                        } else {
-                            cr_cache_entry_t* e = cr_cache_slot(s);
-                            e->key = key;
-                            key.data = NULL;
-                            key.len = key.cap = 0;
-                            cr_exact_build(&e->exact, &m, root);
-                            e->level_var = level_var;
-                            e->level_bit = level_bit;
-                            level_var = level_bit = NULL;
-                            e->used = 1;
-                            cr_sample_exact(st, &e->exact, e->level_var, e->level_bit);
-                            result = LLG_CR_OK;
-                        }
-                        st->report->engines |= LLG_CR_ENGINE_BDD;
-                        done = 1;
-                    } else {
-                        cr_remember_failure(s, &key);
-                        if (!st->budget) st->budget = "LLG_RAND_BDD_NODES";
-                    }
-                    cr_bdd_free(&m);
-                }
-            } else {
+            cr_comp_aig_build(st, &aig, vars, nvars, conj, ncon, in_cone);
+            if (aig.overflow) {
                 cr_remember_failure(s, &key);
                 if (!st->budget) st->budget = "LLG_RAND_BDD_NODES";
+            } else if (aig.out == CR_FALSE) {
+                result = LLG_CR_UNSAT;
+                done = 1;
+            } else {
+                cr_bdd_t m;
+                cr_bdd_init(&m, aig.levels, st->t->bdd_nodes);
+                uint32_t root = cr_bdd_from_aig(&m, &aig.blast.aig, aig.out);
+                st->bdd_nodes += m.count;
+                if (!m.overflow) {
+                    if (root == 0u) {
+                        result = LLG_CR_UNSAT;
+                    } else {
+                        cr_cache_entry_t* e = cr_cache_slot(s);
+                        e->key = key;
+                        key.data = NULL;
+                        key.len = key.cap = 0;
+                        cr_exact_build(&e->exact, &m, root);
+                        /* The entry keeps copies of the level maps. */
+                        e->level_var = (uint32_t*)cr_alloc(aig.levels ? aig.levels : 1u, sizeof(uint32_t));
+                        e->level_bit = (uint32_t*)cr_alloc(aig.levels ? aig.levels : 1u, sizeof(uint32_t));
+                        memcpy(e->level_var, aig.level_var, aig.levels * sizeof(uint32_t));
+                        memcpy(e->level_bit, aig.level_bit, aig.levels * sizeof(uint32_t));
+                        e->used = 1;
+                        cr_sample_exact(st, &e->exact, e->level_var, e->level_bit);
+                        result = LLG_CR_OK;
+                    }
+                    st->report->engines |= LLG_CR_ENGINE_BDD;
+                    done = 1;
+                } else {
+                    cr_remember_failure(s, &key);
+                    if (!st->budget) st->budget = "LLG_RAND_BDD_NODES";
+                }
+                cr_bdd_free(&m);
             }
-            cr_aig_free(&blast.aig);
-            free(blast.lit_off);
-            free(blast.lits.data);
-            free(level_var);
-            free(level_bit);
-            free(var_base);
-            free(bit_input);
         }
         free(key.data);
     } else if (!st->budget) {
@@ -532,6 +567,34 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
         }
         if (!done) st->budget = st->budget ? st->budget : "LLG_RAND_REJECT_TRIES";
     }
+
+    if (!done) {
+        /* Search fallback (not uniform, S29-D10): complete, so its budget is
+         * the one to raise. It shares the AIG and its node bound. */
+        if (!aig.built) cr_comp_aig_build(st, &aig, vars, nvars, conj, ncon, in_cone);
+        if (aig.overflow) {
+            st->budget = "LLG_RAND_BDD_NODES";
+        } else if (st->t->conflicts == 0u) {
+            st->budget = "LLG_RAND_CONFLICTS";
+        } else {
+            uint8_t* model = (uint8_t*)cr_alloc(aig.levels ? aig.levels : 1u, 1u);
+            uint64_t conflicts = 0;
+            llg_cr_status_t found = cr_cdcl_solve(&aig.blast.aig, aig.out, st->rng,
+                                                  st->t->conflicts, model, &conflicts);
+            st->conflicts += conflicts;
+            st->report->engines |= LLG_CR_ENGINE_CDCL;
+            if (found == LLG_CR_OK) {
+                cr_assign_from_levels(s, model, aig.levels, aig.level_var, aig.level_bit);
+                result = LLG_CR_OK;
+            } else if (found == LLG_CR_UNSAT) {
+                result = LLG_CR_UNSAT;
+            } else {
+                st->budget = "LLG_RAND_CONFLICTS";
+            }
+            free(model);
+        }
+    }
+    cr_comp_aig_free(&aig);
     free(stack.data);
     free(in_cone);
     return result;
@@ -614,7 +677,7 @@ static void cr_print_stats(const cr_solve_t* st, llg_cr_status_t status) {
     const llg_cr_report_t* r = st->report;
     fprintf(stderr,
             "llg: randomize stats: problem=%s status=%s engines=%s%s%s%s%s%s components=%u "
-            "bdd_nodes=%llu reject_tries=%llu\n",
+            "bdd_nodes=%llu reject_tries=%llu conflicts=%llu\n",
             st->s->p->name ? st->s->p->name : "?", names[status],
             r->engines ? "" : "none",
             (r->engines & LLG_CR_ENGINE_DIRECT) ? "direct," : "",
@@ -623,7 +686,7 @@ static void cr_print_stats(const cr_solve_t* st, llg_cr_status_t status) {
             (r->engines & LLG_CR_ENGINE_REJECT) ? "reject," : "",
             (r->engines & LLG_CR_ENGINE_CDCL) ? "cdcl," : "",
             st->components, (unsigned long long)st->bdd_nodes,
-            (unsigned long long)st->reject_tries);
+            (unsigned long long)st->reject_tries, (unsigned long long)st->conflicts);
 }
 
 static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach);

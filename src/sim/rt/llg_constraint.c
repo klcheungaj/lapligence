@@ -6,4 +6,5 @@
 #include "constraints/eval.c"
 #include "constraints/aig.c"
 #include "constraints/bdd.c"
+#include "constraints/cdcl.c"
 #include "constraints/solve.c"

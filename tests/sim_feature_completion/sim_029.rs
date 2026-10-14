@@ -82,6 +82,19 @@ fn constraint_functions_and_guards() {
     );
 }
 
+/// Multiplications beyond the exact engine's budget and too rare for
+/// rejection: the CDCL fallback finds solutions and proves infeasibility.
+#[test]
+fn search_fallback_solves_and_proves_unsat() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "search_fallback",
+        include_str!("../fixtures/sim/feature_completion/sim_029/search_fallback.out"),
+        &[],
+        &[],
+    );
+}
+
 /// A located rejection names the fixture's source position, not only the
 /// construct.
 fn names_source_position(fixture: &str) {

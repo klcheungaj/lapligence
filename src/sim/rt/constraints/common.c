@@ -1,6 +1,6 @@
 /* llg_constraint.c - constraint solver (IEEE 1800-2009 clause 18).
  *
- * Assembled from src/sim/rt/constraints/{common,eval,aig,bdd,solve}.c in
+ * Assembled from src/sim/rt/constraints/{common,eval,aig,bdd,cdcl,solve}.c in
  * that order; the files share file-scope statics. See llg_constraint.h for
  * the interface contract and src/sim/rt/constraints/readme.md for the
  * engine portfolio.

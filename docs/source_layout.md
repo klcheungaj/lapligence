@@ -56,7 +56,8 @@ fragments of one translation unit each**, not independently linked modules:
   dynamic arrays, queues, pinned queue references and associative arrays.
 - [`llg_constraint.c`](../src/sim/rt/llg_constraint.c) includes the
   [`constraints/`](../src/sim/rt/constraints/) solver fragments (classification,
-  bit-blasting, exact BDD counting and sampling, layered solving) behind
+  bit-blasting, exact BDD counting and sampling, CDCL search fallback,
+  layered solving) behind
   `randomize()`; it depends on no other runtime module.
 
 The standalone compact value backend in

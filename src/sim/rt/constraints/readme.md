@@ -1,8 +1,8 @@
 # Constraint solver (`llg_constraint.c`)
 
 The solver behind `randomize()` (IEEE 1800-2009 clause 18). The facade
-`../llg_constraint.c` includes `common.c`, `eval.c`, `aig.c`, `bdd.c` and
-`solve.c` in that order; `rt::constraint_sources` embeds the same order as one
+`../llg_constraint.c` includes `common.c`, `eval.c`, `aig.c`, `bdd.c`,
+`cdcl.c` and `solve.c` in that order; `rt::constraint_sources` embeds the same order as one
 translation unit of the `llg_runtime` archive. The interface is
 `../llg_constraint.h`; the scheduler glue (`../scheduler/randomize.c`) converts
 packed values, picks the random stream and reports outcomes.
@@ -44,7 +44,15 @@ Lowering sizes every node (IEEE 1800-2009 11.6/11.8) and inserts explicit
      over all legal combinations (18.5.9). An empty BDD proves UNSAT.
    - *Rejection*: uniform draws of every component variable, accepted only
      when every conjunct holds; also uniform over the solutions.
-   - Otherwise `LLG_CR_RESOURCE` names the exhausted budget.
+   - *Search (CDCL, `cdcl.c`)*: only when both engines above give up. The
+     same AIG cone is Tseitin-encoded and searched with two watched
+     literals, first-UIP learning, integer VSIDS, phase saving and Luby
+     restarts; initial phases, input priorities and bits outside the cone
+     come from the random stream. It finds *a* solution, not a uniformly
+     distributed one (S29-D10); exhausting the search proves UNSAT.
+   - Otherwise `LLG_CR_RESOURCE` names the budget to raise: the conflict
+     budget when the search ran out (or is 0), the node budget when the AIG
+     did not fit.
 5. **Verification.** The complete assignment is re-classified with the
    word-level evaluator, which shares no code with the bit-blasted engines.
    A mismatch aborts as an internal error; it is never returned.
@@ -55,15 +63,18 @@ Named tunables, read once from the environment: `LLG_RAND_BDD_NODES`
 (default 2^20 nodes per component; also bounds the AIG at 8x and the apply
 steps at 32x), `LLG_RAND_BDD_BITS` (512 variable bits per exact component,
 which keeps the recursive BDD operations shallow on coroutine-hosted stacks),
-`LLG_RAND_REJECT_TRIES` (4096), `LLG_RAND_CONFLICTS` (search fallback) and
-`LLG_RAND_STATS=1` (one stderr line per solve: engines, components, BDD nodes,
-rejection tries). Changing a budget may change the values drawn.
+`LLG_RAND_REJECT_TRIES` (4096), `LLG_RAND_CONFLICTS` (100000 conflicts per
+component search; 0 disables the search) and `LLG_RAND_STATS=1` (one stderr
+line per solve: engines, components, BDD nodes, rejection tries, conflicts).
+The AIG bound (8x `LLG_RAND_BDD_NODES`, at least 4096) also bounds the CDCL
+encoding. Changing a budget may change the values drawn.
 
 Each call site keeps one session for the run. A session caches the exact
 model of its eight most recent components, keyed exactly by the conjuncts,
 the variables and every known operand value, so a loop that randomizes with
 unchanged state samples without rebuilding. Budget overflows are cached the
-same way so a repeated overflow goes straight to the fallbacks.
+same way so a repeated overflow goes straight to the fallbacks. The CDCL
+search keeps nothing between calls: it re-encodes the component each time.
 
 ## Determinism
 
