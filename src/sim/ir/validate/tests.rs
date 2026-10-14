@@ -728,6 +728,7 @@ fn z_array_initialization_requires_valid_four_state_storage() {
 fn statement_initialization_validates_its_body() {
     let execute = |sig| IrInitStep::Execute {
         declaration: 0,
+        random_scope: None,
         body: Box::new(IrStmt::Assign {
             lhs: IrLhs::Whole(sig),
             rhs: packed_const(1, 1),

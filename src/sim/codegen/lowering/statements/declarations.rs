@@ -135,12 +135,18 @@ impl EmitCtx<'_, '_> {
             // Native record locals: automatic storage is a lexical value
             // initialized at each entry; static storage persists.
             if !self.cg.model.native_values[value].activation {
-                if self.cg.db.var_initializer(declaration).is_some() {
-                    return Err(format!(
-                        "initializer of static native record local `{}` in `{}` is not supported",
-                        self.cg.node(declaration).name,
-                        self.path
-                    ));
+                // Static storage initializes once in the static schedule
+                // (SV 6.21, 10.5), never at the declaration statement.
+                if let Some(initializer) = self.cg.db.var_initializer(declaration) {
+                    if self.cg.native_record_initialized.insert(declaration) {
+                        self.cg.reserve_initializer_order(declaration);
+                        self.cg.native_record_initializers.push((
+                            declaration,
+                            value,
+                            initializer,
+                            self.path.clone(),
+                        ));
+                    }
                 }
                 return Ok(Vec::new());
             }

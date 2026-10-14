@@ -126,12 +126,15 @@ odd stream increment, child count):
 - A static process (spawned by the model) is seeded with the next value of its
   instance's initialization stream. `scheduler/process_registry.c` keeps one
   stream per instance in an open-addressing table keyed by the process label
-  without its kind component (`tb.u.always` -> `tb.u`, `tb.class_initializer.3`
-  -> `tb`); each derives from the root stream and the instance name. The model
-  enables this with `llg_rt_use_instance_random_streams` when it observes any
-  stream; other models seed static processes from the root stream in spawn
-  order and skip the table. A forked or detached child is seeded with its
-  parent's next value.
+  without its kind component (`tb.u.always` -> `tb.u`); each derives from the
+  root stream and the instance name. The model enables this with
+  `llg_rt_use_instance_random_streams`, before its static initializers, when
+  it observes any stream; other models seed static processes from the root
+  stream in spawn order and skip the table. A static handle initializer runs
+  in the initialization frame between `llg_rng_initializer_scope_begin(label)`
+  and `_end()`: objects it creates draw from that instance's stream
+  (`tb.u.initializer` -> `tb.u`, SV 18.14.1). A forked or detached child is
+  seeded with its parent's next value.
 - A class object keeps a stream only when the model inspects object streams
   (`IrRandomUse::objects`): `llg_object_rng_create` seeds it with the creating
   thread's next value; a model that only draws thread values consumes that

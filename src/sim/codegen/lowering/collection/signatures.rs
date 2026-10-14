@@ -371,12 +371,10 @@ impl<'a> Codegen<'a> {
                             }
                         }
                         if matches!(self.kind(local), NodeKind::Var { ty } if ty.kind == "string") {
-                            let initializer = self.db.var_initializer(local);
-                            let initial = initializer
-                                .map(|initializer| {
-                                    self.lower_string(&self.instance_path_of(inst), initializer)
-                                })
-                                .transpose()?;
+                            // The body reads and writes this object; its
+                            // declaration value runs in the static schedule
+                            // with the other static subroutine initializers.
+                            let initial = None;
                             let object = self.model.objects.len();
                             self.model.objects.push(crate::sim::ir::IrObject {
                                 c_name: format!(

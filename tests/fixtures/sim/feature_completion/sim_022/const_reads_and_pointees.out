@@ -1,0 +1,4 @@
+limits size=3 sum=6 first=3
+name len=3 upper=ABC sub=bc
+bag before=2
+bag after=0

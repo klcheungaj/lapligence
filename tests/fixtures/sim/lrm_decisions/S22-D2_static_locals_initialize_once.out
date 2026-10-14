@@ -1,0 +1,6 @@
+snap=orig item=11 q=3 r=r+/2 fresh=ab
+snap=orig item=13 q=4 r=r++/3 fresh=ab
+tally seen=tt local=xx
+tally seen=ttt local=xx
+loop kept=kk again=gg
+loop kept=kkk again=gg

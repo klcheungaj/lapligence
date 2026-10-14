@@ -1,0 +1,4 @@
+a: snapshot=501
+b: snapshot=501
+head_value=1 seen=head=1 first_bump=1
+describe=pkg/8 doubled=8

@@ -492,9 +492,13 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
     };
     let mut frame = Frame::new(&ctx);
     // SV static initialization may call legal zero-time user functions. The
-    // runtime is already initialized and the frame is not a coroutine, so
-    // timing-bearing callees remain impossible (functions cannot contain
-    // timing); the recursion-depth guard still bounds any user call.
+    // runtime is already initialized and the frame is not a coroutine:
+    // functions cannot contain timing, and lowering rejects a static
+    // initializer whose calls reach a fork or nonblocking assignment (SV
+    // 13.4.4). The recursion-depth guard still bounds any user call.
+    // Temporaries live in a block that closes before `_llg_return`, so a
+    // jump there never skips an initialization.
+    frame.line("{");
     for step in &model.init_steps {
         initialization_step(&mut frame, step)?;
     }
@@ -503,6 +507,12 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             frame.string_assign(&format!("&{}", object.c_name), initial)?;
         }
     }
+    frame.line("}");
+    // A runtime error inside an initializer (a null handle read, for
+    // example) leaves the frame like a plain function; `main` then sees the
+    // failed runtime and stops before any process runs.
+    frame.line("if (0) goto _llg_return;");
+    frame.line("_llg_return: ;");
     frame.line("llg_value_scopes_end_since(_llg_frame_base);");
     out.push_str(&format!(
         "static void llg_model_initializers(void) {{\n{}{}\n}}\n\n",
@@ -697,7 +707,9 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
             ));
             frame.discard(value);
         }
-        IrInitStep::Execute { body, .. } => {
+        IrInitStep::Execute {
+            body, random_scope, ..
+        } => {
             // The model initialization frame is an ordinary C function, not
             // a coroutine, so a suspending body cannot be represented here.
             if crate::sim::execution::effects_for_statements(model, std::slice::from_ref(body))
@@ -705,7 +717,16 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
             {
                 return Err("static declaration initializer cannot suspend".to_owned());
             }
+            if let Some(scope) = random_scope {
+                frame.line(format!(
+                    "llg_rng_initializer_scope_begin({});",
+                    crate::sim::emit_c::constants::c_string_literal(scope)
+                ));
+            }
             frame.statement(body)?;
+            if random_scope.is_some() {
+                frame.line("llg_rng_initializer_scope_end();");
+            }
         }
         IrInitStep::Initialize(initialization) => {
             if initialization.phase() != IrInitPhase::BeforeProcesses {

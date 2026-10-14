@@ -1,0 +1,7 @@
+add_x(1)=11 add_x(x)=1010
+add_default(2)=3 add_default(2, y)=52 add_default(.a(2), .b(7))=9
+twice(3)=6 nested(4)=22
+scaled(2)=6 unit_plus(4)=5 typed=1001
+inner(2)=10 outer_x=1000
+in_task(1): plus_base=11
+in_task(2): plus_base=22

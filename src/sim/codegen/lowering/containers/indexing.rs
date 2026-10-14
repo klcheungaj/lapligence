@@ -288,6 +288,7 @@ impl<'a> Codegen<'a> {
                 .flatten()
                 .or_else(|| refs.last().copied().flatten())
                 .and_then(|target| self.container_declaration(target))
+                .or_else(|| self.static_property_container(refs))
                 .or_else(|| self.record_member_container(node)),
             NodeKind::Expr(ExprKind::Operation {
                 op: Operation::Assignment,
@@ -298,6 +299,23 @@ impl<'a> Codegen<'a> {
                 .and_then(|operand| self.container_of(*operand)),
             _ => self.record_member_container(node),
         }
+    }
+
+    /// A static container class property named through an object
+    /// (`obj.items`): the one model-global container the class scope also
+    /// names, whatever the receiver (SV 8.8).
+    fn static_property_container(&self, refs: &[Option<NodeId>]) -> Option<ContainerInfo> {
+        let property = refs.last().copied().flatten()?;
+        let class = self.node(property).parent?;
+        if !self.class_nodes.contains_key(&class)
+            || self.db.variable_lifetime(property) != VariableLifetime::Static
+        {
+            return None;
+        }
+        self.container_globals
+            .get(&property)
+            .filter(|info| self.model.containers[info.ir].class_field.is_none())
+            .cloned()
     }
 
     /// A queue, dynamic or associative member of a record (SIM-007), which

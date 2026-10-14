@@ -197,6 +197,32 @@ impl<'a> Codegen<'a> {
     /// Capture nominal class layouts and allocate shared static properties.
     /// Instance properties live in the emitted heap object and are mapped by
     /// declaration identity, so same-named classes/properties cannot alias.
+    /// A static numeric class property's initializer: a constant folds into
+    /// the storage default; any other value (another static property, a
+    /// call) runs once in the static schedule before every process (SV 6.8),
+    /// lowered once subroutine prototypes exist.
+    fn class_static_initializer(
+        &mut self,
+        property: NodeId,
+        initializer: NodeId,
+        info: SignalInfo,
+    ) -> Result<(), String> {
+        if let Ok(value) = self.const_of_node(initializer) {
+            self.var_inits.push((info, value));
+            return Ok(());
+        }
+        let class = self.node(property).parent.ok_or_else(|| {
+            format!(
+                "static class property `{}` has no declaring class",
+                self.node(property).full_name
+            )
+        })?;
+        self.reserve_initializer_order(property);
+        self.deferred_declaration_inits
+            .push((property, initializer, class, info));
+        Ok(())
+    }
+
     pub(super) fn collect_classes(&mut self) -> Result<(), String> {
         let classes = self.db.classes().to_vec();
         // Allocate every nominal index before resolving bases.  Generic
@@ -264,13 +290,7 @@ impl<'a> Codegen<'a> {
                             self.signals.push(info.clone());
                             self.class_static_signals.insert(child, info.clone());
                             if let Some(initializer) = self.db.var_initializer(child) {
-                                let value = self.const_of_node(initializer).map_err(|error| {
-                                    format!(
-                                        "static class property `{}` initializer: {error}",
-                                        self.node(child).full_name
-                                    )
-                                })?;
-                                self.var_inits.push((info, value));
+                                self.class_static_initializer(child, initializer, info)?;
                             }
                         }
                         IrClassFieldType::Real { shortreal } => {
@@ -301,47 +321,43 @@ impl<'a> Codegen<'a> {
                             self.signals.push(info.clone());
                             self.class_static_signals.insert(child, info.clone());
                             if let Some(initializer) = self.db.var_initializer(child) {
-                                let value = self.const_of_node(initializer).map_err(|error| {
-                                    format!(
-                                        "static class property `{}` initializer: {error}",
-                                        self.node(child).full_name
-                                    )
-                                })?;
-                                self.var_inits.push((info, value));
+                                self.class_static_initializer(child, initializer, info)?;
                             }
                         }
                         IrClassFieldType::String => {
                             let index = self.model.objects.len();
-                            let initial = self
-                                .db
-                                .var_initializer(child)
-                                .map(|initializer| self.lower_string("$class", initializer))
-                                .transpose()?;
                             self.model.objects.push(crate::sim::ir::IrObject {
                                 c_name: format!(
                                     "O_class_{class_index}_{}",
                                     ident(&self.node(child).name)
                                 ),
                                 ty: IrObjectType::String,
-                                initial,
+                                initial: None,
                             });
                             self.class_static_objects.insert(child, index);
+                            // A static property initializes once before any
+                            // process (SV 6.8), in the static schedule with
+                            // the other declarations it reads or that read it.
+                            if let Some(initializer) = self.db.var_initializer(child) {
+                                self.reserve_initializer_order(child);
+                                self.string_object_initializers.push((
+                                    child,
+                                    index,
+                                    initializer,
+                                    "$class".to_owned(),
+                                ));
+                            }
                         }
                         IrClassFieldType::Chandle => {
                             let index = self.model.objects.len();
                             if let Some(initializer) = self.db.var_initializer(child) {
-                                if !matches!(
-                                    self.kind(initializer),
-                                    NodeKind::Expr(ExprKind::Constant {
-                                        const_type: ConstantType::Null,
-                                        ..
-                                    })
-                                ) {
-                                    return Err(format!(
-                                        "static class handle property `{}` must initialize to null",
-                                        self.node(child).full_name
-                                    ));
-                                }
+                                self.reserve_initializer_order(child);
+                                self.class_object_initializers.push((
+                                    child,
+                                    index,
+                                    initializer,
+                                    "$class".to_owned(),
+                                ));
                             }
                             self.model.objects.push(crate::sim::ir::IrObject {
                                 c_name: format!(

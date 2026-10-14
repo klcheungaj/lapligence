@@ -31,6 +31,9 @@ remain on the calling thread; do not implement `Send` or `Sync`.
 - ABI v19 adds edge role 39 (`LLG_SLANG_EDGE_DEFAULT_DISABLE`) from a
   concurrent assertion statement to its inferred `default disable iff`
   expression; the expression is owned by the first such statement.
+- ABI v20 adds variable auxiliary bit 8 (`LLG_SLANG_VARIABLE_CONST`) above
+  the resolved-lifetime byte (`LLG_SLANG_VARIABLE_LIFETIME_MASK`) for `const`
+  variables and class properties; validation admits no other variable bits.
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;

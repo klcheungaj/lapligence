@@ -163,8 +163,18 @@ collected before any module initializer folds them. Descriptor-backed fixed
 arrays (module, package, function-static and block-static) initialize through
 the typed pattern transport as `IrInitStep::Execute` in SystemVerilog and as an
 active-region process in Verilog-2001; automatic descriptor locals declare and
-initialize on each entry. A name redeclared in a package or `$unit` scope (a
-frontend warning) rejects instead of aliasing storage.
+initialize on each entry. Class-handle, semaphore, mailbox and string
+initializers (module, package, `$unit`, static subroutine and class-method
+locals, static class properties) and static native-record locals are
+`IrInitStep::Execute` statements in the same schedule, never run-once
+processes or first-call code; a handle initializer carries its instance as
+`random_scope` so created objects seed from that instance's initialization RNG
+(SV 18.14.1). `initialization/effects.rs` rejects a static initializer whose
+calls (or constructor) reach a fork, nonblocking assignment or nonblocking
+trigger (SV 13.4.4); `collection/const_writes.rs` rejects modifying built-in
+methods on `const` declarations (SV 6.20.6, `Db::is_const_variable`). A name
+redeclared in a package or `$unit` scope (a frontend warning) rejects instead
+of aliasing storage.
 
 Input links evaluate in the parent scope; selected outputs preserve untouched
 bits. Constants/omitted defaults run once; explicit opens ignore defaults. Whole

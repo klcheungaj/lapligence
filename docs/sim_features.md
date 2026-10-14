@@ -305,11 +305,21 @@ Macros, includes and their edition-specific behavior are counted in §11.
   defaults and mixed state domains are retained, including the member defaults
   of module and procedural-block records with string, real, handle or
   container members (a default whose value is such a record rejects).
-  Module string initializers join the same schedule.
-  Timing-bearing initializer calls are illegal; unsupported native/resizable
-  layouts, oversized records and ambiguous/opposite-lifetime captures remain
-  rejected.
-  V §6.2.1; SV §§6.8, 6.21, 10.5 **[2001/SV-2005]**.
+  Module, package and `$unit` string, class-handle, semaphore and mailbox
+  initializers, static string, handle, semaphore and native-record locals of
+  subroutines and class methods (waiting tasks included), and static class
+  properties with any initializer (another property, a call, a constructed
+  object) join the same schedule, so later initializers read constructed
+  objects and no value depends on first-call order
+  ([sim_022](../tests/fixtures/sim/feature_completion/sim_022/readme.md);
+  decisions S22-D1, S22-D2, S22-D7). A static initializer whose calls reach a
+  `fork`-`join_none`, nonblocking assignment or nonblocking trigger is a
+  located error (SV 13.4.4, S22-D3); modifying built-in methods on `const`
+  variables and properties are located errors (S22-D4); an initialized block
+  variable without `static`/`automatic` is accepted with a warning as static
+  (S22-D5). Unsupported native/resizable layouts, oversized records and
+  ambiguous/opposite-lifetime captures remain rejected.
+  V §6.2.1; SV §§6.8, 6.20.6, 6.21, 10.5, 13.4.4 **[2001/SV-2005]**.
 - 🟨 **Real types** — `real`/`realtime`/`shortreal` support scalar/fixed-array
   storage, parameters, scalar ports, value calls, arithmetic, ordinary `case`,
   waits, any-change events and changed-write notification. `ref`/`const ref`
@@ -549,8 +559,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Packages and `$unit`** — Qualified/imported/re-exported names, wildcard
   exports, shared variables, dependent initialization, static subprogram state,
   types and typed (including aggregate) constants are represented, and module
-  initializers read them regardless of collection order. Separate/merged unit
-  scope is retained; a name redeclared in a package or unit scope rejects.
+  initializers read them regardless of collection order. Package and `$unit`
+  strings, queues, associative arrays, records, class handles and static
+  subroutine state are one copy for every importer, through `export p::name`
+  and `export *::*` chains. Separate/merged unit scope is retained (separate
+  units keep same-named `$unit` variables apart; merged ones share them); a
+  name redeclared in a package or unit scope rejects.
   Native element layouts (for example string arrays), unsupported callable
   environments and post-2009 forms remain restricted. Instance-hierarchical names are not constant-expression operands;
   lexical package references remain distinct. SV §26 **[SV-2005]**.
@@ -1218,8 +1232,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   re-evaluate operands at every use, and return numeric and fixed packed,
   unpacked and descriptor-backed aggregate results in procedural, continuous,
   comparison and declaration-initializer contexts in SV2009, while V2001
-  rejects the syntax. Recursive lets reject. Expanded assertion and native
-  bodies still need an admitted consumer representation.
+  rejects the syntax. Free names and defaults never capture a caller's local
+  of the same name, actuals bind at the use and formals shadow outer names,
+  including package, `$unit`, block and task lets (S22-D6). Recursive lets
+  reject. Expanded assertion and native bodies still need an admitted
+  consumer representation.
   SV §11.13 **[SV-2009]**.
 - 🟨 **Operator overloading** — `bind <op> function` declarations in module,
   interface, program, package, compilation-unit, generate, block and

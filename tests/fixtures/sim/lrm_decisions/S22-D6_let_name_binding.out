@@ -1,0 +1,5 @@
+add_x(1)=11
+add_x(x)=110
+add_default(2)=3
+add_default(2, y)=52
+twice(3)=6

@@ -347,7 +347,11 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
                 & !(CLOCKING_EDGE_MASK | (CLOCKING_EDGE_MASK << CLOCKING_VAR_OUTPUT_EDGE_SHIFT))
                 == 0
         }
-        (9 | 11, _, _) => matches!(node.auxiliary, 0..=2),
+        // The low byte is the lifetime; `const` is the only qualifier above it.
+        (9 | 11, _, _) => {
+            matches!(node.auxiliary & super::VARIABLE_LIFETIME_MASK, 0..=2)
+                && node.auxiliary & !(super::VARIABLE_LIFETIME_MASK | super::VARIABLE_CONST) == 0
+        }
         (25, SEMANTIC_SCOPE_CLOCKING_BLOCK, _) => {
             let edge_mask = CLOCKING_EDGE_MASK << CLOCKING_INPUT_EDGE_SHIFT
                 | CLOCKING_EDGE_MASK << CLOCKING_OUTPUT_EDGE_SHIFT;

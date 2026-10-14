@@ -106,7 +106,7 @@ impl<'a> Codegen<'a> {
     /// Whether a declaration initializer subtree contains a user function
     /// call. Calls cannot be lowered during collection because the callee's
     /// model entry is only created when subroutine prototypes are emitted.
-    fn initializer_contains_call(&self, node: NodeId) -> bool {
+    pub(in super::super) fn initializer_contains_call(&self, node: NodeId) -> bool {
         if matches!(self.kind(node), NodeKind::FuncCall { .. }) {
             return true;
         }

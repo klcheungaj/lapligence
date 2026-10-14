@@ -1,0 +1,12 @@
+s=Ss q=3 d0=8 aa=2 item=6 r=rr/2 sem=1 mb=1 | as=Aa aq=2 ai=10 ar=xx
+s=Sss q=4 d0=10 aa=3 item=8 r=rrr/3 sem=1 mb=2 | as=Aa aq=2 ai=11 ar=xx
+static_function s=Tt item=2
+static_function s=Ttt item=4
+waiting s=ww item=4 r=1 local=zz
+waiting s=www item=6 r=2 local=zz
+method trail=mm
+method item=11
+method trail=mmm
+method item=13
+loop kept=kk shared=1 sq=2 again=gg lq=2
+loop kept=kkk shared=2 sq=3 again=gg lq=2

@@ -38,7 +38,7 @@ Each `<ID>_<name>.sv` file is:
    build it as a shared DPI-C library (the S40 cases include `svdpi.h`) and load it with the simulator's DPI library option.
 3. Compare stdout with the `.out` file. Ignore the simulator's own banners and
    its `$finish` message.
-4. **Negative cases have an empty `.out`.** For AA-D7, S14-D5 and S23-D2, the
+4. **Negative cases have an empty `.out`.** For AA-D7, S14-D5, S22-D3, S22-D4 and S23-D2, the
    expected result is a compile error, and no simulation should run.
 
 ### In llg
@@ -56,7 +56,9 @@ S40-D5 must stop with exit status 1 after its first line, reporting "DPI-C
 import task `d5_task` returned nonzero, but nothing disabled it". AA-D7 must fail to
 compile with "`$past` of a real expression is illegal", S14-D5 with
 "nonblocking assignment to class property `x`", and S23-D2 with "is an
-unpacked structure or union, which is not a singular variable". The scripted run is in
+unpacked structure or union, which is not a singular variable". S22-D3 must
+fail with "calls `watch`, whose fork at" and S22-D4 with "`push_back` modifies
+`limits`, which is declared const". The scripted run is in
 [tests/readme.md](../tests/readme.md):
 
 ```sh
@@ -299,6 +301,18 @@ enum and malformed-token cases remain characterizations in
 | S27-D19 | **A slice with a variable position (`[i +: w]`, `[i -: w]`) is a memory_name.** Its position is evaluated once when the task runs, after any higher-dimension index and before the start and finish addresses, and it addresses the selected indices as a constant slice there would. A slice not wholly inside the declared range or the current size, or with an X or Z bit in its position, is an error: nothing is loaded and a dump writes no file. | 7.4.6 L8226, L8235-8237; 21.4 L37253-37254 | `S27-D19_variable_slice_position` | LRM text for the variable position; one evaluation and the rejection are llg choices (the text does not cover either for a memory task) |
 | S27-D20 | **Queue slice bounds may be any integral expressions, and `$` is the queue's last index when the task runs.** Each bound is evaluated once, left first; the slice is addressed in place and never resizes the queue. A slice whose left bound exceeds its right bound selects no element and is rejected like a slice outside the current size (S27-D14), also when both bounds are constant. | 7.10 L8977-8978; 7.10.1 L9028-9029, L9034-9035; 21.4.1 L37347 | `S27-D20_queue_slice_bounds` | LRM text for the bounds and `$`; rejecting the empty slice is an llg choice (the text does not cover an empty memory_name) |
 | S27-D21 | **An element of a dynamic array or queue of unpacked arrays (`da[k]`) is a memory_name**, and so are the whole array and a slice of its elements, whose first dimension is the current size; the array is never resized. The element index is evaluated once when the task runs; an index outside the current size or with an X or Z bit is an error: nothing is loaded and a dump writes no file. | 21.4 L37251-37254; 21.4.1 L37347; 7.4.6 L8235-8237 | `S27-D21_container_row_memory` | LRM text for the memory_name; the rejection of an invalid element is an llg choice (the text does not cover it for a memory task) |
+
+## Native initialization and let environments (SIM-022)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S22-D1 | **Handle and string initializers run before every procedure.** Class-handle, mailbox, semaphore and string declaration initializers of module, package and `$unit` variables run in the static initialization, before any initial or always procedure, so later static initializers read the constructed object. llg orders initializers by the static declarations they read, otherwise by declaration order. | 6.8 L5286-5287; 10.5 L13286-13287 | `S22-D1_handle_initializers_before_processes` | LRM text (changed: handle initializers used to run as time-0 processes after the other initializers); the order among initializers is an llg choice the case does not depend on |
+| S22-D2 | **Static locals initialize once, before time 0.** An explicitly static local of a subroutine or block, of string, handle, queue or record-with-native-members type, is initialized once before any procedure starts, never on first call; automatic locals are initialized on each entry. | 6.21 L6900-6901, L6904-6905, L6942-6944 | `S22-D2_static_locals_initialize_once` | LRM text (changed: static string and record locals rejected and static handle initializers were dropped) |
+| S22-D3 | **A static initializer may not reach deferred work.** A static initializer whose calls (through other functions or a constructor) reach a `fork`-`join_none`, a nonblocking assignment or a nonblocking event trigger is a compile error naming both locations. | 13.4.4 L18993-18997 | `S22-D3_initializer_deferred_effect_illegal` (negative) | LRM text (the error is required); counting nonblocking assignments and triggers as such events is llg's reading |
+| S22-D4 | **Modifying built-in methods write a const variable.** `push_back`, `pop_*`, `insert`, `delete`, `sort`, `rsort`, `reverse`, `shuffle` on a const array or queue and `putc`, `itoa`, `hextoa`, `octtoa`, `bintoa`, `realtoa` on a const string are compile errors; read-only methods and writes through a const class handle's object stay legal. | 6.20.6 L6884-6886 | `S22-D4_const_method_write_illegal` (negative) | llg choice (the clause says a const variable "cannot be written" but does not list methods) |
+| S22-D5 | **An implicitly static initialized block variable is accepted.** `int count = 10;` inside a procedural block without `static` or `automatic` is accepted with the frontend's warning and is static: initialized once before time 0. | 6.21 L6941-6944 | `S22-D5_implicit_static_initializer` | llg extension (the text requires the keyword and calls its example illegal; a simulator that rejects the file conforms) |
+| S22-D6 | **Let names bind where the let is declared.** Free names of a let body and names in a formal's default actual resolve in the declaring scope; actual arguments resolve at the use; a formal shadows an outer name. | 11.13 L16778-16779 (examples a and b) | `S22-D6_let_name_binding` | LRM text |
+| S22-D7 | **Static class properties initialize once with any value.** A static property's initializer (constant, other static property, string expression, constructed object) runs once before any procedure, and the property is shared by every object and the class scope. | 8.8 L9870-9871, L9887, L9893; 6.8 L5286-5287 | `S22-D7_static_property_initializers` | LRM text (changed: non-constant numeric, string-expression and non-null handle initializers were rejected) |
 
 ## Earlier decisions
 

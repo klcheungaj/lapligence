@@ -1,0 +1,2 @@
+before: reg reg_tag derived=10 called=7 seen=10 items=2 label=reg_d
+after: renamed renamed seed=99 created=3 items=5 ids=1,2,3

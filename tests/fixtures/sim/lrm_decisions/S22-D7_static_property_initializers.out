@@ -1,0 +1,2 @@
+before: reg reg_tag derived=10 seen=10 created=0
+after: renamed renamed created=2 ids=1,2

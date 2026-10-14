@@ -199,7 +199,8 @@ static void service_program_completions(void) {
  * embedding code that invokes the service outside a coroutine. */
 static llg_rng_state_t* llg_process_rng(void) {
     llg_proc_t* process = llg_current();
-    return process ? &process->rng : &g.rng_root;
+    if (process) return &process->rng;
+    return g.rng_initializer ? g.rng_initializer : &g.rng_root;
 }
 
 /* Container methods (shuffle) draw from the calling thread's stream. */
@@ -317,6 +318,18 @@ static void rng_seed_static(llg_proc_t* p) {
 
 void llg_rt_use_instance_random_streams(void) {
     g.rng_instance_streams = 1;
+}
+
+/* A static handle initializer runs in the initialization frame, outside any
+ * process; the objects it creates seed from the declaring instance's
+ * initialization stream, like a static process of that instance. `label` is
+ * a static string whose last component names nothing (`tb.u.initializer`). */
+void llg_rng_initializer_scope_begin(const char* label) {
+    g.rng_initializer = g.rng_instance_streams ? rng_instance_stream(label) : NULL;
+}
+
+void llg_rng_initializer_scope_end(void) {
+    g.rng_initializer = NULL;
 }
 
 sv4_t llg_urandom(void) {

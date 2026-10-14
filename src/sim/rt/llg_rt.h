@@ -1006,6 +1006,11 @@ int llg_process_set_randstate(llg_string_t state);
 // processes then seed from their instance's initialization stream (18.14.1)
 // instead of the root stream in model spawn order. Reset by llg_rt_cleanup.
 void llg_rt_use_instance_random_streams(void);
+// Brackets one static handle initializer of the instance `label` names (its
+// last component is dropped): objects created inside seed from that
+// instance's initialization stream. `label` must outlive the model.
+void llg_rng_initializer_scope_begin(const char* label);
+void llg_rng_initializer_scope_end(void);
 void llg_object_rng_create(llg_rng_state_t* object);
 void llg_object_srandom(llg_rng_state_t* object, sv4_t seed);
 llg_string_t llg_object_get_randstate(const llg_rng_state_t* object);
