@@ -1166,3 +1166,11 @@ fn s27_d20_queue_slice_bounds() {
         include_str!("fixtures/sim/lrm_decisions/S27-D20_queue_slice_bounds.out"),
     );
 }
+
+#[test]
+fn s27_d21_container_row_memory() {
+    run_decision(
+        "S27-D21_container_row_memory",
+        include_str!("fixtures/sim/lrm_decisions/S27-D21_container_row_memory.out"),
+    );
+}

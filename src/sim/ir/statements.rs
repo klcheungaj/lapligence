@@ -174,13 +174,29 @@ pub enum IrMemorySelectorKind {
     SliceLeft,
     /// The right bound of that queue range slice.
     SliceRight,
+    /// The element of a dynamic array or queue whose elements are fixed
+    /// arrays (`da[k]`): the first selector of an `IrMemoryStorage::Container`
+    /// task whose `root_dims` are the element's dimensions. An unknown or
+    /// missing element is an error when the task runs. Its `dimension`,
+    /// `left`, `right` and `stride` are unused (zero, zero, zero, one).
+    Row,
 }
 
 impl IrMemorySelector {
     /// Whether this selector positions the view's slice rather than
-    /// selecting a higher-dimension index.
+    /// selecting an index or a container element.
     pub fn is_slice(&self) -> bool {
-        !matches!(self.kind, IrMemorySelectorKind::Index)
+        matches!(
+            self.kind,
+            IrMemorySelectorKind::SliceBase { .. }
+                | IrMemorySelectorKind::SliceLeft
+                | IrMemorySelectorKind::SliceRight
+        )
+    }
+
+    /// Whether this selector indexes a higher dimension of a fixed view.
+    pub fn is_index(&self) -> bool {
+        matches!(self.kind, IrMemorySelectorKind::Index)
     }
 }
 
@@ -257,6 +273,15 @@ impl IrMemoryAccess {
             .try_fold(1u64, |total, (left, right)| {
                 total.checked_mul((i64::from(*left) - i64::from(*right)).unsigned_abs() + 1)
             })
+    }
+
+    /// The selectors of the view inside `root_dims`: every selector but a
+    /// leading container [`IrMemorySelectorKind::Row`].
+    pub fn view_selectors(&self) -> &[IrMemorySelector] {
+        match self.selectors.split_first() {
+            Some((first, rest)) if first.kind == IrMemorySelectorKind::Row => rest,
+            _ => &self.selectors,
+        }
     }
 
     /// The image target of a load, which the task writes.

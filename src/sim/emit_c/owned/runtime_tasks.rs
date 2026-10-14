@@ -73,6 +73,7 @@ impl Frame<'_, '_> {
         self.memory_call(MemoryCall {
             runtime,
             memory,
+            rows: None,
             element,
             path,
             origin: view.origin,
@@ -95,6 +96,7 @@ impl Frame<'_, '_> {
             return Err("memory task requires a fixed packed memory view".to_owned());
         }
         let mut after = MemoryImageAfter::None;
+        let mut rows = None;
         let (runtime, memory, cells) = match &task.storage {
             IrMemoryStorage::Image(image) => {
                 let cells = task
@@ -148,6 +150,51 @@ impl Frame<'_, '_> {
                 };
                 (runtime, memory, cells)
             }
+            IrMemoryStorage::Container(container)
+                if matches!(
+                    self.ctx.model.containers[*container].element,
+                    IrContainerElement::FixedArray { .. }
+                ) =>
+            {
+                let model_container = &self.ctx.model.containers[*container];
+                let IrContainerElement::FixedArray { dimensions, .. } = &model_container.element
+                else {
+                    unreachable!("guarded by the match arm");
+                };
+                let row_cells = dimensions
+                    .iter()
+                    .try_fold(1u64, |total, (left, right)| {
+                        total.checked_mul(u64::from(left.abs_diff(*right)) + 1)
+                    })
+                    .ok_or_else(|| "memory row cell count overflows".to_owned())?;
+                let runtime = match (&model_container.kind, task.write) {
+                    (IrContainerKind::Dynamic, false) => "llg_dyn_rows_memory_read_view",
+                    (IrContainerKind::Dynamic, true) => "llg_dyn_rows_memory_write_view",
+                    (IrContainerKind::Queue { .. }, false) => "llg_queue_rows_memory_read_view",
+                    (IrContainerKind::Queue { .. }, true) => "llg_queue_rows_memory_write_view",
+                    (IrContainerKind::Associative { .. }, _) => {
+                        return Err(
+                            "memory rows require a dynamic array or queue of fixed arrays"
+                                .to_owned(),
+                        )
+                    }
+                };
+                let one = task
+                    .selectors
+                    .first()
+                    .is_some_and(|row| row.kind == IrMemorySelectorKind::Row);
+                let mode = if one {
+                    "LLG_MEMORY_ROWS_ONE"
+                } else if task.sliced {
+                    "LLG_MEMORY_ROWS_SLICE"
+                } else {
+                    "LLG_MEMORY_ROWS_ALL"
+                };
+                rows = Some((mode, row_cells));
+                let memory = format!("&{}", self.container_name(*container)?);
+                // A whole container or a slice of it is sized at run time.
+                (runtime, memory, if one { row_cells } else { 0 })
+            }
             IrMemoryStorage::Container(container) => {
                 let runtime = match (&self.ctx.model.containers[*container].kind, task.write) {
                     (IrContainerKind::Dynamic, false) => "llg_dyn_memory_read_view",
@@ -165,6 +212,7 @@ impl Frame<'_, '_> {
         self.memory_call(MemoryCall {
             runtime,
             memory,
+            rows,
             element: MemoryElement {
                 cells,
                 width: task.element_width,
@@ -265,6 +313,7 @@ impl Frame<'_, '_> {
         // array, its origin and size) when the task runs.
         let resizable = call.element.cells == 0;
         let mut slice_bounds = None;
+        let mut row = None;
         let mut view_total = format!("{}ULL", call.total);
         let origin = if selector_values.is_empty() {
             format!("{}ULL", call.origin)
@@ -273,6 +322,7 @@ impl Frame<'_, '_> {
             let mut range_left = None;
             for (index, (selector, value)) in selector_values.iter().enumerate() {
                 match selector.kind {
+                    IrMemorySelectorKind::Row => row = Some(value.code.clone()),
                     IrMemorySelectorKind::Index => {
                         self.memory_index_selector(&origin, index, selector, &value.code)
                     }
@@ -372,8 +422,18 @@ impl Frame<'_, '_> {
             )
         };
         let element = call.element;
-        self.line(format!("{}({}, {}, {}ULL, {}u, {}, {}, {dimensions}, {}, {strides}, {origin}, {view_total}, {first}, {last}, {}, {}, {addressing}, {enum_pointer}, {enum_count}, {radix});",
-            call.runtime, path.take_string(), call.memory, element.cells, element.width,
+        // A row-container call names its mode, row and cells per row where
+        // the other entry points take the cell count.
+        let storage = match call.rows {
+            Some((mode, row_cells)) => format!(
+                "{}, {mode}, {}, {row_cells}ULL",
+                call.memory,
+                row.as_deref().unwrap_or("(sv4_t)SV4_EMPTY")
+            ),
+            None => format!("{}, {}ULL", call.memory, element.cells),
+        };
+        self.line(format!("{}({}, {storage}, {}u, {}, {}, {dimensions}, {}, {strides}, {origin}, {view_total}, {first}, {last}, {}, {}, {addressing}, {enum_pointer}, {enum_count}, {radix});",
+            call.runtime, path.take_string(), element.width,
             u8::from(element.signed), u8::from(element.two_state), call.dims.len(),
             u8::from(call.start.is_some()), u8::from(call.finish.is_some())));
         if let Some(enum_name) = enum_name {
@@ -689,6 +749,8 @@ fn memory_image_constant(constant: &IrConst) -> Option<u32> {
 struct MemoryCall<'a> {
     runtime: &'static str,
     memory: String,
+    /// The row mode and cells per row of a container of fixed arrays.
+    rows: Option<(&'static str, u64)>,
     element: MemoryElement,
     path: &'a IrStringExpr,
     origin: u64,

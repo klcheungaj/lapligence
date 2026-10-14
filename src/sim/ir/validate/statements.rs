@@ -190,7 +190,7 @@ impl Validator<'_> {
                             source_dims: &task.root_dims,
                             source_total: cells,
                             origin: task.origin,
-                            selectors: &task.selectors,
+                            selectors: task.view_selectors(),
                             sliced: task.sliced,
                             dims: &task.dims,
                             strides: &task.strides,
@@ -199,6 +199,19 @@ impl Validator<'_> {
                         formals,
                         path,
                     )?;
+                    if let Some(row) = task
+                        .selectors
+                        .first()
+                        .filter(|_| task.view_selectors().len() < task.selectors.len())
+                    {
+                        self.validate_expr(&row.value, formals, &format!("{path}.row"))?;
+                        if row.value.is_real() || row.value.width == 0 {
+                            return self.fail(
+                                format!("{path}.row"),
+                                "memory container row must be a packed integer",
+                            );
+                        }
+                    }
                 } else {
                     // A runtime-sized container view: its slice selectors.
                     for (index, selector) in task.selectors.iter().enumerate() {

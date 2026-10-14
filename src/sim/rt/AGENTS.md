@@ -539,8 +539,10 @@ image is a variable's own storage, loaded in place under the `llg_ba` force
 and region rules and published once like `sig_write_ranges`) and dynamic arrays or queues
 (`llg_dyn_memory_*`/`llg_queue_memory_*`, current size, never resized; a
 `total` 0 slice must lie within that size, and reversed bounds select no
-element; one contents notification after a load) through one storage
-abstraction, so parsing, addressing and range checks
+element; one contents notification after a load), and dynamic arrays or
+queues of fixed arrays (`llg_*_rows_memory_*`: one `llg_value_t` element, the
+whole container or a slice of its elements; cell `i` is item `i % row_cells`
+of row `i / row_cells`) through one storage abstraction, so parsing, addressing and range checks
 stay shared. Integral-index associative arrays (`llg_assoc_memory_*`) share
 the tokenizer and word conversion but address by key: start, finish and wide
 `@` addresses are cast to the index type, each word is an

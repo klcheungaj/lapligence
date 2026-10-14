@@ -142,7 +142,13 @@ position (`SliceBase`, after every index selector, with `dims` holding the
 constant-position placeholder of the same extent) or the two runtime bounds
 of a queue range slice (`SliceLeft`/`SliceRight`, `$` lowered to the last
 index). The emitter resolves them once when the task runs (decisions
-S27-D19/D20); other fixed-array views carry only `Index` selectors. An associative array has no geometry: its addresses are keys.
+S27-D19/D20); other fixed-array views carry only `Index` selectors. A
+container whose elements are fixed arrays of packed words takes one element
+through a leading `Row` selector (`root_dims` are the element's dimensions and
+the remaining selectors view inside it, `IrMemoryAccess::view_selectors`), or
+the whole container or a slice of its elements with empty `root_dims`: the
+first view dimension is the outer one (`[0:0]` placeholder when whole),
+`row_cells` cells apart, followed by the element dimensions (S27-D21). An associative array has no geometry: its addresses are keys.
 The view geometry (`origin`, `selectors`, `dims`, `strides`, `total`) is the
 one fixed-array memory views use and is validated by the same
 `validate_memory_geometry`. Module and static memories keep their existing

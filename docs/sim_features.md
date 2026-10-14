@@ -1626,7 +1626,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   directly, through `this` or through a handle, where a null handle stops with
   the null-access error before the file is opened), a
   whole dynamic array or queue at its current size, never resized (S27-D10),
-  a slice of one checked against that size (S27-D14), or an
+  a slice of one checked against that size (S27-D14), an element of a
+  dynamic array or queue of unpacked arrays (`da[k]`, also selected further
+  inside), or the whole array or a slice of its elements (S27-D21), or an
   associative array with an integral index (S27-D15/D16: entries created or
   updated at each address, addresses cast to the index type, index 0 by
   default; a wildcard index is rejected, S27-D18). The memory_name is
@@ -1668,9 +1670,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   (S27-D4, an llg reading kept as a `q02_enum_*` characterization in
   `sim_undefined_behavior`). Sparse addressed 2009 files omit the no-address
   short-file warning; 2001 count warnings remain, including excess data from
-  repeated in-range addresses. Rows of dynamic arrays of unpacked arrays are
-  rejected as load targets, and multidimensional class-property memories
-  remain under SIM-011.
+  repeated in-range addresses. Associative arrays of unpacked arrays (an
+  element or the whole array) are rejected with their location, and
+  multidimensional class-property memories remain under SIM-011.
   Real/non-packed words and fully indexed scalar targets are outside the
   memory-load argument contract; string-key associative memories are prohibited.
 - 🟦 **Memory writers** — `$writememh/$writememb` emit consumable four-state words

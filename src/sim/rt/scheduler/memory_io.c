@@ -485,7 +485,17 @@ typedef struct {
     int image_mode;
     int image_changed;
     sv4_t image_old_lsb;
+    // Rows of a container whose elements are fixed arrays of packed words:
+    // cell `i` is item `i % row_cells` of row `i / row_cells`.
+    llg_value_t* rows;
+    uint64_t row_cells;
 } llg_memory_storage_t;
+
+static sv4_t* llg_memory_row_cell(const llg_memory_storage_t* storage, uint64_t index) {
+    return &storage->rows[index / storage->row_cells]
+                .value.items[index % storage->row_cells]
+                .value.packed;
+}
 
 static uint64_t llg_memory_image_low(const llg_memory_storage_t* storage,
                                      uint64_t index, uint64_t total,
@@ -558,6 +568,10 @@ static void llg_memory_store(llg_memory_storage_t* storage, uint64_t index,
                             (int64_t)low, value);
         return;
     }
+    if (storage->rows) {
+        llg_ba(llg_memory_row_cell(storage, index), value);
+        return;
+    }
     llg_ba(storage->fixed ? llg_fixed_array_cell(storage->fixed, index)
                           : &storage->memory[index],
            value);
@@ -575,6 +589,10 @@ static void llg_memory_format_cell(const llg_memory_storage_t* storage,
                                      (int64_t)(low + elem_width - 1u), (int64_t)low);
         sv4_format(conversion, cell, digits, capacity);
         sv4_destroy(&cell);
+        return;
+    }
+    if (storage->rows) {
+        sv4_format(conversion, *llg_memory_row_cell(storage, index), digits, capacity);
         return;
     }
     sv4_format(conversion,
@@ -942,6 +960,50 @@ void llg_image_memory_write_view(llg_string_t path, const llg_memory_image_t* me
     fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
 }
 
+// Whether a runtime-sized container of `size` elements can be addressed;
+// otherwise report it and return 0. An empty array loads nothing with a
+// warning and dumps as an empty file (decision S27-D10).
+static int llg_container_memory_addressable(int write, llg_string_t path, size_t size,
+                                            int has_start, int has_finish) {
+    if (size != 0 && size - 1u <= (size_t)INT32_MAX) return 1;
+    char* filename = llg_memory_path_copy(path);
+    if (size != 0) {
+        llg_memory_error(filename, "memory has too many elements to address");
+    } else if (write && !has_start && !has_finish) {
+        // An empty array dumps as an empty file.
+        char* output = llg_output_path(filename);
+        FILE* stream = fopen(output, "w");
+        if (!stream || fclose(stream) != 0)
+            llg_memory_warning(output, "open for writing failed: %s", strerror(errno));
+        free(output);
+    } else if (!write && !has_start && !has_finish) {
+        llg_memory_warning(filename, "destination memory has no elements; nothing loaded");
+    } else {
+        llg_memory_error(filename, "selected range includes an address outside the memory");
+    }
+    free(filename);
+    return 0;
+}
+
+// A slice `[dims[0]:dims[1]]` of a runtime-sized array must hold ascending
+// indices within `[0:size-1]` of the current size (decision S27-D14);
+// reversed queue bounds select no element (S27-D20). Otherwise report it and
+// return 0.
+static int llg_container_memory_slice_valid(llg_string_t path, const int32_t* dims,
+                                            size_t size) {
+    const char* problem = NULL;
+    if (dims[0] >= 0 && dims[0] > dims[1]) {
+        problem = "slice left bound exceeds its right bound; the slice selects no element";
+    } else if (dims[0] < 0 || dims[0] > dims[1] || (uint64_t)dims[1] >= (uint64_t)size) {
+        problem = "slice is outside the current size of the array";
+    }
+    if (!problem) return 1;
+    char* filename = llg_memory_path_copy(path);
+    llg_memory_error(filename, "%s", problem);
+    free(filename);
+    return 0;
+}
+
 // Dynamic arrays, queues and fixed-size class properties keep their elements
 // as dense cells in declaration order. A runtime-sized view (`n_dims` 0)
 // addresses `[0:size-1]` of the current size, which a load never changes
@@ -961,25 +1023,8 @@ static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
     int32_t runtime_dims[2];
     uint64_t runtime_stride = 1;
     if (n_dims == 0) {
-        if (size == 0 || size - 1u > (size_t)INT32_MAX) {
-            char* filename = llg_memory_path_copy(path);
-            if (size != 0) {
-                llg_memory_error(filename, "memory has too many elements to address");
-            } else if (write && !has_start && !has_finish) {
-                // An empty array dumps as an empty file.
-                char* output = llg_output_path(filename);
-                FILE* stream = fopen(output, "w");
-                if (!stream || fclose(stream) != 0)
-                    llg_memory_warning(output, "open for writing failed: %s", strerror(errno));
-                free(output);
-            } else if (!write && !has_start && !has_finish) {
-                llg_memory_warning(filename, "destination memory has no elements; nothing loaded");
-            } else {
-                llg_memory_error(filename, "selected range includes an address outside the memory");
-            }
-            free(filename);
+        if (!llg_container_memory_addressable(write, path, size, has_start, has_finish))
             return;
-        }
         runtime_dims[0] = 0;
         runtime_dims[1] = (int32_t)(size - 1u);
         dims = runtime_dims;
@@ -989,21 +1034,7 @@ static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
         total = (uint64_t)size;
         view_total = total;
     } else if (total == 0 && n_dims == 1) {
-        // A slice of a runtime-sized array: its ascending indices must lie in
-        // `[0:size-1]` of the current size (decision S27-D14). Reversed queue
-        // bounds select no element and are rejected too (S27-D20).
-        if (dims[0] >= 0 && dims[0] > dims[1]) {
-            char* filename = llg_memory_path_copy(path);
-            llg_memory_error(filename, "slice left bound exceeds its right bound; the slice selects no element");
-            free(filename);
-            return;
-        }
-        if (dims[0] < 0 || dims[0] > dims[1] || (uint64_t)dims[1] >= (uint64_t)size) {
-            char* filename = llg_memory_path_copy(path);
-            llg_memory_error(filename, "slice is outside the current size of the array");
-            free(filename);
-            return;
-        }
+        if (!llg_container_memory_slice_valid(path, dims, size)) return;
         total = (uint64_t)size;
     } else if (total != (uint64_t)size) {
         char* filename = llg_memory_path_copy(path);
@@ -1041,6 +1072,104 @@ LLG_CONTAINER_MEMORY_ENTRY(llg_dyn_memory_write_view, struct llg_dyn_array_t, 1)
 LLG_CONTAINER_MEMORY_ENTRY(llg_queue_memory_read_view, struct llg_queue_t, 0)
 LLG_CONTAINER_MEMORY_ENTRY(llg_queue_memory_write_view, struct llg_queue_t, 1)
 #undef LLG_CONTAINER_MEMORY_ENTRY
+
+// A dynamic array or queue whose elements are fixed arrays of `row_cells`
+// packed words (`llg_value_t` rows), addressed in place in declaration
+// order. `LLG_MEMORY_ROWS_ONE` makes element `row` the memory, with `dims`,
+// `strides`, `origin` and `view_total` describing the view inside it; an
+// unknown or missing element is an error. `LLG_MEMORY_ROWS_ALL` and
+// `LLG_MEMORY_ROWS_SLICE` address `[0:size-1]` of the current size, or the
+// slice `dims[0]:dims[1]` of it, followed by the element dimensions in
+// `dims[2..]`; the container is never resized (IEEE 1800-2009 21.4.1). A load
+// that placed any word sends one contents notification.
+static void llg_rows_memory_view(int write, llg_string_t path, llg_value_t* data, size_t size,
+                                 const llg_value_desc_t* element,
+                                 llg_container_notify_fn notify, sv4_t* contents,
+                                 sv4_t* shape, int mode, sv4_t row, uint64_t row_cells,
+                                 uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                                 const int32_t* dims, int n_dims, const uint64_t* strides,
+                                 uint64_t origin, uint64_t view_total, sv4_t start,
+                                 sv4_t finish, int has_start, int has_finish,
+                                 int addressing_policy, const sv4_t* enum_values,
+                                 uint32_t enum_count, int radix) {
+    if (!element || element->kind != LLG_VALUE_FIXED_ARRAY || element->item_count != row_cells ||
+        row_cells == 0 || !element->element || element->element->kind != LLG_VALUE_PACKED ||
+        element->element->packed_width != elem_width || !dims || n_dims <= 0 ||
+        (mode != LLG_MEMORY_ROWS_ONE && n_dims < 2)) {
+        char* filename = llg_memory_path_copy(path);
+        llg_memory_error(filename, "memory descriptor does not match its container");
+        free(filename);
+        return;
+    }
+    llg_memory_storage_t storage = {0};
+    storage.row_cells = row_cells;
+    uint64_t total = row_cells;
+    int32_t* outer_dims = NULL;
+    if (mode == LLG_MEMORY_ROWS_ONE) {
+        int64_t index;
+        if (!sv4_to_index_i64(row, &index) || index < 0 || (uint64_t)index >= (uint64_t)size) {
+            char* filename = llg_memory_path_copy(path);
+            llg_memory_error(filename, "selected index or slice is outside the memory");
+            free(filename);
+            return;
+        }
+        storage.rows = &data[index];
+    } else {
+        int32_t low = 0, high = 0;
+        if (mode == LLG_MEMORY_ROWS_ALL) {
+            if (!llg_container_memory_addressable(write, path, size, has_start, has_finish))
+                return;
+            high = (int32_t)(size - 1u);
+        } else {
+            if (!llg_container_memory_slice_valid(path, dims, size)) return;
+            low = dims[0];
+            high = dims[1];
+        }
+        if ((uint64_t)size > UINT64_MAX / row_cells) {
+            char* filename = llg_memory_path_copy(path);
+            llg_memory_error(filename, "memory has too many elements to address");
+            free(filename);
+            return;
+        }
+        outer_dims = (int32_t*)llg_checked_malloc((size_t)n_dims, 2u * sizeof(int32_t),
+                                                  "memory dimensions");
+        memcpy(outer_dims, dims, (size_t)n_dims * 2u * sizeof(int32_t));
+        outer_dims[0] = low;
+        outer_dims[1] = high;
+        dims = outer_dims;
+        storage.rows = data;
+        total = (uint64_t)size * row_cells;
+        origin = (uint64_t)low * row_cells;
+        view_total = ((uint64_t)high - (uint64_t)low + 1u) * row_cells;
+    }
+    if (write) {
+        fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+    } else if (fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix) != 0 &&
+               notify) {
+        notify(contents, shape, LLG_CONTAINER_CHANGED_CONTENTS);
+    }
+    free(outer_dims);
+}
+
+#define LLG_ROWS_MEMORY_ENTRY(name, type, write)                                        \
+    void name(llg_string_t path, type* memory, int mode, sv4_t row, uint64_t row_cells,  \
+              uint32_t elem_width, int8_t elem_signed, int8_t two_state,                 \
+              const int32_t* dims, int n_dims, const uint64_t* strides, uint64_t origin, \
+              uint64_t view_total, sv4_t start, sv4_t finish, int has_start,             \
+              int has_finish, int addressing_policy, const sv4_t* enum_values,           \
+              uint32_t enum_count, int radix) {                                          \
+        llg_rows_memory_view(write, path, memory->data, memory->size, memory->element,   \
+                             memory->notify, memory->contents_dependency,                \
+                             memory->shape_dependency, mode, row, row_cells, elem_width, \
+                             elem_signed, two_state, dims, n_dims, strides, origin,      \
+                             view_total, start, finish, has_start, has_finish,           \
+                             addressing_policy, enum_values, enum_count, radix);         \
+    }
+LLG_ROWS_MEMORY_ENTRY(llg_dyn_rows_memory_read_view, struct llg_dyn_value_array_t, 0)
+LLG_ROWS_MEMORY_ENTRY(llg_dyn_rows_memory_write_view, struct llg_dyn_value_array_t, 1)
+LLG_ROWS_MEMORY_ENTRY(llg_queue_rows_memory_read_view, struct llg_queue_value_array_t, 0)
+LLG_ROWS_MEMORY_ENTRY(llg_queue_rows_memory_write_view, struct llg_queue_value_array_t, 1)
+#undef LLG_ROWS_MEMORY_ENTRY
 
 // ── Associative-array memories (IEEE 1800-2009 21.4.1, 21.5.3) ─────────────
 // Keys are values of the array's integral index type: start, finish and file

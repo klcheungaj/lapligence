@@ -27,10 +27,10 @@ pub(super) fn render_memory(
     if view.dims.is_empty() || view.dims.len() != view.strides.len() {
         return Err("memory task requires a fixed packed memory view".to_owned());
     }
-    if view
+    if !view
         .selectors
         .iter()
-        .any(crate::sim::ir::IrMemorySelector::is_slice)
+        .all(crate::sim::ir::IrMemorySelector::is_index)
     {
         return Err("memory slices with a variable position require the owned emitter".to_owned());
     }

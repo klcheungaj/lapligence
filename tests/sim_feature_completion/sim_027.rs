@@ -474,6 +474,40 @@ fn variable_position_slices_resolve_when_the_task_runs() {
     );
 }
 
+// A03: dynamic arrays and queues whose elements are unpacked arrays: one
+// element (also with a further index or slice inside it, a runtime index
+// evaluated once, `$`), the whole array and slices of its elements, a class
+// property through a handle; an invalid element or slice changes nothing and
+// an empty array loads nothing (S27-D21, S27-D19, S27-D10).
+#[test]
+fn rows_of_dynamic_arrays_and_queues_of_unpacked_arrays() {
+    let outside = |file: &str| {
+        format!("error: memory file `{file}`: selected index or slice is outside the memory")
+    };
+    let diagnostics = [
+        more_words("four.mem"),
+        more_words("four.mem"),
+        more_words("four.mem"),
+        more_words("four.mem"),
+        outside("four.mem"),
+        outside("four.mem"),
+        "error: memory file `four.mem`: slice is outside the current size of the array".to_owned(),
+        outside("dump.mem"),
+        "warning: memory file `four.mem`: destination memory has no elements; nothing loaded"
+            .to_owned(),
+    ];
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "container_rows",
+        &[],
+        &[],
+        &exact(
+            include_str!("../fixtures/sim/feature_completion/sim_027/container_rows.out"),
+            &as_strs(&diagnostics),
+        ),
+    );
+}
+
 // A03: a memory_name reached through a null class handle raises the standard
 // null dereference error before the file is opened or a word is stored.
 #[test]
@@ -528,6 +562,11 @@ fn neg_memory_names_that_are_not_variable_memories() {
         SUITE,
         "neg_const_ref",
         "cannot assign to read-only variable 'mem'",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_associative_rows",
+        "$readmemh does not support associative arrays of unpacked arrays, at ",
     );
     sim_cli::reject_case(
         SUITE,
