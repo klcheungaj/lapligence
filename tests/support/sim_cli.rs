@@ -500,6 +500,18 @@ pub(crate) fn run_case_checked_matrix(
     args: &[&str],
     check: &dyn Fn(&str, &Output),
 ) {
+    run_case_checked_matrix_with_files(suite, fixture, args, &[], check);
+}
+
+/// [`run_case_checked_matrix`] with checked-in input `files` (name,
+/// contents) written into every run's working directory.
+pub(crate) fn run_case_checked_matrix_with_files(
+    suite: &str,
+    fixture: &str,
+    args: &[&str],
+    files: &[(&str, &str)],
+    check: &dyn Fn(&str, &Output),
+) {
     assert!(
         llg::sim::build::cmake_available(),
         "CLI tests require CMake"
@@ -516,7 +528,8 @@ pub(crate) fn run_case_checked_matrix(
                 ("LLG_DEV_COMPACT_KERNELS", kernel),
                 ("GMP_ROOT", gmp.as_str()),
             ];
-            let output = invoke_with_env(suite, fixture, optimized, args, &controls, &[]);
+            let output =
+                invoke_with_env_and_files(suite, fixture, optimized, args, &controls, &[], files);
             let label = format!("{suite}/{fixture}, {backend}/{kernel}, optimized={optimized}");
             check(&label, &output);
         }

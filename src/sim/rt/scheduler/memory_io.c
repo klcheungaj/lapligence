@@ -16,13 +16,29 @@ typedef struct {
     int invalid_index;
 } llg_memory_value_t;
 
+// Diagnostics carry the category IEEE 1800-2009 21.4/21.4.2 and IEEE
+// 1364-2001 17.2.8 prescribe: a word count that differs from the range is a
+// warning; an out-of-range file address or enum value is an error that
+// terminates the load. Neither ends the simulation or changes its status.
+static void llg_memory_report(const char* category, const char* path,
+                              const char* format, va_list args) {
+    fprintf(stderr, "llg: %s: memory file `%s`: ", category, path ? path : "");
+    vfprintf(stderr, format, args);
+    fputc('\n', stderr);
+}
+
 static void llg_memory_warning(const char* path, const char* format, ...) {
     va_list args;
-    fprintf(stderr, "llg: memory file `%s`: ", path ? path : "");
     va_start(args, format);
-    vfprintf(stderr, format, args);
+    llg_memory_report("warning", path, format, args);
     va_end(args);
-    fputc('\n', stderr);
+}
+
+static void llg_memory_error(const char* path, const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    llg_memory_report("error", path, format, args);
+    va_end(args);
 }
 
 static char* llg_memory_path_copy(llg_string_t path) {
@@ -244,7 +260,7 @@ static int llg_memory_descriptor(const char* path, uint64_t total,
                                  uint64_t view_total, uint64_t* inner_total) {
     if (!dims || !strides || n_dims <= 0 || total == 0 || view_total == 0 ||
         origin >= total || view_total > total - origin) {
-        llg_memory_warning(path, "memory descriptor is invalid");
+        llg_memory_error(path, "memory descriptor is invalid");
         return 0;
     }
     uint64_t expected_total = 1;
@@ -252,13 +268,13 @@ static int llg_memory_descriptor(const char* path, uint64_t total,
         uint64_t extent;
         if (!llg_memory_extent(dims[2 * dimension], dims[2 * dimension + 1], &extent) ||
             expected_total > UINT64_MAX / extent) {
-            llg_memory_warning(path, "memory descriptor dimension overflows");
+            llg_memory_error(path, "memory descriptor dimension overflows");
             return 0;
         }
         expected_total *= extent;
     }
     if (expected_total != view_total) {
-        llg_memory_warning(path, "memory descriptor size does not match its bounds");
+        llg_memory_error(path, "memory descriptor size does not match its bounds");
         return 0;
     }
     uint64_t expected_stride = 1;
@@ -267,7 +283,7 @@ static int llg_memory_descriptor(const char* path, uint64_t total,
         if (!llg_memory_extent(dims[2 * dimension], dims[2 * dimension + 1], &extent) ||
             strides[dimension] != expected_stride ||
             expected_stride > UINT64_MAX / extent) {
-            llg_memory_warning(path, "memory descriptor stride is invalid");
+            llg_memory_error(path, "memory descriptor stride is invalid");
             return 0;
         }
         expected_stride *= extent;
@@ -279,19 +295,19 @@ static int llg_memory_descriptor(const char* path, uint64_t total,
             extent == 0 ||
             (extent - 1u) > UINT64_MAX / strides[dimension] ||
             max_offset > UINT64_MAX - (extent - 1u) * strides[dimension]) {
-            llg_memory_warning(path, "memory descriptor range overflows");
+            llg_memory_error(path, "memory descriptor range overflows");
             return 0;
         }
         max_offset += (extent - 1u) * strides[dimension];
     }
     if (max_offset >= total - origin) {
-        llg_memory_warning(path, "memory descriptor exceeds its source array");
+        llg_memory_error(path, "memory descriptor exceeds its source array");
         return 0;
     }
     uint64_t outer_extent;
     if (!llg_memory_extent(dims[0], dims[1], &outer_extent) ||
         outer_extent == 0 || view_total % outer_extent != 0) {
-        llg_memory_warning(path, "memory descriptor outer extent is invalid");
+        llg_memory_error(path, "memory descriptor outer extent is invalid");
         return 0;
     }
     *inner_total = view_total / outer_extent;
@@ -358,11 +374,11 @@ static int llg_memory_bounds(const char* path, uint64_t total,
     int32_t left_value = dims[0], right_value = dims[1];
     int64_t left = left_value, right = right_value;
     if (has_start && !sv4_to_index_i64(start, first)) {
-        llg_memory_warning(path, "start address is unknown, negative-width, or out of range");
+        llg_memory_error(path, "start address is unknown or outside the index range");
         return 0;
     }
     if (has_finish && !sv4_to_index_i64(finish, last)) {
-        llg_memory_warning(path, "finish address is unknown, negative-width, or out of range");
+        llg_memory_error(path, "finish address is unknown or outside the index range");
         return 0;
     }
     if (!has_start) {
@@ -378,7 +394,7 @@ static int llg_memory_bounds(const char* path, uint64_t total,
     uint64_t ignored_offset;
     if (!llg_memory_address_offset(*first, left_value, right_value, &ignored_offset) ||
         !llg_memory_address_offset(*last, left_value, right_value, &ignored_offset)) {
-        llg_memory_warning(path, "selected range includes an address outside the destination memory");
+        llg_memory_error(path, "selected range includes an address outside the memory");
         return 0;
     }
     return 1;
@@ -432,7 +448,69 @@ static sv4_t llg_memory_word_cast(sv4_t word, uint32_t width, int8_t is_signed) 
     return result;
 }
 
-static void fixed_memory_read_view(llg_string_t path, sv4_t* memory, llg_fixed_array_t* fixed, uint64_t total,
+// Destination or source cells of one memory file task: dense or descriptor
+// model cells, or the packed image of a fixed array without model storage.
+// An image holds `total` cells of the element width with cell 0 in the most
+// significant bits; it is a lexical copy that the generated code stores back
+// to the array after a load, so writing it publishes nothing by itself.
+typedef struct {
+    sv4_t* memory;
+    llg_fixed_array_t* fixed;
+    sv4_t* image;
+} llg_memory_storage_t;
+
+static uint64_t llg_memory_image_low(uint64_t index, uint64_t total,
+                                     uint32_t elem_width) {
+    return (total - 1u - index) * (uint64_t)elem_width;
+}
+
+static void llg_memory_store(const llg_memory_storage_t* storage, uint64_t index,
+                             uint64_t total, uint32_t elem_width, sv4_t value) {
+    if (storage->image) {
+        uint64_t low = llg_memory_image_low(index, total, elem_width);
+        sv4_part_select_set(storage->image, (int64_t)(low + elem_width - 1u),
+                            (int64_t)low, value);
+        return;
+    }
+    llg_ba(storage->fixed ? llg_fixed_array_cell(storage->fixed, index)
+                          : &storage->memory[index],
+           value);
+}
+
+// Format one cell into `digits`.
+static void llg_memory_format_cell(const llg_memory_storage_t* storage,
+                                   uint64_t index, uint64_t total,
+                                   uint32_t elem_width, int radix,
+                                   char* digits, size_t capacity) {
+    char conversion = radix == 2 ? 'b' : 'h';
+    if (storage->image) {
+        uint64_t low = llg_memory_image_low(index, total, elem_width);
+        sv4_t cell = sv4_part_select(*storage->image,
+                                     (int64_t)(low + elem_width - 1u), (int64_t)low);
+        sv4_format(conversion, cell, digits, capacity);
+        sv4_destroy(&cell);
+        return;
+    }
+    sv4_format(conversion,
+               *(storage->fixed ? llg_fixed_array_peek(storage->fixed, index)
+                                : &storage->memory[index]),
+               digits, capacity);
+}
+
+// An image must hold exactly `total` cells of the element width.
+static int llg_memory_storage_valid(const char* path,
+                                    const llg_memory_storage_t* storage,
+                                    uint64_t total, uint32_t elem_width) {
+    if (!storage->image) return 1;
+    if (elem_width == 0 || total > UINT32_MAX / elem_width ||
+        llg_sv4_width(*storage->image) != total * (uint64_t)elem_width) {
+        llg_memory_error(path, "memory image size does not match its cells");
+        return 0;
+    }
+    return 1;
+}
+
+static uint64_t fixed_memory_read_view(llg_string_t path, const llg_memory_storage_t* storage, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                           const int32_t* dims, int n_dims,
                           const uint64_t* strides, uint64_t origin,
@@ -444,16 +522,17 @@ static void fixed_memory_read_view(llg_string_t path, sv4_t* memory, llg_fixed_a
     if (!stream) {
         llg_memory_warning(filename, "open for reading failed: %s", strerror(errno));
         free(filename);
-        return;
+        return 0;
     }
     int64_t first, last;
     uint64_t inner_total;
-    if (!llg_memory_bounds(filename, total, dims, n_dims, strides, origin,
+    if (!llg_memory_storage_valid(filename, storage, total, elem_width) ||
+        !llg_memory_bounds(filename, total, dims, n_dims, strides, origin,
                            view_total, start, finish, has_start, has_finish,
                            addressing_policy, &first, &last, &inner_total)) {
         fclose(stream);
         free(filename);
-        return;
+        return 0;
     }
     uint64_t range = llg_memory_range_length(first, last);
     uint64_t expected = range > UINT64_MAX / inner_total
@@ -471,29 +550,35 @@ static void fixed_memory_read_view(llg_string_t path, sv4_t* memory, llg_fixed_a
         int kind = llg_memory_next_token(stream, radix, &token);
         if (kind == LLG_MEMORY_TOKEN_EOF) break;
         if (kind == LLG_MEMORY_TOKEN_ERROR) {
-            llg_memory_warning(filename, "malformed or over-width memory token");
-            continue;
+            // The text admits only white space, comments, numbers and `@`
+            // addresses; the words after a malformed token have no reliable
+            // address, so the load stops and keeps the words already placed.
+            llg_memory_error(filename, "malformed or over-width memory token; load terminated");
+            sv4_destroy(&token.value);
+            fclose(stream);
+            free(filename);
+            return written;
         }
         if (kind == LLG_MEMORY_TOKEN_ADDRESS) {
             saw_address = 1;
             int64_t address = token.address;
             if (token.invalid_index) {
-                llg_memory_warning(filename, "address jump is not a known index");
+                llg_memory_error(filename, "address jump is not a known index; load terminated");
                 sv4_destroy(&token.value);
                 fclose(stream);
                 free(filename);
-                return;
+                return written;
             } else {
                 current = address;
                 inner = 0;
                 if (!llg_memory_address_offset(address, dims[0], dims[1], &(uint64_t){0}) ||
                     !llg_memory_in_requested_range(address, first, last)) {
-                    llg_memory_warning(filename,
+                    llg_memory_error(filename,
                         "address jump is outside the destination memory or selected range; load terminated");
                     sv4_destroy(&token.value);
                     fclose(stream);
                     free(filename);
-                    return;
+                    return written;
                 }
             }
             continue;
@@ -509,7 +594,7 @@ static void fixed_memory_read_view(llg_string_t path, sv4_t* memory, llg_fixed_a
                 !llg_memory_view_index(current, inner, dims, n_dims, strides,
                                        origin, view_total, total, &index)) {
                 if (!warned_extra) {
-                    llg_memory_warning(filename, "selected address is outside the destination memory");
+                    llg_memory_error(filename, "selected address is outside the destination memory");
                     warned_extra = 1;
                 }
             } else {
@@ -523,12 +608,12 @@ static void fixed_memory_read_view(llg_string_t path, sv4_t* memory, llg_fixed_a
                 if (enum_count != 0 &&
                     !llg_memory_enum_word_fits_width(token.value, elem_width,
                                                      elem_signed)) {
-                    llg_memory_warning(filename,
+                    llg_memory_error(filename,
                         "numeric memory data does not fit the enum base type; load terminated");
                     sv4_destroy(&token.value);
                     fclose(stream);
                     free(filename);
-                    return;
+                    return written;
                 }
                 sv4_t converted = llg_memory_word_cast(token.value, elem_width, elem_signed);
                 if (two_state && had_unknown) {
@@ -538,15 +623,15 @@ static void fixed_memory_read_view(llg_string_t path, sv4_t* memory, llg_fixed_a
                     }
                 }
                 if (!llg_memory_enum_value_allowed(converted, enum_values, enum_count)) {
-                    llg_memory_warning(filename,
+                    llg_memory_error(filename,
                         "memory data value is not a member of the enum; load terminated");
                     sv4_destroy(&converted);
                     sv4_destroy(&token.value);
                     fclose(stream);
                     free(filename);
-                    return;
+                    return written;
                 }
-                llg_ba(fixed ? llg_fixed_array_cell(fixed, index) : &memory[index], converted);
+                llg_memory_store(storage, index, total, elem_width, converted);
                 sv4_destroy(&converted);
                 written++;
             }
@@ -571,12 +656,13 @@ static void fixed_memory_read_view(llg_string_t path, sv4_t* memory, llg_fixed_a
                addressing_policy == LLG_MEMORY_ADDRESSING_VERILOG_2001) {
         llg_memory_warning(filename, "memory file contains more words than the selected range");
     }
-    if (ferror(stream)) llg_memory_warning(filename, "read failed");
+    if (ferror(stream)) llg_memory_error(filename, "read failed");
     fclose(stream);
     free(filename);
+    return written;
 }
 
-static void fixed_memory_write_view(llg_string_t path, sv4_t* memory, llg_fixed_array_t* fixed, uint64_t total,
+static void fixed_memory_write_view(llg_string_t path, const llg_memory_storage_t* storage, uint64_t total,
                            uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                            const int32_t* dims, int n_dims,
                            const uint64_t* strides, uint64_t origin,
@@ -589,18 +675,20 @@ static void fixed_memory_write_view(llg_string_t path, sv4_t* memory, llg_fixed_
     char* requested = llg_memory_path_copy(path);
     char* filename = llg_output_path(requested);
     free(requested);
-    FILE* stream = fopen(filename, "w");
-    if (!stream) {
-        llg_memory_warning(filename, "open for writing failed: %s", strerror(errno));
+    // Check the range before opening, so a rejected call leaves an existing
+    // file untouched rather than truncating it.
+    int64_t first, last;
+    uint64_t inner_total;
+    if (!llg_memory_storage_valid(filename, storage, total, elem_width) ||
+        !llg_memory_bounds(filename, total, dims, n_dims, strides, origin,
+                           view_total, start, finish, has_start, has_finish,
+                           addressing_policy, &first, &last, &inner_total)) {
         free(filename);
         return;
     }
-    int64_t first, last;
-    uint64_t inner_total;
-    if (!llg_memory_bounds(filename, total, dims, n_dims, strides, origin,
-                           view_total, start, finish, has_start, has_finish,
-                           addressing_policy, &first, &last, &inner_total)) {
-        fclose(stream);
+    FILE* stream = fopen(filename, "w");
+    if (!stream) {
+        llg_memory_warning(filename, "open for writing failed: %s", strerror(errno));
         free(filename);
         return;
     }
@@ -615,13 +703,14 @@ static void fixed_memory_write_view(llg_string_t path, sv4_t* memory, llg_fixed_
         if (!llg_memory_view_index(current, inner, dims, n_dims, strides,
                                    origin, view_total, total, &index)) {
             if (!warned_extra) {
-                llg_memory_warning(filename, "selected address is outside the source memory");
+                llg_memory_error(filename, "selected address is outside the source memory");
                 warned_extra = 1;
             }
         } else {
-            sv4_format(radix == 2 ? 'b' : 'h', *(fixed ? llg_fixed_array_peek(fixed, index) : &memory[index]), digits, capacity);
+            llg_memory_format_cell(storage, index, total, elem_width, radix,
+                                   digits, capacity);
             if (fputs(digits, stream) == EOF || fputc('\n', stream) == EOF) {
-                llg_memory_warning(filename, "write failed");
+                llg_memory_error(filename, "write failed");
                 break;
             }
         }
@@ -636,8 +725,7 @@ static void fixed_memory_write_view(llg_string_t path, sv4_t* memory, llg_fixed_
         }
     }
     free(digits);
-    if (fclose(stream) != 0) llg_memory_warning(filename, "close after writing failed");
-    (void)elem_width;
+    if (fclose(stream) != 0) llg_memory_error(filename, "close after writing failed");
     (void)elem_signed;
     free(filename);
 }
@@ -685,7 +773,9 @@ void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
                           uint64_t view_total, sv4_t start, sv4_t finish,
                           int has_start, int has_finish, int addressing_policy,
                           const sv4_t* enum_values, uint32_t enum_count, int radix) {
-    fixed_memory_read_view(path, memory, NULL, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+    llg_memory_storage_t storage = {0};
+    storage.memory = memory;
+    fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
 }
 void llg_fixed_memory_read_view(llg_string_t path, llg_fixed_array_t* memory, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
@@ -694,24 +784,134 @@ void llg_fixed_memory_read_view(llg_string_t path, llg_fixed_array_t* memory, ui
                           uint64_t view_total, sv4_t start, sv4_t finish,
                           int has_start, int has_finish, int addressing_policy,
                           const sv4_t* enum_values, uint32_t enum_count, int radix) {
-    fixed_memory_read_view(path, NULL, memory, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+    llg_memory_storage_t storage = {0};
+    storage.fixed = memory;
+    fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+}
+void llg_image_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
+                          uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                          const int32_t* dims, int n_dims,
+                          const uint64_t* strides, uint64_t origin,
+                          uint64_t view_total, sv4_t start, sv4_t finish,
+                          int has_start, int has_finish, int addressing_policy,
+                          const sv4_t* enum_values, uint32_t enum_count, int radix) {
+    llg_memory_storage_t storage = {0};
+    storage.image = memory;
+    fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
 }
 
 void llg_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
-                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                           const int32_t* dims, int n_dims,
-                           const uint64_t* strides, uint64_t origin,
-                           uint64_t view_total, sv4_t start, sv4_t finish,
-                           int has_start, int has_finish, int addressing_policy,
-                           const sv4_t* enum_values, uint32_t enum_count, int radix) {
-    fixed_memory_write_view(path, memory, NULL, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+                          uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                          const int32_t* dims, int n_dims,
+                          const uint64_t* strides, uint64_t origin,
+                          uint64_t view_total, sv4_t start, sv4_t finish,
+                          int has_start, int has_finish, int addressing_policy,
+                          const sv4_t* enum_values, uint32_t enum_count, int radix) {
+    llg_memory_storage_t storage = {0};
+    storage.memory = memory;
+    fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
 }
 void llg_fixed_memory_write_view(llg_string_t path, llg_fixed_array_t* memory, uint64_t total,
-                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                           const int32_t* dims, int n_dims,
-                           const uint64_t* strides, uint64_t origin,
-                           uint64_t view_total, sv4_t start, sv4_t finish,
-                           int has_start, int has_finish, int addressing_policy,
-                           const sv4_t* enum_values, uint32_t enum_count, int radix) {
-    fixed_memory_write_view(path, NULL, memory, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+                          uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                          const int32_t* dims, int n_dims,
+                          const uint64_t* strides, uint64_t origin,
+                          uint64_t view_total, sv4_t start, sv4_t finish,
+                          int has_start, int has_finish, int addressing_policy,
+                          const sv4_t* enum_values, uint32_t enum_count, int radix) {
+    llg_memory_storage_t storage = {0};
+    storage.fixed = memory;
+    fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
 }
+void llg_image_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
+                          uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                          const int32_t* dims, int n_dims,
+                          const uint64_t* strides, uint64_t origin,
+                          uint64_t view_total, sv4_t start, sv4_t finish,
+                          int has_start, int has_finish, int addressing_policy,
+                          const sv4_t* enum_values, uint32_t enum_count, int radix) {
+    llg_memory_storage_t storage = {0};
+    storage.image = memory;
+    fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+}
+
+// Dynamic arrays, queues and fixed-size class properties keep their elements
+// as dense cells in declaration order. A runtime-sized view (`n_dims` 0)
+// addresses `[0:size-1]` of the current size, which a load never changes
+// (IEEE 1800-2009 21.4.1); a fixed-size view must match the size. A load that
+// placed any word sends one contents notification, like `$fread`.
+static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
+                                      size_t size, llg_container_notify_fn notify,
+                                      sv4_t* contents, sv4_t* shape, uint64_t total,
+                                      uint32_t elem_width, int8_t elem_signed,
+                                      int8_t two_state, const int32_t* dims, int n_dims,
+                                      const uint64_t* strides, uint64_t origin,
+                                      uint64_t view_total, sv4_t start, sv4_t finish,
+                                      int has_start, int has_finish, int addressing_policy,
+                                      const sv4_t* enum_values, uint32_t enum_count,
+                                      int radix) {
+    int32_t runtime_dims[2];
+    uint64_t runtime_stride = 1;
+    if (n_dims == 0) {
+        if (size == 0 || size - 1u > (size_t)INT32_MAX) {
+            char* filename = llg_memory_path_copy(path);
+            if (size != 0) {
+                llg_memory_error(filename, "memory has too many elements to address");
+            } else if (write && !has_start && !has_finish) {
+                // An empty array dumps as an empty file.
+                char* output = llg_output_path(filename);
+                FILE* stream = fopen(output, "w");
+                if (!stream || fclose(stream) != 0)
+                    llg_memory_warning(output, "open for writing failed: %s", strerror(errno));
+                free(output);
+            } else if (!write && !has_start && !has_finish) {
+                llg_memory_warning(filename, "destination memory has no elements; nothing loaded");
+            } else {
+                llg_memory_error(filename, "selected range includes an address outside the memory");
+            }
+            free(filename);
+            return;
+        }
+        runtime_dims[0] = 0;
+        runtime_dims[1] = (int32_t)(size - 1u);
+        dims = runtime_dims;
+        strides = &runtime_stride;
+        n_dims = 1;
+        origin = 0;
+        total = (uint64_t)size;
+        view_total = total;
+    } else if (total != (uint64_t)size) {
+        char* filename = llg_memory_path_copy(path);
+        llg_memory_error(filename, "memory descriptor size does not match its container");
+        free(filename);
+        return;
+    }
+    llg_memory_storage_t storage = {0};
+    storage.memory = data;
+    if (write) {
+        fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+    } else if (fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix) != 0 &&
+               notify) {
+        notify(contents, shape, LLG_CONTAINER_CHANGED_CONTENTS);
+    }
+}
+
+#define LLG_CONTAINER_MEMORY_ENTRY(name, type, write)                              \
+    void name(llg_string_t path, type* memory, uint64_t total, uint32_t elem_width,  \
+              int8_t elem_signed, int8_t two_state, const int32_t* dims, int n_dims, \
+              const uint64_t* strides, uint64_t origin, uint64_t view_total,         \
+              sv4_t start, sv4_t finish, int has_start, int has_finish,              \
+              int addressing_policy, const sv4_t* enum_values, uint32_t enum_count,  \
+              int radix) {                                                           \
+        llg_container_memory_view(write, path, memory->data, memory->size,           \
+                                  memory->notify, memory->contents_dependency,       \
+                                  memory->shape_dependency, total, elem_width,       \
+                                  elem_signed, two_state, dims, n_dims, strides,     \
+                                  origin, view_total, start, finish, has_start,      \
+                                  has_finish, addressing_policy, enum_values,        \
+                                  enum_count, radix);                                \
+    }
+LLG_CONTAINER_MEMORY_ENTRY(llg_dyn_memory_read_view, struct llg_dyn_array_t, 0)
+LLG_CONTAINER_MEMORY_ENTRY(llg_dyn_memory_write_view, struct llg_dyn_array_t, 1)
+LLG_CONTAINER_MEMORY_ENTRY(llg_queue_memory_read_view, struct llg_queue_t, 0)
+LLG_CONTAINER_MEMORY_ENTRY(llg_queue_memory_write_view, struct llg_queue_t, 1)
+#undef LLG_CONTAINER_MEMORY_ENTRY

@@ -312,6 +312,7 @@ fn render_stmt_scoped(
             start.as_deref(),
             finish.as_deref(),
         )?,
+        IrStmt::MemoryAccess(_) => return Err("memory image tasks require owned whole-model emission".to_owned()),
         IrStmt::FixedValueAssign { .. } | IrStmt::FixedArrayDeclare(_) | IrStmt::NativeValueDeclare(_) | IrStmt::NativeValueSharedDeclare(_) | IrStmt::NativeValueCopy { .. } | IrStmt::FixedArrayCopy { .. } | IrStmt::FixedArrayFill { .. } | IrStmt::FixedArrayOrder(_) | IrStmt::RealArrayOrder(_) => return Err("fixed-array copies require owned whole-model emission".to_owned()),
         IrStmt::Container(operation) => super::containers::statement(ctx, operation)?,
         IrStmt::StreamAssign { nba: true, .. } => {

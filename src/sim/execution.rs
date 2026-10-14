@@ -823,9 +823,10 @@ fn collect_effects(
                     effects.push(ExecutionEffect::Terminate);
                 }
             }
-            IrStmt::Memory { .. } | IrStmt::RandomSeed { .. } | IrStmt::RandomStateSet { .. } => {
-                effects.push(ExecutionEffect::RuntimeService)
-            }
+            IrStmt::Memory { .. }
+            | IrStmt::MemoryAccess(_)
+            | IrStmt::RandomSeed { .. }
+            | IrStmt::RandomStateSet { .. } => effects.push(ExecutionEffect::RuntimeService),
             IrStmt::Display { .. }
             | IrStmt::DisplayTyped { .. }
             | IrStmt::ImmediateAssertion { .. }
@@ -1002,6 +1003,15 @@ fn collect_statement_expression_effects(
         }
         IrStmt::RandomStateSet { state } => {
             collect_string_effects(ir, state, effects, visited_calls);
+        }
+        IrStmt::MemoryAccess(task) => {
+            collect_string_effects(ir, &task.path, effects, visited_calls);
+            for selector in &task.selectors {
+                collect_expression_effects(ir, &selector.value, effects, visited_calls);
+            }
+            for bound in [&task.start, &task.finish].into_iter().flatten() {
+                collect_expression_effects(ir, bound, effects, visited_calls);
+            }
         }
         IrStmt::Memory {
             path,

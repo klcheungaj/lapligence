@@ -89,8 +89,8 @@ pub use calls::{IrCall, IrCallArg, IrCallExpr, IrDepth, IrVirtualCall};
 mod statements;
 pub use statements::{
     IrActivationTarget, IrCaseItem, IrCaseKind, IrClockingSampleMode, IrDisplayRadix, IrFileOp,
-    IrMemoryAddressingPolicy, IrMemoryRadix, IrMemorySelector, IrMemoryView, IrStmt,
-    IrStochasticStmt, IrUniquePriorityCheck, IrWaveDumpVars,
+    IrMemoryAccess, IrMemoryAddressingPolicy, IrMemoryRadix, IrMemorySelector, IrMemoryStorage,
+    IrMemoryView, IrStmt, IrStochasticStmt, IrUniquePriorityCheck, IrWaveDumpVars,
 };
 mod events;
 pub use events::{

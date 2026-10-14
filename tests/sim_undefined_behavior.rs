@@ -1,4 +1,6 @@
-//! Characterization of Q02 unresolved-oracle behavior; goldens are not conformance oracles.
+//! Characterization of the Q02 cases the memory-file text leaves open; goldens
+//! are not conformance oracles. The cases the text settles are conformance
+//! tests in `sim_feature_completion::sim_027`.
 
 use std::path::Path;
 use std::process::Command;
@@ -11,8 +13,8 @@ fn characterize(stem: &str, extension: &str) {
     let source = format!("{stem}.{extension}");
     assert!(root.join(&source).is_file(), "missing fixture {source}");
     let data: &[&str] = match stem {
-        "q02_short_hex" | "q02_narrow_signed" | "q02_types" | "q02_views" => &["q02_hex.mem"],
-        "q02_short_binary" | "q02_binary_narrow" | "q02_binary_types" => &["q02_binary.mem"],
+        "q02_types" => &["q02_hex.mem"],
+        "q02_binary_types" => &["q02_binary.mem"],
         "q02_enum_numeric" => &["q02_enum.mem"],
         "q02_enum_tokens" => &[
             "q02_hex_x.mem",
@@ -27,10 +29,6 @@ fn characterize(stem: &str, extension: &str) {
             "q02_bin_zX.mem",
         ],
         "q02_malformed" => &["q02_malformed.mem"],
-        "q02_bad_address" => &["q02_bad_address.mem"],
-        "q02_short_file" => &["q02_short_file.mem"],
-        "q02_long_file" => &["q02_long_file.mem"],
-        "q02_wakeup" => &["q02_wakeup.mem"],
         _ => &[],
     };
     let editions: &[&str] = if extension == "v" {
@@ -95,17 +93,8 @@ macro_rules! fixture {
     };
 }
 
-fixture!(q02_short_hex, "v");
-fixture!(q02_short_binary, "v");
-fixture!(q02_binary_narrow, "v");
 fixture!(q02_binary_types, "sv");
-fixture!(q02_narrow_signed, "v");
 fixture!(q02_types, "sv");
 fixture!(q02_enum_numeric, "sv");
 fixture!(q02_enum_tokens, "sv");
-fixture!(q02_views, "sv");
 fixture!(q02_malformed, "v");
-fixture!(q02_bad_address, "v");
-fixture!(q02_short_file, "v");
-fixture!(q02_long_file, "v");
-fixture!(q02_wakeup, "v");

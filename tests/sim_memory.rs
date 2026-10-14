@@ -452,7 +452,7 @@ endmodule
         .contains("memory file contains more words than the selected range"));
     assert!(run
         .stderr
-        .contains("selected range includes an address outside the destination memory"));
+        .contains("selected range includes an address outside the memory"));
 }
 
 #[test]

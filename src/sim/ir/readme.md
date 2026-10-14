@@ -124,6 +124,19 @@ members keeps them in one SIM-003 native value (a structure of those leaves
 with the record type's nominal identity), passed as one more trailing formal
 after the record's columns; no `IrFixedValue` carries a native payload.
 
+SIM-027 adds one statement variant, `IrStmt::MemoryAccess`
+(`IrMemoryAccess`), for `$readmem*`/`$writemem*` on memories without model
+array storage. `IrMemoryStorage::Image` names a lexical packed local that
+holds the memory's image (cell 0 in the most significant bits); lowering
+declares it from the memory's value, runs the access and, for a load, assigns
+it back to the memory in one blocking store. `IrMemoryStorage::Container`
+names a dynamic array or queue (or a fixed class property's container) that
+is accessed in place; an empty `root_dims` means its size is read at run time.
+The view geometry (`origin`, `selectors`, `dims`, `strides`, `total`) is the
+one fixed-array memory views use and is validated by the same
+`validate_memory_geometry`. Module and static memories keep their existing
+fixed-array runtime call.
+
 ## Descriptor-backed native values (SIM-003)
 
 Native records live next to, not inside, the fixed-value contract.

@@ -14,6 +14,34 @@ impl Validator<'_> {
         if array.real {
             return self.fail(path, "memory task does not support real arrays");
         }
+        self.validate_memory_geometry(
+            MemoryGeometry {
+                source_dims: &array.dims,
+                source_total: array.total,
+                origin: view.origin,
+                selectors: &view.selectors,
+                sliced: view.sliced,
+                dims: &view.dims,
+                strides: &view.strides,
+                total: view.total,
+            },
+            formals,
+            path,
+        )
+    }
+
+    /// Check that a selected view lies inside its source dimensions; shared
+    /// by model-array views and memory-task images.
+    pub(super) fn validate_memory_geometry(
+        &self,
+        view: MemoryGeometry<'_>,
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
+        let array = MemorySource {
+            dims: view.source_dims,
+            total: view.source_total,
+        };
         if view.dims.is_empty() || view.dims.len() != view.strides.len() {
             return self.fail(path, "memory task requires a fixed packed memory view");
         }
@@ -115,7 +143,7 @@ impl Validator<'_> {
         if expected_total != view.total {
             return self.fail(path, "memory task view total disagrees with its bounds");
         }
-        let Some(last) = view.strides.iter().zip(&view.dims).try_fold(
+        let Some(last) = view.strides.iter().zip(view.dims).try_fold(
             view.origin,
             |offset, (stride, (left, right))| {
                 // The last element lies `distance` strides past the first.
@@ -133,6 +161,63 @@ impl Validator<'_> {
         }
         Ok(())
     }
+    /// Storage-specific shape checks of a memory task outside model arrays.
+    pub(super) fn validate_memory_access_storage(
+        &self,
+        task: &crate::sim::ir::IrMemoryAccess,
+        path: &str,
+    ) -> ValidationResult {
+        if task.element_width == 0 || task.element_width > LLG_MAX_WIDTH {
+            return self.fail(path, "memory element width is outside packed capacity");
+        }
+        let cells = task.cells();
+        if !task.root_dims.is_empty() && cells.is_none() {
+            return self.fail(path, "memory root cell count overflows");
+        }
+        match &task.storage {
+            crate::sim::ir::IrMemoryStorage::Image(_) => {
+                if cells
+                    .and_then(|cells| cells.checked_mul(u64::from(task.element_width)))
+                    .is_none_or(|width| width > u64::from(LLG_MAX_WIDTH))
+                {
+                    return self.fail(path, "memory image width is outside packed capacity");
+                }
+            }
+            crate::sim::ir::IrMemoryStorage::Container(index) => {
+                let Some(container) = self.model.containers.get(*index) else {
+                    return self.fail(path, "memory container index is out of bounds");
+                };
+                if container.element
+                    != (IrContainerElement::Packed {
+                        width: task.element_width,
+                        signed: task.signed,
+                        two_state: task.two_state,
+                    })
+                {
+                    return self.fail(path, "memory container element disagrees with the task");
+                }
+                match (&container.kind, cells) {
+                    (IrContainerKind::Dynamic, Some(cells))
+                        if container.initial_size == Some(cells) => {}
+                    (IrContainerKind::Dynamic | IrContainerKind::Queue { .. }, None)
+                        if task.selectors.is_empty()
+                            && !task.sliced
+                            && task.dims.is_empty()
+                            && task.strides.is_empty()
+                            && task.origin == 0
+                            && task.total == 0 => {}
+                    _ => {
+                        return self.fail(
+                            path,
+                            "memory container must be a fixed-size class property, dynamic array or queue",
+                        )
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn validate_fixed_value(
         &self,
         value: &IrFixedValue,
@@ -299,4 +384,21 @@ impl Validator<'_> {
             }
         }
     }
+}
+
+/// A memory view and the dimensions of the storage it selects from.
+pub(super) struct MemoryGeometry<'a> {
+    pub(super) source_dims: &'a [(i32, i32)],
+    pub(super) source_total: u64,
+    pub(super) origin: u64,
+    pub(super) selectors: &'a [crate::sim::ir::IrMemorySelector],
+    pub(super) sliced: bool,
+    pub(super) dims: &'a [(i32, i32)],
+    pub(super) strides: &'a [u64],
+    pub(super) total: u64,
+}
+
+struct MemorySource<'a> {
+    dims: &'a [(i32, i32)],
+    total: u64,
 }

@@ -1578,6 +1578,40 @@ runtime-sized handle; implement the scope services with SIM-041; export the
 
 `tests/fixtures/sim/feature_completion/sim_040/neg_*.sv`.
 
+## Event controls on fork-shared automatic array elements
+
+**Status:** open (found during SIM-027; not caused by memory tasks).
+
+### Symptom
+
+An `@` or `wait` in a fork branch on an element of an unpacked array that is
+an automatic variable of the enclosing task stops code generation:
+
+```systemverilog
+task automatic run();
+  logic [7:0] mem [0:1];
+  fork
+    begin @(mem[0]); $display("%h", mem[0]); end
+    begin #1 mem[0] = 8'h11; end
+  join
+endtask
+```
+
+`llg: codegen error: P05 ownership emission is not yet implemented for
+unresolved local read _f2_5__l0; no C model was emitted`. The same wait on a
+module, static or `ref`-formal memory, or on a fork-shared scalar, works.
+
+### Cause
+
+Not investigated. The fork-shared lowering does not resolve the element read
+inside the waited expression to the shared frame slot.
+
+### Direction
+
+Resolve fork-shared array elements in event expressions as fork-shared
+scalars are resolved. Until then the SIM-027 wakeup fixtures wait through a
+`ref` formal, a structure member and a static task memory instead.
+
 ## Legacy constructs unsupported by design
 
 **Status:** decided 2026-10-08; not planned. The rows are marked 🚫 in

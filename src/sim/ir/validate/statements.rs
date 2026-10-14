@@ -173,6 +173,44 @@ impl Validator<'_> {
                     }
                 }
             }
+            IrStmt::MemoryAccess(task) => {
+                task.path.validate(self.model, self.string_return.get())?;
+                let mut result = Ok(());
+                task.path.expressions(&mut |child| {
+                    result = result
+                        .clone()
+                        .and_then(|_| self.validate_expr(child, formals, path));
+                });
+                result?;
+                self.validate_memory_access_storage(task, path)?;
+                if let Some(cells) = task.cells() {
+                    self.validate_memory_geometry(
+                        super::fixed_values::MemoryGeometry {
+                            source_dims: &task.root_dims,
+                            source_total: cells,
+                            origin: task.origin,
+                            selectors: &task.selectors,
+                            sliced: task.sliced,
+                            dims: &task.dims,
+                            strides: &task.strides,
+                            total: task.total,
+                        },
+                        formals,
+                        path,
+                    )?;
+                }
+                for (name, bound) in [("start", &task.start), ("finish", &task.finish)] {
+                    if let Some(bound) = bound {
+                        self.validate_expr(bound, formals, &format!("{path}.{name}"))?;
+                        if bound.is_real() {
+                            return self.fail(
+                                format!("{path}.{name}"),
+                                "memory task bound must be a packed integer",
+                            );
+                        }
+                    }
+                }
+            }
             IrStmt::FixedValueAssign { dst, src, nba } => {
                 let source_bits = self.validate_fixed_value(src, formals, path)?;
                 self.validate_fixed_activation(dst.array, path)?;

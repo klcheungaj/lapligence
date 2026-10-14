@@ -121,10 +121,16 @@ configuration blocks in library maps under the formal grammar despite conflictin
 adjacent prose; this remains the owner's 2026-09-27 policy, not a claimed IEEE
 correction. Per-library `-incdir` behavior is described in §3. Q01 mixed-state
 structure-pattern constants have a member-specific two-state conversion path.
-Q02 memory-file intersections retain unresolved oracle questions. Q03
+Q02 memory-file intersections are resolved by SIM-027: word extension follows
+unsized-literal rules (SV §§21.4, 5.7.1), two-state words read X/Z as 0
+(SV §21.4.2), range intersections terminate or warn as SV §21.4 prescribes, and
+same-slot readers are tested against the allowed interleavings (V §§5.3–5.4;
+SV §§4.3–4.7) in the
+[sim_027 conformance fixtures](../tests/fixtures/sim/feature_completion/sim_027/readme.md).
+Enum width/X membership and malformed-token recovery remain llg readings or
+choices (S27-D4, S27-D5). Q03
 member-NBA retagging is resolved from SV §§4.9.4, 10.4.2, 7.3.2 and 11.9: the
-member write is checked against the tag at commit (§2). Q02 same-slot reader ordering follows the
-allowed scheduling interleavings (V §§5.4–5.5; SV §§4.6–4.7). Comparisons with
+member write is checked against the tag at commit (§2). Comparisons with
 other simulators are corroboration, not a normative resolution. Their
 [characterization fixtures](../tests/fixtures/sim/undefined_behavior/readme.md)
 are not independent conformance oracles.
@@ -1614,6 +1620,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   SV §§21.3.5–21.3.8 **[2001/SV-2005]**.
 - 🟨 **Memory images** — `$readmemh/$readmemb` accept owned string paths,
   whitespace/comments, binary/hex digits, X/Z and `@` addresses.
+  The memory may be module, package, hierarchical or static storage, a static
+  or automatic subroutine or block local (also fork-shared), a `ref` formal, a
+  structure member, a fixed-size class property (instance or static), or a
+  whole dynamic array or queue at its current size, never resized (S27-D10).
   Fixed packed memories may have multiple unpacked dimensions and selected
   rows/slices; runtime view selectors are captured once. Remaining dimensions
   walk low-to-high in row-major order; one-dimensional 2001 omitted ranges
@@ -1626,39 +1636,34 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   change the selected cell. Magnitudes outside signed 64-bit index range and
   jumps outside a selected view diagnose before another write.
   Incomplete rows leave unread subwords unchanged.
-  Public SV2009 coverage includes mixed-direction 3-D declarations, a runtime
-  selected slice with explicit descending bounds, a 129-bit selected word, and
-  settled per-leaf reader notification after a selected load.
-  **Allowed nondeterminism (Q02):** Same-slot readers may interleave under
-  V §§5.4–5.5 / SV §§4.6–4.7. Each read follows its triggering word update;
-  the memory-load clauses do not impose a total order between independent
-  readers or require the caller to print before them. `q02_wakeup` in
-  `sim_undefined_behavior` records current `llg` order, **not a conformance
-  claim**; a conformance test must use these ordering constraints.
+  Words are unsized unsigned numbers: a leading X/Z pads with that state, known
+  digits zero-extend, wider numbers truncate (S27-D2); two-state words read X/Z
+  as 0 (S27-D3). Diagnostics print as `llg: warning: memory file ...` (missing
+  file, word-count mismatch, X/Z conversion, empty resizable array) or
+  `llg: error: memory file ...` (malformed token, address outside the task range
+  or the memory, enum value, invalid range); neither changes the exit status
+  (S27-D5..D9). Erroneous files never write outside the selected memory.
+  **Scheduling (S27-D1):** each word is stored when the task reaches it; a
+  changed word wakes its waiters once in the same time slot, an unchanged word
+  is no event, and woken readers may run in any permitted order (SV §4.7). The
+  [sim_027 suite](../tests/fixtures/sim/feature_completion/sim_027/readme.md)
+  accepts every permitted order rather than one transcript.
   V §17.2.8; SV §21.4 **[1995/SV-2005]**.
 
-  Short words pad a leading X/Z with that state; known digits zero-extend.
-  Ordinary packed memories truncate normally. Enum words are checked at original
-  width, allowing redundant signed extension; invalid words diagnose and stop
-  without undoing earlier writes. Two-state X/Z conversion occurs before enum
-  range checking, without discarding high bits. Sparse addressed 2009 files omit
-  the no-address short-file warning; 2001 count warnings remain, including excess
-  data from repeated in-range addresses. **Unresolved oracle (Q02):** The
-  short X/Z token-extension intersections for binary and hex words of different
-  widths, signed/two-state/enum destinations and selected views, plus malformed
-  token handling, four-state enum numeric corners and diagnostic details beyond
-  the prescribed warning/error categories, have no settled oracle in the
-  supplied V §17.2.8 / SV §§21.4–21.4.3 text. The `q02_*` fixtures in
-  `sim_undefined_behavior` record current `llg` values, diagnostics and status,
-  **not a conformance claim**; resolution requires a clause-based oracle.
-  Dynamic arrays and queues of packed words (without resizing), and
-  integral-key associative memories, are legal under SV §21.4.1 but unsupported.
+  Enum words are checked at the base width, allowing redundant signed
+  extension; invalid words diagnose and stop without undoing earlier writes
+  (S27-D4, an llg reading kept as a `q02_enum_*` characterization in
+  `sim_undefined_behavior`). Sparse addressed 2009 files omit the no-address
+  short-file warning; 2001 count warnings remain, including excess data from
+  repeated in-range addresses. Integral-key associative memories and slices
+  of dynamic arrays or queues are legal under SV §21.4.1 but unsupported.
   Real/non-packed words and fully indexed scalar targets are outside the
   memory-load argument contract; string-key associative memories are prohibited.
 - 🟦 **Memory writers** — `$writememh/$writememb` emit consumable four-state words
-  from admitted fixed-memory views in low-to-high row-major order. The same
-  element/view restrictions apply; writers reject in 2001 mode.
-  SV §21.5 **[SV-2005]**.
+  from the same storage forms and views in low-to-high row-major order without
+  `@` addresses (S27-D11); a range outside the memory is rejected before the
+  file is opened (S27-D12). The same element/view restrictions apply; writers
+  reject in 2001 mode. SV §21.5 **[SV-2005]**.
 
 - ❌ **String-sourced memory loading** — `$sreadmemb/$sreadmemh` appear in the
   frontend's standard-name allowlist, but have no built-in simulator lowering or

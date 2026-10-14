@@ -22,7 +22,7 @@ fn signed_jumps_in_selected_multidimensional_view_preserve_other_cells() {
         "syn030_memory_views", "signed_selected",
         "selected=aa,ee,ee,ee retained=ee,ee\n",
         concat!(
-            "llg: memory file `selected.mem`: address jump is outside the destination memory or selected range; load terminated\n",
+            "llg: error: memory file `selected.mem`: address jump is outside the destination memory or selected range; load terminated\n",
             "llg: simulation ended without $finish (no processes remain) at time 0\n",
         ),
         &[], &["--edition", "sv2009"],
@@ -63,7 +63,7 @@ fn invalid_selected_slice_range_leaves_all_cells_unchanged() {
         "selected_bad_bounds",
         "selected=ee,ee retained=ee\n",
         concat!(
-            "llg: memory file `bounds.mem`: selected range includes an address outside the destination memory\n",
+            "llg: error: memory file `bounds.mem`: selected range includes an address outside the memory\n",
             "llg: simulation ended without $finish (no processes remain) at time 0\n",
         ),
         &[],
@@ -79,7 +79,7 @@ fn invalid_jump_in_selected_row_retains_the_loaded_prefix() {
         "selected_bad_jump",
         "selected=ee,11,ee other=ee\n",
         concat!(
-            "llg: memory file `jump.mem`: address jump is outside the destination memory or selected range; load terminated\n",
+            "llg: error: memory file `jump.mem`: address jump is outside the destination memory or selected range; load terminated\n",
             "llg: simulation ended without $finish (no processes remain) at time 0\n",
         ),
         &[],
@@ -108,7 +108,7 @@ fn selected_enum_load_stops_before_non_fitting_word() {
         "enum_selected_stop",
         "selected=1,0 other=0\n",
         concat!(
-            "llg: memory file `enum.mem`: numeric memory data does not fit the enum base type; load terminated\n",
+            "llg: error: memory file `enum.mem`: numeric memory data does not fit the enum base type; load terminated\n",
             "llg: simulation ended without $finish (no processes remain) at time 0\n",
         ),
         &[],
@@ -123,11 +123,8 @@ fn selected_packed_struct_and_two_state_binary_elements_convert_per_leaf() {
         "syn030_memory_views",
         "selected_element_types",
         "struct=12,34,ee bits=1000,1010,1111\n",
-        concat!(
-            "llg: memory file `bits.mem`: X/Z memory data converted to a two-state element\n",
-            "llg: simulation ended without $finish (no processes remain) at time 0\n",
-        ),
-        &[],
+        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        &["memory file `bits.mem`: X/Z memory data converted to a two-state element"],
         &["--edition", "sv2009"],
         &[("struct.mem", "12\n34\n"), ("bits.mem", "1x0z\n1010\n")],
     );

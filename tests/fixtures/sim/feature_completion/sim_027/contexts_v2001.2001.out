@@ -1,0 +1,5 @@
+module=30,31,32,33
+static_local[5:2]=10,11,12,13
+automatic_local=23,22,21,20
+function_sum=110
+hierarchical[3:0]=10,11,12,13

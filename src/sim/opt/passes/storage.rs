@@ -408,6 +408,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                 collect_expr_reads(arg, model, rw);
             }
         }
+        IrStmt::MemoryAccess(task) => {
+            task.expressions(&mut |child| collect_expr_reads(child, model, rw));
+        }
         IrStmt::Memory {
             path,
             view,

@@ -1,0 +1,9 @@
+whole round trips: mismatches=0
+w100[2]=0deadbeefxxxxxxxxxxxxxxxx w200[0]=ffffc0000444Zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+xz=x0z1x0,zzzzzz,10x01z,xxxxxx
+xz via hex=xxxxxx,zzzzzz,10xxxx,xxxxxx
+reversed range same order: mismatches=0 edges=00,00
+reversed range mirrored: mismatches=0
+descending declaration mirrored: mismatches=0 edges=00,00
+negative to positive addresses: mismatches=0
+start only: mismatches=0 below=00
