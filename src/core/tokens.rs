@@ -444,6 +444,8 @@ fn semantic_kind(kind: SemanticKind) -> &'static str {
         SemanticKind::ContinuousAssign => "continuous assignment",
         SemanticKind::TimingControl => "timing control",
         SemanticKind::AssertionExpr => "assertion expression",
+        SemanticKind::ConstraintBlock => "constraint block",
+        SemanticKind::Constraint => "constraint",
         SemanticKind::Primitive => "primitive",
         SemanticKind::Subroutine => "subroutine",
         SemanticKind::Argument => "argument",

@@ -53,6 +53,8 @@ pub enum CapturedSemanticKind {
     TimingControl,
     NetAlias,
     AssertionExpr,
+    ConstraintBlock,
+    Constraint,
     Unsupported,
 }
 
@@ -87,6 +89,8 @@ impl From<crate::ffi::slang::SemanticKind> for CapturedSemanticKind {
             crate::ffi::slang::SemanticKind::TimingControl => Self::TimingControl,
             crate::ffi::slang::SemanticKind::NetAlias => Self::NetAlias,
             crate::ffi::slang::SemanticKind::AssertionExpr => Self::AssertionExpr,
+            crate::ffi::slang::SemanticKind::ConstraintBlock => Self::ConstraintBlock,
+            crate::ffi::slang::SemanticKind::Constraint => Self::Constraint,
             crate::ffi::slang::SemanticKind::Unsupported => Self::Unsupported,
         }
     }

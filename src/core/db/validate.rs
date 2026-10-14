@@ -85,6 +85,23 @@ impl Validator<'_> {
             }
             self.validate_kind_refs(&node.kind, &format!("{path}.kind"))?;
         }
+        for (call, info) in self.db.randomize_call_entries() {
+            let path = format!("randomize_calls[{}]", call.0);
+            if !matches!(
+                self.node(*call, &path)?.kind,
+                NodeKind::SysCall { .. } | NodeKind::MethodCall { .. }
+            ) {
+                return self.fail(path, "randomize metadata key is not a call");
+            }
+            if let Some(inline) = info.inline {
+                if !matches!(
+                    self.node(inline, &format!("{path}.inline"))?.kind,
+                    NodeKind::Constraint(_)
+                ) {
+                    return self.fail(path, "inline randomize constraints are not a constraint");
+                }
+            }
+        }
         for (pattern, fields) in self.db.conditional_pattern_field_entries() {
             let path = format!("conditional_pattern_fields[{}]", pattern.0);
             self.node(*pattern, &path)?;
@@ -654,6 +671,8 @@ impl NodeKind {
             NodeKind::Stmt(stmt) => statement_refs(stmt, refs),
             NodeKind::AssertionExpr(assertion) => assertion.referenced_nodes(refs),
             NodeKind::Expr(expr) => expression_refs(expr, refs),
+            NodeKind::ConstraintBlock(block) => refs.extend(block.body),
+            NodeKind::Constraint(constraint) => constraint.referenced_nodes(refs),
             NodeKind::ModuleInst { .. }
             | NodeKind::InstanceArray
             | NodeKind::Package

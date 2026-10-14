@@ -1446,8 +1446,26 @@ uint32_t semanticSymbolKind(SymbolKind kind) {
     case SymbolKind::StatementBlock: return LLG_SLANG_SEMANTIC_SCOPE;
     case SymbolKind::ClockingBlock: return LLG_SLANG_SEMANTIC_SCOPE;
     case SymbolKind::ClockVar: return LLG_SLANG_SEMANTIC_VARIABLE;
+    case SymbolKind::ConstraintBlock: return LLG_SLANG_SEMANTIC_CONSTRAINT_BLOCK;
     default: return LLG_SLANG_SEMANTIC_UNSUPPORTED;
   }
+}
+
+// Repository codes for Slang constraint kinds; 0 for an invalid constraint,
+// which is exported as an unsupported node.
+uint32_t semanticConstraintKind(ConstraintKind kind) {
+  switch (kind) {
+    case ConstraintKind::List: return LLG_SLANG_CONSTRAINT_LIST;
+    case ConstraintKind::Expression: return LLG_SLANG_CONSTRAINT_EXPRESSION;
+    case ConstraintKind::Implication: return LLG_SLANG_CONSTRAINT_IMPLICATION;
+    case ConstraintKind::Conditional: return LLG_SLANG_CONSTRAINT_CONDITIONAL;
+    case ConstraintKind::Uniqueness: return LLG_SLANG_CONSTRAINT_UNIQUENESS;
+    case ConstraintKind::DisableSoft: return LLG_SLANG_CONSTRAINT_DISABLE_SOFT;
+    case ConstraintKind::SolveBefore: return LLG_SLANG_CONSTRAINT_SOLVE_BEFORE;
+    case ConstraintKind::Foreach: return LLG_SLANG_CONSTRAINT_FOREACH;
+    case ConstraintKind::Invalid: return 0;
+  }
+  return 0;
 }
 
 uint64_t clockingEdgeCode(EdgeKind edge) {
@@ -2303,7 +2321,29 @@ public:
             : LLG_SLANG_VARIABLE_LIFETIME_STATIC;
         if (symbol.flags.has(VariableFlags::Const))
           result.auxiliary |= LLG_SLANG_VARIABLE_CONST;
+        if constexpr (std::same_as<T, ClassPropertySymbol>) {
+          if (symbol.randMode == RandMode::Rand)
+            result.auxiliary |= LLG_SLANG_VARIABLE_RAND;
+          else if (symbol.randMode == RandMode::RandC)
+            result.auxiliary |= LLG_SLANG_VARIABLE_RANDC;
+        }
       }
+    }
+    if constexpr (std::same_as<T, ConstraintBlockSymbol>) {
+      if (symbol.flags.has(ConstraintBlockFlags::Static))
+        result.auxiliary |= LLG_SLANG_CONSTRAINT_BLOCK_STATIC;
+      if (symbol.flags.has(ConstraintBlockFlags::Pure))
+        result.auxiliary |= LLG_SLANG_CONSTRAINT_BLOCK_PURE;
+      if (symbol.flags.has(ConstraintBlockFlags::Extern))
+        result.auxiliary |= LLG_SLANG_CONSTRAINT_BLOCK_EXTERN;
+      if (symbol.flags.has(ConstraintBlockFlags::ExplicitExtern))
+        result.auxiliary |= LLG_SLANG_CONSTRAINT_BLOCK_EXPLICIT_EXTERN;
+      if (symbol.flags.has(ConstraintBlockFlags::Initial))
+        result.auxiliary |= LLG_SLANG_CONSTRAINT_BLOCK_INITIAL;
+      if (symbol.flags.has(ConstraintBlockFlags::Extends))
+        result.auxiliary |= LLG_SLANG_CONSTRAINT_BLOCK_EXTENDS;
+      if (symbol.flags.has(ConstraintBlockFlags::Final))
+        result.auxiliary |= LLG_SLANG_CONSTRAINT_BLOCK_FINAL;
     }
     if constexpr (std::same_as<T, SubroutineSymbol>) {
       addLifetime(result, symbol.defaultLifetime);
@@ -2485,6 +2525,13 @@ public:
         capture.semanticRole(id, expression, LLG_SLANG_EDGE_ALIAS_NET, index++);
     }
     visitDefault(symbol);
+    // A prototype without an out-of-block body, and a pure constraint, bind
+    // to an invalid constraint: such a block has no BODY (18.5.1, 18.5.2).
+    if constexpr (std::same_as<T, ConstraintBlockSymbol>) {
+      const Constraint& body = symbol.getConstraints();
+      if (!capture.declarationOnly && body.kind != ConstraintKind::Invalid)
+        capture.semanticRole(id, &body, LLG_SLANG_EDGE_BODY);
+    }
     if constexpr (std::same_as<T, GenerateBlockArraySymbol>) {
       if (symbol.loopVariable) {
         const uint64_t loopVariableId =
@@ -3034,6 +3081,16 @@ public:
           result.auxiliary |= LLG_SLANG_ASSERTION_ABORT_SYNC;
       }
     }
+    else if constexpr (std::derived_from<T, Constraint>) {
+      const uint32_t subkind = semanticConstraintKind(node.kind);
+      result.kind = subkind ? LLG_SLANG_SEMANTIC_CONSTRAINT
+                            : LLG_SLANG_SEMANTIC_UNSUPPORTED;
+      result.subkind = subkind;
+      if constexpr (std::same_as<T, ExpressionConstraint>) {
+        if (node.isSoft)
+          result.auxiliary |= LLG_SLANG_CONSTRAINT_SOFT;
+      }
+    }
     else {
       result.kind = LLG_SLANG_SEMANTIC_UNSUPPORTED;
       if constexpr (std::derived_from<T, Pattern>) {
@@ -3069,6 +3126,8 @@ public:
     parents.push_back(id);
     visitDefault(node);
     parents.pop_back();
+    if constexpr (std::derived_from<T, Constraint>)
+      addConstraintRoles(id, node);
     if constexpr (std::same_as<T, StructurePattern>) {
       // A structure pattern's field identities and nested patterns are
       // resolved by Slang. Replace generic child edges with paired roles so
@@ -3230,6 +3289,50 @@ private:
       addDirection(node, port.direction);
     }
     return id;
+  }
+
+  // Typed constraint children (see LLG_SLANG_CONSTRAINT_* in the header):
+  // the generic visit attached them as children in visit order.
+  template<typename T>
+  void addConstraintRoles(uint64_t id, const T& node) {
+    if constexpr (std::same_as<T, ConstraintList>) {
+      uint32_t index = 0;
+      for (const Constraint* item : node.list)
+        capture.semanticRole(id, item, LLG_SLANG_EDGE_OPERAND, index++);
+    }
+    else if constexpr (std::same_as<T, ExpressionConstraint>) {
+      capture.semanticRole(id, &node.expr, LLG_SLANG_EDGE_OPERAND, 0);
+    }
+    else if constexpr (std::same_as<T, ImplicationConstraint>) {
+      capture.semanticRole(id, &node.predicate, LLG_SLANG_EDGE_CONDITION);
+      capture.semanticRole(id, &node.body, LLG_SLANG_EDGE_BODY);
+    }
+    else if constexpr (std::same_as<T, ConditionalConstraint>) {
+      capture.semanticRole(id, &node.predicate, LLG_SLANG_EDGE_CONDITION);
+      capture.semanticRole(id, &node.ifBody, LLG_SLANG_EDGE_THEN);
+      if (node.elseBody)
+        capture.semanticRole(id, node.elseBody, LLG_SLANG_EDGE_ELSE);
+    }
+    else if constexpr (std::same_as<T, UniquenessConstraint>) {
+      uint32_t index = 0;
+      for (const Expression* item : node.items)
+        capture.semanticRole(id, item, LLG_SLANG_EDGE_OPERAND, index++);
+    }
+    else if constexpr (std::same_as<T, DisableSoftConstraint>) {
+      capture.semanticRole(id, &node.target, LLG_SLANG_EDGE_OPERAND, 0);
+    }
+    else if constexpr (std::same_as<T, SolveBeforeConstraint>) {
+      uint32_t index = 0;
+      for (const Expression* item : node.solve)
+        capture.semanticRole(id, item, LLG_SLANG_EDGE_LEFT, index++);
+      index = 0;
+      for (const Expression* item : node.after)
+        capture.semanticRole(id, item, LLG_SLANG_EDGE_RIGHT, index++);
+    }
+    else if constexpr (std::same_as<T, ForeachConstraint>) {
+      capture.semanticRole(id, &node.arrayRef, LLG_SLANG_EDGE_BASE);
+      capture.semanticRole(id, &node.body, LLG_SLANG_EDGE_BODY);
+    }
   }
 
   bool markVisited(uint64_t id) {
@@ -3764,6 +3867,24 @@ private:
       if (isSuperMethodCall(expression))
         capture.output.semantic_nodes[static_cast<size_t>(id)].auxiliary |=
             LLG_SLANG_CALL_SUPER;
+      if (expression.isSystemCall()) {
+        const auto& info =
+            std::get<CallExpression::SystemCallInfo>(expression.subroutine);
+        if (info.subroutine->knownNameId == parsing::KnownSystemName::Randomize) {
+          const bool classForm =
+              info.scope->getCompilation().getSystemMethod(
+                  SymbolKind::ClassType, expression.getSubroutineName()) ==
+              info.subroutine.get();
+          capture.output.semantic_nodes[static_cast<size_t>(id)].auxiliary |=
+              classForm ? LLG_SLANG_CALL_CLASS_RANDOMIZE
+                        : LLG_SLANG_CALL_SCOPE_RANDOMIZE;
+        }
+        if (const auto* randomize =
+                std::get_if<CallExpression::RandomizeCallInfo>(&info.extraInfo);
+            randomize && randomize->inlineConstraints &&
+            randomize->inlineConstraints->kind != ConstraintKind::Invalid)
+          capture.semanticRole(id, randomize->inlineConstraints, LLG_SLANG_EDGE_BODY);
+      }
     }
     else if constexpr (std::same_as<T, AssertionInstanceExpression>) {
       capture.semanticRole(id, &expression.body, LLG_SLANG_EDGE_BODY);

@@ -235,6 +235,8 @@ pub(super) fn node_kind_from_slang(
             expression_from_slang(snapshot, type_projector, node, edges, ids, ty)?
         }
         SemanticKind::AssertionExpr => assertion_expr_from_slang(snapshot, node, edges, ids)?,
+        SemanticKind::ConstraintBlock => constraint_block_from_slang(node, edges, ids)?,
+        SemanticKind::Constraint => constraint_from_slang(node, edges, ids)?,
         SemanticKind::SystemCall => NodeKind::SysCall {
             name: node.name.to_string(),
         },
