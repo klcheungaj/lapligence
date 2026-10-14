@@ -295,7 +295,7 @@ fn unprovided_svdpi_routine_is_named() {
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_unprovided_routine",
-        "a DPI-C library calls svdpi.h routine `svGetScope`, which llg does not provide",
+        "a DPI-C library calls svdpi.h routine `svGetTime`, which llg does not provide",
         &["--dpi-lib", &library],
     );
 }
@@ -346,20 +346,20 @@ fn unprovided_routine_imported_by_a_mach_o_library_is_named_before_the_build() {
     let library = directory.path().join("libneg_unprovided_routine.dylib");
     std::fs::write(
         &library,
-        dynamic_lookup_dylib(&["svGetScope", "svGetArrayPtr", "neg_helper"]),
+        dynamic_lookup_dylib(&["svGetTime", "svGetArrayPtr", "neg_helper"]),
     )
     .expect("write Mach-O library");
     let library = library.to_string_lossy().into_owned();
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_unprovided_routine",
-        "a DPI-C library calls svdpi.h routine `svGetScope`, which llg does not provide",
+        "a DPI-C library calls svdpi.h routine `svGetTime`, which llg does not provide",
         &["--dpi-lib", &library],
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_unprovided_routine",
-        "imports svGetScope for dyld to resolve when the model runs",
+        "imports svGetTime for dyld to resolve when the model runs",
         &["--dpi-lib", &library],
     );
 }

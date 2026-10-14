@@ -63,7 +63,7 @@ fn dpi_string_snapshots_precede_copyouts_and_preserve_borrowed_inputs() {
                 _ => None,
             },
         ));
-        let c = render_dpi_thunk(&function).unwrap();
+        let c = render_dpi_thunk(&IrModel::new("t".to_owned(), 1).unwrap(), &function).unwrap();
         let call = c.find("foreign_alias(").unwrap();
         let first_copyout = c.find("llg_string_move_take(o1, _dpi_s1)").unwrap();
         for idx in 1..=3 {
@@ -134,7 +134,7 @@ fn dpi_byte_is_plain_char_and_sign_extended_explicitly() {
         prototype.contains("extern char foreign_byte(char p0, char *p1, unsigned char *p2);"),
         "{prototype}"
     );
-    let thunk = render_dpi_thunk(&function).unwrap();
+    let thunk = render_dpi_thunk(&IrModel::new("t".to_owned(), 1).unwrap(), &function).unwrap();
     assert!(!thunk.contains("int8_t"), "{thunk}");
     assert!(
         !thunk.contains("(int64_t)_dpi"),

@@ -38,7 +38,9 @@ pub(super) use functions::handle_marker_param;
 pub(super) use functions::native_companion_param;
 use functions::{block_stmts_of, func_params, func_prototype, packed_result};
 mod dpi;
+mod dpi_exports;
 use dpi::{dpi_external_prototype, dpi_helpers, internal_return_type, render_dpi_thunk};
+use dpi_exports::{render_dpi_declarations, render_dpi_export_bodies};
 mod processes;
 use processes::process_runtime_name;
 mod initialization;
@@ -82,8 +84,8 @@ pub(super) fn recursive_result_field(function: &IrFunc) -> Option<(String, Strin
 pub(super) fn owned_packed_result(function: &IrFunc) -> bool {
     functions::packed_result(function)
 }
-pub(super) fn owned_dpi_thunk(function: &IrFunc) -> Result<String, String> {
-    render_dpi_thunk(function)
+pub(super) fn owned_dpi_thunk(model: &IrModel, function: &IrFunc) -> Result<String, String> {
+    render_dpi_thunk(model, function)
 }
 
 // ── Model rendering ───────────────────────────────────────────────────────────
@@ -877,7 +879,11 @@ fn render_model(
     // declares the always-linked container runtime.
     out.push_str("#include \"llg_container.h\"\n");
     out.push_str("#include \"llg_string.h\"\n");
-    if model.funcs.iter().any(|func| func.dpi_import().is_some()) {
+    let uses_dpi = model
+        .funcs
+        .iter()
+        .any(|func| func.dpi_import().is_some() || func.dpi_export().is_some());
+    if uses_dpi {
         // DPI code is linked into the simulator executable, never imported
         // from a DLL; without these svdpi.h marks its declarations
         // __declspec(dllimport) on Windows toolchains, which GCC and MSVC
@@ -1098,7 +1104,7 @@ fn render_model(
     // Functions/tasks become static C functions (prototypes first so bodies
     // may call each other regardless of declaration order), emitted before
     // any process code references them.
-    if model.funcs.iter().any(|func| func.dpi_import().is_some()) {
+    if uses_dpi {
         out.push_str(dpi_helpers());
     }
     for (index, f) in model.funcs.iter().enumerate() {
@@ -1111,6 +1117,7 @@ fn render_model(
             out.push_str(&func_prototype(f)?);
         }
     }
+    out.push_str(&render_dpi_declarations(model)?);
     out.push_str(&net_tables.declarations);
     out.push_str(&sharing.declarations);
     out.push_str(&sharing.prototypes);
@@ -1167,6 +1174,7 @@ fn render_model(
         |function| execution.analysis().is_coroutine_function(function),
         &mut out,
     );
+    out.push_str(&render_dpi_export_bodies(model)?);
     // Three passes lower comb drivers, links, then always/initial processes,
     // so every comb process, link, and process runs at t=0 in that order;
     // push order equals spawn order.
@@ -1215,7 +1223,12 @@ fn render_model(
     let external = model
         .funcs
         .iter()
-        .filter_map(|function| function.dpi_import().map(|dpi| dpi.c_name()))
+        .filter_map(|function| {
+            function
+                .dpi_import()
+                .map(|dpi| dpi.c_name())
+                .or_else(|| function.dpi_export().map(|export| export.c_name()))
+        })
         .collect::<BTreeSet<_>>();
     drop(assemble_stage);
     let _identifiers_stage = crate::profile::Stage::new("render.identifiers");

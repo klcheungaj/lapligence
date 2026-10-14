@@ -95,6 +95,9 @@ pub struct IrDpiImport {
     /// returns the C `int` of the disable protocol (SV 35.5.4), which this
     /// does not record.
     pub(in crate::sim) ret: Option<IrDpiType>,
+    /// Index into [`super::IrModel::dpi_scopes`] of the instantiated scope
+    /// holding the declaration: a context call runs in it (SV 35.5.3).
+    pub(in crate::sim) scope: Option<usize>,
 }
 
 impl IrDpiImport {
@@ -111,7 +114,18 @@ impl IrDpiImport {
             pure,
             formals,
             ret,
+            scope: None,
         }
+    }
+
+    /// The same import declared in DPI scope `scope`.
+    pub fn with_scope(mut self, scope: Option<usize>) -> Self {
+        self.scope = scope;
+        self
+    }
+
+    pub fn scope(&self) -> Option<usize> {
+        self.scope
     }
 
     pub fn c_name(&self) -> &str {
@@ -138,6 +152,73 @@ impl IrDpiImport {
     /// import is a template that each call specializes for its actuals.
     pub fn is_open_template(&self) -> bool {
         self.formals.iter().any(IrDpiType::is_unsized)
+    }
+}
+
+/// A SystemVerilog subroutine that foreign code may call through a DPI-C
+/// export declaration (SV 35.7, 35.8).
+///
+/// Every instance of the declaring scope has its own exported subroutine;
+/// the generated C entry point `c_name` selects one by the context scope of
+/// the calling import call chain. A subroutine exported from several scopes
+/// has one entry point (35.4), so all of them share these foreign types.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrDpiExport {
+    pub(in crate::sim) c_name: String,
+    /// Foreign type of each declared formal, in declaration order.
+    pub(in crate::sim) formals: Vec<IrDpiType>,
+    /// Foreign result type; `None` for a void function. An exported task
+    /// returns the C `int` of the disable protocol (35.8, 35.9).
+    pub(in crate::sim) ret: Option<IrDpiType>,
+    /// Index into [`super::IrModel::dpi_scopes`] of the declaring scope.
+    pub(in crate::sim) scope: usize,
+    /// For each formal of a static subroutine passed by address, the C name
+    /// of its persistent formal storage: such a subroutine reads inouts from
+    /// and writes outputs to that storage, which its callers fill and read.
+    pub(in crate::sim) storage: Vec<Option<String>>,
+}
+
+impl IrDpiExport {
+    pub fn new(
+        c_name: String,
+        formals: Vec<IrDpiType>,
+        ret: Option<IrDpiType>,
+        scope: usize,
+    ) -> Self {
+        Self {
+            c_name,
+            formals,
+            ret,
+            scope,
+            storage: Vec::new(),
+        }
+    }
+
+    /// The same export with the persistent storage of each formal.
+    pub fn with_storage(mut self, storage: Vec<Option<String>>) -> Self {
+        self.storage = storage;
+        self
+    }
+
+    /// Persistent storage of formal `index`, see [`Self::with_storage`].
+    pub fn storage(&self, index: usize) -> Option<&str> {
+        self.storage.get(index).and_then(Option::as_deref)
+    }
+
+    pub fn c_name(&self) -> &str {
+        &self.c_name
+    }
+
+    pub fn formals(&self) -> &[IrDpiType] {
+        &self.formals
+    }
+
+    pub fn ret(&self) -> Option<&IrDpiType> {
+        self.ret.as_ref()
+    }
+
+    pub fn scope(&self) -> usize {
+        self.scope
     }
 }
 
@@ -386,6 +467,9 @@ pub struct IrFunc {
     /// Foreign DPI-C import contract. Imported functions use the same
     /// internal call ABI as ordinary subroutines and are rendered as thunks.
     pub(in crate::sim) dpi: Option<IrDpiImport>,
+    /// DPI-C export contract: foreign code may call this subroutine through
+    /// a generated C entry point.
+    pub(in crate::sim) dpi_export: Option<IrDpiExport>,
     /// Class-method functions receive one hidden `void *` receiver before
     /// their ordinary formals. `None` denotes a module/package subprogram.
     pub(in crate::sim) receiver_class: Option<usize>,
@@ -442,6 +526,7 @@ impl IrFunc {
             ret_string: false,
             ret,
             dpi: None,
+            dpi_export: None,
             receiver_class: None,
             virtual_slot: None,
             formals,
@@ -504,6 +589,9 @@ impl IrFunc {
     }
     pub fn dpi_import(&self) -> Option<&IrDpiImport> {
         self.dpi.as_ref()
+    }
+    pub fn dpi_export(&self) -> Option<&IrDpiExport> {
+        self.dpi_export.as_ref()
     }
     pub fn formals(&self) -> &[IrFormal] {
         &self.formals

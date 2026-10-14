@@ -195,6 +195,8 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
         vpi_objects: Vec::new(),
         vpi_compile_calls: Vec::new(),
         random: Default::default(),
+        dpi_scopes: Vec::new(),
+        dpi_sites: Vec::new(),
     }
 }
 
@@ -1197,6 +1199,7 @@ fn unused_storage_counts_call_temp_inits_and_copyouts() {
             8,
             false,
         )],
+        dpi_site: None,
     }));
     let mut m = model_with(vec![call], sigs(5));
     run(&mut m, &storage_only());

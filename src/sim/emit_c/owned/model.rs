@@ -179,7 +179,11 @@ fn render_function(
         if coroutine {
             return Err("a DPI subprogram cannot be a coroutine".to_owned());
         }
-        return Ok((super::super::model::owned_dpi_thunk(function)?, None, 0));
+        return Ok((
+            super::super::model::owned_dpi_thunk(ctx.model, function)?,
+            None,
+            0,
+        ));
     }
     // Non-coroutine packed results go to the caller's `_llg_result`.
     let packed_result = !coroutine && super::super::model::owned_packed_result(function);

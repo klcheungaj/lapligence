@@ -286,14 +286,256 @@ void llg_dpi_init_c(const llg_dpi_type_t* type, void* out) {
 
 /* ---- svdpi.h: version and canonical bit/part selects (H.10.1.3, H.11.5) */
 
-void llg_dpi_task_protocol_error(const char* c_name) {
+/* ---- Context call chains: svScope, user data, caller and disable state
+ * (SV 35.5.3, 35.9, Annex H.9.3) */
+
+enum {
+    LLG_DPI_CHAIN_NONE = 0,       /* SystemVerilog code is running */
+    LLG_DPI_CHAIN_NONCONTEXT = 1, /* foreign code of a noncontext import */
+    LLG_DPI_CHAIN_CONTEXT = 2     /* foreign code of a context import */
+};
+
+struct llg_dpi_user {
+    void* key;
+    void* data;
+    llg_dpi_user_t* next;
+};
+
+const llg_dpi_site_t* llg_dpi_next_site = NULL;
+
+static llg_dpi_scope_t* llg_dpi_table = NULL;
+static size_t llg_dpi_table_count = 0;
+/* The live call-chain state; each crossing keeps the state it replaced. */
+static llg_dpi_call_t llg_dpi_now = {NULL, NULL, 0, LLG_DPI_CHAIN_NONE, 0, 0};
+
+void llg_dpi_model_init(llg_dpi_scope_t* scopes, size_t count) {
+    llg_dpi_table = scopes;
+    llg_dpi_table_count = count;
+}
+
+void llg_dpi_shutdown(void) {
+    for (size_t i = 0; i < llg_dpi_table_count; ++i) {
+        llg_dpi_user_t* entry = llg_dpi_table[i].user;
+        while (entry) {
+            llg_dpi_user_t* next = entry->next;
+            free(entry);
+            entry = next;
+        }
+        llg_dpi_table[i].user = NULL;
+    }
+    llg_dpi_table = NULL;
+    llg_dpi_table_count = 0;
+    llg_dpi_next_site = NULL;
+    memset(&llg_dpi_now, 0, sizeof(llg_dpi_now));
+}
+
+/* The table entry `scope` designates, or NULL for any other value: user
+ * code may pass anything, so only addresses of table entries are used. */
+static llg_dpi_scope_t* llg_dpi_valid_scope(const void* scope) {
+    if (!scope || llg_dpi_table_count == 0) return NULL;
+    uintptr_t base = (uintptr_t)llg_dpi_table;
+    uintptr_t address = (uintptr_t)scope;
+    if (address < base) return NULL;
+    uintptr_t offset = address - base;
+    if (offset % sizeof(llg_dpi_scope_t) != 0) return NULL;
+    size_t index = (size_t)(offset / sizeof(llg_dpi_scope_t));
+    return index < llg_dpi_table_count ? &llg_dpi_table[index] : NULL;
+}
+
+/* Report a DPI-C protocol violation as a fatal simulation error (SV 35.5.3,
+ * 35.9) and request completion. Foreign code cannot be unwound, so the
+ * caller returns a default value and the chain finishes normally. */
+static void llg_dpi_fatal(const char* what, const char* c_name, const char* detail) {
     if (llg_rt_exiting()) return;
-    fprintf(stderr,
-            "llg: DPI-C import task `%s` returned nonzero, but nothing disabled it "
-            "(SV 35.9: an imported task returns 1 only after a disable)\n",
-            c_name);
+    fprintf(stderr, "llg: %s%s\n", what, detail ? detail : "");
     llg_rt_mark_failed();
-    llg_rt_fatal_typed(0, "DPI-C disable protocol violation", NULL, 0, "", c_name);
+    llg_rt_fatal_typed(0, "DPI-C protocol violation", NULL, 0, "", c_name);
+}
+
+void llg_dpi_import_enter(llg_dpi_call_t* saved, llg_dpi_scope_t* scope, int task, int depth) {
+    *saved = llg_dpi_now;
+    llg_dpi_now.task = (uint8_t)(task != 0);
+    llg_dpi_now.scope = scope;
+    llg_dpi_now.site = scope ? llg_dpi_next_site : NULL;
+    llg_dpi_now.depth = depth;
+    llg_dpi_now.chain = scope ? LLG_DPI_CHAIN_CONTEXT : LLG_DPI_CHAIN_NONCONTEXT;
+    llg_dpi_now.acked = 0;
+    llg_dpi_next_site = NULL;
+}
+
+void llg_dpi_import_leave(const llg_dpi_call_t* saved, const char* c_name, int task) {
+    int acked = llg_dpi_now.acked;
+    llg_dpi_now = *saved;
+    if (!task && !acked && llg_activation_cancelled()) {
+        char detail[160];
+        snprintf(detail, sizeof(detail),
+                 "`%s` returned from a disable without calling svAckDisabledState "
+                 "(SV 35.9 item c)", c_name);
+        llg_dpi_fatal("DPI-C import function ", c_name, detail);
+    }
+}
+
+int llg_dpi_task_status(int status, const char* c_name) {
+    int disabled = llg_activation_cancelled();
+    if (status != 0 && !disabled) {
+        if (!llg_rt_exiting()) {
+            fprintf(stderr,
+                    "llg: DPI-C import task `%s` returned nonzero, but nothing disabled it "
+                    "(SV 35.9: an imported task returns 1 only after a disable)\n",
+                    c_name);
+            llg_rt_mark_failed();
+            llg_rt_fatal_typed(0, "DPI-C disable protocol violation", NULL, 0, "", c_name);
+        }
+        return 1;
+    }
+    if (status == 0 && disabled) {
+        char detail[160];
+        snprintf(detail, sizeof(detail),
+                 "`%s` returned 0 although a disable cancelled it (SV 35.9 item b)",
+                 c_name);
+        llg_dpi_fatal("DPI-C import task ", c_name, detail);
+        return 1;
+    }
+    return status != 0;
+}
+
+llg_dpi_fn_t llg_dpi_export_target(uint32_t id, const char* c_name, int task) {
+    char detail[256];
+    if (llg_dpi_now.chain != LLG_DPI_CHAIN_CONTEXT) {
+        snprintf(detail, sizeof(detail),
+                 "`%s` was called %s; only a context import call chain may call "
+                 "exported subroutines (SV 35.5.3)",
+                 c_name,
+                 llg_dpi_now.chain == LLG_DPI_CHAIN_NONCONTEXT
+                     ? "from a noncontext import"
+                     : "outside a DPI-C import call");
+        llg_dpi_fatal("DPI-C export ", c_name, detail);
+        return NULL;
+    }
+    if (task && !llg_dpi_now.task) {
+        snprintf(detail, sizeof(detail),
+                 "task `%s` was called from an imported function; only imported "
+                 "tasks may call exported tasks (SV 35.8)", c_name);
+        llg_dpi_fatal("DPI-C export ", c_name, detail);
+        return NULL;
+    }
+    if (llg_activation_cancelled()) {
+        snprintf(detail, sizeof(detail),
+                 "`%s` was called after a disable cancelled the calling import "
+                 "(SV 35.9 item d)", c_name);
+        llg_dpi_fatal("DPI-C export ", c_name, detail);
+        return NULL;
+    }
+    llg_dpi_scope_t* scope = llg_dpi_now.scope;
+    if (scope) {
+        for (uint32_t i = 0; i < scope->export_count; ++i) {
+            if (scope->exports[i].id == id) return scope->exports[i].fn;
+            if (scope->exports[i].id > id) break;
+        }
+    }
+    snprintf(detail, sizeof(detail),
+             "`%s` is not exported from the current scope `%s`; call svSetScope "
+             "with a scope that exports it (SV 35.5.3)",
+             c_name, scope ? scope->name : "<none>");
+    llg_dpi_fatal("DPI-C export ", c_name, detail);
+    return NULL;
+}
+
+int llg_dpi_export_enter(llg_dpi_call_t* saved) {
+    *saved = llg_dpi_now;
+    llg_dpi_now.chain = LLG_DPI_CHAIN_NONE;
+    llg_dpi_now.site = NULL;
+    return saved->depth + 1;
+}
+
+int llg_dpi_export_leave(const llg_dpi_call_t* saved, int task) {
+    /* 35.9: a disable of the export task itself ended with its own
+     * activation, so only a cancelled caller activation remains. */
+    int status = task && llg_activation_cancelled() ? 1 : 0;
+    llg_dpi_now = *saved;
+    return status;
+}
+
+svScope svGetScope(void) {
+    return llg_dpi_now.chain == LLG_DPI_CHAIN_CONTEXT ? (svScope)llg_dpi_now.scope : NULL;
+}
+
+svScope svSetScope(const svScope scope) {
+    if (llg_dpi_now.chain != LLG_DPI_CHAIN_CONTEXT) return NULL;
+    svScope previous = (svScope)llg_dpi_now.scope;
+    llg_dpi_scope_t* target = llg_dpi_valid_scope(scope);
+    if (target) {
+        llg_dpi_now.scope = target;
+    } else {
+        fprintf(stderr, "llg: svSetScope: %p is not a scope; the context scope is unchanged\n",
+                scope);
+    }
+    return previous;
+}
+
+const char* svGetNameFromScope(const svScope scope) {
+    llg_dpi_scope_t* target = llg_dpi_valid_scope(scope);
+    return target ? target->name : NULL;
+}
+
+svScope svGetScopeFromName(const char* scopeName) {
+    if (!scopeName) return NULL;
+    size_t low = 0;
+    size_t high = llg_dpi_table_count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        int order = strcmp(llg_dpi_table[middle].name, scopeName);
+        if (order == 0) return (svScope)&llg_dpi_table[middle];
+        if (order < 0) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    return NULL;
+}
+
+int svPutUserData(const svScope scope, void* userKey, void* userData) {
+    llg_dpi_scope_t* target = llg_dpi_valid_scope(scope);
+    if (!target || !userKey || !userData) return -1;
+    for (llg_dpi_user_t* entry = target->user; entry; entry = entry->next) {
+        if (entry->key == userKey) {
+            entry->data = userData;
+            return 0;
+        }
+    }
+    llg_dpi_user_t* entry = (llg_dpi_user_t*)malloc(sizeof(*entry));
+    if (!entry) return -1;
+    entry->key = userKey;
+    entry->data = userData;
+    entry->next = target->user;
+    target->user = entry;
+    return 0;
+}
+
+void* svGetUserData(const svScope scope, void* userKey) {
+    llg_dpi_scope_t* target = llg_dpi_valid_scope(scope);
+    if (!target || !userKey) return NULL;
+    for (llg_dpi_user_t* entry = target->user; entry; entry = entry->next) {
+        if (entry->key == userKey) return entry->data;
+    }
+    return NULL;
+}
+
+int svGetCallerInfo(const char** fileName, int* lineNumber) {
+    const llg_dpi_site_t* site = llg_dpi_now.site;
+    if (llg_dpi_now.chain != LLG_DPI_CHAIN_CONTEXT || !site) return 0;
+    if (fileName) *fileName = site->file;
+    if (lineNumber) *lineNumber = site->line;
+    return 1;
+}
+
+int svIsDisabledState(void) {
+    return llg_dpi_now.chain != LLG_DPI_CHAIN_NONE && llg_activation_cancelled();
+}
+
+void svAckDisabledState(void) {
+    if (llg_dpi_now.chain != LLG_DPI_CHAIN_NONE) llg_dpi_now.acked = 1;
 }
 
 const char* svDpiVersion(void) {

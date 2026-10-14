@@ -107,7 +107,7 @@ mod processes;
 pub use processes::{IrPreFn, IrProcess, IrProcessKind, IrShape};
 mod functions;
 pub(in crate::sim) use functions::dimension_size;
-pub use functions::{IrDpiImport, IrDpiType, IrFormal, IrFormalMode, IrFunc, IrLocal};
+pub use functions::{IrDpiExport, IrDpiImport, IrDpiType, IrFormal, IrFormalMode, IrFunc, IrLocal};
 mod initialization;
 pub use initialization::{IrInitPhase, IrInitStep, IrInitTarget, IrInitialization};
 mod storage;
@@ -538,6 +538,43 @@ pub struct IrModel {
     pub(in crate::sim) vpi_compile_calls: Vec<IrVpiCompileCall>,
     /// Random streams the model observes; set by lowering.
     pub(in crate::sim) random: IrRandomUse,
+    /// Instantiated scopes holding DPI-C import or export declarations, in
+    /// ascending byte order of their names; an `svScope` names one (SV
+    /// Annex H.9). Set by lowering.
+    pub(in crate::sim) dpi_scopes: Vec<IrDpiScope>,
+    /// Source positions of context import calls for `svGetCallerInfo`
+    /// (H.9.3). Set by lowering.
+    pub(in crate::sim) dpi_sites: Vec<IrDpiSite>,
+}
+
+/// One instantiated scope of DPI-C declarations (SV Annex H.9.2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrDpiScope {
+    /// Fully qualified scope name, as `svGetNameFromScope` returns it.
+    pub(in crate::sim) name: String,
+}
+
+impl IrDpiScope {
+    pub fn new(name: String) -> Self {
+        Self { name }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// The source file and line of one context import call (H.9.3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrDpiSite {
+    pub(in crate::sim) file: String,
+    pub(in crate::sim) line: u32,
+}
+
+impl IrDpiSite {
+    pub fn new(file: String, line: u32) -> Self {
+        Self { file, line }
+    }
 }
 
 /// Which random streams a model observes (SV 18.14). Each flag enables a
@@ -632,6 +669,8 @@ impl IrModel {
             vpi_objects: Vec::new(),
             vpi_compile_calls: Vec::new(),
             random: IrRandomUse::default(),
+            dpi_scopes: Vec::new(),
+            dpi_sites: Vec::new(),
         };
         model.validate()?;
         Ok(model)
@@ -704,6 +743,25 @@ impl IrModel {
 
     pub fn vpi_compile_calls(&self) -> &[IrVpiCompileCall] {
         &self.vpi_compile_calls
+    }
+
+    pub fn dpi_scopes(&self) -> &[IrDpiScope] {
+        &self.dpi_scopes
+    }
+
+    pub fn dpi_sites(&self) -> &[IrDpiSite] {
+        &self.dpi_sites
+    }
+
+    /// Whether DPI-C calls cross a context boundary: some import is
+    /// `context` or some subroutine is exported. Only then do import calls
+    /// save, set and restore the call-chain state (SV 35.5.3); otherwise no
+    /// foreign code can observe it.
+    pub fn dpi_context_used(&self) -> bool {
+        self.funcs.iter().any(|function| {
+            function.dpi_export.is_some()
+                || function.dpi.as_ref().is_some_and(IrDpiImport::is_context)
+        })
     }
 
     pub fn signal(&self, idx: usize) -> &IrSignal {

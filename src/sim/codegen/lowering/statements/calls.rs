@@ -770,6 +770,7 @@ impl EmitCtx<'_, '_> {
             virtual_call: call_receiver.virtual_interface,
             temps,
             copyouts,
+            dpi_site: self.cg.dpi_call_site(fidx, h),
         }));
         if before.is_empty() && after.is_empty() {
             Ok(call)

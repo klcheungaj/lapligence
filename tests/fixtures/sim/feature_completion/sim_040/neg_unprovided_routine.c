@@ -1,8 +1,9 @@
-/* SIM-040 negative companion: calls a scope routine llg does not provide. */
+/* SIM-040 negative companion: calls a time routine llg does not provide. */
 #include "svdpi.h"
 #include <stddef.h>
 
 int neg_scope(void)
 {
-    return svGetScope() != NULL;
+    svTimeVal now;
+    return svGetTime(NULL, &now);
 }

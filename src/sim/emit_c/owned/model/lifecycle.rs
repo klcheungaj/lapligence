@@ -332,6 +332,12 @@ pub(in crate::sim::emit_c) fn main(
             ));
         }
     }
+    if !model.dpi_scopes().is_empty() {
+        out.push_str(&format!(
+            "    llg_dpi_model_init(llg_dpi_scopes, {}u);\n",
+            model.dpi_scopes().len()
+        ));
+    }
     out.push_str(&format!("    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count) || !llg_vpi_startup()) goto start_failed;\n", c_string_literal(model.design_name())));
     for (index, call) in model.vpi_compile_calls.iter().enumerate() {
         out.push_str(&format!("    if (!llg_vpi_compile_call_site({index}ULL, {}, llg_vpi_compile_args_{index}, {}, {}ULL)) goto start_failed;\n",

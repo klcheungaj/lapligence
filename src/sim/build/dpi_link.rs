@@ -21,20 +21,11 @@ use std::path::Path;
 /// Prefix of the comment the emitter writes before each import prototype.
 const IMPORT_MARKER: &str = "/* llg DPI-C import: c_name=";
 
-/// `svdpi.h` routines outside the implemented open-array, canonical and
-/// version set: scope, user-data, caller, disable and time services
-/// (context imports and exports, SIM-041) and the deprecated SV3.1a
-/// representation (H.13, which an implementation need not provide).
+/// `svdpi.h` routines outside the implemented open-array, canonical,
+/// version, scope, user-data, caller and disable set: the time services and
+/// the deprecated SV3.1a representation (H.13, which an implementation need
+/// not provide).
 const UNPROVIDED_ROUTINES: &[&str] = &[
-    "svGetScope",
-    "svSetScope",
-    "svGetNameFromScope",
-    "svGetScopeFromName",
-    "svPutUserData",
-    "svGetUserData",
-    "svGetCallerInfo",
-    "svIsDisabledState",
-    "svAckDisabledState",
     "svGetTime",
     "svGetTimeUnit",
     "svGetTimePrecision",
@@ -416,13 +407,13 @@ mod tests {
         std::fs::write(
             &library,
             mach_o(&[
-                ("_svGetScope", N_EXT, 0xfe, 0),
+                ("_svGetTime", N_EXT, 0xfe, 0),
                 ("_svGetArrayPtr", N_EXT, 0xfe, 0),
                 ("_neg_helper", N_EXT, 0xfe, 0),
             ]),
         )
         .unwrap();
-        assert_eq!(unprovided_routines_in_mach_o(&library), ["svGetScope"]);
+        assert_eq!(unprovided_routines_in_mach_o(&library), ["svGetTime"]);
         let elf = directory.join("libneg.so");
         std::fs::write(&elf, b"\x7fELF svGetScope").unwrap();
         assert!(unprovided_routines_in_mach_o(&elf).is_empty());
@@ -455,10 +446,10 @@ mod tests {
             "/* llg DPI-C import: c_name=nowhere context=0 pure=0; x */\nextern int nowhere(void);\n",
         )
         .unwrap();
-        let transcript = "undefined reference to `nowhere'\nundefined reference to `svGetScope'\nundefined reference to `helper'";
+        let transcript = "undefined reference to `nowhere'\nundefined reference to `svGetTime'\nundefined reference to `helper'";
         let missing = missing_dpi_symbols(&directory, transcript).unwrap();
         assert_eq!(missing.imports, vec!["nowhere".to_owned()]);
-        assert_eq!(missing.routines, vec!["svGetScope".to_owned()]);
+        assert_eq!(missing.routines, vec!["svGetTime".to_owned()]);
         assert!(missing_dpi_symbols(&directory, "undefined reference to `helper'").is_none());
         std::fs::remove_dir_all(&directory).unwrap();
     }

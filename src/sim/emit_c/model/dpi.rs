@@ -10,7 +10,7 @@
 //! published in declaration order, each publication a cancellation boundary.
 
 use super::*;
-use crate::sim::ir::{IrDpiImport, IrDpiType, IrFormal, IrFormalMode};
+use crate::sim::ir::{IrDpiImport, IrDpiType, IrFormal, IrFormalMode, IrModel};
 
 /// Canonical vectors up to this many bytes are staged in the thunk's C
 /// stack frame; wider ones in a scope-owned heap block, keeping a thunk's
@@ -44,7 +44,7 @@ fn formal_type(dpi: &IrDpiImport, index: usize) -> Result<&IrDpiType, String> {
 /// RISC-V), so a foreign `char` is sign-extended explicitly when it becomes
 /// an SV value ([`dpi_packed_result`]); declaring `int8_t` instead would give
 /// the import a prototype that differs from the foreign definition.
-fn int_c_type(bytes: u8, signed: bool) -> Result<&'static str, String> {
+pub(super) fn int_c_type(bytes: u8, signed: bool) -> Result<&'static str, String> {
     Ok(match (bytes, signed) {
         (1, true) => "char",
         (1, false) => "unsigned char",
@@ -59,7 +59,7 @@ fn int_c_type(bytes: u8, signed: bool) -> Result<&'static str, String> {
 }
 
 /// C type of a small value passed or returned by value (H.8.3).
-fn small_c_type(ty: &IrDpiType) -> Result<&'static str, String> {
+pub(super) fn small_c_type(ty: &IrDpiType) -> Result<&'static str, String> {
     Ok(match ty {
         IrDpiType::Bit => "svBit",
         IrDpiType::Logic => "svLogic",
@@ -72,14 +72,14 @@ fn small_c_type(ty: &IrDpiType) -> Result<&'static str, String> {
     })
 }
 
-fn is_aggregate(ty: &IrDpiType) -> bool {
+pub(super) fn is_aggregate(ty: &IrDpiType) -> bool {
     matches!(
         ty,
         IrDpiType::Array { .. } | IrDpiType::Struct(_) | IrDpiType::Open { .. }
     )
 }
 
-fn chunks(width: u32) -> u64 {
+pub(super) fn chunks(width: u32) -> u64 {
     u64::from(width).div_ceil(32)
 }
 
@@ -106,7 +106,7 @@ fn dpi_external_return_type(f: &IrFunc, dpi: &IrDpiImport) -> Result<&'static st
 }
 
 /// C parameter type of one foreign formal (H.8).
-fn dpi_param_type(ty: &IrDpiType, form: &IrFormal) -> Result<String, String> {
+pub(super) fn dpi_param_type(ty: &IrDpiType, form: &IrFormal) -> Result<String, String> {
     let address = form.is_address();
     Ok(match ty {
         IrDpiType::Open { .. } => "const svOpenArrayHandle".to_owned(),
@@ -184,10 +184,10 @@ static int64_t llg_dpi_byte_value(char value) {\n\
 }
 
 /// Static layout tables of the aggregate formals of one thunk.
-struct LayoutTables {
-    prefix: String,
-    count: usize,
-    out: String,
+pub(super) struct LayoutTables {
+    pub(super) prefix: String,
+    pub(super) count: usize,
+    pub(super) out: String,
 }
 
 impl LayoutTables {
@@ -207,7 +207,7 @@ impl LayoutTables {
     }
 
     /// Emit the C type and layout table of `ty`; returns their names.
-    fn emit(&mut self, ty: &IrDpiType) -> Result<(String, String), String> {
+    pub(super) fn emit(&mut self, ty: &IrDpiType) -> Result<(String, String), String> {
         match ty {
             IrDpiType::Bit | IrDpiType::Logic | IrDpiType::Int { .. } => {
                 let (c, t) = self.fresh();
@@ -370,7 +370,11 @@ fn dpi_output_init(ty: &IrDpiType, form: &IrFormal, idx: usize) -> Result<String
     })
 }
 
-fn dpi_packed_result(ty: &IrDpiType, source: &str, signed: bool) -> Result<String, String> {
+pub(super) fn dpi_packed_result(
+    ty: &IrDpiType,
+    source: &str,
+    signed: bool,
+) -> Result<String, String> {
     Ok(match ty {
         IrDpiType::Bit => format!("sv4_from_u64((uint64_t){source}, 1, {})", u8::from(signed)),
         IrDpiType::Logic => format!("llg_dpi_sv4_from_logic({source}, {})", u8::from(signed)),
@@ -395,8 +399,19 @@ fn dpi_packed_result(ty: &IrDpiType, source: &str, signed: bool) -> Result<Strin
 
 /// Inputs are borrowed from the caller's registered slots. Every foreign result
 /// is staged before any output publication can reenter HDL or invalidate inputs.
-pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
+pub(super) fn render_dpi_thunk(model: &IrModel, f: &IrFunc) -> Result<String, String> {
     let dpi = dpi_import(f)?;
+    // Without a context import or an export no foreign code can observe
+    // the call-chain state, so calls stay uninstrumented (SV 35.5.3).
+    let instrumented = model.dpi_context_used();
+    let scope = if dpi.is_context() {
+        let scope = dpi
+            .scope()
+            .ok_or_else(|| format!("context DPI-C import `{}` has no scope", dpi.c_name()))?;
+        format!("&llg_dpi_scopes[{scope}]")
+    } else {
+        "NULL".to_owned()
+    };
     let ret = if f.is_task { None } else { dpi.ret() };
     let mut tables = LayoutTables {
         prefix: format!("llg_dpi_{}_", f.c_name),
@@ -513,24 +528,45 @@ pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
         }
     }
     let call = format!("{}({})", dpi.c_name(), arguments.join(", "));
+    let c_name_literal = c_string_literal(dpi.c_name());
+    if instrumented {
+        // Save the chain state and enter this call's context (35.5.3).
+        out.push_str(&format!(
+            "    llg_dpi_call_t _dpi_call;\n    llg_dpi_import_enter(&_dpi_call, {scope}, {}, depth);\n",
+            u8::from(f.is_task)
+        ));
+    }
     if let Some(scalar) = ret {
         out.push_str(&format!(
             "    {} _dpi_ret = {call};\n",
             small_c_type(scalar)?
         ));
     } else if f.is_task {
-        // SV 35.9 b): an imported task returns 1 only when it returns because
-        // of a disable. Without exported subroutines nothing can disable it
-        // inside the call, so a nonzero result breaks the protocol, which
-        // 35.9 makes a fatal simulation error; nothing is published. The
-        // publication loop below tests the status, so no jump crosses the
-        // snapshot declarations.
-        out.push_str(&format!(
-            "    int _dpi_status = {call};\n    if (_dpi_status != 0) llg_dpi_task_protocol_error(\"{}\");\n",
-            dpi.c_name()
-        ));
+        out.push_str(&format!("    int _dpi_status = {call};\n"));
     } else {
         out.push_str(&format!("    {call};\n"));
+    }
+    if instrumented {
+        out.push_str(&format!(
+            "    llg_dpi_import_leave(&_dpi_call, {c_name_literal}, {});\n",
+            u8::from(f.is_task)
+        ));
+    }
+    let has_outputs = f.formals.iter().any(|formal| formal.is_address());
+    if f.is_task {
+        // SV 35.9 b): an imported task returns 1 exactly when it returns
+        // because of a disable, which only an exported subroutine it calls
+        // can cause. Any other result is a fatal error; in both cases
+        // nothing is published. The publication loop below tests the
+        // status, so no jump crosses the snapshot declarations.
+        out.push_str(&format!(
+            "    {}llg_dpi_task_status(_dpi_status, {c_name_literal});\n",
+            if has_outputs {
+                "int _dpi_skip = "
+            } else {
+                "(void)"
+            }
+        ));
     }
     let string_snapshot = |name: &str, source: &str| {
         format!(
@@ -604,7 +640,7 @@ pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
         .filter(|(_, formal)| formal.is_address())
     {
         out.push_str(if f.is_task {
-            "    if (_dpi_status != 0 || llg_activation_cancelled()) goto _dpi_return;\n"
+            "    if (_dpi_skip || llg_activation_cancelled()) goto _dpi_return;\n"
         } else {
             "    if (llg_activation_cancelled()) goto _dpi_return;\n"
         });

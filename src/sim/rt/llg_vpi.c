@@ -1445,6 +1445,7 @@ int llg_vpi_failed(void) { return g_vpi.failed || g_vpi.error_pending; }
 
 void llg_vpi_shutdown(void) {
     if (g_vpi.running) llg_vpi_end_simulation();
+    llg_dpi_shutdown();
     llg_vpi_handle_t* cursor = g_vpi.all_handles;
     while (cursor) {
         llg_vpi_handle_t* next = cursor->all_next;
