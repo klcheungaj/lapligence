@@ -26,7 +26,10 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   bounds sources by `max_source_bytes`; parse diagnostics are discarded.
 - ABI v17 adds statement tag 68 (`LLG_SLANG_STMT_CONCURRENT_COVER_SEQUENCE`)
   and subroutine auxiliary bit 11 (`LLG_SLANG_SUBROUTINE_DPI_EXPORT`); a new
-  tag or flag bit bumps the version on both sides together.
+  tag or flag bit bumps the version on both sides together. Since SIM-041 the
+  bit is set on every instance's exported subroutine and `definition_name`
+  carries its export C identifier (no ABI change: an export is never an
+  import, whose linkage name uses the same field).
 - ABI v18 adds scope subkind 235 (`LLG_SLANG_SCOPE_ANONYMOUS_PROGRAM`).
 - ABI v19 adds edge role 39 (`LLG_SLANG_EDGE_DEFAULT_DISABLE`) from a
   concurrent assertion statement to its inferred `default disable iff`

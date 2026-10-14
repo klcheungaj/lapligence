@@ -64,7 +64,7 @@ Recursive synchronous subprograms (`ExecutionAnalysis::is_recursive_function`)
 render twice from the same body: `<fn>_co` in a `Frame::new_recursive` frame and
 the plain-ABI entry `<fn>`, which copies its parameters into an arena frame from
 `llg_co_sync_begin` and runs `llg_co_sync_run`. Every caller outside the
-component, including dispatchers and DPI exports, keeps calling `<fn>`. The
+component, including dispatchers and DPI export thunks, keeps calling `<fn>`. The
 coroutine keeps plain-function exits (`llg_rt_exiting`, budget and
 cancellation `goto _llg_return`, `llg_current()` for `self`), numbers its
 resume points as it emits arena calls, and writes its result through the
@@ -345,6 +345,17 @@ before callbacks; peek clones. A blocking get emits `llg_mailbox_delivery_take`
 with the same destination right after its arm, so a suspended get writes only
 live storage on resume. Never cast an integer to a target pointer.
 
+DPI-C exports (`model/dpi_exports.rs`) render one external entry per C
+identifier that resolves the instance thunk through the current `svScope` and
+casts it to the Annex H prototype, and a static per-instance thunk that
+converts with the import layout helpers, calls `<fn>` with `depth + 1` and
+copies outputs back in declaration order. Export string outputs and results
+stay in per-thunk retained strings until that thunk runs again (H.8.10). When
+a model has any context import or export, every import thunk brackets the
+call with `llg_dpi_import_enter/leave`; a context call site sets
+`llg_dpi_next_site` just before the call. Context imports carry the effects of
+every exported body (`execution::effects_for_function`), so cancellation
+checks follow them.
 DPI input strings remain borrowed for the call. Snapshot the foreign return and
 all string outputs before the first copy-out or input destruction, preserving
 aliased foreign pointers. VPI argument arrays borrow registered slots only for

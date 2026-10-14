@@ -269,6 +269,17 @@ negatives cover frontend, codegen and link-time errors. Decisions S40-D1-D5,
 with `.c` companions, are in `sim_lrm_decisions`; component checks are the
 `sim::build::dpi_link::tests` unit tests.
 
+SIM-041's DPI-C export and context call-chain fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_041::)'`. Positives build their
+companions as shared libraries (Unix hosts) and run in both optimizer modes on
+every backend; `scopes` also links its companion as a static archive (every
+host, the Windows route) and `chains` also runs with `-funsigned-char`. The
+runtime negatives share `errors.c` and must stop with a "DPI-C protocol
+violation". Decisions S41-D1-D8 are in `sim_lrm_decisions`; the component
+check is `sim_dpi::dpi_exports_lower_to_one_entry_and_sorted_scopes`. Under
+ASan run the set with `LLG_CFLAGS='-fsanitize=address,undefined'`, which also
+instruments the companions.
+
 SIM-037's sequence-composition fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_037::)'`. `exhaustive` compares
 36 sequences on all 1024 two-signal traces of length 5 with the test-side

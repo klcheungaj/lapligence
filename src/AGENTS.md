@@ -215,6 +215,14 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
   drive case; a textual comparison of configured trees covers both drive cases
   (`build/tree_template.rs`). This rejected every opt-in tree template on both
   Windows runners until CI round 5.
+- A Windows DLL resolves its imports only from libraries named when it is
+  linked, and the model executable has no import library, so a DPI DLL can
+  call neither the `svdpi.h` routines nor `export "DPI-C"` entries of the
+  model. On Windows a companion that uses them is given to `--dpi-lib` as a
+  static library (`.lib`), which CMake links into the model executable; Unix
+  hosts accept both shared and static companions. The static route is
+  exercised by `sim_041::static_archive_companion_reaches_exports_and_scopes`
+  (written for MSVC `cl /c` + `lib`; Unix-verified only as of SIM-041).
 - Apple ld64 does not check a dylib's undefined symbols when it links an
   executable against it; GNU ld does. A DPI library built with `-undefined
   dynamic_lookup` that calls a routine nobody defines therefore links, and the

@@ -2161,17 +2161,45 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   result assigned last; output formals start at X or 0 (decisions
   S40-D1..D4 in [lrm_decisions.md](lrm_decisions.md)). An imported task that
   returns nonzero without a disable is a fatal error (35.9, S40-D5). An import
-  no `--dpi-lib` library defines, or a library calling an `svdpi.h` routine
-  llg does not provide (scope, user-data, time and disable services, SIM-041;
-  the SV3.1a H.13 forms), fails the build with an error that names the
-  symbol. Remaining limits:
+  no `--dpi-lib` library defines, a library calling an `svdpi.h` routine llg
+  does not provide (`svGetTime*`; the SV3.1a H.13 forms) or a library calling
+  a symbol the design does not export fails the build with an error that
+  names the symbol. Remaining limits:
   [known issue](known_issues.md#dpi-c-import-limits-sim-040). Exports and
-  context callbacks are SIM-041. Ref directions, event/class/unpacked-union
+  context call chains: next item. Ref directions, event/class/unpacked-union
   formals, packed or enum results, open arrays in exports and mismatched
   signatures for one C name are rejected by the frontend (SV §§35.5.1.2,
   35.5.4-35.5.6). Fixtures:
   [sim_040](../tests/fixtures/sim/feature_completion/sim_040/readme.md).
   SV ch.35, Annex H **[SV-2005]**.
+- 🟨 **DPI-C exports and context call chains** — `export "DPI-C"` functions
+  and zero-time tasks of modules, interfaces, programs, generate blocks and
+  packages, with the import signature rules for formals and results. Every
+  exported C identifier is one C entry point with the Annex H prototype that
+  runs the instance of the current context scope; each scope declaring DPI
+  imports or exports has a stable `svScope` named by its hierarchical path
+  (`tb.g[0].c`). Context imports run in their declaring scope; each crossing
+  saves and restores the chain's scope, so after an export returns the chain
+  is back in the scope it had (35.5.3, S41-D1). `svGetScope`, `svSetScope`,
+  `svGetScopeFromName`, `svGetNameFromScope`, `svPutUserData`,
+  `svGetUserData`, `svGetCallerInfo` (context imports: file and line),
+  `svIsDisabledState` and `svAckDisabledState` are provided. Exports nest
+  (SV -> C -> SV -> C) under the 256-call recursion limit, convert arguments
+  with the import layout tables and copy outputs back in declaration order
+  (S41-D2); a noncontext import has no scope (S41-D3). An export task that
+  disables the caller returns 1 and the disable protocol is checked (35.9;
+  S41-D5): a missing acknowledgement, an export call after a disable, an
+  export call from a noncontext import (S41-D6), from a scope that does not
+  export it (S41-D7) or of a task from an imported function (S41-D8) is a
+  fatal error. Context imports carry the effects of every exported body
+  (stores, disables, `$finish`), so the optimizer and process cancellation
+  treat them as barriers; noncontext and pure imports keep their declared
+  properties. An exported task that can consume time is rejected (ADV-018).
+  On Windows the companion must be linked as a static archive (`--dpi-lib
+  x.lib`), since a DLL cannot import the model's exports; limits:
+  [known issue](known_issues.md#dpi-c-export-limits-sim-041). Fixtures:
+  [sim_041](../tests/fixtures/sim/feature_completion/sim_041/readme.md).
+  SV 35.5.3, 35.7-35.9, Annex H.9 **[SV-2005]**.
 - 🚫 **PLI 1.0 TF/ACC** — The legacy `tf_*` and `acc_*` routines, the
   `veriusertfs` registration table and the `veriuser.h` / `acc_user.h` headers
   are unsupported by design; `llg` ships none of them. A DPI/VPI library given
