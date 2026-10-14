@@ -6066,8 +6066,16 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
         capture, LLG_SLANG_DIAG_ANALYSIS);
     engine.addClient(analysisClient);
     engine.setSeverity(diag::AlwaysWithoutTimingControl, DiagnosticSeverity::Warning);
-    for (const Diagnostic& diagnostic : diagnostics)
+    for (const Diagnostic& diagnostic : diagnostics) {
+      // The unused check does not count an export "DPI-C" declaration as a
+      // use, but C code calls the exported subroutine (IEEE 1800-2009 35.7).
+      if ((diagnostic.code == diag::UnusedSubroutine ||
+           diagnostic.code == diag::UnusedPackageSubroutine) &&
+          diagnostic.symbol && diagnostic.symbol->kind == SymbolKind::Subroutine &&
+          dpiExportName(capture, diagnostic.symbol->as<SubroutineSymbol>()))
+        continue;
       analysisClient->issue(engine, diagnostic);
+    }
     output->flags |= LLG_SLANG_SNAPSHOT_ANALYSIS_RAN;
   }
 
