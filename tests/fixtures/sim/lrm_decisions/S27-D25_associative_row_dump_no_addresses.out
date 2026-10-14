@@ -1,0 +1,14 @@
+s27_d25_one.mem:
+  0a
+  0b
+s27_d25_cell.mem:
+  0b
+s27_d25_start.mem:
+  0b
+s27_d25_all.mem:
+  @3
+  0a
+  0b
+  @4
+  xx
+  0a

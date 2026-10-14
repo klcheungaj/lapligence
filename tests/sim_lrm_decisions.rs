@@ -1241,3 +1241,35 @@ fn s27_d21_container_row_memory() {
         include_str!("fixtures/sim/lrm_decisions/S27-D21_container_row_memory.out"),
     );
 }
+
+#[test]
+fn s27_d22_associative_rows_whole() {
+    run_decision(
+        "S27-D22_associative_rows_whole",
+        include_str!("fixtures/sim/lrm_decisions/S27-D22_associative_rows_whole.out"),
+    );
+}
+
+#[test]
+fn s27_d23_associative_row_load_creates() {
+    run_decision(
+        "S27-D23_associative_row_load_creates",
+        include_str!("fixtures/sim/lrm_decisions/S27-D23_associative_row_load_creates.out"),
+    );
+}
+
+#[test]
+fn s27_d24_associative_row_dump_missing() {
+    run_decision(
+        "S27-D24_associative_row_dump_missing",
+        include_str!("fixtures/sim/lrm_decisions/S27-D24_associative_row_dump_missing.out"),
+    );
+}
+
+#[test]
+fn s27_d25_associative_row_dump_no_addresses() {
+    run_decision(
+        "S27-D25_associative_row_dump_no_addresses",
+        include_str!("fixtures/sim/lrm_decisions/S27-D25_associative_row_dump_no_addresses.out"),
+    );
+}

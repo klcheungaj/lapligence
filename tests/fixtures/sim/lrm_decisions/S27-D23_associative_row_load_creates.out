@@ -1,0 +1,15 @@
+start elements 0 exists5 0 exists6 0 exists7 0 exists8 0
+s27_d23_a.mem:
+  0a
+  0b
+  xx
+s27_d23_b.mem:
+  0a
+  0b
+  0c
+s27_d23_c.mem:
+  xx
+  0a
+  0b
+loaded elements 2 exists5 1 exists6 1 exists7 0 exists8 0
+rejected elements 2 exists5 1 exists6 1 exists7 0 exists8 0
