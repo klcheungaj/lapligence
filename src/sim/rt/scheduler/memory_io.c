@@ -1207,8 +1207,8 @@ LLG_ROWS_MEMORY_ENTRY(llg_queue_rows_memory_write_view, struct llg_queue_value_a
 // fixed-array-element containers.
 typedef struct {
     uint8_t kind;
-    uint32_t width;
-    int8_t is_signed;
+    uint32_t index_width;
+    int8_t index_signed;
 } llg_assoc_keys_t;
 
 static llg_assoc_keys_t llg_assoc_keys(const llg_assoc_t* array) {
@@ -1216,7 +1216,7 @@ static llg_assoc_keys_t llg_assoc_keys(const llg_assoc_t* array) {
 }
 
 static sv4_t llg_assoc_memory_key(llg_assoc_keys_t keys, sv4_t value) {
-    return sv4_cast(value, keys.width, keys.is_signed);
+    return sv4_cast(value, keys.index_width, keys.index_signed);
 }
 
 static int llg_assoc_memory_less(sv4_t a, sv4_t b) {
@@ -1238,7 +1238,7 @@ static int llg_assoc_memory_in_range(sv4_t key, sv4_t first, sv4_t last) {
 static int llg_assoc_memory_bounds(const char* filename, llg_assoc_keys_t keys,
                                    sv4_t start, sv4_t finish, int has_start,
                                    int has_finish, sv4_t* first, sv4_t* last) {
-    if (keys.kind != LLG_ASSOC_INTEGRAL || keys.width == 0) {
+    if (keys.kind != LLG_ASSOC_INTEGRAL || keys.index_width == 0) {
         llg_memory_error(filename, "associative memory needs an integral index type");
         return 0;
     }
@@ -1251,7 +1251,7 @@ static int llg_assoc_memory_bounds(const char* filename, llg_assoc_keys_t keys,
         return 0;
     }
     *first = has_start ? llg_assoc_memory_key(keys, start)
-                       : sv4_from_u64(0, keys.width, keys.is_signed);
+                       : sv4_from_u64(0, keys.index_width, keys.index_signed);
     *last = has_finish ? llg_assoc_memory_key(keys, finish) : (sv4_t)SV4_EMPTY;
     return 1;
 }
@@ -1489,7 +1489,7 @@ static void llg_assoc_rows_read(llg_string_t path, llg_assoc_value_t* array,
     }
     sv4_t first = sv4_clone(&current);
     int descending = has_finish && llg_assoc_memory_less(last, first);
-    sv4_t one = sv4_from_u64(1, keys.width, keys.is_signed);
+    sv4_t one = sv4_from_u64(1, keys.index_width, keys.index_signed);
     int exhausted = 0, warned_extra = 0, warned_unknown = 0, saw_address = 0;
     int terminated = 0;
     uint64_t inner = 0, written = 0;
@@ -1557,7 +1557,7 @@ static void llg_assoc_rows_read(llg_string_t path, llg_assoc_value_t* array,
         storage.rows = NULL;
         if (has_finish && sv4_same(current, last)) {
             exhausted = 1;
-        } else if (!llg_assoc_memory_advance(&current, one, descending, keys.is_signed)) {
+        } else if (!llg_assoc_memory_advance(&current, one, descending, keys.index_signed)) {
             exhausted = 1;
         }
     }
@@ -1604,7 +1604,7 @@ static void llg_assoc_rows_write(llg_string_t path, const llg_assoc_value_t* arr
         return;
     }
     int descending = has_finish && llg_assoc_memory_less(last, first);
-    size_t key_capacity = (size_t)keys.width + 2u;
+    size_t key_capacity = (size_t)keys.index_width + 2u;
     size_t word_capacity = (size_t)elem_width + 2u;
     char* key_digits = (char*)llg_checked_malloc(key_capacity, 1, "memory file address");
     char* digits = (char*)llg_checked_malloc(word_capacity, 1, "memory file word");
