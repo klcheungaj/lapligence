@@ -177,6 +177,11 @@ impl IrDelay {
 pub struct IrCapture {
     pub(super) storage: StorageRef,
     pub(super) initial: IrExpr,
+    /// The declaring subroutine's local name for the captured variable when
+    /// the branch body reads it under that name (a selected or projected
+    /// access, such as an element of an automatic array, inside a nested
+    /// fork); the branch binds it to the captured cell too.
+    pub(super) alias: Option<String>,
 }
 
 /// One automatic value copied into an evaluated-event environment.
@@ -245,7 +250,21 @@ impl IrEventContext {
 
 impl IrCapture {
     pub fn new(storage: StorageRef, initial: IrExpr) -> Self {
-        Self { storage, initial }
+        Self {
+            storage,
+            initial,
+            alias: None,
+        }
+    }
+
+    /// Also bind the captured cell under `alias` in the branch.
+    pub fn with_alias(mut self, alias: Option<String>) -> Self {
+        self.alias = alias;
+        self
+    }
+
+    pub fn alias(&self) -> Option<&str> {
+        self.alias.as_deref()
     }
 
     pub fn storage(&self) -> StorageRef {

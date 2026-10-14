@@ -437,6 +437,18 @@ impl Frame<'_, '_> {
         Ok(())
     }
 
+    /// Bind `alias` to the packed or real cell already bound as `name` in
+    /// the innermost scope (see `IrCapture::alias`).
+    pub(super) fn alias_capture(&mut self, alias: &str, name: &str) {
+        let scope = self
+            .bindings
+            .last_mut()
+            .expect("frame always has a binding scope");
+        if let Some(binding) = scope.get(name).cloned() {
+            scope.insert(alias.to_owned(), binding);
+        }
+    }
+
     pub(super) fn captured_fork(
         &mut self,
         kind: IrJoinKind,

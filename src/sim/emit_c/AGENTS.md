@@ -399,7 +399,10 @@ zero-fills and diagnoses oversized inputs. Composite call/ref targets retain exa
 layout descriptors.
 
 Evaluate capture values before publishing frames. Synchronous joined forks may
-alias registered parent numeric cells until every branch completes. Register all
+alias registered parent numeric cells until every branch completes. A branch
+binds an aliased packed capture under its capture name, its initializer's local
+and `IrCapture::alias` (the declaring subroutine's local, which element reads
+in nested branches name). Register all
 fields of a multi-event context before the first evaluator call: shared context
 pointers require one retain per descriptor field, not per distinct pointer.
 Fork captures of input event formals use `StorageKind::Event` and a typed

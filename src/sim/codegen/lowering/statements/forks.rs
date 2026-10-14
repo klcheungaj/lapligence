@@ -196,6 +196,21 @@ impl EmitCtx<'_, '_> {
                     },
                 )
                 .with_kind(source.kind);
+                // Selected accesses in the branch name the variable by the
+                // declaring subroutine's local, which a nested branch's
+                // initializer (the outer capture) does not carry.
+                let capture_name = Codegen::capture_local_name(storage);
+                let alias = self
+                    .cg
+                    .func
+                    .as_ref()
+                    .and_then(|func| func.locals.get(target))
+                    .map(|(name, ..)| name.clone())
+                    .or_else(|| self.cg.proc_local_info(*target).map(|info| info.c_name.clone()))
+                    .filter(|alias| {
+                        *alias != capture_name
+                            && !matches!(initial.kind(), IrExprKind::LocalRead(local) if local == alias)
+                    });
                 let local = ProcLocalInfo {
                     c_name: Codegen::capture_local_name(storage),
                     width: source.info.width,
@@ -206,7 +221,7 @@ impl EmitCtx<'_, '_> {
                 self.cg
                     .capture_locals
                     .insert(*target, CaptureBinding { storage, local });
-                captures.push(IrCapture::new(storage, initial));
+                captures.push(IrCapture::new(storage, initial).with_alias(alias));
             }
             if let Some(receiver) = &this_receiver {
                 let storage = StorageRef::new(

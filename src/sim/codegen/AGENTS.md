@@ -128,6 +128,10 @@ checks its actual has one (`native_ref_actual_observable`). Keep those cases in
 that one predicate and record new ones there. A fork-shared string keeps a
 marker only when `native_observed` finds a wait that can observe it; waits on
 fork-shared strings and handles use `IrDependency::SharedNative`.
+An event evaluator reads fork-visible automatics through its context slots:
+`event_context_with_aliases` maps the declaring subroutine's local (which
+array-element reads name) to the slot, and a joined branch's borrowed capture
+stays borrowed even when a detached fork elsewhere shares the cell.
 Fixed aggregate projections of static function locals use that persistent signal
 as their read/write owner, including tagged-member guards; activation locals do
 not name the persistent cell.
