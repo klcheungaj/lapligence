@@ -135,11 +135,11 @@ struct llg_cr_session {
     uint8_t* leaf_input;
     uint32_t* call_off;
     uint64_t* call_val;
-    uint8_t* call_state;        /* 0 pending, 1 done */
+    uint8_t* call_state;        /* 0 not evaluated, 1 ready, 2 done */
     uint8_t* call_input;
     const uint64_t** call_args; /* argument pointers for the thunk */
-    llg_cr_call_fn call_fn;
-    void* call_ctx;
+    int need_calls;             /* a classification found ready calls */
+    uint32_t engines;           /* engines used since llg_cr_begin */
     /* Scratch for big-integer and evaluation helpers. */
     uint64_t* tmp_a;
     uint64_t* tmp_b;

@@ -266,6 +266,12 @@ fn ident_children(e: &mut IrExpr) {
                     ident_expr(weight);
                 }
             }
+            IrSysFunc::RandStep { stream, .. } => {
+                if let Some(stream) = stream {
+                    stream.expressions_mut(&mut |expression| ident_expr(expression));
+                }
+            }
+            IrSysFunc::RandCallReady { .. } | IrSysFunc::RandValue { .. } => {}
             IrSysFunc::Math { args, .. } => {
                 for arg in args {
                     ident_expr(arg);

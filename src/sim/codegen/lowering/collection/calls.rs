@@ -513,12 +513,18 @@ impl<'a> Codegen<'a> {
             } else if self.model.funcs[meta.ir].receiver_class.is_some()
                 && matches!(self.kind(h), NodeKind::FuncCall { .. })
             {
+                // A constraint function of the randomized object (18.5.11).
+                let owner = self
+                    .class_method_owner(ft)
+                    .and_then(|class| self.class_nodes.get(&class).copied());
                 (
-                    self.class_init_receiver.clone().or_else(|| {
-                        self.func
-                            .as_ref()
-                            .and_then(|function| function.class_receiver.clone())
-                    }),
+                    self.rand_receiver_for(owner)
+                        .or_else(|| self.class_init_receiver.clone())
+                        .or_else(|| {
+                            self.func
+                                .as_ref()
+                                .and_then(|function| function.class_receiver.clone())
+                        }),
                     None,
                 )
             } else {

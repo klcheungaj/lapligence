@@ -40,7 +40,12 @@ pub(in crate::sim::emit_c) fn pattern_tables(model: &IrModel) -> String {
             .map(|field| {
                 format!(
                     "{{{}, {}u, {}}}",
-                    c_string_literal(&field.name),
+                    // A hidden member (randomization mode bit) has no name.
+                    if field.name.is_empty() {
+                        "NULL".to_owned()
+                    } else {
+                        c_string_literal(&field.name)
+                    },
                     field.ty,
                     storage_code(field.storage)
                 )

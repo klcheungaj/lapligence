@@ -978,6 +978,11 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             IrSysFunc::Randcase { .. } => {
                 return Err("randcase requires the ownership-aware emitter".to_owned())
             }
+            IrSysFunc::RandStep { .. }
+            | IrSysFunc::RandCallReady { .. }
+            | IrSysFunc::RandValue { .. } => {
+                return Err("randomize requires the ownership-aware emitter".to_owned())
+            }
             IrSysFunc::Math { kind, args } => {
                 use crate::sim::ir::IrMathFunc;
                 let name = match kind {

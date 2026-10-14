@@ -292,6 +292,9 @@ fn render_stmt_scoped(
             "    (void)llg_process_set_randstate({});\n",
             super::objects::string(ctx, state)?
         ),
+        IrStmt::Randomize(_) => {
+            return Err("randomize requires the ownership-aware emitter".to_owned())
+        }
         IrStmt::Memory {
             write,
             path,

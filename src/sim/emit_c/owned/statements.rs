@@ -255,6 +255,7 @@ impl Frame<'_, '_> {
                 self.line(format!("llg_process_srandom({});", seed.code));
                 self.discard(seed);
             }
+            IrStmt::Randomize(operation) => self.rand_statement(operation)?,
             IrStmt::RandomStateSet { state } => {
                 let state = self.string(state)?;
                 self.line(format!(

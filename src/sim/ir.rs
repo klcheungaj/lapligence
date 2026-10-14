@@ -86,6 +86,11 @@ pub use lvalues::{
 mod calls;
 pub(in crate::sim) use calls::call_argument_name;
 pub use calls::{IrCall, IrCallArg, IrCallExpr, IrDepth, IrVirtualCall};
+mod randomize;
+pub use randomize::{
+    IrRandBlock, IrRandCall, IrRandLeaf, IrRandNode, IrRandOp, IrRandProblem, IrRandStmt,
+    IrRandVar, RAND_STEP_FAILED, RAND_STEP_NEED_CALLS, RAND_STEP_OK,
+};
 mod statements;
 pub use statements::{
     IrActivationTarget, IrCaseItem, IrCaseKind, IrClockingSampleMode, IrDisplayRadix, IrFileOp,
@@ -539,6 +544,9 @@ pub struct IrModel {
     pub(in crate::sim) vpi_compile_calls: Vec<IrVpiCompileCall>,
     /// Random streams the model observes; set by lowering.
     pub(in crate::sim) random: IrRandomUse,
+    /// Constraint problems of randomize calls (IEEE 1800-2009 18), one per
+    /// call site and dynamic class; each owns one runtime solver session.
+    pub(in crate::sim) rand_problems: Vec<IrRandProblem>,
     /// Instantiated scopes holding DPI-C import or export declarations, in
     /// ascending byte order of their names; an `svScope` names one (SV
     /// Annex H.9). Set by lowering.
@@ -670,6 +678,7 @@ impl IrModel {
             vpi_objects: Vec::new(),
             vpi_compile_calls: Vec::new(),
             random: IrRandomUse::default(),
+            rand_problems: Vec::new(),
             dpi_scopes: Vec::new(),
             dpi_sites: Vec::new(),
         };

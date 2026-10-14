@@ -878,6 +878,7 @@ fn collect_effects(
             IrStmt::Memory { .. } | IrStmt::RandomSeed { .. } | IrStmt::RandomStateSet { .. } => {
                 effects.push(ExecutionEffect::RuntimeService)
             }
+            IrStmt::Randomize(_) => effects.push(ExecutionEffect::RuntimeService),
             IrStmt::Display { .. }
             | IrStmt::DisplayTyped { .. }
             | IrStmt::ImmediateAssertion { .. }
@@ -1053,6 +1054,11 @@ fn collect_statement_expression_effects(
         }
         IrStmt::RandomSeed { seed } => {
             collect_expression_effects(ir, seed, effects, visited_calls);
+        }
+        IrStmt::Randomize(operation) => {
+            for expression in operation.expressions() {
+                collect_expression_effects(ir, expression, effects, visited_calls);
+            }
         }
         IrStmt::RandomStateSet { state } => {
             collect_string_effects(ir, state, effects, visited_calls);
@@ -1828,6 +1834,16 @@ fn collect_expression_effects(
                 for weight in weights {
                     collect_expression_effects(ir, weight, effects, visited_calls);
                 }
+            }
+            IrSysFunc::RandStep { stream, .. } => {
+                effects.push(ExecutionEffect::RuntimeService);
+                if let Some(stream) = stream {
+                    collect_chandle_effects(ir, stream, effects, visited_calls);
+                }
+            }
+            // Reads of the solver session written by the statements above.
+            IrSysFunc::RandCallReady { .. } | IrSysFunc::RandValue { .. } => {
+                effects.push(ExecutionEffect::RuntimeService)
             }
             IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
             IrSysFunc::Math { args, .. } => {

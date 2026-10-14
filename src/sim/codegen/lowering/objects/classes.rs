@@ -143,6 +143,13 @@ impl Codegen<'_> {
                 node,
             )));
         }
+        // A constraint function of the randomized object (18.5.11).
+        let owner = self
+            .class_method_owner(callee)
+            .and_then(|class| self.class_nodes.get(&class).copied());
+        if let Some(receiver) = self.rand_receiver_for(owner) {
+            return Ok(Some(receiver));
+        }
         self.class_init_receiver
             .clone()
             .or_else(|| {
@@ -224,6 +231,12 @@ impl Codegen<'_> {
         field: NodeId,
     ) -> Result<IrChandleExpr, String> {
         if let Some(receiver) = self.explicit_class_receiver(path, node, field)? {
+            return Ok(receiver);
+        }
+        // A property of the randomized object inside its constraints.
+        if let Some(receiver) =
+            self.rand_receiver_for(self.class_fields.get(&field).map(|(class, _)| *class))
+        {
             return Ok(receiver);
         }
         self.class_init_receiver
@@ -599,8 +612,14 @@ impl Codegen<'_> {
                 field: index,
             },
         );
+        // Inside a constraint a random variable reads its solver value.
+        let read = self
+            .random_field_placeholder(node, field)
+            .unwrap_or_else(|| {
+                IrExpr::new(IrExprKind::LocalRead(name.clone()), width, signed, None)
+            });
         Ok(Some((
-            IrExpr::new(IrExprKind::LocalRead(name.clone()), width, signed, None),
+            read,
             IrLhs::WholeRef {
                 addr: format!("&{name}"),
                 width,

@@ -1021,7 +1021,7 @@ static int thunk(void* context, uint32_t call, const uint64_t* const* args,
     const llg_cr_call_t* c = &current->calls[call];
     uint64_t sum = 1u + call;
     for (uint32_t i = 0; i < c->arg_count; ++i) sum += args[i][0] * 3u;
-    result[0] = c->width >= 64 ? sum : (sum & ((UINT64_C(1) << c->width) - 1u));
+    result[0] = c->bit_width >= 64 ? sum : (sum & ((UINT64_C(1) << c->bit_width) - 1u));
     return (c->arg_count && args[0][0] % 7u == 6u) ? 2 : 0;
 }
 

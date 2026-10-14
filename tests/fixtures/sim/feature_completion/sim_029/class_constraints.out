@@ -1,0 +1,4 @@
+sum: bad=0
+packet: bad=0 varies=1
+inheritance: bad=0
+static: ok=1 shared=1 same=1

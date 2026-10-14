@@ -512,6 +512,30 @@ pub(crate) fn run_case_checked_matrix_with_files(
     files: &[(&str, &str)],
     check: &dyn Fn(&str, &Output),
 ) {
+    checked_matrix(suite, fixture, args, &[], files, check);
+}
+
+/// [`run_case_checked_matrix`] with extra child-process `envs`, for runtime
+/// controls such as solver budgets; the backend selection is applied after
+/// them.
+pub(crate) fn run_case_checked_matrix_with_env(
+    suite: &str,
+    fixture: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    check: &dyn Fn(&str, &Output),
+) {
+    checked_matrix(suite, fixture, args, envs, &[], check);
+}
+
+fn checked_matrix(
+    suite: &str,
+    fixture: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    files: &[(&str, &str)],
+    check: &dyn Fn(&str, &Output),
+) {
     assert!(
         llg::sim::build::cmake_available(),
         "CLI tests require CMake"
@@ -523,11 +547,12 @@ pub(crate) fn run_case_checked_matrix_with_files(
             ("compact", "portable"),
             ("compact", "gmp"),
         ] {
-            let controls = [
+            let mut controls = envs.to_vec();
+            controls.extend([
                 ("LLG_DEV_VALUE_BACKEND", backend),
                 ("LLG_DEV_COMPACT_KERNELS", kernel),
                 ("GMP_ROOT", gmp.as_str()),
-            ];
+            ]);
             let output =
                 invoke_with_env_and_files(suite, fixture, optimized, args, &controls, &[], files);
             let label = format!("{suite}/{fixture}, {backend}/{kernel}, optimized={optimized}");

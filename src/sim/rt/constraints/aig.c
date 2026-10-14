@@ -244,9 +244,9 @@ static const uint32_t* cr_node_lits(llg_cr_session_t* s, cr_blast_t* b, uint32_t
         if (s->status[n] != CR_K) cr_fatal("blasting a node without literals");
         b->lit_off[n] = (uint32_t)b->lits.len;
         const uint64_t* v = cr_node_val(s, n);
-        for (uint32_t i = 0; i < nd->width; ++i)
+        for (uint32_t i = 0; i < nd->bit_width; ++i)
             cr_u32_push(&b->lits, bv_bit(v, i) ? CR_TRUE : CR_FALSE);
-        if (nd->width == 0u) cr_u32_push(&b->lits, CR_FALSE);
+        if (nd->bit_width == 0u) cr_u32_push(&b->lits, CR_FALSE);
     }
     return b->lits.data + b->lit_off[n];
 }
@@ -256,12 +256,12 @@ static uint32_t* cr_operand_lits(llg_cr_session_t* s, cr_blast_t* b, uint32_t x,
                                  uint32_t w) {
     const llg_cr_node_t* nx = &s->p->nodes[x];
     uint32_t* out = cr_lits(w);
-    cr_blast_extend(out, w, cr_node_lits(s, b, x), nx->width, nx->is_signed);
+    cr_blast_extend(out, w, cr_node_lits(s, b, x), nx->bit_width, nx->sign_flag);
     return out;
 }
 
 static uint32_t cr_operand_truth(llg_cr_session_t* s, cr_blast_t* b, uint32_t x) {
-    return cr_blast_any(&b->aig, cr_node_lits(s, b, x), s->p->nodes[x].width);
+    return cr_blast_any(&b->aig, cr_node_lits(s, b, x), s->p->nodes[x].bit_width);
 }
 
 /* Blast R node n (all its R operands are already blasted). */
@@ -270,22 +270,22 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
     const llg_cr_problem_t* p = s->p;
     const llg_cr_node_t* nd = &p->nodes[n];
     cr_aig_t* g = &b->aig;
-    uint32_t w = nd->width;
+    uint32_t w = nd->bit_width;
     uint32_t* out = cr_lits(w);
     for (uint32_t i = 0; i < w; ++i) out[i] = CR_FALSE;
     const llg_cr_node_t* na = nd->a < p->node_count ? &p->nodes[nd->a] : NULL;
     switch (nd->op) {
     case LLG_CR_VAR: {
         const llg_cr_var_t* var = &p->vars[nd->a];
-        uint32_t* bits = cr_lits(var->width);
-        for (uint32_t i = 0; i < var->width; ++i)
+        uint32_t* bits = cr_lits(var->bit_width);
+        for (uint32_t i = 0; i < var->bit_width; ++i)
             bits[i] = bit_input[var_base[nd->a] + i] << 1;
-        cr_blast_extend(out, w, bits, var->width, var->is_signed);
+        cr_blast_extend(out, w, bits, var->bit_width, var->sign_flag);
         free(bits);
         break;
     }
     case LLG_CR_RESIZE:
-        cr_blast_extend(out, w, cr_node_lits(s, b, nd->a), na->width, na->is_signed);
+        cr_blast_extend(out, w, cr_node_lits(s, b, nd->a), na->bit_width, na->sign_flag);
         break;
     case LLG_CR_NOT:
     case LLG_CR_NEG: {
@@ -299,7 +299,7 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
     case LLG_CR_REDNAND: {
         const uint32_t* a = cr_node_lits(s, b, nd->a);
         uint32_t r = CR_TRUE;
-        for (uint32_t i = 0; i < na->width; ++i) r = cr_and(g, r, a[i]);
+        for (uint32_t i = 0; i < na->bit_width; ++i) r = cr_and(g, r, a[i]);
         out[0] = nd->op == LLG_CR_REDAND ? r : r ^ 1u;
         break;
     }
@@ -313,7 +313,7 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
     case LLG_CR_REDXNOR: {
         const uint32_t* a = cr_node_lits(s, b, nd->a);
         uint32_t r = CR_FALSE;
-        for (uint32_t i = 0; i < na->width; ++i) r = cr_xor(g, r, a[i]);
+        for (uint32_t i = 0; i < na->bit_width; ++i) r = cr_xor(g, r, a[i]);
         out[0] = nd->op == LLG_CR_REDXOR ? r : r ^ 1u;
         break;
     }
@@ -360,8 +360,8 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
         case LLG_CR_XNOR: for (uint32_t i = 0; i < w; ++i) out[i] = cr_xor(g, a[i], c[i]) ^ 1u; break;
         default: {
             /* Signed operands divide magnitudes and fix the signs. */
-            uint32_t sa = nd->is_signed && w ? a[w - 1u] : CR_FALSE;
-            uint32_t sb = nd->is_signed && w ? c[w - 1u] : CR_FALSE;
+            uint32_t sa = nd->sign_flag && w ? a[w - 1u] : CR_FALSE;
+            uint32_t sb = nd->sign_flag && w ? c[w - 1u] : CR_FALSE;
             uint32_t* ua = cr_lits(w);
             uint32_t* ub = cr_lits(w);
             uint32_t* t = cr_lits(w);
@@ -392,8 +392,8 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
     case LLG_CR_ASHR: {
         uint32_t* a = cr_operand_lits(s, b, nd->a, w);
         const llg_cr_node_t* nb = &p->nodes[nd->b];
-        uint32_t fill = nd->op == LLG_CR_ASHR && nd->is_signed && w ? a[w - 1u] : CR_FALSE;
-        cr_blast_shift(g, out, a, w, cr_node_lits(s, b, nd->b), nb->width,
+        uint32_t fill = nd->op == LLG_CR_ASHR && nd->sign_flag && w ? a[w - 1u] : CR_FALSE;
+        cr_blast_shift(g, out, a, w, cr_node_lits(s, b, nd->b), nb->bit_width,
                        nd->op == LLG_CR_SHL, fill);
         free(a);
         break;
@@ -405,8 +405,8 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
     case LLG_CR_GT:
     case LLG_CR_GE: {
         const llg_cr_node_t* nb = &p->nodes[nd->b];
-        uint32_t cw = na->width > nb->width ? na->width : nb->width;
-        int sgn = na->is_signed && nb->is_signed;
+        uint32_t cw = na->bit_width > nb->bit_width ? na->bit_width : nb->bit_width;
+        int sgn = na->sign_flag && nb->sign_flag;
         uint32_t* a = cr_operand_lits(s, b, nd->a, cw);
         uint32_t* c = cr_operand_lits(s, b, nd->b, cw);
         if (sgn && cw) {
@@ -440,7 +440,7 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
         uint32_t pos = 0;
         for (uint32_t i = nd->c; i-- > 0;) {
             uint32_t x = p->args[nd->b + i];
-            uint32_t xw = p->nodes[x].width;
+            uint32_t xw = p->nodes[x].bit_width;
             const uint32_t* v = cr_node_lits(s, b, x);
             for (uint32_t bit = 0; bit < xw && pos < w; ++bit, ++pos) out[pos] = v[bit];
         }
@@ -450,7 +450,7 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
         const uint32_t* v = cr_node_lits(s, b, nd->a);
         uint32_t pos = 0;
         for (uint32_t k = 0; k < nd->b; ++k)
-            for (uint32_t bit = 0; bit < na->width && pos < w; ++bit, ++pos) out[pos] = v[bit];
+            for (uint32_t bit = 0; bit < na->bit_width && pos < w; ++bit, ++pos) out[pos] = v[bit];
         break;
     }
     case LLG_CR_SLICE:
@@ -459,13 +459,13 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
         if (nd->op == LLG_CR_DSLICE) {
             int64_t index = 0;
             const llg_cr_node_t* ni = &p->nodes[nd->b];
-            if (!bv_index(cr_node_val(s, nd->b), ni->width, ni->is_signed, &index) || index < 0)
+            if (!bv_index(cr_node_val(s, nd->b), ni->bit_width, ni->sign_flag, &index) || index < 0)
                 cr_fatal("dynamic select index escaped classification");
             lsb = (uint64_t)index;
         }
         const uint32_t* v = cr_node_lits(s, b, nd->a);
         for (uint32_t bit = 0; bit < w; ++bit)
-            out[bit] = lsb + bit < na->width ? v[lsb + bit] : CR_FALSE;
+            out[bit] = lsb + bit < na->bit_width ? v[lsb + bit] : CR_FALSE;
         break;
     }
     default:

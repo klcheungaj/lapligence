@@ -15,10 +15,10 @@ static void cr_validate_problem(const llg_cr_problem_t* p) {
     for (uint32_t n = 0; n < p->node_count; ++n) {
         const llg_cr_node_t* nd = &p->nodes[n];
         if (nd->op == 0 || nd->op >= LLG_CR_OP_LIMIT) cr_fatal("invalid node operation");
-        if (nd->width == 0u) cr_fatal("zero-width node");
+        if (nd->bit_width == 0u) cr_fatal("zero-width node");
         switch (nd->op) {
         case LLG_CR_CONST:
-            if ((uint64_t)nd->a + CR_WORDS(nd->width) > p->const_count) cr_fatal("constant out of range");
+            if ((uint64_t)nd->a + CR_WORDS(nd->bit_width) > p->const_count) cr_fatal("constant out of range");
             break;
         case LLG_CR_VAR:
             if (nd->a >= p->var_count) cr_fatal("variable out of range");
@@ -65,7 +65,7 @@ static void cr_validate_problem(const llg_cr_problem_t* p) {
     for (uint32_t b = 0; b < p->block_count; ++b)
         if (p->blocks[b].root >= p->node_count) cr_fatal("block root out of range");
     for (uint32_t v = 0; v < p->var_count; ++v) {
-        if (p->vars[v].width == 0u) cr_fatal("zero-width variable");
+        if (p->vars[v].bit_width == 0u) cr_fatal("zero-width variable");
         if (p->vars[v].domain_node != LLG_CR_NONE && p->vars[v].domain_node >= p->node_count)
             cr_fatal("domain node out of range");
     }
@@ -82,7 +82,7 @@ llg_cr_session_t* llg_cr_session_get(const llg_cr_problem_t* p, llg_cr_session_t
     s->max_words = 1u;
     for (uint32_t n = 0; n < p->node_count; ++n) {
         s->node_off[n] = (uint32_t)words;
-        uint32_t w = CR_WORDS(p->nodes[n].width);
+        uint32_t w = CR_WORDS(p->nodes[n].bit_width);
         if (w > s->max_words) s->max_words = w;
         words += w;
         if (words > UINT32_MAX) cr_fatal("problem too large");
@@ -97,7 +97,7 @@ llg_cr_session_t* llg_cr_session_get(const llg_cr_problem_t* p, llg_cr_session_t
     words = 0;
     for (uint32_t v = 0; v < p->var_count; ++v) {
         s->var_off[v] = (uint32_t)words;
-        uint32_t w = CR_WORDS(p->vars[v].width);
+        uint32_t w = CR_WORDS(p->vars[v].bit_width);
         if (w > s->max_words) s->max_words = w;
         words += w;
         if (words > UINT32_MAX) cr_fatal("problem too large");
@@ -114,7 +114,7 @@ llg_cr_session_t* llg_cr_session_get(const llg_cr_problem_t* p, llg_cr_session_t
     words = 0;
     for (uint32_t l = 0; l < p->leaf_count; ++l) {
         s->leaf_off[l] = (uint32_t)words;
-        words += CR_WORDS(p->leaves[l].width);
+        words += CR_WORDS(p->leaves[l].bit_width);
     }
     s->leaf_val = (uint64_t*)cr_alloc(words ? words : 1u, sizeof(uint64_t));
     s->leaf_input = (uint8_t*)cr_alloc(leaves, 1u);
@@ -124,7 +124,8 @@ llg_cr_session_t* llg_cr_session_get(const llg_cr_problem_t* p, llg_cr_session_t
     uint32_t max_args = 1u;
     for (uint32_t c = 0; c < p->call_count; ++c) {
         s->call_off[c] = (uint32_t)words;
-        words += CR_WORDS(p->calls[c].width);
+        words += CR_WORDS(p->calls[c].bit_width);
+        if (CR_WORDS(p->calls[c].bit_width) > s->max_words) s->max_words = CR_WORDS(p->calls[c].bit_width);
         if (p->calls[c].arg_count > max_args) max_args = p->calls[c].arg_count;
     }
     s->call_val = (uint64_t*)cr_alloc(words ? words : 1u, sizeof(uint64_t));
@@ -173,10 +174,10 @@ void llg_cr_session_release_all(void) {
 void llg_cr_set_var(llg_cr_session_t* s, uint32_t var, const uint64_t* words,
                     int active, int input_state) {
     if (var >= s->p->var_count) cr_fatal("variable out of range");
-    uint32_t n = CR_WORDS(s->p->vars[var].width);
+    uint32_t n = CR_WORDS(s->p->vars[var].bit_width);
     uint64_t* d = s->var_cur + s->var_off[var];
     for (uint32_t i = 0; i < n; ++i) d[i] = words ? words[i] : 0u;
-    bv_mask(d, s->p->vars[var].width);
+    bv_mask(d, s->p->vars[var].bit_width);
     s->var_active[var] = (uint8_t)(active != 0);
     s->var_input[var] = (uint8_t)input_state;
 }
@@ -189,10 +190,10 @@ void llg_cr_set_block(llg_cr_session_t* s, uint32_t block, int enabled) {
 void llg_cr_set_leaf(llg_cr_session_t* s, uint32_t leaf, const uint64_t* words,
                      int input_state) {
     if (leaf >= s->p->leaf_count) cr_fatal("state leaf out of range");
-    uint32_t n = CR_WORDS(s->p->leaves[leaf].width);
+    uint32_t n = CR_WORDS(s->p->leaves[leaf].bit_width);
     uint64_t* d = s->leaf_val + s->leaf_off[leaf];
     for (uint32_t i = 0; i < n; ++i) d[i] = words ? words[i] : 0u;
-    bv_mask(d, s->p->leaves[leaf].width);
+    bv_mask(d, s->p->leaves[leaf].bit_width);
     s->leaf_input[leaf] = (uint8_t)input_state;
 }
 
@@ -201,7 +202,7 @@ const uint64_t* llg_cr_value(const llg_cr_session_t* s, uint32_t var) {
 }
 
 uint32_t llg_cr_var_words(const llg_cr_session_t* s, uint32_t var) {
-    return CR_WORDS(s->p->vars[var].width);
+    return CR_WORDS(s->p->vars[var].bit_width);
 }
 
 /* ---- solve helpers -------------------------------------------------------- */
@@ -331,7 +332,7 @@ static void cr_cache_key(llg_cr_session_t* s, const uint32_t* conj, uint32_t nco
             if (s->status[x] != CR_K) continue;
             cr_u64_push(key, ((uint64_t)n << 32) | x);
             const uint64_t* v = cr_node_val(s, x);
-            for (uint32_t w = 0; w < CR_WORDS(s->p->nodes[x].width); ++w) cr_u64_push(key, v[w]);
+            for (uint32_t w = 0; w < CR_WORDS(s->p->nodes[x].bit_width); ++w) cr_u64_push(key, v[w]);
         }
     }
 }
@@ -380,7 +381,7 @@ static int cr_eval_cone(llg_cr_session_t* s, const uint8_t* in_cone, const uint3
         const llg_cr_node_t* nd = &p->nodes[n];
         if (nd->op == LLG_CR_VAR) {
             const llg_cr_var_t* var = &p->vars[nd->a];
-            cr_copy_input(s, n, s->sol + s->var_off[nd->a], var->width, var->is_signed);
+            cr_copy_input(s, n, s->sol + s->var_off[nd->a], var->bit_width, var->sign_flag);
         } else if (cr_eval_op(s, n)) {
             return 0; /* an evaluation error never satisfies a constraint */
         }
@@ -398,8 +399,8 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
     uint64_t bits = 0;
     uint32_t maxw = 0;
     for (uint32_t i = 0; i < nvars; ++i) {
-        bits += p->vars[vars[i]].width;
-        if (p->vars[vars[i]].width > maxw) maxw = p->vars[vars[i]].width;
+        bits += p->vars[vars[i]].bit_width;
+        if (p->vars[vars[i]].bit_width > maxw) maxw = p->vars[vars[i]].bit_width;
     }
     uint8_t* in_cone = (uint8_t*)cr_alloc(p->node_count ? p->node_count : 1u, 1u);
     cr_u32vec_t stack = {0, 0, 0};
@@ -439,13 +440,13 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
             uint32_t base = 0;
             for (uint32_t i = 0; i < nvars; ++i) {
                 var_base[vars[i]] = base;
-                base += p->vars[vars[i]].width;
+                base += p->vars[vars[i]].bit_width;
             }
             uint32_t l = 0;
             for (uint32_t pos = maxw; pos-- > 0;) {
                 for (uint32_t i = 0; i < nvars; ++i) {
                     uint32_t v = vars[i];
-                    if (pos >= p->vars[v].width) continue;
+                    if (pos >= p->vars[v].bit_width) continue;
                     level_var[l] = v;
                     level_bit[l] = pos;
                     bit_input[var_base[v] + pos] = l + 1u;
@@ -520,7 +521,7 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
          * solutions because draws cover each variable's whole domain. */
         for (uint64_t attempt = 0; attempt < st->t->reject_tries; ++attempt) {
             for (uint32_t i = 0; i < nvars; ++i)
-                cr_draw_bits(st->rng, s->sol + s->var_off[vars[i]], p->vars[vars[i]].width);
+                cr_draw_bits(st->rng, s->sol + s->var_off[vars[i]], p->vars[vars[i]].bit_width);
             st->reject_tries++;
             if (cr_eval_cone(s, in_cone, conj, ncon)) {
                 st->report->engines |= LLG_CR_ENGINE_REJECT;
@@ -627,33 +628,77 @@ static void cr_print_stats(const cr_solve_t* st, llg_cr_status_t status) {
 
 static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach);
 
-llg_cr_status_t llg_cr_solve(llg_cr_session_t* s, const llg_cr_rng_t* rng, llg_cr_call_fn calls,
-                             void* context, llg_cr_report_t* report) {
+void llg_cr_begin(llg_cr_session_t* s) {
+    for (uint32_t v = 0; v < s->p->var_count; ++v) s->var_fixed[v] = 0;
+    for (uint32_t c = 0; c < s->p->call_count; ++c) s->call_state[c] = 0;
+    s->engines = 0;
+}
+
+llg_cr_status_t llg_cr_step(llg_cr_session_t* s, const llg_cr_rng_t* rng,
+                            llg_cr_report_t* report) {
     llg_cr_report_t local;
     if (!report) report = &local;
     memset(report, 0, sizeof(*report));
     report->item = LLG_CR_NONE;
+    report->engines = s->engines;
     cr_solve_t st;
     memset(&st, 0, sizeof(st));
     st.s = s;
     st.rng = rng;
     st.report = report;
     st.t = llg_cr_tunables();
-    s->call_fn = calls;
-    s->call_ctx = context;
     uint8_t* reach = (uint8_t*)cr_alloc(s->p->node_count ? s->p->node_count : 1u, 1u);
     llg_cr_status_t status = cr_solve_inner(&st, reach);
     free(reach);
+    s->engines = report->engines;
     if (status == LLG_CR_RESOURCE) report->budget = st.budget ? st.budget : "LLG_RAND_REJECT_TRIES";
-    if (st.t->stats) cr_print_stats(&st, status);
+    if (st.t->stats && status != LLG_CR_NEED_CALLS) cr_print_stats(&st, status);
     return status;
+}
+
+int llg_cr_call_ready(const llg_cr_session_t* s, uint32_t call) {
+    return call < s->p->call_count && s->call_state[call] == 1u;
+}
+
+const uint64_t* llg_cr_call_arg(const llg_cr_session_t* s, uint32_t call, uint32_t arg) {
+    const llg_cr_call_t* c = &s->p->calls[call];
+    if (arg >= c->arg_count) cr_fatal("call argument out of range");
+    return s->val + s->node_off[s->p->args[c->arg_first + arg]];
+}
+
+void llg_cr_set_call_result(llg_cr_session_t* s, uint32_t call, const uint64_t* words,
+                            int input_state) {
+    const llg_cr_call_t* c = &s->p->calls[call];
+    uint64_t* result = s->call_val + s->call_off[call];
+    uint32_t n = CR_WORDS(c->bit_width);
+    for (uint32_t i = 0; i < n; ++i) result[i] = words ? words[i] : 0u;
+    bv_mask(result, c->bit_width);
+    s->call_input[call] = (uint8_t)input_state;
+    s->call_state[call] = 2u;
+}
+
+llg_cr_status_t llg_cr_solve(llg_cr_session_t* s, const llg_cr_rng_t* rng, llg_cr_call_fn calls,
+                             void* context, llg_cr_report_t* report) {
+    llg_cr_begin(s);
+    for (;;) {
+        llg_cr_status_t status = llg_cr_step(s, rng, report);
+        if (status != LLG_CR_NEED_CALLS) return status;
+        if (!calls) cr_fatal("constraint function call without a thunk");
+        for (uint32_t c = 0; c < s->p->call_count; ++c) {
+            if (!llg_cr_call_ready(s, c)) continue;
+            const llg_cr_call_t* call = &s->p->calls[c];
+            for (uint32_t i = 0; i < call->arg_count; ++i) s->call_args[i] = llg_cr_call_arg(s, c, i);
+            uint64_t* result = s->tmp_a;
+            memset(result, 0, ((size_t)s->max_words + 1u) * sizeof(uint64_t));
+            int state = calls(context, c, s->call_args, result);
+            llg_cr_set_call_result(s, c, result, state);
+        }
+    }
 }
 
 static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach) {
     llg_cr_session_t* s = st->s;
     const llg_cr_problem_t* p = s->p;
-    for (uint32_t v = 0; v < p->var_count; ++v) s->var_fixed[v] = 0;
-    for (uint32_t c = 0; c < p->call_count; ++c) s->call_state[c] = 0;
     cr_mark_reachable(s, reach);
 
     cr_u32vec_t conj = {0, 0, 0}, stack = {0, 0, 0}, support = {0, 0, 0}, calls = {0, 0, 0};
@@ -670,6 +715,10 @@ static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach) {
     for (;;) {
         cr_prepare_classify(s, reach);
         cr_classify(s);
+        if (s->need_calls) {
+            status = LLG_CR_NEED_CALLS;
+            break;
+        }
         status = cr_roots(st, &conj, &stack);
         if (status != LLG_CR_OK) break;
 
@@ -797,7 +846,7 @@ static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach) {
             if (!ccount) {
                 for (uint32_t i = 0; i < vcount; ++i) {
                     uint32_t v = comp_vars.data[vfirst + i];
-                    cr_draw_bits(st->rng, s->sol + s->var_off[v], p->vars[v].width);
+                    cr_draw_bits(st->rng, s->sol + s->var_off[v], p->vars[v].bit_width);
                 }
                 st->report->engines |= LLG_CR_ENGINE_DIRECT;
                 continue;

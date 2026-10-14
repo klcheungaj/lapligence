@@ -228,13 +228,13 @@ static uint64_t* cr_node_val(llg_cr_session_t* s, uint32_t n) {
 static const uint64_t* cr_operand(llg_cr_session_t* s, uint32_t x, uint32_t w,
                                   uint64_t* tmp) {
     const llg_cr_node_t* nx = &s->p->nodes[x];
-    if (nx->width == w) return cr_node_val(s, x);
-    bv_extend(tmp, w, cr_node_val(s, x), nx->width, nx->is_signed);
+    if (nx->bit_width == w) return cr_node_val(s, x);
+    bv_extend(tmp, w, cr_node_val(s, x), nx->bit_width, nx->sign_flag);
     return tmp;
 }
 
 static int cr_truth(llg_cr_session_t* s, uint32_t x) {
-    return !bv_is_zero(cr_node_val(s, x), s->p->nodes[x].width);
+    return !bv_is_zero(cr_node_val(s, x), s->p->nodes[x].bit_width);
 }
 
 /* Evaluate one node whose operands all hold values (K, or R with the
@@ -244,11 +244,11 @@ static int cr_truth(llg_cr_session_t* s, uint32_t x) {
 static int cr_eval_op(llg_cr_session_t* s, uint32_t n) {
     const llg_cr_node_t* nd = &s->p->nodes[n];
     uint64_t* d = cr_node_val(s, n);
-    uint32_t w = nd->width, nw = CR_WORDS(w);
+    uint32_t w = nd->bit_width, nw = CR_WORDS(w);
     const llg_cr_node_t* na = nd->a < s->p->node_count ? &s->p->nodes[nd->a] : NULL;
     switch (nd->op) {
     case LLG_CR_RESIZE:
-        bv_extend(d, w, cr_node_val(s, nd->a), na->width, na->is_signed);
+        bv_extend(d, w, cr_node_val(s, nd->a), na->bit_width, na->sign_flag);
         return 0;
     case LLG_CR_NOT:
         bv_not(d, cr_operand(s, nd->a, w, s->tmp_a), w);
@@ -260,7 +260,7 @@ static int cr_eval_op(llg_cr_session_t* s, uint32_t n) {
     case LLG_CR_REDNAND: {
         const uint64_t* a = cr_node_val(s, nd->a);
         int all = 1;
-        for (uint32_t i = 0; i < na->width; ++i)
+        for (uint32_t i = 0; i < na->bit_width; ++i)
             if (!bv_bit(a, i)) { all = 0; break; }
         for (uint32_t i = 0; i < nw; ++i) d[i] = 0;
         d[0] = (uint64_t)(nd->op == LLG_CR_REDAND ? all : !all);
@@ -277,7 +277,7 @@ static int cr_eval_op(llg_cr_session_t* s, uint32_t n) {
     case LLG_CR_REDXNOR: {
         const uint64_t* a = cr_node_val(s, nd->a);
         uint64_t parity = 0;
-        for (uint32_t i = 0; i < CR_WORDS(na->width); ++i) {
+        for (uint32_t i = 0; i < CR_WORDS(na->bit_width); ++i) {
             uint64_t x = a[i];
             x ^= x >> 32; x ^= x >> 16; x ^= x >> 8; x ^= x >> 4; x ^= x >> 2; x ^= x >> 1;
             parity ^= x & 1u;
@@ -337,8 +337,8 @@ static int cr_eval_op(llg_cr_session_t* s, uint32_t n) {
         const uint64_t* a = cr_operand(s, nd->a, w, s->tmp_a);
         const uint64_t* b = cr_operand(s, nd->b, w, s->tmp_b);
         if (bv_is_zero(b, w)) return LLG_CR_REASON_DIVZERO;
-        int sa = nd->is_signed && w && bv_bit(a, w - 1u);
-        int sb = nd->is_signed && w && bv_bit(b, w - 1u);
+        int sa = nd->sign_flag && w && bv_bit(a, w - 1u);
+        int sb = nd->sign_flag && w && bv_bit(b, w - 1u);
         uint64_t* ua = s->tmp_c;
         uint64_t* ub = s->tmp_d;
         if (sa) bv_neg(ua, a, w); else memcpy(ua, a, nw * sizeof(uint64_t));
@@ -360,10 +360,10 @@ static int cr_eval_op(llg_cr_session_t* s, uint32_t n) {
     case LLG_CR_SHR:
     case LLG_CR_ASHR: {
         const uint64_t* a = cr_operand(s, nd->a, w, s->tmp_a);
-        uint64_t amount = bv_amount(cr_node_val(s, nd->b), s->p->nodes[nd->b].width);
+        uint64_t amount = bv_amount(cr_node_val(s, nd->b), s->p->nodes[nd->b].bit_width);
         if (nd->op == LLG_CR_SHL) bv_shl(d, a, w, amount);
         else bv_shr(d, a, w, amount,
-                    nd->op == LLG_CR_ASHR && nd->is_signed && w && bv_bit(a, w - 1u));
+                    nd->op == LLG_CR_ASHR && nd->sign_flag && w && bv_bit(a, w - 1u));
         return 0;
     }
     case LLG_CR_EQ:
@@ -373,8 +373,8 @@ static int cr_eval_op(llg_cr_session_t* s, uint32_t n) {
     case LLG_CR_GT:
     case LLG_CR_GE: {
         const llg_cr_node_t* nb = &s->p->nodes[nd->b];
-        uint32_t cw = na->width > nb->width ? na->width : nb->width;
-        int sgn = na->is_signed && nb->is_signed;
+        uint32_t cw = na->bit_width > nb->bit_width ? na->bit_width : nb->bit_width;
+        int sgn = na->sign_flag && nb->sign_flag;
         const uint64_t* a = cr_operand(s, nd->a, cw, s->tmp_a);
         const uint64_t* b = cr_operand(s, nd->b, cw, s->tmp_b);
         int c = sgn ? bv_scmp(a, b, cw) : bv_ucmp(a, b, cw);
@@ -400,7 +400,7 @@ static int cr_eval_op(llg_cr_session_t* s, uint32_t n) {
         for (uint32_t i = nd->c; i-- > 0;) {
             uint32_t x = s->p->args[nd->b + i];
             const uint64_t* v = cr_node_val(s, x);
-            uint32_t xw = s->p->nodes[x].width;
+            uint32_t xw = s->p->nodes[x].bit_width;
             for (uint32_t bit = 0; bit < xw && pos < w; ++bit, ++pos)
                 if (bv_bit(v, bit)) bv_set_bit(d, pos, 1);
         }
@@ -411,7 +411,7 @@ static int cr_eval_op(llg_cr_session_t* s, uint32_t n) {
         const uint64_t* v = cr_node_val(s, nd->a);
         uint32_t pos = 0;
         for (uint32_t k = 0; k < nd->b; ++k)
-            for (uint32_t bit = 0; bit < na->width && pos < w; ++bit, ++pos)
+            for (uint32_t bit = 0; bit < na->bit_width && pos < w; ++bit, ++pos)
                 if (bv_bit(v, bit)) bv_set_bit(d, pos, 1);
         return 0;
     }
@@ -420,15 +420,15 @@ static int cr_eval_op(llg_cr_session_t* s, uint32_t n) {
         int64_t lsb = nd->b;
         if (nd->op == LLG_CR_DSLICE) {
             const llg_cr_node_t* ni = &s->p->nodes[nd->b];
-            if (!bv_index(cr_node_val(s, nd->b), ni->width, ni->is_signed, &lsb))
+            if (!bv_index(cr_node_val(s, nd->b), ni->bit_width, ni->sign_flag, &lsb))
                 return LLG_CR_REASON_INDEX;
-            if (lsb < 0 || (uint64_t)lsb + w > na->width) return LLG_CR_REASON_INDEX;
+            if (lsb < 0 || (uint64_t)lsb + w > na->bit_width) return LLG_CR_REASON_INDEX;
         }
         for (uint32_t i = 0; i < nw; ++i) d[i] = 0;
         const uint64_t* v = cr_node_val(s, nd->a);
         for (uint32_t bit = 0; bit < w; ++bit) {
             uint64_t from = (uint64_t)lsb + bit;
-            if (from < na->width && bv_bit(v, (uint32_t)from)) bv_set_bit(d, bit, 1);
+            if (from < na->bit_width && bv_bit(v, (uint32_t)from)) bv_set_bit(d, bit, 1);
         }
         return 0;
     }
@@ -460,7 +460,7 @@ static void cr_inherit_error(llg_cr_session_t* s, uint32_t n, uint32_t from) {
 static void cr_copy_input(llg_cr_session_t* s, uint32_t n, const uint64_t* words,
                           uint32_t width, int sgn) {
     const llg_cr_node_t* nd = &s->p->nodes[n];
-    bv_extend(cr_node_val(s, n), nd->width, words, width, sgn);
+    bv_extend(cr_node_val(s, n), nd->bit_width, words, width, sgn);
 }
 
 static void cr_classify_logic(llg_cr_session_t* s, uint32_t n, const uint32_t* xs,
@@ -484,7 +484,7 @@ static void cr_classify_logic(llg_cr_session_t* s, uint32_t n, const uint32_t* x
     if (dominant) {
         s->status[n] = CR_K;
         uint64_t* d = cr_node_val(s, n);
-        memset(d, 0, CR_WORDS(s->p->nodes[n].width) * sizeof(uint64_t));
+        memset(d, 0, CR_WORDS(s->p->nodes[n].bit_width) * sizeof(uint64_t));
         d[0] = (uint64_t)disjunction;
     } else if (error >= 0) {
         cr_inherit_error(s, n, xs[error]);
@@ -493,7 +493,7 @@ static void cr_classify_logic(llg_cr_session_t* s, uint32_t n, const uint32_t* x
     } else {
         s->status[n] = CR_K;
         uint64_t* d = cr_node_val(s, n);
-        memset(d, 0, CR_WORDS(s->p->nodes[n].width) * sizeof(uint64_t));
+        memset(d, 0, CR_WORDS(s->p->nodes[n].bit_width) * sizeof(uint64_t));
         d[0] = (uint64_t)!disjunction;
     }
 }
@@ -502,34 +502,33 @@ static void cr_eval_call(llg_cr_session_t* s, uint32_t n) {
     const llg_cr_node_t* nd = &s->p->nodes[n];
     const llg_cr_call_t* call = &s->p->calls[nd->a];
     uint64_t* result = s->call_val + s->call_off[nd->a];
-    if (!s->call_state[nd->a]) {
-        if (!s->call_fn) cr_fatal("constraint function call without a thunk");
-        for (uint32_t i = 0; i < call->arg_count; ++i)
-            s->call_args[i] = cr_node_val(s, s->p->args[call->arg_first + i]);
-        memset(result, 0, CR_WORDS(call->width) * sizeof(uint64_t));
-        int state = s->call_fn(s->call_ctx, nd->a, s->call_args, result);
-        bv_mask(result, call->width);
-        s->call_input[nd->a] = (uint8_t)state;
-        s->call_state[nd->a] = 1;
+    if (s->call_state[nd->a] != 2u) {
+        /* Arguments are known: the caller evaluates the function between
+         * solve steps (llg_cr_step returns LLG_CR_NEED_CALLS). */
+        s->call_state[nd->a] = 1u;
+        s->need_calls = 1;
+        s->status[n] = CR_R;
+        return;
     }
     if (s->call_input[nd->a] != LLG_CR_INPUT_KNOWN) {
         cr_set_error(s, n, LLG_CR_REASON_XZ_CALL, nd->a);
         return;
     }
     s->status[n] = CR_K;
-    cr_copy_input(s, n, result, call->width, call->is_signed);
+    cr_copy_input(s, n, result, call->bit_width, call->sign_flag);
 }
 
 /* Classify every node not marked CR_SKIP, in post-order. */
 static void cr_classify(llg_cr_session_t* s) {
     const llg_cr_problem_t* p = s->p;
+    s->need_calls = 0;
     for (uint32_t n = 0; n < p->node_count; ++n) {
         if (s->status[n] == CR_SKIP) continue;
         const llg_cr_node_t* nd = &p->nodes[n];
         switch (nd->op) {
         case LLG_CR_CONST:
             s->status[n] = CR_K;
-            cr_copy_input(s, n, p->consts + nd->a, nd->width, nd->is_signed);
+            cr_copy_input(s, n, p->consts + nd->a, nd->bit_width, nd->sign_flag);
             continue;
         case LLG_CR_VAR: {
             uint32_t v = nd->a;
@@ -538,12 +537,12 @@ static void cr_classify(llg_cr_session_t* s) {
                 s->status[n] = CR_R;
             } else if (s->var_active[v]) {
                 s->status[n] = CR_K;
-                cr_copy_input(s, n, s->sol + s->var_off[v], var->width, var->is_signed);
+                cr_copy_input(s, n, s->sol + s->var_off[v], var->bit_width, var->sign_flag);
             } else if (s->var_input[v] != LLG_CR_INPUT_KNOWN) {
                 cr_set_error(s, n, LLG_CR_REASON_XZ_VAR, v);
             } else {
                 s->status[n] = CR_K;
-                cr_copy_input(s, n, s->var_cur + s->var_off[v], var->width, var->is_signed);
+                cr_copy_input(s, n, s->var_cur + s->var_off[v], var->bit_width, var->sign_flag);
             }
             continue;
         }
@@ -556,8 +555,8 @@ static void cr_classify(llg_cr_session_t* s) {
                 cr_set_error(s, n, LLG_CR_REASON_XZ_LEAF, l);
             } else {
                 s->status[n] = CR_K;
-                cr_copy_input(s, n, s->leaf_val + s->leaf_off[l], leaf->width,
-                              leaf->is_signed);
+                cr_copy_input(s, n, s->leaf_val + s->leaf_off[l], leaf->bit_width,
+                              leaf->sign_flag);
             }
             continue;
         }
@@ -639,7 +638,7 @@ static void cr_classify(llg_cr_session_t* s) {
         /* A known divisor of zero or a known out-of-range index is an error
          * even when the other operand is random. */
         if ((nd->op == LLG_CR_DIV || nd->op == LLG_CR_MOD) && s->status[nd->b] == CR_K &&
-            bv_is_zero(cr_node_val(s, nd->b), p->nodes[nd->b].width)) {
+            bv_is_zero(cr_node_val(s, nd->b), p->nodes[nd->b].bit_width)) {
             cr_set_error(s, n, LLG_CR_REASON_DIVZERO, n);
             continue;
         }
@@ -651,8 +650,8 @@ static void cr_classify(llg_cr_session_t* s) {
         if (nd->op == LLG_CR_DSLICE) {
             const llg_cr_node_t* ni = &p->nodes[nd->b];
             int64_t lsb;
-            if (!bv_index(cr_node_val(s, nd->b), ni->width, ni->is_signed, &lsb) ||
-                lsb < 0 || (uint64_t)lsb + nd->width > p->nodes[nd->a].width) {
+            if (!bv_index(cr_node_val(s, nd->b), ni->bit_width, ni->sign_flag, &lsb) ||
+                lsb < 0 || (uint64_t)lsb + nd->bit_width > p->nodes[nd->a].bit_width) {
                 cr_set_error(s, n, LLG_CR_REASON_INDEX, n);
                 continue;
             }

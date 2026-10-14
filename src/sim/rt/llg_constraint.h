@@ -24,7 +24,7 @@ extern "C" {
 #define LLG_CR_NONE UINT32_MAX
 
 /* Expression node operations. Nodes are stored in post-order: every operand
- * index is smaller than the node's own index. `width`/`is_signed` give the
+ * index is smaller than the node's own index. `bit_width`/`sign_flag` give the
  * node's result type after IEEE 1800-2009 11.6/11.8 sizing; lowering inserts
  * explicit RESIZE nodes, and operands of arithmetic and bitwise nodes have
  * the node's width. */
@@ -77,16 +77,16 @@ enum {
 
 typedef struct {
     uint16_t op;
-    uint8_t is_signed;
+    uint8_t sign_flag;
     uint8_t reserved;
-    uint32_t width;
+    uint32_t bit_width;
     uint32_t a, b, c;
 } llg_cr_node_t;
 
 typedef struct {
     const char* name;
-    uint32_t width;
-    uint8_t is_signed;
+    uint32_t bit_width;
+    uint8_t sign_flag;
     /* Domain constraint applied only while the variable is active (an enum
      * variable takes its named values, decision S29-D2), or LLG_CR_NONE. */
     uint32_t domain_node;
@@ -99,14 +99,14 @@ typedef struct {
 
 typedef struct {
     const char* name;   /* source text for diagnostics */
-    uint32_t width;
-    uint8_t is_signed;
+    uint32_t bit_width;
+    uint8_t sign_flag;
 } llg_cr_leaf_t;
 
 typedef struct {
     const char* name;
-    uint32_t width;
-    uint8_t is_signed;
+    uint32_t bit_width;
+    uint8_t sign_flag;
     uint32_t arg_first;  /* node indices in problem args */
     uint32_t arg_count;
 } llg_cr_call_t;
@@ -133,7 +133,8 @@ typedef enum {
     LLG_CR_OK = 0,       /* solution available through llg_cr_value */
     LLG_CR_UNSAT = 1,    /* proven: no assignment satisfies the constraints */
     LLG_CR_RESOURCE = 2, /* a named budget ran out; nothing was proven */
-    LLG_CR_ERROR = 3     /* evaluation error (18.5.12 E, X/Z state, order) */
+    LLG_CR_ERROR = 3,    /* evaluation error (18.5.12 E, X/Z state, order) */
+    LLG_CR_NEED_CALLS = 4 /* llg_cr_step only: evaluate the ready calls */
 } llg_cr_status_t;
 
 /* Leaf / inactive-variable / call-result input states. */
@@ -201,6 +202,20 @@ void llg_cr_set_block(llg_cr_session_t* s, uint32_t block, int enabled);
 void llg_cr_set_leaf(llg_cr_session_t* s, uint32_t leaf, const uint64_t* words,
                      int input_state);
 
+/* Step-wise solving for generated code: llg_cr_begin, then llg_cr_step
+ * until it returns something other than LLG_CR_NEED_CALLS. On NEED_CALLS,
+ * evaluate every call for which llg_cr_call_ready holds (its arguments are
+ * known; read them with llg_cr_call_arg, in the argument node's width) and
+ * store each result with llg_cr_set_call_result (18.5.11). */
+void llg_cr_begin(llg_cr_session_t* s);
+llg_cr_status_t llg_cr_step(llg_cr_session_t* s, const llg_cr_rng_t* rng,
+                            llg_cr_report_t* report);
+int llg_cr_call_ready(const llg_cr_session_t* s, uint32_t call);
+const uint64_t* llg_cr_call_arg(const llg_cr_session_t* s, uint32_t call, uint32_t arg);
+void llg_cr_set_call_result(llg_cr_session_t* s, uint32_t call, const uint64_t* words,
+                            int input_state);
+
+/* Whole solve with a thunk for the calls (runtime probes). */
 llg_cr_status_t llg_cr_solve(llg_cr_session_t* s, const llg_cr_rng_t* rng,
                              llg_cr_call_fn calls, void* context,
                              llg_cr_report_t* report);

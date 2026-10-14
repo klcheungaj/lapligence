@@ -771,6 +771,13 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         h: NodeId,
     ) -> Result<IrExpr, String> {
+        // A random variable inside a constraint stands for its solver value.
+        if let Some(placeholder) = self.random_placeholder(h) {
+            return Ok(placeholder);
+        }
+        if let Some(value) = self.lower_random_value(scope_path, h)? {
+            return Ok(value);
+        }
         // The iterator declaration of a generated method loop stands for its
         // current element index or key (see `inline_element_path`).
         if let Some(key) = self.inline_key_read(h) {

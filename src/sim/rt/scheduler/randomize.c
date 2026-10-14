@@ -64,17 +64,6 @@ sv4_t llg_cr_value_sv4(const llg_cr_session_t* s, uint32_t var, uint32_t width,
     return sv4_from_limbs(llg_cr_value(s, var), NULL, NULL, width, is_signed);
 }
 
-sv4_t llg_cr_arg_sv4(const uint64_t* words, uint32_t width, int8_t is_signed) {
-    return sv4_from_limbs(words, NULL, NULL, width, is_signed);
-}
-
-int llg_cr_result_sv4(sv4_t value, uint64_t* result, uint32_t width) {
-    sv4_t sized = sv4_resize(value, width, 0);
-    int input = randomize_words(sized, result, width);
-    sv4_destroy(&sized);
-    return input;
-}
-
 static const char* randomize_reason_text(int reason) {
     switch (reason) {
     case LLG_CR_REASON_NULL: return "null object handle in a constraint";
@@ -88,48 +77,46 @@ static const char* randomize_reason_text(int reason) {
     }
 }
 
-/* Solve, report and return the randomize() result (1 on success). UNSAT
- * warns and the run continues; RESOURCE and ERROR are run-time errors that
- * make the run exit with status 1 (S29-D5). `site` names the call. */
-static int randomize_run(const llg_cr_problem_t* problem, llg_cr_session_t* s,
-                         llg_rng_state_t* stream, llg_cr_call_fn calls, void* context,
-                         const char* site) {
-    llg_cr_rng_t rng = {randomize_stream_next, stream};
-    llg_cr_report_t report;
-    llg_cr_status_t status = llg_cr_solve(s, &rng, calls, context, &report);
+/* Report a finished solve and return the randomize() result (1 when the
+ * caller may commit). UNSAT warns and the run continues; RESOURCE and ERROR
+ * are run-time errors that make the run exit with status 1 (S29-D5). */
+static int randomize_report(const llg_cr_problem_t* problem, llg_cr_status_t status,
+                            const llg_cr_report_t* report, const char* site) {
     switch (status) {
     case LLG_CR_OK:
         return 1;
     case LLG_CR_UNSAT:
-        fprintf(stderr, "llg: warning: randomize at %s: the constraints cannot be satisfied; randomize returns 0\n",
+        fprintf(stderr,
+                "llg: warning: %s: the constraints cannot be satisfied; "
+                "randomize returns 0\n",
                 site);
         return 0;
     case LLG_CR_RESOURCE:
         fprintf(stderr,
-                "llg: error: randomize at %s: solver budget %s exhausted before a solution "
+                "llg: error: %s: solver budget %s exhausted before a solution "
                 "or proof of unsatisfiability was found (raise %s); randomize returns 0\n",
-                site, report.budget, report.budget);
+                site, report->budget, report->budget);
         llg_last_failure = 1;
         return 0;
     default: {
         const char* name = NULL;
-        switch (report.reason) {
+        switch (report->reason) {
         case LLG_CR_REASON_NULL:
         case LLG_CR_REASON_XZ_LEAF:
-            if (report.item < problem->leaf_count) name = problem->leaves[report.item].name;
+            if (report->item < problem->leaf_count) name = problem->leaves[report->item].name;
             break;
         case LLG_CR_REASON_XZ_VAR:
         case LLG_CR_REASON_ORDER:
-            if (report.item < problem->var_count) name = problem->vars[report.item].name;
+            if (report->item < problem->var_count) name = problem->vars[report->item].name;
             break;
         case LLG_CR_REASON_XZ_CALL:
-            if (report.item < problem->call_count) name = problem->calls[report.item].name;
+            if (report->item < problem->call_count) name = problem->calls[report->item].name;
             break;
         default:
             break;
         }
-        fprintf(stderr, "llg: error: randomize at %s: %s%s%s%s; randomize returns 0\n", site,
-                randomize_reason_text(report.reason), name ? " (`" : "", name ? name : "",
+        fprintf(stderr, "llg: error: %s: %s%s%s%s; randomize returns 0\n", site,
+                randomize_reason_text(report->reason), name ? " (`" : "", name ? name : "",
                 name ? "`)" : "");
         llg_last_failure = 1;
         return 0;
@@ -137,18 +124,23 @@ static int randomize_run(const llg_cr_problem_t* problem, llg_cr_session_t* s,
     }
 }
 
-int llg_randomize_object(const llg_cr_problem_t* problem, llg_cr_session_t* s,
-                         llg_rng_state_t* object_stream, llg_cr_call_fn calls, void* context,
-                         const char* site) {
-    /* A model that never inspects object streams keeps no per-object state;
-     * the thread stream then stands in (the emitter keeps object streams in
-     * every model that randomizes objects). */
-    return randomize_run(problem, s, object_stream ? object_stream : llg_process_rng(), calls,
-                         context, site);
+int32_t llg_randomize_step(const llg_cr_problem_t* problem, llg_cr_session_t* s,
+                           llg_rng_state_t* stream, const char* site) {
+    /* Object randomize draws from the object's stream (18.14.1);
+     * std::randomize and models without object streams use the calling
+     * thread's stream (S29-D3). */
+    llg_cr_rng_t rng = {randomize_stream_next, stream ? stream : llg_process_rng()};
+    llg_cr_report_t report;
+    llg_cr_status_t status = llg_cr_step(s, &rng, &report);
+    if (status == LLG_CR_NEED_CALLS) return 4;
+    return randomize_report(problem, status, &report, site);
 }
 
-/* std::randomize draws from the calling thread's stream (S29-D3). */
-int llg_randomize_scope(const llg_cr_problem_t* problem, llg_cr_session_t* s,
-                        llg_cr_call_fn calls, void* context, const char* site) {
-    return randomize_run(problem, s, llg_process_rng(), calls, context, site);
+void llg_cr_set_call_result_sv4(llg_cr_session_t* s, uint32_t call, sv4_t value,
+                                uint32_t width) {
+    sv4_t sized = sv4_resize(value, width, 0);
+    uint64_t* words = randomize_scratch(width);
+    int input = randomize_words(sized, words, width);
+    llg_cr_set_call_result(s, call, words, input);
+    sv4_destroy(&sized);
 }

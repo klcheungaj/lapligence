@@ -384,6 +384,7 @@ impl<'a> Codegen<'a> {
                 });
                 self.class_fields.insert(child, (class_index, field_index));
             }
+            self.allocate_random_modes(class, class_index, &mut fields);
             self.model.classes.push(IrClass {
                 c_name: format!("llg_class_{class_index}"),
                 base: self
@@ -394,6 +395,7 @@ impl<'a> Codegen<'a> {
                 fields,
             });
         }
+        self.share_constraint_modes();
         // Derived objects use a flattened prefix-compatible layout.  Process
         // bases before derived classes even if generic specialization capture
         // ordered the semantic class nodes the other way around. Keep field
@@ -418,6 +420,17 @@ impl<'a> Codegen<'a> {
                 for (owner, index) in self.class_fields.values_mut() {
                     if *owner == class_index {
                         *index += inherited.len();
+                    }
+                }
+                for bit in self
+                    .rand_mode_bits
+                    .values_mut()
+                    .chain(self.constraint_mode_bits.values_mut())
+                {
+                    if let super::super::randomization::ModeBit::Field(owner, index) = bit {
+                        if *owner == class_index {
+                            *index += inherited.len();
+                        }
                     }
                 }
                 for container in &mut self.model.containers {

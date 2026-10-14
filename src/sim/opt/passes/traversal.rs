@@ -324,6 +324,12 @@ pub(in crate::sim) fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrEx
                     walk_expr_mut(weight, f);
                 }
             }
+            IrSysFunc::RandStep { stream, .. } => {
+                if let Some(stream) = stream {
+                    stream.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
+                }
+            }
+            IrSysFunc::RandCallReady { .. } | IrSysFunc::RandValue { .. } => {}
             IrSysFunc::Math { args, .. } => {
                 for arg in args {
                     walk_expr_mut(arg, f);
@@ -440,6 +446,11 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         }
         IrStmt::PlusArg(expression) => walk_expr_mut(expression, f),
         IrStmt::RandomSeed { seed } => walk_expr_mut(seed, f),
+        IrStmt::Randomize(operation) => {
+            for expression in operation.expressions_mut() {
+                walk_expr_mut(expression, f);
+            }
+        }
         IrStmt::RandomStateSet { state } => {
             state.expressions_mut(&mut |child| walk_expr_mut(child, f));
         }

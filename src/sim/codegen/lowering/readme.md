@@ -9,6 +9,7 @@ semantic nodes into typed IR. C generation belongs to `emit_c`, not these module
 | `statements/` | Assignments, source-loop control, process bodies, subroutine calls and procedural drivers. |
 | `expressions/` | Typed values/conversions, conditionals, ordered predicates, patterns, `inside` and fixed reductions. |
 | `containers/`, `objects/` | Admitted container/object operations and typed native boundaries. |
+| `randomization/` | `randomize()`/`std::randomize()` sites, constraint problems for the C11 solver and `rand_mode`/`constraint_mode` state. |
 | Assertion, clocking and event helpers | Sampling/evaluator contexts, sequence plans, qualifiers, captures and regions. |
 
 Fixed-value collection preserves immediate rows/members, declaration order and
