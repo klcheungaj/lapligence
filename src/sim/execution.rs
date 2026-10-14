@@ -581,6 +581,50 @@ pub(crate) fn effects_for_statements(ir: &IrModel, statements: &[IrStmt]) -> Vec
     effects
 }
 
+/// Effects of running subprogram `function`: its body's, plus for a context
+/// DPI-C import those of every exported subroutine its foreign code may call
+/// (SV 35.5.3: a context call is an optimization barrier). Noncontext and
+/// pure imports keep their own effects; a call from them into an export is
+/// a run-time error, never a hidden effect.
+pub(crate) fn effects_for_function(ir: &IrModel, function: usize) -> Vec<ExecutionEffect> {
+    let mut effects = Vec::new();
+    let mut visits = CallVisits::default();
+    if let Some(body) = ir.funcs.get(function).map(|function| &function.body) {
+        visits.insert(function);
+        collect_effects(ir, body, &mut effects, &mut visits);
+    }
+    collect_export_effects(ir, function, &mut effects, &mut visits);
+    effects.sort();
+    effects.dedup();
+    effects
+}
+
+/// When `function` is a context import, add the effects of every exported
+/// subroutine to `effects`.
+fn collect_export_effects(
+    ir: &IrModel,
+    function: usize,
+    effects: &mut Vec<ExecutionEffect>,
+    visited_calls: &mut CallVisits,
+) {
+    let context = ir
+        .funcs
+        .get(function)
+        .and_then(crate::sim::ir::IrFunc::dpi_import)
+        .is_some_and(crate::sim::ir::IrDpiImport::is_context);
+    if !context {
+        return;
+    }
+    for (export, _) in ir
+        .funcs
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| candidate.dpi_export().is_some())
+    {
+        collect_callee_effects(ir, export, false, effects, visited_calls);
+    }
+}
+
 /// The subprogram(s) one call site may enter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CallTarget {
@@ -966,6 +1010,7 @@ fn collect_callee_effects(
     if visited_calls.direct.is_some() || !visited_calls.insert(function) {
         return;
     }
+    let index = function;
     if let Some(function) = ir.funcs.get(function) {
         // Imported native code cannot suspend beneath its foreign frame, but
         // it can synchronously request finish or kill through the runtime.
@@ -973,6 +1018,7 @@ fn collect_callee_effects(
             effects.push(ExecutionEffect::Terminate);
         }
         collect_effects(ir, &function.body, effects, visited_calls);
+        collect_export_effects(ir, index, effects, visited_calls);
     } else {
         effects.push(ExecutionEffect::Suspend);
         effects.push(ExecutionEffect::Terminate);

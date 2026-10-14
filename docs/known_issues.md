@@ -1584,14 +1584,13 @@ These legal imports reject with explicit diagnostics:
   formal ... is not supported (SIM-040)";
 - an unpacked aggregate formal wider than 1048575 payload bits.
 
-A library that calls `svGetScope`, `svSetScope`, `svPutUserData`,
-`svGetUserData`, `svGetCallerInfo`, `svIsDisabledState`,
-`svAckDisabledState`, `svGetTime*` or a deprecated SV3.1a routine (H.13)
-fails the model link with an error naming the routine. A Mach-O library
-(macOS) is rejected with the same error before the build, from its symbol
-table, because ld64 does not check a dylib's undefined symbols. On Windows, a DPI DLL
-cannot import the `svdpi.h` routines from the model executable, so open-array
-imports have not been built there.
+A library that calls `svGetTime`, `svGetTimeUnit`, `svGetTimePrecision` or a
+deprecated SV3.1a routine (H.13) fails the model link with an error naming
+the routine. A Mach-O library (macOS) is rejected with the same error before
+the build, from its symbol table, because ld64 does not check a dylib's
+undefined symbols. On Windows, a DPI DLL cannot import the `svdpi.h` routines
+from the model executable; such a library must be linked as a static archive
+(see [DPI-C export limits](#dpi-c-export-limits-sim-041)).
 
 The lint pass reports `undriven-signal` warnings for variables written only as
 DPI output or inout actuals.
@@ -1602,19 +1601,68 @@ The thunk moves each aggregate through the packed payload, which has no
 representation for owned strings, doubles or handles inside a record. Open
 formals are specialized per actual shape at compile time, so a runtime-sized
 actual has no fixed shape. Scope, user-data and disable services need the
-context-import and export machinery of SIM-041. The lint driver analysis does
-not yet treat DPI output actuals as writes.
+time services need a defined simulation-time view for foreign code. The lint
+driver analysis does not yet treat DPI output actuals as writes.
 
 ### Intended direction
 
 Give aggregate leaves of native types their own C-layout slots in the layout
 tables; specialize open formals on container actuals by element type with a
-runtime-sized handle; implement the scope services with SIM-041; export the
-`svdpi.h` routines through an import library on Windows.
+runtime-sized handle; provide the time services.
 
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_040/neg_*.sv`.
+
+## DPI-C export limits (SIM-041)
+
+**Status:** open. SIM-041 provides zero-time exports, `svScope` and context
+call chains; these cases remain outside it.
+
+### Symptom
+
+- An exported task that can consume time (a delay, event control or wait,
+  directly or through a called task) is rejected: "DPI-C export task `t` (C
+  identifier `t`) can consume time; exported tasks that suspend are not
+  supported (ADV-018)".
+- On Windows a DPI DLL cannot call exports or `svdpi.h` routines, which the
+  model executable defines; the companion must be given to `--dpi-lib` as a
+  static library (`.lib`), which links into the model. The static route is
+  tested on Unix hosts (`sim_041::static_archive_companion_reaches_exports_and_scopes`)
+  and written for MSVC (`cl /c`, `lib`), but has not run on a Windows host.
+- On macOS a dylib built with `-undefined dynamic_lookup` that calls a symbol
+  the design does not export is not named before the build; dyld reports it
+  when the model loads.
+- An export called outside any DPI-C call chain (for example from a C
+  `atexit` handler or another thread) is a fatal error; exports are not
+  thread-safe.
+- Recursion through C (SV -> C -> SV ...) uses the native stack of the
+  process for each level; the 256-call recursion limit bounds it, but deep
+  levels with large C frames can exceed small thread stacks.
+- An export function that disables a block which called it is undefined in
+  SV 9.6.2; llg follows the 35.9 protocol for it (S41-D5).
+- The lint pass reports variables read only by exported subroutines as unused
+  (`unused-signal`), and names instances inside loop generate blocks through
+  both the array and the block (`tb.g.g[0].c`).
+
+### Cause
+
+A suspending export would need the C caller's native stack preserved across
+the suspension (ADV-018). Windows DLLs resolve imports only from libraries
+named at link time, and the model executable has no import library. The
+lint driver has its own hierarchy naming and use analysis.
+
+### Intended direction
+
+ADV-018 for time-consuming exports; a function-pointer table handed to a
+loaded DLL if shared Windows companions are needed; teach lint that exported
+subroutines are used.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_041/neg_timed_export_task.sv`;
+`tests/fixtures/sim/lrm_decisions/S41-D1_context_scope_chain.sv` (lint
+naming).
 
 ## Legacy constructs unsupported by design
 

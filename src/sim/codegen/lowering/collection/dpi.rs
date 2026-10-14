@@ -11,7 +11,7 @@
 
 use super::*;
 use crate::core::db::DpiOpenType;
-use crate::sim::ir::{IrDpiImport, IrDpiType};
+use crate::sim::ir::{IrDpiExport, IrDpiImport, IrDpiScope, IrDpiSite, IrDpiType};
 
 /// Foreign representation of a declared DPI formal or member type.
 pub(super) fn dpi_type_of(descriptor: &TypeDescriptor) -> Result<IrDpiType, String> {
@@ -125,6 +125,11 @@ impl Codegen<'_> {
         formals: &[(NodeId, bool)],
         formals_ir: &[IrFormal],
     ) -> Result<Vec<IrDpiType>, String> {
+        let role = if self.db.dpi_import(ft).is_some() {
+            "import"
+        } else {
+            "export"
+        };
         let name = &self.node(ft).name;
         let mut types = Vec::with_capacity(formals.len());
         for (index, ((io, _), ir)) in formals.iter().zip(formals_ir).enumerate() {
@@ -133,10 +138,10 @@ impl Codegen<'_> {
                 dpi_open_template(open)?
             } else {
                 let descriptor = self.query_descriptor(*io).ok_or_else(|| {
-                    format!("DPI-C import `{name}` formal {index} (`{formal_name}`) has no captured type")
+                    format!("DPI-C {role} `{name}` formal {index} (`{formal_name}`) has no captured type")
                 })?;
                 dpi_type_of(descriptor).map_err(|error| {
-                    format!("DPI-C import `{name}` formal {index} (`{formal_name}`): {error}")
+                    format!("DPI-C {role} `{name}` formal {index} (`{formal_name}`): {error}")
                 })?
             };
             if matches!(
@@ -145,7 +150,7 @@ impl Codegen<'_> {
             ) {
                 if !payload_only(&ty) {
                     return Err(format!(
-                        "DPI-C import `{name}` formal {index} (`{formal_name}`): unpacked aggregates with real, shortreal, string or chandle elements are not supported (SIM-040)"
+                        "DPI-C {role} `{name}` formal {index} (`{formal_name}`): unpacked aggregates with real, shortreal, string or chandle elements are not supported (SIM-040)"
                     ));
                 }
                 if ir.fixed_array.is_some()
@@ -154,13 +159,13 @@ impl Codegen<'_> {
                     || ir.container.is_some()
                 {
                     return Err(format!(
-                        "DPI-C import `{name}` formal {index} (`{formal_name}`): an unpacked aggregate wider than {LLG_MAX_WIDTH} payload bits is not supported (SIM-040)"
+                        "DPI-C {role} `{name}` formal {index} (`{formal_name}`): an unpacked aggregate wider than {LLG_MAX_WIDTH} payload bits is not supported (SIM-040)"
                     ));
                 }
                 if let Some(width) = ty.payload_width() {
                     if width != u64::from(ir.width) {
                         return Err(format!(
-                            "DPI-C import `{name}` formal {index} (`{formal_name}`): foreign layout covers {width} bits but the formal carries {}",
+                            "DPI-C {role} `{name}` formal {index} (`{formal_name}`): foreign layout covers {width} bits but the formal carries {}",
                             ir.width
                         ));
                     }
@@ -195,7 +200,12 @@ impl Codegen<'_> {
                 }),
                 _ => {
                     return Err(format!(
-                        "DPI-C import `{}` result type `{}` is not a small value (SV 35.5.5)",
+                        "DPI-C {} `{}` result type `{}` is not a small value (SV 35.5.5)",
+                        if self.db.dpi_import(ft).is_some() {
+                            "import"
+                        } else {
+                            "export"
+                        },
                         self.node(ft).name,
                         ty.render()
                     ));
@@ -389,17 +399,214 @@ impl Codegen<'_> {
         }
         function.inline_expanded = false;
         function.c_name = format!("{}_open{}", function.c_name, self.dpi_specializations.len());
-        function.dpi = Some(IrDpiImport::new(
-            dpi.c_name.clone(),
-            dpi.context,
-            dpi.pure,
-            types,
-            dpi.ret.clone(),
-        ));
+        function.dpi = Some(
+            IrDpiImport::new(
+                dpi.c_name.clone(),
+                dpi.context,
+                dpi.pure,
+                types,
+                dpi.ret.clone(),
+            )
+            .with_scope(dpi.scope),
+        );
         let index = self.model.funcs.len();
         self.model.funcs.push(function);
         self.dpi_specializations.insert(key, index);
         Ok(index)
+    }
+}
+
+/// Whether `name` is a C identifier (SV 35.4: a letter or underscore, then
+/// letters, digits or underscores).
+pub(super) fn valid_c_identifier(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().enumerate().all(|(index, ch)| {
+            ch == '_'
+                || if index == 0 {
+                    ch.is_ascii_alphabetic()
+                } else {
+                    ch.is_ascii_alphanumeric()
+                }
+        })
+}
+
+/// Whether the generated model or its runtime defines `name` itself, so an
+/// exported entry point of that name would clash at link time or replace a
+/// runtime routine: the `svdpi.h` routines (`sv` and an upper-case letter),
+/// the runtime and value-layer prefixes, VPI and `main`.
+fn reserved_export_name(name: &str) -> bool {
+    let svdpi = name
+        .strip_prefix("sv")
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(|ch| ch.is_ascii_uppercase());
+    svdpi
+        || name == "main"
+        || [
+            "llg_", "LLG_", "sv4_", "vpi_", "G_", "S_f", "O_f", "fn_", "p_",
+        ]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+}
+
+impl Codegen<'_> {
+    /// The `model.dpi_scopes` index of the instantiated scope `inst` that
+    /// declares DPI subroutine `function`, registering it on first use.
+    pub(super) fn dpi_scope(&mut self, inst: NodeId, function: NodeId) -> usize {
+        if let Some(index) = self.dpi_scope_ids.get(&inst) {
+            return *index;
+        }
+        let name = self
+            .func_scope_labels
+            .get(&function)
+            .cloned()
+            .unwrap_or_else(|| self.source_path(&self.instance_path_of(inst)));
+        let index = self.model.dpi_scopes.len();
+        self.model.dpi_scopes.push(IrDpiScope::new(name));
+        self.dpi_scope_ids.insert(inst, index);
+        index
+    }
+
+    /// The `model.dpi_sites` entry of call node `call` when callee `function`
+    /// is a context import, whose foreign code may ask for it through
+    /// `svGetCallerInfo` (H.9.3). Other calls record nothing.
+    pub(in super::super) fn dpi_call_site(&mut self, function: usize, call: NodeId) -> Option<u32> {
+        if !self.model.funcs[function]
+            .dpi
+            .as_ref()
+            .is_some_and(IrDpiImport::is_context)
+        {
+            return None;
+        }
+        let node = self.node(call);
+        let key = (node.file.as_deref()?.to_owned(), node.line);
+        if let Some(index) = self.dpi_site_ids.get(&key) {
+            return Some(*index);
+        }
+        let index = u32::try_from(self.model.dpi_sites.len()).ok()?;
+        self.model
+            .dpi_sites
+            .push(IrDpiSite::new(key.0.clone(), key.1));
+        self.dpi_site_ids.insert(key, index);
+        Some(index)
+    }
+
+    /// Validate the DPI-C export of subroutine `ft` under C identifier
+    /// `c_name` and return its foreign contract (SV 35.7, 35.8, H.8.2).
+    pub(super) fn validate_dpi_export(
+        &mut self,
+        ft: NodeId,
+        inst: NodeId,
+        c_name: &str,
+        formals: &[(NodeId, bool)],
+        formals_ir: &[IrFormal],
+    ) -> Result<IrDpiExport, String> {
+        let name = self.node(ft).name.clone();
+        if !valid_c_identifier(c_name) {
+            return Err(format!(
+                "DPI-C export `{name}` has an invalid C linkage identifier `{c_name}`"
+            ));
+        }
+        if reserved_export_name(c_name) {
+            return Err(format!(
+                "DPI-C export `{name}` uses C identifier `{c_name}`, which the generated model or its runtime defines"
+            ));
+        }
+        if self.class_nodes.contains_key(&inst) {
+            return Err(format!(
+                "DPI-C export `{name}`: class methods cannot be exported (SV 35.7)"
+            ));
+        }
+        let is_task = matches!(self.kind(ft), NodeKind::FuncTask { is_task: true, .. });
+        if is_task && self.task_has_wait(ft, inst) {
+            return Err(format!(
+                "DPI-C export task `{name}` (C identifier `{c_name}`) can consume time; exported tasks that suspend are not supported (ADV-018)"
+            ));
+        }
+        let ret = self.dpi_return_type(ft)?;
+        let types = self.dpi_formal_types(ft, formals, formals_ir)?;
+        let mut key = format!("task={};return={ret:?}", is_task as u8);
+        for (index, (((io, _), ir), ty)) in formals.iter().zip(formals_ir).zip(&types).enumerate() {
+            let NodeKind::FuncArg { direction, .. } = self.kind(*io) else {
+                return Err("non-FuncArg DPI formal".to_owned());
+            };
+            if matches!(direction, DbDirection::Ref) || ir.is_ref() || ir.event {
+                return Err(format!(
+                    "DPI-C export `{name}` formal {index} is a ref or event formal, which cannot cross the DPI (SV 35.5.6)"
+                ));
+            }
+            if matches!(ty, IrDpiType::Open { .. } | IrDpiType::OpenPacked { .. }) {
+                return Err(format!(
+                    "DPI-C export `{name}` formal {index} is an open array, which exported subroutines cannot take (H.8.2)"
+                ));
+            }
+            key.push_str(&format!(";arg{index}={direction:?}:{ty:?}"));
+        }
+        if self.dpi_signatures.contains_key(c_name) {
+            return Err(format!(
+                "DPI-C C identifier `{c_name}` is both imported and exported (SV 35.4)"
+            ));
+        }
+        if self
+            .func_names
+            .values()
+            .any(|internal_name| internal_name == c_name)
+        {
+            return Err(format!(
+                "DPI-C symbol `{c_name}` collides with a generated simulator function name"
+            ));
+        }
+        match self.dpi_export_signatures.get(c_name) {
+            Some(previous) if previous != &key => {
+                return Err(format!(
+                    "DPI-C symbol `{c_name}` has conflicting exported signatures (SV 35.4)"
+                ));
+            }
+            Some(_) => {}
+            None => {
+                self.dpi_export_signatures.insert(c_name.to_owned(), key);
+            }
+        }
+        let scope = self.dpi_scope(inst, ft);
+        Ok(IrDpiExport::new(c_name.to_owned(), types, ret, scope))
+    }
+
+    /// Sort the DPI scopes by name, so `svGetScopeFromName` can search them,
+    /// and check that no scope exports one C identifier twice (35.4).
+    pub(in super::super) fn finish_dpi(&self, model: &mut IrModel) -> Result<(), String> {
+        if model.dpi_scopes.is_empty() {
+            return Ok(());
+        }
+        let mut order = (0..model.dpi_scopes.len()).collect::<Vec<_>>();
+        order.sort_by(|left, right| {
+            model.dpi_scopes[*left]
+                .name
+                .as_bytes()
+                .cmp(model.dpi_scopes[*right].name.as_bytes())
+        });
+        let mut position = vec![0; order.len()];
+        for (new, old) in order.iter().enumerate() {
+            position[*old] = new;
+        }
+        model.dpi_scopes = order
+            .iter()
+            .map(|old| model.dpi_scopes[*old].clone())
+            .collect();
+        let mut exported = HashSet::new();
+        for function in &mut model.funcs {
+            if let Some(dpi) = &mut function.dpi {
+                dpi.scope = dpi.scope.map(|scope| position[scope]);
+            }
+            if let Some(export) = &mut function.dpi_export {
+                export.scope = position[export.scope];
+                if !exported.insert((export.scope, export.c_name.clone())) {
+                    return Err(format!(
+                        "scope `{}` exports DPI-C C identifier `{}` more than once (SV 35.4)",
+                        model.dpi_scopes[export.scope].name, export.c_name
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 

@@ -1,0 +1,7 @@
+plain scope NULL caller 0
+plain=1
+ctx caller line 35
+ctx scope tb
+plain scope NULL caller 0
+ctx scope after tb
+ctx=11

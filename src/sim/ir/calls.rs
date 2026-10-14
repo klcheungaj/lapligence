@@ -166,6 +166,9 @@ pub struct IrCallExpr {
     pub(in crate::sim) virtual_call: Option<IrVirtualCall>,
     /// Void callee used as a value: yield all-X (warning issued at lowering).
     pub(in crate::sim) void_x: bool,
+    /// Index into [`IrModel::dpi_sites`] of this call's source position when
+    /// the callee is a context DPI-C import (`svGetCallerInfo`, H.9.3).
+    pub(in crate::sim) dpi_site: Option<u32>,
 }
 
 impl IrCallExpr {
@@ -180,6 +183,7 @@ impl IrCallExpr {
             virtual_dispatch: false,
             virtual_call: None,
             void_x,
+            dpi_site: None,
         }
     }
 
@@ -207,6 +211,14 @@ impl IrCallExpr {
     pub fn yields_x_for_void(&self) -> bool {
         self.void_x
     }
+    /// Record the source position of a context DPI-C import call.
+    pub fn with_dpi_site(mut self, site: Option<u32>) -> Self {
+        self.dpi_site = site;
+        self
+    }
+    pub fn dpi_site(&self) -> Option<u32> {
+        self.dpi_site
+    }
 }
 
 /// A function/task call used in statement position: the temp declarations
@@ -230,6 +242,8 @@ pub struct IrCall {
     pub(in crate::sim) temps: Vec<(String, usize, Option<IrExpr>)>,
     /// Copy-outs after the call: `(actual LHS, temp name, width, signed)`.
     pub(in crate::sim) copyouts: Vec<(IrLhs, String, u32, bool)>,
+    /// See [`IrCallExpr::dpi_site`].
+    pub(in crate::sim) dpi_site: Option<u32>,
 }
 
 impl IrCall {
@@ -250,6 +264,7 @@ impl IrCall {
             virtual_call: None,
             temps,
             copyouts,
+            dpi_site: None,
         }
     }
 
@@ -278,6 +293,14 @@ impl IrCall {
     }
     pub fn copyouts(&self) -> &[(IrLhs, String, u32, bool)] {
         &self.copyouts
+    }
+    /// See [`IrCallExpr::with_dpi_site`].
+    pub fn with_dpi_site(mut self, site: Option<u32>) -> Self {
+        self.dpi_site = site;
+        self
+    }
+    pub fn dpi_site(&self) -> Option<u32> {
+        self.dpi_site
     }
 }
 

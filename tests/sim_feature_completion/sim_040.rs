@@ -22,12 +22,23 @@ fn companion_with_flags(
     stem: &str,
     flags: &[&str],
 ) -> Option<String> {
+    shared_companion(SUITE, directory, stem, flags)
+}
+
+/// Build `tests/fixtures/sim/<suite>/<stem>.c` into a shared DPI-C library
+/// as [`companion_with_flags`] does; shared with later DPI suites.
+pub(super) fn shared_companion(
+    suite: &str,
+    directory: &sim_harness::TempDir,
+    stem: &str,
+    flags: &[&str],
+) -> Option<String> {
     if !cfg!(unix) {
         eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
         return None;
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let source = root.join(format!("tests/fixtures/sim/{SUITE}/{stem}.c"));
+    let source = root.join(format!("tests/fixtures/sim/{suite}/{stem}.c"));
     let library = directory.path().join(format!("lib{stem}.so"));
     let mut command = std::process::Command::new(c_compiler::host_c_compiler());
     command
@@ -295,7 +306,7 @@ fn unprovided_svdpi_routine_is_named() {
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_unprovided_routine",
-        "a DPI-C library calls svdpi.h routine `svGetScope`, which llg does not provide",
+        "a DPI-C library calls svdpi.h routine `svGetTime`, which llg does not provide",
         &["--dpi-lib", &library],
     );
 }
@@ -346,20 +357,20 @@ fn unprovided_routine_imported_by_a_mach_o_library_is_named_before_the_build() {
     let library = directory.path().join("libneg_unprovided_routine.dylib");
     std::fs::write(
         &library,
-        dynamic_lookup_dylib(&["svGetScope", "svGetArrayPtr", "neg_helper"]),
+        dynamic_lookup_dylib(&["svGetTime", "svGetArrayPtr", "neg_helper"]),
     )
     .expect("write Mach-O library");
     let library = library.to_string_lossy().into_owned();
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_unprovided_routine",
-        "a DPI-C library calls svdpi.h routine `svGetScope`, which llg does not provide",
+        "a DPI-C library calls svdpi.h routine `svGetTime`, which llg does not provide",
         &["--dpi-lib", &library],
     );
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_unprovided_routine",
-        "imports svGetScope for dyld to resolve when the model runs",
+        "imports svGetTime for dyld to resolve when the model runs",
         &["--dpi-lib", &library],
     );
 }

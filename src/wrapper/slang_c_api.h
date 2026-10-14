@@ -490,7 +490,9 @@ enum {
   LLG_SLANG_SUBROUTINE_DPI_CONTEXT = 1ull << 9,
   LLG_SLANG_SUBROUTINE_DPI_PURE = 1ull << 10,
   /* The subroutine is named by a DPI-C export declaration, so foreign code
-   * can call it (IEEE 1800-2009 35.5.3: a context import may reach it). */
+   * can call it (IEEE 1800-2009 35.5.3: a context import may reach it).
+   * Set on the subroutine of every instance of the declaring scope;
+   * definition_name carries the export's C identifier. */
   LLG_SLANG_SUBROUTINE_DPI_EXPORT = 1ull << 11
 };
 

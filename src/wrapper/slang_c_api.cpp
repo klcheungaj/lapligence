@@ -16,6 +16,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -422,9 +423,15 @@ struct Capture {
   std::unordered_map<const DefinitionSymbol*, std::vector<const VirtualInterfaceType*>>
       virtualInterfaceTypes;
   std::unordered_map<const void*, uint64_t> semanticIds;
-  // Subroutines named by DPI-C export declarations, collected after
-  // elaboration (the compilation records them while elaborating).
-  std::unordered_set<const SubroutineSymbol*> dpiExports;
+  // DPI-C export declarations by the syntax node that holds them, each as
+  // (exported subroutine name, C identifier), filled on first use. Every
+  // instance of a declaring scope shares that scope's syntax, so this finds
+  // the export of each instance's subroutine; the compilation's own export
+  // list keeps one subroutine per C identifier. Views borrow syntax-tree
+  // tokens, which outlive capture.
+  std::unordered_map<const syntax::SyntaxNode*,
+                     std::vector<std::pair<std::string_view, std::string_view>>>
+      dpiExportDirectives;
   std::vector<std::vector<LlgSlangSemanticEdge>> pendingEdges;
   // Small nodes retain cheap scans. Only high-fanout parents pay for indexes;
   // positions refer to the authoritative ordered edge vector, never its memory.
@@ -1400,6 +1407,38 @@ struct Capture {
           {physical, std::string(name), semanticId});
   }
 };
+
+// The C identifier of the DPI-C export declaration naming `symbol`, if any
+// (IEEE 1800-2009 35.4: the subroutine name when no c_identifier is given).
+// An export declaration sits in the scope that defines the subroutine
+// (35.7), so it is a sibling of the subroutine's syntax; the frontend has
+// already rejected exports in any other scope and kind mismatches.
+std::optional<std::string_view> dpiExportName(Capture& capture,
+                                              const SubroutineSymbol& symbol) {
+  const syntax::SyntaxNode* own = symbol.getSyntax();
+  const syntax::SyntaxNode* holder = own ? own->parent.get() : nullptr;
+  if (!holder)
+    return std::nullopt;
+  auto [entry, inserted] = capture.dpiExportDirectives.try_emplace(holder);
+  if (inserted) {
+    for (size_t index = 0, count = holder->getChildCount(); index < count; ++index) {
+      const syntax::SyntaxNode* child = holder->childNode(index);
+      if (!child || child->kind != syntax::SyntaxKind::DPIExport)
+        continue;
+      const auto& directive = child->as<syntax::DPIExportSyntax>();
+      const std::string_view name = directive.name.valueText();
+      const std::string_view cName = directive.c_identifier.isMissing()
+          ? name
+          : directive.c_identifier.valueText();
+      entry->second.emplace_back(name, cName.empty() ? name : cName);
+    }
+  }
+  for (const auto& [name, cName] : entry->second) {
+    if (name == symbol.name)
+      return cName;
+  }
+  return std::nullopt;
+}
 
 uint32_t semanticSymbolKind(SymbolKind kind) {
   switch (kind) {
@@ -2377,8 +2416,12 @@ public:
         }
         result.definition_name = storeString(capture.output, cName);
       }
-      if (capture.dpiExports.count(&symbol))
+      if (const auto exported = dpiExportName(capture, symbol)) {
+        // An export is never an import (the frontend rejects that), so the
+        // linkage-name field carries the export's C identifier.
         result.auxiliary |= LLG_SLANG_SUBROUTINE_DPI_EXPORT;
+        result.definition_name = storeString(capture.output, *exported);
+      }
     }
     if constexpr (std::same_as<T, ClassType>) {
       result.type_id = capture.type(symbol);
@@ -6091,10 +6134,6 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   ProfileStage elaborateStage("slang.elaborate");
   const Diagnostics& compilationDiagnostics = compilation.getAllDiagnostics();
   elaborateStage.finish();
-  for (const auto& exported : compilation.getDPIExports()) {
-    if (exported.subroutine)
-      capture.dpiExports.insert(exported.subroutine);
-  }
   ProfileStage instanceStage("wrapper.instances");
   DiagnosticEngine engine(sourceManager);
   auto compilationClient = std::make_shared<CaptureClient>(
@@ -6148,8 +6187,16 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
         capture, LLG_SLANG_DIAG_ANALYSIS);
     engine.addClient(analysisClient);
     engine.setSeverity(diag::AlwaysWithoutTimingControl, DiagnosticSeverity::Warning);
-    for (const Diagnostic& diagnostic : diagnostics)
+    for (const Diagnostic& diagnostic : diagnostics) {
+      // The unused check does not count an export "DPI-C" declaration as a
+      // use, but C code calls the exported subroutine (IEEE 1800-2009 35.7).
+      if ((diagnostic.code == diag::UnusedSubroutine ||
+           diagnostic.code == diag::UnusedPackageSubroutine) &&
+          diagnostic.symbol && diagnostic.symbol->kind == SymbolKind::Subroutine &&
+          dpiExportName(capture, diagnostic.symbol->as<SubroutineSymbol>()))
+        continue;
       analysisClient->issue(engine, diagnostic);
+    }
     output->flags |= LLG_SLANG_SNAPSHOT_ANALYSIS_RAN;
   }
 

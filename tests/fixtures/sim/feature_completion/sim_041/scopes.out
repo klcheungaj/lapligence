@@ -1,0 +1,37 @@
+c tb_scopes in tb
+c name tb.u1 -> tb.u1
+c name tb.u2 -> tb.u2
+c name tb.g[0].c -> tb.g[0].c
+c name tb.g[1].c -> tb.g[1].c
+c unknown -> NULL
+c tb -> tb
+c user tb.u1 a=10 b=NULL
+c user tb.u2 a=20 b=NULL
+c user tb.g[0].c a=30 b=NULL
+c user tb.g[1].c a=40 b=NULL
+c replaced a=40
+c put errors -1 -1 -1
+tb_scopes=4
+tb.u1.cell_bump(10)
+c tb.u1 value(0)=100 after bump 110
+tb.u2.cell_bump(20)
+c tb.u2 value(1)=201 after bump 220
+tb.g[0].c.cell_bump(30)
+c tb.g[0].c value(2)=1002 after bump 1030
+tb.g[1].c.cell_bump(40)
+c tb.g[1].c value(3)=1103 after bump 1140
+c cell_visit(3) in tb.u1
+c cell_visit read u2 223, scope now tb.u2
+c cell_peek scope NULL
+c after nest scope tb.u1
+c restored scope tb
+tb_drive=2632
+values 10 20 30 40 (sum 0 -> 100)
+c cell_visit(4) in tb.u2
+c cell_visit read u2 224, scope now tb.u2
+u2.cell_visit=226
+c cell_visit(5) in tb.g[1].c
+c cell_visit read u2 225, scope now tb.u2
+c cell_peek scope NULL
+g[1].c.cell_nest=228
+pure=5 plain=42

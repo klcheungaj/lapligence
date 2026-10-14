@@ -42,6 +42,7 @@ fn class_analysis() -> Analysis {
                 ret: None,
                 args: Vec::new(),
                 dpi_import: None,
+                dpi_export: None,
                 scope: "Counter".to_owned(),
             },
             FuncDef {
@@ -54,6 +55,7 @@ fn class_analysis() -> Analysis {
                 ret: Some(int_ty()),
                 args: Vec::new(),
                 dpi_import: None,
+                dpi_export: None,
                 scope: "Counter".to_owned(),
             },
         ],

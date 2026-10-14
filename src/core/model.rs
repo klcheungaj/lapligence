@@ -157,6 +157,8 @@ pub struct FuncDef {
     pub args: Vec<FuncArgDef>,
     /// Owned DPI-C import metadata, when this declaration is foreign.
     pub dpi_import: Option<DpiImportDef>,
+    /// C identifier of the DPI-C export declaration naming this subroutine.
+    pub dpi_export: Option<String>,
     /// Full name of the instance the clone belongs to.
     pub scope: String,
 }
@@ -454,6 +456,7 @@ fn instance_from_db(db: &db::Db, id: NodeId) -> InstanceModel {
                     context: dpi.context,
                     pure: dpi.pure,
                 }),
+                dpi_export: db.dpi_export(*c).map(str::to_owned),
                 scope: full_name.clone(),
             }),
             _ => None,
@@ -637,6 +640,7 @@ fn class_from_db(db: &db::Db, id: NodeId) -> ClassDef {
                         context: dpi.context,
                         pure: dpi.pure,
                     }),
+                    dpi_export: db.dpi_export(*c).map(str::to_owned),
                     // Class definitions are not per-instance; the method scope
                     // is the (library-stripped) class name.
                     scope: scope.clone(),

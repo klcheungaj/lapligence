@@ -458,6 +458,9 @@ pub enum BuildError {
     MissingDpiSymbol {
         imports: Vec<String>,
         routines: Vec<String>,
+        /// Other symbols a library calls that nothing defines, such as an
+        /// export the design does not declare.
+        unresolved: Vec<String>,
         output: String,
     },
     /// CMake succeeded but no simulator executable was produced.
@@ -515,6 +518,7 @@ impl fmt::Display for BuildError {
             Self::MissingDpiSymbol {
                 imports,
                 routines,
+                unresolved,
                 output,
             } => {
                 let quoted = |names: &[String]| {
@@ -537,8 +541,18 @@ impl fmt::Display for BuildError {
                     }
                     write!(
                         f,
-                        "a DPI-C library calls svdpi.h routine {}, which llg does not provide (scope, user-data, caller and time services: SIM-041; SV3.1a packed access, SV H.13: not provided)",
+                        "a DPI-C library calls svdpi.h routine {}, which llg does not provide (time services; SV3.1a packed access, SV H.13)",
                         quoted(routines)
+                    )?;
+                }
+                if !unresolved.is_empty() {
+                    if !imports.is_empty() || !routines.is_empty() {
+                        write!(f, "; ")?;
+                    }
+                    write!(
+                        f,
+                        "a DPI-C library calls {}, which no export \"DPI-C\" declaration of the design and no --dpi-lib library defines",
+                        quoted(unresolved)
                     )?;
                 }
                 write!(f, "\n{output}")
@@ -693,10 +707,13 @@ fn build_model_cmake_timed(
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        if let Some(missing) = dpi_link::missing_dpi_symbols(out_dir, &transcript) {
+        if let Some(missing) =
+            dpi_link::missing_dpi_symbols(out_dir, &transcript, !opts.dpi_libraries.is_empty())
+        {
             return Err(BuildError::MissingDpiSymbol {
                 imports: missing.imports,
                 routines: missing.routines,
+                unresolved: missing.unresolved,
                 output: format!("linker output:\n{}", output_tail(&output)),
             });
         }
@@ -1148,6 +1165,7 @@ fn check_mach_o_dpi_imports(opts: &CmakeBuildOpts) -> Result<(), BuildError> {
     Err(BuildError::MissingDpiSymbol {
         imports: Vec::new(),
         routines: routines.into_iter().collect(),
+        unresolved: Vec::new(),
         output,
     })
 }

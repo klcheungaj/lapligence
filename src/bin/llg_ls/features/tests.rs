@@ -150,6 +150,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
             },
         ],
         dpi_import: None,
+        dpi_export: None,
         scope: "top.u0".to_owned(),
     };
     let run = FuncDef {
@@ -169,6 +170,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
             ref_static: false,
         }],
         dpi_import: None,
+        dpi_export: None,
         scope: "top.u0".to_owned(),
     };
     let inst = InstanceModel {

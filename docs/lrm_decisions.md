@@ -34,8 +34,9 @@ Each `<ID>_<name>.sv` file is:
 ### On another simulator
 
 1. Compile and run the `.sv` file alone, with `tb` as the top module.
-2. If there is a `.c` companion of the same name (B8 and S40-D1 to S40-D5),
-   build it as a shared DPI-C library (the S40 cases include `svdpi.h`) and load it with the simulator's DPI library option.
+2. If there is a `.c` companion of the same name (B8, S40-D1 to S40-D5 and
+   S41-D1 to S41-D8), build it as a shared DPI-C library (the S40 and S41
+   cases include `svdpi.h`) and load it with the simulator's DPI library option.
 3. Compare stdout with the `.out` file. Ignore the simulator's own banners and
    its `$finish` message.
 4. **Negative cases have an empty `.out`.** For AA-D7, S14-D5, S22-D3, S22-D4 and S23-D2, the
@@ -50,10 +51,12 @@ through the public `llg` command line:
 - in both optimizer modes;
 - requiring the exact `.out` stdout and identical stderr across backends.
 
-For B8 and S40-D1 to S40-D5, the test builds the `.c` companion with the host
-C compiler and passes it with `--dpi-lib`; these cases run on Unix hosts only.
-S40-D5 must stop with exit status 1 after its first line, reporting "DPI-C
-import task `d5_task` returned nonzero, but nothing disabled it". AA-D7 must fail to
+For B8, S40-D1 to S40-D5 and S41-D1 to S41-D8, the test builds the `.c`
+companion with the host C compiler and passes it with `--dpi-lib`; these cases
+run on Unix hosts only. S40-D5 must stop with exit status 1 after its first
+line, reporting "DPI-C import task `d5_task` returned nonzero, but nothing
+disabled it". S41-D6, S41-D7 and S41-D8 must stop with exit status 1 after
+their first line, reporting a "DPI-C protocol violation". AA-D7 must fail to
 compile with "`$past` of a real expression is illegal", S14-D5 with
 "nonblocking assignment to class property `x`", and S23-D2 with "is an
 unpacked structure or union, which is not a singular variable". S22-D3 must
@@ -269,7 +272,15 @@ independent transcription in
 | S40-D2 | **Copy order.** Every input and inout is copied in before the call; after it, outputs and inouts are copied out one at a time in declaration order, and the function result is assigned last. With aliased actuals the last copy-out wins and a result assigned to the same variable replaces them. A string result is copied before any output is written. | 35.6.1 L56128-56131; H.6.4 L72022-72023 | `S40-D2_aliased_copy_out` (`.sv` and `.c`) | llg choice (the text does not order copy-outs) |
 | S40-D3 | **Open-array queries.** `svDimensions` counts the unpacked dimensions plus one when the element is integral, like `$dimensions`; dimension 0 is the normalized packed part. Queries of an absent dimension return 0. | H.12.2 L73284-73288; 20.7 L34712-34715, L34736-34737 | `S40-D3_open_array_queries` (`.sv` and `.c`) | LRM text; returning 0 instead of `'x` is an llg choice |
 | S40-D4 | **Invalid element indices.** An out-of-range index or a wrong index count gives a NULL element pointer, reads the element type's default (X for logic, 0 for bit) and makes writes do nothing. svBit reads of a logic element map X and Z to 0. | H.12.4 L73337-73340; 7.4.6 L8235-8237 | `S40-D4_invalid_element_access` (`.sv` and `.c`) | llg choice (7.4.6 applied to the C layer) |
-| S40-D5 | **Imported-task results.** An imported task that returns nonzero when no disable is in effect stops the simulation with a fatal error; nothing is copied out. Without exports nothing can disable an imported task during its call. | 35.9 L56272-56273, L56282-56284 | `S40-D5_task_disable_protocol` (`.sv` and `.c`; runtime fatal after the first line) | LRM text |
+| S40-D5 | **Imported-task results.** An imported task that returns nonzero when no disable is in effect stops the simulation with a fatal error; nothing is copied out. An export that disables the caller is the only way a disable reaches an imported task during its call (S41-D5). | 35.9 L56272-56273, L56282-56284 | `S40-D5_task_disable_protocol` (`.sv` and `.c`; runtime fatal after the first line) | LRM text |
+| S41-D1 | **Context scope of a call chain.** A context import runs in the scope of its declaration; `svSetScope` selects another instance and returns the previous scope; after an export returns, the chain's scope is the one it had when the export was called. Scope names are full hierarchical names; a loop generate block reads `g[0]`. | 35.5.3 L55801-55807; H.9.2 L72598-72599; H.9.3 L72702; 27.4 L46316-46319 | `S41-D1_context_scope_chain` (`.sv` and `.c`) | LRM text |
+| S41-D2 | **Export copy-back order.** When C calls an export, outputs and inouts are written to the C locations in declaration order after the body, so with one address for several formals the last wins; inouts are all copied in first. | 35.6.1 L56128-56131 | `S41-D2_export_copy_back` (`.sv` and `.c`) | llg choice (the text does not order copy-outs; as S40-D2) |
+| S41-D3 | **Noncontext imports have no scope.** `svGetScope` returns NULL and `svGetCallerInfo` 0 in a noncontext import, also when a context chain reaches it through an export; a context import called from SV reports its call line. | 35.5.3 L55783-55785; H.9.3 L72673-72674, L72730-72736 | `S41-D3_noncontext_has_no_scope` (`.sv` and `.c`) | llg policy (undefined and implementation-specific in the text) |
+| S41-D4 | **Scope routine arguments.** `svPutUserData` returns -1 for a NULL scope, data or key and replaces the data of a key stored before; `svGetUserData` returns NULL for a NULL scope or an unknown key; NULL names give NULL; `svSetScope` with a non-scope keeps and returns the current scope (with a stderr warning). | H.9.3 L72683, L72711-72714, L72723-72726 | `S41-D4_scope_routine_arguments` (`.sv` and `.c`) | LRM text for NULL scope and data; llg choice for the rest |
+| S41-D5 | **Disabled imports copy nothing back.** An import that returns because a disable cancelled it leaves its output and inout actuals and the function result target unchanged; an export task that disabled the caller returns 1. | 35.9 L56269-56275, L56313-56318; 9.6.2 L12400-12402 | `S41-D5_disabled_outputs` (`.sv` and `.c`) | llg choice (the text permits not propagating) |
+| S41-D6 | **Export call from a noncontext import** is a fatal error at that call. | 35.5.3 L55796-55797; H.9 L72543-72545 | `S41-D6_noncontext_export_call` (`.sv` and `.c`; runtime fatal after the first line) | llg policy (the text says "error" without a reporting rule) |
+| S41-D7 | **Export not exported from the chain's scope** (no `svSetScope` to a scope that exports it) is a fatal error at that call. | 35.5.3 L55841-55844 | `S41-D7_export_outside_scope` (`.sv` and `.c`; runtime fatal after the first line) | llg policy (the text is silent on the outcome) |
+| S41-D8 | **Exported task called from an imported function** is a fatal error at that call. | 35.8 L56241-56242 | `S41-D8_task_from_import_function` (`.sv` and `.c`; runtime fatal after the first line) | llg policy (the text says "never legal" without a reporting rule) |
 
 ## Memory files (SIM-027)
 

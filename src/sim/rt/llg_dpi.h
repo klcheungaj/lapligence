@@ -73,10 +73,85 @@ void llg_dpi_to_c(const llg_dpi_type_t* type, const sv4_t* payload, void* out);
 void llg_dpi_from_c(const llg_dpi_type_t* type, const void* in, sv4_t* payload);
 void llg_dpi_init_c(const llg_dpi_type_t* type, void* out);
 
-/* An imported task returned nonzero although nothing disabled it (SV 35.9
- * item b): report a fatal simulation error naming `c_name` and request
- * completion. The caller copies nothing out and returns. */
-void llg_dpi_task_protocol_error(const char* c_name);
+/* ---- Context call chains (SV 35.5.3, Annex H.9) ----
+ *
+ * An svScope points at one llg_dpi_scope_t of the table the model passes to
+ * llg_dpi_model_init: an instantiated scope holding DPI-C import or export
+ * declarations. Generated thunks save, set and restore the call-chain state
+ * on every crossing between SystemVerilog and foreign code, so a nested
+ * SV -> C -> SV -> C chain sees the scope of its innermost context import
+ * and gets the outer state back when each call returns. Nothing suspends
+ * inside a chain: exported tasks are zero-time. */
+
+/* Entry of one exported subroutine in a scope: `id` numbers the exported C
+ * identifier model-wide, `fn` is that scope's export thunk (cast to its
+ * Annex H prototype by the C entry point of the identifier). */
+typedef void (*llg_dpi_fn_t)(void);
+typedef struct llg_dpi_export_slot {
+    uint32_t id;
+    llg_dpi_fn_t fn;
+} llg_dpi_export_slot_t;
+
+typedef struct llg_dpi_user llg_dpi_user_t;
+
+typedef struct llg_dpi_scope {
+    const char* name;                     /* fully qualified scope name */
+    const llg_dpi_export_slot_t* exports; /* ascending `id` */
+    uint32_t export_count;
+    llg_dpi_user_t* user;                 /* svPutUserData entries */
+} llg_dpi_scope_t;
+
+/* Source position of a context import call (svGetCallerInfo, H.9.3). */
+typedef struct llg_dpi_site {
+    const char* file;
+    int line;
+} llg_dpi_site_t;
+
+/* Call-chain state saved by one crossing, on the C stack of its thunk. */
+typedef struct llg_dpi_call {
+    llg_dpi_scope_t* scope;
+    const llg_dpi_site_t* site;
+    int depth;
+    uint8_t chain;
+    uint8_t acked;
+    uint8_t task; /* the innermost import is a task */
+} llg_dpi_call_t;
+
+/* Set by a context import's call site just before the call, consumed by
+ * the import thunk. */
+extern const llg_dpi_site_t* llg_dpi_next_site;
+
+/* Register the model's scope table, sorted by strcmp of `name`. */
+void llg_dpi_model_init(llg_dpi_scope_t* scopes, size_t count);
+/* Release svPutUserData entries and forget the table. */
+void llg_dpi_shutdown(void);
+
+/* SV -> C: an import thunk saves the chain state in `saved` and enters a
+ * context call (`scope` its declaring scope) or, with `scope` NULL, a
+ * noncontext call of an imported task (`task` 1) or function. `depth` is
+ * the thunk's recursion depth. */
+void llg_dpi_import_enter(llg_dpi_call_t* saved, llg_dpi_scope_t* scope, int task, int depth);
+/* The import returned: restore the chain state. For a function (`task`
+ * 0), a disable that the foreign code did not acknowledge is a fatal
+ * error (35.9 item c). */
+void llg_dpi_import_leave(const llg_dpi_call_t* saved, const char* c_name, int task);
+/* Check an imported task's disable-protocol result (35.9 item b) and
+ * return nonzero when its outputs must not be copied out (it was disabled
+ * or broke the protocol, a fatal error). */
+int llg_dpi_task_status(int status, const char* c_name);
+
+/* C -> SV: the entry point of exported C identifier `id` (a task when
+ * `task` is 1) finds the export thunk of the current context scope. Calls
+ * from outside a context import chain, of a task from an imported function
+ * (35.8), after the calling import was disabled (35.9 item d) or into a
+ * scope that does not export `c_name` are fatal errors that return NULL. */
+llg_dpi_fn_t llg_dpi_export_target(uint32_t id, const char* c_name, int task);
+/* An export thunk saves the chain state and returns the recursion depth of
+ * the SystemVerilog call it makes. */
+int llg_dpi_export_enter(llg_dpi_call_t* saved);
+/* Restore the chain state; for an exported task return the disable status
+ * of 35.9 item a) (1 when a disable now cancels the calling import). */
+int llg_dpi_export_leave(const llg_dpi_call_t* saved, int task);
 
 #ifdef __cplusplus
 }

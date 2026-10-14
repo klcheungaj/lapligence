@@ -594,6 +594,7 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
     );
     cg.build_init_steps(&mut model)?;
     cg.populate_vpi_metadata(&mut model, &tops)?;
+    cg.finish_dpi(&mut model)?;
     // Final-block processes render like any other but spawn into the
     // post-simulation phase: they run after `llg_rt_run` returns, not at
     // t=0.
@@ -1243,6 +1244,14 @@ struct Codegen<'a> {
     /// Open-array DPI import specializations keyed by template function
     /// and the concrete foreign types of the call's actuals.
     dpi_specializations: HashMap<(usize, String), usize>,
+    /// Exported C identifier → canonical lowered signature (SV 35.4: one C
+    /// entry point serves every scope exporting that identifier).
+    dpi_export_signatures: HashMap<String, String>,
+    /// Instantiated scope node → `model.dpi_scopes` index (before the
+    /// final sort by name in `finish_dpi`).
+    dpi_scope_ids: HashMap<NodeId, usize>,
+    /// Source file and line → `model.dpi_sites` index.
+    dpi_site_ids: HashMap<(String, u32), u32>,
     /// Interned combinational UDP definitions → `model.udp_tables` index, so
     /// every instance of one definition shares a table without rescanning.
     udp_table_indices: HashMap<crate::sim::ir::IrUdpTable, usize>,
@@ -1582,6 +1591,9 @@ struct Codegen<'a> {
     /// FuncTask arena node → emitted C function name.
     func_names: HashMap<NodeId, String>,
     func_labels: HashMap<NodeId, String>,
+    /// Readable name of the instantiated scope declaring each subroutine
+    /// (the `svScope` name of DPI declarations, SV Annex H.9.2).
+    func_scope_labels: HashMap<NodeId, String>,
     /// Raw source components, separate from historical display-path spelling.
     c_paths: HashMap<String, Vec<String>>,
     instance_paths: HashMap<NodeId, String>,
@@ -1754,6 +1766,9 @@ impl<'a> Codegen<'a> {
             func_meta: HashMap::new(),
             dpi_signatures: HashMap::new(),
             dpi_specializations: HashMap::new(),
+            dpi_export_signatures: HashMap::new(),
+            dpi_scope_ids: HashMap::new(),
+            dpi_site_ids: HashMap::new(),
             udp_table_indices: HashMap::new(),
             static_formals: HashMap::new(),
             static_string_formals: HashMap::new(),
@@ -1869,6 +1884,7 @@ impl<'a> Codegen<'a> {
             gen_scope_paths: HashMap::new(),
             func_names: HashMap::new(),
             func_labels: HashMap::new(),
+            func_scope_labels: HashMap::new(),
             c_paths: HashMap::new(),
             instance_paths: HashMap::new(),
             display_paths: HashMap::new(),

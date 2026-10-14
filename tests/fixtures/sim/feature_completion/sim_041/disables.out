@@ -1,0 +1,6 @@
+c dt_kill returned 1 disabled=1
+after task disable seen=3 out=11
+c dt_self returned 0 disabled=0
+after self disable seen=103 out=42
+c df_kill returned disabled=1
+after function disable r=1

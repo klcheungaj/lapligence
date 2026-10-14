@@ -447,6 +447,12 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
             }
         }
     }
+    if !model.dpi_scopes().is_empty() {
+        out.push_str(&format!(
+            "    llg_dpi_model_init(llg_dpi_scopes, {}u);\n",
+            model.dpi_scopes().len()
+        ));
+    }
     out.push_str(&format!(
         "    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count) || !llg_vpi_startup()) {{\n\
              \x20       llg_vpi_shutdown();\n\

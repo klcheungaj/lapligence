@@ -33,7 +33,7 @@ use crate::sim::ir::{IrModel, IrObjectStmt, IrPreFn, IrProcessControl, IrStmt};
 
 use super::recursion::RecursionAnalysis;
 use super::{
-    effects_for_statements, CallTarget, ExecutionEffect, ExecutionProcess, ExecutionTerminator,
+    effects_for_function, CallTarget, ExecutionEffect, ExecutionProcess, ExecutionTerminator,
 };
 
 /// Default crossover for direct polling, matching `LLG_CO_POLL_DEPTH_MAX`.
@@ -205,8 +205,9 @@ impl ExecutionAnalysis {
         let function_effects = ir
             .funcs
             .iter()
-            .map(|function| {
-                let mut effects = effects_for_statements(ir, &function.body);
+            .enumerate()
+            .map(|(index, function)| {
+                let mut effects = effects_for_function(ir, index);
                 // Dynamic dispatch is conservatively suspendable for tasks,
                 // but a SystemVerilog function (including a void function)
                 // cannot suspend. `$stop` there is a deferred scheduler

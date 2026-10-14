@@ -162,14 +162,22 @@ impl<'a> Codegen<'a> {
                         record_columns.push(column);
                     }
                 }
-                if dpi.is_some() && !record_columns.is_empty() {
+                let export_name = self.db.dpi_export(*c).map(str::to_owned);
+                if (dpi.is_some() || export_name.is_some()) && !record_columns.is_empty() {
                     return Err(format!(
-                        "DPI-C import `{}` cannot pass a column-layout record",
+                        "DPI-C {} `{}` cannot pass a column-layout record",
+                        if dpi.is_some() { "import" } else { "export" },
                         self.node(*c).name
                     ));
                 }
                 formals_ir.extend(record_columns);
                 let mut dpi_types = None;
+                let dpi_export = match &export_name {
+                    Some(c_name) => {
+                        Some(self.validate_dpi_export(*c, inst, c_name, &formals, &formals_ir)?)
+                    }
+                    None => None,
+                };
                 if let Some(dpi) = &dpi {
                     dpi_types =
                         Some(self.validate_dpi_import(*c, inst, dpi, &formals, &formals_ir)?);
@@ -452,12 +460,35 @@ impl<'a> Codegen<'a> {
                         self.static_task_locals.insert((inst, local), info);
                     }
                 }
+                // A static export's address formals live in persistent
+                // storage that its export thunk fills and reads like a call.
+                let dpi_export = dpi_export.map(|export| {
+                    let storage = formals
+                        .iter()
+                        .map(|(io, _)| {
+                            if automatic {
+                                return None;
+                            }
+                            self.static_formals
+                                .get(&(inst, *io))
+                                .map(|info| info.global.clone())
+                                .or_else(|| {
+                                    self.static_string_formals
+                                        .get(&(inst, *io))
+                                        .or_else(|| self.static_chandle_formals.get(&(inst, *io)))
+                                        .map(|object| self.model.objects[*object].c_name.clone())
+                                })
+                        })
+                        .collect();
+                    export.with_storage(storage)
+                });
                 let c_name =
                     self.func_names.get(c).cloned().ok_or_else(|| {
                         format!("function `{}` has no C name", self.node(*c).name)
                     })?;
                 // Event formals of every direction are typed parameters
                 // (`IrCallArg::EventVal`/`EventAddr`), class methods included.
+                let dpi_scope = dpi.as_ref().map(|_| self.dpi_scope(inst, *c));
                 let dpi_import = dpi.as_ref().zip(dpi_types).map(|(dpi, (formals, ret))| {
                     crate::sim::ir::IrDpiImport::new(
                         dpi.c_name.clone(),
@@ -466,6 +497,7 @@ impl<'a> Codegen<'a> {
                         formals,
                         ret,
                     )
+                    .with_scope(dpi_scope)
                 });
                 // An open-array import is a template: each call selects a
                 // specialization for its actuals (`dpi_open_callee`). So is a
@@ -495,6 +527,7 @@ impl<'a> Codegen<'a> {
                     ),
                     ret_string: self.is_string_return(*c),
                     dpi: dpi_import,
+                    dpi_export,
                     ret: ret.map(|(w, s, two_state, shortreal)| {
                         if w == 0 {
                             IrType::Real { shortreal }
@@ -872,15 +905,7 @@ impl<'a> Codegen<'a> {
         ),
         String,
     > {
-        if dpi.c_name.is_empty()
-            || !dpi.c_name.chars().enumerate().all(|(index, ch)| {
-                if index == 0 {
-                    ch == '_' || ch.is_ascii_alphabetic()
-                } else {
-                    ch == '_' || ch.is_ascii_alphanumeric()
-                }
-            })
-        {
+        if !super::dpi::valid_c_identifier(&dpi.c_name) {
             return Err(format!(
                 "DPI-C import `{}` has an invalid C linkage identifier `{}`",
                 self.node(ft).name,
@@ -936,6 +961,12 @@ impl<'a> Codegen<'a> {
                 ));
             }
             key.push_str(&format!(";arg{index}={direction:?}:{ty:?}"));
+        }
+        if self.dpi_export_signatures.contains_key(&dpi.c_name) {
+            return Err(format!(
+                "DPI-C C identifier `{}` is both imported and exported (SV 35.4)",
+                dpi.c_name
+            ));
         }
         if let Some(previous) = self.dpi_signatures.get(&dpi.c_name) {
             if previous != &key {

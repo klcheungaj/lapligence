@@ -549,6 +549,7 @@ impl<'a> Codegen<'a> {
                 virtual_dispatch: false,
                 virtual_call,
                 void_x: ret_val.is_none(),
+                dpi_site: self.dpi_call_site(function, h),
             })),
             ret_w,
             ret_s,

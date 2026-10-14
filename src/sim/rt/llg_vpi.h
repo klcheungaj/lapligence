@@ -54,6 +54,8 @@ int llg_vpi_compile_calls(const char* const* names,
 void llg_vpi_start_simulation(void);
 void llg_vpi_end_simulation(void);
 void llg_vpi_shutdown(void);
+/* Run `hook` once at the next llg_vpi_shutdown (DPI-C scope user data). */
+void llg_vpi_on_shutdown(void (*hook)(void));
 
 int llg_vpi_call_task(const char* name, llg_vpi_arg_t* args, int arg_count);
 sv4_t llg_vpi_call_function(const char* name, llg_vpi_arg_t* args,

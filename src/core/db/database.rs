@@ -314,9 +314,11 @@ pub struct Db {
     /// a side table so synthetic test nodes and the existing NodeKind ABI do
     /// not need a lossy placeholder field.
     dpi_imports: HashMap<NodeId, DpiImportInfo>,
-    /// Whether any subroutine is named by a DPI-C export declaration: only
-    /// then can a context import write SystemVerilog storage (SV 35.5.3).
-    has_dpi_exports: bool,
+    /// C identifier of every subroutine named by a DPI-C export declaration,
+    /// one entry per instance of the declaring scope. Only these can a
+    /// context import reach, so only then can it write SystemVerilog storage
+    /// (SV 35.5.3).
+    dpi_exports: HashMap<NodeId, String>,
     /// Nets declared implicitly by Slang's semantic analysis.
     implicit_nets: HashSet<NodeId>,
     /// Context conversions inserted by Slang rather than written as casts.
@@ -381,7 +383,7 @@ impl Db {
             modport_expressions: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
             dpi_imports: HashMap::new(),
-            has_dpi_exports: false,
+            dpi_exports: HashMap::new(),
             implicit_nets: HashSet::new(),
             implicit_conversions: HashSet::new(),
             source_files: HashMap::new(),
@@ -456,7 +458,7 @@ impl Db {
             modport_expressions: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
             dpi_imports: HashMap::new(),
-            has_dpi_exports: false,
+            dpi_exports: HashMap::new(),
             implicit_nets: HashSet::new(),
             implicit_conversions: HashSet::new(),
             source_files: HashMap::new(),
@@ -629,7 +631,13 @@ impl Db {
     /// Whether the design declares any DPI-C export, through which foreign
     /// code called by a context import can reach SystemVerilog subroutines.
     pub fn has_dpi_exports(&self) -> bool {
-        self.has_dpi_exports
+        !self.dpi_exports.is_empty()
+    }
+
+    /// The C identifier under which a subroutine is exported (SV 35.4,
+    /// 35.7), when a DPI-C export declaration names it.
+    pub fn dpi_export(&self, id: NodeId) -> Option<&str> {
+        self.dpi_exports.get(&id).map(String::as_str)
     }
 
     pub fn arrays(&self) -> &HashMap<NodeId, ArrayMeta> {

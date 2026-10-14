@@ -223,9 +223,12 @@ impl Frame<'_, '_> {
         args: &[IrCallArg],
         depth: IrDepth,
     ) -> Result<Option<CallValue>, String> {
-        self.call_target(f, args, depth, None, false, None)
+        self.call_target(f, args, depth, None, false, None, None)
     }
 
+    // The call shape (receiver, dispatch, interface call, DPI site) is the
+    // IR call's own fields; bundling them would only rename the same tuple.
+    #[allow(clippy::too_many_arguments)]
     fn call_target(
         &mut self,
         f: usize,
@@ -234,6 +237,7 @@ impl Frame<'_, '_> {
         receiver: Option<&IrChandleExpr>,
         virtual_dispatch: bool,
         virtual_call: Option<&IrVirtualCall>,
+        dpi_site: Option<u32>,
     ) -> Result<Option<CallValue>, String> {
         if !self.allow_calls {
             return Err(pending("subprogram calls in declaration initialization"));
@@ -837,6 +841,12 @@ impl Frame<'_, '_> {
             }
         }
         parameters.push(depth.code().to_owned());
+        if let Some(site) = dpi_site {
+            // The context import thunk takes its caller position from here
+            // at entry (svGetCallerInfo, SV Annex H.9.3); every argument has
+            // already been evaluated, so no other import call intervenes.
+            self.line(format!("llg_dpi_next_site = &llg_dpi_sites[{site}];"));
+        }
         let call_mark = self.cancellation_mark();
         let result = if coroutine {
             self.coroutine_call(f, &function, &parameters)?;
@@ -952,7 +962,15 @@ impl Frame<'_, '_> {
         receiver: Option<&IrChandleExpr>,
         virtual_dispatch: bool,
     ) -> Result<NativeValue, String> {
-        match self.call_target(function, args, depth, receiver, virtual_dispatch, None)? {
+        match self.call_target(
+            function,
+            args,
+            depth,
+            receiver,
+            virtual_dispatch,
+            None,
+            None,
+        )? {
             Some(CallValue::Native(value)) if value.kind == kind => Ok(value),
             _ => Err("native method result type mismatch".to_owned()),
         }
@@ -967,6 +985,7 @@ impl Frame<'_, '_> {
                 call.receiver.as_ref(),
                 call.virtual_dispatch,
                 call.virtual_call.as_ref(),
+                call.dpi_site,
             )? {
                 Some(CallValue::Numeric(value)) => value,
                 Some(CallValue::Native(_)) => {
@@ -1010,6 +1029,7 @@ impl Frame<'_, '_> {
             call.receiver.as_ref(),
             call.virtual_dispatch,
             call.virtual_call.as_ref(),
+            call.dpi_site,
         )? {
             match value {
                 CallValue::Numeric(value) => self.discard(value),

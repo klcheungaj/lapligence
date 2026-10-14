@@ -210,7 +210,7 @@ pub(super) fn func_prototype(f: &IrFunc) -> Result<String, String> {
 #[allow(dead_code)] // legacy model renderer superseded by owned::model
 pub(super) fn render_func_body(ctx: &RCtx<'_>, f: &IrFunc) -> Result<String, String> {
     if f.dpi_import().is_some() {
-        return render_dpi_thunk(f);
+        return render_dpi_thunk(ctx.model, f);
     }
     let ret_t = if f.ret_string {
         "llg_string_t"
