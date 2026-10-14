@@ -164,7 +164,8 @@ impl Codegen<'_> {
     /// Static subroutine records with native members: one record assignment
     /// at the declaration's slot of the static schedule.
     pub(in super::super) fn emit_native_record_initializers(&mut self) -> Result<(), String> {
-        for (declaration, initializer, path) in std::mem::take(&mut self.native_record_initializers)
+        for (declaration, value, initializer, path) in
+            std::mem::take(&mut self.native_record_initializers)
         {
             let owner = self.initializer_environment(declaration).ok_or_else(|| {
                 format!(
@@ -174,20 +175,26 @@ impl Codegen<'_> {
             })?;
             self.inst = owner;
             self.depth_arg = "0".into();
-            let statement = self
-                .lower_native_value_assignment(
-                    &path,
-                    declaration,
-                    initializer,
-                    false,
-                    Operation::Assignment,
-                )?
-                .ok_or_else(|| {
-                    format!(
-                        "initializer of static record `{}` in `{path}` has no record assignment",
-                        self.node(declaration).name
-                    )
-                })?;
+            // Subroutine native locals are bound only while their body
+            // lowers; bind this declaration to its persistent value again.
+            let previous = self.native_roots.insert(declaration, value);
+            let statement = self.lower_native_value_assignment(
+                &path,
+                declaration,
+                initializer,
+                false,
+                Operation::Assignment,
+            );
+            match previous {
+                Some(previous) => self.native_roots.insert(declaration, previous),
+                None => self.native_roots.remove(&declaration),
+            };
+            let statement = statement?.ok_or_else(|| {
+                format!(
+                    "initializer of static record `{}` in `{path}` has no record assignment",
+                    self.node(declaration).name
+                )
+            })?;
             self.record_initializer_source(declaration, initializer);
             let identity = self.declaration_identity(declaration)?;
             self.declaration_statements.push((identity, statement));

@@ -142,6 +142,7 @@ impl EmitCtx<'_, '_> {
                         self.cg.reserve_initializer_order(declaration);
                         self.cg.native_record_initializers.push((
                             declaration,
+                            value,
                             initializer,
                             self.path.clone(),
                         ));

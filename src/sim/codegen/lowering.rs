@@ -1316,10 +1316,11 @@ struct Codegen<'a> {
     /// `$unit` strings whose value calls a subroutine, lowered after every
     /// body into the static schedule.
     string_object_initializers: Vec<(NodeId, usize, NodeId, String)>,
-    /// `(declaration, initializer, path)` of static subroutine records
-    /// with native members, lowered into the static schedule after every
-    /// body; the set keeps a body lowered more than once from queuing again.
-    native_record_initializers: Vec<(NodeId, NodeId, String)>,
+    /// `(declaration, native value, initializer, path)` of static
+    /// subroutine records with native members, lowered into the static
+    /// schedule after every body; the set keeps a body lowered more than
+    /// once from queuing again.
+    native_record_initializers: Vec<(NodeId, usize, NodeId, String)>,
     native_record_initialized: HashSet<NodeId>,
     /// Mailbox variables with declaration-time `new(...)` initializers use
     /// the same time-zero ordering, but are constructed by the mailbox
