@@ -890,6 +890,90 @@ fn s40_d5_task_disable_protocol() {
 }
 
 #[test]
+fn s41_d1_context_scope_chain() {
+    run_dpi_decision(
+        "S41-D1_context_scope_chain",
+        include_str!("fixtures/sim/lrm_decisions/S41-D1_context_scope_chain.out"),
+    );
+}
+
+#[test]
+fn s41_d2_export_copy_back() {
+    run_dpi_decision(
+        "S41-D2_export_copy_back",
+        include_str!("fixtures/sim/lrm_decisions/S41-D2_export_copy_back.out"),
+    );
+}
+
+#[test]
+fn s41_d3_noncontext_has_no_scope() {
+    run_dpi_decision(
+        "S41-D3_noncontext_has_no_scope",
+        include_str!("fixtures/sim/lrm_decisions/S41-D3_noncontext_has_no_scope.out"),
+    );
+}
+
+#[test]
+fn s41_d4_scope_routine_arguments() {
+    run_dpi_decision(
+        "S41-D4_scope_routine_arguments",
+        include_str!("fixtures/sim/lrm_decisions/S41-D4_scope_routine_arguments.out"),
+    );
+}
+
+#[test]
+fn s41_d5_disabled_outputs() {
+    run_dpi_decision(
+        "S41-D5_disabled_outputs",
+        include_str!("fixtures/sim/lrm_decisions/S41-D5_disabled_outputs.out"),
+    );
+}
+
+/// [`run_dpi_decision`] for a case that stops with a fatal DPI-C protocol
+/// error after its expected output; `message` is the stderr report.
+fn run_dpi_fatal_decision(case: &str, expected: &str, message: &str) {
+    let directory = crate::sim_harness::TempDir::new("lrm-s41").expect("temporary directory");
+    let Some(library) = dpi_companion(&directory, case) else {
+        return;
+    };
+    sim_cli::run_case_checked_matrix(SUITE, case, &["--dpi-lib", &library], &|label, output| {
+        assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(message),
+            "{label}: {output:?}"
+        );
+    });
+}
+
+#[test]
+fn s41_d6_noncontext_export_call() {
+    run_dpi_fatal_decision(
+        "S41-D6_noncontext_export_call",
+        include_str!("fixtures/sim/lrm_decisions/S41-D6_noncontext_export_call.out"),
+        "llg: DPI-C export `d6_inc` was called from a noncontext import",
+    );
+}
+
+#[test]
+fn s41_d7_export_outside_scope() {
+    run_dpi_fatal_decision(
+        "S41-D7_export_outside_scope",
+        include_str!("fixtures/sim/lrm_decisions/S41-D7_export_outside_scope.out"),
+        "llg: DPI-C export `d7_inc` is not exported from the current scope `tb.u`",
+    );
+}
+
+#[test]
+fn s41_d8_task_from_import_function() {
+    run_dpi_fatal_decision(
+        "S41-D8_task_from_import_function",
+        include_str!("fixtures/sim/lrm_decisions/S41-D8_task_from_import_function.out"),
+        "llg: DPI-C export task `d8_task` was called from an imported function",
+    );
+}
+
+#[test]
 fn s09_d1_string_ref_wait() {
     run_decision(
         "S09-D1_string_ref_wait",

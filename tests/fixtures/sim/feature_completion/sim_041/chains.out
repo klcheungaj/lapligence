@@ -1,0 +1,10 @@
+c steps total=332833500 returned=500500 bad=0
+c text o=abc-out io=seed+ ret=abc-ret
+c wide b=f0/f0 edcba987 6543210f a/2 c=1 00000000 00000000
+ch_byte b=-5
+c byte r=-10 o=-6
+ch_loop=332833500 acc=1000
+ch_rec=1275
+c alias v=4
+ch_task o=56 acc=1028
+time 5000 -> 5000

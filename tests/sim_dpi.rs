@@ -211,6 +211,44 @@ fn dpi_exports_are_owned_for_every_instance() {
     assert!(db.has_dpi_exports());
 }
 
+/// One external C entry per exported C identifier dispatches through a
+/// scope table sorted by name (so `svGetScopeFromName` can search it), with a
+/// slot for each instance; context imports enter their declaring scope and
+/// noncontext imports none (SV 35.5.3, H.9.3).
+#[test]
+fn dpi_exports_lower_to_one_entry_and_sorted_scopes() {
+    let source = "module m;\n\
+                  int v = 0;\n\
+                  export \"DPI-C\" function get;\n\
+                  import \"DPI-C\" context function int visit();\n\
+                  import \"DPI-C\" function int plain();\n\
+                  function int get(); return v; endfunction\n\
+                  endmodule\n\
+                  module tb; m zz(); m aa();\n\
+                  initial $display(\"%0d %0d\", zz.visit(), aa.plain());\n\
+                  endmodule\n";
+    let compiled = compile::compile_checked(&compile::CompileOpts {
+        sources: vec![compile::OwnedSource::compilation_unit("exports.sv", source)],
+        top: Some("tb".to_owned()),
+        ..Default::default()
+    })
+    .expect("export source should compile");
+    let db = Db::from_slang(&compiled.snapshot).expect("owned database");
+    for config in [sim::opt::OptConfig::default(), sim::opt::OptConfig::none()] {
+        let model = sim::codegen::generate_from_db_with_opts(&db, &config).expect("lowering");
+        let c = &model.model_c;
+        assert_eq!(c.matches("/* llg DPI-C export: c_name=get */").count(), 1);
+        let aa = c.find("\"tb.aa\"").expect("tb.aa scope");
+        let zz = c.find("\"tb.zz\"").expect("tb.zz scope");
+        assert!(aa < zz, "scope table is not sorted by name");
+        assert!(c.contains("llg_dpi_model_init(llg_dpi_scopes, 2u);"), "{c}");
+        // zz is the second scope; its context import enters it.
+        assert!(c.contains("llg_dpi_import_enter(&_dpi_call, &llg_dpi_scopes[1], 0, depth);"));
+        assert!(c.contains("llg_dpi_import_enter(&_dpi_call, NULL, 0, depth);"));
+        assert!(c.contains("llg_dpi_next_site = &llg_dpi_sites[0];"));
+    }
+}
+
 #[test]
 fn dpi_missing_symbol_fails_during_model_link() {
     if !sim::build::cmake_available() {

@@ -1,0 +1,8 @@
+root tb
+set returned the caller scope
+u1 get 1
+g get 3 in tb.g[0].c
+where tb.u2
+after nested tb
+unknown NULL
+root=7

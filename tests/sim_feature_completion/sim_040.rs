@@ -22,12 +22,23 @@ fn companion_with_flags(
     stem: &str,
     flags: &[&str],
 ) -> Option<String> {
+    shared_companion(SUITE, directory, stem, flags)
+}
+
+/// Build `tests/fixtures/sim/<suite>/<stem>.c` into a shared DPI-C library
+/// as [`companion_with_flags`] does; shared with later DPI suites.
+pub(super) fn shared_companion(
+    suite: &str,
+    directory: &sim_harness::TempDir,
+    stem: &str,
+    flags: &[&str],
+) -> Option<String> {
     if !cfg!(unix) {
         eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
         return None;
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let source = root.join(format!("tests/fixtures/sim/{SUITE}/{stem}.c"));
+    let source = root.join(format!("tests/fixtures/sim/{suite}/{stem}.c"));
     let library = directory.path().join(format!("lib{stem}.so"));
     let mut command = std::process::Command::new(c_compiler::host_c_compiler());
     command
