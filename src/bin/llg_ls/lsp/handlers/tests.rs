@@ -3011,3 +3011,92 @@ fn every_commit_takes_a_later_ticket() {
     let config_ticket = state.lock().expect("state").client_order.ticket();
     assert!(config_ticket > second);
 }
+
+/// A client whose unregistrations complete when the test releases them, and
+/// that records every registration it receives.
+#[derive(Default)]
+struct ScriptedWatcherClient {
+    unregister_calls: AtomicUsize,
+    releases: [tokio::sync::Notify; 2],
+    registered: Mutex<Vec<String>>,
+}
+
+impl WatcherClient for ScriptedWatcherClient {
+    async fn unregister(&self, _: Unregistration) -> Result<()> {
+        let call = self.unregister_calls.fetch_add(1, Ordering::SeqCst);
+        self.releases[call].notified().await;
+        Ok(())
+    }
+
+    async fn register(&self, registration: Registration) -> Result<()> {
+        self.registered
+            .lock()
+            .expect("registrations")
+            .push(registration.register_options.expect("options").to_string());
+        Ok(())
+    }
+
+    async fn warn(&self, _: String) {}
+}
+
+/// Watcher registrations suspend on the client, and commit tasks of
+/// different roots and handlers call them concurrently. The call that read
+/// the older watcher set must not register it after the newer one: the
+/// include dependency that appeared in between would stay unwatched.
+#[tokio::test(flavor = "current_thread")]
+async fn overlapping_watcher_registrations_end_with_the_newest_set() {
+    let root = PathBuf::from(hp("/tmp/llg_watcher_order"));
+    let dependency = root.join("defs.inc");
+    let mut initial = single_root_state(&root, Vec::new());
+    initial.dynamic_watched_files = true;
+    initial.watchers_registered = true;
+    initial.registered_watchers_digest = Some("registered before".to_owned());
+    let state = Arc::new(Mutex::new(initial));
+    let client = Arc::new(ScriptedWatcherClient::default());
+    let registration = || {
+        let (client, state) = (Arc::clone(&client), Arc::clone(&state));
+        tokio::spawn(async move { register_watchers_with(&*client, &state).await })
+    };
+    let yield_a_while = || async {
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+    };
+
+    let first = registration();
+    yield_a_while().await;
+    assert_eq!(client.unregister_calls.load(Ordering::SeqCst), 1);
+    // The first call has read its watcher set; a commit then resolves a new
+    // include dependency and starts the second call.
+    state
+        .lock()
+        .expect("state")
+        .roots
+        .get_mut(&root)
+        .expect("root")
+        .include_deps
+        .insert(dependency);
+    let second = registration();
+    yield_a_while().await;
+    // The newer call finishes its unregistration before the older one.
+    client.releases[1].notify_one();
+    yield_a_while().await;
+    client.releases[0].notify_one();
+    first.await.expect("first registration");
+    second.await.expect("second registration");
+
+    let newest = {
+        let state = state.lock().expect("state");
+        watcher_options_from_state(&state).to_string()
+    };
+    let registered = client.registered.lock().expect("registrations");
+    assert_eq!(registered.last(), Some(&newest));
+    assert_eq!(
+        state
+            .lock()
+            .expect("state")
+            .registered_watchers_digest
+            .as_deref(),
+        Some(newest.as_str())
+    );
+}

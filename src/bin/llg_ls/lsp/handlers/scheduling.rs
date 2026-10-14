@@ -2,12 +2,49 @@
 
 use super::*;
 
+/// The client calls watcher registration makes; a trait so the ordering of
+/// the exchange can be tested without a connection.
+pub(super) trait WatcherClient {
+    async fn unregister(&self, unregistration: Unregistration) -> Result<()>;
+    async fn register(&self, registration: Registration) -> Result<()>;
+    async fn warn(&self, message: String);
+}
+
+impl WatcherClient for Client {
+    async fn unregister(&self, unregistration: Unregistration) -> Result<()> {
+        self.unregister_capability(vec![unregistration]).await
+    }
+
+    async fn register(&self, registration: Registration) -> Result<()> {
+        self.register_capability(vec![registration]).await
+    }
+
+    async fn warn(&self, message: String) {
+        self.log_message(MessageType::WARNING, message).await;
+    }
+}
+
 /// Free-standing watcher registration used by both the backend methods and
 /// spawned commit tasks (which cannot borrow `&Backend`).
 ///
-/// See [`Backend::register_watchers`] for the coalescing contract.
-pub(super) async fn register_watchers_with(client: &Client, state: &Arc<Mutex<BackendState>>) {
+/// See [`Backend::register_watchers`] for the coalescing contract. Calls are
+/// serialized and read the watcher set only once they hold their turn: the
+/// unregister/register exchange suspends on the client, so an overlapping
+/// call that had already read an older set could otherwise register it last
+/// and leave newly resolved include dependencies unwatched.
+pub(super) async fn register_watchers_with<C: WatcherClient>(
+    client: &C,
+    state: &Arc<Mutex<BackendState>>,
+) {
     let started = std::time::Instant::now();
+    let gate = Arc::clone(
+        &state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .client_order
+            .watcher_gate,
+    );
+    let _turn = gate.lock().await;
     let dynamic = {
         let state = state.lock().unwrap_or_else(|error| error.into_inner());
         state.dynamic_watched_files
@@ -48,16 +85,13 @@ pub(super) async fn register_watchers_with(client: &Client, state: &Arc<Mutex<Ba
             id: WATCH_REGISTRATION_ID.to_owned(),
             method: "workspace/didChangeWatchedFiles".to_owned(),
         };
-        if let Err(error) = client.unregister_capability(vec![unregistration]).await {
+        if let Err(error) = client.unregister(unregistration).await {
             crate::llg_debug!(
                 "event=watchers.unregistration.end outcome=error error={}",
                 error
             );
             client
-                .log_message(
-                    MessageType::WARNING,
-                    format!("watched-file unregistration failed: {error}"),
-                )
+                .warn(format!("watched-file unregistration failed: {error}"))
                 .await;
         } else {
             crate::llg_trace!("event=watchers.unregistration.end outcome=ok");
@@ -69,11 +103,11 @@ pub(super) async fn register_watchers_with(client: &Client, state: &Arc<Mutex<Ba
         state.registered_watchers_digest = Some(digest);
     }
     if let Err(error) = client
-        .register_capability(vec![Registration {
+        .register(Registration {
             id: WATCH_REGISTRATION_ID.to_owned(),
             method: "workspace/didChangeWatchedFiles".to_owned(),
             register_options: Some(options),
-        }])
+        })
         .await
     {
         {
@@ -81,10 +115,7 @@ pub(super) async fn register_watchers_with(client: &Client, state: &Arc<Mutex<Ba
             state.registered_watchers_digest = None;
         }
         client
-            .log_message(
-                MessageType::WARNING,
-                format!("watched-file registration failed: {error}"),
-            )
+            .warn(format!("watched-file registration failed: {error}"))
             .await;
         crate::llg_debug!(
             "event=watchers.registration.end outcome=error digest_bytes={} elapsed_us={} error={}",

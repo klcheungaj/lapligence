@@ -124,6 +124,8 @@ pub(super) struct ClientOrder {
     last_ticket: u64,
     sent: BTreeMap<Url, u64>,
     pub(super) publish_gate: Arc<tokio::sync::Mutex<()>>,
+    /// Serializes watched-file registrations (see `register_watchers_with`).
+    pub(super) watcher_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl ClientOrder {
