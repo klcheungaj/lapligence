@@ -222,39 +222,26 @@ pub(super) fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>
             result.include_deps.len(),
             job_started.elapsed().as_micros()
         );
-        let outcome = Backend::commit_job(&state, &key, generation, result);
+        let mut outcome = Backend::commit_job(&state, &key, generation, result);
+        let publication_count = outcome.publications.len();
         let ready = outcome.ready;
         crate::llg_debug!(
             "event=root_job.commit.end outcome=ok root={} generation={} publications={} ready={} valid_commit={} watchers_refresh={} module_explorer_changed={}",
             key.display(),
             generation,
-            outcome.publications.len(),
+            publication_count,
             ready,
             outcome.valid_commit,
             outcome.watchers_refresh,
             outcome.module_explorer_changed
         );
-        for (uri, diagnostics) in &outcome.publications {
-            let lint_count = diagnostics
-                .iter()
-                .filter(|diagnostic| diagnostic.source.as_deref() == Some("llg-lint"))
-                .count();
-            crate::llg_trace!(
-                "publishing diagnostics uri={} lint_rules={} total={}",
-                uri,
-                lint_count,
-                diagnostics.len()
-            );
-            client
-                .publish_diagnostics(uri.clone(), diagnostics.clone(), None)
-                .await;
-            crate::llg_trace!(
-                "event=publish_diagnostics.end outcome=ok uri={} lint_rules={} total={}",
-                uri,
-                lint_count,
-                diagnostics.len()
-            );
-        }
+        publish_ordered(
+            &client,
+            &state,
+            outcome.ticket,
+            std::mem::take(&mut outcome.publications),
+        )
+        .await;
         if outcome.module_explorer_changed {
             client
                 .send_notification::<LlgModuleExplorerChanged>(ModuleExplorerChangedParams {})
@@ -276,22 +263,22 @@ pub(super) fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>
         // Latest-wins coalescing: at most ONE debounced follow-up run when
         // triggers landed while this job executed.
         if Backend::finish_root_run(&state, &key) {
-            end_to_end_span.complete("ok-follow-up", outcome.publications.len());
+            end_to_end_span.complete("ok-follow-up", publication_count);
             crate::llg_debug!(
                 "event=root_job.end outcome=ok-follow-up root={} generation={} publications={} elapsed_us={}",
                 key.display(),
                 generation,
-                outcome.publications.len(),
+                publication_count,
                 job_started.elapsed().as_micros()
             );
             spawn_debounced_run(client, state, key);
         } else {
-            end_to_end_span.complete("ok", outcome.publications.len());
+            end_to_end_span.complete("ok", publication_count);
             crate::llg_debug!(
                 "event=root_job.end outcome=ok root={} generation={} publications={} elapsed_us={}",
                 key.display(),
                 generation,
-                outcome.publications.len(),
+                publication_count,
                 job_started.elapsed().as_micros()
             );
         }

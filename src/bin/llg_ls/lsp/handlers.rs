@@ -703,7 +703,7 @@ impl LanguageServer for Backend {
         if let Some(root) = &root {
             notification.set_root(|| root.to_string_lossy().into_owned());
         }
-        let (initialized, admission, cached_diagnostics) = {
+        let (initialized, admission, cached_diagnostics, ticket) = {
             let mut state = self.lock_state();
             let admission =
                 Self::admit_document_text(&mut state, uri.clone(), params.text_document.text, true);
@@ -722,7 +722,10 @@ impl LanguageServer for Backend {
                 root.published_digests.remove(&uri);
             }
             state.published_shared.remove(&uri);
-            (state.initialized, admission, cached_diagnostics)
+            // The replay below can run after awaits; the ticket taken with
+            // the payload keeps it from replacing a commit published meanwhile.
+            let ticket = state.client_order.ticket();
+            (state.initialized, admission, cached_diagnostics, ticket)
         };
         // Store the didOpen buffer before any await so a concurrent change
         // cannot be overwritten by the older open text. Discovery itself is
@@ -740,13 +743,13 @@ impl LanguageServer for Backend {
                     // before it opens a document. Replay the retained payload
                     // (or an authoritative empty one) at didOpen; later root
                     // commits still use digest suppression.
-                    self.client
-                        .publish_diagnostics(
-                            uri.clone(),
-                            cached_diagnostics.unwrap_or_default(),
-                            None,
-                        )
-                        .await;
+                    publish_ordered(
+                        &self.client,
+                        &self.state,
+                        ticket,
+                        vec![(uri.clone(), cached_diagnostics.unwrap_or_default())],
+                    )
+                    .await;
                     if let Some(root) = root {
                         self.schedule_roots_with_parent(vec![root], Some(notification.id()));
                     }

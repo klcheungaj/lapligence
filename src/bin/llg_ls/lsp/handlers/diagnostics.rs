@@ -248,6 +248,81 @@ pub(super) fn aggregate_shared_publications(
     }
     publications
 }
+/// Send diagnostics computed under the state lock with `ticket`, skipping
+/// every URI for which a later-ticketed payload was already sent (see
+/// [`ClientOrder`]).
+pub(super) async fn publish_ordered(
+    client: &Client,
+    state: &Arc<Mutex<BackendState>>,
+    ticket: u64,
+    publications: Vec<(Url, Vec<Diagnostic>)>,
+) {
+    send_in_ticket_order(state, ticket, publications, |uri, diagnostics| async move {
+        let lint_count = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.source.as_deref() == Some("llg-lint"))
+            .count();
+        let total = diagnostics.len();
+        crate::llg_trace!(
+            "publishing diagnostics uri={} lint_rules={} total={}",
+            uri,
+            lint_count,
+            total
+        );
+        client
+            .publish_diagnostics(uri.clone(), diagnostics, None)
+            .await;
+        crate::llg_trace!(
+            "event=publish_diagnostics.end outcome=ok uri={} lint_rules={} total={}",
+            uri,
+            lint_count,
+            total
+        );
+    })
+    .await;
+}
+
+/// The ordering core of [`publish_ordered`], with the transport injected.
+/// `send` runs while the publish gate is held, so the check against the sent
+/// tickets and the send itself cannot interleave with another publisher.
+pub(super) async fn send_in_ticket_order<F, Fut>(
+    state: &Arc<Mutex<BackendState>>,
+    ticket: u64,
+    publications: Vec<(Url, Vec<Diagnostic>)>,
+    mut send: F,
+) where
+    F: FnMut(Url, Vec<Diagnostic>) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    if publications.is_empty() {
+        return;
+    }
+    let gate = Arc::clone(
+        &state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .client_order
+            .publish_gate,
+    );
+    let _turn = gate.lock().await;
+    for (uri, diagnostics) in publications {
+        let admitted = state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .client_order
+            .admit(&uri, ticket);
+        if !admitted {
+            crate::llg_debug!(
+                "event=publish_diagnostics.end outcome=superseded uri={} ticket={}",
+                uri,
+                ticket
+            );
+            continue;
+        }
+        send(uri, diagnostics).await;
+    }
+}
+
 impl Backend {
     /// Publish each root's config errors and warnings against its TOML URI.
     pub(super) async fn publish_config_diagnostics(&self) {
@@ -257,9 +332,12 @@ impl Backend {
             "event=publish_config_diagnostics.begin roots={}",
             root_count
         );
-        let publications: Vec<(Url, Vec<Diagnostic>)> = {
-            let state = self.lock_state();
-            state
+        // The ticket is taken with the payloads: an older call that finishes
+        // after a newer one (a reload in between) must not replace it.
+        let (ticket, publications): (u64, Vec<(Url, Vec<Diagnostic>)>) = {
+            let mut state = self.lock_state();
+            let ticket = state.client_order.ticket();
+            let publications = state
                 .roots
                 .values()
                 .filter_map(|root| {
@@ -310,19 +388,10 @@ impl Backend {
                     };
                     Some((uri, diagnostics))
                 })
-                .collect()
+                .collect();
+            (ticket, publications)
         };
-        for (uri, diagnostics) in publications {
-            let diagnostic_count = diagnostics.len();
-            self.client
-                .publish_diagnostics(uri.clone(), diagnostics, None)
-                .await;
-            crate::llg_trace!(
-                "event=publish_config_diagnostics.item.end outcome=ok uri={} diagnostics={}",
-                uri,
-                diagnostic_count
-            );
-        }
+        publish_ordered(&self.client, &self.state, ticket, publications).await;
         crate::llg_debug!(
             "event=publish_config_diagnostics.end outcome=ok roots={} elapsed_us={}",
             root_count,
@@ -522,7 +591,9 @@ impl Backend {
         let published_uris: BTreeSet<Url> =
             publications.iter().map(|(uri, _)| uri.clone()).collect();
         let shared_publications = aggregate_shared_publications(&mut state, &published_uris);
+        let ticket = state.client_order.ticket();
         CommitOutcome {
+            ticket,
             publications: publications
                 .into_iter()
                 .chain(shared_publications)

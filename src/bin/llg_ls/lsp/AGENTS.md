@@ -18,6 +18,11 @@ triggers during a run arm one dirty-root follow-up. Always publish diagnostics.
 Valid analysis replaces `last_good`; compile/admission failures retain navigation.
 Snapshot replacement/clearing advances the process-wide epoch and invalidates caches.
 
+Diagnostics are sent after the state lock is released, by job tasks and handlers.
+Every payload takes a `ClientOrder` ticket under that lock, and `publish_ordered`
+sends under an async gate, skipping a URI whose later-ticketed payload already
+went out (commits, shared-file unions, config diagnostics, the didOpen replay).
+
 ## Admission
 
 - Admit `.v`/`.sv` units; headers/arbitrary included extensions are include-only.

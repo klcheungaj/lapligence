@@ -75,6 +75,9 @@ pub(super) struct BackendState {
     /// Start order of workspace discoveries, so an older walk never replaces
     /// the file sets of a newer one (see [`DiscoveryOrder`]).
     pub(super) discovery: DiscoveryOrder,
+    /// Order of the messages this server sends to the client (see
+    /// [`ClientOrder`]).
+    pub(super) client_order: ClientOrder,
 }
 
 /// Orders workspace discoveries ([`Backend::rescan`]). tower-lsp runs
@@ -107,6 +110,46 @@ impl DiscoveryOrder {
         true
     }
 }
+/// Keeps client-visible state in the order the server computed it.
+///
+/// Diagnostics are computed under the state lock but sent after it is
+/// released, from the debounced job tasks and from notification handlers, so
+/// two senders can swap places: the client would end up showing the older
+/// payload while the server's digests say the newer one was delivered. Each
+/// payload takes a ticket under the state lock, and a send is dropped when a
+/// later-ticketed payload already went out for the same URI. `publish_gate`
+/// makes the check and the send one step.
+#[derive(Default)]
+pub(super) struct ClientOrder {
+    last_ticket: u64,
+    sent: BTreeMap<Url, u64>,
+    pub(super) publish_gate: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl ClientOrder {
+    /// The ticket of a payload computed now; later calls return larger values.
+    pub(super) fn ticket(&mut self) -> u64 {
+        self.last_ticket += 1;
+        self.last_ticket
+    }
+
+    /// Whether the payload with `ticket` may still be sent for `uri`; records
+    /// it as sent when it may.
+    pub(super) fn admit(&mut self, uri: &Url, ticket: u64) -> bool {
+        match self.sent.get_mut(uri) {
+            Some(sent) if *sent > ticket => false,
+            Some(sent) => {
+                *sent = ticket;
+                true
+            }
+            None => {
+                self.sent.insert(uri.clone(), ticket);
+                true
+            }
+        }
+    }
+}
+
 pub(super) struct RootJob {
     pub(super) key: RootKey,
     pub(super) generation: u64,
@@ -133,6 +176,8 @@ pub(super) struct CompileResult {
 #[derive(Default)]
 pub(super) struct CommitOutcome {
     pub(super) publications: Vec<(Url, Vec<Diagnostic>)>,
+    /// [`ClientOrder`] ticket shared by every payload of this commit.
+    pub(super) ticket: u64,
     pub(super) ready: bool,
     /// Whether the committed analysis carries servable feature data (see
     /// [`Analysis::has_feature_data`]).  Watcher re-registration triggers
@@ -233,6 +278,7 @@ impl Backend {
                 published_shared: BTreeMap::new(),
                 next_generation: 0,
                 discovery: DiscoveryOrder::default(),
+                client_order: ClientOrder::default(),
             })),
             definition_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
             hover_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
