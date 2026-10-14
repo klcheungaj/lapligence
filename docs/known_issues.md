@@ -1664,6 +1664,57 @@ subroutines are used.
 `tests/fixtures/sim/lrm_decisions/S41-D1_context_scope_chain.sv` (lint
 naming).
 
+## Constrained randomization limits (SIM-029)
+
+**Status:** open. SIM-029 solves packed integral and enum class properties and
+`std::randomize` arguments; these forms remain outside it.
+
+### Symptom
+
+- Rejected with a located `randomization:` error (planned for SIM-030):
+  `randc`, `dist`, `solve...before`, `foreach`, random arrays and queues,
+  random object (handle) members, packed structures with enum or tagged
+  members, a select whose index is a random variable (S29-D7), a random
+  divisor in `/` or `%`, and `**` on a random variable. `super.randomize()`
+  and an inline `local::` name that also names an object property are
+  rejected too.
+- A `randomize()` call used as a value is supported in assignments, `if`
+  conditions, `return`, declarations, system-task arguments and immediate
+  assertions. Inside a short-circuit or conditional operand, or in a loop
+  condition, it is rejected, because it would have to run a number of times
+  that depends on the other operands.
+- When the exact model and rejection sampling both exceed their budgets, the
+  CDCL search returns a legal solution that is not uniformly distributed
+  (S29-D10), against 18.5.9 L30013-30014.
+- The search re-encodes the component on every call; a loop that keeps
+  needing the search pays the encoding each time (about 18 ms per call for a
+  16-bit factoring constraint on x86-64).
+- A component whose exact model exceeds `LLG_RAND_BDD_NODES` spends the whole
+  node budget before falling back (about 0.9 s at the default budget for that
+  constraint). The overflow is remembered per state, so repeated calls with
+  the same state values skip it, but a constraint whose state changes on every
+  call pays it each time; lowering `LLG_RAND_BDD_NODES` trades exact uniform
+  sampling of larger components for speed.
+
+### Cause
+
+The solver problem has scalar variables only: arrays and `foreach` need
+per-element variables, `dist` and `randc` need weighted and cyclic
+sampling, and `solve...before` needs ordered layers. The exact engine counts
+models over the whole component, which a product of wide variables can
+exceed; the CDCL fallback finds one solution without counting.
+
+### Intended direction
+
+SIM-030: array and handle random variables, `dist`, `randc`,
+`solve...before` and `foreach`. Near-uniform sampling for the
+search fallback (hashing-based) if a workload needs it.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_029/neg_*.sv` and
+`search_fallback.sv`; `tests/fixtures/sim/lrm_decisions/S29-D10_search_not_uniform.sv`.
+
 ## Legacy constructs unsupported by design
 
 **Status:** decided 2026-10-08; not planned. The rows are marked 🚫 in

@@ -635,13 +635,9 @@ impl Codegen<'_> {
             .lower_expr(path, expr)
             .map_err(|error| self.rand_error(expr, path, &format!("in a constraint: {error}")))?;
         self.check_direct_reads(path, expr, &lowered, vars, object)?;
-        let source = self.node(expr);
-        builder.item = format!(
-            "at {}:{}:{}",
-            source.file.as_deref().unwrap_or("<unknown>"),
-            source.line,
-            source.col
-        );
+        // Run-time diagnostics name the constraint like other run-time
+        // sites: instance path, line and column.
+        builder.item = self.source_site("in the constraint", path, expr);
         builder
             .expr(&lowered)
             .map_err(|error| self.rand_error(expr, path, &error))
