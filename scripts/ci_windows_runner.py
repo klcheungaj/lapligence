@@ -219,6 +219,24 @@ def measure(args):
     if timings_file.is_file():
         records = ci_build_timings.parse(timings_file.read_text(encoding="utf-8", errors="replace").splitlines())
         print(ci_build_timings.summarize(records))
+    if args.compare_launcher and env.get("LLG_C_LAUNCHER"):
+        plain_timings = work / f"timings-{args.label}-no-launcher.tsv"
+        plain_env = dict(env)
+        plain_env.pop("LLG_CMAKE_PROFILE_DIR", None)
+        plain_env.pop("LLG_C_LAUNCHER")
+        subprocess.run(llg_command(args, work / f"{args.label}-n-warm"), env=plain_env, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+        plain_env["LLG_BUILD_TIMINGS"] = str(plain_timings)
+        for index in range(args.runs):
+            out_dir = work / f"{args.label}-n{index}"
+            result = subprocess.run(llg_command(args, out_dir), env=plain_env, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True, errors="replace")
+            if result.returncode != 0:
+                print(f"build {index} without the launcher failed with {result.returncode}:\n{result.stdout[-4000:]}")
+        if plain_timings.is_file():
+            print(f"without LLG_C_LAUNCHER={env['LLG_C_LAUNCHER']} (compare with the sequential medians above):")
+            records = ci_build_timings.parse(plain_timings.read_text(encoding="utf-8", errors="replace").splitlines())
+            print(ci_build_timings.summarize(records))
     template_timings = work / f"timings-{args.label}-templates.tsv"
     template_env = dict(env)
     template_env.pop("LLG_CMAKE_PROFILE_DIR", None)
@@ -272,6 +290,8 @@ def main(argv=None):
     mes.add_argument("--files", type=int, default=200)
     mes.add_argument("--concurrency", type=int, default=0, help="parallel builds per round; 0 = CPU count")
     mes.add_argument("--concurrent-rounds", type=int, default=2)
+    mes.add_argument("--compare-launcher", action="store_true",
+                     help="also time the sequential builds without $LLG_C_LAUNCHER")
     mes.set_defaults(handler=measure)
     args = parser.parse_args(argv)
     return args.handler(args)

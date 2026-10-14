@@ -383,6 +383,20 @@ jobs:
         shell: bash
         run: git apply --whitespace=nowarn --directory=vendor/libfst patches/libfst/libfst-local-changes.patch
 
+      # Every 30 s while the suite runs: CPU per process (MsMpEng included),
+      # memory, commit and page file, free disk, the size of the test scratch,
+      # target/, the runtime cache and ccache, and live or orphaned build
+      # processes. A diagnostic only: it never fails the job.
+      - name: Start the resource sampler
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        continue-on-error: true
+        run: >-
+          python scripts/ci_resource_sampler.py start
+          --log "$env:RUNNER_TEMP/llg-resources.jsonl" --interval 30 --tree-every 10
+          --tree "temp=$env:TEMP" --tree "target=target"
+          --tree "runtime-cache=target/llg-runtime-cache" --tree "ccache=$env:RUNNER_TEMP/ccache"
+
       # Extracting into the checkout restores target/ at the build job's
       # compile-time paths. Every model build appends its phase timings to
       # LLG_BUILD_TIMINGS (src/sim/build/timings.rs), summarized below.
@@ -394,6 +408,23 @@ jobs:
           cargo nextest run --no-fail-fast
           --archive-file "$RUNNER_TEMP/nextest-archive/nextest-archive.tar.zst"
           --workspace-remap "$GITHUB_WORKSPACE" --extract-to "$GITHUB_WORKSPACE"
+
+      # The build job's measure runs on an idle runner without ccache in
+      # RUNNER_TEMP; this one runs where the tests do (the temporary
+      # directory, LLG_C_LAUNCHER) after the suite, also without the launcher,
+      # so a slow test job can be told apart from load. Never fails the job.
+      - name: Measure model-build costs after the suite
+        if: ${{ !cancelled() && inputs.platform == 'windows' }}
+        shell: bash
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          llg=$(ls target/*/release/llg.exe target/release/llg.exe 2>/dev/null | head -n 1)
+          if [ -z "$llg" ]; then echo "no llg.exe in the extracted archive"; exit 0; fi
+          work=$(python -c "import tempfile; print(tempfile.gettempdir())")/llg-probe
+          python scripts/ci_windows_runner.py measure --llg "$llg" --compare-launcher \
+            --source tests/fixtures/sim/dynamic_ownership/numeric_loop.sv \
+            --work "$work" --label test-job
 
       # Whether fresh model trees reused CMake toolchain detection: each seed
       # prints its CMake version (ready) or why it was refused (rejected).
@@ -432,6 +463,23 @@ jobs:
         run: |
           echo "logical CPUs: $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo "$NUMBER_OF_PROCESSORS")"
           df -h
+
+      # Stops the sampler and prints one line per sample.
+      - name: Report resource samples
+        if: always() && inputs.platform == 'windows'
+        shell: bash
+        continue-on-error: true
+        run: python scripts/ci_resource_sampler.py report --log "$RUNNER_TEMP/llg-resources.jsonl"
+
+      - name: Upload resource samples
+        if: always() && inputs.platform == 'windows'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: resource-samples-${{ inputs.target }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: ${{ runner.temp }}/llg-resources.jsonl
 
       - name: Compiler cache statistics and save
         if: always()
