@@ -706,9 +706,7 @@ pub(crate) fn reject_case_with_exact_stderr(
     }
 }
 
-/// The status and both streams of a run, for assertion messages: a run that
-/// exits 1 with nothing on stderr (a model ended by a signal, which `llg`
-/// reports as 1) must still say what it did.
+/// The status and both streams of a run, for assertion messages.
 pub(crate) fn observed_output(output: &Output) -> String {
     format!(
         "status: {:?}\n--- stdout ({} bytes) ---\n{}\n--- stderr ({} bytes) ---\n{}",

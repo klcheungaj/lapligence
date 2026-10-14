@@ -369,7 +369,23 @@ fn run(options: DriverOptions) -> i32 {
             return 1;
         }
     };
-    model_exit_code(status.code())
+    let (code, report) = model_exit(status.code(), exit_signal(&status));
+    if let Some(report) = report {
+        eprintln!("llg: {report}");
+    }
+    code
+}
+
+/// The signal that ended the model, where the platform has signals.
+#[cfg(unix)]
+fn exit_signal(status: &std::process::ExitStatus) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal()
+}
+
+#[cfg(not(unix))]
+fn exit_signal(_status: &std::process::ExitStatus) -> Option<i32> {
+    None
 }
 
 /// Print lint findings to stderr as `file:line:col: [SEVERITY] rule: message`
@@ -415,14 +431,60 @@ fn print_lint_findings(findings: &[LintDiag], lint_only: bool) {
     }
 }
 
-/// The driver status for a model run. A model that exits normally with a
-/// status in the portable 0-255 range reports it unchanged. Termination by a
-/// signal (`None` on Unix) or any status outside that range becomes 1: a
-/// Windows crash status such as 0xC0000409, which `abort()` produces through
+/// The driver status and the one-line report for a finished model run. A
+/// model that exits normally with a status in the portable 0-255 range reports
+/// it unchanged and `llg` says nothing. Termination by a signal (`None` code
+/// on Unix) or any status outside that range becomes 1 with a line naming it:
+/// a Windows crash status such as 0xC0000409, which `abort()` produces through
 /// the C runtime's fast-fail, would otherwise be truncated to an unrelated
-/// low byte (9) by `ExitCode`.
-fn model_exit_code(code: Option<i32>) -> i32 {
-    code.filter(|code| u8::try_from(*code).is_ok()).unwrap_or(1)
+/// low byte (9) by `ExitCode`, and a signal would leave no trace at all.
+fn model_exit(code: Option<i32>, signal: Option<i32>) -> (i32, Option<String>) {
+    if let Some(signal) = signal {
+        return (
+            1,
+            Some(match signal_name(signal) {
+                Some(name) => format!("the model was terminated by signal {signal} ({name})"),
+                None => format!("the model was terminated by signal {signal}"),
+            }),
+        );
+    }
+    match code {
+        Some(code) if u8::try_from(code).is_ok() => (code, None),
+        // The status is a 32-bit value on Windows; show it unsigned in hex,
+        // the way NTSTATUS codes are written.
+        Some(code) => (
+            1,
+            Some(format!(
+                "the model exited with status {:#010X}",
+                code as u32
+            )),
+        ),
+        None => (
+            1,
+            Some("the model ended without an exit status".to_string()),
+        ),
+    }
+}
+
+/// The names that are the same on Linux and macOS, plus the two that differ.
+fn signal_name(signal: i32) -> Option<&'static str> {
+    Some(match signal {
+        1 => "SIGHUP",
+        2 => "SIGINT",
+        3 => "SIGQUIT",
+        4 => "SIGILL",
+        5 => "SIGTRAP",
+        6 => "SIGABRT",
+        7 if cfg!(target_os = "linux") => "SIGBUS",
+        10 if cfg!(target_os = "macos") => "SIGBUS",
+        8 => "SIGFPE",
+        9 => "SIGKILL",
+        11 => "SIGSEGV",
+        13 => "SIGPIPE",
+        14 => "SIGALRM",
+        15 => "SIGTERM",
+        _ => return None,
+    })
 }
 
 /// Directory name for the generated model (the design name, sanitized).
@@ -447,14 +509,60 @@ mod tests {
     use super::*;
 
     #[test]
-    fn model_exit_codes_keep_byte_statuses_and_map_crashes_to_one() {
-        assert_eq!(model_exit_code(Some(0)), 0);
-        assert_eq!(model_exit_code(Some(1)), 1);
-        assert_eq!(model_exit_code(Some(255)), 255);
-        assert_eq!(model_exit_code(None), 1);
-        assert_eq!(model_exit_code(Some(-1)), 1);
-        assert_eq!(model_exit_code(Some(256)), 1);
+    fn model_exits_keep_byte_statuses_and_report_crashes() {
+        assert_eq!(model_exit(Some(0), None), (0, None));
+        assert_eq!(model_exit(Some(1), None), (1, None));
+        assert_eq!(model_exit(Some(255), None), (255, None));
+        let (code, report) = model_exit(Some(256), None);
+        assert_eq!(code, 1);
+        assert_eq!(
+            report.as_deref(),
+            Some("the model exited with status 0x00000100")
+        );
+        assert_eq!(
+            model_exit(Some(-1), None),
+            (
+                1,
+                Some("the model exited with status 0xFFFFFFFF".to_string())
+            )
+        );
         // STATUS_STACK_BUFFER_OVERRUN from abort() on Windows.
-        assert_eq!(model_exit_code(Some(0xC000_0409_u32 as i32)), 1);
+        assert_eq!(
+            model_exit(Some(0xC000_0409_u32 as i32), None),
+            (
+                1,
+                Some("the model exited with status 0xC0000409".to_string())
+            )
+        );
+        assert_eq!(
+            model_exit(Some(0xC000_0005_u32 as i32), None).1.as_deref(),
+            Some("the model exited with status 0xC0000005")
+        );
+    }
+
+    #[test]
+    fn model_signals_are_named() {
+        assert_eq!(
+            model_exit(None, Some(6)),
+            (
+                1,
+                Some("the model was terminated by signal 6 (SIGABRT)".to_string())
+            )
+        );
+        assert_eq!(
+            model_exit(None, Some(11)).1.as_deref(),
+            Some("the model was terminated by signal 11 (SIGSEGV)")
+        );
+        assert_eq!(
+            model_exit(None, Some(40)).1.as_deref(),
+            Some("the model was terminated by signal 40")
+        );
+        assert_eq!(
+            model_exit(None, None),
+            (
+                1,
+                Some("the model ended without an exit status".to_string())
+            )
+        );
     }
 }

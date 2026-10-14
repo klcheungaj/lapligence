@@ -348,7 +348,7 @@ fn dynamic_lookup_dylib(names: &[&str]) -> Vec<u8> {
 
 /// ld64 links a model against a dylib without checking the dylib's undefined
 /// symbols, so on macOS the unprovided routine reached dyld and the model
-/// ended by a signal with nothing on stderr. llg reads a Mach-O library's
+/// ended by a signal. llg reads a Mach-O library's
 /// imports before the build and names the routine as the ELF link does; the
 /// check depends only on the file, so it runs on every host.
 #[test]
