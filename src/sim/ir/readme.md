@@ -248,6 +248,17 @@ step to optimization, dependency discovery, address snapshots, and stack sizing.
 Folding cannot merge steps or erase intermediate bounds: clipping is relative to
 each selected value, even when the root contains more bits.
 
+## Randcase selection (SIM-031)
+
+`IrSysFunc::Randcase { weights, sum_width, origin }` is a signed 32-bit
+expression: the index of the chosen `randcase` item, or -1 when every weight is
+zero. Validation requires at least one packed weight, `sum_width` equal to the
+widest weight plus `ceil(log2(items))` bits and below the packed-value limit.
+The weights are evaluated in order into separate temporaries before the one
+runtime call; traversal, reads, effects (`RuntimeService`) and folding visit
+every weight. Only the owned emitter renders it; the detached legacy emitter
+rejects it. It draws from the calling thread's stream like `$urandom_range`.
+
 ## Fixed-array reductions
 
 `fixed_array_reductions.rs` models nonempty folds over immediate unpacked elements.

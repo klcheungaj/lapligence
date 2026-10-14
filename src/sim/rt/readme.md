@@ -139,6 +139,16 @@ odd stream increment, child count):
   nothing. A shallow copy copies the state and takes no thread value.
 - `shuffle` draws from the stream `llg_container_set_rng_source` names; the
   scheduler installs the current thread's stream.
+- `llg_randcase_select` (`scheduler/process_registry.c`) serves `randcase`
+  (SV 18.16) with one draw from the calling thread's stream: a total up to 32
+  bits uses `llg_rng_state_uniform(sum - 1, 0)`, exactly the value
+  `$urandom_range(sum - 1, 0)` returns; a total up to 64 bits combines two
+  32-bit draws with rejection; a wider one runs on the `sv4_t` facade, drawing
+  just enough 32-bit words for the bit length of the sum and rejecting values
+  at or above it. Lowering passes the exact-sum width (widest weight plus
+  `ceil(log2(items))` bits), so the path is chosen per site and the sum never
+  wraps. All-zero weights draw nothing and warn; a negative signed weight
+  keeps its unsigned bit pattern and warns.
 
 `get_randstate` returns the versioned, host-independent text
 `LLG_RNG_V1:<state>:<increment>:<child count>` (three 16-digit hexadecimal
