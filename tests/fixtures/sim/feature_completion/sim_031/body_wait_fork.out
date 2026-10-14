@@ -1,0 +1,15 @@
+t=5 chosen after delay
+t=5 continued
+t=7 child 1
+t=9 child 2
+t=9 joined
+t=12 event seen
+t=14 slow 1
+t=17 task body local=41
+t=19 slow 1
+t=19 task body done local=41
+t=20 other process
+t=22 task body local=42
+t=24 slow 2
+t=24 task body done local=42
+unchosen=0

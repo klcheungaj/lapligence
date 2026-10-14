@@ -1,0 +1,6 @@
+first  hits=64,0,0
+middle hits=0,64,0
+last   hits=0,0,64
+const  hits=0,64,0
+one item runs=64
+unchosen bodies=0

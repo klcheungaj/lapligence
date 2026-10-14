@@ -944,3 +944,59 @@ fn s09_d7_fork_shared_native_wait() {
         include_str!("fixtures/sim/lrm_decisions/S09-D7_fork_shared_native_wait.out"),
     );
 }
+
+#[test]
+fn s31_d1_exact_weight_sum() {
+    run_decision(
+        "S31-D1_exact_weight_sum",
+        include_str!("fixtures/sim/lrm_decisions/S31-D1_exact_weight_sum.out"),
+    );
+}
+
+#[test]
+fn s31_d2_weight_precision_self_determined() {
+    run_decision(
+        "S31-D2_weight_precision_self_determined",
+        include_str!("fixtures/sim/lrm_decisions/S31-D2_weight_precision_self_determined.out"),
+    );
+}
+
+#[test]
+fn s31_d3_zero_weights() {
+    run_decision(
+        "S31-D3_zero_weights",
+        include_str!("fixtures/sim/lrm_decisions/S31-D3_zero_weights.out"),
+    );
+}
+
+#[test]
+fn s31_d4_negative_weight_unsigned() {
+    run_decision(
+        "S31-D4_negative_weight_unsigned",
+        include_str!("fixtures/sim/lrm_decisions/S31-D4_negative_weight_unsigned.out"),
+    );
+}
+
+#[test]
+fn s31_d5_unknown_weight_bits() {
+    run_decision(
+        "S31-D5_unknown_weight_bits",
+        include_str!("fixtures/sim/lrm_decisions/S31-D5_unknown_weight_bits.out"),
+    );
+}
+
+#[test]
+fn s31_d6_weight_evaluation_order() {
+    run_decision(
+        "S31-D6_weight_evaluation_order",
+        include_str!("fixtures/sim/lrm_decisions/S31-D6_weight_evaluation_order.out"),
+    );
+}
+
+#[test]
+fn s31_d7_draw_is_urandom_range() {
+    run_decision(
+        "S31-D7_draw_is_urandom_range",
+        include_str!("fixtures/sim/lrm_decisions/S31-D7_draw_is_urandom_range.out"),
+    );
+}

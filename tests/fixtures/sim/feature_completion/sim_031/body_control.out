@@ -1,0 +1,9 @@
+early(1)=101 early(0)=-1
+t=2 task_return before
+t=2 task_return fell through
+in escape
+after escape
+loop_count=3
+t=5 victim disabled
+survivors=0,0 unchosen=0
+t=27 end
