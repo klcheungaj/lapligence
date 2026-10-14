@@ -321,16 +321,7 @@ impl EmitCtx<'_, '_> {
                 }
             }
             IrContainerKind::Associative { key } => {
-                let index = match key {
-                    IrAssocKey::Wildcard => "a wildcard `[*]` index",
-                    IrAssocKey::String => "a string index",
-                    IrAssocKey::Integral { .. } => unreachable!(),
-                };
-                return Err(format!(
-                    "{name} requires an associative array with an index of integral type, not {index} (IEEE 1800-2009 21.4.1), at {} in `{}`",
-                    self.cg.source_location(args[1]),
-                    self.path
-                ));
+                return Err(self.associative_key_error(name, args, key));
             }
             IrContainerKind::Dynamic | IrContainerKind::Queue { .. } => {}
         }
@@ -425,6 +416,21 @@ impl EmitCtx<'_, '_> {
         })))
     }
 
+    /// The located rejection of a wildcard or string index, which has no
+    /// index type to cast file addresses to (decision S27-D18).
+    fn associative_key_error(&self, name: &str, args: &[NodeId], key: &IrAssocKey) -> String {
+        let index = match key {
+            IrAssocKey::Wildcard => "a wildcard `[*]` index",
+            IrAssocKey::String => "a string index",
+            IrAssocKey::Integral { .. } => unreachable!("integral indices are accepted"),
+        };
+        format!(
+            "{name} requires an associative array with an index of integral type, not {index} (IEEE 1800-2009 21.4.1), at {} in `{}`",
+            self.cg.source_location(args[1]),
+            self.path
+        )
+    }
+
     /// The element of a dynamic array or queue of fixed arrays that `root`
     /// selects, its index node and any further indices of the same select
     /// (`da[k][j]` as one select), outermost first.
@@ -467,13 +473,20 @@ impl EmitCtx<'_, '_> {
             let container = &self.cg.model.containers[container];
             (container.kind.clone(), container.element.clone())
         };
-        if !matches!(
-            kind,
-            IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
-        ) {
+        // An associative array of unpacked arrays is addressed by key: one
+        // element (`aa[k]`) or the whole array (S27-D22..D24).
+        let associative = match &kind {
+            IrContainerKind::Associative {
+                key: IrAssocKey::Integral { .. },
+            } => true,
+            IrContainerKind::Associative { key } => {
+                return Err(self.associative_key_error(name, args, key));
+            }
+            IrContainerKind::Dynamic | IrContainerKind::Queue { .. } => false,
+        };
+        if associative && row.is_none() && (!selectors.is_empty() || slice.is_some()) {
             return Err(format!(
-                "{name} does not support associative arrays of unpacked arrays, at {} in `{}`",
-                self.cg.source_location(args[1]),
+                "{name} requires a whole associative array or one of its elements, not a selection of its keys, in `{}`",
                 self.path
             ));
         }

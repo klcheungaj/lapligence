@@ -489,6 +489,11 @@ typedef struct {
     // cell `i` is item `i % row_cells` of row `i / row_cells`.
     llg_value_t* rows;
     uint64_t row_cells;
+    // One element of an associative array of fixed arrays (`aa[key]`) that a
+    // load creates, with its default value, once its range is valid
+    // (S27-D23); `rows` then points at it.
+    llg_assoc_value_t* assoc;
+    sv4_t assoc_key;
 } llg_memory_storage_t;
 
 static sv4_t* llg_memory_row_cell(const llg_memory_storage_t* storage, uint64_t index) {
@@ -601,6 +606,18 @@ static void llg_memory_format_cell(const llg_memory_storage_t* storage,
                digits, capacity);
 }
 
+// Create the associative element a load targets. Returns 0, with the error
+// reported, when the element cannot be created.
+static int llg_memory_storage_resolve(const char* path, llg_memory_storage_t* storage) {
+    if (!storage->assoc || storage->rows) return 1;
+    storage->rows = llg_assoc_value_element_integral(storage->assoc, &storage->assoc_key, 1, 1);
+    if (!storage->rows) {
+        llg_memory_error(path, "selected associative array element cannot be created");
+        return 0;
+    }
+    return 1;
+}
+
 // An image must lie within its storage: `total` cells of the element width
 // from `image_offset`.
 static int llg_memory_storage_valid(const char* path,
@@ -672,7 +689,8 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
     if (!llg_memory_storage_valid(filename, storage, total, elem_width) ||
         !llg_memory_bounds(filename, total, dims, n_dims, strides, origin,
                            view_total, start, finish, has_start, has_finish,
-                           addressing_policy, &first, &last, &inner_total)) {
+                           addressing_policy, &first, &last, &inner_total) ||
+        !llg_memory_storage_resolve(filename, storage)) {
         fclose(stream);
         free(filename);
         return 0;
@@ -1073,6 +1091,18 @@ LLG_CONTAINER_MEMORY_ENTRY(llg_queue_memory_read_view, struct llg_queue_t, 0)
 LLG_CONTAINER_MEMORY_ENTRY(llg_queue_memory_write_view, struct llg_queue_t, 1)
 #undef LLG_CONTAINER_MEMORY_ENTRY
 
+// Whether `element` describes fixed arrays of `row_cells` packed words of
+// `elem_width` bits, and the view dimensions fit `mode`.
+static int llg_rows_descriptor_valid(const llg_value_desc_t* element, uint64_t row_cells,
+                                     uint32_t elem_width, const int32_t* dims, int n_dims,
+                                     int mode) {
+    return element && element->kind == LLG_VALUE_FIXED_ARRAY &&
+           element->item_count == row_cells && row_cells != 0 && element->element &&
+           element->element->kind == LLG_VALUE_PACKED &&
+           element->element->packed_width == elem_width && dims && n_dims > 0 &&
+           (mode == LLG_MEMORY_ROWS_ONE || n_dims >= 2);
+}
+
 // A dynamic array or queue whose elements are fixed arrays of `row_cells`
 // packed words (`llg_value_t` rows), addressed in place in declaration
 // order. `LLG_MEMORY_ROWS_ONE` makes element `row` the memory, with `dims`,
@@ -1092,10 +1122,7 @@ static void llg_rows_memory_view(int write, llg_string_t path, llg_value_t* data
                                  sv4_t finish, int has_start, int has_finish,
                                  int addressing_policy, const sv4_t* enum_values,
                                  uint32_t enum_count, int radix) {
-    if (!element || element->kind != LLG_VALUE_FIXED_ARRAY || element->item_count != row_cells ||
-        row_cells == 0 || !element->element || element->element->kind != LLG_VALUE_PACKED ||
-        element->element->packed_width != elem_width || !dims || n_dims <= 0 ||
-        (mode != LLG_MEMORY_ROWS_ONE && n_dims < 2)) {
+    if (!llg_rows_descriptor_valid(element, row_cells, elem_width, dims, n_dims, mode)) {
         char* filename = llg_memory_path_copy(path);
         llg_memory_error(filename, "memory descriptor does not match its container");
         free(filename);
@@ -1176,8 +1203,20 @@ LLG_ROWS_MEMORY_ENTRY(llg_queue_rows_memory_write_view, struct llg_queue_value_a
 // addresses are cast to it (7.8.4), so a wider file address keeps its low
 // bits and a signed index reads a two's-complement address (S27-D16).
 
-static sv4_t llg_assoc_memory_key(const llg_assoc_t* array, sv4_t value) {
-    return sv4_cast(value, array->key_width, array->key_signed);
+// The index type of an associative array, shared by the packed-element and
+// fixed-array-element containers.
+typedef struct {
+    uint8_t kind;
+    uint32_t width;
+    int8_t is_signed;
+} llg_assoc_keys_t;
+
+static llg_assoc_keys_t llg_assoc_keys(const llg_assoc_t* array) {
+    return (llg_assoc_keys_t){array->key_kind, array->key_width, array->key_signed};
+}
+
+static sv4_t llg_assoc_memory_key(llg_assoc_keys_t keys, sv4_t value) {
+    return sv4_cast(value, keys.width, keys.is_signed);
 }
 
 static int llg_assoc_memory_less(sv4_t a, sv4_t b) {
@@ -1196,10 +1235,10 @@ static int llg_assoc_memory_in_range(sv4_t key, sv4_t first, sv4_t last) {
 
 // Start and finish arguments of an associative memory task. Without a start
 // a load begins at index 0 (S27-D15) and a dump at the lowest index.
-static int llg_assoc_memory_bounds(const char* filename, const llg_assoc_t* array,
+static int llg_assoc_memory_bounds(const char* filename, llg_assoc_keys_t keys,
                                    sv4_t start, sv4_t finish, int has_start,
                                    int has_finish, sv4_t* first, sv4_t* last) {
-    if (array->key_kind != LLG_ASSOC_INTEGRAL || array->key_width == 0) {
+    if (keys.kind != LLG_ASSOC_INTEGRAL || keys.width == 0) {
         llg_memory_error(filename, "associative memory needs an integral index type");
         return 0;
     }
@@ -1211,9 +1250,25 @@ static int llg_assoc_memory_bounds(const char* filename, const llg_assoc_t* arra
         llg_memory_error(filename, "finish address is unknown or outside the index range");
         return 0;
     }
-    *first = has_start ? llg_assoc_memory_key(array, start)
-                       : sv4_from_u64(0, array->key_width, array->key_signed);
-    *last = has_finish ? llg_assoc_memory_key(array, finish) : (sv4_t)SV4_EMPTY;
+    *first = has_start ? llg_assoc_memory_key(keys, start)
+                       : sv4_from_u64(0, keys.width, keys.is_signed);
+    *last = has_finish ? llg_assoc_memory_key(keys, finish) : (sv4_t)SV4_EMPTY;
+    return 1;
+}
+
+// Move `current` one key in the load direction. Stepping past the index
+// type's maximum (or minimum) wraps, so the following words have no index
+// (S27-D8 for fixed memories); returns 0 then and leaves `current` alone.
+static int llg_assoc_memory_advance(sv4_t* current, sv4_t one, int descending,
+                                    int8_t key_signed) {
+    sv4_t next = descending ? sv4_sub(*current, one) : sv4_add(*current, one);
+    llg_sv4_set_signed(&next, key_signed);
+    if (descending ? llg_assoc_memory_less(*current, next)
+                   : llg_assoc_memory_less(next, *current)) {
+        sv4_destroy(&next);
+        return 0;
+    }
+    sv4_replace(current, next);
     return 1;
 }
 
@@ -1235,8 +1290,8 @@ static void llg_assoc_memory_read(llg_string_t path, llg_assoc_t* array,
         return;
     }
     sv4_t current, last;
-    if (!llg_assoc_memory_bounds(filename, array, start, finish, has_start,
-                                 has_finish, &current, &last)) {
+    if (!llg_assoc_memory_bounds(filename, llg_assoc_keys(array), start, finish,
+                                 has_start, has_finish, &current, &last)) {
         fclose(stream);
         free(filename);
         return;
@@ -1257,7 +1312,7 @@ static void llg_assoc_memory_read(llg_string_t path, llg_assoc_t* array,
         }
         if (kind == LLG_MEMORY_TOKEN_ADDRESS) {
             saw_address = 1;
-            sv4_t key = llg_assoc_memory_key(array, token.value);
+            sv4_t key = llg_assoc_memory_key(llg_assoc_keys(array), token.value);
             if (has_finish && !llg_assoc_memory_in_range(key, first, last)) {
                 sv4_destroy(&key);
                 llg_memory_error(filename,
@@ -1289,16 +1344,8 @@ static void llg_assoc_memory_read(llg_string_t path, llg_assoc_t* array,
             exhausted = 1;
             continue;
         }
-        sv4_t next = descending ? sv4_sub(current, one) : sv4_add(current, one);
-        llg_sv4_set_signed(&next, array->key_signed);
-        // Stepping past the index type's maximum (or minimum) wraps; the
-        // following words have no index (S27-D8 for fixed memories).
-        if (descending ? llg_assoc_memory_less(current, next)
-                       : llg_assoc_memory_less(next, current)) {
+        if (!llg_assoc_memory_advance(&current, one, descending, array->key_signed)) {
             exhausted = 1;
-            sv4_destroy(&next);
-        } else {
-            sv4_replace(&current, next);
         }
     }
     if (has_finish && !saw_address && !exhausted && !terminated && !ferror(stream)) {
@@ -1335,8 +1382,8 @@ static void llg_assoc_memory_write(llg_string_t path, const llg_assoc_t* array,
     char* filename = llg_output_path(requested);
     free(requested);
     sv4_t first, last;
-    if (!llg_assoc_memory_bounds(filename, array, start, finish, has_start,
-                                 has_finish, &first, &last)) {
+    if (!llg_assoc_memory_bounds(filename, llg_assoc_keys(array), start, finish,
+                                 has_start, has_finish, &first, &last)) {
         free(filename);
         return;
     }
@@ -1404,3 +1451,272 @@ void llg_assoc_memory_write_view(llg_string_t path, struct llg_assoc_t* memory, 
     llg_assoc_memory_write(path, memory, elem_width, start, finish, has_start,
                            has_finish, radix);
 }
+
+// ── Associative arrays of fixed arrays (IEEE 1800-2009 21.4, 21.4.3) ───────
+// A whole array is addressed like a multidimensional memory whose highest
+// dimension is the index: an address (`@`, start, finish) is a key, cast to
+// the index type (S27-D16), and the words after it fill that element's cells
+// in row-major order from its first cell. When the last cell is filled the
+// key moves on as in S27-D15 (S27-D22). `dims[0]` is the placeholder
+// dimension (0, 0) and `dims[1..]` the element's.
+
+static int llg_assoc_rows_index(uint64_t inner, uint64_t row_cells, const int32_t* dims,
+                                int n_dims, const uint64_t* strides, uint64_t* index) {
+    return llg_memory_view_index(0, inner, dims, n_dims, strides, 0, row_cells, row_cells,
+                                 index);
+}
+
+static void llg_assoc_rows_read(llg_string_t path, llg_assoc_value_t* array,
+                                uint64_t row_cells, uint32_t elem_width,
+                                int8_t elem_signed, int8_t two_state,
+                                const int32_t* dims, int n_dims, const uint64_t* strides,
+                                sv4_t start, sv4_t finish, int has_start, int has_finish,
+                                const sv4_t* enum_values, uint32_t enum_count, int radix) {
+    char* filename = llg_memory_path_copy(path);
+    FILE* stream = fopen(filename, "r");
+    if (!stream) {
+        llg_memory_warning(filename, "open for reading failed: %s", strerror(errno));
+        free(filename);
+        return;
+    }
+    llg_assoc_keys_t keys = {array->key_kind, array->key_width, array->key_signed};
+    sv4_t current, last;
+    if (!llg_assoc_memory_bounds(filename, keys, start, finish, has_start, has_finish,
+                                 &current, &last)) {
+        fclose(stream);
+        free(filename);
+        return;
+    }
+    sv4_t first = sv4_clone(&current);
+    int descending = has_finish && llg_assoc_memory_less(last, first);
+    sv4_t one = sv4_from_u64(1, keys.width, keys.is_signed);
+    int exhausted = 0, warned_extra = 0, warned_unknown = 0, saw_address = 0;
+    int terminated = 0;
+    uint64_t inner = 0, written = 0;
+    llg_memory_storage_t storage = {0};
+    storage.row_cells = row_cells;
+    llg_memory_value_t token = {0};
+    for (;;) {
+        int kind = llg_memory_next_token(stream, radix, 1, &token);
+        if (kind == LLG_MEMORY_TOKEN_EOF) break;
+        if (kind == LLG_MEMORY_TOKEN_ERROR) {
+            llg_memory_error(filename, "malformed or over-width memory token; load terminated");
+            terminated = 1;
+            break;
+        }
+        if (kind == LLG_MEMORY_TOKEN_ADDRESS) {
+            saw_address = 1;
+            sv4_t key = llg_assoc_memory_key(keys, token.value);
+            if (has_finish && !llg_assoc_memory_in_range(key, first, last)) {
+                sv4_destroy(&key);
+                llg_memory_error(filename,
+                    "address jump is outside the destination memory or selected range; load terminated");
+                terminated = 1;
+                break;
+            }
+            sv4_replace(&current, key);
+            inner = 0;
+            storage.rows = NULL;
+            exhausted = 0;
+            continue;
+        }
+        if (exhausted) {
+            if (!warned_extra) {
+                llg_memory_warning(filename, "memory file contains more words than the selected range");
+                warned_extra = 1;
+            }
+            continue;
+        }
+        sv4_t converted;
+        if (!llg_memory_convert_word(filename, &token, elem_width, elem_signed,
+                                     two_state, enum_values, enum_count,
+                                     &warned_unknown, &converted)) {
+            terminated = 1;
+            break;
+        }
+        uint64_t index;
+        // The element is created, with its default value, by its first word;
+        // its address stays valid until the next element is created.
+        if (!llg_assoc_rows_index(inner, row_cells, dims, n_dims, strides, &index) ||
+            (inner == 0 &&
+             !(storage.rows = llg_assoc_value_element_integral(array, &current, 1, 1))) ||
+            !storage.rows) {
+            llg_memory_error(filename, "selected associative array element cannot be created");
+            sv4_destroy(&converted);
+            terminated = 1;
+            break;
+        }
+        llg_memory_store(&storage, index, row_cells, elem_width, converted);
+        sv4_destroy(&converted);
+        written++;
+        if (inner + 1u < row_cells) {
+            ++inner;
+            continue;
+        }
+        inner = 0;
+        storage.rows = NULL;
+        if (has_finish && sv4_same(current, last)) {
+            exhausted = 1;
+        } else if (!llg_assoc_memory_advance(&current, one, descending, keys.is_signed)) {
+            exhausted = 1;
+        }
+    }
+    if (has_finish && !saw_address && !exhausted && !terminated && !ferror(stream)) {
+        llg_memory_warning(filename, "memory file contains too few words for the selected range");
+    }
+    if (ferror(stream)) llg_memory_error(filename, "read failed");
+    if (written != 0 && array->notify) {
+        array->notify(array->contents_dependency, array->shape_dependency,
+                      LLG_CONTAINER_CHANGED_CONTENTS);
+    }
+    sv4_destroy(&token.value);
+    sv4_destroy(&one);
+    sv4_destroy(&first);
+    sv4_destroy(&last);
+    sv4_destroy(&current);
+    fclose(stream);
+    free(filename);
+}
+
+// Dump (S27-D22): each existing element in index order, as its `@` address
+// (S27-D17) followed by its cells in row-major order, one per line.
+static void llg_assoc_rows_write(llg_string_t path, const llg_assoc_value_t* array,
+                                 uint64_t row_cells, uint32_t elem_width,
+                                 const int32_t* dims, int n_dims, const uint64_t* strides,
+                                 sv4_t start, sv4_t finish, int has_start, int has_finish,
+                                 int radix) {
+    char* requested = llg_memory_path_copy(path);
+    char* filename = llg_output_path(requested);
+    free(requested);
+    llg_assoc_keys_t keys = {array->key_kind, array->key_width, array->key_signed};
+    sv4_t first, last;
+    if (!llg_assoc_memory_bounds(filename, keys, start, finish, has_start, has_finish,
+                                 &first, &last)) {
+        free(filename);
+        return;
+    }
+    FILE* stream = fopen(filename, "w");
+    if (!stream) {
+        llg_memory_warning(filename, "open for writing failed: %s", strerror(errno));
+        sv4_destroy(&first);
+        sv4_destroy(&last);
+        free(filename);
+        return;
+    }
+    int descending = has_finish && llg_assoc_memory_less(last, first);
+    size_t key_capacity = (size_t)keys.width + 2u;
+    size_t word_capacity = (size_t)elem_width + 2u;
+    char* key_digits = (char*)llg_checked_malloc(key_capacity, 1, "memory file address");
+    char* digits = (char*)llg_checked_malloc(word_capacity, 1, "memory file word");
+    int failed = 0, broken = 0;
+    for (size_t step = 0; step < array->size && !failed && !broken; ++step) {
+        const llg_assoc_value_entry_t* entry =
+            &array->entries[descending ? array->size - 1u - step : step];
+        sv4_t key = entry->integral_key;
+        if (has_finish ? !llg_assoc_memory_in_range(key, first, last)
+                       : has_start && llg_assoc_memory_less(key, first)) {
+            continue;
+        }
+        llg_assoc_memory_format_key(key, key_digits, key_capacity);
+        failed = fprintf(stream, "@%s\n", key_digits) < 0;
+        llg_memory_storage_t storage = {0};
+        storage.rows = (llg_value_t*)&entry->value;
+        storage.row_cells = row_cells;
+        for (uint64_t inner = 0; inner < row_cells && !failed; ++inner) {
+            uint64_t index;
+            if (!llg_assoc_rows_index(inner, row_cells, dims, n_dims, strides, &index)) {
+                // The caller validated the descriptor; this cannot happen.
+                llg_memory_error(filename, "memory descriptor does not match its container");
+                broken = 1;
+                break;
+            }
+            llg_memory_format_cell(&storage, index, row_cells, elem_width, radix, digits,
+                                   word_capacity);
+            failed = fputs(digits, stream) == EOF || fputc('\n', stream) == EOF;
+        }
+    }
+    if (failed) llg_memory_error(filename, "write failed");
+    free(key_digits);
+    free(digits);
+    if (fclose(stream) != 0) llg_memory_error(filename, "close after writing failed");
+    sv4_destroy(&first);
+    sv4_destroy(&last);
+    free(filename);
+}
+
+// Entry points for an associative array of fixed arrays. `LLG_MEMORY_ROWS_ONE`
+// is element `row` (a key), a fixed memory addressed through the view inside
+// it; a load creates a missing element once its range is valid (S27-D23), a
+// dump of a missing or unknown key is an error that writes no file and
+// creates nothing (S27-D24). `LLG_MEMORY_ROWS_ALL` is the whole array (S27-D22).
+static void llg_assoc_rows_memory_view(int write, llg_string_t path, llg_assoc_value_t* array,
+                                       int mode, sv4_t row, uint64_t row_cells,
+                                       uint32_t elem_width, int8_t elem_signed,
+                                       int8_t two_state, const int32_t* dims, int n_dims,
+                                       const uint64_t* strides, uint64_t origin,
+                                       uint64_t view_total, sv4_t start, sv4_t finish,
+                                       int has_start, int has_finish, int addressing_policy,
+                                       const sv4_t* enum_values, uint32_t enum_count,
+                                       int radix) {
+    int whole = mode == LLG_MEMORY_ROWS_ALL;
+    if (!llg_rows_descriptor_valid(array->element, row_cells, elem_width, dims, n_dims, mode) ||
+        array->key_kind != LLG_ASSOC_INTEGRAL || array->key_width == 0 ||
+        (mode != LLG_MEMORY_ROWS_ONE && !whole) ||
+        (whole && (dims[0] != 0 || dims[1] != 0 || !strides))) {
+        char* filename = llg_memory_path_copy(path);
+        llg_memory_error(filename, "memory descriptor does not match its container");
+        free(filename);
+        return;
+    }
+    if (whole) {
+        if (write) {
+            llg_assoc_rows_write(path, array, row_cells, elem_width, dims, n_dims, strides,
+                                 start, finish, has_start, has_finish, radix);
+        } else {
+            llg_assoc_rows_read(path, array, row_cells, elem_width, elem_signed, two_state,
+                                dims, n_dims, strides, start, finish, has_start, has_finish,
+                                enum_values, enum_count, radix);
+        }
+        return;
+    }
+    if (sv4_is_unknown(row) ||
+        (write && !llg_assoc_value_exists_integral(array, row))) {
+        char* filename = llg_memory_path_copy(path);
+        llg_memory_error(filename, sv4_is_unknown(row)
+                                       ? "selected index or slice is outside the memory"
+                                       : "selected associative array element does not exist");
+        free(filename);
+        return;
+    }
+    llg_memory_storage_t storage = {0};
+    storage.row_cells = row_cells;
+    if (write) {
+        storage.rows = llg_assoc_value_element_integral(array, &row, 1, 0);
+        fixed_memory_write_view(path, &storage, row_cells, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+        return;
+    }
+    storage.assoc = array;
+    storage.assoc_key = row;
+    if (fixed_memory_read_view(path, &storage, row_cells, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix) != 0 &&
+        array->notify) {
+        array->notify(array->contents_dependency, array->shape_dependency,
+                      LLG_CONTAINER_CHANGED_CONTENTS);
+    }
+}
+
+#define LLG_ASSOC_ROWS_MEMORY_ENTRY(name, write)                                        \
+    void name(llg_string_t path, struct llg_assoc_value_t* memory, int mode, sv4_t row,  \
+              uint64_t row_cells, uint32_t elem_width, int8_t elem_signed,               \
+              int8_t two_state, const int32_t* dims, int n_dims, const uint64_t* strides, \
+              uint64_t origin, uint64_t view_total, sv4_t start, sv4_t finish,           \
+              int has_start, int has_finish, int addressing_policy,                      \
+              const sv4_t* enum_values, uint32_t enum_count, int radix) {                \
+        llg_assoc_rows_memory_view(write, path, memory, mode, row, row_cells, elem_width, \
+                                   elem_signed, two_state, dims, n_dims, strides,        \
+                                   origin, view_total, start, finish, has_start,         \
+                                   has_finish, addressing_policy, enum_values,           \
+                                   enum_count, radix);                                   \
+    }
+LLG_ASSOC_ROWS_MEMORY_ENTRY(llg_assoc_rows_memory_read_view, 0)
+LLG_ASSOC_ROWS_MEMORY_ENTRY(llg_assoc_rows_memory_write_view, 1)
+#undef LLG_ASSOC_ROWS_MEMORY_ENTRY

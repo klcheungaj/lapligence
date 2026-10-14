@@ -172,11 +172,11 @@ impl Frame<'_, '_> {
                     (IrContainerKind::Dynamic, true) => "llg_dyn_rows_memory_write_view",
                     (IrContainerKind::Queue { .. }, false) => "llg_queue_rows_memory_read_view",
                     (IrContainerKind::Queue { .. }, true) => "llg_queue_rows_memory_write_view",
-                    (IrContainerKind::Associative { .. }, _) => {
-                        return Err(
-                            "memory rows require a dynamic array or queue of fixed arrays"
-                                .to_owned(),
-                        )
+                    (IrContainerKind::Associative { .. }, false) => {
+                        "llg_assoc_rows_memory_read_view"
+                    }
+                    (IrContainerKind::Associative { .. }, true) => {
+                        "llg_assoc_rows_memory_write_view"
                     }
                 };
                 let one = task

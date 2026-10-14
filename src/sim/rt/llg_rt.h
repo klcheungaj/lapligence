@@ -1517,6 +1517,11 @@ LLG_ROWS_MEMORY_DECL(llg_dyn_rows_memory_read_view, struct llg_dyn_value_array_t
 LLG_ROWS_MEMORY_DECL(llg_dyn_rows_memory_write_view, struct llg_dyn_value_array_t)
 LLG_ROWS_MEMORY_DECL(llg_queue_rows_memory_read_view, struct llg_queue_value_array_t)
 LLG_ROWS_MEMORY_DECL(llg_queue_rows_memory_write_view, struct llg_queue_value_array_t)
+// An associative array with an integral index takes `ROWS_ONE` (`row` is the
+// key) or `ROWS_ALL` only; the latter ignores `origin` and `view_total`, and
+// its `dims[0]` is the placeholder (0, 0) (decisions S27-D22..D24).
+LLG_ROWS_MEMORY_DECL(llg_assoc_rows_memory_read_view, struct llg_assoc_value_t)
+LLG_ROWS_MEMORY_DECL(llg_assoc_rows_memory_write_view, struct llg_assoc_value_t)
 #undef LLG_ROWS_MEMORY_DECL
 
 // ── File input ─────────────────────────────────────────────────────────────

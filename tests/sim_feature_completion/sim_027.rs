@@ -436,6 +436,39 @@ fn associative_memories_load_and_dump_by_index() {
     );
 }
 
+// A03: associative arrays of unpacked arrays: the whole array maps an address
+// to a key and the words after it to the element's cells (S27-D22); one
+// element is created by a load once its range is valid (S27-D23) and a dump
+// of a missing or unknown key writes nothing (S27-D24); a dump of one element
+// has no `@` addresses (S27-D25).
+#[test]
+fn associative_arrays_of_unpacked_arrays_load_and_dump() {
+    let diagnostics = [
+        too_few_words("v.mem"),
+        "error: memory file `r.mem`: address jump is outside the destination memory or selected range; load terminated".to_owned(),
+        more_words("f.mem"),
+        more_words("v.mem"),
+        "error: memory file `p.mem`: selected range includes an address outside the memory"
+            .to_owned(),
+        "error: memory file `p.mem`: selected index or slice is outside the memory".to_owned(),
+        "error: memory file `miss.mem`: selected associative array element does not exist"
+            .to_owned(),
+        "error: memory file `miss.mem`: selected index or slice is outside the memory".to_owned(),
+        more_words("g.mem"),
+        too_few_words("blank.mem"),
+    ];
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "assoc_rows",
+        &[],
+        &[],
+        &exact(
+            include_str!("../fixtures/sim/feature_completion/sim_027/assoc_rows.out"),
+            &as_strs(&diagnostics),
+        ),
+    );
+}
+
 // A03: slices with a variable position on fixed arrays (module, descending,
 // a runtime row, an automatic image, a class property through `this` and a
 // handle), dynamic arrays and queues, and queue slices with runtime or `$`
@@ -589,7 +622,17 @@ fn neg_memory_names_that_are_not_variable_memories() {
     sim_cli::reject_case(
         SUITE,
         "neg_associative_rows",
-        "$readmemh does not support associative arrays of unpacked arrays, at ",
+        "$readmemh requires an associative array with an index of integral type, not a string index (IEEE 1800-2009 21.4.1), at ",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_associative_rows_wildcard",
+        "$readmemh requires an associative array with an index of integral type, not a wildcard `[*]` index (IEEE 1800-2009 21.4.1), at ",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_associative_rows_slice",
+        "cannot take a slice of an associative array",
     );
     sim_cli::reject_case(
         SUITE,

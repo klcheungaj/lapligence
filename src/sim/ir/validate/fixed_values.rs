@@ -563,19 +563,27 @@ impl Validator<'_> {
         path: &str,
     ) -> ValidationResult {
         use crate::sim::ir::IrMemorySelectorKind as Kind;
-        if !matches!(
+        let associative = matches!(
             container.kind,
-            IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
-        ) || *element
-            != (IrContainerElement::Packed {
-                width: task.element_width,
-                signed: task.signed,
-                two_state: task.two_state,
-            })
+            IrContainerKind::Associative {
+                key: crate::sim::ir::IrAssocKey::Integral { .. }
+            }
+        );
+        if !(associative
+            || matches!(
+                container.kind,
+                IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+            ))
+            || *element
+                != (IrContainerElement::Packed {
+                    width: task.element_width,
+                    signed: task.signed,
+                    two_state: task.two_state,
+                })
         {
             return self.fail(
                 path,
-                "memory rows must be packed fixed-array elements of a dynamic array or queue",
+                "memory rows must be packed fixed-array elements of a dynamic array, queue or integral-index associative array",
             );
         }
         let Some(row_cells) = dimensions.iter().try_fold(1u64, |total, (left, right)| {
@@ -625,7 +633,8 @@ impl Validator<'_> {
                 && Some(task.total) == (u64::from(high.abs_diff(low)) + 1).checked_mul(row_cells));
         let runtime_slice =
             task.sliced && task.origin == 0 && self.resizable_slice_shape(task, row_cells);
-        if !(whole || constant_slice || runtime_slice) {
+        // Keys cannot be sliced: an associative array is addressed whole.
+        if !(whole || (!associative && (constant_slice || runtime_slice))) {
             return self.fail(
                 path,
                 "memory container rows view disagrees with its element",
