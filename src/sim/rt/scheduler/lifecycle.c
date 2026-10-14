@@ -244,6 +244,7 @@ static void free_mailboxes(void) {
 
 void llg_rt_cleanup(void) {
     gc_release_registrations();
+    llg_cr_session_release_all();
     value_scopes_unwind(NULL);
     while (root_reference_top) llg_ref_scope_end(root_reference_top);
     for (int i = 0; i < g.force_count; i++) force_free_entry(&g.force_table[i]);

@@ -1,0 +1,227 @@
+/* llg_constraint.h - constraint solver for randomize() (IEEE 1800-2009 18).
+ *
+ * The solver is independent of the scheduler and of the packed-value backend:
+ * values cross this interface as exact 2-state little-endian 64-bit words
+ * (bit i of a value is bit i%64 of word i/64; bits above the width are zero).
+ * Generated models describe each randomize problem with static const tables
+ * and drive one persistent session per call site; the scheduler glue
+ * (llg_rt.h) converts packed values and reports outcomes.
+ *
+ * Determinism: the result is a pure function of the tables, the inputs, the
+ * budgets and the random stream. No floating point, pointer ordering or host
+ * word size affects a decision, so every platform draws the same values from
+ * the same seed.
+ */
+#ifndef LLG_CONSTRAINT_H
+#define LLG_CONSTRAINT_H
+
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define LLG_CR_NONE UINT32_MAX
+
+/* Expression node operations. Nodes are stored in post-order: every operand
+ * index is smaller than the node's own index. `width`/`is_signed` give the
+ * node's result type after IEEE 1800-2009 11.6/11.8 sizing; lowering inserts
+ * explicit RESIZE nodes, and operands of arithmetic and bitwise nodes have
+ * the node's width. */
+enum {
+    LLG_CR_CONST = 1,   /* a = first word in problem consts */
+    LLG_CR_VAR,         /* a = random variable */
+    LLG_CR_STATE,       /* a = state leaf */
+    LLG_CR_CALL,        /* a = function call site */
+    LLG_CR_RESIZE,      /* a; extends by a's signedness, truncates */
+    LLG_CR_NOT,         /* bitwise ~a */
+    LLG_CR_NEG,         /* -a */
+    LLG_CR_REDAND,      /* reductions of a, 1-bit results */
+    LLG_CR_REDOR,
+    LLG_CR_REDXOR,
+    LLG_CR_REDNAND,
+    LLG_CR_REDNOR,
+    LLG_CR_REDXNOR,
+    LLG_CR_LNOT,        /* !a */
+    LLG_CR_ADD,         /* a, b */
+    LLG_CR_SUB,
+    LLG_CR_MUL,
+    LLG_CR_DIV,         /* signed iff node is signed; divisor 0 is an error */
+    LLG_CR_MOD,
+    LLG_CR_AND,
+    LLG_CR_OR,
+    LLG_CR_XOR,
+    LLG_CR_XNOR,
+    LLG_CR_SHL,         /* a << b, b unsigned */
+    LLG_CR_SHR,         /* a >> b, logical */
+    LLG_CR_ASHR,        /* a >>> b, arithmetic iff node is signed */
+    LLG_CR_EQ,          /* comparisons: signed iff both operands are */
+    LLG_CR_NE,
+    LLG_CR_LT,
+    LLG_CR_LE,
+    LLG_CR_GT,
+    LLG_CR_GE,
+    LLG_CR_LAND,        /* a && b, Figure 18-3 conjunction */
+    LLG_CR_LOR,         /* a || b, Figure 18-3 disjunction */
+    LLG_CR_IMPL,        /* a -> b, as !a || b */
+    LLG_CR_EQUIV,       /* a <-> b */
+    LLG_CR_COND,        /* a ? b : c */
+    LLG_CR_CONCAT,      /* args[b .. b+c), most significant first */
+    LLG_CR_REPL,        /* a repeated b times */
+    LLG_CR_SLICE,       /* a[b +: width] with constant b */
+    LLG_CR_DSLICE,      /* a[idx +: width], idx = node b (state only);
+                           a bit outside a is an evaluation error */
+    LLG_CR_ALL,         /* conjunction of args[b .. b+c), Figure 18-3 */
+    LLG_CR_OP_LIMIT
+};
+
+typedef struct {
+    uint16_t op;
+    uint8_t is_signed;
+    uint8_t reserved;
+    uint32_t width;
+    uint32_t a, b, c;
+} llg_cr_node_t;
+
+typedef struct {
+    const char* name;
+    uint32_t width;
+    uint8_t is_signed;
+    /* Domain constraint applied only while the variable is active (an enum
+     * variable takes its named values, decision S29-D2), or LLG_CR_NONE. */
+    uint32_t domain_node;
+} llg_cr_var_t;
+
+typedef struct {
+    const char* name;
+    uint32_t root;      /* 1-bit node that must hold while enabled */
+} llg_cr_block_t;
+
+typedef struct {
+    const char* name;   /* source text for diagnostics */
+    uint32_t width;
+    uint8_t is_signed;
+} llg_cr_leaf_t;
+
+typedef struct {
+    const char* name;
+    uint32_t width;
+    uint8_t is_signed;
+    uint32_t arg_first;  /* node indices in problem args */
+    uint32_t arg_count;
+} llg_cr_call_t;
+
+typedef struct {
+    const char* name;
+    const llg_cr_node_t* nodes;
+    uint32_t node_count;
+    const uint32_t* args;
+    uint32_t arg_count;
+    const uint64_t* consts;
+    uint32_t const_count;
+    const llg_cr_var_t* vars;
+    uint32_t var_count;
+    const llg_cr_block_t* blocks;
+    uint32_t block_count;
+    const llg_cr_leaf_t* leaves;
+    uint32_t leaf_count;
+    const llg_cr_call_t* calls;
+    uint32_t call_count;
+} llg_cr_problem_t;
+
+typedef enum {
+    LLG_CR_OK = 0,       /* solution available through llg_cr_value */
+    LLG_CR_UNSAT = 1,    /* proven: no assignment satisfies the constraints */
+    LLG_CR_RESOURCE = 2, /* a named budget ran out; nothing was proven */
+    LLG_CR_ERROR = 3     /* evaluation error (18.5.12 E, X/Z state, order) */
+} llg_cr_status_t;
+
+/* Leaf / inactive-variable / call-result input states. */
+enum {
+    LLG_CR_INPUT_KNOWN = 0,
+    LLG_CR_INPUT_NULL = 1,   /* evaluating it dereferenced a null handle */
+    LLG_CR_INPUT_XZ = 2      /* it holds an X or Z bit (S29-D1) */
+};
+
+/* Reasons for LLG_CR_ERROR, with the offending item in report fields. */
+enum {
+    LLG_CR_REASON_NONE = 0,
+    LLG_CR_REASON_NULL,      /* leaf: null handle dereference */
+    LLG_CR_REASON_XZ_LEAF,   /* leaf holds X/Z */
+    LLG_CR_REASON_XZ_VAR,    /* var: inactive random variable holds X/Z */
+    LLG_CR_REASON_XZ_CALL,   /* call: result holds X/Z */
+    LLG_CR_REASON_DIVZERO,   /* node: division or modulo by zero */
+    LLG_CR_REASON_INDEX,     /* node: select index out of range */
+    LLG_CR_REASON_ORDER      /* var: circular function-argument order */
+};
+
+/* Engines, as bits of llg_cr_report_t.engines. */
+enum {
+    LLG_CR_ENGINE_DIRECT = 1u << 0, /* unconstrained draws */
+    LLG_CR_ENGINE_BDD = 1u << 1,    /* exact counting and uniform sampling */
+    LLG_CR_ENGINE_REJECT = 1u << 2, /* uniform rejection sampling */
+    LLG_CR_ENGINE_CDCL = 1u << 3,   /* search fallback, not uniform */
+    LLG_CR_ENGINE_CACHE = 1u << 4   /* a cached exact model was reused */
+};
+
+typedef struct {
+    uint32_t engines;
+    int reason;
+    uint32_t item;           /* leaf, var, call or node named by `reason` */
+    const char* budget;      /* tunable that ran out, for LLG_CR_RESOURCE */
+} llg_cr_report_t;
+
+/* Generated function-call thunk (18.5.11). `args[i]` holds the words of
+ * argument i; the callee writes the result words and returns an
+ * LLG_CR_INPUT_* state. */
+typedef int (*llg_cr_call_fn)(void* context, uint32_t call,
+                              const uint64_t* const* args, uint64_t* result);
+
+typedef struct llg_cr_session llg_cr_session_t;
+
+/* Random source: `next` returns the stream's next 32-bit draw. The glue
+ * passes the object's or the calling thread's llg_rng stream, so the solver
+ * itself has no runtime dependency. */
+typedef struct {
+    uint32_t (*next)(void* stream);
+    void* stream;
+} llg_cr_rng_t;
+
+/* Return the site's session, creating it on first use. Sessions live until
+ * llg_cr_session_release_all (model shutdown). Allocation failure is fatal,
+ * like every other runtime allocation. */
+llg_cr_session_t* llg_cr_session_get(const llg_cr_problem_t* problem,
+                                     llg_cr_session_t** slot);
+void llg_cr_session_release_all(void);
+
+/* Inputs for one solve; every variable, block and leaf must be set. */
+void llg_cr_set_var(llg_cr_session_t* s, uint32_t var, const uint64_t* words,
+                    int active, int input_state);
+void llg_cr_set_block(llg_cr_session_t* s, uint32_t block, int enabled);
+void llg_cr_set_leaf(llg_cr_session_t* s, uint32_t leaf, const uint64_t* words,
+                     int input_state);
+
+llg_cr_status_t llg_cr_solve(llg_cr_session_t* s, const llg_cr_rng_t* rng,
+                             llg_cr_call_fn calls, void* context,
+                             llg_cr_report_t* report);
+
+/* Solution words of an active variable after LLG_CR_OK. */
+const uint64_t* llg_cr_value(const llg_cr_session_t* s, uint32_t var);
+uint32_t llg_cr_var_words(const llg_cr_session_t* s, uint32_t var);
+
+/* Budgets (named tunables, environment overrides read once). */
+typedef struct {
+    uint64_t bdd_nodes;      /* LLG_RAND_BDD_NODES */
+    uint64_t bdd_bits;       /* LLG_RAND_BDD_BITS */
+    uint64_t reject_tries;   /* LLG_RAND_REJECT_TRIES */
+    uint64_t conflicts;      /* LLG_RAND_CONFLICTS */
+    int stats;               /* LLG_RAND_STATS */
+} llg_cr_tunables_t;
+
+const llg_cr_tunables_t* llg_cr_tunables(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

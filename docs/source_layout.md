@@ -53,6 +53,10 @@ fragments of one translation unit each**, not independently linked modules:
   [`llg_container_prelude.c`](../src/sim/rt/llg_container_prelude.c) and
   [`container/`](../src/sim/rt/container/) domains for value descriptors,
   dynamic arrays, queues, pinned queue references and associative arrays.
+- [`llg_constraint.c`](../src/sim/rt/llg_constraint.c) includes the
+  [`constraints/`](../src/sim/rt/constraints/) solver fragments (classification,
+  bit-blasting, exact BDD counting and sampling, layered solving) behind
+  `randomize()`; it depends on no other runtime module.
 
 The standalone compact value backend in
 [`value_gmp/`](../src/sim/rt/value_gmp/) has its own header and separately compiled

@@ -32,7 +32,8 @@ def main() -> int:
         shutil.copytree(runtime / "value", output / "value")
         for name, function in (("llg_rt.c", "runtime_sources"),
                                ("llg_value.c", "value_sources"),
-                               ("llg_container.c", "container_sources")):
+                               ("llg_container.c", "container_sources"),
+                               ("llg_constraint.c", "constraint_sources")):
             if function == "value_sources":
                 body = embedding.split("pub fn value_sources_for(", 1)[1].split("super::value_backend::ValueBackend::Compact =>", 1)[0]
             else:
@@ -49,7 +50,7 @@ def main() -> int:
                  '_Static_assert(LLG_MODEL_VALUE_ABI == LLG_VALUE_ABI_VERSION, "ABI mismatch");\n')
         (output / "abi_probe.c").write_text(probe, encoding="utf-8")
         (output / "stale_abi.c").write_text(probe.replace("ABI 4", "ABI 3"), encoding="utf-8")
-        units = ["llg_value.c", "llg_container.c"]
+        units = ["llg_value.c", "llg_container.c", "llg_constraint.c"]
         if not args.without_scheduler:
             units.append("llg_rt.c")
         for compiler in args.compiler:

@@ -8,6 +8,7 @@
 #include "gc/collector.c"
 #include "scheduler/output_files.c"
 #include "scheduler/process_registry.c"
+#include "scheduler/randomize.c"
 #include "scheduler/activations.c"
 #include "scheduler/value_scopes.c"
 #include "scheduler/wait_queues.c"

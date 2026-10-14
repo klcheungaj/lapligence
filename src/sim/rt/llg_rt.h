@@ -51,6 +51,7 @@
 #include "llg_value.h"
 #include "llg_string.h"
 #include "llg_rng.h"
+#include "llg_constraint.h"
 #include "llg_container.h"
 
 typedef struct llg_fixed_cell llg_fixed_cell_t;
@@ -1015,6 +1016,31 @@ void llg_object_rng_create(llg_rng_state_t* object);
 void llg_object_srandom(llg_rng_state_t* object, sv4_t seed);
 llg_string_t llg_object_get_randstate(const llg_rng_state_t* object);
 void llg_object_set_randstate(llg_rng_state_t* object, llg_string_t state);
+
+// randomize() glue (IEEE 1800-2009 18.6, 18.12; scheduler/randomize.c).
+// Values are resized to `width` (zero extension) and passed as 2-state words;
+// an X/Z bit marks the input LLG_CR_INPUT_XZ (S29-D1). A leaf whose
+// evaluation met a null handle passes `null_dereference` (18.5.12 E).
+void llg_cr_set_var_sv4(llg_cr_session_t* s, uint32_t var, sv4_t value, uint32_t width,
+                        int active);
+void llg_cr_set_leaf_sv4(llg_cr_session_t* s, uint32_t leaf, sv4_t value, uint32_t width,
+                         int null_dereference);
+// The solved value of an active variable as an independent owner.
+sv4_t llg_cr_value_sv4(const llg_cr_session_t* s, uint32_t var, uint32_t width,
+                       int8_t is_signed);
+// Constraint-function thunk helpers: an argument as an owner, and a result
+// stored into the solver's words (returns the LLG_CR_INPUT_* state).
+sv4_t llg_cr_arg_sv4(const uint64_t* words, uint32_t width, int8_t is_signed);
+int llg_cr_result_sv4(sv4_t value, uint64_t* result, uint32_t width);
+// Solve and report: UNSAT warns; RESOURCE and ERROR are run-time errors
+// (exit status 1). Returns 1 when the caller may commit the solution.
+// Object randomize uses the object's stream; scope randomize the calling
+// thread's stream (S29-D3).
+int llg_randomize_object(const llg_cr_problem_t* problem, llg_cr_session_t* s,
+                         llg_rng_state_t* object_stream, llg_cr_call_fn calls, void* context,
+                         const char* site);
+int llg_randomize_scope(const llg_cr_problem_t* problem, llg_cr_session_t* s,
+                        llg_cr_call_fn calls, void* context, const char* site);
 
 // Stable dependency markers used by generated fixed-array and container
 // readers. A marker's address remains valid when a resizable container moves

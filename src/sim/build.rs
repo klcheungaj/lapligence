@@ -777,7 +777,7 @@ pub fn generate_model_sources_with_opts(
 
 /// File names [`super::write_sim_sources`] always writes (must mirror its
 /// fixed list there) plus this module's own `CMakeLists.txt`.
-const FIXED_SOURCE_NAMES: [&str; 23] = [
+const FIXED_SOURCE_NAMES: [&str; 25] = [
     "llg_rt.h",
     "llg_rt.c",
     "llg_value.h",
@@ -786,6 +786,8 @@ const FIXED_SOURCE_NAMES: [&str; 23] = [
     "llg_random.c",
     "llg_rng.h",
     "llg_rng.c",
+    "llg_constraint.h",
+    "llg_constraint.c",
     "llg_co.h",
     "llg_co.c",
     "vpi_user.h",
@@ -1374,6 +1376,7 @@ fn runtime_source_names_for(
     let mut sources = vec![
         "llg_value.c",
         "llg_rng.c",
+        "llg_constraint.c",
         "llg_co.c",
         "llg_rt.c",
         "llg_random.c",
@@ -1470,6 +1473,8 @@ fn runtime_cache_key_with_compiler(
         super::rt::random_sources().1,
         super::rt::rng_sources().0,
         super::rt::rng_sources().1,
+        super::rt::constraint_sources().0,
+        super::rt::constraint_sources().1,
         super::rt::coroutine_sources().0,
         super::rt::coroutine_sources().1,
         super::rt::vpi_sources().0,

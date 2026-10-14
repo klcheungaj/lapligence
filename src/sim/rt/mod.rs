@@ -56,6 +56,23 @@ pub fn rng_sources() -> (&'static str, &'static str) {
     (include_str!("llg_rng.h"), include_str!("llg_rng.c"))
 }
 
+/// (header, implementation) of the constraint solver behind `randomize()`
+/// (IEEE 1800-2009 clause 18). The solver depends on no other runtime
+/// module: values cross its interface as 2-state words and random draws come
+/// through a callback, so it builds standalone for the runtime probes.
+pub fn constraint_sources() -> (&'static str, &'static str) {
+    (
+        include_str!("llg_constraint.h"),
+        concat!(
+            include_str!("constraints/common.c"),
+            include_str!("constraints/eval.c"),
+            include_str!("constraints/aig.c"),
+            include_str!("constraints/bdd.c"),
+            include_str!("constraints/solve.c"),
+        ),
+    )
+}
+
 /// Stackless coroutine frame, chain, anchor, and arena support.
 pub fn coroutine_sources() -> (&'static str, &'static str) {
     (include_str!("llg_co.h"), include_str!("llg_co.c"))
@@ -74,6 +91,7 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
             include_str!("gc/collector.c"),
             include_str!("scheduler/output_files.c"),
             include_str!("scheduler/process_registry.c"),
+            include_str!("scheduler/randomize.c"),
             include_str!("scheduler/activations.c"),
             include_str!("scheduler/value_scopes.c"),
             include_str!("scheduler/wait_queues.c"),
