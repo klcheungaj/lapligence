@@ -2,6 +2,7 @@
 
 use super::*;
 
+mod effects;
 mod order;
 
 impl<'a> Codegen<'a> {
@@ -154,6 +155,7 @@ impl<'a> Codegen<'a> {
                 value: c.clone(),
             });
         }
+        self.validate_static_initializer_effects()?;
         // Value and statement initializers share one schedule: each runs
         // after the static declarations it reads (SV §§6.21, 10.5).
         // String declaration values are assignments in the same schedule.
