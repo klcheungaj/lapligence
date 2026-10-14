@@ -636,6 +636,11 @@ fn neg_memory_names_that_are_not_variable_memories() {
     );
     sim_cli::reject_case(
         SUITE,
+        "neg_container_element_select",
+        "multidimensional resizable container access in `tb` is not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
         "neg_wide_variable_slice",
         "$readmemh indexed memory slice is wider than its dimension in `tb`",
     );

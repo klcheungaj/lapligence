@@ -548,7 +548,14 @@ stay shared. Integral-index associative arrays (`llg_assoc_memory_*`) share
 the tokenizer and word conversion but address by key: start, finish and wide
 `@` addresses are cast to the index type, each word is an
 `llg_assoc_set_integral`, and a dump writes `@key` before every entry in index
-order (S27-D15..D17). Report through
+order (S27-D15..D17). Associative arrays of fixed arrays
+(`llg_assoc_rows_memory_*`, an `llg_assoc_value_t`) take `LLG_MEMORY_ROWS_ONE`
+(`row` is the key; a load creates a missing element after the file and range
+are validated through `llg_memory_storage_resolve`, a dump of a missing or
+unknown key writes nothing) or `LLG_MEMORY_ROWS_ALL`: an address is a key, the
+words fill the element's cells through `llg_memory_view_index` over the
+placeholder outer dimension, and a dump writes `@key` plus the cells
+(S27-D22..D25). Report through
 `llg_memory_warning` (missing file, word-count mismatch, X/Z conversion, empty
 resizable array) or `llg_memory_error` (malformed token, address outside the
 task range or memory, enum value, invalid range, a generated `origin` of
