@@ -183,8 +183,42 @@ impl<'a> Codegen<'a> {
         strip_lib(&self.node(id).name)
     }
 
+    /// `%m` and svScope name of instance `inst`: its instance path, except
+    /// that a loop generate block is named once as written (`g[0]`, SV
+    /// 27.4), not as the loop array followed by the block. An unnamed block
+    /// keeps the array's name, as generate scopes do.
+    fn instance_display_path(&self, inst: NodeId) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        let mut named_block = false;
+        let mut current = Some(inst);
+        while let Some(id) = current {
+            let node = self.node(id);
+            match node.kind {
+                NodeKind::ModuleInst { .. } | NodeKind::GenScope => {
+                    named_block = matches!(node.kind, NodeKind::GenScope) && !node.name.is_empty();
+                    if !node.name.is_empty() {
+                        parts.push(&node.name);
+                    }
+                }
+                NodeKind::GenScopeArray => {
+                    if !named_block && !node.name.is_empty() {
+                        parts.push(&node.name);
+                    }
+                    named_block = false;
+                }
+                _ => {}
+            }
+            current = node.parent;
+        }
+        if parts.len() <= 1 {
+            return self.instance_path_of(inst);
+        }
+        parts.reverse();
+        parts.join(".")
+    }
+
     fn collect_instance(&mut self, inst: NodeId, path: &str) -> Result<(), String> {
-        let display_path = self.instance_path_of(inst);
+        let display_path = self.instance_display_path(inst);
         self.display_paths.insert(path.to_owned(), display_path);
         self.instance_paths.insert(inst, path.to_owned());
         self.scope_nodes.insert(path.to_owned(), inst);
@@ -454,9 +488,12 @@ impl<'a> Codegen<'a> {
             if matches!(self.kind(*c), NodeKind::FuncTask { .. }) {
                 let fname = self.node(*c).name.clone();
                 let c_name = self.c_name("fn", path, &[&fname]);
-                let scope = self.source_path(path);
-                self.func_labels.insert(*c, format!("{scope}.{fname}"));
-                self.func_scope_labels.insert(*c, scope);
+                self.func_labels
+                    .insert(*c, format!("{}.{fname}", self.source_path(path)));
+                // svScope names follow `%m` (SV 21.2.1.6): generate array
+                // elements read `g[0]`, not the array then the element.
+                self.func_scope_labels
+                    .insert(*c, self.display_path(path).to_owned());
                 self.func_names.insert(*c, c_name);
             }
         }
