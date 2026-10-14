@@ -1096,3 +1096,70 @@ fn s31_d7_draw_is_urandom_range() {
         include_str!("fixtures/sim/lrm_decisions/S31-D7_draw_is_urandom_range.out"),
     );
 }
+
+#[test]
+fn s22_d1_handle_initializers_before_processes() {
+    run_decision(
+        "S22-D1_handle_initializers_before_processes",
+        include_str!("fixtures/sim/lrm_decisions/S22-D1_handle_initializers_before_processes.out"),
+    );
+}
+
+#[test]
+fn s22_d2_static_locals_initialize_once() {
+    run_decision(
+        "S22-D2_static_locals_initialize_once",
+        include_str!("fixtures/sim/lrm_decisions/S22-D2_static_locals_initialize_once.out"),
+    );
+}
+
+#[test]
+fn s22_d3_initializer_deferred_effect_illegal() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!(
+        "fixtures/sim/lrm_decisions/S22-D3_initializer_deferred_effect_illegal.out"
+    )
+    .is_empty());
+    sim_cli::reject_case(
+        SUITE,
+        "S22-D3_initializer_deferred_effect_illegal",
+        "calls `watch`, whose fork at ",
+    );
+}
+
+#[test]
+fn s22_d4_const_method_write_illegal() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/S22-D4_const_method_write_illegal.out").is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "S22-D4_const_method_write_illegal",
+        "`push_back` modifies `limits`, which is declared const",
+    );
+}
+
+#[test]
+fn s22_d5_implicit_static_initializer() {
+    run_decision(
+        "S22-D5_implicit_static_initializer",
+        include_str!("fixtures/sim/lrm_decisions/S22-D5_implicit_static_initializer.out"),
+    );
+}
+
+#[test]
+fn s22_d6_let_name_binding() {
+    run_decision(
+        "S22-D6_let_name_binding",
+        include_str!("fixtures/sim/lrm_decisions/S22-D6_let_name_binding.out"),
+    );
+}
+
+#[test]
+fn s22_d7_static_property_initializers() {
+    run_decision(
+        "S22-D7_static_property_initializers",
+        include_str!("fixtures/sim/lrm_decisions/S22-D7_static_property_initializers.out"),
+    );
+}

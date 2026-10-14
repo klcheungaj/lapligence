@@ -1,0 +1,3 @@
+copied=first! length=5 capacity_left=4
+package: shared=100 value=100
+after reassignment: second copied=first!

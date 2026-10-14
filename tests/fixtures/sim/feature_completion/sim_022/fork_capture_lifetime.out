@@ -1,0 +1,5 @@
+child 1: s=s1! q=3 b=11 r=r/2
+child 2: s=s2! q=3 b=12 r=r/2
+child 1 later: s=s1!?
+child 2 later: s=s2!?
+done
