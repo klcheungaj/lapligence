@@ -533,6 +533,16 @@ padding, truncation/original-width enum validation and sparse-file diagnostics.
 For the admitted signed `@` extension, check hexadecimal magnitude against the
 signed index range before applying the sign; leading zeroes cannot affect the
 index, and selected-view bounds must be checked before writes.
+`memory_io.c` reaches fixed arrays, packed images (`llg_image_memory_*_view`,
+cell 0 in the most significant bits) and dynamic arrays or queues
+(`llg_dyn_memory_*`/`llg_queue_memory_*`, current size, never resized; one
+contents notification after a load) through one storage abstraction, so
+parsing, addressing and range checks stay shared. Report through
+`llg_memory_warning` (missing file, word-count mismatch, X/Z conversion, empty
+resizable array) or `llg_memory_error` (malformed token, address outside the
+task range or memory, enum value, invalid range, I/O failure); neither stops
+the simulation (decisions S27-D5..D9 in `docs/lrm_decisions.md`). `$writemem*`
+checks its range before opening the file, so a rejected call keeps the file.
 Binary rank-one `$fread` advances low-to-high HDL addresses independently of physical
 declaration order, clamps count at the high bound, and consumes/writes nothing for
 invalid/unknown bounds or negative count. Keep element owners across callbacks;
