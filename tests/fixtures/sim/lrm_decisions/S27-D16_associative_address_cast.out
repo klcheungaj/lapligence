@@ -1,0 +1,13 @@
+int [-2]=11
+int [-1]=22
+int [4]=44
+int [5]=55
+int [511]=33
+byte [4]=44
+byte [5]=55
+byte [254]=11
+byte [255]=33
+color [4]=44
+color [5]=55
+color [14]=11
+color [15]=33

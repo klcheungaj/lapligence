@@ -1,0 +1,9 @@
+module member load calls=3 11 22 33 44
+module member dump calls=3 44 33 22 11
+start bound calls=1 44 11 22 33
+automatic member load calls=1 11 22 33 44
+untouched xx x
+automatic member dump calls=1 11 22 33 44
+automatic grid row calls=2 11 22 33 44
+fork-shared row calls=1 11 22 33 44
+ref formal calls=2 11 22 33 44

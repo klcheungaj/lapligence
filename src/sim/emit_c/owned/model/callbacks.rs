@@ -53,6 +53,9 @@ fn render_with_frame(
                         capture.initial(),
                         "llg_proc_frame(self)",
                     )?;
+                    if let Some(alias) = capture.alias() {
+                        frame.alias_capture(alias, &name);
+                    }
                 }
             }
             // SV 9.7 / 9.6.2: a named block forming the whole branch has no

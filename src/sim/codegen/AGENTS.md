@@ -136,6 +136,10 @@ checks its actual has one (`native_ref_actual_observable`). Keep those cases in
 that one predicate and record new ones there. A fork-shared string keeps a
 marker only when `native_observed` finds a wait that can observe it; waits on
 fork-shared strings and handles use `IrDependency::SharedNative`.
+An event evaluator reads fork-visible automatics through its context slots:
+`event_context_with_aliases` maps the declaring subroutine's local (which
+array-element reads name) to the slot, and a joined branch's borrowed capture
+stays borrowed even when a detached fork elsewhere shares the cell.
 Fixed aggregate projections of static function locals use that persistent signal
 as their read/write owner, including tagged-member guards; activation locals do
 not name the persistent cell.
@@ -607,12 +611,16 @@ same recursive descriptors.
 Memory views evaluate each dynamic selector once, retaining static strides and HDL
 bounds; invalid views fail before writes. `statements/memory_tasks.rs` lowers
 `$readmem*`/`$writemem*`: memories with model array storage keep the
-fixed-array call; dynamic arrays, queues and fixed class properties use
+fixed-array call; dynamic arrays and queues (whole or a constant slice
+checked at run time), integral-index associative arrays (a wildcard index
+rejects with its location) and fixed class properties use
 `IrMemoryStorage::Container`; every other variable memory (subroutine and
-block locals, `ref` formals, structure members) is copied into a lexical
-packed image (`IrMemoryStorage::Image`) and, for a load, stored back with one
-blocking assignment. The root expression of an image is evaluated twice (read
-and write-back), so its selectors must stay free of side effects. Binary rank-one reads advance numeric
+block locals, `ref` formals, structure members) is a packed image
+(`IrMemoryStorage::Image`) whose root is lowered once: as an lvalue for a load
+(`IrMemoryImage::Target`) and as a value for a dump. The emitter resolves a
+load's root once and loads a whole variable or local, or a constant member of
+one, in place; any other root is copied and stored back with one blocking
+assignment through the same resolved target (decision S27-D13). Binary rank-one reads advance numeric
 addresses independently of declaration order. Packed `$fread` optional bounds
 are evaluated/disposed but their values are ignored; memory bounds remain active.
 File-input destinations (`expressions/external_input.rs`) evaluate selectors once

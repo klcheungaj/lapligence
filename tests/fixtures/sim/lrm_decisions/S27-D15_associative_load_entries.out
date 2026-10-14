@@ -1,0 +1,11 @@
+default [0]=11
+default [1]=22
+default [5]=55
+default [8]=33
+start -3 [-3]=11
+start -3 [-2]=22
+start -3 [8]=33
+7 to 4 [6]=bb
+7 to 4 [7]=aa
+0 to 4 [0]=11
+0 to 4 [1]=22

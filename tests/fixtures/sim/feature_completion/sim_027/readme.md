@@ -143,6 +143,49 @@ L5113-5118; 5.4.1, L5219-5222; 5.4.2, L5240-5246):
 > source of nondeterminism is that statements without time-control constructs
 > in procedural blocks do not have to be executed as one event.
 
+Slices of dynamic arrays and queues (SV 21.4, L37253-37254; 21.4.1, L37347
+quoted above; 7.4.6, L8235-8237; decision S27-D14 rejects a slice outside the
+current size):
+
+> The lowest dimension (i.e., the rightmost specified dimension in the
+> identifier) can be specified with slice syntax.
+
+> If an index expression is out of the address bounds or if any bit in the
+> address is X or Z, then the index shall be invalid. ... Writing to an array
+> with an invalid index shall perform no operation.
+
+Associative memories (SV 21.4.1, L37359-37362; 21.5.3, L37500-37502; 7.8.4,
+L8696-8699; decisions S27-D15..D18):
+
+> When loading associative arrays, indices shall be of integral types.
+> Loading an address creates an element of that index, if it does not already
+> exist. When an associative array's index is of an enumerated type, address
+> entries in the pattern file are in numeric format and correspond to the
+> numeric values associated with the elements of the enumerated type.
+
+> When $writememb and $writememh write out data corresponding to associative
+> arrays, address specifiers shall be written to the output file. As
+> specified in 21.4.1, associative arrays shall have indices of integral types
+> in order to be legal arguments to the $writememb and $writememh calls.
+
+> The index expression shall be evaluated in terms of a cast to the index
+> type, except that an implicit cast from a real or shortreal data type shall
+> be illegal.
+
+> The ordering is signed or unsigned numerical, depending on the signedness
+> of the index type.
+
+Evaluating memory_name (SV 21.4, L37251-37252; 11.4.1, L14478-14479, the
+nearest rule for a target that is read and written; decision S27-D13):
+
+> The memory_name can be an unpacked array or a partially indexed
+> multidimensional unpacked array that resolves to a lesser dimensioned
+> unpacked array (see 21.4.3).
+
+> An assignment operator is semantically equivalent to a blocking assignment,
+> with the exception that any left-hand index expression is only evaluated
+> once.
+
 ## When loaded data become visible
 
 A load stores each word when the task reaches it, as a blocking store in the
@@ -155,10 +198,12 @@ its next statement. `llg` runs the woken processes after the loading process
 suspends; any order of them, and any interleaving with the loading process
 that keeps its statement order, is permitted (4.7), so the tests accept every
 such order. Memories without model array storage (subroutine and block
-locals, `ref` formals, structure members) are loaded through a lexical copy of
-their packed image and stored back with one blocking assignment when the task
-returns; because the loading process does not suspend in between, the woken
-processes and the values they read are the same. Dynamic arrays, queues and
+locals, `ref` formals, structure members) are packed images: a whole variable
+or local, or a constant member of one, is loaded in place and published once
+after its last word; any other root is loaded through a lexical copy stored
+back with one blocking assignment. Because the loading process does not
+suspend in between, the woken processes and the values they read are the
+same. Dynamic arrays, queues and
 fixed-size class properties are written in place and send one contents
 notification. Decision S27-D1 records this.
 
@@ -177,13 +222,18 @@ notification. Decision S27-D1 records this.
 | `q02_bounds.v` | Q02: file address outside the task range; short and long files | `q02_bounds.out`; one error, two warnings |
 | `wakeup.v` | A02: readers of loaded words, an unchanged word, a word outside the range and a later same-slot event | Lines `caller=11,22,33,00`, `reader0=11`, `reader0b=11`, `reader2=33`, `tick=1` each once in any order with `caller` before `tick`, then `done` |
 | `wakeup_storage.sv` | A02 through a packed image: `ref` formal, structure member, static task memory | The four woken lines of `wakeup_storage.out` in any order, then its `done` line |
-| `neg_*` | Real, string and automatic real elements; a fully indexed word; a net memory; a `const ref` target; an associative memory and a queue slice (legal, not supported); `$writememh` and a two-dimensional memory in Verilog-2001 | Rejected before a model is built |
+| `single_evaluation.sv` | A selector with side effects (a counting function) in memory_name: module and automatic structure-array members (load and dump), a runtime row of a local two-dimensional memory, a fork-shared row, a `ref` actual, a start bound | `single_evaluation.out`: every call counts one evaluation; one "more words" warning for the start-bound load |
+| `mixed_state_struct.sv` | Memories that are members of a structure mixing two- and four-state members, in module, automatic and `inout` storage; X/Z digits loaded into both, each member dumped and read back | `mixed_state_struct.out`: X/Z kept in the four-state member, read as 0 in the two-state one (21.4.2); the scalar members keep their values; one conversion warning per two-state load |
+| `resizable_slices.sv` | Constant slices (`[a:b]`, `+:`, `-:`) of a module queue and dynamic array, an automatic queue and a class-property dynamic array; explicit start and finish inside a slice; dumps of slices; a slice beyond the current size for a load and a dump | `resizable_slices.out`: only the selected elements change, sizes never change; the two slices beyond the size are errors that load nothing and write no file (S27-D14) |
+| `associative.sv` | Associative memories with `int`, `byte unsigned`, enum, 100-bit, `longint unsigned` (automatic) and `shortint` (class property) indices: default, start-only and ranged loads over existing entries, file addresses wider than or negative in the index type, a file address outside the range, binary and hexadecimal dumps (all, from a start, descending range, empty array) read back | `associative.out`: entries created or updated only at the loaded indices (S27-D15), addresses cast to the index type (S27-D16), each dumped word preceded by its `@` address in index order (S27-D17); one "more words" warning, one range error, one "too few words" warning |
+| `neg_*` | Real, string and automatic real elements; a fully indexed word; a net memory; a `const ref` target; a wildcard-index associative memory (S27-D18); `$writememh` and a two-dimensional memory in Verilog-2001 | Rejected before a model is built |
 
 Data files: `format.hex`, `format.bin`, `tokens.hex`, `tokens.bin`,
 `wake.hex`, `bad_digit.hex`, `outside_task.hex`, `outside_memory.hex`,
 `unknown_address.hex`, `long.hex`, `short.hex`, `two_words.hex`,
-`three_words.hex`, `far_address.hex`. `contexts.sv`, `contexts_v2001.v` and
-`round_trip.sv` write their own files.
+`three_words.hex`, `far_address.hex`. `contexts.sv`, `contexts_v2001.v`,
+`round_trip.sv`, `single_evaluation.sv`, `mixed_state_struct.sv`,
+`resizable_slices.sv` and `associative.sv` write their own files.
 
 ## Diagnostics
 

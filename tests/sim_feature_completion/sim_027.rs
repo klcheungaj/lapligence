@@ -348,6 +348,94 @@ fn image_loads_wake_only_the_changed_words() {
     );
 }
 
+// A03: a selector with side effects in memory_name runs once per call, on
+// the copy path and in place, for loads and dumps (S27-D13).
+#[test]
+fn memory_name_is_evaluated_once() {
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "single_evaluation",
+        &[],
+        &[],
+        &exact(
+            include_str!("../fixtures/sim/feature_completion/sim_027/single_evaluation.out"),
+            &as_strs(&[more_words("words.mem")]),
+        ),
+    );
+}
+
+// A03: members of a structure mixing two- and four-state members keep X/Z
+// in the four-state member and read it as 0 in the two-state one.
+#[test]
+fn mixed_state_structure_members_round_trip() {
+    let converted =
+        "warning: memory file `digits.mem`: X/Z memory data converted to a two-state element";
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "mixed_state_struct",
+        &[],
+        &[],
+        &exact(
+            include_str!("../fixtures/sim/feature_completion/sim_027/mixed_state_struct.out"),
+            &[converted, converted, converted],
+        ),
+    );
+}
+
+// A03: slices of dynamic arrays and queues address the selected elements in
+// place, never resize, and a slice outside the current size is rejected at
+// run time (S27-D14).
+#[test]
+fn resizable_slices_address_elements_in_place() {
+    let outside = |file: &str| {
+        format!("error: memory file `{file}`: slice is outside the current size of the array")
+    };
+    let diagnostics = [
+        more_words("words.mem"),
+        more_words("words.mem"),
+        too_few_words("dump.mem"),
+        too_few_words("dump.mem"),
+        more_words("words.mem"),
+        too_few_words("dump.mem"),
+        more_words("words.mem"),
+        outside("words.mem"),
+        outside("dump.mem"),
+        too_few_words("dump.mem"),
+    ];
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "resizable_slices",
+        &[],
+        &[],
+        &exact(
+            include_str!("../fixtures/sim/feature_completion/sim_027/resizable_slices.out"),
+            &as_strs(&diagnostics),
+        ),
+    );
+}
+
+// A03: integral-index associative memories load by creating or updating
+// entries and dump the existing entries in index order with `@` addresses
+// (S27-D15..D17).
+#[test]
+fn associative_memories_load_and_dump_by_index() {
+    let diagnostics = [
+        more_words("words.mem"),
+        "error: memory file `words.mem`: address jump is outside the destination memory or selected range; load terminated".to_owned(),
+        too_few_words("bits.mem"),
+    ];
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "associative",
+        &[],
+        &[],
+        &exact(
+            include_str!("../fixtures/sim/feature_completion/sim_027/associative.out"),
+            &as_strs(&diagnostics),
+        ),
+    );
+}
+
 // A03 nearest-illegal and unsupported forms are rejected before a model is
 // built.
 #[test]
@@ -370,17 +458,13 @@ fn neg_memory_names_that_are_not_variable_memories() {
 }
 
 #[test]
-fn neg_unsupported_resizable_forms() {
+fn neg_associative_memory_without_an_integral_index() {
     sim_cli::reject_case(
         SUITE,
         "neg_associative",
-        "$readmemh does not support associative arrays in `tb`",
+        "$readmemh requires an associative array with an index of integral type, not a wildcard `[*]` index (IEEE 1800-2009 21.4.1), at ",
     );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_queue_slice",
-        "$readmemh requires a whole dynamic array or queue, not a selection of one, in `tb`",
-    );
+    sim_cli::reject_case(SUITE, "neg_associative", "neg_associative.sv:6:31 in `tb`");
 }
 
 #[test]

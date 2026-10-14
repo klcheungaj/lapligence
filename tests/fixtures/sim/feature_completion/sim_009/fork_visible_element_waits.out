@@ -1,0 +1,11 @@
+1000 @(mem[0]) 11
+2000 @(mem[i]) 05
+3000 wait 22
+4000 posedge 01
+5000 nested 33
+7000 iff 12
+8000 detached aa
+8000 done 12 44 aa 01
+9000 joined x 01
+10000 joined row[1] 02
+11000 detached 03 02

@@ -1,7 +1,9 @@
 //! Memory file tasks: `$readmemb`, `$readmemh`, `$writememb`, `$writememh`.
 
 use super::*;
-use crate::sim::ir::{IrContainerElement, IrContainerKind, IrMemoryAccess, IrMemoryStorage};
+use crate::sim::ir::{
+    IrAssocKey, IrContainerElement, IrContainerKind, IrMemoryAccess, IrMemoryImage, IrMemoryStorage,
+};
 
 #[derive(Clone, Copy)]
 enum MemorySliceNodes {
@@ -104,11 +106,11 @@ impl EmitCtx<'_, '_> {
     /// A memory file task over storage other than model array cells: the
     /// packed image of a subroutine or block local, `ref` formal or structure
     /// member, or a container (fixed-size class property, dynamic array or
-    /// queue) addressed in place. For an image, the root array's value is
-    /// copied into a lexical local, the runtime addresses the selected view
-    /// of that local and a load stores the whole image back with one blocking
+    /// queue) addressed in place. For an image the root is lowered once (see
+    /// [`IrMemoryImage`]); the emitter loads a stable packed cell in place and
+    /// any other root through one copy stored back with a blocking
     /// assignment. The loading process does not suspend in between, so no
-    /// other process can observe the intermediate image (IEEE 1800-2009 4.7;
+    /// other process can observe a partly loaded image (IEEE 1800-2009 4.7;
     /// IEEE 1364-2001 5.4.2).
     fn lower_memory_access_task(
         &mut self,
@@ -187,31 +189,32 @@ impl EmitCtx<'_, '_> {
                     self.path
                 )
             })?;
-        let image_value = self.cg.lower_expr(&self.path, root)?;
-        if image_value.is_real() || image_value.width != image_width {
-            return Err(format!(
+        let no_image = || {
+            format!(
                 "{name} memory view has no packed image of its declared shape in `{}`",
                 self.path
-            ));
-        }
-        let writeback = if write {
-            None
+            )
+        };
+        // The root is lowered once, as a value for a dump and as an lvalue for
+        // a load, so a selector with side effects in the root runs once.
+        let image = if write {
+            let value = self.cg.lower_expr(&self.path, root)?;
+            if value.is_real() || value.width != image_width {
+                return Err(no_image());
+            }
+            IrMemoryImage::Value(value)
         } else {
-            Some(self.cg.lower_lhs(&self.path, root)?)
+            let lhs = self.cg.lower_lhs(&self.path, root)?;
+            if self.memory_image_lhs_width(&lhs) != Some(image_width) {
+                return Err(no_image());
+            }
+            IrMemoryImage::Target(lhs)
         };
         let path = self.cg.lower_string(&self.path, args[0])?;
-        let image = format!("_llg_memory_image_{}", target.0);
-        let mut statements = vec![IrStmt::DeclLocal {
-            name: image.clone(),
-            width: image_width,
-            signed: false,
-            init: Some(Box::new(image_value)),
-            two_state: false,
-        }];
-        statements.push(IrStmt::MemoryAccess(Box::new(IrMemoryAccess {
+        Ok(IrStmt::MemoryAccess(Box::new(IrMemoryAccess {
             write,
             path,
-            storage: IrMemoryStorage::Image(image.clone()),
+            storage: IrMemoryStorage::Image(image),
             root_dims,
             element_width,
             signed: element.info.signed,
@@ -227,15 +230,30 @@ impl EmitCtx<'_, '_> {
             enum_values: operands.enum_values,
             start: operands.start,
             finish: operands.finish,
-        })));
-        if let Some(lhs) = writeback {
-            statements.push(IrStmt::Assign {
-                lhs,
-                rhs: IrExpr::new(IrExprKind::LocalRead(image), image_width, false, None),
-                nba: false,
-            });
-        }
-        Ok(IrStmt::Block(statements))
+        })))
+    }
+
+    /// Packed width of a load's root lvalue; `None` for a real cell.
+    fn memory_image_lhs_width(&self, lhs: &IrLhs) -> Option<u32> {
+        let width = match lhs {
+            IrLhs::Whole(signal) => self.cg.model.signals.get(*signal)?.ty.width(),
+            IrLhs::WholeRef { width, .. }
+            | IrLhs::Ref { width, .. }
+            | IrLhs::Stream { width, .. }
+            | IrLhs::IdxPart(_, _, _, width, _, _) => *width,
+            IrLhs::PackedSelect { steps, .. } => steps.last()?.width,
+            IrLhs::TaggedSelect { steps, .. } => steps.last()?.selection.width,
+            IrLhs::Bit(..) => 1,
+            IrLhs::Part(_, left, right, _) => u32::try_from(left.abs_diff(*right) + 1).ok()?,
+            IrLhs::ArrayElem { arr, elem_sel, .. } => match elem_sel {
+                IrElemSel::Whole => self.cg.model.arrays.get(*arr)?.elem_width,
+                IrElemSel::Part(left, right) => u32::try_from(left.abs_diff(*right) + 1).ok()?,
+                IrElemSel::Bit(_) => 1,
+                IrElemSel::Indexed { width, .. } => *width,
+                IrElemSel::PackedChain(steps) => steps.last()?.width,
+            },
+        };
+        (width != 0).then_some(width)
     }
 
     /// A memory file task addressing container elements in place.
@@ -258,11 +276,33 @@ impl EmitCtx<'_, '_> {
                 container.element.clone(),
             )
         };
-        if matches!(kind, IrContainerKind::Associative { .. }) {
-            return Err(format!(
-                "{name} does not support associative arrays in `{}`",
-                self.path
-            ));
+        // IEEE 1800-2009 21.4.1/21.5.3: an associative memory needs an index
+        // of integral type. A wildcard index has no index type to cast file
+        // addresses to (decision S27-D18).
+        match &kind {
+            IrContainerKind::Associative {
+                key: IrAssocKey::Integral { .. },
+            } => {
+                if !selectors.is_empty() || slice.is_some() {
+                    return Err(format!(
+                        "{name} requires a whole associative array, not a selection of one, in `{}`",
+                        self.path
+                    ));
+                }
+            }
+            IrContainerKind::Associative { key } => {
+                let index = match key {
+                    IrAssocKey::Wildcard => "a wildcard `[*]` index",
+                    IrAssocKey::String => "a string index",
+                    IrAssocKey::Integral { .. } => unreachable!(),
+                };
+                return Err(format!(
+                    "{name} requires an associative array with an index of integral type, not {index} (IEEE 1800-2009 21.4.1), at {} in `{}`",
+                    self.cg.source_location(args[1]),
+                    self.path
+                ));
+            }
+            IrContainerKind::Dynamic | IrContainerKind::Queue { .. } => {}
         }
         let packed_elements = || {
             format!(
@@ -304,19 +344,22 @@ impl EmitCtx<'_, '_> {
         }
         let operands = self.lower_memory_operands(name, args, &element, write)?;
         let geometry = if root_dims.is_empty() {
-            if !selectors.is_empty() || slice.is_some() {
+            if !selectors.is_empty() {
                 return Err(format!(
-                    "{name} requires a whole dynamic array or queue, not a selection of one, in `{}`",
+                    "{name} requires a whole dynamic array or queue or a slice of one, not an element, in `{}`",
                     self.path
                 ));
             }
-            MemoryGeometry {
-                origin: 0,
-                selectors: Vec::new(),
-                sliced: false,
-                dims: Vec::new(),
-                strides: Vec::new(),
-                total: 0,
+            match slice {
+                Some(slice) => self.resizable_memory_slice(name, slice)?,
+                None => MemoryGeometry {
+                    origin: 0,
+                    selectors: Vec::new(),
+                    sliced: false,
+                    dims: Vec::new(),
+                    strides: Vec::new(),
+                    total: 0,
+                },
             }
         } else {
             let cells = Self::memory_extent_product(name, &root_dims, &self.path)?;
@@ -350,6 +393,35 @@ impl EmitCtx<'_, '_> {
             start: operands.start,
             finish: operands.finish,
         })))
+    }
+
+    /// A constant slice of a dynamic array or queue, addressed in place like a
+    /// fixed-array slice: its indices keep the container's ascending
+    /// `[0:size-1]` direction whatever the slice spelling, and the runtime
+    /// checks them against the current size (decision S27-D14).
+    fn resizable_memory_slice(
+        &self,
+        name: &str,
+        slice: MemorySliceNodes,
+    ) -> Result<MemoryGeometry, String> {
+        let (left, right) = self.memory_slice_bounds(name, slice)?;
+        let (low, high) = (left.min(right), left.max(right));
+        let low = i32::try_from(low).ok().filter(|low| *low >= 0);
+        let high = i32::try_from(high).ok();
+        let (Some(low), Some(high)) = (low, high) else {
+            return Err(format!(
+                "{name} memory slice bound is outside every dynamic array or queue index in `{}`",
+                self.path
+            ));
+        };
+        Ok(MemoryGeometry {
+            origin: u64::from(low.unsigned_abs()),
+            selectors: Vec::new(),
+            sliced: true,
+            dims: vec![(low, high)],
+            strides: vec![1],
+            total: u64::from(high.abs_diff(low)) + 1,
+        })
     }
 
     /// Element checks, start/finish bounds, enum members, radix and default
@@ -455,6 +527,9 @@ impl EmitCtx<'_, '_> {
                 .query_descriptor(base)
                 .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. }))
         };
+        // A slice of a whole dynamic array or queue addresses it in place.
+        let sliceable_base =
+            |base: NodeId| fixed_base(base) || self.cg.container_of(base).is_some();
         let no_selector_after_slice = |slice: &Option<MemorySliceNodes>| {
             if slice.is_some() {
                 Err(format!(
@@ -488,7 +563,7 @@ impl EmitCtx<'_, '_> {
                 selectors.extend(indices.iter().copied());
                 Ok((root, selectors, None))
             }
-            NodeKind::Expr(ExprKind::PartSelect { base, left, right }) if fixed_base(*base) => {
+            NodeKind::Expr(ExprKind::PartSelect { base, left, right }) if sliceable_base(*base) => {
                 let (root, selectors, slice) = self.memory_image_base(name, *base)?;
                 single_slice(&slice)?;
                 Ok((
@@ -505,7 +580,7 @@ impl EmitCtx<'_, '_> {
                 base_expr,
                 width_expr,
                 neg,
-            }) if fixed_base(*base) => {
+            }) if sliceable_base(*base) => {
                 let (root, selectors, slice) = self.memory_image_base(name, *base)?;
                 single_slice(&slice)?;
                 Ok((

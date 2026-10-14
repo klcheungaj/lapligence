@@ -935,7 +935,24 @@ impl EmitCtx<'_, '_> {
         self.cg
             .check_event_expression_effects(expression, &self.path)?;
         let mut value = self.cg.lower_expr(&self.path, expression)?;
-        let context = self.cg.event_context(expression)?;
+        let (context, aliases) = self.cg.event_context_with_aliases(expression)?;
+        // A fork-visible automatic array element names its declaration
+        // local; the evaluator binds the captured cell under the context
+        // local only.
+        if !aliases.is_empty() {
+            crate::sim::opt::walk_expr_mut(&mut value, &mut |expression| {
+                if let IrExprKind::LocalRead(name) = expression.kind() {
+                    if let Some((_, local)) = aliases.iter().find(|(alias, _)| alias == name) {
+                        *expression = IrExpr::new(
+                            IrExprKind::LocalRead(local.clone()),
+                            expression.width,
+                            expression.signed,
+                            expression.fill,
+                        );
+                    }
+                }
+            });
+        }
         // The evaluator reads captured formals from its context slots.
         if context.as_ref().is_some_and(|context| {
             context

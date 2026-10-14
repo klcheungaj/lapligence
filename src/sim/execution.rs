@@ -17,9 +17,10 @@ use std::collections::{BTreeSet, HashSet};
 
 use crate::sim::ir::{
     IrArrayQueryTarget, IrCallArg, IrChandleExpr, IrContainerExpr, IrContainerStmt, IrDependency,
-    IrDisplayArg, IrExpr, IrExprKind, IrInsideItem, IrLhs, IrMailboxExpr, IrMailboxValue, IrModel,
-    IrObjectQuery, IrObjectStmt, IrShape, IrStmt, IrStochasticStmt, IrStreamSelector,
-    IrStreamTarget, IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError,
+    IrDisplayArg, IrExpr, IrExprKind, IrInsideItem, IrLhs, IrMailboxExpr, IrMailboxValue,
+    IrMemoryImage, IrMemoryStorage, IrModel, IrObjectQuery, IrObjectStmt, IrShape, IrStmt,
+    IrStochasticStmt, IrStreamSelector, IrStreamTarget, IrStringExpr, IrStringInsideItem,
+    IrSysFunc, IrValidationError,
 };
 use crate::sim::semantic::{ExtensionRef, Origin};
 
@@ -823,10 +824,16 @@ fn collect_effects(
                     effects.push(ExecutionEffect::Terminate);
                 }
             }
-            IrStmt::Memory { .. }
-            | IrStmt::MemoryAccess(_)
-            | IrStmt::RandomSeed { .. }
-            | IrStmt::RandomStateSet { .. } => effects.push(ExecutionEffect::RuntimeService),
+            IrStmt::MemoryAccess(task) => {
+                effects.push(ExecutionEffect::RuntimeService);
+                // A load into an image target stores the root back.
+                if task.image_target().is_some() {
+                    effects.push(ExecutionEffect::ImmediateStore);
+                }
+            }
+            IrStmt::Memory { .. } | IrStmt::RandomSeed { .. } | IrStmt::RandomStateSet { .. } => {
+                effects.push(ExecutionEffect::RuntimeService)
+            }
             IrStmt::Display { .. }
             | IrStmt::DisplayTyped { .. }
             | IrStmt::ImmediateAssertion { .. }
@@ -1005,6 +1012,15 @@ fn collect_statement_expression_effects(
             collect_string_effects(ir, state, effects, visited_calls);
         }
         IrStmt::MemoryAccess(task) => {
+            match &task.storage {
+                IrMemoryStorage::Image(IrMemoryImage::Target(lhs)) => {
+                    collect_lhs_expression_effects(ir, lhs, effects, visited_calls)
+                }
+                IrMemoryStorage::Image(IrMemoryImage::Value(value)) => {
+                    collect_expression_effects(ir, value, effects, visited_calls)
+                }
+                IrMemoryStorage::Container(_) => {}
+            }
             collect_string_effects(ir, &task.path, effects, visited_calls);
             for selector in &task.selectors {
                 collect_expression_effects(ir, &selector.value, effects, visited_calls);

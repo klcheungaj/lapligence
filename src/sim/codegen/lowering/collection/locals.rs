@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// `(declaration local, context local)` pairs of an event evaluator context
+/// (see `Codegen::event_context_with_aliases`).
+pub(in crate::sim::codegen) type EventContextAliases = Vec<(String, String)>;
+
 impl<'a> Codegen<'a> {
     pub(in super::super) fn signal_dependency(&self, info: &SignalInfo) -> IrDependency {
         self.reference_dependency(info)
@@ -799,7 +803,15 @@ impl<'a> Codegen<'a> {
         {
             return None;
         }
-        if self.shared_locals.contains(&target) {
+        // Inside a joined branch the variable is a borrowed capture even when
+        // a detached fork elsewhere makes its declaring cell shared: the
+        // evaluator aliases the cell the branch borrowed.
+        if self
+            .capture_binding(target)
+            .is_some_and(|binding| binding.storage.ownership() == StorageOwnership::Borrowed)
+        {
+            Some(StorageOwnership::Borrowed)
+        } else if self.shared_locals.contains(&target) {
             Some(StorageOwnership::Shared)
         } else if self.fork_visible(target) {
             Some(StorageOwnership::Borrowed)
@@ -893,6 +905,20 @@ impl<'a> Codegen<'a> {
         &mut self,
         expression: NodeId,
     ) -> Result<Option<IrEventContext>, String> {
+        Ok(self.event_context_with_aliases(expression)?.0)
+    }
+
+    /// [`Self::event_context`] together with `(declaration local, context
+    /// local)` pairs for captured variables whose declaration local differs
+    /// from the name the context binds. Inside a fork branch a fork-visible
+    /// automatic is captured under its capture name, while a selected or
+    /// projected access (an element of an automatic array) still reads the
+    /// declaration local; the evaluator must read both through the context
+    /// slot, as the branch itself does.
+    pub(in super::super) fn event_context_with_aliases(
+        &mut self,
+        expression: NodeId,
+    ) -> Result<(Option<IrEventContext>, EventContextAliases), String> {
         fn visit(cg: &Codegen<'_>, node: NodeId, out: &mut HashSet<NodeId>) {
             let target = match cg.kind(node) {
                 NodeKind::Expr(ExprKind::Ref {
@@ -920,7 +946,7 @@ impl<'a> Codegen<'a> {
         let mut targets = targets.into_iter().collect::<Vec<_>>();
         targets.sort_by_key(|target| target.index());
         if targets.is_empty() {
-            return Ok(None);
+            return Ok((None, Vec::new()));
         }
 
         let sources = targets
@@ -961,6 +987,7 @@ impl<'a> Codegen<'a> {
         let frame = self.new_frame_id()?;
         // (declaration, evaluator local, lifetime, kind, ownership, source)
         let mut slots = Vec::new();
+        let mut aliases = Vec::new();
         for (source, target) in sources.into_iter().zip(targets) {
             // Inlined const-ref formals can be substituted directly with
             // their signal/array actual. Such references already have a
@@ -993,6 +1020,23 @@ impl<'a> Codegen<'a> {
                 }
                 _ => continue,
             };
+            // The declaring subroutine's own name for the variable, which
+            // selected accesses inside a fork branch still read.
+            let declared = self
+                .proc_local_info(target)
+                .map(|info| info.c_name.clone())
+                .into_iter()
+                .chain(
+                    self.func
+                        .as_ref()
+                        .and_then(|func| func.locals.get(&target))
+                        .map(|(name, ..)| name.clone()),
+                );
+            for declared in declared {
+                if declared != local && !aliases.iter().any(|(alias, _)| *alias == declared) {
+                    aliases.push((declared, local.clone()));
+                }
+            }
             // Another process can change a fork-visible automatic while the
             // control waits, so the evaluator aliases its cell.
             let ownership = self
@@ -1032,8 +1076,8 @@ impl<'a> Codegen<'a> {
             )
             .collect::<Result<Vec<_>, String>>()?;
         if captures.is_empty() {
-            return Ok(None);
+            return Ok((None, Vec::new()));
         }
-        Ok(Some(IrEventContext::new(frame, captures)))
+        Ok((Some(IrEventContext::new(frame, captures)), aliases))
     }
 }

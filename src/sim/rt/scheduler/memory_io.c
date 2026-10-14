@@ -176,13 +176,29 @@ static int llg_memory_parse_digits(FILE* stream, int radix, int first,
     return LLG_MEMORY_TOKEN_DATA;
 }
 
-static int llg_memory_next_token(FILE* stream, int radix,
+// With `wide_address`, an `@` address keeps all its hexadecimal digits in
+// `value->value` (an unsigned number without sign or X/Z) instead of a host
+// index, for associative-array keys of any width.
+static int llg_memory_next_token(FILE* stream, int radix, int wide_address,
                                  llg_memory_value_t* value) {
     sv4_destroy(&value->value);
     memset(value, 0, sizeof(*value));
     int c = llg_memory_next_noncomment(stream);
     if (c == EOF) return LLG_MEMORY_TOKEN_EOF;
     if (c == -2) return LLG_MEMORY_TOKEN_ERROR;
+    if (c == '@' && wide_address) {
+        c = fgetc(stream);
+        int state = 0;
+        if (!llg_memory_digit(c, 16, &state, &(unsigned){0}) || state != 0) {
+            if (c != EOF && !isspace((unsigned char)c)) llg_memory_consume_bad_token(stream);
+            return LLG_MEMORY_TOKEN_ERROR;
+        }
+        if (llg_memory_parse_digits(stream, 16, c, value) != LLG_MEMORY_TOKEN_DATA ||
+            sv4_is_unknown(value->value)) {
+            return LLG_MEMORY_TOKEN_ERROR;
+        }
+        return LLG_MEMORY_TOKEN_ADDRESS;
+    }
     if (c == '@') {
         c = fgetc(stream);
         int negative = 0;
@@ -449,25 +465,89 @@ static sv4_t llg_memory_word_cast(sv4_t word, uint32_t width, int8_t is_signed) 
 }
 
 // Destination or source cells of one memory file task: dense or descriptor
-// model cells, or the packed image of a fixed array without model storage.
-// An image holds `total` cells of the element width with cell 0 in the most
-// significant bits; it is a lexical copy that the generated code stores back
-// to the array after a load, so writing it publishes nothing by itself.
+// model cells, or the packed image of a fixed array without model storage
+// (see `llg_memory_image_t`). An image holds `total` cells of the element
+// width from bit `image_offset`, cell 0 in the most significant bits.
 typedef struct {
     sv4_t* memory;
     llg_fixed_array_t* fixed;
     sv4_t* image;
+    uint32_t image_offset;
+    // Published image: 0 = no store allowed, 1 = private store, 2 = store and
+    // publish once at the end (see `llg_memory_image_begin`).
+    int publish;
+    int image_mode;
+    int image_changed;
+    sv4_t image_old_lsb;
 } llg_memory_storage_t;
 
-static uint64_t llg_memory_image_low(uint64_t index, uint64_t total,
+static uint64_t llg_memory_image_low(const llg_memory_storage_t* storage,
+                                     uint64_t index, uint64_t total,
                                      uint32_t elem_width) {
-    return (total - 1u - index) * (uint64_t)elem_width;
+    return (uint64_t)storage->image_offset + (total - 1u - index) * (uint64_t)elem_width;
 }
 
-static void llg_memory_store(const llg_memory_storage_t* storage, uint64_t index,
+// Decide, as `llg_ba` does for a whole store, whether a published image may
+// change: never while it is forced, and in a read-only region only as a
+// private store.
+static void llg_memory_image_begin(llg_memory_storage_t* storage) {
+    if (!storage->image || !storage->publish) return;
+    if (llg_is_forced(storage->image)) {
+        storage->image_mode = 0;
+    } else if (region_is_read_only_now(g.current_region) && !clocking_sample_publication) {
+        storage->image_mode = region_private_store("signal write") ? 1 : 0;
+    } else {
+        storage->image_mode = 2;
+    }
+}
+
+// Publish a changed image once, after its last word. Like
+// `sig_write_ranges`, the edge snapshots are bit 0 before the first change
+// and after the last, the only bit directional packed edges consume.
+static void llg_memory_image_end(llg_memory_storage_t* storage) {
+    if (!storage->image || !storage->publish || !storage->image_changed) return;
+    if (storage->image_mode != 2) {
+        sv4_destroy(&storage->image_old_lsb);
+        return;
+    }
+    sv4_t* target = storage->image;
+    llg_value_scope_t* target_pin = value_target_pin(target);
+    llg_value_scope_t* snapshots = llg_value_scope_begin(
+#ifdef LLG_WAVEFORM
+        3
+#else
+        2
+#endif
+    );
+    sv4_t* edges = llg_value_scope_values(snapshots);
+    sv4_replace(&edges[0], storage->image_old_lsb);
+    storage->image_old_lsb = (sv4_t)SV4_EMPTY;
+    sv4_replace(&edges[1], sv4_bit_select(*target, 0));
+#ifdef LLG_WAVEFORM
+    sv4_copy(&edges[2], target);
+    sv4_t published = edges[2];
+#else
+    sv4_t published = SV4_EMPTY;
+#endif
+    sig_publish_changed(target, edges[0], edges[1], published);
+    llg_value_scope_end(snapshots);
+    if (target_pin) llg_value_scope_end(target_pin);
+}
+
+static void llg_memory_store(llg_memory_storage_t* storage, uint64_t index,
                              uint64_t total, uint32_t elem_width, sv4_t value) {
     if (storage->image) {
-        uint64_t low = llg_memory_image_low(index, total, elem_width);
+        uint64_t low = llg_memory_image_low(storage, index, total, elem_width);
+        if (storage->publish) {
+            if (storage->image_mode == 0 ||
+                llg_sv4_range_same(*storage->image, (uint32_t)low, value)) return;
+            if (!storage->image_changed) {
+                storage->image_old_lsb = sv4_bit_select(*storage->image, 0);
+                storage->image_changed = 1;
+            }
+            llg_sv4_range_copy(storage->image, (uint32_t)low, value);
+            return;
+        }
         sv4_part_select_set(storage->image, (int64_t)(low + elem_width - 1u),
                             (int64_t)low, value);
         return;
@@ -484,7 +564,7 @@ static void llg_memory_format_cell(const llg_memory_storage_t* storage,
                                    char* digits, size_t capacity) {
     char conversion = radix == 2 ? 'b' : 'h';
     if (storage->image) {
-        uint64_t low = llg_memory_image_low(index, total, elem_width);
+        uint64_t low = llg_memory_image_low(storage, index, total, elem_width);
         sv4_t cell = sv4_part_select(*storage->image,
                                      (int64_t)(low + elem_width - 1u), (int64_t)low);
         sv4_format(conversion, cell, digits, capacity);
@@ -497,20 +577,59 @@ static void llg_memory_format_cell(const llg_memory_storage_t* storage,
                digits, capacity);
 }
 
-// An image must hold exactly `total` cells of the element width.
+// An image must lie within its storage: `total` cells of the element width
+// from `image_offset`.
 static int llg_memory_storage_valid(const char* path,
                                     const llg_memory_storage_t* storage,
                                     uint64_t total, uint32_t elem_width) {
     if (!storage->image) return 1;
     if (elem_width == 0 || total > UINT32_MAX / elem_width ||
-        llg_sv4_width(*storage->image) != total * (uint64_t)elem_width) {
+        (uint64_t)llg_sv4_width(*storage->image) < (uint64_t)storage->image_offset ||
+        (uint64_t)llg_sv4_width(*storage->image) - storage->image_offset <
+            total * (uint64_t)elem_width) {
         llg_memory_error(path, "memory image size does not match its cells");
         return 0;
     }
     return 1;
 }
 
-static uint64_t fixed_memory_read_view(llg_string_t path, const llg_memory_storage_t* storage, uint64_t total,
+// Convert one file word to an element: two-state data read X/Z as 0 (one
+// warning per load), the word is an unsized unsigned literal at the element
+// width, and an enum word must fit the base and equal a member. Returns 0,
+// with the error reported, when the load must terminate.
+static int llg_memory_convert_word(const char* filename, llg_memory_value_t* token,
+                                   uint32_t elem_width, int8_t elem_signed,
+                                   int8_t two_state, const sv4_t* enum_values,
+                                   uint32_t enum_count, int* warned_unknown,
+                                   sv4_t* converted) {
+    // Normalize two-state data before a narrowing conversion so a low X/Z
+    // digit cannot hide a known out-of-range enum high bit. Four-state enum
+    // membership remains an exact state comparison.
+    int had_unknown = sv4_is_unknown(token->value);
+    if (two_state && had_unknown) {
+        sv4_replace(&token->value, sv4_to_two_state(token->value));
+    }
+    if (enum_count != 0 &&
+        !llg_memory_enum_word_fits_width(token->value, elem_width, elem_signed)) {
+        llg_memory_error(filename,
+            "numeric memory data does not fit the enum base type; load terminated");
+        return 0;
+    }
+    *converted = llg_memory_word_cast(token->value, elem_width, elem_signed);
+    if (two_state && had_unknown && !*warned_unknown) {
+        llg_memory_warning(filename, "X/Z memory data converted to a two-state element");
+        *warned_unknown = 1;
+    }
+    if (!llg_memory_enum_value_allowed(*converted, enum_values, enum_count)) {
+        llg_memory_error(filename,
+            "memory data value is not a member of the enum; load terminated");
+        sv4_destroy(converted);
+        return 0;
+    }
+    return 1;
+}
+
+static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* storage, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                           const int32_t* dims, int n_dims,
                           const uint64_t* strides, uint64_t origin,
@@ -547,7 +666,7 @@ static uint64_t fixed_memory_read_view(llg_string_t path, const llg_memory_stora
     int saw_address = 0;
     llg_memory_value_t token = {0};
     for (;;) {
-        int kind = llg_memory_next_token(stream, radix, &token);
+        int kind = llg_memory_next_token(stream, radix, 0, &token);
         if (kind == LLG_MEMORY_TOKEN_EOF) break;
         if (kind == LLG_MEMORY_TOKEN_ERROR) {
             // The text admits only white space, comments, numbers and `@`
@@ -598,34 +717,10 @@ static uint64_t fixed_memory_read_view(llg_string_t path, const llg_memory_stora
                     warned_extra = 1;
                 }
             } else {
-                // Normalize two-state data before a narrowing conversion so a
-                // low X/Z digit cannot hide a known out-of-range enum high bit.
-                // Four-state enum membership remains an exact state comparison.
-                int had_unknown = sv4_is_unknown(token.value);
-                if (two_state && had_unknown) {
-                    sv4_replace(&token.value, sv4_to_two_state(token.value));
-                }
-                if (enum_count != 0 &&
-                    !llg_memory_enum_word_fits_width(token.value, elem_width,
-                                                     elem_signed)) {
-                    llg_memory_error(filename,
-                        "numeric memory data does not fit the enum base type; load terminated");
-                    sv4_destroy(&token.value);
-                    fclose(stream);
-                    free(filename);
-                    return written;
-                }
-                sv4_t converted = llg_memory_word_cast(token.value, elem_width, elem_signed);
-                if (two_state && had_unknown) {
-                    if (!warned_unknown) {
-                        llg_memory_warning(filename, "X/Z memory data converted to a two-state element");
-                        warned_unknown = 1;
-                    }
-                }
-                if (!llg_memory_enum_value_allowed(converted, enum_values, enum_count)) {
-                    llg_memory_error(filename,
-                        "memory data value is not a member of the enum; load terminated");
-                    sv4_destroy(&converted);
+                sv4_t converted;
+                if (!llg_memory_convert_word(filename, &token, elem_width, elem_signed,
+                                             two_state, enum_values, enum_count,
+                                             &warned_unknown, &converted)) {
                     sv4_destroy(&token.value);
                     fclose(stream);
                     free(filename);
@@ -788,7 +883,8 @@ void llg_fixed_memory_read_view(llg_string_t path, llg_fixed_array_t* memory, ui
     storage.fixed = memory;
     fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
 }
-void llg_image_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
+void llg_image_memory_read_view(llg_string_t path, const llg_memory_image_t* memory,
+                          uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                           const int32_t* dims, int n_dims,
                           const uint64_t* strides, uint64_t origin,
@@ -796,8 +892,12 @@ void llg_image_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total
                           int has_start, int has_finish, int addressing_policy,
                           const sv4_t* enum_values, uint32_t enum_count, int radix) {
     llg_memory_storage_t storage = {0};
-    storage.image = memory;
+    storage.image = memory->storage;
+    storage.image_offset = memory->offset;
+    storage.publish = memory->publish != 0;
+    llg_memory_image_begin(&storage);
     fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+    llg_memory_image_end(&storage);
 }
 
 void llg_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
@@ -822,7 +922,8 @@ void llg_fixed_memory_write_view(llg_string_t path, llg_fixed_array_t* memory, u
     storage.fixed = memory;
     fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
 }
-void llg_image_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
+void llg_image_memory_write_view(llg_string_t path, const llg_memory_image_t* memory,
+                          uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                           const int32_t* dims, int n_dims,
                           const uint64_t* strides, uint64_t origin,
@@ -830,14 +931,16 @@ void llg_image_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t tota
                           int has_start, int has_finish, int addressing_policy,
                           const sv4_t* enum_values, uint32_t enum_count, int radix) {
     llg_memory_storage_t storage = {0};
-    storage.image = memory;
+    storage.image = memory->storage;
+    storage.image_offset = memory->offset;
     fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
 }
 
 // Dynamic arrays, queues and fixed-size class properties keep their elements
 // as dense cells in declaration order. A runtime-sized view (`n_dims` 0)
 // addresses `[0:size-1]` of the current size, which a load never changes
-// (IEEE 1800-2009 21.4.1); a fixed-size view must match the size. A load that
+// (IEEE 1800-2009 21.4.1); a slice of one (`total` 0, one ascending dimension)
+// must lie within that size; a fixed-size view must match the size. A load that
 // placed any word sends one contents notification, like `$fread`.
 static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
                                       size_t size, llg_container_notify_fn notify,
@@ -879,6 +982,16 @@ static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
         origin = 0;
         total = (uint64_t)size;
         view_total = total;
+    } else if (total == 0 && n_dims == 1) {
+        // A slice of a runtime-sized array: its ascending indices must lie in
+        // `[0:size-1]` of the current size (decision S27-D14).
+        if (dims[0] < 0 || dims[0] > dims[1] || (uint64_t)dims[1] >= (uint64_t)size) {
+            char* filename = llg_memory_path_copy(path);
+            llg_memory_error(filename, "slice is outside the current size of the array");
+            free(filename);
+            return;
+        }
+        total = (uint64_t)size;
     } else if (total != (uint64_t)size) {
         char* filename = llg_memory_path_copy(path);
         llg_memory_error(filename, "memory descriptor size does not match its container");
@@ -915,3 +1028,237 @@ LLG_CONTAINER_MEMORY_ENTRY(llg_dyn_memory_write_view, struct llg_dyn_array_t, 1)
 LLG_CONTAINER_MEMORY_ENTRY(llg_queue_memory_read_view, struct llg_queue_t, 0)
 LLG_CONTAINER_MEMORY_ENTRY(llg_queue_memory_write_view, struct llg_queue_t, 1)
 #undef LLG_CONTAINER_MEMORY_ENTRY
+
+// ── Associative-array memories (IEEE 1800-2009 21.4.1, 21.5.3) ─────────────
+// Keys are values of the array's integral index type: start, finish and file
+// addresses are cast to it (7.8.4), so a wider file address keeps its low
+// bits and a signed index reads a two's-complement address (S27-D16).
+
+static sv4_t llg_assoc_memory_key(const llg_assoc_t* array, sv4_t value) {
+    return sv4_cast(value, array->key_width, array->key_signed);
+}
+
+static int llg_assoc_memory_less(sv4_t a, sv4_t b) {
+    sv4_t less = sv4_lt(a, b);
+    int result = sv4_to_bool(less);
+    sv4_destroy(&less);
+    return result;
+}
+
+static int llg_assoc_memory_in_range(sv4_t key, sv4_t first, sv4_t last) {
+    int ascending = !llg_assoc_memory_less(last, first);
+    sv4_t low = ascending ? first : last;
+    sv4_t high = ascending ? last : first;
+    return !llg_assoc_memory_less(key, low) && !llg_assoc_memory_less(high, key);
+}
+
+// Start and finish arguments of an associative memory task. Without a start
+// a load begins at index 0 (S27-D15) and a dump at the lowest index.
+static int llg_assoc_memory_bounds(const char* filename, const llg_assoc_t* array,
+                                   sv4_t start, sv4_t finish, int has_start,
+                                   int has_finish, sv4_t* first, sv4_t* last) {
+    if (array->key_kind != LLG_ASSOC_INTEGRAL || array->key_width == 0) {
+        llg_memory_error(filename, "associative memory needs an integral index type");
+        return 0;
+    }
+    if (has_start && sv4_is_unknown(start)) {
+        llg_memory_error(filename, "start address is unknown or outside the index range");
+        return 0;
+    }
+    if (has_finish && sv4_is_unknown(finish)) {
+        llg_memory_error(filename, "finish address is unknown or outside the index range");
+        return 0;
+    }
+    *first = has_start ? llg_assoc_memory_key(array, start)
+                       : sv4_from_u64(0, array->key_width, array->key_signed);
+    *last = has_finish ? llg_assoc_memory_key(array, finish) : (sv4_t)SV4_EMPTY;
+    return 1;
+}
+
+// Load (S27-D15): each word creates the entry at the current index or
+// updates it; other entries are untouched. Without a finish address the
+// index advances upward until the file ends or the index type's maximum;
+// with one it moves toward it and a file address must lie in the range.
+static void llg_assoc_memory_read(llg_string_t path, llg_assoc_t* array,
+                                  uint32_t elem_width, int8_t elem_signed,
+                                  int8_t two_state, sv4_t start, sv4_t finish,
+                                  int has_start, int has_finish,
+                                  const sv4_t* enum_values, uint32_t enum_count,
+                                  int radix) {
+    char* filename = llg_memory_path_copy(path);
+    FILE* stream = fopen(filename, "r");
+    if (!stream) {
+        llg_memory_warning(filename, "open for reading failed: %s", strerror(errno));
+        free(filename);
+        return;
+    }
+    sv4_t current, last;
+    if (!llg_assoc_memory_bounds(filename, array, start, finish, has_start,
+                                 has_finish, &current, &last)) {
+        fclose(stream);
+        free(filename);
+        return;
+    }
+    sv4_t first = sv4_clone(&current);
+    int descending = has_finish && llg_assoc_memory_less(last, first);
+    sv4_t one = sv4_from_u64(1, array->key_width, array->key_signed);
+    int exhausted = 0, warned_extra = 0, warned_unknown = 0, saw_address = 0;
+    int terminated = 0;
+    llg_memory_value_t token = {0};
+    for (;;) {
+        int kind = llg_memory_next_token(stream, radix, 1, &token);
+        if (kind == LLG_MEMORY_TOKEN_EOF) break;
+        if (kind == LLG_MEMORY_TOKEN_ERROR) {
+            llg_memory_error(filename, "malformed or over-width memory token; load terminated");
+            terminated = 1;
+            break;
+        }
+        if (kind == LLG_MEMORY_TOKEN_ADDRESS) {
+            saw_address = 1;
+            sv4_t key = llg_assoc_memory_key(array, token.value);
+            if (has_finish && !llg_assoc_memory_in_range(key, first, last)) {
+                sv4_destroy(&key);
+                llg_memory_error(filename,
+                    "address jump is outside the destination memory or selected range; load terminated");
+                terminated = 1;
+                break;
+            }
+            sv4_replace(&current, key);
+            exhausted = 0;
+            continue;
+        }
+        if (exhausted) {
+            if (!warned_extra) {
+                llg_memory_warning(filename, "memory file contains more words than the selected range");
+                warned_extra = 1;
+            }
+            continue;
+        }
+        sv4_t converted;
+        if (!llg_memory_convert_word(filename, &token, elem_width, elem_signed,
+                                     two_state, enum_values, enum_count,
+                                     &warned_unknown, &converted)) {
+            terminated = 1;
+            break;
+        }
+        llg_assoc_set_integral(array, current, converted);
+        sv4_destroy(&converted);
+        if (has_finish && sv4_same(current, last)) {
+            exhausted = 1;
+            continue;
+        }
+        sv4_t next = descending ? sv4_sub(current, one) : sv4_add(current, one);
+        llg_sv4_set_signed(&next, array->key_signed);
+        // Stepping past the index type's maximum (or minimum) wraps; the
+        // following words have no index (S27-D8 for fixed memories).
+        if (descending ? llg_assoc_memory_less(current, next)
+                       : llg_assoc_memory_less(next, current)) {
+            exhausted = 1;
+            sv4_destroy(&next);
+        } else {
+            sv4_replace(&current, next);
+        }
+    }
+    if (has_finish && !saw_address && !exhausted && !terminated && !ferror(stream)) {
+        llg_memory_warning(filename, "memory file contains too few words for the selected range");
+    }
+    if (ferror(stream)) llg_memory_error(filename, "read failed");
+    sv4_destroy(&token.value);
+    sv4_destroy(&one);
+    sv4_destroy(&first);
+    sv4_destroy(&last);
+    sv4_destroy(&current);
+    fclose(stream);
+    free(filename);
+}
+
+// The minimal lowercase hexadecimal digits of a key's bits (two's
+// complement for a negative signed key).
+static void llg_assoc_memory_format_key(sv4_t key, char* digits, size_t capacity) {
+    sv4_t bits = key;
+    llg_sv4_set_signed(&bits, 0);
+    sv4_format('h', bits, digits, capacity);
+    size_t skip = 0;
+    while (digits[skip] == '0' && digits[skip + 1] != 0) ++skip;
+    if (skip) memmove(digits, digits + skip, strlen(digits + skip) + 1u);
+}
+
+// Dump (S27-D17): the existing entries in index order, each preceded by its
+// own `@` address (21.5.3); start and finish select an inclusive index range
+// and its direction.
+static void llg_assoc_memory_write(llg_string_t path, const llg_assoc_t* array,
+                                   uint32_t elem_width, sv4_t start, sv4_t finish,
+                                   int has_start, int has_finish, int radix) {
+    char* requested = llg_memory_path_copy(path);
+    char* filename = llg_output_path(requested);
+    free(requested);
+    sv4_t first, last;
+    if (!llg_assoc_memory_bounds(filename, array, start, finish, has_start,
+                                 has_finish, &first, &last)) {
+        free(filename);
+        return;
+    }
+    FILE* stream = fopen(filename, "w");
+    if (!stream) {
+        llg_memory_warning(filename, "open for writing failed: %s", strerror(errno));
+        sv4_destroy(&first);
+        sv4_destroy(&last);
+        free(filename);
+        return;
+    }
+    int descending = has_finish && llg_assoc_memory_less(last, first);
+    size_t key_capacity = (size_t)array->key_width + 2u;
+    size_t word_capacity = (size_t)elem_width + 2u;
+    char* key_digits = (char*)llg_checked_malloc(key_capacity, 1, "memory file address");
+    char* digits = (char*)llg_checked_malloc(word_capacity, 1, "memory file word");
+    char conversion = radix == 2 ? 'b' : 'h';
+    for (size_t step = 0; step < array->size; ++step) {
+        const llg_assoc_entry_t* entry =
+            &array->entries[descending ? array->size - 1u - step : step];
+        sv4_t key = entry->integral_key;
+        if (has_finish ? !llg_assoc_memory_in_range(key, first, last)
+                       : has_start && llg_assoc_memory_less(key, first)) {
+            continue;
+        }
+        llg_assoc_memory_format_key(key, key_digits, key_capacity);
+        sv4_format(conversion, entry->value, digits, word_capacity);
+        if (fprintf(stream, "@%s\n%s\n", key_digits, digits) < 0) {
+            llg_memory_error(filename, "write failed");
+            break;
+        }
+    }
+    free(key_digits);
+    free(digits);
+    if (fclose(stream) != 0) llg_memory_error(filename, "close after writing failed");
+    sv4_destroy(&first);
+    sv4_destroy(&last);
+    free(filename);
+}
+
+void llg_assoc_memory_read_view(llg_string_t path, struct llg_assoc_t* memory, uint64_t total,
+                                uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                                const int32_t* dims, int n_dims, const uint64_t* strides,
+                                uint64_t origin, uint64_t view_total, sv4_t start,
+                                sv4_t finish, int has_start, int has_finish,
+                                int addressing_policy, const sv4_t* enum_values,
+                                uint32_t enum_count, int radix) {
+    (void)total; (void)dims; (void)n_dims; (void)strides; (void)origin;
+    (void)view_total; (void)addressing_policy;
+    llg_assoc_memory_read(path, memory, elem_width, elem_signed, two_state, start,
+                          finish, has_start, has_finish, enum_values, enum_count,
+                          radix);
+}
+
+void llg_assoc_memory_write_view(llg_string_t path, struct llg_assoc_t* memory, uint64_t total,
+                                 uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                                 const int32_t* dims, int n_dims, const uint64_t* strides,
+                                 uint64_t origin, uint64_t view_total, sv4_t start,
+                                 sv4_t finish, int has_start, int has_finish,
+                                 int addressing_policy, const sv4_t* enum_values,
+                                 uint32_t enum_count, int radix) {
+    (void)total; (void)elem_signed; (void)two_state; (void)dims; (void)n_dims;
+    (void)strides; (void)origin; (void)view_total; (void)addressing_policy;
+    (void)enum_values; (void)enum_count;
+    llg_assoc_memory_write(path, memory, elem_width, start, finish, has_start,
+                           has_finish, radix);
+}

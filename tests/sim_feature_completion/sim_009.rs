@@ -168,6 +168,13 @@ fn fork_visible_array_elements_are_ref_actuals() {
 }
 
 #[test]
+fn fork_visible_array_elements_are_waited_on_in_branches() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_009/fork_visible_element_waits.out");
+    sim_cli::run_case_backend_parity(SUITE, "fork_visible_element_waits", expected, &[], &[]);
+}
+
+#[test]
 fn waited_record_refs_to_subroutine_records_are_explicit() {
     sim_cli::reject_case(
         SUITE,
