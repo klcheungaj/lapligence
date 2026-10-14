@@ -414,6 +414,28 @@ fn resizable_slices_address_elements_in_place() {
     );
 }
 
+// A03: integral-index associative memories load by creating or updating
+// entries and dump the existing entries in index order with `@` addresses
+// (S27-D15..D17).
+#[test]
+fn associative_memories_load_and_dump_by_index() {
+    let diagnostics = [
+        more_words("words.mem"),
+        "error: memory file `words.mem`: address jump is outside the destination memory or selected range; load terminated".to_owned(),
+        too_few_words("bits.mem"),
+    ];
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "associative",
+        &[],
+        &[],
+        &exact(
+            include_str!("../fixtures/sim/feature_completion/sim_027/associative.out"),
+            &as_strs(&diagnostics),
+        ),
+    );
+}
+
 // A03 nearest-illegal and unsupported forms are rejected before a model is
 // built.
 #[test]
@@ -436,12 +458,13 @@ fn neg_memory_names_that_are_not_variable_memories() {
 }
 
 #[test]
-fn neg_unsupported_resizable_forms() {
+fn neg_associative_memory_without_an_integral_index() {
     sim_cli::reject_case(
         SUITE,
         "neg_associative",
-        "$readmemh does not support associative arrays in `tb`",
+        "$readmemh requires an associative array with an index of integral type, not a wildcard `[*]` index (IEEE 1800-2009 21.4.1), at ",
     );
+    sim_cli::reject_case(SUITE, "neg_associative", "neg_associative.sv:6:31 in `tb`");
 }
 
 #[test]

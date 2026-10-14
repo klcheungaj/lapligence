@@ -1,0 +1,42 @@
+int[-1]=44
+int[0]=55
+int[1]=22
+int[10]=33
+int[100]=77
+int.mem:
+  @ffffffff
+  44
+  @0
+  55
+  @1
+  22
+  @a
+  33
+  @64
+  77
+byte[10]=33
+byte[254]=11
+byte[255]=44
+byte.mem 255..0:
+  @ff
+  44
+  @fe
+  11
+  @a
+  33
+color[4]=011
+color[5]=022
+wide.mem:
+  @10000000000000000
+  05
+local[3]=1x01
+local[4]=0z10
+local.mem from 4:
+  @4
+  0z10
+property[-2]=11
+property[-1]=44
+property[0]=55
+property[10]=33
+empty.mem:
+back 55 22 xx 33

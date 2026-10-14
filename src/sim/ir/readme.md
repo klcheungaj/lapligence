@@ -132,8 +132,11 @@ load carries the root as an lvalue (`IrMemoryImage::Target`, which the task
 writes; optimizer and effect walks treat it as read and written), a dump as a
 value. The emitter loads a stable packed cell in place and copies any other
 root, storing it back in one blocking store. `IrMemoryStorage::Container`
-names a dynamic array or queue (or a fixed class property's container) that
-is accessed in place; an empty `root_dims` means its size is read at run time.
+names a dynamic array, queue, integral-index associative array or a fixed
+class property's container, accessed in place; an empty `root_dims` means its
+size is read at run time, and a resizable container with empty `root_dims`
+and one `sliced` dimension is a constant slice the runtime checks against the
+current size. An associative array has no geometry: its addresses are keys.
 The view geometry (`origin`, `selectors`, `dims`, `strides`, `total`) is the
 one fixed-array memory views use and is validated by the same
 `validate_memory_geometry`. Module and static memories keep their existing

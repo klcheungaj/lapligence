@@ -243,6 +243,19 @@ impl Validator<'_> {
                             && task.strides.is_empty()
                             && task.origin == 0
                             && task.total == 0 => {}
+                    // A whole integral-index associative array.
+                    (
+                        IrContainerKind::Associative {
+                            key: crate::sim::ir::IrAssocKey::Integral { .. },
+                        },
+                        None,
+                    ) if task.root_dims.is_empty()
+                        && task.selectors.is_empty()
+                        && !task.sliced
+                        && task.dims.is_empty()
+                        && task.strides.is_empty()
+                        && task.origin == 0
+                        && task.total == 0 => {}
                     // A constant ascending slice; the runtime checks it
                     // against the current size.
                     (IrContainerKind::Dynamic | IrContainerKind::Queue { .. }, None)
@@ -257,7 +270,7 @@ impl Validator<'_> {
                     _ => {
                         return self.fail(
                             path,
-                            "memory container must be a fixed-size class property, dynamic array or queue",
+                            "memory container must be a fixed-size class property, dynamic array, queue or integral-index associative array",
                         )
                     }
                 }

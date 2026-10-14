@@ -1622,8 +1622,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   whitespace/comments, binary/hex digits, X/Z and `@` addresses.
   The memory may be module, package, hierarchical or static storage, a static
   or automatic subroutine or block local (also fork-shared), a `ref` formal, a
-  structure member, a fixed-size class property (instance or static), or a
-  whole dynamic array or queue at its current size, never resized (S27-D10).
+  structure member, a fixed-size class property (instance or static), a
+  whole dynamic array or queue at its current size, never resized (S27-D10),
+  a constant slice of one checked against that size (S27-D14), or an
+  associative array with an integral index (S27-D15/D16: entries created or
+  updated at each address, addresses cast to the index type, index 0 by
+  default; a wildcard index is rejected, S27-D18). The memory_name is
+  evaluated once per call; whole variables and locals, and constant members
+  of them, load in place (S27-D13).
   Fixed packed memories may have multiple unpacked dimensions and selected
   rows/slices; runtime view selectors are captured once. Remaining dimensions
   walk low-to-high in row-major order; one-dimensional 2001 omitted ranges
@@ -1655,14 +1661,17 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   (S27-D4, an llg reading kept as a `q02_enum_*` characterization in
   `sim_undefined_behavior`). Sparse addressed 2009 files omit the no-address
   short-file warning; 2001 count warnings remain, including excess data from
-  repeated in-range addresses. Integral-key associative memories and slices
-  of dynamic arrays or queues are legal under SV §21.4.1 but unsupported.
+  repeated in-range addresses. Slices need constant bounds (a variable
+  position, legal under SV §7.4.6, and a queue slice ending at `$` are
+  rejected), rows of dynamic arrays of unpacked arrays are rejected as load
+  targets, and multidimensional class-property memories remain under SIM-011.
   Real/non-packed words and fully indexed scalar targets are outside the
   memory-load argument contract; string-key associative memories are prohibited.
 - 🟦 **Memory writers** — `$writememh/$writememb` emit consumable four-state words
   from the same storage forms and views in low-to-high row-major order without
   `@` addresses (S27-D11); a range outside the memory is rejected before the
-  file is opened (S27-D12). The same element/view restrictions apply; writers
+  file is opened (S27-D12). Associative arrays dump their existing entries in
+  index order, each word after its own `@` address (S27-D17). The same element/view restrictions apply; writers
   reject in 2001 mode. SV §21.5 **[SV-2005]**.
 
 - ❌ **String-sourced memory loading** — `$sreadmemb/$sreadmemh` appear in the

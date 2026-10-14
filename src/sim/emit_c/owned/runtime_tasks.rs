@@ -149,15 +149,13 @@ impl Frame<'_, '_> {
                 (runtime, memory, cells)
             }
             IrMemoryStorage::Container(container) => {
-                let queue = matches!(
-                    self.ctx.model.containers[*container].kind,
-                    IrContainerKind::Queue { .. }
-                );
-                let runtime = match (queue, task.write) {
-                    (false, false) => "llg_dyn_memory_read_view",
-                    (false, true) => "llg_dyn_memory_write_view",
-                    (true, false) => "llg_queue_memory_read_view",
-                    (true, true) => "llg_queue_memory_write_view",
+                let runtime = match (&self.ctx.model.containers[*container].kind, task.write) {
+                    (IrContainerKind::Dynamic, false) => "llg_dyn_memory_read_view",
+                    (IrContainerKind::Dynamic, true) => "llg_dyn_memory_write_view",
+                    (IrContainerKind::Queue { .. }, false) => "llg_queue_memory_read_view",
+                    (IrContainerKind::Queue { .. }, true) => "llg_queue_memory_write_view",
+                    (IrContainerKind::Associative { .. }, false) => "llg_assoc_memory_read_view",
+                    (IrContainerKind::Associative { .. }, true) => "llg_assoc_memory_write_view",
                 };
                 let memory = format!("&{}", self.container_name(*container)?);
                 // Zero cells: the runtime takes the extent from the current size.

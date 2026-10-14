@@ -1474,6 +1474,11 @@ LLG_CONTAINER_MEMORY_DECL(llg_dyn_memory_read_view, struct llg_dyn_array_t)
 LLG_CONTAINER_MEMORY_DECL(llg_dyn_memory_write_view, struct llg_dyn_array_t)
 LLG_CONTAINER_MEMORY_DECL(llg_queue_memory_read_view, struct llg_queue_t)
 LLG_CONTAINER_MEMORY_DECL(llg_queue_memory_write_view, struct llg_queue_t)
+// Associative entry points take an integral-index array; only the path,
+// element, start/finish, enum and radix arguments apply (IEEE 1800-2009
+// 21.4.1, 21.5.3; decisions S27-D15..D17).
+LLG_CONTAINER_MEMORY_DECL(llg_assoc_memory_read_view, struct llg_assoc_t)
+LLG_CONTAINER_MEMORY_DECL(llg_assoc_memory_write_view, struct llg_assoc_t)
 #undef LLG_CONTAINER_MEMORY_DECL
 
 // ── File input ─────────────────────────────────────────────────────────────

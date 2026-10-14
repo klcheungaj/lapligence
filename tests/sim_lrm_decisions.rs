@@ -1056,3 +1056,41 @@ fn s27_d14_resizable_slice_outside_size() {
         include_str!("fixtures/sim/lrm_decisions/S27-D14_resizable_slice_outside_size.out"),
     );
 }
+
+#[test]
+fn s27_d15_associative_load_entries() {
+    run_decision(
+        "S27-D15_associative_load_entries",
+        include_str!("fixtures/sim/lrm_decisions/S27-D15_associative_load_entries.out"),
+    );
+}
+
+#[test]
+fn s27_d16_associative_address_cast() {
+    run_decision(
+        "S27-D16_associative_address_cast",
+        include_str!("fixtures/sim/lrm_decisions/S27-D16_associative_address_cast.out"),
+    );
+}
+
+#[test]
+fn s27_d17_associative_dump_addresses() {
+    run_decision(
+        "S27-D17_associative_dump_addresses",
+        include_str!("fixtures/sim/lrm_decisions/S27-D17_associative_dump_addresses.out"),
+    );
+}
+
+#[test]
+fn s27_d18_associative_wildcard_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/S27-D18_associative_wildcard_rejected.out")
+            .is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "S27-D18_associative_wildcard_rejected",
+        "requires an associative array with an index of integral type, not a wildcard `[*]` index",
+    );
+}

@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::sim::ir::{
-    IrContainerElement, IrContainerKind, IrMemoryAccess, IrMemoryImage, IrMemoryStorage,
+    IrAssocKey, IrContainerElement, IrContainerKind, IrMemoryAccess, IrMemoryImage, IrMemoryStorage,
 };
 
 #[derive(Clone, Copy)]
@@ -276,11 +276,33 @@ impl EmitCtx<'_, '_> {
                 container.element.clone(),
             )
         };
-        if matches!(kind, IrContainerKind::Associative { .. }) {
-            return Err(format!(
-                "{name} does not support associative arrays in `{}`",
-                self.path
-            ));
+        // IEEE 1800-2009 21.4.1/21.5.3: an associative memory needs an index
+        // of integral type. A wildcard index has no index type to cast file
+        // addresses to (decision S27-D18).
+        match &kind {
+            IrContainerKind::Associative {
+                key: IrAssocKey::Integral { .. },
+            } => {
+                if !selectors.is_empty() || slice.is_some() {
+                    return Err(format!(
+                        "{name} requires a whole associative array, not a selection of one, in `{}`",
+                        self.path
+                    ));
+                }
+            }
+            IrContainerKind::Associative { key } => {
+                let index = match key {
+                    IrAssocKey::Wildcard => "a wildcard `[*]` index",
+                    IrAssocKey::String => "a string index",
+                    IrAssocKey::Integral { .. } => unreachable!(),
+                };
+                return Err(format!(
+                    "{name} requires an associative array with an index of integral type, not {index} (IEEE 1800-2009 21.4.1), at {} in `{}`",
+                    self.cg.source_location(args[1]),
+                    self.path
+                ));
+            }
+            IrContainerKind::Dynamic | IrContainerKind::Queue { .. } => {}
         }
         let packed_elements = || {
             format!(

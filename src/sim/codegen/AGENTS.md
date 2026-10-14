@@ -589,7 +589,9 @@ same recursive descriptors.
 Memory views evaluate each dynamic selector once, retaining static strides and HDL
 bounds; invalid views fail before writes. `statements/memory_tasks.rs` lowers
 `$readmem*`/`$writemem*`: memories with model array storage keep the
-fixed-array call; dynamic arrays, queues and fixed class properties use
+fixed-array call; dynamic arrays and queues (whole or a constant slice
+checked at run time), integral-index associative arrays (a wildcard index
+rejects with its location) and fixed class properties use
 `IrMemoryStorage::Container`; every other variable memory (subroutine and
 block locals, `ref` formals, structure members) is a packed image
 (`IrMemoryStorage::Image`) whose root is lowered once: as an lvalue for a load

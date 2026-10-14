@@ -537,9 +537,14 @@ index, and selected-view bounds must be checked before writes.
 on an `llg_memory_image_t`, cell 0 in the most significant bits; a published
 image is a variable's own storage, loaded in place under the `llg_ba` force
 and region rules and published once like `sig_write_ranges`) and dynamic arrays or queues
-(`llg_dyn_memory_*`/`llg_queue_memory_*`, current size, never resized; one
-contents notification after a load) through one storage abstraction, so
-parsing, addressing and range checks stay shared. Report through
+(`llg_dyn_memory_*`/`llg_queue_memory_*`, current size, never resized; a
+`total` 0 slice must lie within that size; one contents notification after a
+load) through one storage abstraction, so parsing, addressing and range checks
+stay shared. Integral-index associative arrays (`llg_assoc_memory_*`) share
+the tokenizer and word conversion but address by key: start, finish and wide
+`@` addresses are cast to the index type, each word is an
+`llg_assoc_set_integral`, and a dump writes `@key` before every entry in index
+order (S27-D15..D17). Report through
 `llg_memory_warning` (missing file, word-count mismatch, X/Z conversion, empty
 resizable array) or `llg_memory_error` (malformed token, address outside the
 task range or memory, enum value, invalid range, I/O failure); neither stops
