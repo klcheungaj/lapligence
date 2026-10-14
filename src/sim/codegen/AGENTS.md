@@ -617,8 +617,17 @@ same recursive descriptors.
 Memory views evaluate each dynamic selector once, retaining static strides and HDL
 bounds; invalid views fail before writes. `statements/memory_tasks.rs` lowers
 `$readmem*`/`$writemem*`: memories with model array storage keep the
-fixed-array call; dynamic arrays and queues (whole or a constant slice
-checked at run time), integral-index associative arrays (a wildcard index
+fixed-array call; a slice with a variable position becomes a `SliceBase`
+selector and a queue range slice with a runtime or `$` bound (or reversed
+constant bounds) a `SliceLeft`/`SliceRight` pair, resolved once when the task
+runs (S27-D19/D20); `this.<property>` names the property as the bare name
+does; dynamic arrays and queues (whole or a slice checked at run time; with
+fixed-array elements also one element through a leading `Row` selector;
+a multidimensional class property of packed words is one fixed-size container
+of all its cells in row-major order, recorded in `fixed_view_dims`: memory
+files view it like a fixed array, whole copies, equality, `%p` and nested
+positional patterns use it whole, and `reject_multidimensional_view` rejects
+its element, row and slice selects), integral-index associative arrays (a wildcard index
 rejects with its location) and fixed class properties use
 `IrMemoryStorage::Container`; every other variable memory (subroutine and
 block locals, `ref` formals, structure members) is a packed image

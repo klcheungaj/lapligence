@@ -1672,6 +1672,12 @@ impl<'a> Codegen<'a> {
                     self.kind(h)
                 ))
             }
+            // `$` inside a queue slice bound of a memory task: the queue's
+            // current last index (IEEE 1800-2009 7.10.1).
+            NodeKind::Expr(ExprKind::Unbounded) if self.queue_end.is_some() => {
+                let container = self.queue_end.unwrap_or_default();
+                self.lower_queue_index(scope_path, container, h)
+            }
             other => Err(self.unstaged_element_member(h).unwrap_or_else(|| {
                 format!("unsupported expression in `{scope_path}` (node kind {other:?})")
             })),

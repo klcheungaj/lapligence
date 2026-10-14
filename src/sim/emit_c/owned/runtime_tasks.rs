@@ -73,6 +73,7 @@ impl Frame<'_, '_> {
         self.memory_call(MemoryCall {
             runtime,
             memory,
+            rows: None,
             element,
             path,
             origin: view.origin,
@@ -95,6 +96,7 @@ impl Frame<'_, '_> {
             return Err("memory task requires a fixed packed memory view".to_owned());
         }
         let mut after = MemoryImageAfter::None;
+        let mut rows = None;
         let (runtime, memory, cells) = match &task.storage {
             IrMemoryStorage::Image(image) => {
                 let cells = task
@@ -148,6 +150,51 @@ impl Frame<'_, '_> {
                 };
                 (runtime, memory, cells)
             }
+            IrMemoryStorage::Container(container)
+                if matches!(
+                    self.ctx.model.containers[*container].element,
+                    IrContainerElement::FixedArray { .. }
+                ) =>
+            {
+                let model_container = &self.ctx.model.containers[*container];
+                let IrContainerElement::FixedArray { dimensions, .. } = &model_container.element
+                else {
+                    unreachable!("guarded by the match arm");
+                };
+                let row_cells = dimensions
+                    .iter()
+                    .try_fold(1u64, |total, (left, right)| {
+                        total.checked_mul(u64::from(left.abs_diff(*right)) + 1)
+                    })
+                    .ok_or_else(|| "memory row cell count overflows".to_owned())?;
+                let runtime = match (&model_container.kind, task.write) {
+                    (IrContainerKind::Dynamic, false) => "llg_dyn_rows_memory_read_view",
+                    (IrContainerKind::Dynamic, true) => "llg_dyn_rows_memory_write_view",
+                    (IrContainerKind::Queue { .. }, false) => "llg_queue_rows_memory_read_view",
+                    (IrContainerKind::Queue { .. }, true) => "llg_queue_rows_memory_write_view",
+                    (IrContainerKind::Associative { .. }, false) => {
+                        "llg_assoc_rows_memory_read_view"
+                    }
+                    (IrContainerKind::Associative { .. }, true) => {
+                        "llg_assoc_rows_memory_write_view"
+                    }
+                };
+                let one = task
+                    .selectors
+                    .first()
+                    .is_some_and(|row| row.kind == IrMemorySelectorKind::Row);
+                let mode = if one {
+                    "LLG_MEMORY_ROWS_ONE"
+                } else if task.sliced {
+                    "LLG_MEMORY_ROWS_SLICE"
+                } else {
+                    "LLG_MEMORY_ROWS_ALL"
+                };
+                rows = Some((mode, row_cells));
+                let memory = format!("&{}", self.container_name(*container)?);
+                // A whole container or a slice of it is sized at run time.
+                (runtime, memory, if one { row_cells } else { 0 })
+            }
             IrMemoryStorage::Container(container) => {
                 let runtime = match (&self.ctx.model.containers[*container].kind, task.write) {
                     (IrContainerKind::Dynamic, false) => "llg_dyn_memory_read_view",
@@ -165,6 +212,7 @@ impl Frame<'_, '_> {
         self.memory_call(MemoryCall {
             runtime,
             memory,
+            rows,
             element: MemoryElement {
                 cells,
                 width: task.element_width,
@@ -260,29 +308,52 @@ impl Frame<'_, '_> {
             }
             selector_values.push((selector, value));
         }
+        // A variable slice position or a runtime queue bound replaces the
+        // first view dimension's placeholder bounds (and, for a resizable
+        // array, its origin and size) when the task runs.
+        let resizable = call.element.cells == 0;
+        let mut slice_bounds = None;
+        let mut row = None;
+        let mut view_total = format!("{}ULL", call.total);
         let origin = if selector_values.is_empty() {
             format!("{}ULL", call.origin)
         } else {
             let origin = self.scalar("uint64_t", format!("{}ULL", call.origin));
+            let mut range_left = None;
             for (index, (selector, value)) in selector_values.iter().enumerate() {
-                let selected = self.declare("int64_t", "memory_selector_index", "0".to_owned());
-                let (left, right) = (selector.left, selector.right);
-                let minimum = left.min(right);
-                let maximum = left.max(right);
-                let offset = if left >= right {
-                    format!("(uint64_t)((int64_t){left} - {selected})")
-                } else {
-                    format!("(uint64_t)({selected} - (int64_t){left})")
-                };
-                let offset_name = self.name(&format!("memory_offset_{index}"));
-                let (offset_access, offset_declaration) =
-                    self.declaration_target_named("uint64_t", &offset_name);
-                self.line(format!(
-                    "if ({origin} != UINT64_MAX) {{ if (!sv4_to_index_i64({}, &{selected}) || {selected} < {minimum} || {selected} > {maximum}) {{ {origin} = UINT64_MAX; }} else {{ {offset_declaration} = {offset}; if ({offset_access} > (UINT64_MAX - {origin}) / {}ULL) {{ {origin} = UINT64_MAX; }} else {{ {origin} += {offset_access} * {}ULL; }} }} }}",
-                    value.code,
-                    selector.stride,
-                    selector.stride
-                ));
+                match selector.kind {
+                    IrMemorySelectorKind::Row => row = Some(value.code.clone()),
+                    IrMemorySelectorKind::Index => {
+                        self.memory_index_selector(&origin, index, selector, &value.code)
+                    }
+                    IrMemorySelectorKind::SliceBase { width, descending } => {
+                        let (left, right) = *call
+                            .dims
+                            .first()
+                            .ok_or_else(|| "memory slice has no view dimension".to_owned())?;
+                        let bounds = self.memory_slice_base(
+                            &origin,
+                            selector,
+                            &value.code,
+                            (width, descending),
+                            (left, right),
+                            resizable,
+                        );
+                        if resizable {
+                            view_total = self.memory_slice_total(&bounds);
+                        }
+                        slice_bounds = Some(bounds);
+                    }
+                    IrMemorySelectorKind::SliceLeft => range_left = Some(value.code.clone()),
+                    IrMemorySelectorKind::SliceRight => {
+                        let left = range_left.take().ok_or_else(|| {
+                            "memory slice right bound has no left bound".to_owned()
+                        })?;
+                        let bounds = self.memory_slice_range(&origin, &left, &value.code);
+                        view_total = self.memory_slice_total(&bounds);
+                        slice_bounds = Some(bounds);
+                    }
+                }
             }
             origin
         };
@@ -327,14 +398,16 @@ impl Frame<'_, '_> {
         let dimensions = if call.dims.is_empty() {
             "NULL".to_owned()
         } else {
-            format!(
-                "(const int32_t[]){{ {} }}",
-                call.dims
-                    .iter()
-                    .flat_map(|(left, right)| [left.to_string(), right.to_string()])
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
+            let mut bounds = call
+                .dims
+                .iter()
+                .flat_map(|(left, right)| [left.to_string(), right.to_string()])
+                .collect::<Vec<_>>();
+            if let Some((left, right)) = slice_bounds {
+                bounds[0] = left;
+                bounds[1] = right;
+            }
+            format!("(const int32_t[]){{ {} }}", bounds.join(", "))
         };
         let strides = if call.strides.is_empty() {
             "NULL".to_owned()
@@ -349,9 +422,19 @@ impl Frame<'_, '_> {
             )
         };
         let element = call.element;
-        self.line(format!("{}({}, {}, {}ULL, {}u, {}, {}, {dimensions}, {}, {strides}, {origin}, {}ULL, {first}, {last}, {}, {}, {addressing}, {enum_pointer}, {enum_count}, {radix});",
-            call.runtime, path.take_string(), call.memory, element.cells, element.width,
-            u8::from(element.signed), u8::from(element.two_state), call.dims.len(), call.total,
+        // A row-container call names its mode, row and cells per row where
+        // the other entry points take the cell count.
+        let storage = match call.rows {
+            Some((mode, row_cells)) => format!(
+                "{}, {mode}, {}, {row_cells}ULL",
+                call.memory,
+                row.as_deref().unwrap_or("(sv4_t)SV4_EMPTY")
+            ),
+            None => format!("{}, {}ULL", call.memory, element.cells),
+        };
+        self.line(format!("{}({}, {storage}, {}u, {}, {}, {dimensions}, {}, {strides}, {origin}, {view_total}, {first}, {last}, {}, {}, {addressing}, {enum_pointer}, {enum_count}, {radix});",
+            call.runtime, path.take_string(), element.width,
+            u8::from(element.signed), u8::from(element.two_state), call.dims.len(),
             u8::from(call.start.is_some()), u8::from(call.finish.is_some())));
         if let Some(enum_name) = enum_name {
             self.line(format!("sv4_destroy_array({enum_name}, {enum_count});"));
@@ -368,6 +451,122 @@ impl Frame<'_, '_> {
             self.discard(value);
         }
         Ok(())
+    }
+
+    /// Add a runtime index of a higher dimension to `origin`; an unknown or
+    /// out-of-range index makes the view invalid (`UINT64_MAX`), which the
+    /// runtime reports without writing.
+    fn memory_index_selector(
+        &mut self,
+        origin: &str,
+        index: usize,
+        selector: &IrMemorySelector,
+        value: &str,
+    ) {
+        let selected = self.declare("int64_t", "memory_selector_index", "0".to_owned());
+        let (left, right) = (selector.left, selector.right);
+        let minimum = left.min(right);
+        let maximum = left.max(right);
+        let offset = if left >= right {
+            format!("(uint64_t)((int64_t){left} - {selected})")
+        } else {
+            format!("(uint64_t)({selected} - (int64_t){left})")
+        };
+        let offset_name = self.name(&format!("memory_offset_{index}"));
+        let (offset_access, offset_declaration) =
+            self.declaration_target_named("uint64_t", &offset_name);
+        self.line(format!(
+            "if ({origin} != UINT64_MAX) {{ if (!sv4_to_index_i64({value}, &{selected}) || {selected} < {minimum} || {selected} > {maximum}) {{ {origin} = UINT64_MAX; }} else {{ {offset_declaration} = {offset}; if ({offset_access} > (UINT64_MAX - {origin}) / {}ULL) {{ {origin} = UINT64_MAX; }} else {{ {origin} += {offset_access} * {}ULL; }} }} }}",
+            selector.stride,
+            selector.stride
+        ));
+    }
+
+    /// Resolve the variable position of an indexed slice once (decision
+    /// S27-D19) and return the C names of the view's first-dimension bounds.
+    /// A fixed dimension keeps its declared direction, adds the slice offset
+    /// to `origin` and makes the view invalid when the slice is unknown or
+    /// not inside the declared range. A dynamic array or queue gets the
+    /// ascending bounds and origin, or `-1` bounds that the runtime rejects
+    /// with the size check.
+    fn memory_slice_base(
+        &mut self,
+        origin: &str,
+        selector: &IrMemorySelector,
+        value: &str,
+        (width, descending): (u32, bool),
+        placeholder: (i32, i32),
+        resizable: bool,
+    ) -> (String, String) {
+        let span = u64::from(width) - 1;
+        let slice_left = self.declare("int32_t", "memory_slice_left", placeholder.0.to_string());
+        let slice_right = self.declare("int32_t", "memory_slice_right", placeholder.1.to_string());
+        let base = self.declare("int64_t", "memory_slice_base", "0".to_owned());
+        // `low > high` marks an unknown position or one outside the 32-bit
+        // index range; a known position inside it keeps both bounds exact in
+        // 64 bits.
+        let low = self.declare("int64_t", "memory_slice_low", "1".to_owned());
+        let high = self.declare("int64_t", "memory_slice_high", "0".to_owned());
+        let first = if descending {
+            format!("{base} - {span}LL")
+        } else {
+            base.clone()
+        };
+        self.line(format!(
+            "if (sv4_to_index_i64({value}, &{base}) && {base} >= INT32_MIN && {base} <= INT32_MAX) {{ {low} = {first}; {high} = {low} + {span}LL; }}"
+        ));
+        if resizable {
+            self.line(format!(
+                "if ({low} > {high} || {low} < 0 || {high} > INT32_MAX) {{ {low} = -1; {high} = -1; }}"
+            ));
+            self.line(format!(
+                "{slice_left} = (int32_t){low}; {slice_right} = (int32_t){high}; {origin} = {low} >= 0 ? (uint64_t){low} : 0u;"
+            ));
+            return (slice_left, slice_right);
+        }
+        let (left, right) = (selector.left, selector.right);
+        let minimum = left.min(right);
+        let maximum = left.max(right);
+        let (view_left, view_right, offset) = if left >= right {
+            (&high, &low, format!("(uint64_t)((int64_t){left} - {high})"))
+        } else {
+            (&low, &high, format!("(uint64_t)({low} - (int64_t){left})"))
+        };
+        let offset_name = self.name("memory_slice_offset");
+        let (offset_access, offset_declaration) =
+            self.declaration_target_named("uint64_t", &offset_name);
+        self.line(format!(
+            "if ({origin} != UINT64_MAX) {{ if ({low} > {high} || {low} < {minimum} || {high} > {maximum}) {{ {origin} = UINT64_MAX; }} else {{ {slice_left} = (int32_t){view_left}; {slice_right} = (int32_t){view_right}; {offset_declaration} = {offset}; if ({offset_access} > (UINT64_MAX - {origin}) / {}ULL) {{ {origin} = UINT64_MAX; }} else {{ {origin} += {offset_access} * {}ULL; }} }} }}",
+            selector.stride,
+            selector.stride
+        ));
+        (slice_left, slice_right)
+    }
+
+    /// Resolve the two bounds of a queue range slice, each evaluated once in
+    /// order (decision S27-D20), into the view's ascending bounds and origin.
+    /// An unknown bound gives `-1` bounds; reversed bounds stay reversed.
+    /// The runtime rejects both against the current size.
+    fn memory_slice_range(&mut self, origin: &str, left: &str, right: &str) -> (String, String) {
+        let slice_left = self.declare("int32_t", "memory_slice_left", "-1".to_owned());
+        let slice_right = self.declare("int32_t", "memory_slice_right", "-1".to_owned());
+        let low = self.declare("int64_t", "memory_slice_low", "0".to_owned());
+        let high = self.declare("int64_t", "memory_slice_high", "0".to_owned());
+        self.line(format!(
+            "if (sv4_to_index_i64({left}, &{low}) && sv4_to_index_i64({right}, &{high}) && {low} >= 0 && {low} <= INT32_MAX && {high} >= 0 && {high} <= INT32_MAX) {{ {slice_left} = (int32_t){low}; {slice_right} = (int32_t){high}; {origin} = (uint64_t){low}; }}"
+        ));
+        (slice_left, slice_right)
+    }
+
+    /// Element count of a resizable slice whose bounds resolve at run time;
+    /// the runtime rejects an empty or invalid slice before reading it.
+    fn memory_slice_total(&mut self, (left, right): &(String, String)) -> String {
+        self.scalar(
+            "uint64_t",
+            format!(
+                "({left} >= 0 && {left} <= {right}) ? (uint64_t)((int64_t){right} - {left}) + 1u : 1u"
+            ),
+        )
     }
 
     pub(super) fn monitor_task(&mut self, statement: &IrStmt) -> Result<(), String> {
@@ -550,6 +749,8 @@ fn memory_image_constant(constant: &IrConst) -> Option<u32> {
 struct MemoryCall<'a> {
     runtime: &'static str,
     memory: String,
+    /// The row mode and cells per row of a container of fixed arrays.
+    rows: Option<(&'static str, u64)>,
     element: MemoryElement,
     path: &'a IrStringExpr,
     origin: u64,

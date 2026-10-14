@@ -24,6 +24,9 @@ impl Frame<'_, '_> {
     /// The view's first storage offset, `UINT64_MAX` when any selector is
     /// unknown or outside its dimension. Each selector is evaluated once.
     fn fixed_view_origin(&mut self, view: &IrMemoryView) -> Result<String, String> {
+        if !view.selectors.iter().all(IrMemorySelector::is_index) {
+            return Err("fixed array value views have no runtime slice selector".to_owned());
+        }
         let origin = self.scalar("uint64_t", format!("{}ULL", view.origin));
         for selector in &view.selectors {
             let value = self.expression(&selector.value)?;

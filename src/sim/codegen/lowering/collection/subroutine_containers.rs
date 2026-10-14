@@ -254,6 +254,9 @@ impl Codegen<'_> {
         if let Some(range) = self.fixed_view_ranges.get(&like).copied() {
             self.fixed_view_ranges.insert(ir, range);
         }
+        if let Some(dimensions) = self.fixed_view_dims.get(&like).cloned() {
+            self.fixed_view_dims.insert(ir, dimensions);
+        }
         self.container_types_like.insert(ir, like);
         ir
     }

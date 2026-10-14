@@ -575,6 +575,44 @@ receivers computed by element selects or calls, retained element cells for
 
 `tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`.
 
+## Cell selects inside unpacked-array container elements and multidimensional class properties (SIM-011, SIM-027)
+
+**Status:** open; SIM-027 reads and writes these storages as whole elements
+through memory file tasks, and SIM-011 stores multidimensional class
+properties of packed words.
+
+### Symptom
+
+These legal forms reject with a located diagnostic: selecting one cell, or a
+part of it, of an element that is a fixed unpacked array of a dynamic array,
+queue or associative array (`da[k][j]`, `aa[k][j] = v`, `x = q[k][j]`), and a
+row, element or slice select of a multidimensional class property in an
+expression (`o.g[i][j]`, `o.g[i]`). A whole element cannot be read into or
+assigned from an unpacked-array variable or pattern either (`row = da[k]`,
+`da[k] = row`, `aa[k] = '{...}`). The containers work as a whole (copies,
+`%p`, memory file tasks), and so do whole multidimensional class properties.
+
+### Cause
+
+Native arrays are stored as container elements (`llg_value_t` rows) or one flat
+packed container, and the expression and lvalue lowering resolve a select's
+base to a model array, a record column or a one-level container. A second
+select level, or a row of a flat property, has no element-address operand;
+the memory file tasks address the rows in place through their own runtime
+entry points instead.
+
+### Intended direction
+
+An addressed element operand (container plus key or index, then the fixed
+dimensions) shared by reads, writes and the memory tasks, so a select over a
+container of unpacked arrays and a row of a multidimensional property lower to
+the same cell address (about 42 call sites of the container element path).
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_027/neg_container_element_select.sv`
+and `tests/fixtures/sim/feature_completion/sim_011/neg_multidim_property.sv`.
+
 ## Bit-stream limits (SIM-020)
 
 **Status:** open; SIM-020 streams strings, resizable containers and records

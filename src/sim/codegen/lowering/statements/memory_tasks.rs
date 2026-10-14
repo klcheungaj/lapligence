@@ -2,7 +2,8 @@
 
 use super::*;
 use crate::sim::ir::{
-    IrAssocKey, IrContainerElement, IrContainerKind, IrMemoryAccess, IrMemoryImage, IrMemoryStorage,
+    IrAssocKey, IrContainerElement, IrContainerKind, IrMemoryAccess, IrMemoryImage,
+    IrMemorySelectorKind, IrMemoryStorage,
 };
 
 #[derive(Clone, Copy)]
@@ -119,8 +120,37 @@ impl EmitCtx<'_, '_> {
         write: bool,
     ) -> Result<IrStmt, String> {
         let target = args[1];
-        let (root, selectors, slice) = self.memory_image_base(name, target)?;
+        let (root, mut selectors, slice) = self.memory_image_base(name, target)?;
+        // An element of a dynamic array or queue of fixed arrays (`da[k]`).
+        if let Some((container, row, inner)) = self.memory_container_row(root) {
+            selectors.splice(0..0, inner);
+            return self.lower_container_rows_task(
+                name,
+                args,
+                write,
+                root,
+                container,
+                Some(row),
+                &selectors,
+                slice,
+            );
+        }
         if let Some(container) = self.cg.container_of(root) {
+            if matches!(
+                self.cg.model.containers[container.ir].element,
+                IrContainerElement::FixedArray { .. }
+            ) {
+                return self.lower_container_rows_task(
+                    name,
+                    args,
+                    write,
+                    root,
+                    container.ir,
+                    None,
+                    &selectors,
+                    slice,
+                );
+            }
             return self.lower_container_memory_task(
                 name,
                 args,
@@ -291,16 +321,7 @@ impl EmitCtx<'_, '_> {
                 }
             }
             IrContainerKind::Associative { key } => {
-                let index = match key {
-                    IrAssocKey::Wildcard => "a wildcard `[*]` index",
-                    IrAssocKey::String => "a string index",
-                    IrAssocKey::Integral { .. } => unreachable!(),
-                };
-                return Err(format!(
-                    "{name} requires an associative array with an index of integral type, not {index} (IEEE 1800-2009 21.4.1), at {} in `{}`",
-                    self.cg.source_location(args[1]),
-                    self.path
-                ));
+                return Err(self.associative_key_error(name, args, key));
             }
             IrContainerKind::Dynamic | IrContainerKind::Queue { .. } => {}
         }
@@ -351,7 +372,7 @@ impl EmitCtx<'_, '_> {
                 ));
             }
             match slice {
-                Some(slice) => self.resizable_memory_slice(name, slice)?,
+                Some(slice) => self.resizable_memory_slice(name, slice, container, &kind)?,
                 None => MemoryGeometry {
                     origin: 0,
                     selectors: Vec::new(),
@@ -395,16 +416,282 @@ impl EmitCtx<'_, '_> {
         })))
     }
 
-    /// A constant slice of a dynamic array or queue, addressed in place like a
+    /// The located rejection of a wildcard or string index, which has no
+    /// index type to cast file addresses to (decision S27-D18).
+    fn associative_key_error(&self, name: &str, args: &[NodeId], key: &IrAssocKey) -> String {
+        let index = match key {
+            IrAssocKey::Wildcard => "a wildcard `[*]` index",
+            IrAssocKey::String => "a string index",
+            IrAssocKey::Integral { .. } => unreachable!("integral indices are accepted"),
+        };
+        format!(
+            "{name} requires an associative array with an index of integral type, not {index} (IEEE 1800-2009 21.4.1), at {} in `{}`",
+            self.cg.source_location(args[1]),
+            self.path
+        )
+    }
+
+    /// The element of a dynamic array or queue of fixed arrays that `root`
+    /// selects, its index node and any further indices of the same select
+    /// (`da[k][j]` as one select), outermost first.
+    fn memory_container_row(&self, root: NodeId) -> Option<(usize, NodeId, Vec<NodeId>)> {
+        let (base, row, inner) = match self.cg.kind(root) {
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, *index, Vec::new()),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                let (row, inner) = indices.split_first()?;
+                (*base, *row, inner.to_vec())
+            }
+            _ => return None,
+        };
+        let container = self.cg.container_of_select(root, base)?.ir;
+        matches!(
+            self.cg.model.containers[container].element,
+            IrContainerElement::FixedArray { .. }
+        )
+        .then_some((container, row, inner))
+    }
+
+    /// A memory file task over a dynamic array or queue whose elements are
+    /// fixed arrays of packed words, addressed in place: one element `row`
+    /// (with any further selection inside it), or the whole container or a
+    /// slice of it, whose outer dimension is the current size (IEEE
+    /// 1800-2009 21.4: "a partially indexed multidimensional unpacked array
+    /// that resolves to a lesser dimensioned unpacked array").
+    #[allow(clippy::too_many_arguments)]
+    fn lower_container_rows_task(
+        &mut self,
+        name: &str,
+        args: &[NodeId],
+        write: bool,
+        root: NodeId,
+        container: usize,
+        row: Option<NodeId>,
+        selectors: &[NodeId],
+        slice: Option<MemorySliceNodes>,
+    ) -> Result<IrStmt, String> {
+        let (kind, element) = {
+            let container = &self.cg.model.containers[container];
+            (container.kind.clone(), container.element.clone())
+        };
+        // An associative array of unpacked arrays is addressed by key: one
+        // element (`aa[k]`) or the whole array (S27-D22..D24).
+        let associative = match &kind {
+            IrContainerKind::Associative {
+                key: IrAssocKey::Integral { .. },
+            } => true,
+            IrContainerKind::Associative { key } => {
+                return Err(self.associative_key_error(name, args, key));
+            }
+            IrContainerKind::Dynamic | IrContainerKind::Queue { .. } => false,
+        };
+        if associative && row.is_none() && (!selectors.is_empty() || slice.is_some()) {
+            return Err(format!(
+                "{name} requires a whole associative array or one of its elements, not a selection of its keys, in `{}`",
+                self.path
+            ));
+        }
+        let packed_elements = || {
+            format!(
+                "{name} requires packed integral or packed-struct memory elements in `{}`",
+                self.path
+            )
+        };
+        let IrContainerElement::FixedArray {
+            dimensions,
+            element: inner,
+        } = element
+        else {
+            return Err(packed_elements());
+        };
+        let IrContainerElement::Packed {
+            width,
+            signed,
+            two_state,
+        } = *inner
+        else {
+            return Err(packed_elements());
+        };
+        // The packed element type, below the container and every fixed
+        // dimension, for enum members and the element checks.
+        let mut descriptor = self
+            .cg
+            .query_descriptor(root)
+            .cloned()
+            .ok_or_else(packed_elements)?;
+        while let TypeShape::Container { element, .. } | TypeShape::FixedArray { element, .. } =
+            descriptor.shape
+        {
+            descriptor = *element;
+        }
+        if Codegen::fixed_descriptor_width(&descriptor) != Some(width) {
+            return Err(packed_elements());
+        }
+        let operands = self.lower_memory_operands(name, args, &descriptor, write)?;
+        let row_cells = Self::memory_extent_product(name, &dimensions, &self.path)?;
+        let (root_dims, mut ir_selectors, geometry) = match row {
+            Some(row) => {
+                let row = self
+                    .cg
+                    .lower_container_top_index(&self.path, container, row)?;
+                if row.is_real() || row.width == 0 {
+                    return Err(format!(
+                        "{name} memory view selectors must be packed integral indices in `{}`",
+                        self.path
+                    ));
+                }
+                let geometry = self.memory_geometry(name, &dimensions, selectors, slice)?;
+                let row = IrMemorySelector {
+                    dimension: 0,
+                    left: 0,
+                    right: 0,
+                    stride: 1,
+                    value: row,
+                    kind: IrMemorySelectorKind::Row,
+                };
+                (dimensions.clone(), vec![row], geometry)
+            }
+            None => {
+                if !selectors.is_empty() {
+                    return Err(format!(
+                        "{name} requires a whole dynamic array or queue or a slice of one, not an element, in `{}`",
+                        self.path
+                    ));
+                }
+                let outer = match slice {
+                    Some(slice) => self.resizable_memory_slice(name, slice, container, &kind)?,
+                    None => MemoryGeometry {
+                        origin: 0,
+                        selectors: Vec::new(),
+                        sliced: false,
+                        dims: vec![(0, 0)],
+                        strides: vec![1],
+                        total: 0,
+                    },
+                };
+                let scale = |value: u64| {
+                    value.checked_mul(row_cells).ok_or_else(|| {
+                        format!("{name} memory view extent overflow in `{}`", self.path)
+                    })
+                };
+                let mut dims = outer.dims;
+                dims.extend_from_slice(&dimensions);
+                let mut strides = vec![row_cells];
+                strides.extend(Self::memory_dimension_strides(
+                    name,
+                    &dimensions,
+                    &self.path,
+                )?);
+                let geometry = MemoryGeometry {
+                    origin: scale(outer.origin)?,
+                    selectors: outer.selectors,
+                    sliced: outer.sliced,
+                    dims,
+                    strides,
+                    total: scale(outer.total)?,
+                };
+                (Vec::new(), Vec::new(), geometry)
+            }
+        };
+        self.check_memory_edition(name, dimensions.len() + 1, geometry.sliced)?;
+        ir_selectors.extend(geometry.selectors);
+        let path = self.cg.lower_string(&self.path, args[0])?;
+        Ok(IrStmt::MemoryAccess(Box::new(IrMemoryAccess {
+            write,
+            path,
+            storage: IrMemoryStorage::Container(container),
+            root_dims,
+            element_width: width,
+            signed,
+            two_state,
+            origin: geometry.origin,
+            selectors: ir_selectors,
+            sliced: geometry.sliced,
+            dims: geometry.dims,
+            strides: geometry.strides,
+            total: geometry.total,
+            radix: operands.radix,
+            addressing: operands.addressing,
+            enum_values: operands.enum_values,
+            start: operands.start,
+            finish: operands.finish,
+        })))
+    }
+
+    /// A slice of a dynamic array or queue, addressed in place like a
     /// fixed-array slice: its indices keep the container's ascending
-    /// `[0:size-1]` direction whatever the slice spelling, and the runtime
-    /// checks them against the current size (decision S27-D14).
+    /// `[0:size-1]` direction, and the runtime checks them against the
+    /// current size (decision S27-D14). Constant ascending bounds fold into
+    /// the view; a variable position (S27-D19), a queue bound that is not
+    /// constant or uses `$`, or reversed queue bounds (S27-D20) become slice
+    /// selectors that the emitter resolves once when the task runs.
     fn resizable_memory_slice(
-        &self,
+        &mut self,
         name: &str,
         slice: MemorySliceNodes,
+        container: usize,
+        kind: &IrContainerKind,
     ) -> Result<MemoryGeometry, String> {
-        let (left, right) = self.memory_slice_bounds(name, slice)?;
+        let queue = matches!(kind, IrContainerKind::Queue { .. });
+        if let Some((base, width, descending)) = self.runtime_slice_base(name, slice)? {
+            let value = self.memory_slice_bound(name, queue.then_some(container), base)?;
+            let span = i32::try_from(width - 1).map_err(|_| {
+                format!(
+                    "{name} indexed memory slice width is outside the supported index range in `{}`",
+                    self.path
+                )
+            })?;
+            return Ok(MemoryGeometry {
+                origin: 0,
+                selectors: vec![IrMemorySelector {
+                    dimension: 0,
+                    left: 0,
+                    right: 0,
+                    stride: 1,
+                    value,
+                    kind: IrMemorySelectorKind::SliceBase { width, descending },
+                }],
+                sliced: true,
+                dims: vec![(0, span)],
+                strides: vec![1],
+                total: u64::from(width),
+            });
+        }
+        let constant = match slice {
+            MemorySliceNodes::Range { left, right } if queue => self
+                .cg
+                .eval_bound_i128(left)
+                .ok()
+                .zip(self.cg.eval_bound_i128(right).ok())
+                .filter(|(left, right)| left <= right),
+            _ => Some(self.memory_slice_bounds(name, slice)?),
+        };
+        let Some((left, right)) = constant else {
+            let MemorySliceNodes::Range { left, right } = slice else {
+                unreachable!("only queue range slices resolve at run time here");
+            };
+            let mut selectors = Vec::with_capacity(2);
+            for (bound, kind) in [
+                (left, IrMemorySelectorKind::SliceLeft),
+                (right, IrMemorySelectorKind::SliceRight),
+            ] {
+                selectors.push(IrMemorySelector {
+                    dimension: 0,
+                    left: 0,
+                    right: 0,
+                    stride: 1,
+                    value: self.memory_slice_bound(name, Some(container), bound)?,
+                    kind,
+                });
+            }
+            return Ok(MemoryGeometry {
+                origin: 0,
+                selectors,
+                sliced: true,
+                dims: vec![(0, 0)],
+                strides: vec![1],
+                total: 1,
+            });
+        };
         let (low, high) = (left.min(right), left.max(right));
         let low = i32::try_from(low).ok().filter(|low| *low >= 0);
         let high = i32::try_from(high).ok();
@@ -422,6 +709,74 @@ impl EmitCtx<'_, '_> {
             strides: vec![1],
             total: u64::from(high.abs_diff(low)) + 1,
         })
+    }
+
+    /// The variable position of an indexed slice `[base +: width]` or
+    /// `[base -: width]` whose base is not constant, with its constant width
+    /// (IEEE 1800-2009 7.4.6: "The size of the part-select or slice shall be
+    /// constant, but the position can be variable."). `None` for a slice
+    /// with constant bounds.
+    fn runtime_slice_base(
+        &self,
+        name: &str,
+        slice: MemorySliceNodes,
+    ) -> Result<Option<(NodeId, u32, bool)>, String> {
+        let MemorySliceNodes::Indexed {
+            base,
+            width,
+            descending,
+        } = slice
+        else {
+            return Ok(None);
+        };
+        if self.cg.eval_bound_i128(base).is_ok() {
+            return Ok(None);
+        }
+        let width = self.cg.eval_bound_i128(width).map_err(|_| {
+            format!(
+                "{name} indexed memory slice width must be constant in `{}`",
+                self.path
+            )
+        })?;
+        let width = u32::try_from(width)
+            .ok()
+            .filter(|width| *width > 0)
+            .ok_or_else(|| {
+                format!(
+                    "{name} indexed memory slice width must be positive in `{}`",
+                    self.path
+                )
+            })?;
+        Ok(Some((base, width, descending)))
+    }
+
+    /// A runtime slice position or bound, keeping X/Z so the emitter treats
+    /// it as invalid; within a queue slice `$` is the current last index.
+    fn memory_slice_bound(
+        &mut self,
+        name: &str,
+        queue: Option<usize>,
+        node: NodeId,
+    ) -> Result<IrExpr, String> {
+        let value = match queue {
+            Some(container) if self.cg.is_unbounded_node(node) => {
+                self.cg.lower_queue_index(&self.path, container, node)
+            }
+            Some(container) => {
+                let previous = self.cg.queue_end.replace(container);
+                let value = self.cg.lower_container_index(&self.path, node);
+                self.cg.queue_end = previous;
+                value
+            }
+            None => self.cg.lower_container_index(&self.path, node),
+        }?;
+        if value.is_real() || value.width == 0 {
+            return Err(format!(
+                "{name} memory slice bounds must be packed integers in `{}`",
+                self.path
+            ));
+        }
+        Ok(value)
     }
 
     /// Element checks, start/finish bounds, enum members, radix and default
@@ -524,12 +879,17 @@ impl EmitCtx<'_, '_> {
     ) -> Result<(NodeId, Vec<NodeId>, Option<MemorySliceNodes>), String> {
         let fixed_base = |base: NodeId| {
             self.cg
-                .query_descriptor(base)
+                .query_descriptor(self.this_property(base).unwrap_or(base))
                 .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. }))
         };
         // A slice of a whole dynamic array or queue addresses it in place.
-        let sliceable_base =
-            |base: NodeId| fixed_base(base) || self.cg.container_of(base).is_some();
+        let sliceable_base = |base: NodeId| {
+            fixed_base(base)
+                || self
+                    .cg
+                    .container_of(self.this_property(base).unwrap_or(base))
+                    .is_some()
+        };
         let no_selector_after_slice = |slice: &Option<MemorySliceNodes>| {
             if slice.is_some() {
                 Err(format!(
@@ -552,19 +912,22 @@ impl EmitCtx<'_, '_> {
         };
         match self.cg.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) if fixed_base(*base) => {
-                let (root, mut selectors, slice) = self.memory_image_base(name, *base)?;
+                let base = self.receiver_select_base(node, *base);
+                let (root, mut selectors, slice) = self.memory_image_base(name, base)?;
                 no_selector_after_slice(&slice)?;
                 selectors.push(*index);
                 Ok((root, selectors, None))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if fixed_base(*base) => {
-                let (root, mut selectors, slice) = self.memory_image_base(name, *base)?;
+                let base = self.receiver_select_base(node, *base);
+                let (root, mut selectors, slice) = self.memory_image_base(name, base)?;
                 no_selector_after_slice(&slice)?;
                 selectors.extend(indices.iter().copied());
                 Ok((root, selectors, None))
             }
             NodeKind::Expr(ExprKind::PartSelect { base, left, right }) if sliceable_base(*base) => {
-                let (root, selectors, slice) = self.memory_image_base(name, *base)?;
+                let base = self.receiver_select_base(node, *base);
+                let (root, selectors, slice) = self.memory_image_base(name, base)?;
                 single_slice(&slice)?;
                 Ok((
                     root,
@@ -581,7 +944,8 @@ impl EmitCtx<'_, '_> {
                 width_expr,
                 neg,
             }) if sliceable_base(*base) => {
-                let (root, selectors, slice) = self.memory_image_base(name, *base)?;
+                let base = self.receiver_select_base(node, *base);
+                let (root, selectors, slice) = self.memory_image_base(name, base)?;
                 single_slice(&slice)?;
                 Ok((
                     root,
@@ -600,13 +964,48 @@ impl EmitCtx<'_, '_> {
                 operands,
                 ..
             }) if !operands.is_empty() => self.memory_image_base(name, operands[0]),
-            _ => Ok((node, Vec::new(), None)),
+            _ => Ok((self.this_property(node).unwrap_or(node), Vec::new(), None)),
+        }
+    }
+
+    /// The base of `select` to descend into: the frontend names only the
+    /// declaration of a class container property selected through an
+    /// explicit handle and keeps the receiver path as a child of the select
+    /// (SIM-011); that path carries the receiver-qualified container.
+    fn receiver_select_base(&self, select: NodeId, base: NodeId) -> NodeId {
+        if self.cg.receiver_containers.is_empty() {
+            return base;
+        }
+        self.cg
+            .node(select)
+            .children
+            .iter()
+            .copied()
+            .find(|child| self.cg.receiver_containers.contains_key(child))
+            .unwrap_or(base)
+    }
+
+    /// The property declaration that `this.<property>` names inside a
+    /// method: the method's own receiver, exactly as the bare property name
+    /// (IEEE 1800-2009 8.10).
+    fn this_property(&self, node: NodeId) -> Option<NodeId> {
+        let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.cg.kind(node) else {
+            return None;
+        };
+        match (parts.as_slice(), refs.as_slice()) {
+            ([this, _], [Some(receiver), Some(property)])
+                if this == "this" && self.cg.node(*receiver).name == "this" =>
+            {
+                Some(*property)
+            }
+            _ => None,
         }
     }
 
     /// Capture a fixed memory view. SystemVerilog permits constant or runtime
-    /// higher-dimension indices and a constant slice on the lowest specified
-    /// dimension. At least one unpacked dimension remains addressable.
+    /// higher-dimension indices and a slice, with a constant or variable
+    /// position, on the lowest specified dimension. At least one unpacked
+    /// dimension remains addressable.
     pub(in super::super) fn lower_memory_view(
         &mut self,
         name: &str,
@@ -652,8 +1051,10 @@ impl EmitCtx<'_, '_> {
 
     /// Selected view of a source with unpacked dimensions `source_dims`:
     /// constant selectors fold into the origin, runtime selectors are lowered
-    /// once, and an optional constant slice of the next dimension keeps the
-    /// source declaration's direction. At least one dimension remains.
+    /// once, and an optional slice of the next dimension keeps the source
+    /// declaration's direction. A slice with a variable position becomes the
+    /// last runtime selector (decision S27-D19). At least one dimension
+    /// remains.
     fn memory_geometry(
         &mut self,
         name: &str,
@@ -702,11 +1103,51 @@ impl EmitCtx<'_, '_> {
                     right,
                     stride: source_strides[dimension],
                     value,
+                    kind: IrMemorySelectorKind::Index,
                 });
             }
         }
         let sliced = slice.is_some();
-        let dims = if let Some(slice) = slice {
+        let runtime_slice = match slice {
+            Some(slice) => self.runtime_slice_base(name, slice)?,
+            None => None,
+        };
+        let dims = if let Some((base, width, descending)) = runtime_slice {
+            // The slice position is resolved when the task runs: `dims`
+            // holds the first slice of the dimension, which has the same
+            // extent, and the emitter substitutes the selected bounds.
+            let dimension = selectors.len();
+            let (left, right) = source_dims[dimension];
+            let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
+            if u64::from(width) > extent {
+                return Err(format!(
+                    "{name} indexed memory slice is wider than its dimension in `{}`",
+                    self.path
+                ));
+            }
+            let value = self.memory_slice_bound(name, None, base)?;
+            runtime_selectors.push(IrMemorySelector {
+                dimension,
+                left,
+                right,
+                stride: source_strides[dimension],
+                value,
+                kind: IrMemorySelectorKind::SliceBase { width, descending },
+            });
+            // `width` is at most the extent, so the far bound stays inside
+            // the declared range.
+            let span = i64::from(width) - 1;
+            let far = if left >= right {
+                i64::from(left) - span
+            } else {
+                i64::from(left) + span
+            };
+            let far = i32::try_from(far)
+                .map_err(|_| format!("{name} memory view offset overflow in `{}`", self.path))?;
+            let mut selected = vec![(left, far)];
+            selected.extend_from_slice(&source_dims[dimension + 1..]);
+            selected
+        } else if let Some(slice) = slice {
             let dimension = selectors.len();
             let (left, right) = source_dims[dimension];
             let (slice_left, slice_right) = self.memory_slice_bounds(name, slice)?;

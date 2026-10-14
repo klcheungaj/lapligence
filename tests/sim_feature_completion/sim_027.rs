@@ -436,6 +436,170 @@ fn associative_memories_load_and_dump_by_index() {
     );
 }
 
+// A03: associative arrays of unpacked arrays: the whole array maps an address
+// to a key and the words after it to the element's cells (S27-D22); one
+// element is created by a load once its range is valid (S27-D23) and a dump
+// of a missing or unknown key writes nothing (S27-D24); a dump of one element
+// has no `@` addresses (S27-D25).
+#[test]
+fn associative_arrays_of_unpacked_arrays_load_and_dump() {
+    let diagnostics = [
+        too_few_words("v.mem"),
+        "error: memory file `r.mem`: address jump is outside the destination memory or selected range; load terminated".to_owned(),
+        more_words("f.mem"),
+        more_words("v.mem"),
+        "error: memory file `p.mem`: selected range includes an address outside the memory"
+            .to_owned(),
+        "error: memory file `p.mem`: selected index or slice is outside the memory".to_owned(),
+        "error: memory file `miss.mem`: selected associative array element does not exist"
+            .to_owned(),
+        "error: memory file `miss.mem`: selected index or slice is outside the memory".to_owned(),
+        more_words("g.mem"),
+        too_few_words("blank.mem"),
+    ];
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "assoc_rows",
+        &[],
+        &[],
+        &exact(
+            include_str!("../fixtures/sim/feature_completion/sim_027/assoc_rows.out"),
+            &as_strs(&diagnostics),
+        ),
+    );
+}
+
+// A03: slices with a variable position on fixed arrays (module, descending,
+// a runtime row, an automatic image, a class property through `this` and a
+// handle), dynamic arrays and queues, and queue slices with runtime or `$`
+// bounds. Positions and bounds are resolved once when the task runs; a slice
+// outside the array, with an unknown position or with reversed queue bounds
+// loads nothing and writes no file (S27-D19, S27-D20).
+#[test]
+fn variable_position_slices_resolve_when_the_task_runs() {
+    let outside = |file: &str| {
+        format!("error: memory file `{file}`: selected index or slice is outside the memory")
+    };
+    let reversed = |file: &str| {
+        format!(
+            "error: memory file `{file}`: slice left bound exceeds its right bound; the slice selects no element"
+        )
+    };
+    let diagnostics = [
+        too_few_words("two.mem"),
+        outside("two.mem"),
+        outside("two.mem"),
+        outside("two.mem"),
+        "error: memory file `two.mem`: slice is outside the current size of the array".to_owned(),
+        reversed("two.mem"),
+        reversed("dump.mem"),
+        outside("dump.mem"),
+    ];
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "variable_slices",
+        &[],
+        &[],
+        &exact(
+            include_str!("../fixtures/sim/feature_completion/sim_027/variable_slices.out"),
+            &as_strs(&diagnostics),
+        ),
+    );
+}
+
+// A03: dynamic arrays and queues whose elements are unpacked arrays: one
+// element (also with a further index or slice inside it, a runtime index
+// evaluated once, `$`), the whole array and slices of its elements, a class
+// property through a handle; an invalid element or slice changes nothing and
+// an empty array loads nothing (S27-D21, S27-D19, S27-D10).
+#[test]
+fn rows_of_dynamic_arrays_and_queues_of_unpacked_arrays() {
+    let outside = |file: &str| {
+        format!("error: memory file `{file}`: selected index or slice is outside the memory")
+    };
+    let diagnostics = [
+        more_words("four.mem"),
+        more_words("four.mem"),
+        more_words("four.mem"),
+        more_words("four.mem"),
+        outside("four.mem"),
+        outside("four.mem"),
+        "error: memory file `four.mem`: slice is outside the current size of the array".to_owned(),
+        outside("dump.mem"),
+        "warning: memory file `four.mem`: destination memory has no elements; nothing loaded"
+            .to_owned(),
+    ];
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "container_rows",
+        &[],
+        &[],
+        &exact(
+            include_str!("../fixtures/sim/feature_completion/sim_027/container_rows.out"),
+            &as_strs(&diagnostics),
+        ),
+    );
+}
+
+// A03: multidimensional class properties as memory_name: whole, rows,
+// a variable row slice, through a handle, `this.` and a static property; also
+// copied whole, compared, printed and assigned a nested pattern.
+#[test]
+fn multidimensional_class_properties_load_and_dump() {
+    let diagnostics = [
+        more_words("words.mem"),
+        more_words("words.mem"),
+        more_words("words.mem"),
+        "error: memory file `words.mem`: selected index or slice is outside the memory".to_owned(),
+    ];
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "class_multidim",
+        &[],
+        &[],
+        &exact(
+            include_str!("../fixtures/sim/feature_completion/sim_027/class_multidim.out"),
+            &as_strs(&diagnostics),
+        ),
+    );
+}
+
+// A03: a memory_name reached through a null class handle raises the standard
+// null dereference error before the file is opened or a word is stored.
+#[test]
+fn null_class_handles_stop_before_the_memory_file_task() {
+    let stopped = |location: &'static str| {
+        move |label: &str, output: &Output| {
+            assert!(!output.status.success(), "{label}: the run must fail");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert_eq!(stdout.lines().collect::<Vec<_>>(), ["before"], "{label}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains(&format!(
+                    "llg: null class handle access: property access at {location}"
+                )),
+                "{label}: {stderr}"
+            );
+            assert!(memory_diagnostics(output).is_empty(), "{label}: {stderr}");
+        }
+    };
+    let files = [("dump.mem", "55\n"), ("words.mem", "11\n")];
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "null_handle",
+        &[],
+        &files,
+        &stopped("tb:11:28"),
+    );
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "null_handle_load",
+        &[],
+        &files,
+        &stopped("tb:10:28"),
+    );
+}
+
 // A03 nearest-illegal and unsupported forms are rejected before a model is
 // built.
 #[test]
@@ -454,6 +618,31 @@ fn neg_memory_names_that_are_not_variable_memories() {
         SUITE,
         "neg_const_ref",
         "cannot assign to read-only variable 'mem'",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_associative_rows",
+        "$readmemh requires an associative array with an index of integral type, not a string index (IEEE 1800-2009 21.4.1), at ",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_associative_rows_wildcard",
+        "$readmemh requires an associative array with an index of integral type, not a wildcard `[*]` index (IEEE 1800-2009 21.4.1), at ",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_associative_rows_slice",
+        "cannot take a slice of an associative array",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_container_element_select",
+        "multidimensional resizable container access in `tb` is not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_wide_variable_slice",
+        "$readmemh indexed memory slice is wider than its dimension in `tb`",
     );
 }
 

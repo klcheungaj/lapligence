@@ -135,8 +135,24 @@ root, storing it back in one blocking store. `IrMemoryStorage::Container`
 names a dynamic array, queue, integral-index associative array or a fixed
 class property's container, accessed in place; an empty `root_dims` means its
 size is read at run time, and a resizable container with empty `root_dims`
-and one `sliced` dimension is a constant slice the runtime checks against the
-current size. An associative array has no geometry: its addresses are keys.
+and one `sliced` dimension is a slice the runtime checks against the current
+size. `IrMemorySelector::kind` marks a selector that positions the view's
+slice instead of indexing a higher dimension: a variable `[i +: w]`/`[i -: w]`
+position (`SliceBase`, after every index selector, with `dims` holding the
+constant-position placeholder of the same extent) or the two runtime bounds
+of a queue range slice (`SliceLeft`/`SliceRight`, `$` lowered to the last
+index). The emitter resolves them once when the task runs (decisions
+S27-D19/D20); other fixed-array views carry only `Index` selectors. A
+container whose elements are fixed arrays of packed words takes one element
+through a leading `Row` selector (`root_dims` are the element's dimensions and
+the remaining selectors view inside it, `IrMemoryAccess::view_selectors`), or
+the whole container or a slice of its elements with empty `root_dims`: the
+first view dimension is the outer one (`[0:0]` placeholder when whole),
+`row_cells` cells apart, followed by the element dimensions (S27-D21). An integral-index associative array of packed words has no
+geometry: its addresses are keys. When its elements are fixed arrays it takes
+the same `Row` selector (the key) for one element, or the whole-container
+view with the `[0:0]` placeholder first dimension, and never a slice
+(S27-D22..D25).
 The view geometry (`origin`, `selectors`, `dims`, `strides`, `total`) is the
 one fixed-array memory views use and is validated by the same
 `validate_memory_geometry`. Module and static memories keep their existing

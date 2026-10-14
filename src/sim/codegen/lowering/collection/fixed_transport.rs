@@ -375,6 +375,7 @@ impl Codegen<'_> {
                 right: dims[dimension].1,
                 stride: strides[dimension],
                 value: value.clone(),
+                kind: crate::sim::ir::IrMemorySelectorKind::Index,
             })
             .collect();
         let selected = coordinates.len();

@@ -1459,6 +1459,10 @@ struct Codegen<'a> {
     /// stored as fixed-size container views, keyed by container index. Their
     /// HDL indices are normalized to storage positions at every access.
     fixed_view_ranges: HashMap<usize, (i32, i32)>,
+    /// Declared dimensions of multidimensional fixed class properties of
+    /// packed words, stored as fixed-size containers of all their cells in
+    /// declaration (row-major) order, keyed by container index.
+    fixed_view_dims: HashMap<usize, Vec<(i32, i32)>>,
     /// Resizable-container declaration patterns are lowered after all
     /// functions and processes exist, so nonconstant elements use the same
     /// expression/capture machinery as procedural assignments.
@@ -1467,6 +1471,9 @@ struct Codegen<'a> {
     /// (`h.q`), keyed by the selecting path expression: receiver-qualified
     /// aliases of the property's container (SIM-011).
     receiver_containers: HashMap<NodeId, usize>,
+    /// The queue whose last index `$` stands for while a memory-task slice
+    /// bound is lowered (IEEE 1800-2009 7.10.1); `None` elsewhere.
+    queue_end: Option<usize>,
     /// Native record class properties by declaration: their per-object
     /// value (SIM-011).
     class_native_fields: HashMap<NodeId, usize>,
@@ -1835,8 +1842,10 @@ impl<'a> Codegen<'a> {
             array_globals: HashMap::new(),
             container_globals: HashMap::new(),
             fixed_view_ranges: HashMap::new(),
+            fixed_view_dims: HashMap::new(),
             container_initializers: Vec::new(),
             receiver_containers: HashMap::new(),
+            queue_end: None,
             class_native_fields: HashMap::new(),
             pattern_classes_started: false,
             receiver_native_values: HashMap::new(),

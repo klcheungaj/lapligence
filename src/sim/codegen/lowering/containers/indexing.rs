@@ -8,7 +8,7 @@ impl<'a> Codegen<'a> {
         ir_to_storage(value, 32, true, true)
     }
 
-    fn is_unbounded_node(&self, node: NodeId) -> bool {
+    pub(in super::super) fn is_unbounded_node(&self, node: NodeId) -> bool {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Unbounded) => true,
             NodeKind::Expr(ExprKind::Ref {
@@ -246,6 +246,23 @@ impl<'a> Codegen<'a> {
             _ => Err(format!(
                 "associative traversal key in `{path}` must be a whole packed variable"
             )),
+        }
+    }
+
+    /// A multidimensional class property is addressed whole (copies,
+    /// patterns, `%p`) or by memory file tasks; its rows, elements and
+    /// slices are not lowered, so selecting one is a located error rather
+    /// than an access to the wrong cell.
+    pub(in super::super) fn reject_multidimensional_view(
+        &self,
+        path: &str,
+        container: usize,
+    ) -> Result<(), String> {
+        match self.fixed_view_dims.get(&container) {
+            Some(_) => Err(format!(
+                "selecting a row, element or slice of a multidimensional class property in `{path}` is not supported; it is accessed whole or through memory file tasks (SIM-011)"
+            )),
+            None => Ok(()),
         }
     }
 
@@ -584,6 +601,7 @@ impl<'a> Codegen<'a> {
         container: usize,
         node: NodeId,
     ) -> Result<IrExpr, String> {
+        self.reject_multidimensional_view(path, container)?;
         if matches!(
             self.model.containers[container].kind,
             IrContainerKind::Queue { .. }
@@ -642,6 +660,7 @@ impl Codegen<'_> {
         else {
             return Ok(None);
         };
+        self.reject_multidimensional_view(path, container)?;
         let Some((left, right)) = self.fixed_view_ranges.get(&container).copied() else {
             return Ok(None);
         };

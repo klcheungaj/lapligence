@@ -142,7 +142,9 @@ pub struct IrMemoryView {
     pub total: u64,
 }
 
-/// One runtime-selected higher dimension of a fixed memory view.
+/// One runtime selection of a memory view: an index of a higher dimension,
+/// or the variable position or a bound of the view's slice (see
+/// [`IrMemorySelectorKind`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrMemorySelector {
     pub dimension: usize,
@@ -150,6 +152,52 @@ pub struct IrMemorySelector {
     pub right: i32,
     pub stride: u64,
     pub value: IrExpr,
+    pub kind: IrMemorySelectorKind,
+}
+
+/// What a [`IrMemorySelector`] value selects. Slice selectors follow every
+/// index selector and select the view's first dimension, whose bounds in
+/// `dims` are then the constant-position placeholder of the same extent; the
+/// emitter replaces them with the runtime bounds (decisions S27-D19/D20).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrMemorySelectorKind {
+    /// One index of higher dimension `dimension`, inside `left`..`right`.
+    Index,
+    /// The variable position of an indexed slice `[value +: width]` or
+    /// `[value -: width]` (`descending`) of `dimension` (IEEE 1800-2009
+    /// 7.4.6). A fixed dimension keeps its declared bounds in `left` and
+    /// `right`; a dynamic array or queue checks the slice against its
+    /// current size when the task runs.
+    SliceBase { width: u32, descending: bool },
+    /// The left bound of a queue range slice `[value:right]` whose bounds
+    /// need not be constant (7.10.1); the next selector is its right bound.
+    SliceLeft,
+    /// The right bound of that queue range slice.
+    SliceRight,
+    /// The element of a dynamic array or queue whose elements are fixed
+    /// arrays (`da[k]`): the first selector of an `IrMemoryStorage::Container`
+    /// task whose `root_dims` are the element's dimensions. An unknown or
+    /// missing element is an error when the task runs. Its `dimension`,
+    /// `left`, `right` and `stride` are unused (zero, zero, zero, one).
+    Row,
+}
+
+impl IrMemorySelector {
+    /// Whether this selector positions the view's slice rather than
+    /// selecting an index or a container element.
+    pub fn is_slice(&self) -> bool {
+        matches!(
+            self.kind,
+            IrMemorySelectorKind::SliceBase { .. }
+                | IrMemorySelectorKind::SliceLeft
+                | IrMemorySelectorKind::SliceRight
+        )
+    }
+
+    /// Whether this selector indexes a higher dimension of a fixed view.
+    pub fn is_index(&self) -> bool {
+        matches!(self.kind, IrMemorySelectorKind::Index)
+    }
 }
 
 /// Storage a [`IrMemoryAccess`] addresses, cell by cell in declaration order.
@@ -225,6 +273,15 @@ impl IrMemoryAccess {
             .try_fold(1u64, |total, (left, right)| {
                 total.checked_mul((i64::from(*left) - i64::from(*right)).unsigned_abs() + 1)
             })
+    }
+
+    /// The selectors of the view inside `root_dims`: every selector but a
+    /// leading container [`IrMemorySelectorKind::Row`].
+    pub fn view_selectors(&self) -> &[IrMemorySelector] {
+        match self.selectors.split_first() {
+            Some((first, rest)) if first.kind == IrMemorySelectorKind::Row => rest,
+            _ => &self.selectors,
+        }
     }
 
     /// The image target of a load, which the task writes.

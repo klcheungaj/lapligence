@@ -1488,6 +1488,7 @@ fn descriptor_value_assignment_requires_matching_descriptor_shape() {
             right: 1,
             stride: 65_537,
             value: packed_const(1, 32),
+            kind: crate::sim::ir::IrMemorySelectorKind::Index,
         }],
         sliced: false,
         dims: vec![(0, 65536)],
@@ -2122,4 +2123,195 @@ fn clocking_drive_cycle_counts_and_instance_dispatch_are_checked() {
             .contains("unknown virtual interface descriptor"),
         "{error:?}"
     );
+}
+
+#[test]
+fn memory_slice_position_selector_must_match_its_view() {
+    use crate::sim::ir::{IrMemoryAddressingPolicy, IrMemoryRadix, IrMemorySelectorKind};
+    let mut model = valid_model();
+    model.arrays.push(IrArray {
+        activation: false,
+        descriptor: false,
+        net: None,
+        net_elements: Vec::new(),
+        element_default: None,
+        element_uninitialized: None,
+        c_name: "mem".to_string(),
+        hdl_name: "mem".to_string(),
+        elem_width: 8,
+        signed: false,
+        two_state: false,
+        real: false,
+        shortreal: false,
+        dims: vec![(2, 3), (7, 0)],
+        total: 16,
+    });
+    let index = IrMemorySelector {
+        dimension: 0,
+        left: 2,
+        right: 3,
+        stride: 8,
+        value: packed_const(1, 32),
+        kind: IrMemorySelectorKind::Index,
+    };
+    let slice = |width: u32| IrMemorySelector {
+        dimension: 1,
+        left: 7,
+        right: 0,
+        stride: 1,
+        value: packed_const(4, 32),
+        kind: IrMemorySelectorKind::SliceBase {
+            width,
+            descending: false,
+        },
+    };
+    // `mem[r][p +: 3]`: the placeholder is the first three-wide slice of the
+    // descending dimension.
+    let view = |selectors: Vec<IrMemorySelector>, sliced: bool| IrMemoryView {
+        array: 0,
+        origin: 0,
+        selectors,
+        sliced,
+        dims: vec![(7, 5)],
+        strides: vec![1],
+        total: 3,
+    };
+    let task = |view: IrMemoryView| IrStmt::Memory {
+        write: false,
+        path: IrStringExpr::Literal(b"words.mem".to_vec()),
+        view: Box::new(view),
+        radix: IrMemoryRadix::Hex,
+        addressing: IrMemoryAddressingPolicy::SystemVerilog2009,
+        enum_values: None,
+        start: None,
+        finish: None,
+    };
+    model
+        .validate_stmt(&task(view(vec![index.clone(), slice(3)], true)), None)
+        .expect("a row index followed by a slice position");
+    for (selectors, sliced) in [
+        (vec![index.clone(), slice(4)], true),
+        (vec![index.clone(), slice(3)], false),
+        (vec![slice(3), index.clone()], true),
+    ] {
+        let error = model
+            .validate_stmt(&task(view(selectors, sliced)), None)
+            .expect_err("a slice position must be the last selector of a sliced view");
+        assert!(error.detail().contains("memory"), "{}", error.detail());
+    }
+    let mut range = slice(3);
+    range.kind = IrMemorySelectorKind::SliceLeft;
+    model
+        .validate_stmt(&task(view(vec![index, range], true)), None)
+        .expect_err("a fixed view has no runtime range slice");
+}
+
+#[test]
+fn memory_rows_of_an_associative_array_are_whole_or_one_element() {
+    use crate::sim::ir::{
+        IrAssocKey, IrContainer, IrContainerElement, IrContainerKind, IrMemoryAccess,
+        IrMemoryAddressingPolicy, IrMemoryRadix, IrMemorySelector, IrMemorySelectorKind,
+        IrMemoryStorage,
+    };
+    let mut model = valid_model();
+    let element = IrContainerElement::FixedArray {
+        dimensions: vec![(0, 3)],
+        element: Box::new(IrContainerElement::Packed {
+            width: 8,
+            signed: false,
+            two_state: true,
+        }),
+    };
+    let container = |c_name: &str, key: IrAssocKey| IrContainer {
+        c_name: c_name.to_string(),
+        element: element.clone(),
+        kind: IrContainerKind::Associative { key },
+        initial_size: None,
+        activation: false,
+        class_field: None,
+        receiver: None,
+    };
+    let integral = IrAssocKey::Integral {
+        width: 32,
+        signed: true,
+        two_state: true,
+    };
+    model.containers.push(container("aa", integral));
+    model
+        .containers
+        .push(container("by_string", IrAssocKey::String));
+    let task = |storage: usize,
+                root_dims: Vec<(i32, i32)>,
+                selectors: Vec<IrMemorySelector>,
+                sliced: bool,
+                dims: Vec<(i32, i32)>,
+                strides: Vec<u64>,
+                total: u64| {
+        IrStmt::MemoryAccess(Box::new(IrMemoryAccess {
+            write: false,
+            path: IrStringExpr::Literal(b"words.mem".to_vec()),
+            storage: IrMemoryStorage::Container(storage),
+            root_dims,
+            element_width: 8,
+            signed: false,
+            two_state: true,
+            origin: 0,
+            selectors,
+            sliced,
+            dims,
+            strides,
+            total,
+            radix: IrMemoryRadix::Hex,
+            addressing: IrMemoryAddressingPolicy::SystemVerilog2009,
+            enum_values: None,
+            start: None,
+            finish: None,
+        }))
+    };
+    let selector = |kind| IrMemorySelector {
+        dimension: 0,
+        left: 0,
+        right: 0,
+        stride: 1,
+        value: packed_const(1, 32),
+        kind,
+    };
+    let whole = |storage| {
+        task(
+            storage,
+            vec![],
+            vec![],
+            false,
+            vec![(0, 0), (0, 3)],
+            vec![4, 1],
+            0,
+        )
+    };
+    model
+        .validate_stmt(&whole(0), None)
+        .expect("the whole array of an integral-index associative array");
+    model
+        .validate_stmt(
+            &task(
+                0,
+                vec![(0, 3)],
+                vec![selector(IrMemorySelectorKind::Row)],
+                false,
+                vec![(0, 3)],
+                vec![1],
+                4,
+            ),
+            None,
+        )
+        .expect("one element selected by key");
+    model
+        .validate_stmt(&whole(1), None)
+        .expect_err("a string index has no address type");
+    // Keys cannot be sliced: a sliced view of the whole array is invalid.
+    model
+        .validate_stmt(
+            &task(0, vec![], vec![], true, vec![(1, 2), (0, 3)], vec![4, 1], 8),
+            None,
+        )
+        .expect_err("an associative array is addressed whole or by one key");
 }

@@ -244,7 +244,7 @@ fn unsupported_property_layouts_reject_explicitly() {
     sim_cli::reject_case(
         SUITE,
         "neg_multidim_property",
-        "multidimensional fixed array class property `grid_c.g` is not supported (SIM-011)",
+        "selecting a row, element or slice of a multidimensional class property in `tb` is not supported; it is accessed whole or through memory file tasks (SIM-011)",
     );
     sim_cli::reject_case(
         SUITE,

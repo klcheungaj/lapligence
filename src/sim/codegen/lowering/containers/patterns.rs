@@ -15,6 +15,13 @@ impl<'a> Codegen<'a> {
                 "resizable container initializer in `{path}` is not an assignment pattern"
             ));
         };
+        if let Some(dimensions) = self.fixed_view_dims.get(&container).cloned() {
+            // A multidimensional class property: its nested positional
+            // pattern lists the cells in declaration (row-major) order.
+            let mut cells = Vec::new();
+            self.flatten_multidimensional_pattern(path, &dimensions, operands, &mut cells)?;
+            return self.lower_container_source_values(path, container, cells);
+        }
         let kind = self.model.containers[container].kind.clone();
         match kind {
             IrContainerKind::Dynamic | IrContainerKind::Queue { .. } => {
@@ -24,6 +31,47 @@ impl<'a> Codegen<'a> {
                 self.lower_associative_pattern(path, container, operands)
             }
         }
+    }
+
+    /// The cells of a positional pattern over `dimensions`, one nested
+    /// pattern per dimension, in row-major order (IEEE 1800-2009 10.9.1).
+    fn flatten_multidimensional_pattern(
+        &mut self,
+        path: &str,
+        dimensions: &[(i32, i32)],
+        operands: Vec<NodeId>,
+        cells: &mut Vec<NodeId>,
+    ) -> Result<(), String> {
+        let unsupported = || {
+            format!(
+                "a multidimensional class property in `{path}` takes only nested positional assignment patterns with one item per index (SIM-011)"
+            )
+        };
+        let Some(((left, right), inner)) = dimensions.split_first() else {
+            return Err(unsupported());
+        };
+        let extent = (i64::from(*left) - i64::from(*right)).unsigned_abs() + 1;
+        if u64::try_from(operands.len()).ok() != Some(extent)
+            || operands.iter().any(|operand| {
+                matches!(
+                    self.kind(*operand),
+                    NodeKind::Expr(ExprKind::TaggedPattern { .. })
+                )
+            })
+        {
+            return Err(unsupported());
+        }
+        if inner.is_empty() {
+            cells.extend(operands);
+            return Ok(());
+        }
+        for operand in operands {
+            let row = self
+                .assignment_pattern_operands(path, operand)?
+                .ok_or_else(unsupported)?;
+            self.flatten_multidimensional_pattern(path, inner, row, cells)?;
+        }
+        Ok(())
     }
 
     fn lower_sequence_pattern(

@@ -66,12 +66,12 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 0 | 17 |
 | 8. Continuous/structural | 4 | 6 | 3 | 1 | 0 | 0 | 14 |
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 0 | 7 |
-| 10. System tasks/functions | 11 | 9 | 2 | 4 | 0 | 0 | 26 |
+| 10. System tasks/functions | 12 | 8 | 2 | 4 | 0 | 0 | 26 |
 | 11. Compiler directives | 6 | 1 | 0 | 1 | 0 | 0 | 8 |
 | 12. Verification/foreign interfaces | 1 | 12 | 0 | 1 | 3 | 0 | 17 |
-| **Total** | **47** | **78** | **6** | **8** | **3** | **1** | **143** |
+| **Total** | **48** | **77** | **6** | **8** | **3** | **1** | **143** |
 
-**126 rows have some source implementation; 78 of those remain partial and one
+**126 rows have some source implementation; 77 of those remain partial and one
 is accepted.** The accepted row (`always_ff` and writer rules) carries
 post-change HDL execution evidence from RTL-013 and RTL-099; other rows have no
 row-level acceptance promotion yet, which does not mean they lack passing tests.
@@ -1635,20 +1635,34 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   preserve EOF/error and invalid/closed-descriptor status; `$rewind` is also a
   function and a successful reposition clears the error status. V §§17.2.5–17.2.7;
   SV §§21.3.5–21.3.8 **[2001/SV-2005]**.
-- 🟨 **Memory images** — `$readmemh/$readmemb` accept owned string paths,
+- 🟦 **Memory images** — `$readmemh/$readmemb` accept owned string paths,
   whitespace/comments, binary/hex digits, X/Z and `@` addresses.
   The memory may be module, package, hierarchical or static storage, a static
   or automatic subroutine or block local (also fork-shared), a `ref` formal, a
-  structure member, a fixed-size class property (instance or static), a
+  structure member, a fixed-size class property (instance or static; named
+  directly, through `this` or through a handle, where a null handle stops with
+  the null-access error before the file is opened), a
   whole dynamic array or queue at its current size, never resized (S27-D10),
-  a constant slice of one checked against that size (S27-D14), or an
+  a slice of one checked against that size (S27-D14), an element of a
+  dynamic array or queue of unpacked arrays (`da[k]`, also selected further
+  inside), or the whole array or a slice of its elements (S27-D21), or an
   associative array with an integral index (S27-D15/D16: entries created or
   updated at each address, addresses cast to the index type, index 0 by
-  default; a wildcard index is rejected, S27-D18). The memory_name is
+  default; a wildcard index is rejected, S27-D18). When the elements of an
+  associative array are unpacked arrays, the whole array maps an address to a
+  key and the words after it to that element's cells in row-major order
+  (S27-D22), and one element (`aa[k]`, also selected further inside) is a
+  fixed unpacked array that a load creates when missing (S27-D23); a string
+  or wildcard index is rejected with its location. The memory_name is
   evaluated once per call; whole variables and locals, and constant members
   of them, load in place (S27-D13).
   Fixed packed memories may have multiple unpacked dimensions and selected
-  rows/slices; runtime view selectors are captured once. Remaining dimensions
+  rows/slices; runtime view selectors are captured once. A slice position may
+  be variable (`[i +: w]`, `[i -: w]`, SV §7.4.6) and queue slice bounds may be
+  any expressions with `$` as the last index (SV §7.10.1); each is evaluated
+  once when the task runs, and a slice outside the array, with an X/Z position
+  or with reversed queue bounds is an error that changes nothing (S27-D19,
+  S27-D20). Remaining dimensions
   walk low-to-high in row-major order; one-dimensional 2001 omitted ranges
   instead follow declaration direction. 2009 defaults, including start-only
   calls, are low-to-high; explicit ranges retain requested direction.
@@ -1678,17 +1692,20 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   (S27-D4, an llg reading kept as a `q02_enum_*` characterization in
   `sim_undefined_behavior`). Sparse addressed 2009 files omit the no-address
   short-file warning; 2001 count warnings remain, including excess data from
-  repeated in-range addresses. Slices need constant bounds (a variable
-  position, legal under SV §7.4.6, and a queue slice ending at `$` are
-  rejected), rows of dynamic arrays of unpacked arrays are rejected as load
-  targets, and multidimensional class-property memories remain under SIM-011.
+  repeated in-range addresses.
+  Multidimensional class properties of packed words (instance or static) are
+  memories whole, by row and by slice, through a handle or `this.`.
   Real/non-packed words and fully indexed scalar targets are outside the
   memory-load argument contract; string-key associative memories are prohibited.
 - 🟦 **Memory writers** — `$writememh/$writememb` emit consumable four-state words
   from the same storage forms and views in low-to-high row-major order without
   `@` addresses (S27-D11); a range outside the memory is rejected before the
   file is opened (S27-D12). Associative arrays dump their existing entries in
-  index order, each word after its own `@` address (S27-D17). The same element/view restrictions apply; writers
+  index order, each word after its own `@` address (S27-D17); an associative
+  array of unpacked arrays writes an `@` key before each element's cells
+  (S27-D22), while one element of it writes its cells without addresses and a
+  missing or unknown key is an error that writes no file (S27-D24, S27-D25).
+  The same element/view restrictions apply; writers
   reject in 2001 mode. SV §21.5 **[SV-2005]**.
 
 - ❌ **String-sourced memory loading** — `$sreadmemb/$sreadmemh` appear in the
@@ -1940,7 +1957,10 @@ These are bounded implementations, not full verification-infrastructure support.
   [collector limits](known_issues.md#collected-objects-keep-some-runtime-objects-and-defer-collection).
   Static record properties with string, real
   or handle members, record properties with container members,
-  multidimensional fixed-array properties, container
+  element, row and slice selects of multidimensional fixed-array properties
+  (which are used whole: copies, equality, `%p`, nested positional patterns,
+  memory files) and multidimensional properties of non-packed elements,
+  container
   properties selected through other handle expressions or outside procedural
   statements, and constrained randomization remain restricted.
   SV ch.8 **[SV-2005]**.

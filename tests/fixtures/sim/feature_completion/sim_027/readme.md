@@ -154,6 +154,44 @@ current size):
 > address is X or Z, then the index shall be invalid. ... Writing to an array
 > with an invalid index shall perform no operation.
 
+Slices with a variable position and queue slice bounds (SV 7.4.6, L8226;
+7.10, L8977-8978; 7.10.1, L9028-9029, L9034-9035; decisions S27-D19 and
+S27-D20 evaluate each position or bound once and reject a slice outside the
+array, with an unknown position or with reversed queue bounds):
+
+> The size of the part-select or slice shall be constant, but the position
+> can be variable.
+
+> Each element in a queue is identified by an ordinal number that represents
+> its position within the queue, with 0 representing the first, and $
+> representing the last.
+
+> In a queue slice expression such as Q[a:b], the slice bounds may be
+> arbitrary integral expressions and, in particular, are not required to be
+> constant expressions.
+
+> Q[ a : b ] yields a queue with b - a + 1 elements.
+> If a > b, then Q[a:b] yields the empty queue {}.
+
+Elements of dynamic arrays and queues of unpacked arrays (SV 21.4,
+L37251-37253; 21.4.1, L37347 quoted above; decision S27-D21 rejects an
+element index outside the current size or with an X or Z bit):
+
+> The memory_name can be an unpacked array or a partially indexed
+> multidimensional unpacked array that resolves to a lesser dimensioned
+> unpacked array (see 21.4.3). Higher order dimensions shall be specified
+> with an index, rather than a complete or partial dimension range.
+
+Class properties named through `this` or a handle (SV 8.10, L9926-9928; 8.4,
+L9653-9654):
+
+> The this keyword is used to unambiguously refer to class properties, value
+> parameters, local value parameters or methods of the current instance.
+
+> Accessing nonstatic members (see 8.8) or virtual methods (see 8.19) via a
+> null object handle is illegal. The result of an illegal access via a null
+> object is indeterminate, and implementations may issue an error.
+
 Associative memories (SV 21.4.1, L37359-37362; 21.5.3, L37500-37502; 7.8.4,
 L8696-8699; decisions S27-D15..D18):
 
@@ -185,6 +223,32 @@ nearest rule for a target that is read and written; decision S27-D13):
 > An assignment operator is semantically equivalent to a blocking assignment,
 > with the exception that any left-hand index expression is only evaluated
 > once.
+
+Associative arrays of unpacked arrays (SV 21.4, L37257-37258; 21.4.3,
+L37377-37381; 21.5.3, L37497-37501; 7.8.6, L8722-8724 and L8756; decisions
+S27-D22..D25). An address names the highest dimension, here the key, and the
+words after it fill the element row-major; reading a nonexistent entry is
+the 7.8.6 case that llg refuses for a dump:
+
+> The start_addr and finish_addr arguments apply to the addresses of the
+> unpacked array selected by memory_name. This address range represents the
+> highest dimension of data in the filename.
+
+> The file contents are organized in row-major order, with each dimension's
+> entries ranging from low to high address. ... In this organization, the
+> lowest dimension (i.e., the rightmost dimension in the array declaration)
+> varies the most rapidly.
+
+> When $writememb and $writememh write out data corresponding to unpacked or
+> dynamic arrays, address specifiers (@-words) shall not be written to the
+> output file. When $writememb and $writememh write out data corresponding to
+> associative arrays, address specifiers shall be written to the output file.
+
+> If an invalid index (i.e., 4-state expression has X's) is used during a read
+> operation or an attempt is made to read a nonexistent entry, then a warning
+> shall be issued; and the default initial value for the array type shall be
+> returned ... If an invalid index is used during a write operation, the write
+> shall be ignored, and a warning shall be issued.
 
 ## When loaded data become visible
 
@@ -225,15 +289,21 @@ notification. Decision S27-D1 records this.
 | `single_evaluation.sv` | A selector with side effects (a counting function) in memory_name: module and automatic structure-array members (load and dump), a runtime row of a local two-dimensional memory, a fork-shared row, a `ref` actual, a start bound | `single_evaluation.out`: every call counts one evaluation; one "more words" warning for the start-bound load |
 | `mixed_state_struct.sv` | Memories that are members of a structure mixing two- and four-state members, in module, automatic and `inout` storage; X/Z digits loaded into both, each member dumped and read back | `mixed_state_struct.out`: X/Z kept in the four-state member, read as 0 in the two-state one (21.4.2); the scalar members keep their values; one conversion warning per two-state load |
 | `resizable_slices.sv` | Constant slices (`[a:b]`, `+:`, `-:`) of a module queue and dynamic array, an automatic queue and a class-property dynamic array; explicit start and finish inside a slice; dumps of slices; a slice beyond the current size for a load and a dump | `resizable_slices.out`: only the selected elements change, sizes never change; the two slices beyond the size are errors that load nothing and write no file (S27-D14) |
+| `variable_slices.sv` | Slices with a variable position (`+:`, `-:`) of ascending and descending module memories, with explicit start and finish, after a runtime row (a counting function), dumped and read back; a class property through `this.` and through a handle; a dynamic array; queue slices `[i:$]`, `[$-2:$]` and `[i-2:$-1]`; an automatic memory; slices outside the array, with an unknown position, outside the current size and with reversed queue bounds (also constant) | `variable_slices.out`: only the selected indices change, the row and slice functions run once, sizes never change; one "too few words" warning, then four load and two dump errors that change nothing and keep the dump file (S27-D19, S27-D20) |
+| `container_rows.sv` | Dynamic arrays and queues whose elements are unpacked arrays: one element at a runtime index (a counting function) and at `$`, a variable slice inside an element with a start and finish, the whole array, constant and variable slices of its elements, two-dimensional elements, a class property through a handle; an element outside the current size or with an unknown index, a slice outside it, an invalid dump and an empty array | `container_rows.out`: only the selected cells change, the index function runs once, sizes never change; four "more words" warnings, three load errors and one dump error that change nothing (the dump file is kept), and the empty-array warning (S27-D21, S27-D19, S27-D10) |
+| `class_multidim.sv` | A two-dimensional class property (whole, a runtime row with a variable slice, a constant row dumped, through `this.` with a range) and a static two-dimensional property; the property copied whole, compared, printed with `%p` and assigned a nested positional pattern; a row outside the declared range | `class_multidim.out`: cells change only where addressed, in row-major order; three "more words" warnings and one error that changes nothing |
+| `null_handle.sv`, `null_handle_load.sv` | A dump of a variable slice and a load of a queue property through a null class handle | The null-handle error at the access, before any memory-file diagnostic; the run stops |
 | `associative.sv` | Associative memories with `int`, `byte unsigned`, enum, 100-bit, `longint unsigned` (automatic) and `shortint` (class property) indices: default, start-only and ranged loads over existing entries, file addresses wider than or negative in the index type, a file address outside the range, binary and hexadecimal dumps (all, from a start, descending range, empty array) read back | `associative.out`: entries created or updated only at the loaded indices (S27-D15), addresses cast to the index type (S27-D16), each dumped word preceded by its `@` address in index order (S27-D17); one "more words" warning, one range error, one "too few words" warning |
-| `neg_*` | Real, string and automatic real elements; a fully indexed word; a net memory; a `const ref` target; a wildcard-index associative memory (S27-D18); `$writememh` and a two-dimensional memory in Verilog-2001 | Rejected before a model is built |
+| `assoc_rows.sv` | Associative arrays of unpacked arrays (`bit [7:0] aa [int][3]`, `logic [7:0]` with `shortint`, `byte unsigned`, enum and descending `[1:0]` elements, a two-dimensional element, a class property and an automatic local): the whole array with the default start, a start key, a descending and an ascending range, a file address in and outside the range, a wrapped index type, negative keys; dumps (all, descending range, start key, binary); one element (`aa[k]`, `aa[k][1+:2]`, `aa[k]` with a start address) created by a load; an element address outside it and an unknown key; dumps of an element and of a missing or unknown key; empty arrays and files | `assoc_rows.out`, derived by hand from the clauses above: a key's row fills before the key advances, a short last row keeps default cells (zero, or unknown for four-state elements), each dumped element is its `@` key and its cells, an element dump has no `@`, a missing-key dump keeps the existing file and creates nothing (S27-D22, S27-D23, S27-D24, S27-D25); two "too few words" and three "more words" warnings, four load or dump errors that change nothing |
+| `neg_*` | Real, string and automatic real elements; a fully indexed word; a net memory; a `const ref` target; a wildcard-index associative memory (S27-D18); a variable-position slice wider than its dimension; string and wildcard indices of associative arrays of unpacked arrays and a range of their keys; a cell of a dynamic array element selected in an expression (a documented limitation); `$writememh` and a two-dimensional memory in Verilog-2001 | Rejected before a model is built |
 
 Data files: `format.hex`, `format.bin`, `tokens.hex`, `tokens.bin`,
 `wake.hex`, `bad_digit.hex`, `outside_task.hex`, `outside_memory.hex`,
 `unknown_address.hex`, `long.hex`, `short.hex`, `two_words.hex`,
 `three_words.hex`, `far_address.hex`. `contexts.sv`, `contexts_v2001.v`,
 `round_trip.sv`, `single_evaluation.sv`, `mixed_state_struct.sv`,
-`resizable_slices.sv` and `associative.sv` write their own files.
+`resizable_slices.sv`, `associative.sv`, `variable_slices.sv`,
+`container_rows.sv`, `class_multidim.sv` and `assoc_rows.sv` write their own files.
 
 ## Diagnostics
 

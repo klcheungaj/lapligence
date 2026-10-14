@@ -29,5 +29,5 @@ from llg. Times are printed with `%0d $time` in the default 1 ns unit.
 | `null_copy` | §§8.4, 8.11. Copying through the null `h` at time 1 is a run-time error at `tb:12:16`; `before` is printed and `after` is not. |
 | `neg_const_assign` | Nearest illegal form (§8.19): assigning a `const` property in a method other than the constructor is a frontend error. |
 | `neg_record_container_property` | Legal by §§7.2, 8.4; a record property with a queue member would need per-object companion containers and is rejected explicitly. |
-| `neg_multidim_property` | Legal by §§7.4.2, 8.4; a multidimensional fixed-array property is rejected explicitly (one-dimensional ones are per-object containers). |
+| `neg_multidim_property` | Legal by §§7.4.2, 8.4; a multidimensional fixed-array property of packed words is stored as one per-object container of all its cells (SIM-027), but selecting one of its elements is rejected explicitly. |
 | `neg_static_record_property` | Legal by §8.9; a static record property with a string member is rejected explicitly (instance ones are per-object values). |
