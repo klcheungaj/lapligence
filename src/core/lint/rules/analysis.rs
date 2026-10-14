@@ -511,6 +511,30 @@ fn add_driver_lhs_write(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: &
     }
 }
 
+/// The executable body of a function/task node: the last statement child.
+/// Declarations (formals, locals) precede it among the children.
+pub fn subroutine_body(db: &Db, id: NodeId) -> Option<NodeId> {
+    db.node(id)
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .find(|child| matches!(db.node_kind(*child), NodeKind::Stmt(_)))
+}
+
+/// Default-value expressions of a function/task node's formals. They are
+/// evaluated at the call site but read the declaring scope's signals.
+pub fn subroutine_formal_defaults(db: &Db, id: NodeId) -> Vec<NodeId> {
+    db.node(id)
+        .children
+        .iter()
+        .filter_map(|child| match db.node_kind(*child) {
+            NodeKind::FuncArg { default, .. } => *default,
+            _ => None,
+        })
+        .collect()
+}
+
 /// Every node in the design tree (from the top instances), depth-first, in
 /// deterministic order.
 pub fn all_nodes(db: &Db) -> Vec<NodeId> {

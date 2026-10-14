@@ -9,6 +9,10 @@
 //! assignment driver (a driver exists — flagging them would hit every driven
 //! output that is only consumed at a port).
 //!
+//! Reads and writes inside any subroutine body count as well (a variable read
+//! only by a DPI-exported function is used); a write there alone leaves the
+//! signal "never read".
+//!
 //! Severity is Warning for both findings; the two cases are:
 //! - zero writes *and* zero reads → "never used" (dead declaration);
 //! - zero reads but at least one write → "never read" (driven but unconsumed).
@@ -17,8 +21,8 @@ use std::collections::HashSet;
 
 use crate::core::db::{Db, Direction, NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
-    collect_reads, collect_writes, is_signal, iter_instances, port_connected_signals,
-    signal_scope_path,
+    all_design_nodes, collect_reads, collect_writes, is_signal, iter_instances,
+    port_connected_signals, signal_scope_path, subroutine_body, subroutine_formal_defaults,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -46,6 +50,20 @@ impl LintRule for UnusedSignalRule {
             reads.extend(r);
             writes.extend(w);
             cont_writes.extend(c);
+        }
+        // A subroutine body (including an exported one) reads and writes
+        // signals of its declaring scope, or of another scope by hierarchical
+        // name; package and class subroutines are outside every instance.
+        for id in all_design_nodes(db) {
+            if matches!(db.node_kind(id), NodeKind::FuncTask { .. }) {
+                if let Some(body) = subroutine_body(db, id) {
+                    reads.extend(collect_reads(db, body));
+                    writes.extend(collect_writes(db, body));
+                }
+                for default in subroutine_formal_defaults(db, id) {
+                    reads.extend(collect_reads(db, default));
+                }
+            }
         }
         let mut out = Vec::new();
         for inst_id in instances {
@@ -258,5 +276,52 @@ mod tests {
                 "signal `dead_nested` in `top.outer[0].inner[1]` is never used",
             ]
         );
+    }
+
+    #[test]
+    fn reads_inside_subroutines_count_as_uses() {
+        let paths = unused_paths(
+            "module top;\n  int by_function = 1;\n  int by_task = 2;\n  int by_default = 3;\n  int dead;\n\
+               function int f();\n    return by_function;\n  endfunction\n\
+               task t();\n    $display(by_task);\n  endtask\n\
+               function int g(int a = by_default);\n    return a;\n  endfunction\nendmodule\n",
+            "top",
+        );
+        assert_eq!(
+            paths,
+            ["signal `dead` in `top` is never used"],
+            "only the untouched variable remains"
+        );
+    }
+
+    #[test]
+    fn variable_read_only_by_an_exported_subroutine_is_used() {
+        let paths = unused_paths(
+            "module top;\n  int shared = 5;\n  int dead;\n\
+               export \"DPI-C\" function get_shared;\n\
+               function int get_shared();\n    return shared;\n  endfunction\nendmodule\n",
+            "top",
+        );
+        assert_eq!(paths, ["signal `dead` in `top` is never used"]);
+    }
+
+    #[test]
+    fn write_only_in_a_subroutine_is_still_never_read() {
+        let paths = unused_paths(
+            "module top;\n  int sink;\n  task put(input int v);\n    sink = v;\n  endtask\n\
+               initial put(1);\nendmodule\n",
+            "top",
+        );
+        assert_eq!(paths, ["signal `sink` in `top` is never read"]);
+    }
+
+    #[test]
+    fn read_in_a_nested_generate_subroutine_counts() {
+        let paths = unused_paths(
+            "module top;\n  genvar i;\n  for (i = 0; i < 2; i = i + 1) begin : g\n\
+                 int local_value = i;\n    function int get();\n      return local_value;\n    endfunction\n  end\nendmodule\n",
+            "top",
+        );
+        assert!(paths.is_empty(), "{paths:?}");
     }
 }

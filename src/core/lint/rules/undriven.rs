@@ -11,7 +11,7 @@ use crate::core::db::{Db, NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
     all_nodes, collect_driver_writes, collect_reads, connected_port_link_drivers,
     gate_terminal_drivers, gate_terminal_reads, is_signal, port_link_reads, signal_scope_path,
-    top_external_port_signals, unconnected_port_signals,
+    subroutine_body, top_external_port_signals, unconnected_port_signals,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -93,7 +93,7 @@ fn design_activity(db: &Db) -> (HashSet<NodeId>, HashSet<NodeId>) {
             NodeKind::FuncTask { .. } => {
                 // Function/task bodies are not process nodes, but their
                 // assignments still describe activity on captured signals.
-                if let Some(body) = function_body(db, id) {
+                if let Some(body) = subroutine_body(db, id) {
                     reads.extend(collect_reads(db, body));
                     drivers.extend(collect_driver_writes(db, body));
                 }
@@ -122,16 +122,6 @@ fn design_activity(db: &Db) -> (HashSet<NodeId>, HashSet<NodeId>) {
     }
 
     (reads, drivers)
-}
-
-/// The body statement is the last statement child of a function/task node.
-fn function_body(db: &Db, id: NodeId) -> Option<NodeId> {
-    db.node(id)
-        .children
-        .iter()
-        .rev()
-        .copied()
-        .find(|child| matches!(db.node_kind(*child), NodeKind::Stmt(_)))
 }
 
 /// Net declarations with an intrinsic pull/supply value are conservatively

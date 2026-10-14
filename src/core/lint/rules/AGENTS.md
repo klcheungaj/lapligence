@@ -9,7 +9,9 @@ them across rules. New rules need registry entries plus focused behavior and
 configuration tests. Rules consume owned data through `LintCtx`, with no live
 native traversal or I/O.
 
-- `unused.rs` — `unused-signal`: signals that are never read or used.
+- `unused.rs` — `unused-signal`: signals that are never read or used. Reads and
+  writes in every subroutine body (exported ones included) and in formal
+  defaults count, wherever the subroutine is declared.
 - `width.rs` — `width-mismatch`: assignments and port links with different known widths.
 - `latch.rs` — `incomplete-case`: exact cases without a default in combinational/latch logic.
 - `combloop.rs` — `combinational-loop`: combinational feedback paths. A
