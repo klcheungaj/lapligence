@@ -1242,6 +1242,11 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             | IrSysFunc::BitsToReal(a)
             | IrSysFunc::ShortRealToBits(a)
             | IrSysFunc::BitsToShortReal(a) => collect_expr_reads(a, model, rw),
+            IrSysFunc::Randcase { weights, .. } => {
+                for weight in weights {
+                    collect_expr_reads(weight, model, rw);
+                }
+            }
             IrSysFunc::Math { args, .. } => {
                 for arg in args {
                     collect_expr_reads(arg, model, rw);

@@ -1755,6 +1755,18 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   initialization stream; an unpacked-structure member as a legacy seed is
   rejected
   ([random stream limits](known_issues.md#random-stream-limits)).
+  `randcase` (SV §18.16) selects one branch by weight: the weights are
+  self-determined unsigned values evaluated once each in source order, added
+  without wrapping, and one value of the calling thread's stream (the value
+  `$urandom_range(sum - 1, 0)` would return) picks the first branch whose
+  running total exceeds it. A zero-weight branch never runs; all-zero weights
+  run nothing and warn on stderr, as does a negative weight, which counts as
+  its unsigned bit pattern; X/Z weight bits read as 0. The chosen body is an
+  ordinary statement (waits, forks, timed task calls, `return`, `disable`,
+  `break`/`continue`), and a weight sum that needs the 1048576 bits of the packed limit is a
+  source-addressed lowering error
+  ([sim_031](../tests/fixtures/sim/feature_completion/sim_031/readme.md),
+  decisions S31-D1 to S31-D7 in [lrm_decisions](lrm_decisions.md)).
   Constrained and structured randomization are a separate row.
   V §17.9; SV ch.18 **[1995/SV-2005]**.
 - 🟨 **Stochastic queues** — `$q_initialize/$q_add/$q_remove/$q_full/$q_exam`
@@ -2170,8 +2182,9 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   sampling/query/control/database services are not implemented. `cover` assertions
   and waveform/VPI observation are separate capabilities. SV **[SV-2005]**.
 - ⬜ **Constrained and structured randomization** — `rand/randc`, constraints,
-  object or `std::randomize`, `randcase` and `randsequence` are not implemented.
-  Numeric random functions and container shuffle do not establish these features.
+  object or `std::randomize` and `randsequence` are not implemented.
+  `randcase` is implemented (see the random-number row). Numeric random
+  functions and container shuffle do not establish these features.
   SV **[SV-2005]**.
 
 ## Source and regression evidence

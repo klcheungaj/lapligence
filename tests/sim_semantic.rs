@@ -170,6 +170,50 @@ fn coverage_preserves_case_condition_roles_and_pattern_identity() {
 
 /// G1-30 `classification_three_axes`: a legal runtime loop stays supported for
 /// simulation while synthesis policy reports it as unproven.
+/// SIM-031: a `randcase` keeps its weight expressions and bodies in source
+/// order as owned data, and stays outside the synthesizable profile.
+#[test]
+fn randcase_keeps_weights_and_bodies_in_source_order() {
+    let db = owned_design(
+        "module top;\n\
+         int x, w;\n\
+         initial randcase\n\
+         3 : x = 1;\n\
+         w + 1 : x = 2;\n\
+         0 : ;\n\
+         endcase\n\
+         endmodule",
+    );
+    let items = db
+        .node_ids()
+        .find_map(|id| match db.node_kind(id) {
+            NodeKind::Stmt(StmtKind::RandCase { items }) => Some(items),
+            _ => None,
+        })
+        .expect("randcase statement");
+    assert_eq!(items.len(), 3);
+    let lines = items
+        .iter()
+        .map(|item| {
+            assert!(matches!(db.node_kind(item.weight), NodeKind::Expr(_)));
+            assert!(matches!(db.node_kind(item.body), NodeKind::Stmt(_)));
+            db.node(item.weight).line
+        })
+        .collect::<Vec<_>>();
+    assert!(lines.windows(2).all(|pair| pair[0] < pair[1]), "{lines:?}");
+    assert!(matches!(
+        db.node_kind(items[2].body),
+        NodeKind::Stmt(StmtKind::Empty)
+    ));
+    let semantic = SemanticModel::from_db(&db);
+    let issues = semantic
+        .validate_synthesizable(SynthesisProfile::PortableRtl)
+        .expect_err("randcase is not synthesizable");
+    assert!(issues
+        .iter()
+        .any(|issue| issue.kind == SynthesisIssueKind::UnknownConstruct));
+}
+
 #[test]
 fn classification_separates_simulation_support_from_loop_synthesis_policy() {
     let db = owned_design(

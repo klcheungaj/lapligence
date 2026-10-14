@@ -38,6 +38,14 @@ diagnostic labels remain separate from C symbols. The
   unknown bits; otherwise unmasked LHS X/Z yields X. Bit queries evaluate once:
   countones ignores X/Z, isunknown detects both; counts are signed 32-bit,
   predicates unsigned one-bit. Real operands remain invalid here.
+- `randcase` (SV 18.16) lowers to a `DeclLocal` holding `IrSysFunc::Randcase`
+  (weights lowered self-determined, in source order, their exact-sum width
+  `widest + ceil(log2(items))` bounded by the packed-value limit with a
+  source-addressed error) followed by an ordinary exact `Case` over the signed
+  index (-1 selects nothing). Bodies take the common statement path, so
+  suspension, `return`, `disable`, `break` and `continue` need no randcase
+  code; sets `IrRandomUse::threads`. Return-flow analysis treats it as able to
+  fall through.
 - Get selectors, for-loop relationships, extents and delays from owned typed
   fields, not source names or frontend numeric codes. Widen signed/X/Z-aware
   coordinate arithmetic before subtraction/multiplication; unsigned high bits

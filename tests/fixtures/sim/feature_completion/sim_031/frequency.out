@@ -1,0 +1,26 @@
+small 3:1:0:4 seed 1: ok
+skewed 1:99 seed 1: ok
+wide40 3:1 seed 1: ok
+wide100 3:1 seed 1: ok
+mixed 7:14 seed 1: ok
+small 3:1:0:4 seed 2: ok
+skewed 1:99 seed 2: ok
+wide40 3:1 seed 2: ok
+wide100 3:1 seed 2: ok
+mixed 7:14 seed 2: ok
+small 3:1:0:4 seed 3: ok
+skewed 1:99 seed 3: ok
+wide40 3:1 seed 3: ok
+wide100 3:1 seed 3: ok
+mixed 7:14 seed 3: ok
+small 3:1:0:4 seed 4: ok
+skewed 1:99 seed 4: ok
+wide40 3:1 seed 4: ok
+wide100 3:1 seed 4: ok
+mixed 7:14 seed 4: ok
+small 3:1:0:4 seed 5: ok
+skewed 1:99 seed 5: ok
+wide40 3:1 seed 5: ok
+wide100 3:1 seed 5: ok
+mixed 7:14 seed 5: ok
+failures=0

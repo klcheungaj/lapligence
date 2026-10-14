@@ -261,6 +261,11 @@ fn ident_children(e: &mut IrExpr) {
             | IrSysFunc::BitsToReal(a)
             | IrSysFunc::ShortRealToBits(a)
             | IrSysFunc::BitsToShortReal(a) => ident_expr(a),
+            IrSysFunc::Randcase { weights, .. } => {
+                for weight in weights {
+                    ident_expr(weight);
+                }
+            }
             IrSysFunc::Math { args, .. } => {
                 for arg in args {
                     ident_expr(arg);

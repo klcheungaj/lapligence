@@ -202,6 +202,45 @@ pub(super) fn statement_from_slang(
                 default,
             }
         }
+        crate::ffi::slang::SEMANTIC_STMT_RANDCASE => {
+            let mut weights = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::CaseItem)
+                .collect::<Vec<_>>();
+            weights.sort_by_key(|edge| edge.index);
+            let mut bodies = HashMap::new();
+            for edge in edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Branch)
+            {
+                if bodies.insert(edge.index, edge.target_id).is_some() {
+                    return Err(DbError::InvalidSnapshot(
+                        "randcase item has duplicate bodies".into(),
+                    ));
+                }
+            }
+            let mut items = Vec::with_capacity(weights.len());
+            for (expected, weight) in weights.into_iter().enumerate() {
+                if usize::try_from(weight.index).ok() != Some(expected) {
+                    return Err(DbError::InvalidSnapshot(
+                        "randcase item indices must be dense and unique".into(),
+                    ));
+                }
+                let body = bodies.remove(&weight.index).ok_or_else(|| {
+                    DbError::InvalidSnapshot("randcase item body is missing".into())
+                })?;
+                items.push(RandCaseItem {
+                    weight: semantic_id(ids, weight.target_id)?,
+                    body: semantic_id(ids, body)?,
+                });
+            }
+            if !bodies.is_empty() {
+                return Err(DbError::InvalidSnapshot(
+                    "randcase has a body without a weight".into(),
+                ));
+            }
+            StmtKind::RandCase { items }
+        }
         35 => StmtKind::For {
             vars: Vec::new(),
             init: edge_targets(ids, edges, SemanticEdgeRole::Initializer)?,

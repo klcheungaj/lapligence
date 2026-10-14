@@ -765,6 +765,11 @@ fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
             }
             refs.extend(*default);
         }
+        StmtKind::RandCase { items } => {
+            for item in items {
+                refs.extend([item.weight, item.body]);
+            }
+        }
         StmtKind::For {
             vars,
             init,

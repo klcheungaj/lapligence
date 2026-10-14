@@ -169,6 +169,14 @@ fn statement(
             }
             flow
         }
+        // All-zero weights select no body, so control can also fall through.
+        NodeKind::Stmt(StmtKind::RandCase { items }) => {
+            let mut flow = Flow::falls(input);
+            for item in items {
+                flow = flow.merge(branch(Some(item.body)));
+            }
+            flow
+        }
         NodeKind::Stmt(StmtKind::PatternCase { items, default, .. }) => {
             let mut flow = branch(*default);
             for item in items {

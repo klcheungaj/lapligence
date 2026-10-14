@@ -1250,6 +1250,32 @@ impl Validator<'_> {
                         return self.fail(path, "$urandom_range requires a 32-bit unsigned result");
                     }
                 }
+                IrSysFunc::Randcase {
+                    weights, sum_width, ..
+                } => {
+                    if weights.is_empty() {
+                        return self.fail(path, "randcase requires at least one weight");
+                    }
+                    let mut widest = 0u32;
+                    for (index, weight) in weights.iter().enumerate() {
+                        let weight_path = format!("{path}.weights[{index}]");
+                        self.validate_expr(weight, formals, &weight_path)?;
+                        if weight.is_real() || weight.width == 0 {
+                            return self.fail(weight_path, "randcase weights must be packed");
+                        }
+                        widest = widest.max(weight.width);
+                    }
+                    let spare = usize::BITS - (weights.len() - 1).leading_zeros();
+                    if *sum_width != widest.saturating_add(spare)
+                        || *sum_width >= crate::sim::emit_c::LLG_WIDTH_LIMIT
+                        || (expr.width, expr.signed) != (32, true)
+                    {
+                        return self.fail(
+                            path,
+                            "randcase requires an exact-sum width and a signed 32-bit result",
+                        );
+                    }
+                }
                 IrSysFunc::Math { kind, args } => {
                     if args.len() != kind.arity() || !expr.is_real() {
                         return self.fail(

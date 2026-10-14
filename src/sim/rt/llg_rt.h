@@ -987,6 +987,13 @@ void llg_q_exam(sv4_t q_id, sv4_t stat_code, sv4_t* stat_value,
 sv4_t llg_urandom(void);
 sv4_t llg_urandom_seed(sv4_t seed);
 sv4_t llg_urandom_range(sv4_t max, sv4_t min, int has_min);
+// `randcase` (IEEE 1800-2009 18.16): picks the index of the item whose share
+// of the exact weight sum contains one draw from the calling process stream,
+// or -1 (after a warning naming `location`) when every weight is zero. The
+// weights are borrowed for the call; `sum_width` is the bit width that holds
+// their exact sum and `count` is at least 1.
+int32_t llg_randcase_select(const sv4_t* const* weights, size_t count,
+                            uint32_t sum_width, const char* location);
 void llg_process_srandom(sv4_t seed);
 llg_string_t llg_process_get_randstate(void);
 int llg_process_set_randstate(llg_string_t state);

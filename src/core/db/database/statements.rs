@@ -64,6 +64,11 @@ pub enum StmtKind {
         items: Vec<PatternCaseItem>,
         default: Option<NodeId>,
     },
+    /// `randcase`: weighted random selection of one body (IEEE 1800-2009
+    /// 18.16). Items keep source order; every body is a statement node.
+    RandCase {
+        items: Vec<RandCaseItem>,
+    },
     For {
         /// Variables declared in the initializer (`for (int i = ...; ...)`).
         vars: Vec<NodeId>,

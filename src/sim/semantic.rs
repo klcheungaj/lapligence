@@ -1363,7 +1363,9 @@ fn classify_statement(db: &Db, id: NodeId, statement: &StmtKind) -> Option<Synth
         | StmtKind::Repeat { .. }
         | StmtKind::Forever { .. }
         | StmtKind::Foreach { .. } => Some(SynthesisIssueKind::UnprovenLoop),
-        StmtKind::Unsupported { .. } => Some(SynthesisIssueKind::UnknownConstruct),
+        StmtKind::Unsupported { .. } | StmtKind::RandCase { .. } => {
+            Some(SynthesisIssueKind::UnknownConstruct)
+        }
         _ => None,
     }
 }

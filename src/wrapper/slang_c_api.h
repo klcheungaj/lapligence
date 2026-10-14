@@ -580,6 +580,9 @@ enum {
   /* `cover sequence` counts every match of an attempt (IEEE 1800-2009
    * 16.15.3), unlike `cover property`, so it keeps its own tag. */
   LLG_SLANG_STMT_CONCURRENT_COVER_SEQUENCE = 68,
+  /* `randcase` (IEEE 1800-2009 18.16): CASE_ITEM edges carry the weight
+   * expressions and BRANCH edges the bodies, both indexed by item. */
+  LLG_SLANG_STMT_RANDCASE = 69,
   /* Pattern-matching case statements are kept distinct from ordinary case so
    * the owned database cannot reduce a surviving pattern to an empty case
    * before G3-01 implements matching. */

@@ -824,6 +824,18 @@ pub enum IrSysFunc {
         max: Box<IrExpr>,
         min: Option<Box<IrExpr>>,
     },
+    /// `randcase` branch selection (IEEE 1800-2009 18.16): evaluates the
+    /// weights in source order as self-determined unsigned values and yields
+    /// the signed 32-bit index of the chosen item, or -1 when every weight is
+    /// zero. The draw comes from the calling process stream like
+    /// `$urandom_range`. `sum_width` holds the exact weight sum (widest weight
+    /// plus `ceil(log2(items))` bits); `origin` names the statement in the
+    /// all-zero and negative-weight warnings.
+    Randcase {
+        weights: Vec<IrExpr>,
+        sum_width: u32,
+        origin: crate::sim::semantic::Origin,
+    },
     /// Real math functions defined by IEEE 1800-2009 table 20-4.
     Math { kind: IrMathFunc, args: Vec<IrExpr> },
     /// Fractional time in the calling module's time unit.

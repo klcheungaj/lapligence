@@ -719,6 +719,8 @@ pub const SEMANTIC_STMT_CONCURRENT_COVER: u32 = 66;
 pub const SEMANTIC_STMT_CONCURRENT_EXPECT: u32 = 67;
 /// `cover sequence` (IEEE 1800-2009 16.15.3 counts every match).
 pub const SEMANTIC_STMT_CONCURRENT_COVER_SEQUENCE: u32 = 68;
+/// `randcase` (IEEE 1800-2009 18.16).
+pub const SEMANTIC_STMT_RANDCASE: u32 = 69;
 /// Pattern-matching case statements are tagged apart from ordinary case so
 /// lowering rejects them with their source location instead of treating a
 /// surviving pattern as an empty case.
