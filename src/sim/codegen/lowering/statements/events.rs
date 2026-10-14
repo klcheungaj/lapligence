@@ -152,6 +152,9 @@ impl EmitCtx<'_, '_> {
             }) => (specs, *implicit, *body),
             _ => unreachable!("non-event-control passed to lower_event_control"),
         };
+        let specs = specs.clone();
+        self.cg.ensure_event_spec_endpoints(&self.path, &specs)?;
+        let specs = &specs;
         let body = body.ok_or_else(|| "event_control without body".to_string())?;
         let mut out = if !implicit
             && (self.event_specs_need_process(specs) || self.specs_read_unbound_ref_formal(specs))
@@ -771,6 +774,10 @@ impl EmitCtx<'_, '_> {
             let Some(receiver) = receiver else {
                 return Ok(None);
             };
+            if self.cg.is_sequence_endpoint_operand(receiver) {
+                // `wait(seq.triggered)` waits on the endpoint's event (9.4.4).
+                self.cg.sequence_endpoint(&self.path, receiver, None)?;
+            }
             let target = self.cg.event_target_of(receiver).ok_or_else(|| {
                 format!(
                     "event triggered property has an unresolved receiver in `{}`",
@@ -779,6 +786,78 @@ impl EmitCtx<'_, '_> {
             })?;
             return self.cg.event_ref_of(&target, &self.path).map(Some);
         }
+    }
+
+    /// `wait (cond)` whose condition reads sequence `.triggered` status
+    /// beside other terms (9.4.4: `wait(abc.triggered || de.triggered)`).
+    /// The status changes only when an endpoint event triggers, so the wait
+    /// re-checks the condition after any of those events or any change of a
+    /// variable the condition reads. `None` when `cond` reads no endpoint.
+    pub(super) fn lower_endpoint_wait(
+        &mut self,
+        h: NodeId,
+        cond: NodeId,
+    ) -> Result<Option<Vec<IrStmt>>, String> {
+        let mut receivers = Vec::new();
+        let mut signals = Vec::new();
+        let mut pending = vec![cond];
+        while let Some(node) = pending.pop() {
+            match self.cg.kind(node) {
+                NodeKind::MethodCall {
+                    name,
+                    receiver: Some(receiver),
+                    ..
+                } if name == "triggered" && self.cg.is_sequence_endpoint_operand(*receiver) => {
+                    // The endpoint evaluates the instance's arguments itself.
+                    receivers.push(*receiver);
+                    continue;
+                }
+                NodeKind::Expr(ExprKind::Ref { target: Some(_) }) => {
+                    signals.push(EventSpec::AnyChange { sig: node });
+                }
+                _ => {}
+            }
+            pending.extend(self.cg.node(node).children.iter().copied());
+        }
+        if receivers.is_empty() {
+            return Ok(None);
+        }
+        let mut events = Vec::new();
+        for receiver in receivers {
+            let index = self.cg.sequence_endpoint(&self.path, receiver, None)?;
+            let event = self.cg.model.assertions[index]
+                .endpoint()
+                .map(crate::sim::ir::IrAssertionEndpoint::event)
+                .ok_or_else(|| "sequence endpoint lost its event".to_owned())?;
+            if !events.contains(&event) {
+                events.push(event);
+            }
+        }
+        let condition = self.cg.lower_boolean_expr(&self.path, cond)?;
+        let mut sources = self.lower_event_specs(&signals)?;
+        sources.extend(
+            events
+                .into_iter()
+                .map(|event| (IrWaitSrc::Event(IrEventRef::Static(event)), IrEdge::Any)),
+        );
+        let not_ready = IrExpr::new(
+            IrExprKind::Un {
+                op: IrUnOp::LogNot,
+                a: Box::new(condition),
+            },
+            1,
+            false,
+            None,
+        );
+        let mut out = vec![IrStmt::While {
+            cond: not_ready,
+            body: vec![IrStmt::WaitEvents {
+                specs: sources,
+                refresh: false,
+            }],
+        }];
+        out.extend(self.wait_body(h)?);
+        Ok(Some(out))
     }
 
     pub(super) fn unsupported_event_trigger_timing(

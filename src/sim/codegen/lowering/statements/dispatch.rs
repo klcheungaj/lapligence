@@ -437,6 +437,10 @@ impl EmitCtx<'_, '_> {
                     self.saw_wait = true;
                     return Ok(vec![IrStmt::WaitEventTriggered { event, body }]);
                 }
+                if let Some(wait) = self.lower_endpoint_wait(h, *cond)? {
+                    self.saw_wait = true;
+                    return Ok(wait);
+                }
                 self.cg.reject_process_status_wait(&self.path, *cond)?;
                 let c = self.cg.lower_expr(&self.path, *cond)?;
                 let path = self.path.clone();

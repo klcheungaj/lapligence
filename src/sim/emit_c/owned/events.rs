@@ -383,6 +383,18 @@ impl Frame<'_, '_> {
                     false,
                 )
             }
+            IrRuntimeQuery::SequenceMatched { endpoint, slot } => self.value(
+                format!(
+                    "sv4_from_u64(llg_sequence_matched({endpoint}u, {slot}u) ? 1ULL : 0ULL, 1, 0)"
+                ),
+                1,
+                false,
+            ),
+            IrRuntimeQuery::SequenceTriggered(endpoint) => self.value(
+                format!("sv4_from_u64(llg_sequence_triggered({endpoint}u) ? 1ULL : 0ULL, 1, 0)"),
+                1,
+                false,
+            ),
             IrRuntimeQuery::ForceSourceActive(index) => {
                 let signal = self.ctx.model.signal(*index);
                 if !signal.net_alias.is_empty() {

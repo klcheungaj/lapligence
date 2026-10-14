@@ -81,15 +81,6 @@ fn unsupported_future_global_functions_fail_closed() {
 }
 
 #[test]
-fn unsupported_sequence_status_fails_closed() {
-    sim_cli::reject_case(
-        "concurrent_assertions",
-        "unsupported_sequence_status",
-        "sequence `.triggered` status is not supported",
-    );
-}
-
-#[test]
 fn procedural_past_counts_only_time_steps_strictly_before_the_evaluation() {
     sim_cli::run_case_backend_parity(
         "concurrent_assertions",

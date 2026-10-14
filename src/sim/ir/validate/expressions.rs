@@ -360,6 +360,37 @@ impl Validator<'_> {
                         }
                         2
                     }
+                    IrRuntimeQuery::SequenceMatched { endpoint, slot } => {
+                        let known = self.model.assertions.iter().any(|assertion| {
+                            assertion.endpoint.as_ref().is_some_and(|known| {
+                                known.index == *endpoint
+                                    && (*slot as usize) < known.matched_clocks.len()
+                            })
+                        });
+                        if !known {
+                            return self.fail(
+                                path,
+                                format!(
+                                    "`.matched` names unknown sequence endpoint {endpoint} slot {slot}"
+                                ),
+                            );
+                        }
+                        1
+                    }
+                    IrRuntimeQuery::SequenceTriggered(endpoint) => {
+                        if !self.model.assertions.iter().any(|assertion| {
+                            assertion
+                                .endpoint
+                                .as_ref()
+                                .is_some_and(|known| known.index == *endpoint)
+                        }) {
+                            return self.fail(
+                                path,
+                                format!("`.triggered` names unknown sequence endpoint {endpoint}"),
+                            );
+                        }
+                        1
+                    }
                     IrRuntimeQuery::ForceSourceActive(signal) => {
                         if self.model.signals.get(*signal).is_none() {
                             return self

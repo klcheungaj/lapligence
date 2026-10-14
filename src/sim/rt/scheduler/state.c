@@ -342,6 +342,16 @@ typedef struct llg_assertion_clock_event {
     uint64_t tick;
 } llg_assertion_clock_event_t;
 
+/* One destination clock of a sequence endpoint's `.matched` status (SV
+ * 16.14.6): the match is visible at destination tick `visible_tick`, the
+ * first tick of `clock` at or after the match. */
+typedef struct llg_matched_slot {
+    sv4_t* clock;
+    int edge;
+    uint8_t has_match;
+    uint64_t visible_tick;
+} llg_matched_slot_t;
+
 typedef struct llg_concurrent_assertion {
     struct llg_concurrent_assertion* next;
     sv4_t* clock;
@@ -381,6 +391,14 @@ typedef struct llg_concurrent_assertion {
     uint8_t pass_action_off;
     uint8_t vacuous_action_off;
     uint8_t fail_action_off;
+    /* A sequence endpoint (SV 16.9.11, 16.14.5-16.14.6, 9.4.2.4) is a hidden
+     * cover of every match of a sequence instance. It is no assertion: it
+     * has no counters or actions and assertion controls skip it. Each match
+     * triggers `endpoint_event` in Observed (`.triggered`, `@(seq)`) and
+     * latches the `.matched` slots. */
+    llg_event_t* endpoint_event;
+    uint32_t endpoint_slot_count;
+    llg_matched_slot_t* endpoint_slots;
     uint64_t identity;
     const char* label;
     const char* location;
@@ -569,6 +587,9 @@ typedef struct {
     // set sends the time slot back around through Observed (SV 24.3.1).
     int assertion_edges_pending;
     llg_concurrent_assertion_t* assertion_tail;
+    // Sequence endpoints by their model index, for `.matched` queries.
+    llg_concurrent_assertion_t** sequence_endpoints;
+    uint32_t sequence_endpoint_count;
     // Sequence thread budget (LLG_SEQUENCE_THREAD_LIMIT) and the live count
     // of pending tokens plus attempts it bounds.
     uint64_t sequence_thread_limit;

@@ -2064,6 +2064,20 @@ int llg_event_triggered(const llg_event_t* ev);
 // Number of triggers of the object `ev` currently names since the runtime was
 // initialized. A null handle reports zero. Read-only and allocation-free.
 uint64_t llg_event_trigger_count(const llg_event_t* ev);
+/* Make the concurrent assertion just registered (a cover of every match of
+ * a sequence instance) the sequence endpoint `index`, numbered from zero in
+ * registration order (IEEE 1800-2009 16.9.11, 16.14.5-16.14.6, 9.4.2.4). Each
+ * match triggers `event` in the Observed region and latches the `.matched`
+ * status of each destination clock in `clocks`/`edges` (copied). Endpoints
+ * have no counters or actions and ignore assertion control tasks. */
+int llg_assertion_endpoint(uint64_t identity, uint32_t index, llg_event_t* event,
+                           uint32_t slot_count, sv4_t* const* clocks, const int* edges);
+/* `.matched` of endpoint `endpoint` at a tick of its destination clock
+ * `slot`: a match since the previous tick of that clock. */
+int llg_sequence_matched(uint32_t endpoint, uint32_t slot);
+/* `.triggered` of endpoint `endpoint` inside an assertion: it matched in the
+ * current time step. */
+int llg_sequence_triggered(uint32_t endpoint);
 // Queue a nonblocking event trigger for the NBA region. The event pointer is
 // copied into runtime-owned queue state, so the issuing process may finish
 // before the trigger commits.

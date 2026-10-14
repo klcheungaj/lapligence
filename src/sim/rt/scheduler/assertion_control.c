@@ -461,6 +461,8 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
 
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
+        // A sequence endpoint is not an assertion statement.
+        if (assertion->endpoint_event) continue;
         if (kind == LLG_ASSERTION_CONTROL_FULL &&
             !assertion_matches_type(assertion, assertion_type, directive_type))
             continue;

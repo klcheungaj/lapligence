@@ -2,7 +2,7 @@
 //! 2009 assertion action controls (IEEE 1800-2009 §§16.8, 16.10-16.11,
 //! 16.14.5-16.14.6, 9.4.2.4, 9.4.4, 20.11-20.12). Every expected output is
 //! derived by hand in the fixture readme.
-use super::sim_cli;
+use super::{sim_cli, sim_harness};
 use std::process::Output;
 
 const SUITE: &str = "feature_completion/sim_039";
@@ -83,4 +83,76 @@ fn control_selectors_name_generate_blocks_named_blocks_and_subroutines() {
     sim_cli::run_case_checked_matrix(SUITE, "selectors", &[], &|label, output| {
         assert_sorted_stdout(label, output, expected)
     });
+}
+
+#[test]
+fn procedural_code_observes_endpoints_in_their_region_and_tick() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_039/endpoints_procedural.out");
+    sim_cli::run_case_checked_matrix(SUITE, "endpoints_procedural", &[], &|label, output| {
+        assert_sorted_stdout(label, output, expected)
+    });
+}
+
+#[test]
+fn sequences_read_triggered_and_matched_endpoints_across_clocks() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_039/endpoints_sequence.out");
+    sim_cli::run_case_checked_matrix(SUITE, "endpoints_sequence", &[], &|label, output| {
+        assert_sorted_stdout(label, output, expected)
+    });
+}
+
+/// An end point read by an exported function from inside an imported
+/// context call keeps the status of the time step it is read in.
+#[test]
+fn endpoint_status_is_rooted_across_native_callbacks() {
+    let directory = sim_harness::TempDir::new("sim039-dpi").expect("temporary directory");
+    let Some(library) = super::sim_040::shared_companion(SUITE, &directory, "endpoints_dpi", &[])
+    else {
+        return;
+    };
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_039/endpoints_dpi.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "endpoints_dpi",
+        &["--dpi-lib", &library],
+        &|label, output| assert_sorted_stdout(label, output, expected),
+    );
+}
+
+#[test]
+fn triggered_across_clocks_is_a_located_error() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_triggered_clock",
+        "neg_triggered_clock.sv:7:38 needs its sequence to end on the clock of its context (SV 16.9.11)",
+    );
+}
+
+#[test]
+fn matched_outside_a_sequence_is_a_located_error() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_matched_procedural",
+        "neg_matched_procedural.sv:6:37 'matched' method can only be called from a sequence expression",
+    );
+}
+
+#[test]
+fn edge_control_on_a_sequence_is_a_located_error() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_edge_sequence",
+        "neg_edge_sequence.sv:6:27 expression type 'sequence' is not integral",
+    );
+}
+
+#[test]
+fn local_variable_passed_to_an_endpoint_is_a_located_error() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_endpoint_local",
+        "neg_endpoint_local.sv:7:46 cannot reference local variable 'v' because it is unassigned",
+    );
 }

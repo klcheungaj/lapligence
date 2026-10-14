@@ -367,8 +367,54 @@ impl Validator<'_> {
             }
         }
 
+        let mut next_endpoint = 0u32;
         for (idx, assertion) in self.model.assertions.iter().enumerate() {
             let path = format!("assertions[{idx}]");
+            if let Some(endpoint) = &assertion.endpoint {
+                // Endpoints number themselves in table order, and are covers
+                // of every match with no actions (see IrAssertionEndpoint).
+                if endpoint.index != next_endpoint {
+                    return self.fail(
+                        format!("{path}.endpoint"),
+                        "sequence endpoints must be numbered in assertion-table order",
+                    );
+                }
+                next_endpoint += 1;
+                if !matches!(assertion.kind, IrConcurrentAssertionKind::CoverSequence)
+                    || assertion.pass_action.is_some()
+                    || assertion.fail_action.is_some()
+                    || assertion.property.is_some()
+                {
+                    return self.fail(
+                        format!("{path}.endpoint"),
+                        "a sequence endpoint must be an action-free sequence cover",
+                    );
+                }
+                if self
+                    .model
+                    .events
+                    .get(endpoint.event)
+                    .is_none_or(|event| event.array_dims.is_some())
+                {
+                    return self.fail(
+                        format!("{path}.endpoint.event"),
+                        "sequence endpoint event must be a scalar named event",
+                    );
+                }
+                for (signal, _) in &endpoint.matched_clocks {
+                    if !self
+                        .model
+                        .signals
+                        .get(*signal)
+                        .is_some_and(|signal| !signal.omit && signal.ty.width() != 0)
+                    {
+                        return self.fail(
+                            format!("{path}.endpoint.matched_clocks"),
+                            "`.matched` clock must be an active packed signal",
+                        );
+                    }
+                }
+            }
             let Some(clock) = self.model.signals.get(assertion.clock_signal) else {
                 return self.fail(
                     format!("{path}.clock_signal"),

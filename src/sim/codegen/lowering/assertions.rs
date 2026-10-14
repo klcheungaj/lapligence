@@ -12,6 +12,7 @@ use std::collections::HashSet;
 
 use super::*;
 
+mod endpoints;
 mod property;
 use crate::core::db::{
     AssertionBinaryOp, AssertionExprKind, AssertionRange, AssertionRepetition,
@@ -1387,11 +1388,6 @@ impl Codegen<'_> {
                         NodeKind::Expr(ExprKind::AssertionInstance { body, .. }) => {
                             self.sequence_requires_engine(*body)
                         }
-                        // A sequence `.matched` endpoint is a sequence
-                        // fragment, not an ordinary sampled Boolean. Keep it
-                        // in the NFA so multi-cycle receivers retain their
-                        // endpoint timing and local-attempt state.
-                        NodeKind::MethodCall { name, .. } if name == "matched" => true,
                         _ => false,
                     }
             }
@@ -1516,30 +1512,6 @@ impl Codegen<'_> {
                 repetition,
             }) => {
                 if !*repeated && repetition.is_none() {
-                    let matched_receiver = match self.kind(*expr) {
-                        NodeKind::MethodCall {
-                            name: method,
-                            receiver: Some(receiver),
-                            ..
-                        } if method == "matched" => Some(*receiver),
-                        _ => None,
-                    };
-                    if let Some(receiver) = matched_receiver {
-                        let capture_at_attempt_entry =
-                            self.assertion_instance_depth == 0 && builder.next_state == 0;
-                        let result = self.lower_assertion_instance(
-                            receiver,
-                            capture_at_attempt_entry,
-                            |this, body| {
-                                this.lower_sequence_fragment(path, body, builder, role)
-                            },
-                        )?;
-                        return result.ok_or_else(|| {
-                            format!(
-                                "sequence `.matched` receiver is not an assertion instance in {role} at {path}"
-                            )
-                        });
-                    }
                     let capture_at_attempt_entry =
                         self.assertion_instance_depth == 0 && builder.next_state == 0;
                     if let Some(result) = self.lower_assertion_instance(
@@ -1915,7 +1887,6 @@ impl Codegen<'_> {
                 NodeKind::Expr(ExprKind::AssertionInstance { body, .. }) => {
                     self.one_cycle_form(*body)
                 }
-                NodeKind::MethodCall { name, .. } if name == "matched" => false,
                 _ => true,
             },
             NodeKind::AssertionExpr(AssertionExprKind::Clocking { expr, .. }) => {
@@ -2471,6 +2442,12 @@ pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
         // locals (for example a procedural capture) must not leak into an
         // assertion's sampled expression.
         IrExprKind::LocalRead(name) if name.starts_with("llg_sequence_local_read(") => true,
+        // Sequence endpoint status is set in Observed, not sampled (16.14.6);
+        // endpoints are evaluated before the assertions that read them.
+        IrExprKind::RuntimeQuery(
+            crate::sim::ir::IrRuntimeQuery::SequenceTriggered(_)
+            | crate::sim::ir::IrRuntimeQuery::SequenceMatched { .. },
+        ) => true,
         IrExprKind::Bin { a, b, .. } => sampled_compatible(a) && sampled_compatible(b),
         IrExprKind::Un { a, .. }
         | IrExprKind::CastToPacked { a }

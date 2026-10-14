@@ -126,6 +126,16 @@ impl<'a> Codegen<'a> {
                     indices: Vec::new(),
                 })
             }
+            // A sequence instance whose endpoint exists names its event
+            // (see `assertions::endpoints`).
+            NodeKind::Expr(ExprKind::AssertionInstance { .. })
+                if self.event_globals.contains_key(&node) =>
+            {
+                Some(EventTarget {
+                    declaration: node,
+                    indices: Vec::new(),
+                })
+            }
             NodeKind::FuncArg { ty, .. } if ty.kind == "event" => Some(EventTarget {
                 declaration: node,
                 indices: Vec::new(),

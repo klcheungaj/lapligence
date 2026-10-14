@@ -1687,6 +1687,10 @@ struct Codegen<'a> {
     /// Whether any assertion control task is called in the design, computed
     /// on first use. Immediate assertions query control state only then.
     assertion_controls_used: Option<bool>,
+    /// Sequence endpoints by (scope path, sequence declaration or instance
+    /// expression), as indices into the model's assertion table.
+    sequence_endpoints: HashMap<(String, NodeId), usize>,
+    sequence_endpoint_count: usize,
     /// Assertion formal-to-actual bindings active while recursively lowering
     /// an owned named sequence/property instance.
     assertion_formal_actuals: Option<HashMap<NodeId, NodeId>>,
@@ -1919,6 +1923,8 @@ impl<'a> Codegen<'a> {
             sampled_event_clocks: Vec::new(),
             assertion_local_bindings: None,
             assertion_controls_used: None,
+            sequence_endpoints: HashMap::new(),
+            sequence_endpoint_count: 0,
             assertion_formal_actuals: None,
             assertion_local_initializers: None,
             lowering_assertion_match_item: false,

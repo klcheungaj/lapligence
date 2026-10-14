@@ -98,6 +98,16 @@ pub enum IrRuntimeQuery {
     /// calling process right after [`IrStmt::Expect`](crate::sim::ir::IrStmt)
     /// resumes to select its inline action arm.
     ExpectOutcome(u64),
+    /// `.matched` of sequence endpoint `endpoint` (an
+    /// [`IrAssertionEndpoint`](crate::sim::ir::IrAssertionEndpoint) index)
+    /// at a tick of its destination clock `slot` (1-bit unsigned two-state):
+    /// the endpoint matched since the previous tick of that clock (IEEE
+    /// 1800-2009 16.14.5-16.14.6).
+    SequenceMatched { endpoint: u32, slot: u32 },
+    /// `.triggered` of sequence endpoint `endpoint` inside an assertion
+    /// (1-bit unsigned two-state): it matched in this time step (IEEE
+    /// 1800-2009 16.9.11). Procedural reads use the endpoint's event instead.
+    SequenceTriggered(u32),
 }
 
 /// Structural expression kinds.  The self-determined width/signedness/fill of
