@@ -1,0 +1,11 @@
+missing target=ee,ee,ee,ee guards=b0b1b2b3,a0a1a2a3
+bad_digit target=11,ee,ee,ee guards=b0b1b2b3,a0a1a2a3
+outside_task target=11,ee,ee,ee guards=b0b1b2b3,a0a1a2a3
+outside_memory target=ee,11,ee,ee guards=b0b1b2b3,a0a1a2a3
+unknown_address target=11,ee,ee,ee guards=b0b1b2b3,a0a1a2a3
+long target=01,02,03,04 guards=b0b1b2b3,a0a1a2a3
+short target=01,02,ee,ee guards=b0b1b2b3,a0a1a2a3
+finish_outside target=ee,ee,ee,ee guards=b0b1b2b3,a0a1a2a3
+start_outside target=ee,ee,ee,ee guards=b0b1b2b3,a0a1a2a3
+automatic long=c0,c1,01,02,c4,c5
+automatic outside=c0,11,c2,c3,c4,c5

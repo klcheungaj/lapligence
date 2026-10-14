@@ -1,2 +1,0 @@
-llg: warning: memory file `q02_long_file.mem`: memory file contains more words than the selected range
-llg: simulation ended without $finish (no processes remain) at time 0
