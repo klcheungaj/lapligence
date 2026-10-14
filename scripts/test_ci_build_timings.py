@@ -55,6 +55,33 @@ class BuildTimingsTest(unittest.TestCase):
         self.assertIn("template: -=3, rejected=1", text)
         self.assertIn("template rejected (1): template differs from a real configure: CMakeCache.txt: line 3: `a` vs `b`", text)
 
+    def test_windows_show_phase_medians_by_build_end_time(self):
+        start = 1760000000000
+        lines = [
+            f"llg-build\tresult=ok\ttotal_ms={total}\tend_unix_ms={start + offset}\tconfigure_ms={configure}"
+            for offset, total, configure in (
+                (0, 1000, 300), (60000, 1200, 500), (14 * 60000, 1100, 400),
+                (16 * 60000, 7000, 3000), (40 * 60000, 9000, 2900),
+            )
+        ] + LINES
+        text = timings.windows(timings.parse(lines), 15)
+        rows = text.splitlines()
+        self.assertEqual(rows[0], "phase medians (ms) per 15-minute window of build end time:")
+        self.assertEqual(rows[2].split(), ["+0m", "3", "-", "-", "-", "400", "-", "1100"])
+        self.assertEqual(rows[3].split(), ["+15m", "1", "-", "-", "-", "3000", "-", "7000"])
+        self.assertEqual(rows[4].split(), ["+30m", "1", "-", "-", "-", "2900", "-", "9000"])
+        self.assertEqual(len(rows), 5)
+        self.assertEqual(timings.windows(timings.parse(LINES)), "")
+
+    def test_main_prints_windows_only_for_stamped_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "t.tsv"
+            path.write_text("\n".join(LINES + ["llg-build\tresult=ok\ttotal_ms=5\tend_unix_ms=10"]), encoding="utf-8")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(timings.main([str(path), "--window-minutes", "5"]), 0)
+            self.assertIn("per 5-minute window", output.getvalue())
+
     def test_missing_file_is_not_an_error(self):
         with tempfile.TemporaryDirectory() as directory:
             output = io.StringIO()
