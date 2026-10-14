@@ -371,10 +371,9 @@ impl<'a> Codegen<'a> {
                             }
                         }
                         if matches!(self.kind(local), NodeKind::Var { ty } if ty.kind == "string") {
-                            // The body reads and writes the subroutine's
-                            // persistent string local, whose declaration
-                            // value runs in the static schedule with the
-                            // other static subroutine initializers.
+                            // The body reads and writes this object; its
+                            // declaration value runs in the static schedule
+                            // with the other static subroutine initializers.
                             let initial = None;
                             let object = self.model.objects.len();
                             self.model.objects.push(crate::sim::ir::IrObject {

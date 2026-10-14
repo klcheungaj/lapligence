@@ -513,6 +513,16 @@ impl<'a> Codegen<'a> {
         for local in local_ids.iter().copied() {
             let (name, ..) = &locals[&local];
             if matches!(self.kind(local), NodeKind::Var { ty } if ty.kind == "string") {
+                // A waiting task's static string is a model object, which a
+                // coroutine body may address; other locals are subroutine
+                // cells.
+                if let Some(object) = self.static_string_task_locals.get(&(inst, local)) {
+                    let object_name = self.model.objects[*object].c_name.clone();
+                    string_read.insert(local, IrStringExpr::Read(*object));
+                    string_write.insert(local, object_name.clone());
+                    string_addr.insert(local, object_name);
+                    continue;
+                }
                 string_read.insert(local, IrStringExpr::LocalRead(name.clone()));
                 string_write.insert(local, name.clone());
                 string_addr.insert(local, name.clone());
@@ -1121,13 +1131,12 @@ impl<'a> Codegen<'a> {
                 })?;
                 self.record_initializer_source(local, initializer);
                 let identity = self.declaration_identity(local)?;
-                self.declaration_statements.push((
-                    identity,
-                    IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
-                        c_name.clone(),
-                        value,
-                    ))),
-                ));
+                let assignment = match self.static_string_task_locals.get(&(inst, local)) {
+                    Some(object) => IrObjectStmt::StringAssign(*object, value),
+                    None => IrObjectStmt::StringAssignLocal(c_name.clone(), value),
+                };
+                self.declaration_statements
+                    .push((identity, IrStmt::Object(Box::new(assignment))));
                 continue;
             }
             let initialization = self
