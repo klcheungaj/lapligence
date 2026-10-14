@@ -322,10 +322,24 @@ impl Db {
                 )
             })
             .collect::<HashMap<_, _>>();
-        let has_dpi_exports = snapshot.semantic_nodes.iter().any(|semantic| {
-            semantic.kind == SemanticKind::Subroutine
-                && semantic.auxiliary & crate::ffi::slang::SUBROUTINE_DPI_EXPORT != 0
-        });
+        // The export's C identifier travels in the linkage-name field; an
+        // empty one falls back to the subroutine name (SV 35.4).
+        let dpi_exports = snapshot
+            .semantic_nodes
+            .iter()
+            .filter(|semantic| {
+                semantic.kind == SemanticKind::Subroutine
+                    && semantic.auxiliary & crate::ffi::slang::SUBROUTINE_DPI_EXPORT != 0
+            })
+            .map(|semantic| {
+                let c_name = if semantic.definition_name.is_empty() {
+                    semantic.name.to_string()
+                } else {
+                    semantic.definition_name.to_string()
+                };
+                (NodeId::from_index(semantic.id as usize), c_name)
+            })
+            .collect::<HashMap<_, _>>();
         for semantic in &snapshot.semantic_nodes {
             let id = NodeId::from_index(semantic.id as usize);
             let edges = semantic_edges(snapshot, semantic)?;
@@ -1211,7 +1225,7 @@ impl Db {
             modport_expressions,
             virtual_interface_targets,
             dpi_imports,
-            has_dpi_exports,
+            dpi_exports,
             implicit_nets,
             implicit_conversions,
             source_files: snapshot

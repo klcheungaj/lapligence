@@ -152,6 +152,65 @@ fn dpi_metadata_is_owned_and_keeps_alias_and_qualifiers() {
     assert!(!context.dpi_import.as_ref().is_some_and(|dpi| dpi.pure));
 }
 
+/// Every instance of a scope declaring `export "DPI-C"` owns its exported
+/// subroutine under the declared C identifier (SV 35.4, 35.7), including
+/// generate scopes and packages; the frontend's own export list keeps only
+/// one subroutine per C identifier.
+#[test]
+fn dpi_exports_are_owned_for_every_instance() {
+    let source = "package p;\n\
+                  export \"DPI-C\" function pf;\n\
+                  function int pf(int a); return a; endfunction\n\
+                  endpackage\n\
+                  module m;\n\
+                  export \"DPI-C\" m_set = function set;\n\
+                  export \"DPI-C\" task tick;\n\
+                  function void set(int v); endfunction\n\
+                  task tick(); endtask\n\
+                  function void plain(); endfunction\n\
+                  if (1) begin : g\n\
+                  export \"DPI-C\" g_get = function get;\n\
+                  function int get(); return 1; endfunction\n\
+                  end\n\
+                  endmodule\n\
+                  module tb; m u1(); m u2(); initial $display(\"%0d\", p::pf(1)); endmodule\n";
+    let compiled = compile::compile_checked(&compile::CompileOpts {
+        sources: vec![compile::OwnedSource::compilation_unit("exports.sv", source)],
+        top: Some("tb".to_owned()),
+        ..Default::default()
+    })
+    .expect("export fixture should compile");
+    let db = Db::from_slang(&compiled.snapshot).expect("owned database");
+    let model = DesignModel::from_db(&db);
+    for path in ["tb.u1", "tb.u2"] {
+        let instance = model.instance(path).expect("instance");
+        let export = |name: &str| {
+            instance
+                .func(name)
+                .unwrap_or_else(|| panic!("{path}.{name}"))
+                .dpi_export
+                .clone()
+        };
+        assert_eq!(export("set").as_deref(), Some("m_set"), "{path}");
+        assert_eq!(export("tick").as_deref(), Some("tick"), "{path}");
+        assert_eq!(export("plain"), None, "{path}");
+    }
+    // One generate-scope subroutine per instance, each exported.
+    let generated = db
+        .node_ids()
+        .filter(|id| db.node(*id).name == "get")
+        .filter_map(|id| db.dpi_export(id))
+        .collect::<Vec<_>>();
+    assert_eq!(generated, ["g_get", "g_get"]);
+    let package = db
+        .node_ids()
+        .filter(|id| db.node(*id).name == "pf")
+        .filter_map(|id| db.dpi_export(id))
+        .collect::<Vec<_>>();
+    assert_eq!(package, ["pf"]);
+    assert!(db.has_dpi_exports());
+}
+
 #[test]
 fn dpi_missing_symbol_fails_during_model_link() {
     if !sim::build::cmake_available() {
