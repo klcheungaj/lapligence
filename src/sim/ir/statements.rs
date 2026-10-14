@@ -142,7 +142,9 @@ pub struct IrMemoryView {
     pub total: u64,
 }
 
-/// One runtime-selected higher dimension of a fixed memory view.
+/// One runtime selection of a memory view: an index of a higher dimension,
+/// or the variable position or a bound of the view's slice (see
+/// [`IrMemorySelectorKind`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrMemorySelector {
     pub dimension: usize,
@@ -150,6 +152,36 @@ pub struct IrMemorySelector {
     pub right: i32,
     pub stride: u64,
     pub value: IrExpr,
+    pub kind: IrMemorySelectorKind,
+}
+
+/// What a [`IrMemorySelector`] value selects. Slice selectors follow every
+/// index selector and select the view's first dimension, whose bounds in
+/// `dims` are then the constant-position placeholder of the same extent; the
+/// emitter replaces them with the runtime bounds (decisions S27-D19/D20).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrMemorySelectorKind {
+    /// One index of higher dimension `dimension`, inside `left`..`right`.
+    Index,
+    /// The variable position of an indexed slice `[value +: width]` or
+    /// `[value -: width]` (`descending`) of `dimension` (IEEE 1800-2009
+    /// 7.4.6). A fixed dimension keeps its declared bounds in `left` and
+    /// `right`; a dynamic array or queue checks the slice against its
+    /// current size when the task runs.
+    SliceBase { width: u32, descending: bool },
+    /// The left bound of a queue range slice `[value:right]` whose bounds
+    /// need not be constant (7.10.1); the next selector is its right bound.
+    SliceLeft,
+    /// The right bound of that queue range slice.
+    SliceRight,
+}
+
+impl IrMemorySelector {
+    /// Whether this selector positions the view's slice rather than
+    /// selecting a higher-dimension index.
+    pub fn is_slice(&self) -> bool {
+        !matches!(self.kind, IrMemorySelectorKind::Index)
+    }
 }
 
 /// Storage a [`IrMemoryAccess`] addresses, cell by cell in declaration order.

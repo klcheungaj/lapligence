@@ -1442,6 +1442,9 @@ struct Codegen<'a> {
     /// (`h.q`), keyed by the selecting path expression: receiver-qualified
     /// aliases of the property's container (SIM-011).
     receiver_containers: HashMap<NodeId, usize>,
+    /// The queue whose last index `$` stands for while a memory-task slice
+    /// bound is lowered (IEEE 1800-2009 7.10.1); `None` elsewhere.
+    queue_end: Option<usize>,
     /// Native record class properties by declaration: their per-object
     /// value (SIM-011).
     class_native_fields: HashMap<NodeId, usize>,
@@ -1802,6 +1805,7 @@ impl<'a> Codegen<'a> {
             fixed_view_ranges: HashMap::new(),
             container_initializers: Vec::new(),
             receiver_containers: HashMap::new(),
+            queue_end: None,
             class_native_fields: HashMap::new(),
             pattern_classes_started: false,
             receiver_native_values: HashMap::new(),

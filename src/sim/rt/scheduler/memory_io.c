@@ -274,6 +274,12 @@ static int llg_memory_descriptor(const char* path, uint64_t total,
                                  const int32_t* dims, int n_dims,
                                  const uint64_t* strides, uint64_t origin,
                                  uint64_t view_total, uint64_t* inner_total) {
+    if (origin == UINT64_MAX) {
+        // The generated call marks a runtime index or slice position that is
+        // unknown or outside its dimension (IEEE 1800-2009 7.4.6).
+        llg_memory_error(path, "selected index or slice is outside the memory");
+        return 0;
+    }
     if (!dims || !strides || n_dims <= 0 || total == 0 || view_total == 0 ||
         origin >= total || view_total > total - origin) {
         llg_memory_error(path, "memory descriptor is invalid");
@@ -984,7 +990,14 @@ static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
         view_total = total;
     } else if (total == 0 && n_dims == 1) {
         // A slice of a runtime-sized array: its ascending indices must lie in
-        // `[0:size-1]` of the current size (decision S27-D14).
+        // `[0:size-1]` of the current size (decision S27-D14). Reversed queue
+        // bounds select no element and are rejected too (S27-D20).
+        if (dims[0] >= 0 && dims[0] > dims[1]) {
+            char* filename = llg_memory_path_copy(path);
+            llg_memory_error(filename, "slice left bound exceeds its right bound; the slice selects no element");
+            free(filename);
+            return;
+        }
         if (dims[0] < 0 || dims[0] > dims[1] || (uint64_t)dims[1] >= (uint64_t)size) {
             char* filename = llg_memory_path_copy(path);
             llg_memory_error(filename, "slice is outside the current size of the array");

@@ -1150,3 +1150,19 @@ fn s27_d18_associative_wildcard_rejected() {
         "requires an associative array with an index of integral type, not a wildcard `[*]` index",
     );
 }
+
+#[test]
+fn s27_d19_variable_slice_position() {
+    run_decision(
+        "S27-D19_variable_slice_position",
+        include_str!("fixtures/sim/lrm_decisions/S27-D19_variable_slice_position.out"),
+    );
+}
+
+#[test]
+fn s27_d20_queue_slice_bounds() {
+    run_decision(
+        "S27-D20_queue_slice_bounds",
+        include_str!("fixtures/sim/lrm_decisions/S27-D20_queue_slice_bounds.out"),
+    );
+}

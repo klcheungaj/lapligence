@@ -27,6 +27,13 @@ pub(super) fn render_memory(
     if view.dims.is_empty() || view.dims.len() != view.strides.len() {
         return Err("memory task requires a fixed packed memory view".to_owned());
     }
+    if view
+        .selectors
+        .iter()
+        .any(crate::sim::ir::IrMemorySelector::is_slice)
+    {
+        return Err("memory slices with a variable position require the owned emitter".to_owned());
+    }
     let path = super::super::objects::string(ctx, path)?;
     let mut selector_declarations = String::new();
     let mut selector_cleanups = String::new();

@@ -1622,16 +1622,23 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   whitespace/comments, binary/hex digits, X/Z and `@` addresses.
   The memory may be module, package, hierarchical or static storage, a static
   or automatic subroutine or block local (also fork-shared), a `ref` formal, a
-  structure member, a fixed-size class property (instance or static), a
+  structure member, a fixed-size class property (instance or static; named
+  directly, through `this` or through a handle, where a null handle stops with
+  the null-access error before the file is opened), a
   whole dynamic array or queue at its current size, never resized (S27-D10),
-  a constant slice of one checked against that size (S27-D14), or an
+  a slice of one checked against that size (S27-D14), or an
   associative array with an integral index (S27-D15/D16: entries created or
   updated at each address, addresses cast to the index type, index 0 by
   default; a wildcard index is rejected, S27-D18). The memory_name is
   evaluated once per call; whole variables and locals, and constant members
   of them, load in place (S27-D13).
   Fixed packed memories may have multiple unpacked dimensions and selected
-  rows/slices; runtime view selectors are captured once. Remaining dimensions
+  rows/slices; runtime view selectors are captured once. A slice position may
+  be variable (`[i +: w]`, `[i -: w]`, SV §7.4.6) and queue slice bounds may be
+  any expressions with `$` as the last index (SV §7.10.1); each is evaluated
+  once when the task runs, and a slice outside the array, with an X/Z position
+  or with reversed queue bounds is an error that changes nothing (S27-D19,
+  S27-D20). Remaining dimensions
   walk low-to-high in row-major order; one-dimensional 2001 omitted ranges
   instead follow declaration direction. 2009 defaults, including start-only
   calls, are low-to-high; explicit ranges retain requested direction.
@@ -1661,10 +1668,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   (S27-D4, an llg reading kept as a `q02_enum_*` characterization in
   `sim_undefined_behavior`). Sparse addressed 2009 files omit the no-address
   short-file warning; 2001 count warnings remain, including excess data from
-  repeated in-range addresses. Slices need constant bounds (a variable
-  position, legal under SV §7.4.6, and a queue slice ending at `$` are
-  rejected), rows of dynamic arrays of unpacked arrays are rejected as load
-  targets, and multidimensional class-property memories remain under SIM-011.
+  repeated in-range addresses. Rows of dynamic arrays of unpacked arrays are
+  rejected as load targets, and multidimensional class-property memories
+  remain under SIM-011.
   Real/non-packed words and fully indexed scalar targets are outside the
   memory-load argument contract; string-key associative memories are prohibited.
 - 🟦 **Memory writers** — `$writememh/$writememb` emit consumable four-state words

@@ -1,0 +1,5 @@
+up xx 11 22 xx calls 1
+down xx 11 22 xx
+dyn xx 22 11 xx size 4
+after up xx xx dyn 11 xx
+dump 11 22

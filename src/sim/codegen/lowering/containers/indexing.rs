@@ -8,7 +8,7 @@ impl<'a> Codegen<'a> {
         ir_to_storage(value, 32, true, true)
     }
 
-    fn is_unbounded_node(&self, node: NodeId) -> bool {
+    pub(in super::super) fn is_unbounded_node(&self, node: NodeId) -> bool {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Unbounded) => true,
             NodeKind::Expr(ExprKind::Ref {

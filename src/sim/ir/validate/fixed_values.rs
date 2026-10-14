@@ -73,6 +73,39 @@ impl Validator<'_> {
         let mut previous_selector = None;
         let mut selector_offset = 0u64;
         for (index, selector) in view.selectors.iter().enumerate() {
+            if let crate::sim::ir::IrMemorySelectorKind::SliceBase { width, .. } = selector.kind {
+                // The variable position of the view's slice: the last
+                // selector, on the first view dimension, whose placeholder
+                // bounds have the slice's extent.
+                let extent = view
+                    .dims
+                    .first()
+                    .map(|(left, right)| (i64::from(*left) - i64::from(*right)).unsigned_abs() + 1);
+                if index + 1 != view.selectors.len()
+                    || !view.sliced
+                    || selector.dimension != prefix
+                    || array.dims.get(selector.dimension) != Some(&(selector.left, selector.right))
+                    || source_strides.get(selector.dimension) != Some(&selector.stride)
+                    || extent != Some(u64::from(width))
+                {
+                    return self.fail(path, "memory slice selector disagrees with its view");
+                }
+                self.validate_expr(
+                    &selector.value,
+                    formals,
+                    &format!("{path}.selector[{index}]"),
+                )?;
+                if selector.value.is_real() || selector.value.width == 0 {
+                    return self.fail(
+                        format!("{path}.selector[{index}]"),
+                        "memory selector must be a packed integer",
+                    );
+                }
+                continue;
+            }
+            if selector.is_slice() {
+                return self.fail(path, "a fixed memory view has no runtime range slice");
+            }
             if selector.dimension >= prefix
                 || previous_selector.is_some_and(|previous| previous >= selector.dimension)
             {
@@ -256,6 +289,16 @@ impl Validator<'_> {
                         && task.strides.is_empty()
                         && task.origin == 0
                         && task.total == 0 => {}
+                    // A slice whose position or bounds resolve when the
+                    // task runs: an indexed slice of either kind, or the two
+                    // bounds of a queue range slice. The runtime checks the
+                    // resolved slice against the current size.
+                    (IrContainerKind::Dynamic | IrContainerKind::Queue { .. }, None)
+                        if task.sliced
+                            && task.root_dims.is_empty()
+                            && task.strides == [1]
+                            && task.origin == 0
+                            && self.resizable_slice_selectors(task) => {}
                     // A constant ascending slice; the runtime checks it
                     // against the current size.
                     (IrContainerKind::Dynamic | IrContainerKind::Queue { .. }, None)
@@ -443,6 +486,42 @@ impl Validator<'_> {
                 // The selected extent is runtime-valued; the stream checks it.
                 Ok(0)
             }
+        }
+    }
+}
+
+impl Validator<'_> {
+    /// The runtime slice selectors of a dynamic array or queue view and its
+    /// placeholder first dimension: one indexed-slice position with
+    /// `[0:width-1]`, or a left and a right queue bound with `[0:0]`.
+    fn resizable_slice_selectors(&self, task: &crate::sim::ir::IrMemoryAccess) -> bool {
+        use crate::sim::ir::IrMemorySelectorKind as Kind;
+        let packed = |selector: &crate::sim::ir::IrMemorySelector| {
+            selector.dimension == 0
+                && selector.left == 0
+                && selector.right == 0
+                && selector.stride == 1
+                && !selector.value.is_real()
+                && selector.value.width != 0
+        };
+        match task.selectors.as_slice() {
+            [base] => match base.kind {
+                Kind::SliceBase { width, .. } => {
+                    packed(base)
+                        && i32::try_from(width - 1).is_ok_and(|span| task.dims == [(0, span)])
+                        && task.total == u64::from(width)
+                }
+                _ => false,
+            },
+            [left, right] => {
+                matches!(left.kind, Kind::SliceLeft)
+                    && matches!(right.kind, Kind::SliceRight)
+                    && packed(left)
+                    && packed(right)
+                    && task.dims == [(0, 0)]
+                    && task.total == 1
+            }
+            _ => false,
         }
     }
 }

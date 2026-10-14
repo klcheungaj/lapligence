@@ -90,7 +90,8 @@ mod statements;
 pub use statements::{
     IrActivationTarget, IrCaseItem, IrCaseKind, IrClockingSampleMode, IrDisplayRadix, IrFileOp,
     IrMemoryAccess, IrMemoryAddressingPolicy, IrMemoryImage, IrMemoryRadix, IrMemorySelector,
-    IrMemoryStorage, IrMemoryView, IrStmt, IrStochasticStmt, IrUniquePriorityCheck, IrWaveDumpVars,
+    IrMemorySelectorKind, IrMemoryStorage, IrMemoryView, IrStmt, IrStochasticStmt,
+    IrUniquePriorityCheck, IrWaveDumpVars,
 };
 mod events;
 pub use events::{

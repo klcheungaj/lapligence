@@ -1487,6 +1487,7 @@ fn descriptor_value_assignment_requires_matching_descriptor_shape() {
             right: 1,
             stride: 65_537,
             value: packed_const(1, 32),
+            kind: crate::sim::ir::IrMemorySelectorKind::Index,
         }],
         sliced: false,
         dims: vec![(0, 65536)],
@@ -2121,4 +2122,85 @@ fn clocking_drive_cycle_counts_and_instance_dispatch_are_checked() {
             .contains("unknown virtual interface descriptor"),
         "{error:?}"
     );
+}
+
+#[test]
+fn memory_slice_position_selector_must_match_its_view() {
+    use crate::sim::ir::{IrMemoryAddressingPolicy, IrMemoryRadix, IrMemorySelectorKind};
+    let mut model = valid_model();
+    model.arrays.push(IrArray {
+        activation: false,
+        descriptor: false,
+        net: None,
+        net_elements: Vec::new(),
+        element_default: None,
+        element_uninitialized: None,
+        c_name: "mem".to_string(),
+        hdl_name: "mem".to_string(),
+        elem_width: 8,
+        signed: false,
+        two_state: false,
+        real: false,
+        shortreal: false,
+        dims: vec![(2, 3), (7, 0)],
+        total: 16,
+    });
+    let index = IrMemorySelector {
+        dimension: 0,
+        left: 2,
+        right: 3,
+        stride: 8,
+        value: packed_const(1, 32),
+        kind: IrMemorySelectorKind::Index,
+    };
+    let slice = |width: u32| IrMemorySelector {
+        dimension: 1,
+        left: 7,
+        right: 0,
+        stride: 1,
+        value: packed_const(4, 32),
+        kind: IrMemorySelectorKind::SliceBase {
+            width,
+            descending: false,
+        },
+    };
+    // `mem[r][p +: 3]`: the placeholder is the first three-wide slice of the
+    // descending dimension.
+    let view = |selectors: Vec<IrMemorySelector>, sliced: bool| IrMemoryView {
+        array: 0,
+        origin: 0,
+        selectors,
+        sliced,
+        dims: vec![(7, 5)],
+        strides: vec![1],
+        total: 3,
+    };
+    let task = |view: IrMemoryView| IrStmt::Memory {
+        write: false,
+        path: IrStringExpr::Literal(b"words.mem".to_vec()),
+        view: Box::new(view),
+        radix: IrMemoryRadix::Hex,
+        addressing: IrMemoryAddressingPolicy::SystemVerilog2009,
+        enum_values: None,
+        start: None,
+        finish: None,
+    };
+    model
+        .validate_stmt(&task(view(vec![index.clone(), slice(3)], true)), None)
+        .expect("a row index followed by a slice position");
+    for (selectors, sliced) in [
+        (vec![index.clone(), slice(4)], true),
+        (vec![index.clone(), slice(3)], false),
+        (vec![slice(3), index.clone()], true),
+    ] {
+        let error = model
+            .validate_stmt(&task(view(selectors, sliced)), None)
+            .expect_err("a slice position must be the last selector of a sliced view");
+        assert!(error.detail().contains("memory"), "{}", error.detail());
+    }
+    let mut range = slice(3);
+    range.kind = IrMemorySelectorKind::SliceLeft;
+    model
+        .validate_stmt(&task(view(vec![index, range], true)), None)
+        .expect_err("a fixed view has no runtime range slice");
 }

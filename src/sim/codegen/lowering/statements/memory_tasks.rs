@@ -2,7 +2,8 @@
 
 use super::*;
 use crate::sim::ir::{
-    IrAssocKey, IrContainerElement, IrContainerKind, IrMemoryAccess, IrMemoryImage, IrMemoryStorage,
+    IrAssocKey, IrContainerElement, IrContainerKind, IrMemoryAccess, IrMemoryImage,
+    IrMemorySelectorKind, IrMemoryStorage,
 };
 
 #[derive(Clone, Copy)]
@@ -351,7 +352,7 @@ impl EmitCtx<'_, '_> {
                 ));
             }
             match slice {
-                Some(slice) => self.resizable_memory_slice(name, slice)?,
+                Some(slice) => self.resizable_memory_slice(name, slice, container, &kind)?,
                 None => MemoryGeometry {
                     origin: 0,
                     selectors: Vec::new(),
@@ -395,16 +396,81 @@ impl EmitCtx<'_, '_> {
         })))
     }
 
-    /// A constant slice of a dynamic array or queue, addressed in place like a
+    /// A slice of a dynamic array or queue, addressed in place like a
     /// fixed-array slice: its indices keep the container's ascending
-    /// `[0:size-1]` direction whatever the slice spelling, and the runtime
-    /// checks them against the current size (decision S27-D14).
+    /// `[0:size-1]` direction, and the runtime checks them against the
+    /// current size (decision S27-D14). Constant ascending bounds fold into
+    /// the view; a variable position (S27-D19), a queue bound that is not
+    /// constant or uses `$`, or reversed queue bounds (S27-D20) become slice
+    /// selectors that the emitter resolves once when the task runs.
     fn resizable_memory_slice(
-        &self,
+        &mut self,
         name: &str,
         slice: MemorySliceNodes,
+        container: usize,
+        kind: &IrContainerKind,
     ) -> Result<MemoryGeometry, String> {
-        let (left, right) = self.memory_slice_bounds(name, slice)?;
+        let queue = matches!(kind, IrContainerKind::Queue { .. });
+        if let Some((base, width, descending)) = self.runtime_slice_base(name, slice)? {
+            let value = self.memory_slice_bound(name, queue.then_some(container), base)?;
+            let span = i32::try_from(width - 1).map_err(|_| {
+                format!(
+                    "{name} indexed memory slice width is outside the supported index range in `{}`",
+                    self.path
+                )
+            })?;
+            return Ok(MemoryGeometry {
+                origin: 0,
+                selectors: vec![IrMemorySelector {
+                    dimension: 0,
+                    left: 0,
+                    right: 0,
+                    stride: 1,
+                    value,
+                    kind: IrMemorySelectorKind::SliceBase { width, descending },
+                }],
+                sliced: true,
+                dims: vec![(0, span)],
+                strides: vec![1],
+                total: u64::from(width),
+            });
+        }
+        let constant = match slice {
+            MemorySliceNodes::Range { left, right } if queue => self
+                .cg
+                .eval_bound_i128(left)
+                .ok()
+                .zip(self.cg.eval_bound_i128(right).ok())
+                .filter(|(left, right)| left <= right),
+            _ => Some(self.memory_slice_bounds(name, slice)?),
+        };
+        let Some((left, right)) = constant else {
+            let MemorySliceNodes::Range { left, right } = slice else {
+                unreachable!("only queue range slices resolve at run time here");
+            };
+            let mut selectors = Vec::with_capacity(2);
+            for (bound, kind) in [
+                (left, IrMemorySelectorKind::SliceLeft),
+                (right, IrMemorySelectorKind::SliceRight),
+            ] {
+                selectors.push(IrMemorySelector {
+                    dimension: 0,
+                    left: 0,
+                    right: 0,
+                    stride: 1,
+                    value: self.memory_slice_bound(name, Some(container), bound)?,
+                    kind,
+                });
+            }
+            return Ok(MemoryGeometry {
+                origin: 0,
+                selectors,
+                sliced: true,
+                dims: vec![(0, 0)],
+                strides: vec![1],
+                total: 1,
+            });
+        };
         let (low, high) = (left.min(right), left.max(right));
         let low = i32::try_from(low).ok().filter(|low| *low >= 0);
         let high = i32::try_from(high).ok();
@@ -422,6 +488,74 @@ impl EmitCtx<'_, '_> {
             strides: vec![1],
             total: u64::from(high.abs_diff(low)) + 1,
         })
+    }
+
+    /// The variable position of an indexed slice `[base +: width]` or
+    /// `[base -: width]` whose base is not constant, with its constant width
+    /// (IEEE 1800-2009 7.4.6: "The size of the part-select or slice shall be
+    /// constant, but the position can be variable."). `None` for a slice
+    /// with constant bounds.
+    fn runtime_slice_base(
+        &self,
+        name: &str,
+        slice: MemorySliceNodes,
+    ) -> Result<Option<(NodeId, u32, bool)>, String> {
+        let MemorySliceNodes::Indexed {
+            base,
+            width,
+            descending,
+        } = slice
+        else {
+            return Ok(None);
+        };
+        if self.cg.eval_bound_i128(base).is_ok() {
+            return Ok(None);
+        }
+        let width = self.cg.eval_bound_i128(width).map_err(|_| {
+            format!(
+                "{name} indexed memory slice width must be constant in `{}`",
+                self.path
+            )
+        })?;
+        let width = u32::try_from(width)
+            .ok()
+            .filter(|width| *width > 0)
+            .ok_or_else(|| {
+                format!(
+                    "{name} indexed memory slice width must be positive in `{}`",
+                    self.path
+                )
+            })?;
+        Ok(Some((base, width, descending)))
+    }
+
+    /// A runtime slice position or bound, keeping X/Z so the emitter treats
+    /// it as invalid; within a queue slice `$` is the current last index.
+    fn memory_slice_bound(
+        &mut self,
+        name: &str,
+        queue: Option<usize>,
+        node: NodeId,
+    ) -> Result<IrExpr, String> {
+        let value = match queue {
+            Some(container) if self.cg.is_unbounded_node(node) => {
+                self.cg.lower_queue_index(&self.path, container, node)
+            }
+            Some(container) => {
+                let previous = self.cg.queue_end.replace(container);
+                let value = self.cg.lower_container_index(&self.path, node);
+                self.cg.queue_end = previous;
+                value
+            }
+            None => self.cg.lower_container_index(&self.path, node),
+        }?;
+        if value.is_real() || value.width == 0 {
+            return Err(format!(
+                "{name} memory slice bounds must be packed integers in `{}`",
+                self.path
+            ));
+        }
+        Ok(value)
     }
 
     /// Element checks, start/finish bounds, enum members, radix and default
@@ -524,12 +658,17 @@ impl EmitCtx<'_, '_> {
     ) -> Result<(NodeId, Vec<NodeId>, Option<MemorySliceNodes>), String> {
         let fixed_base = |base: NodeId| {
             self.cg
-                .query_descriptor(base)
+                .query_descriptor(self.this_property(base).unwrap_or(base))
                 .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. }))
         };
         // A slice of a whole dynamic array or queue addresses it in place.
-        let sliceable_base =
-            |base: NodeId| fixed_base(base) || self.cg.container_of(base).is_some();
+        let sliceable_base = |base: NodeId| {
+            fixed_base(base)
+                || self
+                    .cg
+                    .container_of(self.this_property(base).unwrap_or(base))
+                    .is_some()
+        };
         let no_selector_after_slice = |slice: &Option<MemorySliceNodes>| {
             if slice.is_some() {
                 Err(format!(
@@ -600,13 +739,31 @@ impl EmitCtx<'_, '_> {
                 operands,
                 ..
             }) if !operands.is_empty() => self.memory_image_base(name, operands[0]),
-            _ => Ok((node, Vec::new(), None)),
+            _ => Ok((self.this_property(node).unwrap_or(node), Vec::new(), None)),
+        }
+    }
+
+    /// The property declaration that `this.<property>` names inside a
+    /// method: the method's own receiver, exactly as the bare property name
+    /// (IEEE 1800-2009 8.10).
+    fn this_property(&self, node: NodeId) -> Option<NodeId> {
+        let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.cg.kind(node) else {
+            return None;
+        };
+        match (parts.as_slice(), refs.as_slice()) {
+            ([this, _], [Some(receiver), Some(property)])
+                if this == "this" && self.cg.node(*receiver).name == "this" =>
+            {
+                Some(*property)
+            }
+            _ => None,
         }
     }
 
     /// Capture a fixed memory view. SystemVerilog permits constant or runtime
-    /// higher-dimension indices and a constant slice on the lowest specified
-    /// dimension. At least one unpacked dimension remains addressable.
+    /// higher-dimension indices and a slice, with a constant or variable
+    /// position, on the lowest specified dimension. At least one unpacked
+    /// dimension remains addressable.
     pub(in super::super) fn lower_memory_view(
         &mut self,
         name: &str,
@@ -652,8 +809,10 @@ impl EmitCtx<'_, '_> {
 
     /// Selected view of a source with unpacked dimensions `source_dims`:
     /// constant selectors fold into the origin, runtime selectors are lowered
-    /// once, and an optional constant slice of the next dimension keeps the
-    /// source declaration's direction. At least one dimension remains.
+    /// once, and an optional slice of the next dimension keeps the source
+    /// declaration's direction. A slice with a variable position becomes the
+    /// last runtime selector (decision S27-D19). At least one dimension
+    /// remains.
     fn memory_geometry(
         &mut self,
         name: &str,
@@ -702,11 +861,51 @@ impl EmitCtx<'_, '_> {
                     right,
                     stride: source_strides[dimension],
                     value,
+                    kind: IrMemorySelectorKind::Index,
                 });
             }
         }
         let sliced = slice.is_some();
-        let dims = if let Some(slice) = slice {
+        let runtime_slice = match slice {
+            Some(slice) => self.runtime_slice_base(name, slice)?,
+            None => None,
+        };
+        let dims = if let Some((base, width, descending)) = runtime_slice {
+            // The slice position is resolved when the task runs: `dims`
+            // holds the first slice of the dimension, which has the same
+            // extent, and the emitter substitutes the selected bounds.
+            let dimension = selectors.len();
+            let (left, right) = source_dims[dimension];
+            let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
+            if u64::from(width) > extent {
+                return Err(format!(
+                    "{name} indexed memory slice is wider than its dimension in `{}`",
+                    self.path
+                ));
+            }
+            let value = self.memory_slice_bound(name, None, base)?;
+            runtime_selectors.push(IrMemorySelector {
+                dimension,
+                left,
+                right,
+                stride: source_strides[dimension],
+                value,
+                kind: IrMemorySelectorKind::SliceBase { width, descending },
+            });
+            // `width` is at most the extent, so the far bound stays inside
+            // the declared range.
+            let span = i64::from(width) - 1;
+            let far = if left >= right {
+                i64::from(left) - span
+            } else {
+                i64::from(left) + span
+            };
+            let far = i32::try_from(far)
+                .map_err(|_| format!("{name} memory view offset overflow in `{}`", self.path))?;
+            let mut selected = vec![(left, far)];
+            selected.extend_from_slice(&source_dims[dimension + 1..]);
+            selected
+        } else if let Some(slice) = slice {
             let dimension = selectors.len();
             let (left, right) = source_dims[dimension];
             let (slice_left, slice_right) = self.memory_slice_bounds(name, slice)?;

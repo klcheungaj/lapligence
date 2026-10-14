@@ -199,6 +199,15 @@ impl Validator<'_> {
                         formals,
                         path,
                     )?;
+                } else {
+                    // A runtime-sized container view: its slice selectors.
+                    for (index, selector) in task.selectors.iter().enumerate() {
+                        self.validate_expr(
+                            &selector.value,
+                            formals,
+                            &format!("{path}.selector[{index}]"),
+                        )?;
+                    }
                 }
                 for (name, bound) in [("start", &task.start), ("finish", &task.finish)] {
                     if let Some(bound) = bound {
