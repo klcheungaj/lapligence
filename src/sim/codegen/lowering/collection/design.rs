@@ -188,32 +188,10 @@ impl<'a> Codegen<'a> {
     /// 27.4), not as the loop array followed by the block. An unnamed block
     /// keeps the array's name, as generate scopes do.
     fn instance_display_path(&self, inst: NodeId) -> String {
-        let mut parts: Vec<&str> = Vec::new();
-        let mut named_block = false;
-        let mut current = Some(inst);
-        while let Some(id) = current {
-            let node = self.node(id);
-            match node.kind {
-                NodeKind::ModuleInst { .. } | NodeKind::GenScope => {
-                    named_block = matches!(node.kind, NodeKind::GenScope) && !node.name.is_empty();
-                    if !node.name.is_empty() {
-                        parts.push(&node.name);
-                    }
-                }
-                NodeKind::GenScopeArray => {
-                    if !named_block && !node.name.is_empty() {
-                        parts.push(&node.name);
-                    }
-                    named_block = false;
-                }
-                _ => {}
-            }
-            current = node.parent;
-        }
+        let parts = self.db.hierarchical_name_parts(inst);
         if parts.len() <= 1 {
             return self.instance_path_of(inst);
         }
-        parts.reverse();
         parts.join(".")
     }
 

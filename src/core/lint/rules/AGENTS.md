@@ -87,4 +87,6 @@ native traversal or I/O.
 - `analysis.rs` — shared owned-db helpers: read/write collection,
   expression-width computation, scope/instance iteration, port-link
   bookkeeping (deterministic, deduped, first-encounter order),
-  and unconnected-port classification (`port_unconnected`).
+  and unconnected-port classification (`port_unconnected`). Scope names in
+  messages come from `Db::hierarchical_name_parts`, the same SV 27.4 naming
+  as `%m` (`tb.g[0].c`, not `tb.g.g[0].c`).

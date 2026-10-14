@@ -201,4 +201,62 @@ mod tests {
         let got = rule_diags(&diags, "unused-signal");
         assert!(got.is_empty(), "no unused findings: {:?}", diags);
     }
+
+    fn unused_paths(sv: &str, top: &str) -> Vec<String> {
+        let diags = lint_design(sv, top);
+        let mut paths: Vec<String> = rule_diags(&diags, "unused-signal")
+            .iter()
+            .map(|d| d.message.clone())
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    #[test]
+    fn loop_generate_block_is_named_once() {
+        let paths = unused_paths(
+            "module top;\n  genvar i;\n  for (i = 0; i < 2; i = i + 1) begin : g\n    logic dead;\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(
+            paths,
+            [
+                "signal `dead` in `top.g[0]` is never used",
+                "signal `dead` in `top.g[1]` is never used",
+            ],
+            "SV 27.4 names the block g[0], not the array and then the block"
+        );
+    }
+
+    #[test]
+    fn instance_in_loop_generate_block_is_named_once() {
+        let paths = unused_paths(
+            "module child;\n  logic dead;\nendmodule\n\
+             module top;\n  genvar i;\n  for (i = 0; i < 2; i = i + 1) begin : g\n    child c();\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(
+            paths,
+            [
+                "signal `dead` in `top.g[0].c` is never used",
+                "signal `dead` in `top.g[1].c` is never used",
+            ]
+        );
+    }
+
+    #[test]
+    fn nested_loop_generate_blocks_are_each_named_once() {
+        let paths = unused_paths(
+            "module top;\n  genvar i, j;\n  for (i = 0; i < 1; i = i + 1) begin : outer\n\
+               for (j = 0; j < 2; j = j + 1) begin : inner\n      logic dead_nested;\n    end\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(
+            paths,
+            [
+                "signal `dead_nested` in `top.outer[0].inner[0]` is never used",
+                "signal `dead_nested` in `top.outer[0].inner[1]` is never used",
+            ]
+        );
+    }
 }

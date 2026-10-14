@@ -583,26 +583,11 @@ pub fn iter_instances(db: &Db) -> impl Iterator<Item = (NodeId, String)> + '_ {
 }
 
 /// Display path of a scope (module instance or gen scope), e.g. `"top.u0"` or
-/// `"top.genblk[0]"`.  The top instance yields its own name (unlike
-/// [`Db::instance_path`], which returns `""` for the top).
+/// `"top.g[0]"`.  The top instance yields its own name (unlike
+/// [`Db::instance_path`], which returns `""` for the top); loop generate
+/// blocks follow [`Db::hierarchical_name_parts`], the naming `%m` uses.
 pub fn scope_path(db: &Db, id: NodeId) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    let mut cur = Some(id);
-    while let Some(nid) = cur {
-        let node = db.node(nid);
-        if matches!(
-            node.kind,
-            NodeKind::ModuleInst { .. } | NodeKind::GenScopeArray | NodeKind::GenScope
-        ) {
-            let name = node.name.as_str();
-            if !name.is_empty() {
-                parts.push(name.to_string());
-            }
-        }
-        cur = node.parent;
-    }
-    parts.reverse();
-    parts.join(".")
+    db.hierarchical_name_parts(id).join(".")
 }
 
 /// Display path of the scope declaring `sig` (its parent scope); empty when
