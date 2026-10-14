@@ -229,7 +229,7 @@ fn inline_expanded_templates_are_not_callable() {
         .call_expression(&call)
         .err()
         .unwrap()
-        .contains("must be expanded"));
+        .contains("must select a specialization"));
 }
 
 #[test]
