@@ -499,6 +499,7 @@ impl<'a> Codegen<'a> {
         let descriptor = self
             .query_descriptor(child)
             .ok_or_else(|| format!("class property `{name}` has no recursive type descriptor"))?;
+        let mut multidimensional = None;
         let element = match &descriptor.shape {
             TypeShape::Container { element, .. } => element,
             TypeShape::FixedArray {
@@ -506,10 +507,19 @@ impl<'a> Codegen<'a> {
                 element,
             } => {
                 if dimensions.len() != 1 {
-                    return Err(format!(
-                        "multidimensional fixed array class property `{}` is not supported (SIM-011)",
-                        self.node(child).full_name
-                    ));
+                    // A multidimensional property of packed words keeps all
+                    // its cells in one fixed-size container, in declaration
+                    // (row-major) order, as `%p` and memory files read them.
+                    if !matches!(
+                        lower_container_element(element)?,
+                        IrContainerElement::Packed { .. }
+                    ) {
+                        return Err(format!(
+                            "multidimensional fixed array class property `{}` needs packed elements (SIM-011)",
+                            self.node(child).full_name
+                        ));
+                    }
+                    multidimensional = Some(dimensions.clone());
                 }
                 element
             }
@@ -522,6 +532,9 @@ impl<'a> Codegen<'a> {
         let element = lower_container_element(element)?;
         let path = format!("llg_class{class_index}");
         let info = self.container_from_meta(&path, &name, child, meta, element)?;
+        if let Some(dimensions) = multidimensional {
+            self.fixed_view_dims.insert(info.ir, dimensions);
+        }
         if self.db.variable_lifetime(child) != VariableLifetime::Static {
             // The container initializer list is for model storage; an
             // instance property initializes per object at construction.

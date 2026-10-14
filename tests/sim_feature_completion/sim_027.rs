@@ -508,6 +508,29 @@ fn rows_of_dynamic_arrays_and_queues_of_unpacked_arrays() {
     );
 }
 
+// A03: multidimensional class properties as memory_name: whole, rows,
+// a variable row slice, through a handle, `this.` and a static property; also
+// copied whole, compared, printed and assigned a nested pattern.
+#[test]
+fn multidimensional_class_properties_load_and_dump() {
+    let diagnostics = [
+        more_words("words.mem"),
+        more_words("words.mem"),
+        more_words("words.mem"),
+        "error: memory file `words.mem`: selected index or slice is outside the memory".to_owned(),
+    ];
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "class_multidim",
+        &[],
+        &[],
+        &exact(
+            include_str!("../fixtures/sim/feature_completion/sim_027/class_multidim.out"),
+            &as_strs(&diagnostics),
+        ),
+    );
+}
+
 // A03: a memory_name reached through a null class handle raises the standard
 // null dereference error before the file is opened or a word is stored.
 #[test]

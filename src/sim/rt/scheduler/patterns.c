@@ -296,6 +296,25 @@ static void llg_pattern_value_items(llg_pattern_out_t* out,
     llg_pattern_put(out, "}", 1);
 }
 
+// Packed cells of a multidimensional fixed array kept in one packed
+// container in declaration (row-major) order (a multidimensional class
+// property), printed one brace level per dimension.
+static void llg_pattern_packed_items(llg_pattern_out_t* out,
+                                     const llg_pattern_type_t* type, size_t dim,
+                                     const sv4_t* items, size_t count) {
+    uint64_t extent = llg_pattern_extent(type->bounds[2 * dim], type->bounds[2 * dim + 1]);
+    size_t stride = extent ? count / (size_t)extent : 0;
+    llg_pattern_put(out, "'{", 2);
+    for (uint64_t i = 0; i < extent && !out->truncated; ++i) {
+        if (i) llg_pattern_separator(out);
+        if (dim + 1 < type->count)
+            llg_pattern_packed_items(out, type, dim + 1, items + i * stride, stride);
+        else
+            llg_pattern_flat(out, llg_pattern_at(out, type->element), items[i], 0);
+    }
+    llg_pattern_put(out, "}", 1);
+}
+
 static void llg_pattern_value(llg_pattern_out_t* out,
                               const llg_pattern_type_t* type,
                               const llg_value_t* value) {
@@ -392,6 +411,17 @@ static void llg_pattern_container(llg_pattern_out_t* out,
         const llg_dyn_value_array_t* array = container;
         llg_pattern_value_items(out, type, 0, array->data, array->size);
         return;
+    }
+    if (container && storage == LLG_PATTERN_FROM_PACKED_CONTAINER && !assoc && !queue &&
+        type && type->kind == LLG_PATTERN_FIXED_ARRAY && type->count > 1) {
+        const llg_dyn_array_t* array = container;
+        size_t total = 1;
+        for (size_t d = 0; d < type->count; ++d)
+            total *= (size_t)llg_pattern_extent(type->bounds[2 * d], type->bounds[2 * d + 1]);
+        if (total == array->size) {
+            llg_pattern_packed_items(out, type, 0, array->data, array->size);
+            return;
+        }
     }
     llg_pattern_put(out, "'{", 2);
     if (!container) {

@@ -899,19 +899,22 @@ impl EmitCtx<'_, '_> {
         };
         match self.cg.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) if fixed_base(*base) => {
-                let (root, mut selectors, slice) = self.memory_image_base(name, *base)?;
+                let base = self.receiver_select_base(node, *base);
+                let (root, mut selectors, slice) = self.memory_image_base(name, base)?;
                 no_selector_after_slice(&slice)?;
                 selectors.push(*index);
                 Ok((root, selectors, None))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if fixed_base(*base) => {
-                let (root, mut selectors, slice) = self.memory_image_base(name, *base)?;
+                let base = self.receiver_select_base(node, *base);
+                let (root, mut selectors, slice) = self.memory_image_base(name, base)?;
                 no_selector_after_slice(&slice)?;
                 selectors.extend(indices.iter().copied());
                 Ok((root, selectors, None))
             }
             NodeKind::Expr(ExprKind::PartSelect { base, left, right }) if sliceable_base(*base) => {
-                let (root, selectors, slice) = self.memory_image_base(name, *base)?;
+                let base = self.receiver_select_base(node, *base);
+                let (root, selectors, slice) = self.memory_image_base(name, base)?;
                 single_slice(&slice)?;
                 Ok((
                     root,
@@ -928,7 +931,8 @@ impl EmitCtx<'_, '_> {
                 width_expr,
                 neg,
             }) if sliceable_base(*base) => {
-                let (root, selectors, slice) = self.memory_image_base(name, *base)?;
+                let base = self.receiver_select_base(node, *base);
+                let (root, selectors, slice) = self.memory_image_base(name, base)?;
                 single_slice(&slice)?;
                 Ok((
                     root,
@@ -949,6 +953,23 @@ impl EmitCtx<'_, '_> {
             }) if !operands.is_empty() => self.memory_image_base(name, operands[0]),
             _ => Ok((self.this_property(node).unwrap_or(node), Vec::new(), None)),
         }
+    }
+
+    /// The base of `select` to descend into: the frontend names only the
+    /// declaration of a class container property selected through an
+    /// explicit handle and keeps the receiver path as a child of the select
+    /// (SIM-011); that path carries the receiver-qualified container.
+    fn receiver_select_base(&self, select: NodeId, base: NodeId) -> NodeId {
+        if self.cg.receiver_containers.is_empty() {
+            return base;
+        }
+        self.cg
+            .node(select)
+            .children
+            .iter()
+            .copied()
+            .find(|child| self.cg.receiver_containers.contains_key(child))
+            .unwrap_or(base)
     }
 
     /// The property declaration that `this.<property>` names inside a

@@ -1671,8 +1671,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `sim_undefined_behavior`). Sparse addressed 2009 files omit the no-address
   short-file warning; 2001 count warnings remain, including excess data from
   repeated in-range addresses. Associative arrays of unpacked arrays (an
-  element or the whole array) are rejected with their location, and
-  multidimensional class-property memories remain under SIM-011.
+  element or the whole array) are rejected with their location.
+  Multidimensional class properties of packed words (instance or static) are
+  memories whole, by row and by slice, through a handle or `this.`.
   Real/non-packed words and fully indexed scalar targets are outside the
   memory-load argument contract; string-key associative memories are prohibited.
 - 🟦 **Memory writers** — `$writememh/$writememb` emit consumable four-state words
@@ -1931,7 +1932,10 @@ These are bounded implementations, not full verification-infrastructure support.
   [collector limits](known_issues.md#collected-objects-keep-some-runtime-objects-and-defer-collection).
   Static record properties with string, real
   or handle members, record properties with container members,
-  multidimensional fixed-array properties, container
+  element, row and slice selects of multidimensional fixed-array properties
+  (which are used whole: copies, equality, `%p`, nested positional patterns,
+  memory files) and multidimensional properties of non-packed elements,
+  container
   properties selected through other handle expressions or outside procedural
   statements, and constrained randomization remain restricted.
   SV ch.8 **[SV-2005]**.

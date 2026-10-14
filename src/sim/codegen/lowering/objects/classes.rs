@@ -353,6 +353,9 @@ impl Codegen<'_> {
         if let Some(range) = self.fixed_view_ranges.get(&container).copied() {
             self.fixed_view_ranges.insert(alias, range);
         }
+        if let Some(dimensions) = self.fixed_view_dims.get(&container).cloned() {
+            self.fixed_view_dims.insert(alias, dimensions);
+        }
         alias
     }
 
