@@ -382,6 +382,38 @@ fn mixed_state_structure_members_round_trip() {
     );
 }
 
+// A03: slices of dynamic arrays and queues address the selected elements in
+// place, never resize, and a slice outside the current size is rejected at
+// run time (S27-D14).
+#[test]
+fn resizable_slices_address_elements_in_place() {
+    let outside = |file: &str| {
+        format!("error: memory file `{file}`: slice is outside the current size of the array")
+    };
+    let diagnostics = [
+        more_words("words.mem"),
+        more_words("words.mem"),
+        too_few_words("dump.mem"),
+        too_few_words("dump.mem"),
+        more_words("words.mem"),
+        too_few_words("dump.mem"),
+        more_words("words.mem"),
+        outside("words.mem"),
+        outside("dump.mem"),
+        too_few_words("dump.mem"),
+    ];
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "resizable_slices",
+        &[],
+        &[],
+        &exact(
+            include_str!("../fixtures/sim/feature_completion/sim_027/resizable_slices.out"),
+            &as_strs(&diagnostics),
+        ),
+    );
+}
+
 // A03 nearest-illegal and unsupported forms are rejected before a model is
 // built.
 #[test]
@@ -409,11 +441,6 @@ fn neg_unsupported_resizable_forms() {
         SUITE,
         "neg_associative",
         "$readmemh does not support associative arrays in `tb`",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_queue_slice",
-        "$readmemh requires a whole dynamic array or queue, not a selection of one, in `tb`",
     );
 }
 

@@ -143,6 +143,17 @@ L5113-5118; 5.4.1, L5219-5222; 5.4.2, L5240-5246):
 > source of nondeterminism is that statements without time-control constructs
 > in procedural blocks do not have to be executed as one event.
 
+Slices of dynamic arrays and queues (SV 21.4, L37253-37254; 21.4.1, L37347
+quoted above; 7.4.6, L8235-8237; decision S27-D14 rejects a slice outside the
+current size):
+
+> The lowest dimension (i.e., the rightmost specified dimension in the
+> identifier) can be specified with slice syntax.
+
+> If an index expression is out of the address bounds or if any bit in the
+> address is X or Z, then the index shall be invalid. ... Writing to an array
+> with an invalid index shall perform no operation.
+
 Evaluating memory_name (SV 21.4, L37251-37252; 11.4.1, L14478-14479, the
 nearest rule for a target that is read and written; decision S27-D13):
 
@@ -192,14 +203,15 @@ notification. Decision S27-D1 records this.
 | `wakeup_storage.sv` | A02 through a packed image: `ref` formal, structure member, static task memory | The four woken lines of `wakeup_storage.out` in any order, then its `done` line |
 | `single_evaluation.sv` | A selector with side effects (a counting function) in memory_name: module and automatic structure-array members (load and dump), a runtime row of a local two-dimensional memory, a fork-shared row, a `ref` actual, a start bound | `single_evaluation.out`: every call counts one evaluation; one "more words" warning for the start-bound load |
 | `mixed_state_struct.sv` | Memories that are members of a structure mixing two- and four-state members, in module, automatic and `inout` storage; X/Z digits loaded into both, each member dumped and read back | `mixed_state_struct.out`: X/Z kept in the four-state member, read as 0 in the two-state one (21.4.2); the scalar members keep their values; one conversion warning per two-state load |
-| `neg_*` | Real, string and automatic real elements; a fully indexed word; a net memory; a `const ref` target; an associative memory and a queue slice (legal, not supported); `$writememh` and a two-dimensional memory in Verilog-2001 | Rejected before a model is built |
+| `resizable_slices.sv` | Constant slices (`[a:b]`, `+:`, `-:`) of a module queue and dynamic array, an automatic queue and a class-property dynamic array; explicit start and finish inside a slice; dumps of slices; a slice beyond the current size for a load and a dump | `resizable_slices.out`: only the selected elements change, sizes never change; the two slices beyond the size are errors that load nothing and write no file (S27-D14) |
+| `neg_*` | Real, string and automatic real elements; a fully indexed word; a net memory; a `const ref` target; an associative memory (legal, not supported); `$writememh` and a two-dimensional memory in Verilog-2001 | Rejected before a model is built |
 
 Data files: `format.hex`, `format.bin`, `tokens.hex`, `tokens.bin`,
 `wake.hex`, `bad_digit.hex`, `outside_task.hex`, `outside_memory.hex`,
 `unknown_address.hex`, `long.hex`, `short.hex`, `two_words.hex`,
 `three_words.hex`, `far_address.hex`. `contexts.sv`, `contexts_v2001.v`,
-`round_trip.sv`, `single_evaluation.sv` and `mixed_state_struct.sv` write
-their own files.
+`round_trip.sv`, `single_evaluation.sv`, `mixed_state_struct.sv` and
+`resizable_slices.sv` write their own files.
 
 ## Diagnostics
 

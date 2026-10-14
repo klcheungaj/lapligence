@@ -1048,3 +1048,11 @@ fn s27_d13_memory_name_evaluated_once() {
         include_str!("fixtures/sim/lrm_decisions/S27-D13_memory_name_evaluated_once.out"),
     );
 }
+
+#[test]
+fn s27_d14_resizable_slice_outside_size() {
+    run_decision(
+        "S27-D14_resizable_slice_outside_size",
+        include_str!("fixtures/sim/lrm_decisions/S27-D14_resizable_slice_outside_size.out"),
+    );
+}

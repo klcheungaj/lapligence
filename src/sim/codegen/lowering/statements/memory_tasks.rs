@@ -322,19 +322,22 @@ impl EmitCtx<'_, '_> {
         }
         let operands = self.lower_memory_operands(name, args, &element, write)?;
         let geometry = if root_dims.is_empty() {
-            if !selectors.is_empty() || slice.is_some() {
+            if !selectors.is_empty() {
                 return Err(format!(
-                    "{name} requires a whole dynamic array or queue, not a selection of one, in `{}`",
+                    "{name} requires a whole dynamic array or queue or a slice of one, not an element, in `{}`",
                     self.path
                 ));
             }
-            MemoryGeometry {
-                origin: 0,
-                selectors: Vec::new(),
-                sliced: false,
-                dims: Vec::new(),
-                strides: Vec::new(),
-                total: 0,
+            match slice {
+                Some(slice) => self.resizable_memory_slice(name, slice)?,
+                None => MemoryGeometry {
+                    origin: 0,
+                    selectors: Vec::new(),
+                    sliced: false,
+                    dims: Vec::new(),
+                    strides: Vec::new(),
+                    total: 0,
+                },
             }
         } else {
             let cells = Self::memory_extent_product(name, &root_dims, &self.path)?;
@@ -368,6 +371,35 @@ impl EmitCtx<'_, '_> {
             start: operands.start,
             finish: operands.finish,
         })))
+    }
+
+    /// A constant slice of a dynamic array or queue, addressed in place like a
+    /// fixed-array slice: its indices keep the container's ascending
+    /// `[0:size-1]` direction whatever the slice spelling, and the runtime
+    /// checks them against the current size (decision S27-D14).
+    fn resizable_memory_slice(
+        &self,
+        name: &str,
+        slice: MemorySliceNodes,
+    ) -> Result<MemoryGeometry, String> {
+        let (left, right) = self.memory_slice_bounds(name, slice)?;
+        let (low, high) = (left.min(right), left.max(right));
+        let low = i32::try_from(low).ok().filter(|low| *low >= 0);
+        let high = i32::try_from(high).ok();
+        let (Some(low), Some(high)) = (low, high) else {
+            return Err(format!(
+                "{name} memory slice bound is outside every dynamic array or queue index in `{}`",
+                self.path
+            ));
+        };
+        Ok(MemoryGeometry {
+            origin: u64::from(low.unsigned_abs()),
+            selectors: Vec::new(),
+            sliced: true,
+            dims: vec![(low, high)],
+            strides: vec![1],
+            total: u64::from(high.abs_diff(low)) + 1,
+        })
     }
 
     /// Element checks, start/finish bounds, enum members, radix and default
@@ -473,6 +505,9 @@ impl EmitCtx<'_, '_> {
                 .query_descriptor(base)
                 .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. }))
         };
+        // A slice of a whole dynamic array or queue addresses it in place.
+        let sliceable_base =
+            |base: NodeId| fixed_base(base) || self.cg.container_of(base).is_some();
         let no_selector_after_slice = |slice: &Option<MemorySliceNodes>| {
             if slice.is_some() {
                 Err(format!(
@@ -506,7 +541,7 @@ impl EmitCtx<'_, '_> {
                 selectors.extend(indices.iter().copied());
                 Ok((root, selectors, None))
             }
-            NodeKind::Expr(ExprKind::PartSelect { base, left, right }) if fixed_base(*base) => {
+            NodeKind::Expr(ExprKind::PartSelect { base, left, right }) if sliceable_base(*base) => {
                 let (root, selectors, slice) = self.memory_image_base(name, *base)?;
                 single_slice(&slice)?;
                 Ok((
@@ -523,7 +558,7 @@ impl EmitCtx<'_, '_> {
                 base_expr,
                 width_expr,
                 neg,
-            }) if fixed_base(*base) => {
+            }) if sliceable_base(*base) => {
                 let (root, selectors, slice) = self.memory_image_base(name, *base)?;
                 single_slice(&slice)?;
                 Ok((

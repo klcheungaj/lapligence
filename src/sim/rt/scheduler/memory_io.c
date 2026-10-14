@@ -911,7 +911,8 @@ void llg_image_memory_write_view(llg_string_t path, const llg_memory_image_t* me
 // Dynamic arrays, queues and fixed-size class properties keep their elements
 // as dense cells in declaration order. A runtime-sized view (`n_dims` 0)
 // addresses `[0:size-1]` of the current size, which a load never changes
-// (IEEE 1800-2009 21.4.1); a fixed-size view must match the size. A load that
+// (IEEE 1800-2009 21.4.1); a slice of one (`total` 0, one ascending dimension)
+// must lie within that size; a fixed-size view must match the size. A load that
 // placed any word sends one contents notification, like `$fread`.
 static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
                                       size_t size, llg_container_notify_fn notify,
@@ -953,6 +954,16 @@ static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
         origin = 0;
         total = (uint64_t)size;
         view_total = total;
+    } else if (total == 0 && n_dims == 1) {
+        // A slice of a runtime-sized array: its ascending indices must lie in
+        // `[0:size-1]` of the current size (decision S27-D14).
+        if (dims[0] < 0 || dims[0] > dims[1] || (uint64_t)dims[1] >= (uint64_t)size) {
+            char* filename = llg_memory_path_copy(path);
+            llg_memory_error(filename, "slice is outside the current size of the array");
+            free(filename);
+            return;
+        }
+        total = (uint64_t)size;
     } else if (total != (uint64_t)size) {
         char* filename = llg_memory_path_copy(path);
         llg_memory_error(filename, "memory descriptor size does not match its container");

@@ -243,6 +243,17 @@ impl Validator<'_> {
                             && task.strides.is_empty()
                             && task.origin == 0
                             && task.total == 0 => {}
+                    // A constant ascending slice; the runtime checks it
+                    // against the current size.
+                    (IrContainerKind::Dynamic | IrContainerKind::Queue { .. }, None)
+                        if task.selectors.is_empty()
+                            && task.sliced
+                            && task.strides == [1]
+                            && matches!(task.dims.as_slice(), [(low, high)]
+                                if 0 <= *low
+                                    && low <= high
+                                    && task.origin == u64::from(low.unsigned_abs())
+                                    && task.total == u64::from(high.abs_diff(*low)) + 1) => {}
                     _ => {
                         return self.fail(
                             path,

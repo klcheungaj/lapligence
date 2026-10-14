@@ -1460,7 +1460,9 @@ void llg_image_memory_write_view(llg_string_t path, const llg_memory_image_t* me
 
 // Container entry points address a dynamic array, queue or fixed-size class
 // property in place. With `n_dims` 0 the view is `[0:size-1]` of the current
-// size and `total`, `origin` and `view_total` are ignored.
+// size and `total`, `origin` and `view_total` are ignored. With `total` 0 and
+// one ascending dimension the view is that slice of the current size, which
+// must contain it.
 #define LLG_CONTAINER_MEMORY_DECL(name, type)                                        \
     void name(llg_string_t path, type* memory, uint64_t total, uint32_t elem_width,  \
               int8_t elem_signed, int8_t two_state, const int32_t* dims, int n_dims, \

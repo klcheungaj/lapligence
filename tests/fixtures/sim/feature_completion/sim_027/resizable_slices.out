@@ -1,0 +1,9 @@
+queue 01 11 22 04 05 size 5
+dyn xx 11 22 33 44 xx
+dyn xx 11 33 22 11 xx
+queue dump 04 05 xx xx
+dyn dump 22 11 xx xx
+local queue a0 22 11 size 3
+local dump a0 22 xx xx
+property xx 11 22
+rejected 05 size 5 dump a0 22
