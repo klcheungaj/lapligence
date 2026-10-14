@@ -670,9 +670,13 @@ pub(crate) fn reject_case_with_args(suite: &str, fixture: &str, diagnostic: &str
     for optimized in [false, true] {
         let output = invoke_with_args(suite, fixture, optimized, args);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(output.status.code(), Some(1), "{fixture}: {stderr}");
-        assert!(output.stdout.is_empty(), "{fixture}: {output:?}");
-        assert!(stderr.contains(diagnostic), "{fixture}: {stderr}");
+        let seen = observed_output(&output);
+        assert_eq!(output.status.code(), Some(1), "{fixture}: {seen}");
+        assert!(output.stdout.is_empty(), "{fixture}: {seen}");
+        assert!(
+            stderr.contains(diagnostic),
+            "{fixture}: stderr lacks `{diagnostic}`; {seen}"
+        );
     }
 }
 
@@ -685,10 +689,25 @@ pub(crate) fn reject_case_with_exact_stderr(
     for optimized in [false, true] {
         let output = invoke_with_args(suite, fixture, optimized, args);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(output.status.code(), Some(1), "{fixture}: {stderr}");
-        assert!(output.stdout.is_empty(), "{fixture}: {output:?}");
+        let seen = observed_output(&output);
+        assert_eq!(output.status.code(), Some(1), "{fixture}: {seen}");
+        assert!(output.stdout.is_empty(), "{fixture}: {seen}");
         assert_eq!(stderr, expected_stderr, "{fixture}: unexpected diagnostic");
     }
+}
+
+/// The status and both streams of a run, for assertion messages: a run that
+/// exits 1 with nothing on stderr (a model ended by a signal, which `llg`
+/// reports as 1) must still say what it did.
+pub(crate) fn observed_output(output: &Output) -> String {
+    format!(
+        "status: {:?}\n--- stdout ({} bytes) ---\n{}\n--- stderr ({} bytes) ---\n{}",
+        output.status,
+        output.stdout.len(),
+        String::from_utf8_lossy(&output.stdout),
+        output.stderr.len(),
+        String::from_utf8_lossy(&output.stderr)
+    )
 }
 
 /// Reject a fixture with exactly the expected source-located

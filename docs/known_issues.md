@@ -1539,7 +1539,9 @@ These legal imports reject with explicit diagnostics:
 A library that calls `svGetScope`, `svSetScope`, `svPutUserData`,
 `svGetUserData`, `svGetCallerInfo`, `svIsDisabledState`,
 `svAckDisabledState`, `svGetTime*` or a deprecated SV3.1a routine (H.13)
-fails the model link with an error naming the routine. On Windows, a DPI DLL
+fails the model link with an error naming the routine. A Mach-O library
+(macOS) is rejected with the same error before the build, from its symbol
+table, because ld64 does not check a dylib's undefined symbols. On Windows, a DPI DLL
 cannot import the `svdpi.h` routines from the model executable, so open-array
 imports have not been built there.
 

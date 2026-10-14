@@ -6,8 +6,16 @@
 //! Apple and Microsoft linkers and names the DPI-C imports (from the
 //! generated prototypes) and the `svdpi.h` routines that llg does not
 //! provide, so the failure is not a bare toolchain transcript.
+//!
+//! Apple's ld64 does not check the undefined symbols of a dylib it links
+//! against: a DPI library built with `-undefined dynamic_lookup` leaves its
+//! `svdpi.h` calls to dyld, which binds a missing one to an abort that fires,
+//! without a message on stderr, when the model calls it. So before a build,
+//! [`unprovided_routines_in_mach_o`] reads each Mach-O library's symbol table
+//! and names the unprovided routines it imports, as the ELF link does.
 
 use std::collections::BTreeSet;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 /// Prefix of the comment the emitter writes before each import prototype.
@@ -156,9 +164,271 @@ pub(super) fn missing_dpi_symbols(out_dir: &Path, output: &str) -> Option<Missin
     (!imports.is_empty() || !routines.is_empty()).then_some(MissingDpiSymbols { imports, routines })
 }
 
+/// `svdpi.h` routines that a Mach-O library at `path` imports without naming
+/// the dylib that provides them, so dyld would look them up in the model.
+/// Empty for other formats (their links report undefined symbols) and for a
+/// file that cannot be read or parsed: the build then proceeds unchanged.
+pub(super) fn unprovided_routines_in_mach_o(path: &Path) -> Vec<String> {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let imports = mach_o_lookup_imports(&mut file).unwrap_or_default();
+    UNPROVIDED_ROUTINES
+        .iter()
+        .filter(|routine| imports.contains(**routine))
+        .map(|routine| (*routine).to_owned())
+        .collect()
+}
+
+const MH_MAGIC_64: u32 = 0xfeed_facf;
+const FAT_MAGIC: u32 = 0xcafe_babe;
+const FAT_MAGIC_64: u32 = 0xcafe_babf;
+const LC_SYMTAB: u32 = 0x2;
+/// `<mach-o/nlist.h>` type bits.
+const N_STAB: u8 = 0xe0;
+const N_TYPE: u8 = 0x0e;
+const N_EXT: u8 = 0x01;
+const N_UNDF: u8 = 0x0;
+/// Library ordinals 1 to 0xfd name a dependent dylib; 0 (own image or flat
+/// namespace), 0xfe (`-undefined dynamic_lookup`) and 0xff (the main
+/// executable) leave the lookup to the loading process.
+const MAX_DEPENDENT_LIBRARY_ORDINAL: u16 = 0xfd;
+/// Slices of a universal file; real ones have a handful. A larger count is
+/// another format with the same magic (a Java class file).
+const MAX_FAT_SLICES: u32 = 32;
+
+/// Names (without the leading `_`) of the external symbols the Mach-O file
+/// leaves to the loading process, from every 64-bit slice. `None` when the
+/// file is not a 64-bit Mach-O or universal file or is malformed.
+fn mach_o_lookup_imports(file: &mut (impl Read + Seek)) -> Option<BTreeSet<String>> {
+    let length = file.seek(SeekFrom::End(0)).ok()?;
+    let magic = read_at(file, 0, 4, length)?;
+    let mut imports = BTreeSet::new();
+    match u32::from_be_bytes(magic.clone().try_into().ok()?) {
+        fat @ (FAT_MAGIC | FAT_MAGIC_64) => {
+            let count = be_u32(&read_at(file, 4, 4, length)?, 0)?;
+            if count > MAX_FAT_SLICES {
+                return None;
+            }
+            let entry = if fat == FAT_MAGIC { 20 } else { 32 };
+            let table = read_at(file, 8, entry * count as usize, length)?;
+            for slice in table.chunks_exact(entry) {
+                let offset = if fat == FAT_MAGIC {
+                    u64::from(be_u32(slice, 8)?)
+                } else {
+                    u64::from_be_bytes(slice.get(8..16)?.try_into().ok()?)
+                };
+                // A 32-bit or malformed slice cannot run on a supported host.
+                imports.extend(thin_lookup_imports(file, offset, length).unwrap_or_default());
+            }
+        }
+        _ if u32::from_le_bytes(magic.try_into().ok()?) == MH_MAGIC_64 => {
+            imports = thin_lookup_imports(file, 0, length)?;
+        }
+        _ => return None,
+    }
+    Some(imports)
+}
+
+/// [`mach_o_lookup_imports`] for the little-endian 64-bit image at `base`.
+fn thin_lookup_imports(
+    file: &mut (impl Read + Seek),
+    base: u64,
+    length: u64,
+) -> Option<BTreeSet<String>> {
+    let header = read_at(file, base, 32, length)?;
+    if le_u32(&header, 0)? != MH_MAGIC_64 {
+        return None;
+    }
+    let commands = read_at(file, base + 32, le_u32(&header, 20)? as usize, length)?;
+    let mut at = 0usize;
+    for _ in 0..le_u32(&header, 16)? {
+        let command = le_u32(&commands, at)?;
+        let size = le_u32(&commands, at + 4)? as usize;
+        if command == LC_SYMTAB {
+            let (symbols, count) = (le_u32(&commands, at + 8)?, le_u32(&commands, at + 12)?);
+            let (strings, strings_size) =
+                (le_u32(&commands, at + 16)?, le_u32(&commands, at + 20)?);
+            let table = read_at(file, base + u64::from(symbols), 16 * count as usize, length)?;
+            let names = read_at(
+                file,
+                base + u64::from(strings),
+                strings_size as usize,
+                length,
+            )?;
+            let mut imports = BTreeSet::new();
+            for symbol in table.as_chunks::<16>().0 {
+                let kind = symbol[4];
+                let ordinal = u16::from_le_bytes([symbol[6], symbol[7]]) >> 8;
+                let value = u64::from_le_bytes(symbol[8..16].try_into().ok()?);
+                // An undefined external with a value is a common symbol.
+                if kind & N_STAB != 0
+                    || kind & N_TYPE != N_UNDF
+                    || kind & N_EXT == 0
+                    || value != 0
+                    || (1..=MAX_DEPENDENT_LIBRARY_ORDINAL).contains(&ordinal)
+                {
+                    continue;
+                }
+                let start = le_u32(symbol, 0)? as usize;
+                let name = names.get(start..)?;
+                let name = &name[..name.iter().position(|&byte| byte == 0)?];
+                if let Some(name) = name.strip_prefix(b"_") {
+                    imports.insert(String::from_utf8_lossy(name).into_owned());
+                }
+            }
+            return Some(imports);
+        }
+        if size < 8 {
+            return None;
+        }
+        at += size;
+    }
+    Some(BTreeSet::new())
+}
+
+/// `count` bytes at `offset`, refused when they would run past `length` (a
+/// malformed header must not allocate more than the file holds).
+fn read_at(
+    file: &mut (impl Read + Seek),
+    offset: u64,
+    count: usize,
+    length: u64,
+) -> Option<Vec<u8>> {
+    if offset.checked_add(count as u64)? > length {
+        return None;
+    }
+    file.seek(SeekFrom::Start(offset)).ok()?;
+    let mut bytes = vec![0; count];
+    file.read_exact(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+fn le_u32(bytes: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+}
+
+fn be_u32(bytes: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A minimal 64-bit Mach-O image with one `LC_SYMTAB` holding `symbols`
+    /// as (name with `_`, type, library ordinal, value).
+    fn mach_o(symbols: &[(&str, u8, u16, u64)]) -> Vec<u8> {
+        let mut strings = vec![0u8];
+        let mut table = Vec::new();
+        for (name, kind, ordinal, value) in symbols {
+            table.extend_from_slice(&(strings.len() as u32).to_le_bytes());
+            table.extend_from_slice(&[*kind, 0]);
+            table.extend_from_slice(&(ordinal << 8).to_le_bytes());
+            table.extend_from_slice(&value.to_le_bytes());
+            strings.extend_from_slice(name.as_bytes());
+            strings.push(0);
+        }
+        let symbols_at = 32 + 24;
+        let strings_at = symbols_at + table.len();
+        let mut image = Vec::new();
+        for word in [MH_MAGIC_64, 0x0100_000c, 0, 6, 1, 24, 0x85, 0] {
+            image.extend_from_slice(&word.to_le_bytes());
+        }
+        for word in [
+            LC_SYMTAB,
+            24,
+            symbols_at as u32,
+            symbols.len() as u32,
+            strings_at as u32,
+            strings.len() as u32,
+        ] {
+            image.extend_from_slice(&word.to_le_bytes());
+        }
+        image.extend_from_slice(&table);
+        image.extend_from_slice(&strings);
+        image
+    }
+
+    fn imports(bytes: &[u8]) -> Option<BTreeSet<String>> {
+        mach_o_lookup_imports(&mut std::io::Cursor::new(bytes))
+    }
+
+    /// Only undefined externals left to the loading process count: not
+    /// definitions, debugging entries, common symbols or imports bound to a
+    /// dependent dylib (ordinal 1, for example libSystem).
+    #[test]
+    fn mach_o_imports_are_the_lookups_left_to_the_loading_process() {
+        let image = mach_o(&[
+            ("_svGetScope", N_EXT, 0xfe, 0),
+            ("_svGetUserData", N_EXT, 0, 0),
+            ("_svGetTime", N_EXT, 0xff, 0),
+            ("_printf", N_EXT, 1, 0),
+            ("_neg_scope", N_EXT | 0x0e, 1, 0x3f80),
+            ("_common", N_EXT, 0, 8),
+            ("_stab", 0x24, 0, 0),
+            ("_local", 0, 0, 0),
+        ]);
+        let found = imports(&image).expect("a Mach-O image");
+        assert_eq!(
+            found.into_iter().collect::<Vec<_>>(),
+            ["svGetScope", "svGetTime", "svGetUserData"]
+        );
+    }
+
+    #[test]
+    fn universal_files_report_every_slice_and_other_formats_none() {
+        let first = mach_o(&[("_svGetScope", N_EXT, 0xfe, 0)]);
+        let second = mach_o(&[("_svSetScope", N_EXT, 0xfe, 0)]);
+        let mut fat = Vec::new();
+        fat.extend_from_slice(&FAT_MAGIC.to_be_bytes());
+        fat.extend_from_slice(&2u32.to_be_bytes());
+        let first_at = 64u32;
+        let second_at = first_at + first.len() as u32;
+        for (offset, size) in [(first_at, first.len()), (second_at, second.len())] {
+            for word in [0x0100_000c, 0, offset, size as u32, 0] {
+                fat.extend_from_slice(&word.to_be_bytes());
+            }
+        }
+        fat.resize(first_at as usize, 0);
+        fat.extend_from_slice(&first);
+        fat.extend_from_slice(&second);
+        assert_eq!(
+            imports(&fat).unwrap().into_iter().collect::<Vec<_>>(),
+            ["svGetScope", "svSetScope"]
+        );
+        assert!(imports(b"\x7fELF\x02\x01\x01\0\0\0\0\0").is_none());
+        assert!(imports(b"MZ").is_none());
+        let mut truncated = first.clone();
+        truncated.truncate(first.len() - 4);
+        assert!(imports(&truncated).is_none());
+        let mut huge = first;
+        huge[20..24].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(imports(&huge).is_none());
+    }
+
+    #[test]
+    fn only_unprovided_routines_of_a_mach_o_library_are_named() {
+        let directory =
+            std::env::temp_dir().join(format!("llg-dpi-macho-{}-{}", std::process::id(), line!()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let library = directory.join("libneg.dylib");
+        std::fs::write(
+            &library,
+            mach_o(&[
+                ("_svGetScope", N_EXT, 0xfe, 0),
+                ("_svGetArrayPtr", N_EXT, 0xfe, 0),
+                ("_neg_helper", N_EXT, 0xfe, 0),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(unprovided_routines_in_mach_o(&library), ["svGetScope"]);
+        let elf = directory.join("libneg.so");
+        std::fs::write(&elf, b"\x7fELF svGetScope").unwrap();
+        assert!(unprovided_routines_in_mach_o(&elf).is_empty());
+        assert!(unprovided_routines_in_mach_o(&directory.join("absent")).is_empty());
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
 
     #[test]
     fn linker_dialects_report_their_undefined_symbols() {
