@@ -93,11 +93,53 @@ impl Frame<'_, '_> {
         })
     }
 
+    /// The change marker of the fork-shared string or handle bound to
+    /// `local`: the string carries the marker its frame owns; a handle's
+    /// slot marker is allocated when a wait first arms on it, after which
+    /// changing stores through every alias publish it.
+    pub(super) fn shared_native_marker(
+        &mut self,
+        local: &str,
+        handle: bool,
+    ) -> Result<String, String> {
+        if handle {
+            let (frame, slot) = self
+                .shared_cells
+                .get(local)
+                .cloned()
+                .ok_or_else(|| pending(&format!("shared handle {local} has no shared cell")))?;
+            Ok(format!("llg_frame_opaque_marker({frame}, {slot}u, 1)"))
+        } else {
+            let string = self
+                .native_lookup(local, super::native::NativeKind::String)?
+                .address;
+            Ok(format!("llg_dependency_or_never(({string})->dependency)"))
+        }
+    }
+
     pub(super) fn dependency(&mut self, dependency: &IrDependency) -> Result<String, String> {
         Ok(match dependency {
             IrDependency::RefFormal { index, real: true } => format!("{{ .real = r{index} }}"),
-            IrDependency::RefFormal { index, real: false } => {
-                format!("{{ .sig = llg_ref_dependency(r{index}) }}")
+            // A packed descriptor may name several storages; only the
+            // dependency arm expands it (`wait_any`).
+            IrDependency::RefFormal { real: false, .. } => {
+                return Err(pending("a packed `ref` formal outside a dependency wait"))
+            }
+            // A string carries its own change marker (null for storage that
+            // publishes none, such as an unshared activation local).
+            IrDependency::NativeRefFormal {
+                index,
+                handle: false,
+            } => format!("{{ .sig = llg_dependency_or_never(r{index}->dependency) }}"),
+            IrDependency::NativeRefFormal {
+                index,
+                handle: true,
+            } => format!("{{ .sig = llg_dependency_or_never(d{index}) }}"),
+            IrDependency::SharedNative { local, handle } => {
+                format!(
+                    "{{ .sig = {} }}",
+                    self.shared_native_marker(local, *handle)?
+                )
             }
             IrDependency::Scalar(name)
             | IrDependency::Real(name)
@@ -250,7 +292,47 @@ impl Frame<'_, '_> {
                 region.runtime_symbol()
             ));
         }
-        if sens.is_empty() {
+        // Packed `ref` descriptors expand into every storage they name when
+        // the wait arms.
+        let references = sens
+            .iter()
+            .filter_map(|item| match item {
+                IrDependency::RefFormal { index, real: false } => Some(format!("r{index}")),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !references.is_empty() {
+            let values = sens
+                .iter()
+                .filter(|item| !matches!(item, IrDependency::RefFormal { real: false, .. }))
+                .map(|item| self.dependency(item))
+                .collect::<Result<Vec<_>, _>>()?;
+            let array = if values.is_empty() {
+                "NULL".to_owned()
+            } else {
+                self.arm_array(
+                    "llg_wait_dependency_t",
+                    "dependencies",
+                    values.len(),
+                    &values.join(", "),
+                )
+            };
+            let count = references.len();
+            let references = self.arm_array(
+                "const llg_ref_t*",
+                "references",
+                count,
+                &references.join(", "),
+            );
+            let event = i32::from(operation != SuspensionOperation::ConditionWait);
+            self.await_arm(
+                operation,
+                format!(
+                    "llg_arm_ref_dependencies(self, {array}, {}, {references}, {count}, {event})",
+                    values.len()
+                ),
+            )?;
+        } else if sens.is_empty() {
             self.await_arm(operation, "llg_arm_any(self, NULL, 0)")?;
         } else {
             let values = sens

@@ -90,6 +90,14 @@ pub enum IrWaitSrc {
     /// subroutine names (see [`IrDependency::RefFormal`]); a real formal
     /// only supports `IrEdge::Any`.
     RefFormal { index: usize, real: bool },
+    /// The change marker of the string or class handle that `ref` formal
+    /// `index` names (see [`IrDependency::NativeRefFormal`]); only
+    /// `IrEdge::Any`.
+    NativeRefFormal { index: usize, handle: bool },
+    /// The change marker of the fork-shared string or handle the waiting
+    /// process names `local` (see [`IrDependency::SharedNative`]); only
+    /// `IrEdge::Any`.
+    SharedNative { local: String, handle: bool },
 }
 
 /// Fork join kinds (`LLG_JOIN`/`LLG_JOIN_NONE`/`LLG_JOIN_ANY`).

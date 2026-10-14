@@ -1,0 +1,6 @@
+spell a at 1
+held 7 7 at 2
+spell done at 3
+branch s at 4
+branch h 8 at 5
+quiet y at 7

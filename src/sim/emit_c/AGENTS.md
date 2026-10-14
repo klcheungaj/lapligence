@@ -305,12 +305,23 @@ that its body never reads. An input event formal is a by-value `llg_event_t` (fr
 coroutine callee) holding the object the actual named at the call: the caller
 snapshots `{ p ? p->object : NULL }` and the callee binds a private handle copy
 (`IrEventRef::Formal`), so rebinding the actual or the formal cannot move waits.
-Output, inout and ref event formals and event controls reading by-value formals or
-locals stay inline-expanded templates that
-are never emitted; a task whose event control reads a `ref` formal is a template
-whose per-signal specializations are emitted (`subroutine_requires_inline`,
-`CallShape`). Concrete interface members retain their
-actual member address.
+Only open-array DPI imports and tasks waiting on a native record `ref` formal
+are templates that are never emitted (`IrFunc::inline_expanded`); a task whose
+event control reads a `ref` formal also emits per-signal specializations
+(`CallShape`). A typed body waits on a real `ref` formal through its cell, on a
+packed one through `llg_ref_wait_spec`/`llg_arm_ref_dependencies` (which expand
+the descriptor into the leaf markers of the storage it selects; retained
+container cells carry their container's contents marker), on a string `ref`
+formal through its `llg_string_t.dependency` and on a handle `ref` formal
+through the marker parameter `d<idx>` that follows `r<idx>`
+(`handle_marker_param`): the caller passes the module handle's
+`<name>_llg_dep`, the object's `llg_class_handle_dependency`, its own `d<idx>`
+or a fork-shared handle's `llg_frame_opaque_marker`, else NULL. Stores through
+the formal publish that marker at the store (`Frame::handle_store_marker`). A
+class string property actual of a waited formal gets its marker before the call
+(`observe_class_string_property`); an observed fork-shared string's frame owns
+its marker (`IrStmt::SharedString::observed`).
+Concrete interface members retain their actual member address.
 
 Container operations evaluate operands in order, register borrowed string keys and
 item snapshots, compute all mapped results before publishing, and destroy consumed
@@ -356,7 +367,7 @@ with `quiet_receivers` (no null report: `llg_class_field_quiet`,
 `llg_vif_member_quiet`) and arms on the field/member storage or, for a handle
 property, on the object's lazily allocated `handle_dependency`, which
 `llg_class_handle_store` toggles on a changed blocking store (in-place writers
-— task output/`ref` copy-out, mailbox `get`/`peek`, task-form `$cast` — compare
+— task output copy-out, mailbox `get`/`peek`, task-form `$cast` — compare
 the slot before and after and call `llg_class_handle_published`, as module
 handles toggle `<name>_llg_dep`; see `Frame::handle_store_publish`), or, for a string
 property, on the marker `llg_class_string_dependency` installs in the string

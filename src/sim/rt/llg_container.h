@@ -754,6 +754,10 @@ void* llg_queue_ref_acquire(llg_queue_t* queue, uint64_t index);
 void llg_queue_ref_release(void* cell);
 sv4_t llg_queue_cell_read(const void* cell);
 int llg_queue_cell_write(void* cell, sv4_t value);
+/* The contents marker a `ref` wait on a retained element follows: the
+ * queue's while it lives (writes to a removed element's cell publish it as
+ * well), NULL for an invalid actual or after the queue was destroyed. */
+sv4_t* llg_queue_cell_dependency(const void* cell);
 uint64_t llg_queue_ref_identity(const llg_queue_t* queue, uint64_t index);
 sv4_t llg_queue_ref_read(const llg_queue_t* queue, uint64_t identity);
 int llg_queue_ref_write(llg_queue_t* queue, uint64_t identity, sv4_t value);
@@ -941,6 +945,8 @@ void* llg_assoc_ref_acquire_string(llg_assoc_t* array, const void* key,
 void llg_element_ref_release(void* cell);
 sv4_t llg_element_cell_read(const void* cell);
 int llg_element_cell_write(void* cell, sv4_t value);
+/* As llg_queue_cell_dependency, for dynamic and associative array cells. */
+sv4_t* llg_element_cell_dependency(const void* cell);
 size_t llg_assoc_count(const llg_assoc_t* array);
 sv4_t llg_assoc_value_at(const llg_assoc_t* array, size_t index);
 sv4_t llg_assoc_reduce(const llg_assoc_t* array, int operation);

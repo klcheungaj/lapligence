@@ -277,10 +277,11 @@ impl EmitCtx<'_, '_> {
     }
 
     /// Whether `expression` reads a `ref` formal of the typed body being
-    /// lowered that no specialization or expansion bound: only the waiting
-    /// process can evaluate it, through the formal's descriptor, while the
-    /// wait follows the whole variable the descriptor names
-    /// (`IrDependency::RefFormal`).
+    /// lowered that no specialization bound, or a subroutine container: only
+    /// the waiting process can evaluate it, through the formal's descriptor
+    /// or the activation's container, while the wait follows the storage the
+    /// descriptor names (`IrDependency::RefFormal`) or the container's
+    /// markers.
     fn reads_unbound_ref_formal(&self, expression: NodeId) -> bool {
         let Some(func) = self.func.as_ref() else {
             return false;
@@ -294,6 +295,12 @@ impl EmitCtx<'_, '_> {
                 if !func.arg_dependencies.contains_key(target)
                     && self.cg.ref_formal_dependency(*target).is_some()
                 {
+                    return true;
+                }
+                // A subroutine container (a container `ref` formal names the
+                // caller's) is addressed through the activation, or the
+                // fork's shared frame, which a runtime callback cannot reach.
+                if self.cg.is_subroutine_container(*target) {
                     return true;
                 }
             }
@@ -663,6 +670,21 @@ impl EmitCtx<'_, '_> {
             for dependency in sens {
                 let source = match &dependency {
                     IrDependency::Real(name) => IrWaitSrc::Real(name.clone()),
+                    // The variable a typed body's `ref` descriptor names.
+                    IrDependency::RefFormal { index, real } => IrWaitSrc::RefFormal {
+                        index: *index,
+                        real: *real,
+                    },
+                    IrDependency::NativeRefFormal { index, handle } => {
+                        IrWaitSrc::NativeRefFormal {
+                            index: *index,
+                            handle: *handle,
+                        }
+                    }
+                    IrDependency::SharedNative { local, handle } => IrWaitSrc::SharedNative {
+                        local: local.clone(),
+                        handle: *handle,
+                    },
                     other => match other.scalar_name() {
                         Some(name) => IrWaitSrc::Sig(name.to_owned()),
                         None => {
@@ -1091,8 +1113,9 @@ impl EmitCtx<'_, '_> {
         let selected_aggregate_member = self.cg.packed_member_read_info(expression).is_some()
             || self.cg.unpacked_member_info(expression).is_some()
             || self.cg.packed_element_member_select(expression).is_some();
-        // A `ref` formal of a typed body that no specialization or expansion
-        // bound waits on the whole variable its descriptor names.
+        // A `ref` formal of a typed body that no specialization bound waits on
+        // the storage its descriptor names and compares the value it reads
+        // (`llg_ref_wait_spec`).
         if condition.is_none() {
             if let NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
@@ -1143,6 +1166,7 @@ impl EmitCtx<'_, '_> {
                 .and_then(|function| function.persistent.get(&target))
                 .or_else(|| self.cg.static_formals.get(&(self.inst, target)))
                 .or_else(|| self.cg.static_task_locals.get(&(self.inst, target)))
+                .cloned()
         });
         // A member of an unpacked-structure net has no signal of its own;
         // it waits through the evaluated path like other projections.
@@ -1174,18 +1198,52 @@ impl EmitCtx<'_, '_> {
                 ));
             }
         }
-        // A subroutine string or handle has no change marker.
+        // A string or handle `ref` formal waits on the marker of the storage
+        // its actual names; any other subroutine string or handle has none.
         if let NodeKind::Expr(ExprKind::Ref {
             target: Some(target),
         }) = self.cg.kind(expression)
         {
+            let target = *target;
+            if let Some(IrDependency::NativeRefFormal { index, handle }) = condition
+                .is_none()
+                .then(|| self.cg.ref_formal_dependency(target))
+                .flatten()
+            {
+                if edge != IrEdge::Any {
+                    return Err(format!(
+                        "edge control on a string or class handle is not supported in `{}`",
+                        self.cg.source_path(&self.path)
+                    ));
+                }
+                return Ok((IrWaitSrc::NativeRefFormal { index, handle }, edge));
+            }
+            // A fork-shared string or handle waits on the change marker its
+            // frame keeps (see `Codegen::native_observed`).
+            if condition.is_none() {
+                if let Some(IrDependency::SharedNative { local, handle }) = self
+                    .cg
+                    .shared_event_dependencies(expression)
+                    .into_iter()
+                    .next()
+                    .filter(|_| self.cg.shared_locals.contains(&target))
+                {
+                    if edge != IrEdge::Any {
+                        return Err(format!(
+                            "edge control on a string or class handle is not supported in `{}`",
+                            self.cg.source_path(&self.path)
+                        ));
+                    }
+                    return Ok((IrWaitSrc::SharedNative { local, handle }, edge));
+                }
+            }
             if self.func.as_ref().is_some_and(|func| {
-                func.string_read.contains_key(target) || func.chandle_read.contains_key(target)
+                func.string_read.contains_key(&target) || func.chandle_read.contains_key(&target)
             }) && self.cg.object_of(&self.path, expression).is_none()
             {
                 return Err(format!(
                     "event control on subroutine string or handle `{}` in `{}` is not supported (SIM-009)",
-                    self.cg.node(*target).name,
+                    self.cg.node(target).name,
                     self.cg.source_path(&self.path)
                 ));
             }

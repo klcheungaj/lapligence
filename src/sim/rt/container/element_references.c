@@ -9,9 +9,14 @@ enum {
  * access so entry insertion and reallocation do not move it. Outdating
  * snapshots the element into `value` and clears `owner`. `valid` is zero for
  * an actual whose selector was out of range or unknown: reads return the
- * element default and writes do nothing, as for the selected expression. */
+ * element default and writes do nothing, as for the selected expression.
+ * `dependency` is the container's contents marker, which a `ref` wait on the
+ * cell follows (llg_ref_wait_spec); writes to an outdated cell publish it
+ * too. Destroying the container clears it. */
 struct llg_element_cell {
     void* owner;
+    sv4_t* dependency;
+    llg_container_notify_fn notify;
     struct llg_element_cell* next;
     size_t refs;
     size_t index;
@@ -69,6 +74,8 @@ void* llg_dyn_ref_acquire(llg_dyn_array_t* array, sv4_t index) {
     struct llg_element_cell* cell = llg_element_cell_new(
         array, LLG_ELEMENT_CELL_DYNAMIC, array->element_width,
         array->element_signed, array->element_two_state);
+    cell->dependency = array->contents_dependency;
+    cell->notify = array->notify;
     cell->index = native;
     cell->next = array->references;
     array->references = cell;
@@ -94,6 +101,8 @@ void* llg_assoc_ref_acquire_integral(llg_assoc_t* array, sv4_t key) {
     struct llg_element_cell* cell = llg_element_cell_new(
         array, LLG_ELEMENT_CELL_ASSOC_INTEGRAL, array->element_width,
         array->element_signed, array->element_two_state);
+    cell->dependency = array->contents_dependency;
+    cell->notify = array->notify;
     sv4_move(&cell->key, &normalized);
     cell->next = array->references;
     array->references = cell;
@@ -112,6 +121,8 @@ void* llg_assoc_ref_acquire_string(llg_assoc_t* array, const void* key,
     struct llg_element_cell* cell = llg_element_cell_new(
         array, LLG_ELEMENT_CELL_ASSOC_STRING, array->element_width,
         array->element_signed, array->element_two_state);
+    cell->dependency = array->contents_dependency;
+    cell->notify = array->notify;
     if (key_length) {
         cell->string_key = llg_alloc_items(key_length, 1);
         memcpy(cell->string_key, key, key_length);
@@ -172,6 +183,19 @@ static void llg_assoc_outdate_references(llg_assoc_t* array, size_t position) {
     }
 }
 
+sv4_t* llg_element_cell_dependency(const void* ptr) {
+    const struct llg_element_cell* cell = ptr;
+    return cell ? cell->dependency : NULL;
+}
+
+/* The container's markers die with it; cells that outlive it stop publishing. */
+static void llg_element_cells_forget_dependency(struct llg_element_cell* cell) {
+    for (; cell; cell = cell->next) {
+        cell->dependency = NULL;
+        cell->notify = NULL;
+    }
+}
+
 sv4_t llg_element_cell_read(const void* ptr) {
     const struct llg_element_cell* cell = ptr;
     if (!cell) llg_container_fatal("null retained element reference");
@@ -193,8 +217,12 @@ int llg_element_cell_write(void* ptr, sv4_t value) {
     if (!cell) llg_container_fatal("null retained element reference");
     if (!cell->valid) return 0;
     if (!cell->owner) {
-        sv4_replace(&cell->value, llg_element_assign(value, cell->element_width, cell->element_signed,
-                                                     cell->element_two_state));
+        sv4_t assigned = llg_element_assign(value, cell->element_width, cell->element_signed,
+                                            cell->element_two_state);
+        int changed = !sv4_same(cell->value, assigned);
+        sv4_move(&cell->value, &assigned);
+        if (changed)
+            llg_notify(cell->notify, cell->dependency, NULL, LLG_CONTAINER_CHANGED_CONTENTS);
         return 1;
     }
     switch (cell->kind) {

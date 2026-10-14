@@ -690,6 +690,7 @@ impl<'a> Codegen<'a> {
                     static_input_copies.push(IrStmt::SharedString {
                         name: name.clone(),
                         init: Some(IrStringExpr::FormalRead(idx)),
+                        observed: self.native_observed(*io, inst),
                     });
                     string_read.insert(*io, IrStringExpr::LocalRead(name.clone()));
                     string_write.insert(*io, name.clone());
@@ -914,8 +915,8 @@ impl<'a> Codegen<'a> {
                 );
             }
         }
-        // A specialization reads and writes the bound actual directly, exactly
-        // as an expansion does, and waits on its dependencies.
+        // A specialization reads and writes the bound actual directly and
+        // waits on its dependencies.
         for bound in specialization.iter().flat_map(|spec| &spec.statics) {
             arg_ir.insert(bound.formal, bound.read.clone());
             arg_dependencies.insert(bound.formal, bound.dependencies.clone());
@@ -1020,7 +1021,6 @@ impl<'a> Codegen<'a> {
                 inst,
                 "depth + 1",
                 Some(func_ctx),
-                None,
                 false,
             );
             let mut body_stmts = pattern_decls;
@@ -1150,6 +1150,15 @@ impl<'a> Codegen<'a> {
             || (static_local_signals.is_empty()
                 && static_return_signal.is_none()
                 && self.static_return_is_callback_independent(body, ft));
+        let observed_outputs = shared_outputs
+            .iter()
+            .map(|(index, _)| {
+                formals.get(*index).is_some_and(|(io, _)| {
+                    matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "string")
+                        && self.native_observed(*io, inst)
+                })
+            })
+            .collect::<Vec<_>>();
         let no_entry = format!("function `{}` has no model entry", self.node(ft).name);
         let entry = self.model.funcs.get_mut(meta_ir).ok_or(no_entry)?;
         entry.locals = ir_locals;
@@ -1159,9 +1168,10 @@ impl<'a> Codegen<'a> {
         entry.callback_return_independent = callback_return_independent;
         entry.pre_fns = pre_fns;
         entry.body = body_stmts;
-        for (index, name) in shared_outputs {
+        for ((index, name), observed) in shared_outputs.into_iter().zip(observed_outputs) {
             if let Some(formal) = entry.formals.get_mut(index) {
                 formal.shared_local = Some(name);
+                formal.shared_observed = observed;
             }
         }
         let _ = (guard, decl, has_ret, ret_x, c_name.as_str());
@@ -1277,9 +1287,7 @@ impl<'a> Codegen<'a> {
 
     /// Collect the local variables declared by a function/task body's begin
     /// blocks (recursively) into `locals`, keyed by the var arena node.
-    /// `prefix` disambiguates the C local names across inline sites (each
-    /// inlined task body gets its own prefix); pass `""` for C function
-    /// bodies, whose locals are scoped per function.
+    /// `prefix` names the C locals after their function (`_f<inst>_<ft>_`).
     #[allow(clippy::too_many_arguments)]
     pub(in super::super) fn collect_func_locals(
         &self,

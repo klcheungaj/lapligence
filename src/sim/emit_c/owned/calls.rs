@@ -240,7 +240,7 @@ impl Frame<'_, '_> {
         }
         let function = self.ctx.model.func(f).clone();
         if model::inline_template(&function) {
-            return Err("inline-expanded calls must be expanded before C emission".to_owned());
+            return Err("template calls must select a specialization before C emission".to_owned());
         }
         if self.read_only_callback {
             return Err(pending("native or impure calls in evaluator callbacks"));
@@ -286,10 +286,24 @@ impl Frame<'_, '_> {
         }
         // Tie retained queue-reference cells to the same lexical cleanup stack.
         // This covers normal return, named disable and nonlocal process exit.
-        if args
-            .iter()
-            .any(|arg| matches!(arg, IrCallArg::RefAddr { width, .. } if *width != 0))
-        {
+        // A descriptor of a variable, local cell, fixed-array element or
+        // forwarded formal retains no cell (only a container-element read
+        // binds one, see `reference_argument_with_scopes`), so such calls
+        // skip the scope.
+        if args.iter().any(|arg| match arg {
+            IrCallArg::RefAddr {
+                width, lhs, read, ..
+            } if *width != 0 => {
+                !matches!(
+                    lhs.as_ref(),
+                    IrLhs::Whole(_)
+                        | IrLhs::WholeRef { .. }
+                        | IrLhs::ArrayElem { .. }
+                        | IrLhs::Ref { .. }
+                ) || matches!(read.kind(), IrExprKind::Container(_))
+            }
+            _ => false,
+        }) {
             self.line("llg_ref_scope_begin_owned();");
         }
         // Coroutine frames hold argument descriptors; plain functions borrow
@@ -653,6 +667,18 @@ impl Frame<'_, '_> {
                     ));
                 }
                 IrCallArg::EventAddr(event) => parameters.push(self.event_address(event)?),
+                IrCallArg::StringRefAddr {
+                    addr: address,
+                    observed: true,
+                    ..
+                } => {
+                    // A class string property gets its change marker before
+                    // the callee arms a wait on the string it addresses.
+                    if let Some(name) = address.strip_prefix('&') {
+                        self.observe_class_string_property(name)?;
+                    }
+                    parameters.push(self.native_address(address, NativeKind::String)?.address);
+                }
                 IrCallArg::StringOutAddr(address)
                 | IrCallArg::StringRefAddr { addr: address, .. } => {
                     parameters.push(self.native_address(address, NativeKind::String)?.address);
@@ -670,9 +696,20 @@ impl Frame<'_, '_> {
                         let previous = self.scalar("void*", format!("(void*){name}"));
                         handle_publishes.push((name, previous));
                     }
+                    let marker = self.handle_ref_marker(address, &slot)?;
                     parameters.push(format!("(void**){slot}"));
+                    parameters.push(marker);
                 }
-                IrCallArg::ChandleAddr(address) | IrCallArg::ChandleRefAddr(address) => {
+                IrCallArg::ChandleRefAddr(address) => {
+                    // The callee publishes its stores through the formal
+                    // itself, at the store (SV 13.5.2).
+                    let ir_address = address;
+                    let address = self.native_address(address, NativeKind::Chandle)?.address;
+                    let marker = self.handle_ref_marker(ir_address, &address)?;
+                    parameters.push(address);
+                    parameters.push(marker);
+                }
+                IrCallArg::ChandleAddr(address) => {
                     let ir_address = address;
                     let address = self.native_address(address, NativeKind::Chandle)?.address;
                     if let Some(object) = self.ctx.model.objects.iter().find(|object| {
@@ -683,8 +720,8 @@ impl Frame<'_, '_> {
                         let previous = self.scalar("void*", name.clone());
                         handle_publishes.push((name, previous));
                     } else if let Some(publish) = self.handle_store_publish(ir_address, &address)? {
-                        // A handle property bound to an output or `ref`
-                        // formal: the callee stores in place.
+                        // A handle property bound to an output formal:
+                        // the callee stores in place.
                         property_publishes.push(publish);
                     }
                     parameters.push(address);

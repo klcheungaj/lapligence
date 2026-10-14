@@ -829,6 +829,25 @@ impl<'a> Codegen<'a> {
             let Some(source) = self.capture_source(target) else {
                 continue;
             };
+            // A fork-shared string or handle publishes through its change
+            // marker (see `native_observed`).
+            if matches!(source.kind, StorageKind::String | StorageKind::Opaque)
+                && self.shared_locals.contains(&target)
+                && matches!(
+                    self.kind(target),
+                    NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. }
+                        if ty.kind == "string" || is_handle_kind(&ty.kind)
+                )
+            {
+                let dependency = IrDependency::SharedNative {
+                    handle: source.kind == StorageKind::Opaque,
+                    local: source.info.c_name,
+                };
+                if !dependencies.contains(&dependency) {
+                    dependencies.push(dependency);
+                }
+                continue;
+            }
             if self.event_cell_ownership(target, &source).is_none() {
                 continue;
             }
@@ -909,8 +928,8 @@ impl<'a> Codegen<'a> {
             .map(|target| {
                 self.capture_source(*target)
                     .or_else(|| {
-                        // A subroutine string (such as an expansion's copy of a
-                        // string formal) is copied into the context.
+                        // A subroutine string or handle local is copied into
+                        // the context.
                         let (name, kind) = self
                             .event_string_local(*target)
                             .map(|name| (name, StorageKind::String))

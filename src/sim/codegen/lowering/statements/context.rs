@@ -13,7 +13,6 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         inst: NodeId,
         depth_arg: &str,
         func: Option<FuncCtx>,
-        inline: Option<InlineCtx>,
         in_final: bool,
     ) -> EmitCtx<'c, 'a> {
         cg.func = func.clone();
@@ -27,7 +26,6 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             inst,
             depth_arg: depth_arg.to_string(),
             func,
-            inline,
             pre_fns: Vec::new(),
             ctrl: Vec::new(),
             label_seq: 0,
@@ -37,17 +35,15 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
 
     /// Allocate a fresh control-flow label (`_xb3`, `_bk7`, `_ct9`).  The
     /// sequence is per emitted C function (see [`EmitCtx::ctrl`]); distinct
-    /// tags cannot collide with each other or with the inline-task done
-    /// labels (`_id<node>`).
+    /// tags cannot collide with each other.
     pub(super) fn new_label(&mut self, tag: &str) -> String {
         self.label_seq += 1;
         format!("_{tag}{}", self.label_seq)
     }
 
-    /// Ordinary functions cannot suspend. A timing task becomes a stackless
-    /// callee, while event/cancellation paths that need caller-owned activation
-    /// rebinding remain inline expansions in the caller's frame.
+    /// Ordinary functions cannot suspend; a timing task becomes a stackless
+    /// callee.
     pub(super) fn timing_forbidden(&self) -> bool {
-        self.inline.is_none() && self.func.as_ref().is_some_and(|function| !function.is_task)
+        self.func.as_ref().is_some_and(|function| !function.is_task)
     }
 }

@@ -29,8 +29,7 @@ enum ProcessWriteMode {
 
 impl<'a> Codegen<'a> {
     /// The descriptor dependency of `ref` formal `target` in a typed body,
-    /// where no specialization or expansion bound its actual: calls bind such
-    /// a formal only to a whole variable (see `CallShape`).
+    /// where no specialization bound its actual (see `CallShape`).
     pub(in super::super) fn ref_formal_dependency(&self, target: NodeId) -> Option<IrDependency> {
         if !matches!(
             self.kind(target),
@@ -41,7 +40,22 @@ impl<'a> Codegen<'a> {
         ) {
             return None;
         }
-        let read = self.func.as_ref()?.arg_ir.get(&target)?;
+        let func = self.func.as_ref()?;
+        // String and handle `ref` formals name the actual's change marker.
+        if let Some(crate::sim::ir::IrStringExpr::FormalRead(index)) = func.string_read.get(&target)
+        {
+            return Some(IrDependency::NativeRefFormal {
+                index: *index,
+                handle: false,
+            });
+        }
+        if let Some(IrChandleExpr::FormalRead(index)) = func.chandle_read.get(&target) {
+            return Some(IrDependency::NativeRefFormal {
+                index: *index,
+                handle: true,
+            });
+        }
+        let read = func.arg_ir.get(&target)?;
         let IrExprKind::FormalRead(index) = read.kind() else {
             return None;
         };
@@ -1201,7 +1215,9 @@ impl<'a> Codegen<'a> {
                 | IrDependency::ContainerShape(_)
                 | IrDependency::Object(_)
                 | IrDependency::SharedCell { .. }
+                | IrDependency::SharedNative { .. }
                 | IrDependency::RefFormal { .. }
+                | IrDependency::NativeRefFormal { .. }
                 | IrDependency::NativeAccess(_) => {
                     return Err(format!(
                         "container/object dependencies cannot yet drive force evaluators in `{scope_path}`"

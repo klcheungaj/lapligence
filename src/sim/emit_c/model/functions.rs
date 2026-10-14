@@ -71,6 +71,11 @@ pub(in crate::sim::emit_c) fn native_companion_param(parameter: &str, position: 
     format!("{parameter}_c{position}")
 }
 
+/// C parameter naming the change marker of handle `ref` formal `index`.
+pub(in crate::sim::emit_c) fn handle_marker_param(index: usize) -> String {
+    format!("d{index}")
+}
+
 /// Coroutine argument fields stored in the callee frame by the caller. Packed
 /// inputs are descriptor borrows copied into the callee's own owners at entry.
 pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
@@ -111,6 +116,10 @@ pub(super) fn frame_param_fields(f: &IrFunc) -> Vec<(String, String)> {
                     "void **"
                 };
                 params.push((ty.to_owned(), format!("r{idx}")));
+                // The actual's change marker (NULL for storage no other
+                // process can observe): stores through the formal publish it
+                // at once and waits on the formal observe it (SV 13.5.2).
+                params.push(("sv4_t*".to_owned(), handle_marker_param(idx)));
             } else if form.real {
                 // A real reference borrows the actual's numeric cell; writes
                 // publish through `llg_ba_d` on that address.

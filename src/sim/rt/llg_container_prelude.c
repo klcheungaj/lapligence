@@ -13,6 +13,9 @@
  * every associative entry. */
 static void llg_dyn_outdate_references(llg_dyn_array_t* array);
 static void llg_assoc_outdate_references(llg_assoc_t* array, size_t position);
+/* Before a container is destroyed: its retained cells stop naming its
+ * contents marker, which dies with it. */
+static void llg_element_cells_forget_dependency(struct llg_element_cell* cell);
 
 /* _Noreturn, and no statement follows an unconditional call: MSVC /O2 inlines
  * this helper, sees abort() and reports such a statement as unreachable
@@ -564,6 +567,7 @@ void llg_dyn_init(llg_dyn_array_t* array, uint32_t element_width,
 }
 
 void llg_dyn_destroy(llg_dyn_array_t* array) {
+    llg_element_cells_forget_dependency(array->references);
     llg_dyn_outdate_references(array);
     sv4_destroy_array(array->data, array->size);
     free(array->data);

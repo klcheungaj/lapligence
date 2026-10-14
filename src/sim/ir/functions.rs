@@ -57,7 +57,8 @@ pub struct IrFormal {
     pub(in crate::sim) chandle: bool,
     /// Named-event formal. An input is a by-value `llg_event_t` naming the
     /// caller's event object (`IrCallArg::EventVal`, `IrEventRef::Formal`); an
-    /// output, inout or ref event formal is resolved by inline call lowering.
+    /// output, inout or ref event formal is the caller's handle address
+    /// (`IrCallArg::EventAddr`).
     pub(in crate::sim) event: bool,
     /// Native arbitrary-byte string formal. String formals use
     /// `llg_string_t` values/pointers rather than packed storage.
@@ -70,6 +71,9 @@ pub struct IrFormal {
     /// the callee copies the caller's container into a shared frame the same
     /// way.
     pub(in crate::sim) shared_local: Option<String>,
+    /// For a shared string formal: a wait can observe it, so its shared
+    /// frame owns a change marker (see [`super::IrStmt::SharedString`]).
+    pub(in crate::sim) shared_observed: bool,
 }
 
 /// Owned DPI-C linkage qualifiers and foreign C-layer types attached to one
@@ -263,6 +267,7 @@ impl IrFormal {
             event: false,
             string: false,
             shared_local: None,
+            shared_observed: false,
         })
     }
 
@@ -361,8 +366,10 @@ pub struct IrFunc {
     pub(in crate::sim) c_name: String,
     /// Runtime diagnostic spelling, independent of the internal C symbol.
     pub(in crate::sim) diagnostic_name: Option<String>,
-    /// The retained definition is a lowering template whose body is expanded
-    /// into each caller. It is not an independently callable execution frame.
+    /// The retained definition is only a lowering template: every call
+    /// reaches a specialization of it (an open-array DPI import, or a task
+    /// waiting on a native record `ref` formal). It is not an independently
+    /// callable execution frame.
     pub(in crate::sim) inline_expanded: bool,
     /// Automatic subprograms use fresh C locals per call; static subprograms
     /// retain their return/local storage across calls.
@@ -481,7 +488,8 @@ impl IrFunc {
             .as_deref()
             .unwrap_or("unnamed function")
     }
-    /// Whether calls expand this definition into their owning execution body.
+    /// Whether the definition is only a template that every call reaches
+    /// through a specialization.
     pub fn is_inline_expanded(&self) -> bool {
         self.inline_expanded
     }

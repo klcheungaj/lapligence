@@ -749,16 +749,8 @@ impl Codegen<'_> {
         let function = self.func.clone();
         let depth = self.depth_arg.clone();
         let instance = self.inst;
-        EmitCtx::new(
-            self,
-            path.to_owned(),
-            instance,
-            &depth,
-            function,
-            None,
-            false,
-        )
-        .lower_memory_view("fixed value", node)
+        EmitCtx::new(self, path.to_owned(), instance, &depth, function, false)
+            .lower_memory_view("fixed value", node)
     }
 }
 

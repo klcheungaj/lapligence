@@ -473,7 +473,9 @@ impl Validator<'_> {
                         return self.fail(arg_path, "string output address must not be empty");
                     }
                 }
-                IrCallArg::StringRefAddr { addr, const_ref } => {
+                IrCallArg::StringRefAddr {
+                    addr, const_ref, ..
+                } => {
                     if !formal.string || !formal.is_ref() {
                         return self
                             .fail(arg_path, "string reference requires a string ref formal");

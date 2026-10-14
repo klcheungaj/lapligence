@@ -1,0 +1,7 @@
+module 3 at 1
+module 4 at 2
+property 10 at 3
+property 11 at 4
+copy-out 40 at 5
+local 20 at 8
+local 21 at 9

@@ -1306,8 +1306,12 @@ fn render_stmt_scoped(
                     IrCallArg::FixedValue(_) | IrCallArg::FixedArray(_) | IrCallArg::RealArray(_) | IrCallArg::RealArrayValues(_) | IrCallArg::NativeValue(_) | IrCallArg::NativeRefBound | IrCallArg::Container(_) | IrCallArg::ContainerValues { .. } | IrCallArg::NativeLeaves { .. } | IrCallArg::NativeCall { .. } | IrCallArg::RealArrayCall { .. } | IrCallArg::EventVal(_) | IrCallArg::EventAddr(_) => {
                         return Err("event argument requires the ownership emitter".to_string());
                     }
-                    IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => {
-                        call_args.push(addr.clone())
+                    IrCallArg::ChandleAddr(addr) => call_args.push(addr.clone()),
+                    // The marker parameter follows the address; this
+                    // renderer names no observable handle storage.
+                    IrCallArg::ChandleRefAddr(addr) => {
+                        call_args.push(addr.clone());
+                        call_args.push("NULL".to_owned());
                     }
                     IrCallArg::OutAddr(addr) => call_args.push(addr.clone()),
                     IrCallArg::RefAddr { addr, .. } => call_args.push(addr.clone()),

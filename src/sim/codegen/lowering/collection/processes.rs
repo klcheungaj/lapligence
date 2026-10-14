@@ -1530,7 +1530,10 @@ impl<'a> Codegen<'a> {
             IrDependency::ContainerShape(container) => format!("container[{container}] shape"),
             IrDependency::Object(object) => format!("object[{object}] contents"),
             IrDependency::SharedCell { local, .. } => format!("shared cell {local}"),
-            IrDependency::RefFormal { index, .. } => format!("ref formal {index}"),
+            IrDependency::SharedNative { local, .. } => format!("shared native {local}"),
+            IrDependency::RefFormal { index, .. } | IrDependency::NativeRefFormal { index, .. } => {
+                format!("ref formal {index}")
+            }
             IrDependency::NativeAccess(name) => format!("native access {name}"),
         }
     }
@@ -1889,7 +1892,7 @@ impl<'a> Codegen<'a> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let (body_stmts, mut pre_fns, shape) = {
-            let mut ctx = EmitCtx::new(self, path.to_string(), inst, "0", None, None, is_final);
+            let mut ctx = EmitCtx::new(self, path.to_string(), inst, "0", None, is_final);
             ctx.process_kind = always_type;
             let mut body_stmts = pattern_decls;
             body_stmts.extend(ctx.lower_stmt(stmt)?);

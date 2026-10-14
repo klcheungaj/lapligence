@@ -56,6 +56,8 @@ void* llg_queue_ref_acquire(llg_queue_t* queue, uint64_t index) {
         queue->element_width, queue->element_signed, queue->element_two_state);
     if (identity) {
         cell->owner = queue;
+        cell->dependency = queue->contents_dependency;
+        cell->notify = queue->notify;
         cell->next = queue->references;
         queue->references = cell;
     }
@@ -92,7 +94,16 @@ int llg_queue_cell_write(void* ptr, sv4_t value) {
     if (!cell) llg_container_fatal("null retained queue reference");
     if (!cell->identity) return 0; // invalid actual, not a removed valid element
     if (cell->owner) return llg_queue_ref_write(cell->owner, cell->identity, value);
-    sv4_replace(&cell->value, llg_element_assign(value, llg_sv4_width(cell->value),
-                                                llg_sv4_signed(cell->value), cell->two_state));
+    sv4_t assigned = llg_element_assign(value, llg_sv4_width(cell->value),
+                                        llg_sv4_signed(cell->value), cell->two_state);
+    int changed = !sv4_same(cell->value, assigned);
+    sv4_move(&cell->value, &assigned);
+    if (changed)
+        llg_notify(cell->notify, cell->dependency, NULL, LLG_CONTAINER_CHANGED_CONTENTS);
     return 1;
+}
+
+sv4_t* llg_queue_cell_dependency(const void* ptr) {
+    const struct llg_queue_cell* cell = ptr;
+    return cell ? cell->dependency : NULL;
 }

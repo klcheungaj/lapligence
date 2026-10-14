@@ -359,6 +359,12 @@ typedef struct {
         sv4_t packed;
         double real;
         void* opaque;
+        /* An opaque handle slot that a wait observes keeps its change
+         * marker beside the handle (`llg_frame_opaque_marker`). */
+        struct {
+            void* opaque;
+            sv4_t* marker;
+        } handle;
         llg_string_t string;
         struct {
             void* data;
@@ -596,6 +602,11 @@ static void frame_clear_alias(llg_frame_slot_t* entry) {
         sv4_destroy(&entry->value.packed);
     if (entry->alias_kind == LLG_FRAME_ALIAS_NONE && entry->kind == LLG_FRAME_STRING)
         llg_string_destroy(&entry->value.string);
+    if (entry->alias_kind == LLG_FRAME_ALIAS_NONE && entry->kind == LLG_FRAME_OPAQUE &&
+        entry->value.handle.marker) {
+        llg_dependency_marker_destroy(entry->value.handle.marker);
+        free(entry->value.handle.marker);
+    }
     if (entry->alias_kind == LLG_FRAME_ALIAS_NONE && entry->kind == LLG_FRAME_OBJECT) {
         if (entry->value.object.destroy) entry->value.object.destroy(entry->value.object.data);
         free(entry->value.object.data);
@@ -791,6 +802,24 @@ void** llg_frame_opaque_address(llg_frame_t* frame, size_t slot) {
         frame_kind_error(LLG_FRAME_OPAQUE, entry->kind);
     }
     return &entry->value.opaque;
+}
+
+sv4_t* llg_frame_opaque_marker(llg_frame_t* frame, size_t slot, int allocate) {
+    llg_frame_slot_t* entry = frame_slot(frame, slot);
+    if (entry->alias_kind == LLG_FRAME_ALIAS_SLOT) {
+        return llg_frame_opaque_marker(entry->alias.slot.frame, entry->alias.slot.slot,
+                                       allocate);
+    }
+    if (entry->kind != LLG_FRAME_OPAQUE) {
+        frame_kind_error(LLG_FRAME_OPAQUE, entry->kind);
+    }
+    if (!entry->value.handle.marker && allocate) {
+        sv4_t empty = SV4_EMPTY;
+        entry->value.handle.marker = (sv4_t*)llg_checked_malloc(
+            1, sizeof(*entry->value.handle.marker), "handle change marker");
+        *entry->value.handle.marker = empty;
+    }
+    return entry->value.handle.marker;
 }
 
 llg_frame_t* llg_frame_slot_frame(llg_frame_t* frame, size_t slot) {

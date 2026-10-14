@@ -888,3 +888,59 @@ fn s40_d5_task_disable_protocol() {
         );
     });
 }
+
+#[test]
+fn s09_d1_string_ref_wait() {
+    run_decision(
+        "S09-D1_string_ref_wait",
+        include_str!("fixtures/sim/lrm_decisions/S09-D1_string_ref_wait.out"),
+    );
+}
+
+#[test]
+fn s09_d2_handle_ref_event() {
+    run_decision(
+        "S09-D2_handle_ref_event",
+        include_str!("fixtures/sim/lrm_decisions/S09-D2_handle_ref_event.out"),
+    );
+}
+
+#[test]
+fn s09_d3_ref_implicit_sensitivity() {
+    run_decision(
+        "S09-D3_ref_implicit_sensitivity",
+        include_str!("fixtures/sim/lrm_decisions/S09-D3_ref_implicit_sensitivity.out"),
+    );
+}
+
+#[test]
+fn s09_d4_class_property_ref_wait() {
+    run_decision(
+        "S09-D4_class_property_ref_wait",
+        include_str!("fixtures/sim/lrm_decisions/S09-D4_class_property_ref_wait.out"),
+    );
+}
+
+#[test]
+fn s09_d5_handle_ref_store_immediate() {
+    run_decision(
+        "S09-D5_handle_ref_store_immediate",
+        include_str!("fixtures/sim/lrm_decisions/S09-D5_handle_ref_store_immediate.out"),
+    );
+}
+
+#[test]
+fn s09_d6_vif_ref_rebinding() {
+    run_decision(
+        "S09-D6_vif_ref_rebinding",
+        include_str!("fixtures/sim/lrm_decisions/S09-D6_vif_ref_rebinding.out"),
+    );
+}
+
+#[test]
+fn s09_d7_fork_shared_native_wait() {
+    run_decision(
+        "S09-D7_fork_shared_native_wait",
+        include_str!("fixtures/sim/lrm_decisions/S09-D7_fork_shared_native_wait.out"),
+    );
+}

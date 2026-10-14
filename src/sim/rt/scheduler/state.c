@@ -776,10 +776,16 @@ typedef struct llg_dependency_binding {
     struct llg_dependency_binding* next;
     /* Chain of bindings whose target hashes to the same bucket. */
     struct llg_dependency_binding* bucket_next;
-    sv4_t* target;
-    double* real_target;
+    /* The bound storage: a packed value or a real cell (`kind`). */
+    const void* key;
     sv4_t* dependency;
+    uint8_t kind;
 } llg_dependency_binding_t;
+
+enum {
+    LLG_DEPENDENCY_BINDING_PACKED = 0,
+    LLG_DEPENDENCY_BINDING_REAL = 1,
+};
 
 /* The list owns every binding; the bucket index borrows them. Each write
  * consults only the written target's bucket, so dense arrays with one binding

@@ -101,8 +101,12 @@ pub(super) fn render_call_expr(
             | IrCallArg::EventAddr(_) => {
                 return Err("event argument requires the ownership emitter".to_owned());
             }
-            IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => {
+            IrCallArg::ChandleAddr(addr) => call_args.push(addr.clone()),
+            // The marker parameter follows the address; this renderer
+            // names no observable handle storage.
+            IrCallArg::ChandleRefAddr(addr) => {
                 call_args.push(addr.clone());
+                call_args.push("NULL".to_owned());
             }
             IrCallArg::OutAddr(addr) => call_args.push(addr.clone()),
             IrCallArg::RefAddr { addr, .. } => call_args.push(addr.clone()),

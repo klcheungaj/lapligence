@@ -1,7 +1,7 @@
 // SIM-009: a level `wait` on a task's `ref` formal re-evaluates on the bound
 // actual's changes, whether a specialization binds a module variable
-// (directly or through a forwarding task) or the call is expanded for a
-// caller automatic or an element actual (SV 9.4.3, 13.5.2, 9.3.2).
+// (directly or through a forwarding task) or the typed body follows a caller
+// automatic or an element actual (SV 9.4.3, 13.5.2, 9.3.2).
 module tb;
   int flag;
   int arr[4];

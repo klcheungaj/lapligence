@@ -24,9 +24,9 @@ mod lifecycle;
 pub(in crate::sim::emit_c) use initialization::storage_lifecycle;
 pub(in crate::sim::emit_c) use lifecycle::main;
 
-/// A retained definition that lowering expands into each caller. Input event
-/// formals are typed `llg_event_t` parameters and output, inout and ref event
-/// formals `llg_event_t*` handle addresses.
+/// A template definition no call reaches directly: each call selects a
+/// specialization for its actuals (open-array DPI imports and tasks waiting on
+/// a native record `ref` formal).
 pub(in crate::sim::emit_c) fn inline_template(function: &IrFunc) -> bool {
     function.is_inline_expanded()
 }
@@ -475,6 +475,7 @@ fn render_function(
             frame.statement(&IrStmt::SharedString {
                 name: local.clone(),
                 init: Some(IrStringExpr::FormalRead(index)),
+                observed: formal.shared_observed,
             })?;
             continue;
         }

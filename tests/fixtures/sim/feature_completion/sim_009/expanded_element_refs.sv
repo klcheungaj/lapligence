@@ -1,5 +1,5 @@
-// SIM-009: an expanded task's event control on a `ref` formal bound to an
-// array element waits on the element selected when the call starts (SV
+// SIM-009: a task's event control on a `ref` formal bound to an array element
+// (typed call path) waits on the element selected when the call starts (SV
 // 13.5.2): a later index change and stores to other elements do not wake it.
 module tb;
   logic bus [3];

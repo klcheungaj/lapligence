@@ -132,7 +132,7 @@ impl Codegen<'_> {
 
     /// The last class property `node` names, including container and native
     /// record properties, when `node` reads object storage.
-    fn class_storage_field(&self, node: NodeId) -> Option<NodeId> {
+    pub(in super::super) fn class_storage_field(&self, node: NodeId) -> Option<NodeId> {
         let is_field = |target: &NodeId| {
             self.class_fields.contains_key(target) || self.class_native_fields.contains_key(target)
         };

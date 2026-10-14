@@ -201,7 +201,9 @@ fn reference_calls_register_descriptors_and_do_not_copy_back() {
         .unwrap()
         .is_none());
     let source = frame.body();
-    assert!(source.contains("llg_ref_scope_begin_owned();"));
+    // A whole-variable descriptor retains no container cell, so the call
+    // opens no reference scope.
+    assert!(!source.contains("llg_ref_scope_begin_owned();"));
     assert!(source.contains("sizeof(llg_ref_t)"));
     assert!(source.contains(".kind = LLG_REF_WHOLE"));
     assert!(!source.contains("not_executable_C"));

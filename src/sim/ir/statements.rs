@@ -350,12 +350,15 @@ pub enum IrStmt {
         name: String,
         init: Option<IrStringExpr>,
     },
-    /// An automatic string shared with `join_none`/`join_any` branches: its
-    /// value lives in a reference-counted activation frame, like
-    /// [`IrStmt::SharedLocal`].
+    /// An automatic string shared with fork branches: its value lives in a
+    /// reference-counted activation frame, like [`IrStmt::SharedLocal`].
+    /// When a wait can observe it (`observed`, see
+    /// `Codegen::native_observed`) the frame also owns the string's change
+    /// marker, which every changing store toggles.
     SharedString {
         name: String,
         init: Option<IrStringExpr>,
+        observed: bool,
     },
     /// Capture an owned string value now and commit it to persistent storage
     /// in the NBA region `ticks` from now. Untimed `s <= v` uses zero ticks,
@@ -797,9 +800,9 @@ pub enum IrStmt {
     Return {
         value: Option<Box<IrExpr>>,
     },
-    /// Early-exit target label of an inlined task body.
+    /// A jump target (loop `break`/`continue` and block exits).
     Label(String),
-    /// Jump to an inlined task's done label (a `return;` inside it).
+    /// Jump to a [`IrStmt::Label`] of the same body.
     Goto(String),
     /// Placeholder (source-level `;` or an empty construct).
     Nop,

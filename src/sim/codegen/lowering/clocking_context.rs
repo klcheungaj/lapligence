@@ -567,7 +567,7 @@ impl<'a> Codegen<'a> {
             let process_name =
                 self.new_fn_name(&path, &format!("clocking_{}", self.node(block).name));
             let (event_specs, pre_fns) = {
-                let mut ctx = EmitCtx::new(self, path.clone(), parent, "0", None, None, false);
+                let mut ctx = EmitCtx::new(self, path.clone(), parent, "0", None, false);
                 let event_specs = ctx.lower_event_specs(&block_info.event_specs)?;
                 (event_specs, std::mem::take(&mut ctx.pre_fns))
             };

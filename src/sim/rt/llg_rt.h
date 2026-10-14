@@ -1009,14 +1009,14 @@ void llg_object_set_randstate(llg_rng_state_t* object, llg_string_t state);
 // its backing storage. Bindings are cleared by llg_rt_cleanup.
 void llg_dependency_bind(sv4_t* target, sv4_t* dependency);
 void llg_dependency_bind_real(double* target, sv4_t* dependency);
+// Destroy hook (llg_frame_capture_object) of a change marker that a frame
+// slot owns: a fork-shared string that a wait observes. It does not free the
+// marker's own storage.
+void llg_dependency_marker_destroy(void* marker);
 void llg_dependency_changed(sv4_t* dependency);
 // `dependency`, or a marker that is never written when it is NULL (an
 // activation container no other process can change).
 sv4_t* llg_dependency_or_never(sv4_t* dependency);
-// The storage a whole-variable `ref` descriptor names, as a wait dependency
-// and edge source (stores to it publish at that address); any other
-// descriptor kind yields a marker that is never written.
-sv4_t* llg_ref_dependency(const llg_ref_t* ref);
 void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int change);
 
 void llg_display(const char* fmt, ...);  // formatted output followed by a newline
@@ -1761,6 +1761,11 @@ void* llg_frame_capture_object(llg_frame_t* frame, size_t slot, size_t size,
 void* llg_frame_object_address(llg_frame_t* frame, size_t slot);
 // The handle cell of an opaque slot (following frame-to-frame aliases).
 void** llg_frame_opaque_address(llg_frame_t* frame, size_t slot);
+// The change marker of an opaque handle slot (following frame-to-frame
+// aliases): allocated by the first call with `allocate` set (a fork-shared
+// handle that a wait can observe) and released with the frame; NULL while
+// none was allocated, so stores through other aliases publish nothing.
+sv4_t* llg_frame_opaque_marker(llg_frame_t* frame, size_t slot, int allocate);
 // The frame that owns a slot's storage (following frame-to-frame aliases), so
 // a branch can reach the other slots of a shared environment frame.
 llg_frame_t* llg_frame_slot_frame(llg_frame_t* frame, size_t slot);
@@ -1833,6 +1838,14 @@ llg_co_arm_t llg_arm_any_events(llg_proc_t* self,
 llg_co_arm_t llg_arm_event_dependencies(llg_proc_t* self,
                                         const llg_wait_dependency_t* deps,
                                         int n);
+// llg_arm_any_dependencies (llg_arm_event_dependencies when `event`) over
+// `deps` plus every storage the `ref` descriptors in `refs` name (several for
+// an unpacked aggregate or a view into one). Both arrays are copied as for
+// llg_arm_any_dependencies.
+llg_co_arm_t llg_arm_ref_dependencies(llg_proc_t* self,
+                                      const llg_wait_dependency_t* deps, int n,
+                                      const llg_ref_t* const* refs, int n_refs,
+                                      int event);
 // Mark the next event-control wait of `self` as evaluated by the process: if
 // an occurrence was withheld while it was suspended, resume() wakes it with
 // llg_wait_refreshed() true so it takes its armed values again instead of
@@ -2019,6 +2032,12 @@ typedef struct {
 } llg_expr_event_spec_t;
 llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
                                  const llg_expr_event_spec_t* specs, int n);
+// An llg_arm_expressions source for a plain or edge control (`kind`) on the
+// value `ref` names. A whole descriptor waits on its variable itself; any
+// other descriptor waits on every storage it names and compares the value it
+// reads, through a new context reference the wait releases (see
+// llg_expr_event_spec_t).
+llg_expr_event_spec_t llg_ref_wait_spec(const llg_ref_t* ref, int kind);
 // Register a nonblocking trigger whose source control is evaluated at issue
 // time. The copied descriptors remain live until one source matches; the
 // target event is then submitted to the ordinary NBA queue. `repeat` is zero

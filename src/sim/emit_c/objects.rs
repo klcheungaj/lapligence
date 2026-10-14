@@ -337,8 +337,10 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
                 .map(|arg| match arg {
                     IrCallArg::ChandleVal(value) => chandle(ctx, value),
                     IrCallArg::Val(value) => render_expr_impl(ctx, value).map(|value| value.code),
+                    // A handle `ref` formal's marker parameter follows its
+                    // address; these renderers name no observable storage.
+                    IrCallArg::ChandleRefAddr(addr) => Ok(format!("{addr}, NULL")),
                     IrCallArg::ChandleAddr(addr)
-                    | IrCallArg::ChandleRefAddr(addr)
                     | IrCallArg::StringOutAddr(addr)
                     | IrCallArg::StringRefAddr { addr, .. }
                     | IrCallArg::OutAddr(addr) => Ok(addr.clone()),
@@ -1059,7 +1061,8 @@ fn render_typed_call(
                 name, storage_addr, ..
             } => storage_addr.clone().unwrap_or_else(|| format!("&{name}")),
             IrCallArg::ChandleVal(value) => super::objects::chandle(ctx, value)?,
-            IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => addr.clone(),
+            IrCallArg::ChandleAddr(addr) => addr.clone(),
+            IrCallArg::ChandleRefAddr(addr) => format!("{addr}, NULL"),
             IrCallArg::FixedValue(_)
             | IrCallArg::FixedArray(_)
             | IrCallArg::RealArray(_)

@@ -185,32 +185,35 @@ endmodule
 }
 
 #[test]
-fn inline_expanded_task_storage_is_hoisted_into_its_host_frame() {
+fn waited_virtual_interface_ref_task_keeps_its_own_frame() {
     let c = render_source_with_execution_options(
-        "inline_event_frame.sv",
+        "vif_ref_event_frame.sv",
         r#"
+interface ifc;
+    logic [1:0] source;
+endinterface
 module tb;
-    // A block-local ref actual of a formal read by an evaluated event
-    // expression listed with a named event expands the task at its call
-    // site.
-    event go;
-    task automatic await_edge(ref logic [1:0] source);
+    // A virtual-interface `ref` formal read by an event control is a typed
+    // parameter: the task keeps its own frame and locals instead of being
+    // expanded into its caller (SIM-009).
+    ifc port();
+    virtual ifc handle;
+    task automatic await_edge(ref virtual ifc v);
         integer local_value;
-        @(posedge source[0] or go);
+        @(posedge v.source[0]);
         local_value = 1;
     endtask
     initial begin
-        automatic logic [1:0] level;
-        await_edge(level);
+        handle = port;
+        await_edge(handle);
     end
 endmodule
 "#,
         ExecutionAnalysisOptions::default(),
     );
 
-    assert!(!c.contains("fn_tb_await_edge_frame_t"), "{c}");
-    assert!(c.contains("sv4_t* _llg_local_"), "{c}");
-    assert!(c.contains("LLG_CO_ROOT_FRAME_OK(p_tb_proc_"), "{c}");
+    assert!(c.contains("fn_tb_await_edge_frame_t;"), "{c}");
+    assert!(c.contains("    void ** r0;\n"), "{c}");
 }
 
 #[test]
