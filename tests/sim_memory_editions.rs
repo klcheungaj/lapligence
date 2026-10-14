@@ -12,18 +12,19 @@ fn signed_address_spellings_and_hex_boundaries_select_the_same_cells() {
     let words = "@-9 aa @-09 bb @-0009 cc @-7 17 @-8 18 @-f 1f @-80 80 @-81 81\n";
     let expected = "asc=17,18,cc,1f,80,81 desc=17,18,cc,1f,80,81\n";
     for edition in ["v2001", "sv2009"] {
-        let warning = "llg: memory file `signed.mem`: memory file contains too few words for the selected range\n";
-        let stderr = if edition == "v2001" {
-            format!("{warning}{warning}llg: simulation ended without $finish (no processes remain) at time 0\n")
+        let warning =
+            "memory file `signed.mem`: memory file contains too few words for the selected range";
+        let warnings: &[&str] = if edition == "v2001" {
+            &[warning, warning]
         } else {
-            "llg: simulation ended without $finish (no processes remain) at time 0\n".to_owned()
+            &[]
         };
         sim_cli::run_case_with_files(
             "memory_editions",
             "signed_address",
             expected,
-            &stderr,
-            &[],
+            "llg: simulation ended without $finish (no processes remain) at time 0\n",
+            warnings,
             &["--edition", edition],
             &[("signed.mem", words)],
         );
@@ -34,9 +35,18 @@ fn signed_address_spellings_and_hex_boundaries_select_the_same_cells() {
 fn signed_address_overflow_and_out_of_range_stop_before_writing() {
     for edition in ["v2001", "sv2009"] {
         for (word, diagnostic) in [
-            ("@-8000000000000001", "address jump is not a known index"),
-            ("@8000000000000000", "address jump is not a known index"),
-            ("@-fffffffffffffffff", "address jump is not a known index"),
+            (
+                "@-8000000000000001",
+                "address jump is not a known index; load terminated",
+            ),
+            (
+                "@8000000000000000",
+                "address jump is not a known index; load terminated",
+            ),
+            (
+                "@-fffffffffffffffff",
+                "address jump is not a known index; load terminated",
+            ),
             (
                 "@-100",
                 "address jump is outside the destination memory or selected range; load terminated",
@@ -52,7 +62,7 @@ fn signed_address_overflow_and_out_of_range_stop_before_writing() {
         ] {
             let contents = format!("@-9 aa {word} bb\n");
             let stderr = format!(
-                "llg: memory file `signed.mem`: {diagnostic}\nllg: memory file `signed.mem`: {diagnostic}\nllg: simulation ended without $finish (no processes remain) at time 0\n"
+                "llg: error: memory file `signed.mem`: {diagnostic}\nllg: error: memory file `signed.mem`: {diagnostic}\nllg: simulation ended without $finish (no processes remain) at time 0\n"
             );
             sim_cli::run_case_with_files(
                 "memory_editions",
@@ -109,7 +119,7 @@ fn native_enum_memory_overflow_is_rejected_before_cast() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(
         stderr,
-        "llg: memory file `enum_overflow.hex`: numeric memory data does not fit the enum base type; load terminated\n"
+        "llg: error: memory file `enum_overflow.hex`: numeric memory data does not fit the enum base type; load terminated\n"
     );
 }
 
@@ -141,11 +151,8 @@ fn start_only_memory_range_uses_the_edition_default_finish() {
         "memory_editions",
         "start_only",
         "m3=00 m2=aa m1=bb m0=00\n",
-        concat!(
-            "llg: memory file `words.mem`: memory file contains too few words for the selected range\n",
-            "llg: simulation ended without $finish (no processes remain) at time 0\n",
-        ),
-        &[],
+        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        &["memory file `words.mem`: memory file contains too few words for the selected range"],
         &["--edition", "v2001"],
         &[("words.mem", "aa\nbb\n")],
     );
@@ -188,11 +195,8 @@ fn truncated_data_and_two_state_conversion_keep_prior_values_and_diagnose() {
         "memory_editions",
         "truncated",
         "m0=7f m1=b1\n",
-        concat!(
-            "llg: memory file `short.mem`: memory file contains too few words for the selected range\n",
-            "llg: simulation ended without $finish (no processes remain) at time 0\n",
-        ),
-        &[],
+        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        &["memory file `short.mem`: memory file contains too few words for the selected range"],
         &["--edition", "sv2009"],
         &[("short.mem", "7f\n")],
     );
@@ -200,11 +204,8 @@ fn truncated_data_and_two_state_conversion_keep_prior_values_and_diagnose() {
         "memory_editions",
         "two_state",
         "m0=1000 m1=1010\n",
-        concat!(
-            "llg: memory file `unknown.mem`: X/Z memory data converted to a two-state element\n",
-            "llg: simulation ended without $finish (no processes remain) at time 0\n",
-        ),
-        &[],
+        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        &["memory file `unknown.mem`: X/Z memory data converted to a two-state element"],
         &["--edition", "sv2009"],
         &[("unknown.mem", "1x0z\n1010\n")],
     );
@@ -217,7 +218,7 @@ fn invalid_address_terminates_after_already_loaded_values() {
         "invalid_address",
         "m0=00 m1=aa m2=02 m3=03\n",
         concat!(
-            "llg: memory file `bad.mem`: address jump is outside the destination memory or selected range; load terminated\n",
+            "llg: error: memory file `bad.mem`: address jump is outside the destination memory or selected range; load terminated\n",
             "llg: simulation ended without $finish (no processes remain) at time 0\n",
         ),
         &[],
@@ -233,7 +234,7 @@ fn enum_memory_data_stops_at_the_first_non_member() {
         "enum_invalid",
         "m0=00 m1=01\n",
         concat!(
-            "llg: memory file `enum.mem`: memory data value is not a member of the enum; load terminated\n",
+            "llg: error: memory file `enum.mem`: memory data value is not a member of the enum; load terminated\n",
             "llg: simulation ended without $finish (no processes remain) at time 0\n",
         ),
         &[],
@@ -268,7 +269,7 @@ fn enum_memory_overflow_is_rejected_before_truncation() {
             "r08_enum_readmem_overflow",
             expected,
             concat!(
-                "llg: memory file `enum_overflow.hex`: numeric memory data does not fit the enum base type; load terminated\n",
+                "llg: error: memory file `enum_overflow.hex`: numeric memory data does not fit the enum base type; load terminated\n",
                 "llg: $finish at time 0 at tb:10:5\n",
             ),
             &[],
@@ -310,10 +311,10 @@ fn enum_memory_range_check_preserves_packed_truncation_and_signed_values() {
             "TWO_STATE_ENUM_CONTROL 0 0\n",
         ),
         concat!(
-            "llg: memory file `signed_enum_nonextension.hex`: numeric memory data does not fit the enum base type; load terminated\n",
+            "llg: error: memory file `signed_enum_nonextension.hex`: numeric memory data does not fit the enum base type; load terminated\n",
             // SV 21.4.2: `1x` becomes 0x10 before the enum range check, so its
             // known high digit overflows and the load stops with the memory unchanged.
-            "llg: memory file `enum_unknown.hex`: numeric memory data does not fit the enum base type; load terminated\n",
+            "llg: error: memory file `enum_unknown.hex`: numeric memory data does not fit the enum base type; load terminated\n",
             "llg: $finish at time 0 at tb:17:5\n",
         ),
         &[],

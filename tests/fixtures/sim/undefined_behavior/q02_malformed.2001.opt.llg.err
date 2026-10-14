@@ -1,3 +1,2 @@
-llg: memory file `q02_malformed.mem`: malformed or over-width memory token
-llg: memory file `q02_malformed.mem`: memory file contains too few words for the selected range
+llg: error: memory file `q02_malformed.mem`: malformed or over-width memory token; load terminated
 llg: simulation ended without $finish (no processes remain) at time 0

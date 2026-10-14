@@ -16,13 +16,29 @@ typedef struct {
     int invalid_index;
 } llg_memory_value_t;
 
+// Diagnostics carry the category IEEE 1800-2009 21.4/21.4.2 and IEEE
+// 1364-2001 17.2.8 prescribe: a word count that differs from the range is a
+// warning; an out-of-range file address or enum value is an error that
+// terminates the load. Neither ends the simulation or changes its status.
+static void llg_memory_report(const char* category, const char* path,
+                              const char* format, va_list args) {
+    fprintf(stderr, "llg: %s: memory file `%s`: ", category, path ? path : "");
+    vfprintf(stderr, format, args);
+    fputc('\n', stderr);
+}
+
 static void llg_memory_warning(const char* path, const char* format, ...) {
     va_list args;
-    fprintf(stderr, "llg: memory file `%s`: ", path ? path : "");
     va_start(args, format);
-    vfprintf(stderr, format, args);
+    llg_memory_report("warning", path, format, args);
     va_end(args);
-    fputc('\n', stderr);
+}
+
+static void llg_memory_error(const char* path, const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    llg_memory_report("error", path, format, args);
+    va_end(args);
 }
 
 static char* llg_memory_path_copy(llg_string_t path) {
@@ -244,7 +260,7 @@ static int llg_memory_descriptor(const char* path, uint64_t total,
                                  uint64_t view_total, uint64_t* inner_total) {
     if (!dims || !strides || n_dims <= 0 || total == 0 || view_total == 0 ||
         origin >= total || view_total > total - origin) {
-        llg_memory_warning(path, "memory descriptor is invalid");
+        llg_memory_error(path, "memory descriptor is invalid");
         return 0;
     }
     uint64_t expected_total = 1;
@@ -252,13 +268,13 @@ static int llg_memory_descriptor(const char* path, uint64_t total,
         uint64_t extent;
         if (!llg_memory_extent(dims[2 * dimension], dims[2 * dimension + 1], &extent) ||
             expected_total > UINT64_MAX / extent) {
-            llg_memory_warning(path, "memory descriptor dimension overflows");
+            llg_memory_error(path, "memory descriptor dimension overflows");
             return 0;
         }
         expected_total *= extent;
     }
     if (expected_total != view_total) {
-        llg_memory_warning(path, "memory descriptor size does not match its bounds");
+        llg_memory_error(path, "memory descriptor size does not match its bounds");
         return 0;
     }
     uint64_t expected_stride = 1;
@@ -267,7 +283,7 @@ static int llg_memory_descriptor(const char* path, uint64_t total,
         if (!llg_memory_extent(dims[2 * dimension], dims[2 * dimension + 1], &extent) ||
             strides[dimension] != expected_stride ||
             expected_stride > UINT64_MAX / extent) {
-            llg_memory_warning(path, "memory descriptor stride is invalid");
+            llg_memory_error(path, "memory descriptor stride is invalid");
             return 0;
         }
         expected_stride *= extent;
@@ -279,19 +295,19 @@ static int llg_memory_descriptor(const char* path, uint64_t total,
             extent == 0 ||
             (extent - 1u) > UINT64_MAX / strides[dimension] ||
             max_offset > UINT64_MAX - (extent - 1u) * strides[dimension]) {
-            llg_memory_warning(path, "memory descriptor range overflows");
+            llg_memory_error(path, "memory descriptor range overflows");
             return 0;
         }
         max_offset += (extent - 1u) * strides[dimension];
     }
     if (max_offset >= total - origin) {
-        llg_memory_warning(path, "memory descriptor exceeds its source array");
+        llg_memory_error(path, "memory descriptor exceeds its source array");
         return 0;
     }
     uint64_t outer_extent;
     if (!llg_memory_extent(dims[0], dims[1], &outer_extent) ||
         outer_extent == 0 || view_total % outer_extent != 0) {
-        llg_memory_warning(path, "memory descriptor outer extent is invalid");
+        llg_memory_error(path, "memory descriptor outer extent is invalid");
         return 0;
     }
     *inner_total = view_total / outer_extent;
@@ -358,11 +374,11 @@ static int llg_memory_bounds(const char* path, uint64_t total,
     int32_t left_value = dims[0], right_value = dims[1];
     int64_t left = left_value, right = right_value;
     if (has_start && !sv4_to_index_i64(start, first)) {
-        llg_memory_warning(path, "start address is unknown, negative-width, or out of range");
+        llg_memory_error(path, "start address is unknown or outside the index range");
         return 0;
     }
     if (has_finish && !sv4_to_index_i64(finish, last)) {
-        llg_memory_warning(path, "finish address is unknown, negative-width, or out of range");
+        llg_memory_error(path, "finish address is unknown or outside the index range");
         return 0;
     }
     if (!has_start) {
@@ -378,7 +394,7 @@ static int llg_memory_bounds(const char* path, uint64_t total,
     uint64_t ignored_offset;
     if (!llg_memory_address_offset(*first, left_value, right_value, &ignored_offset) ||
         !llg_memory_address_offset(*last, left_value, right_value, &ignored_offset)) {
-        llg_memory_warning(path, "selected range includes an address outside the destination memory");
+        llg_memory_error(path, "selected range includes an address outside the memory");
         return 0;
     }
     return 1;
@@ -488,7 +504,7 @@ static int llg_memory_storage_valid(const char* path,
     if (!storage->image) return 1;
     if (elem_width == 0 || total > UINT32_MAX / elem_width ||
         llg_sv4_width(*storage->image) != total * (uint64_t)elem_width) {
-        llg_memory_warning(path, "memory image size does not match its cells");
+        llg_memory_error(path, "memory image size does not match its cells");
         return 0;
     }
     return 1;
@@ -534,14 +550,20 @@ static uint64_t fixed_memory_read_view(llg_string_t path, const llg_memory_stora
         int kind = llg_memory_next_token(stream, radix, &token);
         if (kind == LLG_MEMORY_TOKEN_EOF) break;
         if (kind == LLG_MEMORY_TOKEN_ERROR) {
-            llg_memory_warning(filename, "malformed or over-width memory token");
-            continue;
+            // The text admits only white space, comments, numbers and `@`
+            // addresses; the words after a malformed token have no reliable
+            // address, so the load stops and keeps the words already placed.
+            llg_memory_error(filename, "malformed or over-width memory token; load terminated");
+            sv4_destroy(&token.value);
+            fclose(stream);
+            free(filename);
+            return written;
         }
         if (kind == LLG_MEMORY_TOKEN_ADDRESS) {
             saw_address = 1;
             int64_t address = token.address;
             if (token.invalid_index) {
-                llg_memory_warning(filename, "address jump is not a known index");
+                llg_memory_error(filename, "address jump is not a known index; load terminated");
                 sv4_destroy(&token.value);
                 fclose(stream);
                 free(filename);
@@ -551,7 +573,7 @@ static uint64_t fixed_memory_read_view(llg_string_t path, const llg_memory_stora
                 inner = 0;
                 if (!llg_memory_address_offset(address, dims[0], dims[1], &(uint64_t){0}) ||
                     !llg_memory_in_requested_range(address, first, last)) {
-                    llg_memory_warning(filename,
+                    llg_memory_error(filename,
                         "address jump is outside the destination memory or selected range; load terminated");
                     sv4_destroy(&token.value);
                     fclose(stream);
@@ -572,7 +594,7 @@ static uint64_t fixed_memory_read_view(llg_string_t path, const llg_memory_stora
                 !llg_memory_view_index(current, inner, dims, n_dims, strides,
                                        origin, view_total, total, &index)) {
                 if (!warned_extra) {
-                    llg_memory_warning(filename, "selected address is outside the destination memory");
+                    llg_memory_error(filename, "selected address is outside the destination memory");
                     warned_extra = 1;
                 }
             } else {
@@ -586,7 +608,7 @@ static uint64_t fixed_memory_read_view(llg_string_t path, const llg_memory_stora
                 if (enum_count != 0 &&
                     !llg_memory_enum_word_fits_width(token.value, elem_width,
                                                      elem_signed)) {
-                    llg_memory_warning(filename,
+                    llg_memory_error(filename,
                         "numeric memory data does not fit the enum base type; load terminated");
                     sv4_destroy(&token.value);
                     fclose(stream);
@@ -601,7 +623,7 @@ static uint64_t fixed_memory_read_view(llg_string_t path, const llg_memory_stora
                     }
                 }
                 if (!llg_memory_enum_value_allowed(converted, enum_values, enum_count)) {
-                    llg_memory_warning(filename,
+                    llg_memory_error(filename,
                         "memory data value is not a member of the enum; load terminated");
                     sv4_destroy(&converted);
                     sv4_destroy(&token.value);
@@ -634,7 +656,7 @@ static uint64_t fixed_memory_read_view(llg_string_t path, const llg_memory_stora
                addressing_policy == LLG_MEMORY_ADDRESSING_VERILOG_2001) {
         llg_memory_warning(filename, "memory file contains more words than the selected range");
     }
-    if (ferror(stream)) llg_memory_warning(filename, "read failed");
+    if (ferror(stream)) llg_memory_error(filename, "read failed");
     fclose(stream);
     free(filename);
     return written;
@@ -681,14 +703,14 @@ static void fixed_memory_write_view(llg_string_t path, const llg_memory_storage_
         if (!llg_memory_view_index(current, inner, dims, n_dims, strides,
                                    origin, view_total, total, &index)) {
             if (!warned_extra) {
-                llg_memory_warning(filename, "selected address is outside the source memory");
+                llg_memory_error(filename, "selected address is outside the source memory");
                 warned_extra = 1;
             }
         } else {
             llg_memory_format_cell(storage, index, total, elem_width, radix,
                                    digits, capacity);
             if (fputs(digits, stream) == EOF || fputc('\n', stream) == EOF) {
-                llg_memory_warning(filename, "write failed");
+                llg_memory_error(filename, "write failed");
                 break;
             }
         }
@@ -703,7 +725,7 @@ static void fixed_memory_write_view(llg_string_t path, const llg_memory_storage_
         }
     }
     free(digits);
-    if (fclose(stream) != 0) llg_memory_warning(filename, "close after writing failed");
+    if (fclose(stream) != 0) llg_memory_error(filename, "close after writing failed");
     (void)elem_signed;
     free(filename);
 }
@@ -833,7 +855,7 @@ static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
         if (size == 0 || size - 1u > (size_t)INT32_MAX) {
             char* filename = llg_memory_path_copy(path);
             if (size != 0) {
-                llg_memory_warning(filename, "memory has too many elements to address");
+                llg_memory_error(filename, "memory has too many elements to address");
             } else if (write && !has_start && !has_finish) {
                 // An empty array dumps as an empty file.
                 char* output = llg_output_path(filename);
@@ -844,8 +866,7 @@ static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
             } else if (!write && !has_start && !has_finish) {
                 llg_memory_warning(filename, "destination memory has no elements; nothing loaded");
             } else {
-                llg_memory_warning(filename, "selected range includes an address outside the %s memory",
-                                   write ? "source" : "destination");
+                llg_memory_error(filename, "selected range includes an address outside the memory");
             }
             free(filename);
             return;
@@ -860,7 +881,7 @@ static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
         view_total = total;
     } else if (total != (uint64_t)size) {
         char* filename = llg_memory_path_copy(path);
-        llg_memory_warning(filename, "memory descriptor size does not match its container");
+        llg_memory_error(filename, "memory descriptor size does not match its container");
         free(filename);
         return;
     }

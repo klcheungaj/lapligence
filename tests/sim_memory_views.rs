@@ -47,11 +47,8 @@ fn partial_final_row_keeps_unread_subwords_unchanged() {
         "memory_views",
         "partial_row",
         "r0=11 r1=22 r2=ee untouched=ee\n",
-        concat!(
-            "llg: memory file `partial.mem`: memory file contains too few words for the selected range\n",
-            "llg: simulation ended without $finish (no processes remain) at time 0\n",
-        ),
-        &[],
+        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        &["memory file `partial.mem`: memory file contains too few words for the selected range"],
         &["--edition", "sv2009"],
         &[("partial.mem", "11\n22\n")],
     );
@@ -144,7 +141,7 @@ fn review_bundle_readmem_accepts_slices_and_runtime_rows() {
         "r09_readmem_slice_address_bounds",
         "PASS r09_readmem_slice_address_bounds\n",
         concat!(
-            "llg: memory file `words.hex`: selected range includes an address outside the destination memory\n",
+            "llg: error: memory file `words.hex`: selected range includes an address outside the memory\n",
             "llg: $finish at time 0 at tb:10:5\n",
         ),
         &[],
