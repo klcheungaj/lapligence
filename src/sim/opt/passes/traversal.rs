@@ -379,6 +379,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
                 walk_expr_mut(arg, f);
             }
         }
+        IrStmt::MemoryAccess(task) => {
+            task.expressions_mut(&mut |child| walk_expr_mut(child, f));
+        }
         IrStmt::Memory {
             path,
             view,

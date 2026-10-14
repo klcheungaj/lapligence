@@ -20,6 +20,7 @@ mod drivers;
 mod events;
 mod forks;
 mod formatting;
+mod memory_tasks;
 mod native_delays;
 mod system_tasks;
 

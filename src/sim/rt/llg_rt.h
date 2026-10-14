@@ -1428,6 +1428,41 @@ void llg_fixed_memory_write_view(llg_string_t path, llg_fixed_array_t* memory, u
                            int has_start, int has_finish, int addressing_policy,
                            const sv4_t* enum_values, uint32_t enum_count, int radix);
 
+// Image entry points address the packed image of a fixed array without model
+// storage: `memory` holds `total` cells of `elem_width` bits, cell 0 in the
+// most significant bits. Writes into it publish nothing; the generated code
+// stores the image back to its array after a load.
+void llg_image_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
+                          uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                          const int32_t* dims, int n_dims,
+                          const uint64_t* strides, uint64_t origin,
+                          uint64_t view_total, sv4_t start, sv4_t finish,
+                          int has_start, int has_finish, int addressing_policy,
+                          const sv4_t* enum_values, uint32_t enum_count, int radix);
+void llg_image_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
+                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                           const int32_t* dims, int n_dims,
+                           const uint64_t* strides, uint64_t origin,
+                           uint64_t view_total, sv4_t start, sv4_t finish,
+                           int has_start, int has_finish, int addressing_policy,
+                           const sv4_t* enum_values, uint32_t enum_count, int radix);
+
+// Container entry points address a dynamic array, queue or fixed-size class
+// property in place. With `n_dims` 0 the view is `[0:size-1]` of the current
+// size and `total`, `origin` and `view_total` are ignored.
+#define LLG_CONTAINER_MEMORY_DECL(name, type)                                        \
+    void name(llg_string_t path, type* memory, uint64_t total, uint32_t elem_width,  \
+              int8_t elem_signed, int8_t two_state, const int32_t* dims, int n_dims, \
+              const uint64_t* strides, uint64_t origin, uint64_t view_total,         \
+              sv4_t start, sv4_t finish, int has_start, int has_finish,              \
+              int addressing_policy, const sv4_t* enum_values, uint32_t enum_count,  \
+              int radix);
+LLG_CONTAINER_MEMORY_DECL(llg_dyn_memory_read_view, struct llg_dyn_array_t)
+LLG_CONTAINER_MEMORY_DECL(llg_dyn_memory_write_view, struct llg_dyn_array_t)
+LLG_CONTAINER_MEMORY_DECL(llg_queue_memory_read_view, struct llg_queue_t)
+LLG_CONTAINER_MEMORY_DECL(llg_queue_memory_write_view, struct llg_queue_t)
+#undef LLG_CONTAINER_MEMORY_DECL
+
 // ── File input ─────────────────────────────────────────────────────────────
 // Formatted input uses an HDL-aware scanner rather than the host scanf family:
 // packed destinations preserve X/Z and arbitrary model widths, while return

@@ -338,6 +338,7 @@ impl Frame<'_, '_> {
             } => self.force_task(lhs, Some(eval), reads, dependencies)?,
             IrStmt::Release { lhs } => self.force_task(lhs, None, &[], &[])?,
             IrStmt::Memory { .. } => self.memory_task(statement)?,
+            IrStmt::MemoryAccess(task) => self.memory_access_task(task)?,
             IrStmt::MonitorSet { .. } => self.monitor_task(statement)?,
             IrStmt::MonitorEnable(enabled) => {
                 self.line(format!("llg_monitor_set({});", u8::from(*enabled)))

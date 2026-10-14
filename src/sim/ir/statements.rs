@@ -152,6 +152,92 @@ pub struct IrMemorySelector {
     pub value: IrExpr,
 }
 
+/// Storage a [`IrMemoryAccess`] addresses, cell by cell in declaration order.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrMemoryStorage {
+    /// Lexical packed local holding the packed image of a fixed array that
+    /// has no model array storage (a static or automatic subroutine or block
+    /// local, `ref` formal or structure member). Cell 0 occupies the most
+    /// significant bits, the flattened fixed-value order. Lowering declares
+    /// the local from the array's current value before the task and, for a
+    /// load, stores it back with one blocking assignment afterwards, so the
+    /// root and its selectors are evaluated once and a load that stops early
+    /// keeps the words it already placed.
+    Image(String),
+    /// A container of packed elements, written in place through its element
+    /// stores: a fixed-size class property (its declaration order is the
+    /// container index), or a dynamic array or queue, whose current size
+    /// gives the addresses `[0:size-1]` and is never changed (IEEE 1800-2009
+    /// 21.4.1).
+    Container(usize),
+}
+
+/// A `$readmem*`/`$writemem*` task over storage other than model array
+/// cells (see [`IrMemoryStorage`]).
+///
+/// `origin`, `selectors`, `sliced`, `dims`, `strides` and `total` describe
+/// the selected view of `root_dims` exactly as the same fields of
+/// [`IrMemoryView`] do. A dynamic array or queue has empty `root_dims` and
+/// `dims`, no selectors and zero `origin` and `total`: its one dimension is
+/// only known when the task runs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrMemoryAccess {
+    pub write: bool,
+    pub path: IrStringExpr,
+    pub storage: IrMemoryStorage,
+    pub root_dims: Vec<(i32, i32)>,
+    pub element_width: u32,
+    pub signed: bool,
+    pub two_state: bool,
+    pub origin: u64,
+    pub selectors: Vec<IrMemorySelector>,
+    pub sliced: bool,
+    pub dims: Vec<(i32, i32)>,
+    pub strides: Vec<u64>,
+    pub total: u64,
+    pub radix: IrMemoryRadix,
+    pub addressing: IrMemoryAddressingPolicy,
+    pub enum_values: Option<Vec<IrConst>>,
+    pub start: Option<IrExpr>,
+    pub finish: Option<IrExpr>,
+}
+
+impl IrMemoryAccess {
+    /// Number of cells in a statically sized root; `None` on overflow or for
+    /// a runtime-sized container.
+    pub fn cells(&self) -> Option<u64> {
+        if self.root_dims.is_empty() {
+            return None;
+        }
+        self.root_dims
+            .iter()
+            .try_fold(1u64, |total, (left, right)| {
+                total.checked_mul((i64::from(*left) - i64::from(*right)).unsigned_abs() + 1)
+            })
+    }
+
+    /// Visit every expression the statement evaluates, in evaluation order.
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        self.path.expressions(visit);
+        for selector in &self.selectors {
+            visit(&selector.value);
+        }
+        for bound in [&self.start, &self.finish].into_iter().flatten() {
+            visit(bound);
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        self.path.expressions_mut(visit);
+        for selector in &mut self.selectors {
+            visit(&mut selector.value);
+        }
+        for bound in [&mut self.start, &mut self.finish].into_iter().flatten() {
+            visit(bound);
+        }
+    }
+}
+
 /// File-control tasks that do not produce a packed value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IrFileOp {
@@ -261,6 +347,9 @@ pub enum IrStmt {
         start: Option<Box<IrExpr>>,
         finish: Option<Box<IrExpr>>,
     },
+    /// `$readmem*`/`$writemem*` against storage other than model array
+    /// cells (see [`IrMemoryAccess`]).
+    MemoryAccess(Box<IrMemoryAccess>),
     /// Non-flattened declaration-order copy of complete fixed integral arrays.
     /// The runtime snapshots the source before publishing destination cells.
     FixedArrayCopy {

@@ -40,13 +40,122 @@ impl Frame<'_, '_> {
         else {
             return Err("expected a memory task".to_owned());
         };
-        let path = self.string(path)?;
         let array = self.ctx.model.array(view.array);
         if array.real || view.dims.is_empty() || view.dims.len() != view.strides.len() {
             return Err("memory task requires a fixed packed memory view".to_owned());
         }
-        let mut selector_values = Vec::with_capacity(view.selectors.len());
-        for selector in &view.selectors {
+        let (runtime, memory) = if array.sparse() {
+            (
+                if *write {
+                    "llg_fixed_memory_write_view"
+                } else {
+                    "llg_fixed_memory_read_view"
+                },
+                self.fixed_array_address(view.array)?,
+            )
+        } else {
+            (
+                if *write {
+                    "llg_memory_write_view"
+                } else {
+                    "llg_memory_read_view"
+                },
+                array.c_name.clone(),
+            )
+        };
+        let element = MemoryElement {
+            cells: array.total,
+            width: array.elem_width,
+            signed: array.signed,
+            two_state: array.two_state,
+        };
+        self.memory_call(MemoryCall {
+            runtime,
+            memory,
+            element,
+            path,
+            origin: view.origin,
+            selectors: &view.selectors,
+            dims: &view.dims,
+            strides: &view.strides,
+            total: view.total,
+            radix: *radix,
+            addressing: *addressing,
+            enum_values: enum_values.as_deref(),
+            start: start.as_deref(),
+            finish: finish.as_deref(),
+        })
+    }
+
+    /// Memory file task over a lexical packed image or a container (see
+    /// `IrMemoryAccess`).
+    pub(super) fn memory_access_task(&mut self, task: &IrMemoryAccess) -> Result<(), String> {
+        if task.dims.len() != task.strides.len() {
+            return Err("memory task requires a fixed packed memory view".to_owned());
+        }
+        let (runtime, memory, cells) = match &task.storage {
+            IrMemoryStorage::Image(image) => {
+                let cells = task
+                    .cells()
+                    .ok_or_else(|| "memory image cell count overflows".to_owned())?;
+                let binding = self
+                    .lookup(image)
+                    .ok_or_else(|| format!("unknown memory image `{image}`"))?;
+                if u64::from(binding.width) != cells * u64::from(task.element_width) {
+                    return Err("memory image width disagrees with its cells".to_owned());
+                }
+                let runtime = if task.write {
+                    "llg_image_memory_write_view"
+                } else {
+                    "llg_image_memory_read_view"
+                };
+                (runtime, binding.address, cells)
+            }
+            IrMemoryStorage::Container(container) => {
+                let queue = matches!(
+                    self.ctx.model.containers[*container].kind,
+                    IrContainerKind::Queue { .. }
+                );
+                let runtime = match (queue, task.write) {
+                    (false, false) => "llg_dyn_memory_read_view",
+                    (false, true) => "llg_dyn_memory_write_view",
+                    (true, false) => "llg_queue_memory_read_view",
+                    (true, true) => "llg_queue_memory_write_view",
+                };
+                let memory = format!("&{}", self.container_name(*container)?);
+                // Zero cells: the runtime takes the extent from the current size.
+                (runtime, memory, task.cells().unwrap_or(0))
+            }
+        };
+        self.memory_call(MemoryCall {
+            runtime,
+            memory,
+            element: MemoryElement {
+                cells,
+                width: task.element_width,
+                signed: task.signed,
+                two_state: task.two_state,
+            },
+            path: &task.path,
+            origin: task.origin,
+            selectors: &task.selectors,
+            dims: &task.dims,
+            strides: &task.strides,
+            total: task.total,
+            radix: task.radix,
+            addressing: task.addressing,
+            enum_values: task.enum_values.as_deref(),
+            start: task.start.as_ref(),
+            finish: task.finish.as_ref(),
+        })
+    }
+
+    /// Evaluate the path, runtime selectors and bounds of a memory task in
+    /// that order, then call `call.runtime` on `call.memory`.
+    fn memory_call(&mut self, call: MemoryCall<'_>) -> Result<(), String> {
+        let path = self.string(call.path)?;
+        let mut selector_values = Vec::with_capacity(call.selectors.len());
+        for selector in call.selectors {
             let value = self.expression(&selector.value)?;
             if value.width == 0 {
                 return Err("memory selector must be a packed integer".to_owned());
@@ -54,9 +163,9 @@ impl Frame<'_, '_> {
             selector_values.push((selector, value));
         }
         let origin = if selector_values.is_empty() {
-            format!("{}ULL", view.origin)
+            format!("{}ULL", call.origin)
         } else {
-            let origin = self.scalar("uint64_t", format!("{}ULL", view.origin));
+            let origin = self.scalar("uint64_t", format!("{}ULL", call.origin));
             for (index, (selector, value)) in selector_values.iter().enumerate() {
                 let selected = self.declare("int64_t", "memory_selector_index", "0".to_owned());
                 let (left, right) = (selector.left, selector.right);
@@ -79,12 +188,12 @@ impl Frame<'_, '_> {
             }
             origin
         };
-        let start_value = start
-            .as_ref()
+        let start_value = call
+            .start
             .map(|expression| self.expression(expression))
             .transpose()?;
-        let finish_value = finish
-            .as_ref()
+        let finish_value = call
+            .finish
             .map(|expression| self.expression(expression))
             .transpose()?;
         let first = start_value
@@ -95,68 +204,57 @@ impl Frame<'_, '_> {
             .as_ref()
             .map(|value| value.code.as_str())
             .unwrap_or("(sv4_t)SV4_EMPTY");
-        let runtime = if *write {
-            "llg_memory_write_view"
-        } else {
-            "llg_memory_read_view"
-        };
-        let runtime = if array.sparse() {
-            if *write {
-                "llg_fixed_memory_write_view"
-            } else {
-                "llg_fixed_memory_read_view"
-            }
-        } else {
-            runtime
-        };
-        let memory = if array.sparse() {
-            self.fixed_array_address(view.array)?
-        } else {
-            array.c_name.clone()
-        };
-        let radix = match radix {
+        let radix = match call.radix {
             IrMemoryRadix::Binary => 2,
             IrMemoryRadix::Hex => 16,
         };
-        let addressing = match addressing {
+        let addressing = match call.addressing {
             IrMemoryAddressingPolicy::Verilog2001 => 0,
             IrMemoryAddressingPolicy::SystemVerilog2009 => 1,
         };
-        let enum_name = enum_values
-            .as_ref()
-            .filter(|values| !values.is_empty())
-            .map(|values| {
-                let entry_count = values.len();
-                let rendered_values = values.iter().map(emit_const).collect::<Vec<_>>().join(", ");
-                self.line("{");
-                self.declare_array_init(
-                    "sv4_t",
-                    "memory_enum_values",
-                    entry_count,
-                    &rendered_values,
-                )
-            });
+        let enum_values = call.enum_values.filter(|values| !values.is_empty());
+        let enum_name = enum_values.map(|values| {
+            let rendered_values = values.iter().map(emit_const).collect::<Vec<_>>().join(", ");
+            self.line("{");
+            self.declare_array_init(
+                "sv4_t",
+                "memory_enum_values",
+                values.len(),
+                &rendered_values,
+            )
+        });
         let enum_pointer = enum_name.as_deref().unwrap_or("NULL");
-        let enum_count = enum_values
-            .as_ref()
-            .filter(|values| !values.is_empty())
-            .map_or(0, Vec::len);
-        let dimensions = view
-            .dims
-            .iter()
-            .flat_map(|(left, right)| [left.to_string(), right.to_string()])
-            .collect::<Vec<_>>()
-            .join(", ");
-        let strides = view
-            .strides
-            .iter()
-            .map(u64::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-        self.line(format!("{runtime}({}, {}, {}ULL, {}u, {}, {}, (const int32_t[]){{ {dimensions} }}, {}, (const uint64_t[]){{ {strides} }}, {origin}, {}ULL, {first}, {last}, {}, {}, {addressing}, {enum_pointer}, {enum_count}, {radix});",
-            path.take_string(), memory, array.total, array.elem_width, u8::from(array.signed),
-            u8::from(array.two_state), view.dims.len(), view.total,
-            u8::from(start.is_some()), u8::from(finish.is_some())));
+        let enum_count = enum_values.map_or(0, <[IrConst]>::len);
+        // C has no empty compound literal; a runtime-sized view passes NULL.
+        let dimensions = if call.dims.is_empty() {
+            "NULL".to_owned()
+        } else {
+            format!(
+                "(const int32_t[]){{ {} }}",
+                call.dims
+                    .iter()
+                    .flat_map(|(left, right)| [left.to_string(), right.to_string()])
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        let strides = if call.strides.is_empty() {
+            "NULL".to_owned()
+        } else {
+            format!(
+                "(const uint64_t[]){{ {} }}",
+                call.strides
+                    .iter()
+                    .map(u64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        let element = call.element;
+        self.line(format!("{}({}, {}, {}ULL, {}u, {}, {}, {dimensions}, {}, {strides}, {origin}, {}ULL, {first}, {last}, {}, {}, {addressing}, {enum_pointer}, {enum_count}, {radix});",
+            call.runtime, path.take_string(), call.memory, element.cells, element.width,
+            u8::from(element.signed), u8::from(element.two_state), call.dims.len(), call.total,
+            u8::from(call.start.is_some()), u8::from(call.finish.is_some())));
         if let Some(enum_name) = enum_name {
             self.line(format!("sv4_destroy_array({enum_name}, {enum_count});"));
             self.line("}");
@@ -301,4 +399,31 @@ impl Frame<'_, '_> {
         }
         Ok(())
     }
+}
+
+/// Cell layout of the storage a memory file task addresses.
+#[derive(Clone, Copy)]
+struct MemoryElement {
+    cells: u64,
+    width: u32,
+    signed: bool,
+    two_state: bool,
+}
+
+/// One memory file task call: runtime entry point, storage and view.
+struct MemoryCall<'a> {
+    runtime: &'static str,
+    memory: String,
+    element: MemoryElement,
+    path: &'a IrStringExpr,
+    origin: u64,
+    selectors: &'a [IrMemorySelector],
+    dims: &'a [(i32, i32)],
+    strides: &'a [u64],
+    total: u64,
+    radix: IrMemoryRadix,
+    addressing: IrMemoryAddressingPolicy,
+    enum_values: Option<&'a [IrConst]>,
+    start: Option<&'a IrExpr>,
+    finish: Option<&'a IrExpr>,
 }
