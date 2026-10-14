@@ -198,8 +198,11 @@ must match the template rewritten for its paths byte for byte (else
 plain ASCII paths without spaces, `$` or `@` qualify; a build from a template
 that fails is rebuilt from a real configure and rejects the template when that
 succeeds. A rejection's reason (first differing files and lines) goes to the
-`rejected` marker and the timing record's `template_reason`. Both Windows runners
-still reject the second tree (cause unknown). Runtime-archive trees always configure.
+`rejected` marker and the timing record's `template_reason`. Spellings cover the
+path as given and canonical, the drive letter as given, upper and lower case
+(CMake 4.4 writes `c:/...` in the `CMakeCache.txt` header and
+`CMAKE_CACHEFILE_DIR`), native, `/` and string-escaped `\\` separators, and a
+plain or Ninja-escaped (`$:`) colon. Runtime-archive trees always configure.
 Detection `try_compile`s use `CMAKE_TRY_COMPILE_CONFIGURATION=Release` (no MSVC
 `/Zi` PDBs). Every configure passes an empty `CMAKE_INSTALL_PREFIX` (with
 `CMAKE_FIND_NO_INSTALL_PREFIX=ON`): CMake's Windows default prefix depends on

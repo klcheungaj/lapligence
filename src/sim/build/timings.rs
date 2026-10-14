@@ -5,7 +5,9 @@
 //! milliseconds (`generate`, `probe`, `runtime`, `seed`, `configure`,
 //! `build`, `total`) and what each cache did (`runtime=hit|built`,
 //! `seed=applied|unseeded|existing-tree`, `configure_retry=0|1`), plus
-//! `result=ok|error`. Processes running in parallel append to the same file;
+//! `result=ok|error` and the wall-clock end of the build in Unix
+//! milliseconds (`end_unix_ms`, so a long run can be split into time
+//! windows). Processes running in parallel append to the same file;
 //! each line is one write. CI uses it to show where model-build time goes on
 //! each platform (`scripts/ci_build_timings.py`). Write failures are ignored:
 //! the timings are diagnostics and never change a build's outcome.
@@ -107,10 +109,11 @@ impl BuildTimings {
         }
     }
 
-    /// The record line for a build of `out_dir` that took `total`.
-    fn line(&self, out_dir: &Path, total: Duration, ok: bool) -> String {
+    /// The record line for a build of `out_dir` that took `total` and ended
+    /// `end_unix_ms` milliseconds after the Unix epoch.
+    fn line(&self, out_dir: &Path, total: Duration, ok: bool, end_unix_ms: u128) -> String {
         let mut line = format!(
-            "llg-build\tresult={}\ttotal_ms={}",
+            "llg-build\tresult={}\ttotal_ms={}\tend_unix_ms={end_unix_ms}",
             if ok { "ok" } else { "error" },
             total.as_millis()
         );
@@ -137,7 +140,10 @@ impl BuildTimings {
         let Some(path) = std::env::var_os(ENV).filter(|value| !value.is_empty()) else {
             return;
         };
-        let line = self.line(out_dir, started.elapsed(), ok);
+        let end_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_millis());
+        let line = self.line(out_dir, started.elapsed(), ok, end_unix_ms);
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -161,16 +167,24 @@ mod tests {
         timings.record("configure", started);
         timings.note("seed", "unseeded");
         timings.note("seed", "applied");
-        let line = timings.line(Path::new("out\tdir"), Duration::from_millis(1234), true);
+        let line = timings.line(
+            Path::new("out\tdir"),
+            Duration::from_millis(1234),
+            true,
+            1_760_000_000_123,
+        );
         assert!(
-            line.starts_with("llg-build\tresult=ok\ttotal_ms=1234\t"),
+            line.starts_with("llg-build\tresult=ok\ttotal_ms=1234\tend_unix_ms=1760000000123\t"),
             "{line}"
         );
         assert!(line.ends_with("\tseed=applied\tdir=out dir\n"), "{line}");
         assert_eq!(line.matches("configure_ms=").count(), 1, "{line}");
         assert!(line.contains("\tbuild_ms="), "{line}");
-        let failed = BuildTimings::default().line(Path::new("x"), Duration::ZERO, false);
-        assert_eq!(failed, "llg-build\tresult=error\ttotal_ms=0\tdir=x\n");
+        let failed = BuildTimings::default().line(Path::new("x"), Duration::ZERO, false, 7);
+        assert_eq!(
+            failed,
+            "llg-build\tresult=error\ttotal_ms=0\tend_unix_ms=7\tdir=x\n"
+        );
     }
 
     #[test]
@@ -179,13 +193,13 @@ mod tests {
         timings.note("template", "rejected");
         timings.detail("template_reason", "first");
         timings.detail("template_reason", "a\tb\r\nc");
-        let line = timings.line(Path::new("d"), Duration::ZERO, true);
+        let line = timings.line(Path::new("d"), Duration::ZERO, true, 0);
         assert!(
             line.ends_with("\ttemplate=rejected\ttemplate_reason=a b  c\tdir=d\n"),
             "{line}"
         );
         timings.detail("template_reason", &"x".repeat(MAX_DETAIL_CHARS + 5));
-        let line = timings.line(Path::new("d"), Duration::ZERO, true);
+        let line = timings.line(Path::new("d"), Duration::ZERO, true, 0);
         let kept = format!("template_reason={}...\t", "x".repeat(MAX_DETAIL_CHARS));
         assert!(line.contains(&kept), "{line}");
     }

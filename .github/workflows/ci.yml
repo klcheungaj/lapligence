@@ -70,6 +70,7 @@ jobs:
           python3 -m unittest discover -s scripts -p test_ci_cache.py
           python3 -m unittest discover -s scripts -p test_ci_build_timings.py
           python3 -m unittest discover -s scripts -p test_ci_windows_runner.py
+          python3 -m unittest discover -s scripts -p test_ci_resource_sampler.py
 
       - name: Check the bundled GMP tables against vendor/gmp
         run: python3 scripts/gmp_tables.py --check
@@ -283,6 +284,9 @@ jobs:
       # several times slower.
       msvc_arch: arm64
       target: aarch64-pc-windows-msvc
+      # One runner reached 3988 of 4583 tests in the 300-minute limit
+      # (CI round 5): two shards keep each test job well inside it.
+      test_shards: "[1, 2]"
 
   macos-arm64:
     if: github.event_name != 'schedule'

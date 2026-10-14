@@ -27,7 +27,8 @@
 //! `@` or non-ASCII, a drive colon only on Windows) are templated, because
 //! CMake's quoting and Ninja's escaping of other characters are not plain
 //! substitutions. Every spelling CMake may use for the source directory is
-//! covered: as given and canonical, with native and forward separators, with
+//! covered: as given and canonical, with the drive letter as given, upper and
+//! lower case, with native, forward and string-escaped (`\\`) separators, with
 //! the drive colon plain or Ninja-escaped (`D$:`). A template is used only for
 //! a tree whose spellings coincide the same way as the captured tree's (for
 //! example, canonical equal to given). Seeds stay in force: a template exists
@@ -50,7 +51,7 @@ pub const TEMPLATE_ENV: &str = "LLG_CMAKE_TREE_TEMPLATES";
 pub const TEMPLATE_DIR: &str = "cmake-tree";
 
 /// Bumped whenever the layout or the check changes.
-const FORMAT: &str = "llg-cmake-tree-template-v1";
+const FORMAT: &str = "llg-cmake-tree-template-v2";
 
 /// Placeholder for spelling `index`; `@` never occurs in an accepted path.
 fn placeholder(index: usize) -> String {
@@ -300,14 +301,7 @@ impl Spellings {
         let given = plain_absolute(source)?;
         let canonical = crate::ffi::platform::canonicalize(source).ok()?;
         let canonical = plain_absolute(&canonical)?;
-        let mut texts = Vec::new();
-        for base in [given, canonical] {
-            for separators in [base.clone(), base.replace('\\', "/")] {
-                texts.push(separators.clone());
-                texts.push(separators.replace(':', "$:"));
-            }
-        }
-        Some(Self::from_texts(texts))
+        Some(Self::from_texts(spelling_texts(&[given, canonical])))
     }
 
     fn from_texts(texts: Vec<String>) -> Self {
@@ -336,6 +330,46 @@ impl Spellings {
             .collect();
         distinct.sort_by_key(|(_, text)| std::cmp::Reverse(text.len()));
         distinct
+    }
+}
+
+/// Every text CMake and Ninja may write for each of `bases` (the directory as
+/// given and canonical), in a fixed order: the drive letter as given, upper
+/// and lower case (CMake 4.4 on Windows writes `c:/...` in the
+/// `CMakeCache.txt` header and `CMAKE_CACHEFILE_DIR` for a `C:\...` tree),
+/// then native, forward and doubled (string-escaped) backslash separators,
+/// then the drive colon plain and Ninja-escaped (`$:`). Transforms that do
+/// not apply (no drive, no backslash on Unix) repeat the text; the
+/// coincidence pattern records that.
+fn spelling_texts(bases: &[String]) -> Vec<String> {
+    let mut texts = Vec::new();
+    for base in bases {
+        for drive in [
+            base.clone(),
+            with_drive_case(base, char::to_ascii_uppercase),
+            with_drive_case(base, char::to_ascii_lowercase),
+        ] {
+            for separators in [
+                drive.clone(),
+                drive.replace('\\', "/"),
+                drive.replace('\\', "\\\\"),
+            ] {
+                texts.push(separators.clone());
+                texts.push(separators.replace(':', "$:"));
+            }
+        }
+    }
+    texts
+}
+
+/// `text` with its drive letter (`X:` at the start) passed through `case`.
+fn with_drive_case(text: &str, case: fn(&char) -> char) -> String {
+    let mut characters = text.chars();
+    match (characters.next(), characters.next()) {
+        (Some(drive), Some(':')) if drive.is_ascii_alphabetic() => {
+            format!("{}{}", case(&drive), &text[1..])
+        }
+        _ => text.to_owned(),
     }
 }
 
@@ -613,19 +647,9 @@ mod tests {
         }
     }
 
+    /// The spellings of a tree whose given and canonical paths agree.
     fn spellings(source: &str) -> Spellings {
-        let texts = (0..2)
-            .flat_map(|_| {
-                let forward = source.replace('\\', "/");
-                [
-                    source.to_owned(),
-                    source.replace(':', "$:"),
-                    forward.clone(),
-                    forward.replace(':', "$:"),
-                ]
-            })
-            .collect();
-        Spellings::from_texts(texts)
+        Spellings::from_texts(spelling_texts(&[source.to_owned(), source.to_owned()]))
     }
 
     #[test]
@@ -677,46 +701,155 @@ mod tests {
         );
     }
 
-    /// A Windows donor tree in every spelling CMake and Ninja use, rewritten
-    /// for a target whose name has another length, matches the target's real
-    /// tree exactly; a spelling the template does not cover (a lower-case
-    /// drive) is a named difference, never silently accepted.
+    /// A configured Windows tree for the source directory `root` (as given),
+    /// with the spellings CMake 4.4 and its Ninja generator write: the
+    /// `CMakeCache.txt` header and `CMAKE_CACHEFILE_DIR` with a lower-case
+    /// drive and `/` (seen on both Windows CI runners), other cache entries
+    /// and `cmake_install.cmake` with an upper-case drive and `/`,
+    /// `build.ninja` and `rules.ninja` natively with `$:` on build edges, and
+    /// a string-escaped (`\\`) spelling in the configure log.
+    fn windows_cmake_tree(root: &str) -> Tree {
+        let upper = with_drive_case(root, char::to_ascii_uppercase);
+        let lower = with_drive_case(root, char::to_ascii_lowercase);
+        let upper_forward = upper.replace('\\', "/");
+        let lower_forward = lower.replace('\\', "/");
+        let escaped = root.replacen(':', "$:", 1);
+        let lower_escaped = lower_forward.replacen(':', "$:", 1);
+        let doubled = root.replace('\\', "\\\\");
+        tree(&[
+            (
+                "CMakeCache.txt",
+                &format!(
+                    "# This is the CMakeCache file.\n\
+                     # For build in directory: {lower_forward}/build\n\
+                     # It was generated by CMake: C:/Program Files/CMake/bin/cmake.exe\n\
+                     CMAKE_CACHEFILE_DIR:INTERNAL={lower_forward}/build\n\
+                     CMAKE_HOME_DIRECTORY:INTERNAL={upper_forward}\n\
+                     tb_BINARY_DIR:STATIC={upper_forward}/build\n\
+                     tb_SOURCE_DIR:STATIC={upper_forward}\n"
+                ),
+            ),
+            (
+                "build.ninja",
+                &format!(
+                    "cmake_ninja_workdir = {escaped}\\build\\\n\
+                     build CMakeFiles\\sim.dir\\model.c.obj: C_COMPILER__sim_unscanned_Release {escaped}\\model.c\n\
+                     build build.ninja: RERUN_CMAKE | {lower_escaped}/CMakeLists.txt\n  \
+                     command = cmd.exe /C \"cd /D {root}\\build && C:\\PROGRA~1\\CMake\\bin\\cmake.exe --regenerate-during-build -S{root} -B{root}\\build\"\n"
+                ),
+            ),
+            (
+                "CMakeFiles/rules.ninja",
+                &format!("rule C_COMPILER__sim_unscanned_Release\n  command = cl.exe /nologo /I{upper} /Fo$out /c $in\n"),
+            ),
+            (
+                "cmake_install.cmake",
+                &format!("# Install script for directory: {upper_forward}\nfile(WRITE \"{upper_forward}/build/install_manifest.txt\" \"\")\n"),
+            ),
+            (
+                "CMakeFiles/TargetDirectories.txt",
+                &format!("{upper_forward}/build/CMakeFiles/sim.dir\n"),
+            ),
+            (
+                "CMakeFiles/CMakeConfigureLog.yaml",
+                &format!("    directories:\n      binary: \"{doubled}\\\\build\"\n"),
+            ),
+        ])
+    }
+
+    /// The CI failure: `first` and `second` under one temporary directory, the
+    /// header spelling `c:/...` for a `C:\...` tree. Every spelling, the
+    /// lower-case drive included, is a placeholder, so the template rewritten
+    /// for `second` (a name of another length) equals the real tree exactly,
+    /// for both drive cases of the given path and for a build-job style tree.
     #[test]
-    fn windows_trees_compare_exactly_and_name_each_difference() {
-        let windows_tree = |root: &str| {
-            let forward = root.replace('\\', "/");
-            let escaped = root.replacen(':', "$:", 1);
-            tree(&[
-                (
-                    "CMakeCache.txt",
-                    &format!("CMAKE_CACHEFILE_DIR:INTERNAL={forward}/build\nCMAKE_HOME_DIRECTORY:INTERNAL={forward}\n"),
-                ),
-                (
-                    "build.ninja",
-                    &format!("cmake_ninja_workdir = {escaped}\\build\\\nbuild CMakeFiles\\sim.dir\\model.c.obj: C_COMPILER__sim {escaped}\\model.c\n  command = cmake.exe -S{root} -B{root}\\build\n"),
-                ),
-                (
-                    "CMakeFiles/TargetDirectories.txt",
-                    &format!("{forward}/build/CMakeFiles/sim.dir\n"),
-                ),
-            ])
-        };
+    fn windows_cmake_spellings_of_either_drive_case_are_rewritten_exactly() {
+        for (first, second) in [
+            (
+                r"C:\Users\runneradmin\AppData\Local\Temp\llg-1924-0\first",
+                r"C:\Users\runneradmin\AppData\Local\Temp\llg-1924-0\second",
+            ),
+            (
+                r"c:\Users\runneradmin\AppData\Local\Temp\llg-1924-0\first",
+                r"c:\Users\runneradmin\AppData\Local\Temp\llg-1924-0\second",
+            ),
+            (
+                r"D:\a\_temp\llg-probe\build-job-t0\sim\tb",
+                r"D:\a\_temp\llg-probe\build-job-t1\sim\tb",
+            ),
+        ] {
+            let donor = windows_cmake_tree(first);
+            let template = Template::capture(&donor, &spellings(first)).unwrap();
+            for bytes in template.tree.files.values() {
+                let text = String::from_utf8_lossy(bytes);
+                assert!(!text.contains("first") && !text.contains("-t0"), "{text}");
+            }
+            let expected = template.tree_for(&spellings(second)).expect("same pattern");
+            assert_eq!(
+                tree_differences(&expected, &windows_cmake_tree(second)),
+                Vec::<String>::new(),
+                "{first}"
+            );
+        }
+    }
+
+    /// A target whose given drive case differs from the donor's coincides
+    /// differently with its upper- and lower-case spellings, so the template
+    /// is refused for it rather than guessed.
+    #[test]
+    fn a_given_drive_case_other_than_the_donors_refuses_the_template() {
+        let first = r"C:\t\llg-1-0\first";
+        let template = Template::capture(&windows_cmake_tree(first), &spellings(first)).unwrap();
+        assert!(template
+            .tree_for(&spellings(r"c:\t\llg-1-0\second"))
+            .is_none());
+        assert!(template
+            .tree_for(&spellings(r"C:\t\llg-1-0\second"))
+            .is_some());
+    }
+
+    /// A spelling the template does not cover (here a path component in
+    /// another case) stays a named difference, never silently accepted.
+    #[test]
+    fn uncovered_windows_spellings_are_named_differences() {
         let first = r"C:\Users\runneradmin\AppData\Local\Temp\llg-22f8-0\first";
         let second = r"C:\Users\runneradmin\AppData\Local\Temp\llg-22f8-0\second";
-        let template = Template::capture(&windows_tree(first), &spellings(first)).unwrap();
+        let template = Template::capture(&windows_cmake_tree(first), &spellings(first)).unwrap();
         let expected = template.tree_for(&spellings(second)).expect("same pattern");
-        assert!(tree_differences(&expected, &windows_tree(second)).is_empty());
-
-        let mut lower = windows_tree(second);
-        lower.files.insert(
+        let mut actual = windows_cmake_tree(second);
+        actual.files.insert(
             "CMakeFiles/TargetDirectories.txt".to_owned(),
-            b"c:/Users/runneradmin/AppData/Local/Temp/llg-22f8-0/second/build/CMakeFiles/sim.dir\n"
+            b"C:/USERS/runneradmin/AppData/Local/Temp/llg-22f8-0/second/build/CMakeFiles/sim.dir\n"
                 .to_vec(),
         );
         assert_eq!(
-            tree_differences(&expected, &lower),
-            ["CMakeFiles/TargetDirectories.txt: line 1: `C:/Users/runneradmin/AppData/Local/Temp/llg-22f8-0/second/build/CMakeFiles/sim.dir` vs `c:/Users/runneradmin/AppData/Local/Temp/llg-22f8-0/second/build/CMakeFiles/sim.dir`"]
+            tree_differences(&expected, &actual),
+            ["CMakeFiles/TargetDirectories.txt: line 1: `C:/Users/runneradmin/AppData/Local/Temp/llg-22f8-0/second/build/CMakeFiles/sim.dir` vs `C:/USERS/runneradmin/AppData/Local/Temp/llg-22f8-0/second/build/CMakeFiles/sim.dir`"]
         );
+    }
+
+    #[test]
+    fn spelling_texts_cover_drive_case_separators_and_escapes() {
+        let texts = spelling_texts(&[r"C:\a\b".to_owned()]);
+        for spelling in [
+            r"C:\a\b",
+            "C:/a/b",
+            r"C:\\a\\b",
+            r"C$:\a\b",
+            "C$:/a/b",
+            r"c:\a\b",
+            "c:/a/b",
+            r"c$:\\a\\b",
+            "c$:/a/b",
+        ] {
+            assert!(
+                texts.iter().any(|text| text == spelling),
+                "{spelling}: {texts:?}"
+            );
+        }
+        assert_eq!(texts.len(), 18);
+        let unix = Spellings::from_texts(spelling_texts(&["/w/a".to_owned()]));
+        assert_eq!(unix.distinct_longest_first(), [(0, "/w/a")]);
     }
 
     #[test]

@@ -76,6 +76,31 @@ def summarize(records):
     return "\n".join(out)
 
 
+WINDOW_PHASES = ("generate", "runtime", "seed", "configure", "build", "total")
+
+
+def windows(records, minutes=15):
+    stamped = [(int(r["end_unix_ms"]), r) for r in records if (r.get("end_unix_ms") or "").isdigit()]
+    if not stamped:
+        return ""
+    start = min(stamp for stamp, _ in stamped)
+    width = max(1, minutes) * 60000
+    buckets = defaultdict(list)
+    for stamp, record in stamped:
+        buckets[(stamp - start) // width].append(record)
+    out = [f"phase medians (ms) per {minutes}-minute window of build end time:",
+           "window  builds " + " ".join(f"{phase:>9}" for phase in WINDOW_PHASES)]
+    for index in sorted(buckets):
+        group = buckets[index]
+        medians = []
+        for phase in WINDOW_PHASES:
+            values = [int(r[phase + "_ms"]) for r in group if (r.get(phase + "_ms") or "").isdigit()]
+            medians.append(f"{percentile(values, 0.5):>9}" if values else f"{'-':>9}")
+        label = f"+{index * minutes}m"
+        out.append(f"{label:>6} {len(group):>7} " + " ".join(medians))
+    return "\n".join(out)
+
+
 def short_location(location):
     path, sep, line = location.rpartition(":")
     if not sep or not line.isdigit():
@@ -147,12 +172,18 @@ def main(argv=None):
     parser.add_argument("file", type=Path)
     parser.add_argument("--cmake-profiles", type=Path,
                         help="directory of LLG_CMAKE_PROFILE_DIR google-trace files to summarize")
+    parser.add_argument("--window-minutes", type=int, default=15,
+                        help="width of the time windows of the per-window phase medians")
     args = parser.parse_args(argv)
     if not args.file.is_file():
         print(f"no model-build timings at {args.file}")
     else:
         text = args.file.read_text(encoding="utf-8", errors="replace")
-        print(summarize(parse(text.splitlines())))
+        records = parse(text.splitlines())
+        print(summarize(records))
+        windowed = windows(records, args.window_minutes)
+        if windowed:
+            print(windowed)
     if args.cmake_profiles:
         profiles, unreadable = load_profiles(args.cmake_profiles)
         print(summarize_profiles(profiles))

@@ -106,6 +106,7 @@ pub use tree_template::{TEMPLATE_DIR as TREE_TEMPLATE_DIR, TEMPLATE_ENV as TREE_
 pub const RUNTIME_CACHE_AUX_DIRS: [&str; 3] =
     [TOOLCHAIN_SEED_DIR, COMPILER_PROBE_DIR, TREE_TEMPLATE_DIR];
 
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::fs::{File, OpenOptions, TryLockError};
@@ -451,7 +452,9 @@ pub enum BuildError {
     Compile { output: String },
     /// The model link left DPI-C symbols undefined: imports that no
     /// `--dpi-lib` library defines, or `svdpi.h` routines llg does not
-    /// provide that a library calls.
+    /// provide that a library calls (for a Mach-O library, found in its
+    /// symbol table before the build). `output` is the evidence: the
+    /// linker transcript or the library's imports.
     MissingDpiSymbol {
         imports: Vec<String>,
         routines: Vec<String>,
@@ -538,7 +541,7 @@ impl fmt::Display for BuildError {
                         quoted(routines)
                     )?;
                 }
-                write!(f, "\nlinker output:\n{output}")
+                write!(f, "\n{output}")
             }
             Self::ExecutableNotFound { directory, listing } => write!(
                 f,
@@ -598,6 +601,7 @@ fn build_model_cmake_timed(
 ) -> Result<PathBuf, BuildError> {
     let phase = Instant::now();
     validate_dpi_libraries(opts)?;
+    check_mach_o_dpi_imports(opts)?;
     generate_model_sources_with_opts(out_dir, extra, opts)?;
     timings.record("generate", phase);
 
@@ -693,7 +697,7 @@ fn build_model_cmake_timed(
             return Err(BuildError::MissingDpiSymbol {
                 imports: missing.imports,
                 routines: missing.routines,
-                output: output_tail(&output),
+                output: format!("linker output:\n{}", output_tail(&output)),
             });
         }
         return Err(BuildError::Compile {
@@ -1117,6 +1121,35 @@ fn validate_dpi_libraries(opts: &CmakeBuildOpts) -> Result<(), BuildError> {
         }
     }
     Ok(())
+}
+
+/// Name the unprovided `svdpi.h` routines a Mach-O DPI library imports
+/// before the build: ld64 links the model without checking them, and dyld
+/// would abort the model without a message when it calls one (see
+/// [`dpi_link`]). ELF and PE libraries are left to the link.
+fn check_mach_o_dpi_imports(opts: &CmakeBuildOpts) -> Result<(), BuildError> {
+    let mut routines = BTreeSet::new();
+    let mut output = String::new();
+    for path in &opts.dpi_libraries {
+        let found = dpi_link::unprovided_routines_in_mach_o(path);
+        if !found.is_empty() {
+            output.push_str(&format!(
+                "{} imports {} for dyld to resolve when the model runs; ld64 does not check \
+                 a library's undefined symbols at link time\n",
+                path.display(),
+                found.join(", ")
+            ));
+            routines.extend(found);
+        }
+    }
+    if routines.is_empty() {
+        return Ok(());
+    }
+    Err(BuildError::MissingDpiSymbol {
+        imports: Vec::new(),
+        routines: routines.into_iter().collect(),
+        output,
+    })
 }
 
 /// Validate one library and return an absolute spelling for CMake. Relative

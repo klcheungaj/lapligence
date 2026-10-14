@@ -210,10 +210,23 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
   (Windows CI: `array_conditional` 12.6 s against 0.9 s, the per-bit word-copy
   oracle over 60 s against 10 s). Keep per-bit reference work in plain arrays,
   not in calls into the runtime under test.
-- On both Windows runners an opt-in configured-tree template
-  (`LLG_CMAKE_TREE_TEMPLATES`) is rejected when the second tree is compared with
-  it; Linux and macOS verify it. The cause is not known yet: the timing record
-  now carries the first differing files and lines as `template_reason`.
+- CMake 4.4 on Windows writes a `C:\...` build directory as `c:/...` (lower-case
+  drive, `/`) in the `CMakeCache.txt` header while other files keep the given
+  drive case; a textual comparison of configured trees covers both drive cases
+  (`build/tree_template.rs`). This rejected every opt-in tree template on both
+  Windows runners until CI round 5.
+- Apple ld64 does not check a dylib's undefined symbols when it links an
+  executable against it; GNU ld does. A DPI library built with `-undefined
+  dynamic_lookup` that calls a routine nobody defines therefore links, and the
+  model ends by a signal (status 1 from `llg`) with nothing on stderr when it
+  calls it. llg reads Mach-O libraries' symbol tables before the build
+  (`build/dpi_link.rs`); `clang --target=arm64-apple-macos11 -c` produces Mach-O
+  objects on Linux for checking such a reader.
+- In the Windows arm64 test job (4 CPUs, Defender on) model-building tests ran a
+  median 4.5 times longer than on x64, flat over five hours, while tests that
+  compile without model builds (frame lint, storage probes) ran at x64 speed and
+  isolated or 4-way concurrent builds in the build job matched x64. The cause is
+  not known; the job samples resources and the suite runs in two shards there.
 - tower-lsp 0.20 runs notifications concurrently, so slower runners (Rocky arm64)
   interleave handlers that are sequential elsewhere; state written after an
   `await` must not let an older result replace a newer one (workspace rescans

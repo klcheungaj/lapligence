@@ -299,3 +299,67 @@ fn unprovided_svdpi_routine_is_named() {
         &["--dpi-lib", &library],
     );
 }
+
+/// A 64-bit Mach-O dylib whose symbol table imports `names` through
+/// `-undefined dynamic_lookup` (library ordinal 0xfe), as the macOS build of
+/// `neg_unprovided_routine.c` does. Written by hand so every host can check it.
+fn dynamic_lookup_dylib(names: &[&str]) -> Vec<u8> {
+    let mut strings = vec![0u8];
+    let mut table = Vec::new();
+    for name in names {
+        table.extend_from_slice(&(strings.len() as u32).to_le_bytes());
+        table.extend_from_slice(&[0x01, 0]); // N_UNDF | N_EXT, no section
+        table.extend_from_slice(&(0xfeu16 << 8).to_le_bytes());
+        table.extend_from_slice(&0u64.to_le_bytes());
+        strings.extend_from_slice(format!("_{name}\0").as_bytes());
+    }
+    let symbols_at = 32 + 24;
+    let strings_at = symbols_at + table.len();
+    let mut image = Vec::new();
+    // mach_header_64 (arm64 MH_DYLIB, one load command), then LC_SYMTAB.
+    for word in [0xfeed_facfu32, 0x0100_000c, 0, 6, 1, 24, 0x85, 0] {
+        image.extend_from_slice(&word.to_le_bytes());
+    }
+    for word in [
+        0x2u32,
+        24,
+        symbols_at as u32,
+        names.len() as u32,
+        strings_at as u32,
+        strings.len() as u32,
+    ] {
+        image.extend_from_slice(&word.to_le_bytes());
+    }
+    image.extend_from_slice(&table);
+    image.extend_from_slice(&strings);
+    image
+}
+
+/// ld64 links a model against a dylib without checking the dylib's undefined
+/// symbols, so on macOS the unprovided routine reached dyld and the model
+/// ended by a signal with nothing on stderr. llg reads a Mach-O library's
+/// imports before the build and names the routine as the ELF link does; the
+/// check depends only on the file, so it runs on every host.
+#[test]
+fn unprovided_routine_imported_by_a_mach_o_library_is_named_before_the_build() {
+    let directory = sim_harness::TempDir::new("sim040-macho").expect("temporary directory");
+    let library = directory.path().join("libneg_unprovided_routine.dylib");
+    std::fs::write(
+        &library,
+        dynamic_lookup_dylib(&["svGetScope", "svGetArrayPtr", "neg_helper"]),
+    )
+    .expect("write Mach-O library");
+    let library = library.to_string_lossy().into_owned();
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_unprovided_routine",
+        "a DPI-C library calls svdpi.h routine `svGetScope`, which llg does not provide",
+        &["--dpi-lib", &library],
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_unprovided_routine",
+        "imports svGetScope for dyld to resolve when the model runs",
+        &["--dpi-lib", &library],
+    );
+}

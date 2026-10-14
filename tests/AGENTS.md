@@ -242,8 +242,15 @@ Archives are retained one day. CI selects the `ci` nextest profile (one test per
 logical CPU). The Windows `build` job runs `scripts/ci_windows_runner.py measure`
 (tool image architectures, Defender state, spawn and new-file costs, timings,
 CMake configure profiles via `LLG_CMAKE_PROFILE_DIR` and the processes one model
-build starts); it and the test job's `report` step are read-only diagnostics
-that never fail a job. Observed platform
+build starts). The Windows `test` job samples resources every 30 s
+(`scripts/ci_resource_sampler.py`: top CPU users, memory, commit and page file,
+free disk, scratch/`target`/cache sizes, live and orphaned build processes;
+printed per sample and uploaded as `resource-samples-<target>-<shard>`) and runs
+the measure again after the suite in its temporary directory, with and without
+`LLG_C_LAUNCHER`. These and the `report` steps are read-only diagnostics that
+never fail a job. A caller may split the test job over runners with
+`test_shards` (`nextest --partition count:k/N`); Windows arm64 uses two, whose
+jobs show as `test 1`/`test 2`. Observed platform
 differences and their portable fixes are in
 [shared source policies](../src/AGENTS.md#platform-differences).
 
