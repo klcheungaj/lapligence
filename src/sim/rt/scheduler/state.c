@@ -631,6 +631,9 @@ typedef struct {
     // an open-addressing table keyed by instance name.
     int rng_instance_streams;  // seed static processes per instance
     struct llg_rng_scope_entry* rng_scopes;
+    // Instance stream of the static initializer being run outside any
+    // process, or NULL (the root stream).
+    llg_rng_state_t* rng_initializer;
     size_t rng_scope_capacity;
     size_t rng_scope_count;
     int argc;

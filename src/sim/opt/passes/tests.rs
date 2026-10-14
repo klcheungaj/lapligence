@@ -1013,6 +1013,7 @@ fn unused_storage_counts_statement_initializer_reads_and_writes() {
     let mut m = model_with(Vec::new(), sigs(3));
     m.init_steps.push(crate::sim::ir::IrInitStep::Execute {
         declaration: 0,
+        random_scope: None,
         body: Box::new(IrStmt::Assign {
             lhs: IrLhs::Whole(1),
             rhs: IrExpr::new(IrExprKind::SigRead(0), 8, false, None),

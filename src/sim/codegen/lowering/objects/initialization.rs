@@ -51,6 +51,14 @@ impl Codegen<'_> {
             self.record_initializer_source(object_node, initializer);
             let identity = self.declaration_identity(object_node)?;
             self.declaration_statements.push((identity, statement));
+            // A constructed object seeds from its declaring instance's
+            // initialization RNG, as when the initializer was a process of
+            // that instance (SV 18.14.1, S28-D4); class-scope properties
+            // have no instance and keep the root stream.
+            if !self.class_nodes.contains_key(&owner) {
+                self.initializer_random_scopes
+                    .insert(identity, format!("{}.initializer", self.source_path(path)));
+            }
             return Ok(());
         }
         let index = processes.len();

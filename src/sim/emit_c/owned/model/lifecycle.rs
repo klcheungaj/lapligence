@@ -193,6 +193,12 @@ pub(in crate::sim::emit_c) fn main(
         // Collector roots precede storage initializers, which may allocate.
         out.push_str("    if (!llg_model_gc_register()) {\n        fprintf(stderr, \"llg: allocation failed registering collector roots\\n\");\n        goto start_failed;\n    }\n");
     }
+    // Static processes, and objects that static initializers create, seed
+    // from their instance's initialization stream only where some stream is
+    // observable (SV 18.14.1).
+    if model.random.threads || model.random.objects {
+        out.push_str("    llg_rt_use_instance_random_streams();\n");
+    }
     out.push_str("    llg_model_storage_defaults();\n    llg_model_initializers();\n    if (llg_rt_failed()) goto start_failed;\n");
     out.push_str(&crate::sim::emit_c::owned::native::helpers_used());
     // Mark otherwise unused generated function definitions as intentional.
@@ -332,11 +338,6 @@ pub(in crate::sim::emit_c) fn main(
             c_string_literal(&call.name), call.args.len(), call.time_unit_fs));
     }
     out.push_str("    llg_vpi_start_simulation();\n    if (llg_vpi_failed()) goto start_failed;\n");
-    // Static processes seed from their instance's initialization stream only
-    // where some stream is observable (SV 18.14.1).
-    if model.random.threads || model.random.objects {
-        out.push_str("    llg_rt_use_instance_random_streams();\n");
-    }
     // First executable process per C name, matching the former linear search.
     let mut executable_by_name = HashMap::new();
     for item in execution.processes() {

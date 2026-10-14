@@ -116,6 +116,13 @@ pub enum IrInitStep {
     /// statement rather than one value, such as a descriptor-backed fixed
     /// array pattern. It always belongs to the SystemVerilog before-process
     /// phase; Verilog declaration initializers remain active-region processes.
-    /// The body must not suspend.
-    Execute { declaration: u32, body: Box<IrStmt> },
+    /// The body must not suspend. `random_scope`, when present, names the
+    /// declaring instance (a label whose last component is dropped, as for
+    /// a static process): objects the body creates seed from that
+    /// instance's initialization RNG (SV 18.14.1) instead of the root.
+    Execute {
+        declaration: u32,
+        body: Box<IrStmt>,
+        random_scope: Option<String>,
+    },
 }

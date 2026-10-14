@@ -194,6 +194,7 @@ impl<'a> Codegen<'a> {
                     IrInitStep::Execute {
                         declaration,
                         body: Box::new(body),
+                        random_scope: self.initializer_random_scopes.get(&declaration).cloned(),
                     }
                 }
             });
