@@ -311,6 +311,7 @@ static llg_dpi_call_t llg_dpi_now = {NULL, NULL, 0, LLG_DPI_CHAIN_NONE, 0, 0};
 void llg_dpi_model_init(llg_dpi_scope_t* scopes, size_t count) {
     llg_dpi_table = scopes;
     llg_dpi_table_count = count;
+    llg_vpi_on_shutdown(llg_dpi_shutdown);
 }
 
 void llg_dpi_shutdown(void) {

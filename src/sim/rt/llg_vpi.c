@@ -1443,9 +1443,20 @@ double llg_vpi_call_real_function(const char* name, llg_vpi_arg_t* args, int cou
 
 int llg_vpi_failed(void) { return g_vpi.failed || g_vpi.error_pending; }
 
+/* Shutdown hook of the DPI-C bridge, which the runtime compiles after this
+ * file: llg_dpi_model_init registers it, so a build of this file alone (the
+ * storage probes) needs no DPI symbol. */
+static void (*g_vpi_dpi_shutdown)(void) = NULL;
+
+void llg_vpi_on_shutdown(void (*hook)(void)) { g_vpi_dpi_shutdown = hook; }
+
 void llg_vpi_shutdown(void) {
     if (g_vpi.running) llg_vpi_end_simulation();
-    llg_dpi_shutdown();
+    if (g_vpi_dpi_shutdown) {
+        void (*hook)(void) = g_vpi_dpi_shutdown;
+        g_vpi_dpi_shutdown = NULL;
+        hook();
+    }
     llg_vpi_handle_t* cursor = g_vpi.all_handles;
     while (cursor) {
         llg_vpi_handle_t* next = cursor->all_next;
