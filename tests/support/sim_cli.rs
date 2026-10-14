@@ -673,10 +673,7 @@ pub(crate) fn reject_case_with_args(suite: &str, fixture: &str, diagnostic: &str
         let seen = observed_output(&output);
         assert_eq!(output.status.code(), Some(1), "{fixture}: {seen}");
         assert!(output.stdout.is_empty(), "{fixture}: {seen}");
-        assert!(
-            stderr.contains(diagnostic),
-            "{fixture}: stderr lacks `{diagnostic}`; {seen}"
-        );
+        assert!(stderr.contains(diagnostic), "{fixture}: {seen}");
     }
 }
 
