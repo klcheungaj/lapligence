@@ -398,7 +398,8 @@ impl EmitCtx<'_, '_> {
             };
             return Err(format!(
                 "randcase at {location} in `{}`: the exact weight sum of {} items with \
-                 {widest}-bit weights needs {sum_width} bits, over the {}-bit packed value limit",
+                 {widest}-bit weights needs {sum_width} bits, but packed values must be \
+                 narrower than {} bits",
                 self.path,
                 items.len(),
                 crate::sim::emit_c::LLG_WIDTH_LIMIT
