@@ -1411,9 +1411,13 @@ fn review_and_extended_links_name_real_owners_and_keep_open_cells_visible() {
             );
         }
         if cells[0] == "SYN038-LINK-Q02" {
+            // SIM-027 resolved Q02 from the memory-file clauses; its evidence
+            // must be the independent-oracle suite, never a characterization.
             assert!(
-                cells[2].starts_with("UNDEFINED BEHAVIOR") && !fixtures.is_empty(),
-                "{} must retain characterization without a conformance claim",
+                cells[2].starts_with("PASS resolved")
+                    && !fixtures.is_empty()
+                    && !cells[4].contains("sim_undefined_behavior.rs"),
+                "{} must cite the SIM-027 conformance tests, not a characterization",
                 cells[0]
             );
         }
