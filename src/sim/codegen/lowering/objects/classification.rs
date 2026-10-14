@@ -142,6 +142,12 @@ impl Codegen<'_> {
             .insert(name, index);
         if let Some(init) = self.db.var_initializer(node) {
             match ty {
+                // A call needs its callee's prototype, which exists only
+                // once every subroutine is collected; such a value lowers
+                // after the bodies, still at this declaration's slot.
+                IrObjectType::String if self.initializer_contains_call(init) => self
+                    .string_object_initializers
+                    .push((node, index, init, path.to_owned())),
                 IrObjectType::String => {
                     self.model.objects[index].initial = Some(self.lower_string(path, init)?)
                 }

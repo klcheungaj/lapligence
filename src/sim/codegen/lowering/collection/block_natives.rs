@@ -185,7 +185,7 @@ impl Codegen<'_> {
     pub(in super::super) fn emit_block_native_initializers(&mut self) -> Result<(), String> {
         let initializers = std::mem::take(&mut self.block_native_initializers);
         for (declaration, initializer, path) in initializers {
-            let inst = self.owner_instance(declaration).ok_or_else(|| {
+            let inst = self.initializer_environment(declaration).ok_or_else(|| {
                 format!(
                     "initializer for `{}` has no owning instance",
                     self.node(declaration).name

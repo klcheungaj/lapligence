@@ -449,12 +449,43 @@ impl<'a> Codegen<'a> {
                 // of silently dropping it with ordinary static handles.
                 if self.is_mailbox_expr(path, local) {
                     if let Some(initializer) = self.db.var_initializer(local) {
+                        self.reserve_initializer_order(local);
                         self.mailbox_object_initializers.push((
                             local,
                             object,
                             initializer,
                             path.to_owned(),
                         ));
+                    }
+                } else if matches!(
+                    self.kind(local),
+                    NodeKind::Var { ty } if ty.type_name.as_deref() == Some("semaphore")
+                ) && !self.object_globals.contains_key(&local)
+                {
+                    // A static semaphore constructs once in the static
+                    // schedule, like a module semaphore.
+                    self.object_globals.insert(local, object);
+                    if let Some(initializer) = self.db.var_initializer(local) {
+                        self.reserve_initializer_order(local);
+                        self.semaphore_initializers.push((
+                            local,
+                            object,
+                            initializer,
+                            path.to_owned(),
+                        ));
+                    }
+                } else if self.block_native_type(local).is_some()
+                    && !self.object_globals.contains_key(&local)
+                {
+                    // A static class, chandle or virtual-interface handle
+                    // initializes once in the static schedule, like a static
+                    // block handle (SV 6.21, 10.5), never on first call.
+                    // The declaration identity resolves its object there.
+                    self.object_globals.insert(local, object);
+                    if let Some(initializer) = self.db.var_initializer(local) {
+                        self.reserve_initializer_order(local);
+                        self.block_native_initializers
+                            .push((local, initializer, path.to_owned()));
                     }
                 }
                 chandle_read.insert(local, IrChandleExpr::Read(object));
@@ -1079,6 +1110,26 @@ impl<'a> Codegen<'a> {
             let Some(initializer) = initializer else {
                 continue;
             };
+            if matches!(self.kind(local), NodeKind::Var { ty } if ty.kind == "string") {
+                // Static string storage is a persistent model cell; its value
+                // runs once in the static schedule (SV 6.21, 10.5).
+                let value = self.lower_string(path, initializer).map_err(|cause| {
+                    format!(
+                        "static subprogram initializer for `{}` cannot be lowered: {cause}",
+                        self.node(local).name
+                    )
+                })?;
+                self.record_initializer_source(local, initializer);
+                let identity = self.declaration_identity(local)?;
+                self.declaration_statements.push((
+                    identity,
+                    IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
+                        c_name.clone(),
+                        value,
+                    ))),
+                ));
+                continue;
+            }
             let initialization = self
                 .lower_declaration_initializer(
                     path,

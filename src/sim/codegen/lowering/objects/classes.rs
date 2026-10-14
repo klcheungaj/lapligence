@@ -766,6 +766,11 @@ impl Codegen<'_> {
         if !matches!(self.kind(field), NodeKind::Var { ty } if ty.kind == "string") {
             return Ok(None);
         }
+        // A static string property is one model object shared by every
+        // instance and the class scope (SV 8.9).
+        if let Some(object) = self.class_static_objects.get(&field) {
+            return Ok(Some(self.model.objects[*object].c_name.clone()));
+        }
         let Some((class, index, _)) = self.class_field_layout(field) else {
             return Ok(None);
         };

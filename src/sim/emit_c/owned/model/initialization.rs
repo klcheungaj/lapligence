@@ -503,6 +503,11 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             frame.string_assign(&format!("&{}", object.c_name), initial)?;
         }
     }
+    // A runtime error inside an initializer (a null handle read, for
+    // example) leaves the frame like a plain function; `main` then sees the
+    // failed runtime and stops before any process runs.
+    frame.line("if (0) goto _llg_return;");
+    frame.line("_llg_return: ;");
     frame.line("llg_value_scopes_end_since(_llg_frame_base);");
     out.push_str(&format!(
         "static void llg_model_initializers(void) {{\n{}{}\n}}\n\n",
