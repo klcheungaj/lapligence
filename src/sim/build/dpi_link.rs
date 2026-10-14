@@ -64,6 +64,10 @@ const UNPROVIDED_ROUTINES: &[&str] = &[
     "svGetLogicArrElem3Vec32",
 ];
 
+/// Prefixes of symbols the generated model and runtime define themselves; an
+/// undefined one is an llg defect, never attributed to a user library.
+const RUNTIME_PREFIXES: &[&str] = &["llg_", "LLG_", "sv4_", "vpi_"];
+
 /// Undefined DPI-C symbols named by a failed model link.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct MissingDpiSymbols {
@@ -71,6 +75,10 @@ pub(super) struct MissingDpiSymbols {
     pub imports: Vec<String>,
     /// `svdpi.h` routines a user library calls that llg does not provide.
     pub routines: Vec<String>,
+    /// Other symbols a user library calls that nothing defines: with the
+    /// model and runtime complete, these are exports the design does not
+    /// declare (`export "DPI-C"`) and helpers missing from every library.
+    pub unresolved: Vec<String>,
 }
 
 /// C linkage names of the imports declared by the generated sources.
@@ -136,7 +144,13 @@ fn undefined_symbols(output: &str) -> BTreeSet<String> {
 }
 
 /// Classify a failed link: `None` when it reports no DPI-related symbol.
-pub(super) fn missing_dpi_symbols(out_dir: &Path, output: &str) -> Option<MissingDpiSymbols> {
+/// `user_libraries` says whether `--dpi-lib` libraries took part; only then
+/// is an otherwise unknown undefined symbol attributed to them.
+pub(super) fn missing_dpi_symbols(
+    out_dir: &Path,
+    output: &str,
+    user_libraries: bool,
+) -> Option<MissingDpiSymbols> {
     let undefined = undefined_symbols(output);
     if undefined.is_empty() {
         return None;
@@ -152,7 +166,28 @@ pub(super) fn missing_dpi_symbols(out_dir: &Path, output: &str) -> Option<Missin
         .filter(|symbol| UNPROVIDED_ROUTINES.contains(&symbol.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    (!imports.is_empty() || !routines.is_empty()).then_some(MissingDpiSymbols { imports, routines })
+    let unresolved = if user_libraries {
+        undefined
+            .iter()
+            .filter(|symbol| {
+                !declared.contains(*symbol)
+                    && !UNPROVIDED_ROUTINES.contains(&symbol.as_str())
+                    && !RUNTIME_PREFIXES
+                        .iter()
+                        .any(|prefix| symbol.starts_with(prefix))
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    (!imports.is_empty() || !routines.is_empty() || !unresolved.is_empty()).then_some(
+        MissingDpiSymbols {
+            imports,
+            routines,
+            unresolved,
+        },
+    )
 }
 
 /// `svdpi.h` routines that a Mach-O library at `path` imports without naming
@@ -447,10 +482,19 @@ mod tests {
         )
         .unwrap();
         let transcript = "undefined reference to `nowhere'\nundefined reference to `svGetTime'\nundefined reference to `helper'";
-        let missing = missing_dpi_symbols(&directory, transcript).unwrap();
+        let missing = missing_dpi_symbols(&directory, transcript, false).unwrap();
         assert_eq!(missing.imports, vec!["nowhere".to_owned()]);
         assert_eq!(missing.routines, vec!["svGetTime".to_owned()]);
-        assert!(missing_dpi_symbols(&directory, "undefined reference to `helper'").is_none());
+        assert!(missing.unresolved.is_empty());
+        assert!(
+            missing_dpi_symbols(&directory, "undefined reference to `helper'", false).is_none()
+        );
+        // With user libraries linked, an unknown symbol is one of theirs
+        // (for example an export the design does not declare); runtime
+        // symbols stay unattributed.
+        let missing = missing_dpi_symbols(&directory, transcript, true).unwrap();
+        assert_eq!(missing.unresolved, vec!["helper".to_owned()]);
+        assert!(missing_dpi_symbols(&directory, "undefined reference to `llg_x'", true).is_none());
         std::fs::remove_dir_all(&directory).unwrap();
     }
 }
