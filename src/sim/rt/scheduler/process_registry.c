@@ -335,6 +335,151 @@ sv4_t llg_urandom_range(sv4_t max, sv4_t min, int has_min) {
         (uint64_t)llg_rng_state_uniform(llg_process_rng(), high, low), 32, 0);
 }
 
+/* randcase (IEEE 1800-2009 18.16). Weights are read as unsigned two-state
+ * values (X/Z bits as 0, a negative signed weight as its bit pattern, with a
+ * warning); the sum is exact in `sum_width` bits, which lowering sized so it
+ * cannot wrap (weight width plus ceil(log2(items))). One draw per call from
+ * the calling process stream picks a number in [0, sum-1], and the first item
+ * whose running total exceeds it wins, so a zero weight is never chosen.
+ * Totals up to 32 bits draw exactly like $urandom_range(sum-1, 0), wider ones
+ * combine more 32-bit draws with rejection to stay unbiased. */
+static const char* randcase_where(const char* location) {
+    return location && location[0] != '\0' ? location : "<unknown>";
+}
+
+static void randcase_warn_negative(const sv4_t* weight, size_t index,
+                                   const char* location) {
+    if (!llg_sv4_signed(*weight) || llg_sv4_width(*weight) == 0) return;
+    sv4_t sign = sv4_bit_select(*weight, (uint64_t)llg_sv4_width(*weight) - 1u);
+    int negative = sv4_to_bool(sign);
+    sv4_destroy(&sign);
+    if (negative)
+        fprintf(stderr,
+                "llg: warning: randcase at %s: weight %zu is negative; "
+                "its bit pattern is used as an unsigned weight\n",
+                randcase_where(location), index);
+}
+
+static void randcase_warn_zero(const char* location) {
+    fprintf(stderr,
+            "llg: warning: randcase at %s: all weights are zero; no branch "
+            "is taken\n",
+            randcase_where(location));
+}
+
+static uint64_t randcase_weight_u64(const sv4_t* weight) {
+    if (llg_sv4_width(*weight) == 0) return 0;
+    if (!sv4_is_unknown(*weight)) return sv4_to_u64(*weight);
+    sv4_t known = sv4_to_two_state(*weight);
+    uint64_t result = sv4_to_u64(known);
+    sv4_destroy(&known);
+    return result;
+}
+
+static int32_t randcase_select_u64(llg_rng_state_t* rng,
+                                   const sv4_t* const* weights, size_t count,
+                                   const char* location) {
+    uint64_t total = 0;
+    for (size_t index = 0; index < count; ++index) {
+        randcase_warn_negative(weights[index], index, location);
+        total += randcase_weight_u64(weights[index]);
+    }
+    if (total == 0) {
+        randcase_warn_zero(location);
+        return -1;
+    }
+    uint64_t pick;
+    if (total - 1u <= UINT32_MAX) {
+        pick = llg_rng_state_uniform(rng, (uint32_t)(total - 1u), 0);
+    } else {
+        uint64_t remainder = (UINT64_C(0) - total) % total;
+        do {
+            pick = (uint64_t)llg_rng_state_next(rng) << 32;
+            pick |= llg_rng_state_next(rng);
+        } while (pick < remainder);
+        pick %= total;
+    }
+    uint64_t running = 0;
+    for (size_t index = 0; index < count; ++index) {
+        running += randcase_weight_u64(weights[index]);
+        if (pick < running) return (int32_t)index;
+    }
+    return -1;
+}
+
+static sv4_t randcase_weight_wide(const sv4_t* weight, uint32_t sum_width) {
+    sv4_t known = sv4_to_two_state(*weight);
+    llg_sv4_set_signed(&known, 0);
+    sv4_t wide = sv4_cast(known, sum_width, 0);
+    sv4_destroy(&known);
+    return wide;
+}
+
+static int randcase_less(sv4_t left, sv4_t right) {
+    sv4_t less = sv4_lt(left, right);
+    int result = sv4_to_bool(less);
+    sv4_destroy(&less);
+    return result;
+}
+
+static int32_t randcase_select_wide(llg_rng_state_t* rng,
+                                    const sv4_t* const* weights, size_t count,
+                                    uint32_t sum_width, const char* location) {
+    sv4_t total = sv4_zero(sum_width, 0);
+    for (size_t index = 0; index < count; ++index) {
+        randcase_warn_negative(weights[index], index, location);
+        sv4_t wide = randcase_weight_wide(weights[index], sum_width);
+        sv4_add_into(&total, total, wide);
+        sv4_destroy(&wide);
+    }
+    if (!sv4_to_bool(total)) {
+        randcase_warn_zero(location);
+        sv4_destroy(&total);
+        return -1;
+    }
+    /* Mask each candidate to the bits needed for `total`, so at least half of
+     * the candidates are accepted. */
+    sv4_t bits = sv4_clog2(total);
+    uint32_t needed = (uint32_t)sv4_to_u64(bits);
+    sv4_destroy(&bits);
+    size_t limbs = ((size_t)needed + 63u) / 64u;
+    uint64_t* words = (uint64_t*)llg_checked_calloc(limbs ? limbs : 1u,
+                                                    sizeof(uint64_t),
+                                                    "randcase draw");
+    sv4_t pick = SV4_EMPTY;
+    do {
+        sv4_destroy(&pick);
+        for (size_t limb = 0; limb < limbs; ++limb) {
+            words[limb] = llg_rng_state_next(rng);
+            if (needed > 64u * limb + 32u)
+                words[limb] |= (uint64_t)llg_rng_state_next(rng) << 32;
+        }
+        pick = needed ? sv4_from_limbs(words, NULL, NULL, needed, 0)
+                      : sv4_zero(1, 0);
+    } while (!randcase_less(pick, total));
+    free(words);
+    sv4_t running = sv4_zero(sum_width, 0);
+    int32_t chosen = -1;
+    for (size_t index = 0; index < count && chosen < 0; ++index) {
+        sv4_t wide = randcase_weight_wide(weights[index], sum_width);
+        sv4_add_into(&running, running, wide);
+        sv4_destroy(&wide);
+        if (randcase_less(pick, running)) chosen = (int32_t)index;
+    }
+    sv4_destroy(&running);
+    sv4_destroy(&pick);
+    sv4_destroy(&total);
+    return chosen;
+}
+
+int32_t llg_randcase_select(const sv4_t* const* weights, size_t count,
+                            uint32_t sum_width, const char* location) {
+    llg_rng_state_t* rng = llg_process_rng();
+    return sum_width <= 64u
+        ? randcase_select_u64(rng, weights, count, location)
+        : randcase_select_wide(rng, weights, count, sum_width, location);
+}
+
 void llg_process_srandom(sv4_t seed) {
     llg_rng_state_seed(llg_process_rng(), llg_rng_argument(seed));
 }

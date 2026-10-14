@@ -119,6 +119,46 @@ impl Frame<'_, '_> {
                 self.discard(minimum);
                 result
             }
+            IrSysFunc::Randcase {
+                weights,
+                sum_width,
+                origin,
+            } => {
+                // Each weight lands in its own slot, in source order, before
+                // the one runtime call: C argument order never reorders the
+                // side effects of weight expressions.
+                let mut values = Vec::with_capacity(weights.len());
+                for weight in weights {
+                    values.push(self.expression(weight)?);
+                }
+                let addresses = values
+                    .iter()
+                    .map(Value::address)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let location = match origin {
+                    crate::sim::semantic::Origin::Source {
+                        path, line, column, ..
+                    } => format!("{path}:{line}:{column}"),
+                    crate::sim::semantic::Origin::Synthetic { reason } => {
+                        format!("<synthetic: {reason}>")
+                    }
+                };
+                let result = self.value(
+                    format!(
+                        "sv4_from_i64(llg_randcase_select((const sv4_t* const[]){{{addresses}}}, \
+                         {}, {sum_width}, {}), 32)",
+                        values.len(),
+                        c_string_literal(&location)
+                    ),
+                    32,
+                    true,
+                );
+                for value in values {
+                    self.discard(value);
+                }
+                result
+            }
             IrSysFunc::Clog2(arg)
             | IrSysFunc::Rtoi(arg)
             | IrSysFunc::Itor(arg)

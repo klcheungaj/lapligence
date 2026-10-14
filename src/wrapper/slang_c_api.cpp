@@ -1475,6 +1475,7 @@ uint32_t semanticStatementKind(StatementKind kind) {
     case StatementKind::Conditional: return LLG_SLANG_STMT_IF;
     case StatementKind::Case: return LLG_SLANG_STMT_CASE;
     case StatementKind::PatternCase: return LLG_SLANG_STMT_PATTERN_CASE;
+    case StatementKind::RandCase: return LLG_SLANG_STMT_RANDCASE;
     case StatementKind::ForLoop: return LLG_SLANG_STMT_FOR;
     case StatementKind::ForeachLoop: return LLG_SLANG_STMT_FOREACH;
     case StatementKind::RepeatLoop: return LLG_SLANG_STMT_REPEAT;
@@ -3964,6 +3965,14 @@ private:
       }
       if (statement.defaultCase)
         capture.semanticRole(id, statement.defaultCase, LLG_SLANG_EDGE_ELSE);
+    }
+    else if constexpr (std::same_as<T, RandCaseStatement>) {
+      uint32_t itemIndex = 0;
+      for (const auto& item : statement.items) {
+        capture.semanticRole(id, item.expr, LLG_SLANG_EDGE_CASE_ITEM, itemIndex);
+        capture.semanticRole(id, item.stmt, LLG_SLANG_EDGE_BRANCH, itemIndex);
+        itemIndex++;
+      }
     }
     else if constexpr (std::same_as<T, ForLoopStatement>) {
       uint32_t index = 0;

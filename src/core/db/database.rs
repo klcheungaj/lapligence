@@ -47,7 +47,8 @@ pub use types::{
 };
 mod nodes;
 pub use nodes::{
-    CaseItem, GateTerm, Node, NodeKind, PatternCaseItem, PrimClass, ProcessKind, UdpRow, UdpTable,
+    CaseItem, GateTerm, Node, NodeKind, PatternCaseItem, PrimClass, ProcessKind, RandCaseItem,
+    UdpRow, UdpTable,
 };
 mod assertions;
 pub use assertions::{

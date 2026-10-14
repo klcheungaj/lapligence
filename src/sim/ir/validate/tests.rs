@@ -511,6 +511,58 @@ fn math_and_realtime_require_valid_shapes_and_units() {
 }
 
 #[test]
+fn randcase_requires_packed_weights_and_an_exact_sum_width() {
+    let model = valid_model();
+    let origin = crate::sim::semantic::Origin::Synthetic {
+        reason: "test".into(),
+    };
+    let randcase = |weights: Vec<IrExpr>, sum_width: u32, width: u32, signed: bool| {
+        IrExpr::new(
+            IrExprKind::SysFunc(Box::new(IrSysFunc::Randcase {
+                weights,
+                sum_width,
+                origin: origin.clone(),
+            })),
+            width,
+            signed,
+            None,
+        )
+    };
+    // Three 8-bit weights need ceil(log2(3)) = 2 spare bits.
+    let weights = || vec![packed_const(1, 8), packed_const(2, 8), packed_const(3, 4)];
+    model
+        .validate_expr(&randcase(weights(), 10, 32, true), None)
+        .unwrap();
+    model
+        .validate_expr(&randcase(vec![packed_const(1, 8)], 8, 32, true), None)
+        .unwrap();
+    for (sum_width, width, signed) in [
+        (9, 32, true),
+        (11, 32, true),
+        (10, 32, false),
+        (10, 16, true),
+    ] {
+        assert!(
+            model
+                .validate_expr(&randcase(weights(), sum_width, width, signed), None)
+                .is_err(),
+            "{sum_width} {width} {signed}"
+        );
+    }
+    assert!(model
+        .validate_expr(&randcase(Vec::new(), 0, 32, true), None)
+        .is_err());
+    let real = IrExpr::new(IrExprKind::Const(IrConst::real(1.0)), 0, false, None);
+    assert!(model
+        .validate_expr(&randcase(vec![real], 1, 32, true), None)
+        .is_err());
+    let limit = crate::sim::emit_c::LLG_WIDTH_LIMIT;
+    assert!(model
+        .validate_expr(&randcase(weights(), limit, 32, true), None)
+        .is_err());
+}
+
+#[test]
 fn variable_aliases_require_matching_canonical_storage() {
     let mut model = valid_model();
     let mut alias = model.signals[0].clone();

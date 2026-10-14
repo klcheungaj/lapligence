@@ -359,6 +359,90 @@ impl EmitCtx<'_, '_> {
         Ok(lowered)
     }
 
+    /// `randcase` (IEEE 1800-2009 18.16): one runtime selection over the
+    /// weights, then an ordinary case over the chosen index, so each body is
+    /// lowered by the common statement path and waits, forks, `return` and
+    /// `disable` inside it need no special handling.
+    pub(super) fn lower_randcase(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
+        let items = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::RandCase { items }) => items,
+            _ => unreachable!("non-randcase passed to lower_randcase"),
+        };
+        let origin = self.cg.origin(h);
+        if items.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut weights = Vec::with_capacity(items.len());
+        let mut widest = 0u32;
+        for item in items {
+            let weight = self.cg.lower_expr(&self.path, item.weight)?;
+            if weight.is_real() || weight.width == 0 {
+                return Err(format!(
+                    "randcase weight must be an integral value in `{}`",
+                    self.path
+                ));
+            }
+            widest = widest.max(weight.width);
+            weights.push(weight);
+        }
+        // The sum of n weights needs ceil(log2(n)) bits beyond the widest one
+        // to be exact, so the draw never sees a wrapped total.
+        let spare = usize::BITS - (items.len() - 1).leading_zeros();
+        let sum_width = widest.saturating_add(spare);
+        if sum_width >= crate::sim::emit_c::LLG_WIDTH_LIMIT {
+            let location = match &origin {
+                crate::sim::semantic::Origin::Source {
+                    path, line, column, ..
+                } => format!("{path}:{line}:{column}"),
+                crate::sim::semantic::Origin::Synthetic { reason } => reason.clone(),
+            };
+            return Err(format!(
+                "randcase at {location} in `{}`: the exact weight sum of {} items with \
+                 {widest}-bit weights needs {sum_width} bits, over the {}-bit packed value limit",
+                self.path,
+                items.len(),
+                crate::sim::emit_c::LLG_WIDTH_LIMIT
+            ));
+        }
+        self.cg.model.random.threads = true;
+        let name = self.new_label("randcase");
+        let selector = IrStmt::DeclLocal {
+            name: name.clone(),
+            width: 32,
+            signed: true,
+            two_state: false,
+            init: Some(Box::new(IrExpr::new(
+                IrExprKind::SysFunc(Box::new(IrSysFunc::Randcase {
+                    weights,
+                    sum_width,
+                    origin,
+                })),
+                32,
+                true,
+                None,
+            ))),
+        };
+        let mut ir_items = Vec::with_capacity(items.len());
+        for (index, item) in items.iter().enumerate() {
+            let index = u64::try_from(index).map_err(|error| error.to_string())?;
+            let constant = IrConst::packed(vec![index], vec![], vec![], 32, true, None)
+                .map_err(|error| error.to_string())?;
+            ir_items.push(IrCaseItem {
+                exprs: vec![IrExpr::new(IrExprKind::Const(constant), 32, true, None)],
+                body: self.lower_stmt(item.body)?,
+            });
+        }
+        Ok(vec![
+            selector,
+            IrStmt::Case {
+                sel: IrExpr::new(IrExprKind::LocalRead(name), 32, true, None),
+                kind: IrCaseKind::Exact,
+                items: ir_items,
+                check: IrUniquePriorityCheck::None,
+            },
+        ])
+    }
+
     pub(super) fn lower_case(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
         let (case_type, check, items) = match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::Case {

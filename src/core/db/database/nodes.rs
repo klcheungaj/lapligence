@@ -316,6 +316,14 @@ impl PatternCaseItem {
     }
 }
 
+/// One `randcase` item: its weight expression and body, in source order
+/// (IEEE 1800-2009 18.16).
+#[derive(Debug)]
+pub struct RandCaseItem {
+    pub weight: NodeId,
+    pub body: NodeId,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

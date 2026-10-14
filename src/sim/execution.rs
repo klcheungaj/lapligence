@@ -1751,6 +1751,12 @@ fn collect_expression_effects(
                     collect_expression_effects(ir, min, effects, visited_calls);
                 }
             }
+            IrSysFunc::Randcase { weights, .. } => {
+                effects.push(ExecutionEffect::RuntimeService);
+                for weight in weights {
+                    collect_expression_effects(ir, weight, effects, visited_calls);
+                }
+            }
             IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
             IrSysFunc::Math { args, .. } => {
                 for arg in args {
