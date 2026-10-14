@@ -824,10 +824,29 @@ impl Frame<'_, '_> {
                 label,
                 location,
                 identity,
+                control_scope,
             } => {
-                let condition = self.condition(condition)?;
+                let kind_name = match kind {
+                    IrImmediateAssertionKind::Assert => "LLG_ASSERTION_ASSERT",
+                    IrImmediateAssertionKind::Assume => "LLG_ASSERTION_ASSUME",
+                    IrImmediateAssertionKind::Cover => "LLG_ASSERTION_COVER",
+                };
                 let label = c_string_literal(label);
                 let location = c_string_literal(location);
+                // Only designs that call a control task query the control
+                // state; it gates checking and each action, never counts.
+                // The query is repeated per use instead of held in a local,
+                // since an action arm may suspend.
+                let controls = control_scope.as_ref().map(|scope| {
+                    format!(
+                        "llg_immediate_assertion_controls({kind_name}, {label}, {})",
+                        c_string_literal(scope)
+                    )
+                });
+                if let Some(query) = &controls {
+                    self.line(format!("if ({query} & LLG_IMMEDIATE_CHECKED) {{"));
+                }
+                let condition = self.condition(condition)?;
                 self.line(format!("if ({condition}) {{"));
                 if *kind == IrImmediateAssertionKind::Cover {
                     self.line(format!(
@@ -835,22 +854,40 @@ impl Frame<'_, '_> {
                     ));
                 }
                 if let Some(body) = if_true {
+                    if let Some(query) = &controls {
+                        self.line(format!("if ({query} & LLG_IMMEDIATE_PASS_ACTION) {{"));
+                    }
                     self.block(body)?;
+                    if controls.is_some() {
+                        self.line("}");
+                    }
                 }
                 self.line("} else {");
+                let default_failure =
+                    if_false.is_none() && *kind != IrImmediateAssertionKind::Cover;
+                if let Some(query) = &controls {
+                    if if_false.is_some() || default_failure {
+                        self.line(format!("if ({query} & LLG_IMMEDIATE_FAIL_ACTION) {{"));
+                    }
+                }
                 if let Some(body) = if_false {
                     self.block(body)?;
-                } else if *kind != IrImmediateAssertionKind::Cover {
-                    let kind = if *kind == IrImmediateAssertionKind::Assert {
-                        "LLG_ASSERTION_ASSERT"
-                    } else {
-                        "LLG_ASSERTION_ASSUME"
-                    };
+                } else if default_failure {
                     self.line(format!(
-                        "llg_assertion_failure({kind}, {identity}ULL, {label}, {location});"
+                        "llg_assertion_failure({kind_name}, {identity}ULL, {label}, {location});"
                     ));
                 }
+                if controls.is_some() && default_failure {
+                    // $assertfailoff also stops the default failure report,
+                    // but the failure is still counted (SV 20.12).
+                    self.line(format!("}} else llg_assertion_failure_quiet({kind_name});"));
+                } else if controls.is_some() && if_false.is_some() {
+                    self.line("}");
+                }
                 self.line("}");
+                if controls.is_some() {
+                    self.line("}");
+                }
             }
             IrStmt::Severity {
                 level,

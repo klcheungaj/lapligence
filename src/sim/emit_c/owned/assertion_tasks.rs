@@ -8,12 +8,7 @@ impl Frame<'_, '_> {
         args: &[IrExpr],
         scopes: &[String],
     ) -> Result<(), String> {
-        let kind = match kind {
-            IrAssertionControlKind::On => "LLG_ASSERTION_CONTROL_ON",
-            IrAssertionControlKind::Off => "LLG_ASSERTION_CONTROL_OFF",
-            IrAssertionControlKind::Kill => "LLG_ASSERTION_CONTROL_KILL",
-            IrAssertionControlKind::Control => "LLG_ASSERTION_CONTROL_FULL",
-        };
+        let kind = kind.runtime_name();
         let mut values = Vec::new();
         for arg in args {
             let value = self.expression(arg)?;

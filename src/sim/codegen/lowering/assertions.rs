@@ -455,6 +455,9 @@ impl Codegen<'_> {
             other => return Err(format!("node is not a concurrent assertion: {other:?}")),
         };
         let location = self.source_location(assertion);
+        // Control-task selectors name the assertion through the named blocks
+        // and subroutines around a procedural assertion (SV 20.11).
+        let scope = format!("{path}{}", self.named_scope_suffix(path, assertion));
         let ir_kind = match kind {
             ConcurrentAssertionKind::Assert => IrConcurrentAssertionKind::Assert,
             ConcurrentAssertionKind::Assume => IrConcurrentAssertionKind::Assume,
@@ -479,7 +482,7 @@ impl Codegen<'_> {
                 self.lower_assertion_actions(inst, path, assertion, kind, program.clock)?;
             let mut lowered = IrAssertion::new_property(
                 assertion.index() as u64,
-                path.to_owned(),
+                scope.clone(),
                 label,
                 location,
                 ir_kind,
@@ -533,7 +536,7 @@ impl Codegen<'_> {
         if let Some(consequent) = parts.consequent {
             let assertion = IrAssertion::new(
                 assertion.index() as u64,
-                path.to_owned(),
+                scope.clone(),
                 label,
                 location,
                 kind,
@@ -555,7 +558,7 @@ impl Codegen<'_> {
         } else if let Some(consequent) = parts.consequent_sequence {
             let assertion = IrAssertion::new_sequence(
                 assertion.index() as u64,
-                path.to_owned(),
+                scope.clone(),
                 label,
                 location,
                 kind,

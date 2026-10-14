@@ -1062,7 +1062,15 @@ fn render_stmt_scoped(
             label,
             location,
             identity,
-        } => render_immediate_assertion(
+            control_scope,
+        } => {
+            if control_scope.is_some() {
+                return Err(
+                    "controlled immediate assertions are emitted only by the owned model emitter"
+                        .to_owned(),
+                );
+            }
+            render_immediate_assertion(
             ctx,
             ImmediateAssertionRender {
                 kind: *kind,
@@ -1074,7 +1082,8 @@ fn render_stmt_scoped(
                 identity: *identity,
                 scopes,
             },
-        )?,
+        )?
+        }
         IrStmt::DeferredImmediateAssertion {
             kind,
             condition,

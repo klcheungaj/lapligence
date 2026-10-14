@@ -463,7 +463,21 @@ enum {
     LLG_ASSERTION_CONTROL_OFF = 1,
     LLG_ASSERTION_CONTROL_KILL = 2,
     LLG_ASSERTION_CONTROL_FULL = 3,
+    /* Action controls (IEEE 1800-2009 20.12) take the same level/selector
+     * arguments as ON/OFF/KILL and change only which actions execute. */
+    LLG_ASSERTION_CONTROL_PASS_ON = 4,
+    LLG_ASSERTION_CONTROL_PASS_OFF = 5,
+    LLG_ASSERTION_CONTROL_FAIL_ON = 6,
+    LLG_ASSERTION_CONTROL_FAIL_OFF = 7,
+    LLG_ASSERTION_CONTROL_NONVACUOUS_ON = 8,
+    LLG_ASSERTION_CONTROL_VACUOUS_OFF = 9,
 };
+
+/* Result of llg_immediate_assertion_controls: the assertion is checked, and
+ * whether its pass and fail actions currently execute. */
+#define LLG_IMMEDIATE_CHECKED 1
+#define LLG_IMMEDIATE_PASS_ACTION 2
+#define LLG_IMMEDIATE_FAIL_ACTION 4
 
 typedef struct {
     int kind;
@@ -1063,6 +1077,12 @@ void llg_assertion_failure(int kind, uint64_t identity, const char* label,
 void llg_assertion_cover(uint64_t identity, const char* label, const char* location);
 uint64_t llg_assertion_count(int kind);
 uint64_t llg_assertion_vacuous_count(void);
+// Records a failure of an immediate assertion whose fail action is
+// suppressed by $assertfailoff: the counter changes, nothing is reported.
+void llg_assertion_failure_quiet(int kind);
+// The control state (LLG_IMMEDIATE_* bits) of a simple immediate assertion
+// in `scope`. Emitted only in designs that call an assertion control task.
+int llg_immediate_assertion_controls(int kind, const char* label, const char* scope);
 // KILL may cancel the current assertion-action process. In that case it sets
 // ABANDON, or COMPLETE when program-completion bookkeeping requests finish,
 // before returning; generated callers perform an immediate Terminate check.

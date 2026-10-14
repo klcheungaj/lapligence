@@ -7,6 +7,10 @@
 // order. Records live in two retained arrays (pending and matured), so a
 // steady stream of reports performs no per-report allocation.
 
+// Defined with the control rules in assertion_control.c.
+static int deferred_action_enabled(int kind, int passed, const char* label,
+                                   const char* scope);
+
 static void free_assertion_rules(void) {
     while (llg_assertion_rules) {
         llg_assertion_rule_t* next = llg_assertion_rules->next;
@@ -184,13 +188,21 @@ static void deferred_report_execute(llg_deferred_assertion_report_t* report) {
     int saved = g.in_deferred_action;
     if (report->passed && report->kind == LLG_ASSERTION_COVER)
         llg_assertion_cover(report->identity, report->label, report->location);
+    // Action controls are read when the report executes (SV 20.12).
+    int allowed = deferred_action_enabled(report->kind, report->passed, report->label,
+                                          report->scope);
     if (report->action) {
-        g.in_deferred_action = 1;
-        report->action(frame);
-        g.in_deferred_action = saved;
+        if (allowed) {
+            g.in_deferred_action = 1;
+            report->action(frame);
+            g.in_deferred_action = saved;
+        }
     } else if (!report->passed) {
-        llg_assertion_failure(report->kind, report->identity, report->label,
-                              report->location);
+        if (allowed)
+            llg_assertion_failure(report->kind, report->identity, report->label,
+                                  report->location);
+        else
+            llg_assertion_failure_quiet(report->kind);
     }
     llg_frame_release(frame);
 }

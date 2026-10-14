@@ -1684,6 +1684,9 @@ struct Codegen<'a> {
     /// lowered into one sequence graph. The map is scoped to the graph so
     /// every runtime attempt receives an independent slot set.
     assertion_local_bindings: Option<HashMap<NodeId, AssertionLocalBinding>>,
+    /// Whether any assertion control task is called in the design, computed
+    /// on first use. Immediate assertions query control state only then.
+    assertion_controls_used: Option<bool>,
     /// Assertion formal-to-actual bindings active while recursively lowering
     /// an owned named sequence/property instance.
     assertion_formal_actuals: Option<HashMap<NodeId, NodeId>>,
@@ -1915,6 +1918,7 @@ impl<'a> Codegen<'a> {
             sampled_domain_keys: HashMap::new(),
             sampled_event_clocks: Vec::new(),
             assertion_local_bindings: None,
+            assertion_controls_used: None,
             assertion_formal_actuals: None,
             assertion_local_initializers: None,
             lowering_assertion_match_item: false,

@@ -52,7 +52,7 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
-        let path = self.cg.waveform_name_for(target).replace('\u{1f}', ".");
+        let path = self.cg.assertion_selector_name(target);
         if path.is_empty() {
             Err(format!(
                 "{task} scope has an empty hierarchy in `{}`",
@@ -391,10 +391,17 @@ impl EmitCtx<'_, '_> {
             | "$assertfailon"
             | "$assertfailoff"
             | "$assertnonvacuouson"
-            | "$assertvacuousoff" => Err(format!(
-                "assertion control task `{name}` is outside the bounded simulator subset in `{}`",
-                self.path
-            )),
+            | "$assertvacuousoff" => {
+                let kind = match name {
+                    "$assertpasson" => IrAssertionControlKind::PassOn,
+                    "$assertpassoff" => IrAssertionControlKind::PassOff,
+                    "$assertfailon" => IrAssertionControlKind::FailOn,
+                    "$assertfailoff" => IrAssertionControlKind::FailOff,
+                    "$assertnonvacuouson" => IrAssertionControlKind::NonvacuousOn,
+                    _ => IrAssertionControlKind::VacuousOff,
+                };
+                Ok(vec![self.lower_assertion_control(name, kind, &args)?])
+            }
             "$swrite" | "$swriteb" | "$swriteo" | "$swriteh" => {
                 let Some((target, values)) = args.split_first() else {
                     return Err(format!("{name} requires a destination in `{}`", self.path));

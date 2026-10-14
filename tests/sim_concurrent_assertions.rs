@@ -379,15 +379,6 @@ fn concurrent_assertions_reject_unbounded_cross_clock_delay() {
 }
 
 #[test]
-fn concurrent_assertions_reject_unimplemented_action_controls() {
-    sim_cli::reject_case(
-        "concurrent_assertions",
-        "unsupported_assertion_control",
-        "outside the bounded simulator subset",
-    );
-}
-
-#[test]
 fn concurrent_assertions_reject_unresolved_control_scopes() {
     sim_cli::reject_case(
         "concurrent_assertions",

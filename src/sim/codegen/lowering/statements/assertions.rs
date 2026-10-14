@@ -68,6 +68,10 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             label: label.clone(),
             location: self.finish_location(h),
             identity: h.index() as u64,
+            control_scope: self
+                .cg
+                .design_uses_assertion_controls()
+                .then(|| self.cg.format_scope(&self.path, h)),
         }])
     }
 

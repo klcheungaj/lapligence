@@ -31,8 +31,12 @@ static void assertion_default_failure_action(void* data) {
                               assertion->location);
 }
 
+/* Report one attempt result. The result counters always change; action
+ * controls (SV 20.12: "shall not affect the statistics counters") only
+ * decide whether the pass, fail or default fail action executes. */
 static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
                              int vacuous) {
+    int suppressed;
     if (vacuous) assertion_vacuous();
     if (success) {
         // Cover counts and pass actions represent a non-vacuous match. An
@@ -42,14 +46,18 @@ static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
         if (assertion->kind == LLG_ASSERTION_COVER && !vacuous)
             llg_assertion_cover(assertion->identity, assertion->label,
                                 assertion->location);
-        if (assertion->kind != LLG_ASSERTION_COVER || !vacuous)
+        suppressed = vacuous ? assertion->vacuous_action_off : assertion->pass_action_off;
+        if ((assertion->kind != LLG_ASSERTION_COVER || !vacuous) && !suppressed)
             assertion_action(assertion, assertion->pass_desc);
     } else {
+        suppressed = assertion->fail_action_off;
         if (assertion->kind == LLG_ASSERTION_COVER) {
-            assertion_action(assertion, assertion->fail_desc);
+            if (!suppressed) assertion_action(assertion, assertion->fail_desc);
         } else {
             assertion_record_failure(assertion->kind);
-            if (assertion->fail_desc) {
+            if (suppressed) {
+                // $assertfailoff also stops the default fail action.
+            } else if (assertion->fail_desc) {
                 // Even an explicit null else is a generated action function.
                 assertion_action(assertion, assertion->fail_desc);
             } else if (!(assertion->kind == LLG_ASSERTION_EXPECT &&
@@ -63,7 +71,8 @@ static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
     }
     if (assertion->kind == LLG_ASSERTION_EXPECT && assertion->expect_active) {
         assertion->expect_active = 0;
-        assertion->expect_outcome = success ? 1 : 2;
+        // 3: decided, but the caller's inline action arm is suppressed.
+        assertion->expect_outcome = suppressed ? 3 : success ? 1 : 2;
         wake_assertion_waiter(assertion->identity);
     }
 }

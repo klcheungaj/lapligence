@@ -23,15 +23,39 @@ impl IrSeverityLevel {
 }
 
 /// Bounded assertion-control task family. The runtime accepts the standard
-/// on/off/kill directives and the corresponding full `$assertcontrol`
-/// directive; unsupported pass/fail/vacuity controls remain fail-closed in
-/// lowering.
+/// on/off/kill directives, the corresponding full `$assertcontrol` directive
+/// and the six 2009 action controls (IEEE 1800-2009 20.12), which change only
+/// which pass/fail actions execute.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IrAssertionControlKind {
     On,
     Off,
     Kill,
     Control,
+    PassOn,
+    PassOff,
+    FailOn,
+    FailOff,
+    NonvacuousOn,
+    VacuousOff,
+}
+
+impl IrAssertionControlKind {
+    /// Runtime `LLG_ASSERTION_CONTROL_*` enumerator for this task.
+    pub(crate) fn runtime_name(self) -> &'static str {
+        match self {
+            Self::On => "LLG_ASSERTION_CONTROL_ON",
+            Self::Off => "LLG_ASSERTION_CONTROL_OFF",
+            Self::Kill => "LLG_ASSERTION_CONTROL_KILL",
+            Self::Control => "LLG_ASSERTION_CONTROL_FULL",
+            Self::PassOn => "LLG_ASSERTION_CONTROL_PASS_ON",
+            Self::PassOff => "LLG_ASSERTION_CONTROL_PASS_OFF",
+            Self::FailOn => "LLG_ASSERTION_CONTROL_FAIL_ON",
+            Self::FailOff => "LLG_ASSERTION_CONTROL_FAIL_OFF",
+            Self::NonvacuousOn => "LLG_ASSERTION_CONTROL_NONVACUOUS_ON",
+            Self::VacuousOff => "LLG_ASSERTION_CONTROL_VACUOUS_OFF",
+        }
+    }
 }
 
 /// Immediate assertion flavor retained through lowering for runtime dispatch.

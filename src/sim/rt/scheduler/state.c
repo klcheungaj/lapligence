@@ -109,9 +109,18 @@ typedef struct llg_assertion_rule {
     struct llg_assertion_rule* next;
     char* scope; // NULL means the whole design
     uint64_t assertion_type, directive_type;
+    /* Which control the rule sets: checking (SV 20.11) or one action class
+     * (SV 20.12); see LLG_ASSERTION_RULE_*. */
+    int field;
     int enabled;
 } llg_assertion_rule_t;
 static llg_assertion_rule_t* llg_assertion_rules;
+enum {
+    LLG_ASSERTION_RULE_CHECK = 0,
+    LLG_ASSERTION_RULE_PASS = 1,
+    LLG_ASSERTION_RULE_VACUOUS = 2,
+    LLG_ASSERTION_RULE_FAIL = 3,
+};
 
 typedef struct llg_sampled_value {
     struct llg_sampled_value* next;
@@ -367,6 +376,11 @@ typedef struct llg_concurrent_assertion {
     int expect_outcome;
     /* The caller's expect has an else arm, so no default failure report. */
     int expect_has_fail;
+    /* Action controls (SV 20.12). Zero, the registration default, executes
+     * the action; they gate actions only, never the result counters. */
+    uint8_t pass_action_off;
+    uint8_t vacuous_action_off;
+    uint8_t fail_action_off;
     uint64_t identity;
     const char* label;
     const char* location;

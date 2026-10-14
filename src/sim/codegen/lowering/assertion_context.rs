@@ -2,7 +2,36 @@
 
 use super::*;
 
+/// System tasks that change which assertions are checked or which of their
+/// actions execute (IEEE 1800-2009 20.11-20.12).
+const ASSERTION_CONTROL_TASKS: [&str; 10] = [
+    "$asserton",
+    "$assertoff",
+    "$assertkill",
+    "$assertcontrol",
+    "$assertpasson",
+    "$assertpassoff",
+    "$assertfailon",
+    "$assertfailoff",
+    "$assertnonvacuouson",
+    "$assertvacuousoff",
+];
+
 impl<'a> Codegen<'a> {
+    /// Whether the design calls any assertion control task. Without one,
+    /// control state never leaves its defaults, so immediate assertions need
+    /// no runtime control query (a static fact of the whole design).
+    pub(super) fn design_uses_assertion_controls(&mut self) -> bool {
+        if let Some(used) = self.assertion_controls_used {
+            return used;
+        }
+        let used = self.db.nodes().iter().any(|node| {
+            matches!(node.kind(), NodeKind::SysCall { name } if ASSERTION_CONTROL_TASKS.contains(&name.as_str()))
+        });
+        self.assertion_controls_used = Some(used);
+        used
+    }
+
     /// Allocate (or retrieve) the bounded runtime slot for a Slang local
     /// assertion variable. Returning `None` keeps ordinary reference
     /// resolution unchanged when no assertion graph is active.
