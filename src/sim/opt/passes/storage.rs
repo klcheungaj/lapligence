@@ -409,6 +409,11 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             }
         }
         IrStmt::MemoryAccess(task) => {
+            // A load reads the cells outside its range and stores the root.
+            if let Some(lhs) = task.image_target() {
+                collect_lhs_rw(lhs, model, rw);
+                collect_lhs_read(lhs, model, rw);
+            }
             task.expressions(&mut |child| collect_expr_reads(child, model, rw));
         }
         IrStmt::Memory {

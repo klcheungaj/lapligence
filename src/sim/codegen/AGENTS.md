@@ -591,10 +591,12 @@ bounds; invalid views fail before writes. `statements/memory_tasks.rs` lowers
 `$readmem*`/`$writemem*`: memories with model array storage keep the
 fixed-array call; dynamic arrays, queues and fixed class properties use
 `IrMemoryStorage::Container`; every other variable memory (subroutine and
-block locals, `ref` formals, structure members) is copied into a lexical
-packed image (`IrMemoryStorage::Image`) and, for a load, stored back with one
-blocking assignment. The root expression of an image is evaluated twice (read
-and write-back), so its selectors must stay free of side effects. Binary rank-one reads advance numeric
+block locals, `ref` formals, structure members) is a packed image
+(`IrMemoryStorage::Image`) whose root is lowered once: as an lvalue for a load
+(`IrMemoryImage::Target`) and as a value for a dump. The emitter resolves a
+load's root once and loads a whole variable or local, or a constant member of
+one, in place; any other root is copied and stored back with one blocking
+assignment through the same resolved target (decision S27-D13). Binary rank-one reads advance numeric
 addresses independently of declaration order. Packed `$fread` optional bounds
 are evaluated/disposed but their values are ignored; memory bounds remain active.
 File-input destinations (`expressions/external_input.rs`) evaluate selectors once

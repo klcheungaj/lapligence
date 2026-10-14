@@ -449,25 +449,89 @@ static sv4_t llg_memory_word_cast(sv4_t word, uint32_t width, int8_t is_signed) 
 }
 
 // Destination or source cells of one memory file task: dense or descriptor
-// model cells, or the packed image of a fixed array without model storage.
-// An image holds `total` cells of the element width with cell 0 in the most
-// significant bits; it is a lexical copy that the generated code stores back
-// to the array after a load, so writing it publishes nothing by itself.
+// model cells, or the packed image of a fixed array without model storage
+// (see `llg_memory_image_t`). An image holds `total` cells of the element
+// width from bit `image_offset`, cell 0 in the most significant bits.
 typedef struct {
     sv4_t* memory;
     llg_fixed_array_t* fixed;
     sv4_t* image;
+    uint32_t image_offset;
+    // Published image: 0 = no store allowed, 1 = private store, 2 = store and
+    // publish once at the end (see `llg_memory_image_begin`).
+    int publish;
+    int image_mode;
+    int image_changed;
+    sv4_t image_old_lsb;
 } llg_memory_storage_t;
 
-static uint64_t llg_memory_image_low(uint64_t index, uint64_t total,
+static uint64_t llg_memory_image_low(const llg_memory_storage_t* storage,
+                                     uint64_t index, uint64_t total,
                                      uint32_t elem_width) {
-    return (total - 1u - index) * (uint64_t)elem_width;
+    return (uint64_t)storage->image_offset + (total - 1u - index) * (uint64_t)elem_width;
 }
 
-static void llg_memory_store(const llg_memory_storage_t* storage, uint64_t index,
+// Decide, as `llg_ba` does for a whole store, whether a published image may
+// change: never while it is forced, and in a read-only region only as a
+// private store.
+static void llg_memory_image_begin(llg_memory_storage_t* storage) {
+    if (!storage->image || !storage->publish) return;
+    if (llg_is_forced(storage->image)) {
+        storage->image_mode = 0;
+    } else if (region_is_read_only_now(g.current_region) && !clocking_sample_publication) {
+        storage->image_mode = region_private_store("signal write") ? 1 : 0;
+    } else {
+        storage->image_mode = 2;
+    }
+}
+
+// Publish a changed image once, after its last word. Like
+// `sig_write_ranges`, the edge snapshots are bit 0 before the first change
+// and after the last, the only bit directional packed edges consume.
+static void llg_memory_image_end(llg_memory_storage_t* storage) {
+    if (!storage->image || !storage->publish || !storage->image_changed) return;
+    if (storage->image_mode != 2) {
+        sv4_destroy(&storage->image_old_lsb);
+        return;
+    }
+    sv4_t* target = storage->image;
+    llg_value_scope_t* target_pin = value_target_pin(target);
+    llg_value_scope_t* snapshots = llg_value_scope_begin(
+#ifdef LLG_WAVEFORM
+        3
+#else
+        2
+#endif
+    );
+    sv4_t* edges = llg_value_scope_values(snapshots);
+    sv4_replace(&edges[0], storage->image_old_lsb);
+    storage->image_old_lsb = (sv4_t)SV4_EMPTY;
+    sv4_replace(&edges[1], sv4_bit_select(*target, 0));
+#ifdef LLG_WAVEFORM
+    sv4_copy(&edges[2], target);
+    sv4_t published = edges[2];
+#else
+    sv4_t published = SV4_EMPTY;
+#endif
+    sig_publish_changed(target, edges[0], edges[1], published);
+    llg_value_scope_end(snapshots);
+    if (target_pin) llg_value_scope_end(target_pin);
+}
+
+static void llg_memory_store(llg_memory_storage_t* storage, uint64_t index,
                              uint64_t total, uint32_t elem_width, sv4_t value) {
     if (storage->image) {
-        uint64_t low = llg_memory_image_low(index, total, elem_width);
+        uint64_t low = llg_memory_image_low(storage, index, total, elem_width);
+        if (storage->publish) {
+            if (storage->image_mode == 0 ||
+                llg_sv4_range_same(*storage->image, (uint32_t)low, value)) return;
+            if (!storage->image_changed) {
+                storage->image_old_lsb = sv4_bit_select(*storage->image, 0);
+                storage->image_changed = 1;
+            }
+            llg_sv4_range_copy(storage->image, (uint32_t)low, value);
+            return;
+        }
         sv4_part_select_set(storage->image, (int64_t)(low + elem_width - 1u),
                             (int64_t)low, value);
         return;
@@ -484,7 +548,7 @@ static void llg_memory_format_cell(const llg_memory_storage_t* storage,
                                    char* digits, size_t capacity) {
     char conversion = radix == 2 ? 'b' : 'h';
     if (storage->image) {
-        uint64_t low = llg_memory_image_low(index, total, elem_width);
+        uint64_t low = llg_memory_image_low(storage, index, total, elem_width);
         sv4_t cell = sv4_part_select(*storage->image,
                                      (int64_t)(low + elem_width - 1u), (int64_t)low);
         sv4_format(conversion, cell, digits, capacity);
@@ -497,20 +561,23 @@ static void llg_memory_format_cell(const llg_memory_storage_t* storage,
                digits, capacity);
 }
 
-// An image must hold exactly `total` cells of the element width.
+// An image must lie within its storage: `total` cells of the element width
+// from `image_offset`.
 static int llg_memory_storage_valid(const char* path,
                                     const llg_memory_storage_t* storage,
                                     uint64_t total, uint32_t elem_width) {
     if (!storage->image) return 1;
     if (elem_width == 0 || total > UINT32_MAX / elem_width ||
-        llg_sv4_width(*storage->image) != total * (uint64_t)elem_width) {
+        (uint64_t)llg_sv4_width(*storage->image) < (uint64_t)storage->image_offset ||
+        (uint64_t)llg_sv4_width(*storage->image) - storage->image_offset <
+            total * (uint64_t)elem_width) {
         llg_memory_error(path, "memory image size does not match its cells");
         return 0;
     }
     return 1;
 }
 
-static uint64_t fixed_memory_read_view(llg_string_t path, const llg_memory_storage_t* storage, uint64_t total,
+static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* storage, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                           const int32_t* dims, int n_dims,
                           const uint64_t* strides, uint64_t origin,
@@ -788,7 +855,8 @@ void llg_fixed_memory_read_view(llg_string_t path, llg_fixed_array_t* memory, ui
     storage.fixed = memory;
     fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
 }
-void llg_image_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
+void llg_image_memory_read_view(llg_string_t path, const llg_memory_image_t* memory,
+                          uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                           const int32_t* dims, int n_dims,
                           const uint64_t* strides, uint64_t origin,
@@ -796,8 +864,12 @@ void llg_image_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total
                           int has_start, int has_finish, int addressing_policy,
                           const sv4_t* enum_values, uint32_t enum_count, int radix) {
     llg_memory_storage_t storage = {0};
-    storage.image = memory;
+    storage.image = memory->storage;
+    storage.image_offset = memory->offset;
+    storage.publish = memory->publish != 0;
+    llg_memory_image_begin(&storage);
     fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+    llg_memory_image_end(&storage);
 }
 
 void llg_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
@@ -822,7 +894,8 @@ void llg_fixed_memory_write_view(llg_string_t path, llg_fixed_array_t* memory, u
     storage.fixed = memory;
     fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
 }
-void llg_image_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
+void llg_image_memory_write_view(llg_string_t path, const llg_memory_image_t* memory,
+                          uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                           const int32_t* dims, int n_dims,
                           const uint64_t* strides, uint64_t origin,
@@ -830,7 +903,8 @@ void llg_image_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t tota
                           int has_start, int has_finish, int addressing_policy,
                           const sv4_t* enum_values, uint32_t enum_count, int radix) {
     llg_memory_storage_t storage = {0};
-    storage.image = memory;
+    storage.image = memory->storage;
+    storage.image_offset = memory->offset;
     fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
 }
 

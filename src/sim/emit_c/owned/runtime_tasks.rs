@@ -1,5 +1,6 @@
 //! Runtime tasks which borrow packed operands or consume a published literal path.
 use super::super::constants::emit_const;
+use super::stores::Target;
 use super::*;
 
 impl Frame<'_, '_> {
@@ -87,29 +88,65 @@ impl Frame<'_, '_> {
         })
     }
 
-    /// Memory file task over a lexical packed image or a container (see
-    /// `IrMemoryAccess`).
+    /// Memory file task over a packed image or a container (see
+    /// `IrMemoryAccess`). An image root is resolved once, before the path.
     pub(super) fn memory_access_task(&mut self, task: &IrMemoryAccess) -> Result<(), String> {
         if task.dims.len() != task.strides.len() {
             return Err("memory task requires a fixed packed memory view".to_owned());
         }
+        let mut after = MemoryImageAfter::None;
         let (runtime, memory, cells) = match &task.storage {
             IrMemoryStorage::Image(image) => {
                 let cells = task
                     .cells()
                     .ok_or_else(|| "memory image cell count overflows".to_owned())?;
-                let binding = self
-                    .lookup(image)
-                    .ok_or_else(|| format!("unknown memory image `{image}`"))?;
-                if u64::from(binding.width) != cells * u64::from(task.element_width) {
-                    return Err("memory image width disagrees with its cells".to_owned());
-                }
+                let width = cells
+                    .checked_mul(u64::from(task.element_width))
+                    .and_then(|width| u32::try_from(width).ok())
+                    .ok_or_else(|| "memory image width overflows".to_owned())?;
                 let runtime = if task.write {
                     "llg_image_memory_write_view"
                 } else {
                     "llg_image_memory_read_view"
                 };
-                (runtime, binding.address, cells)
+                let memory = match image {
+                    IrMemoryImage::Value(value) => {
+                        let value = self.operand(value)?;
+                        if value.width != width {
+                            return Err("memory image width disagrees with its cells".to_owned());
+                        }
+                        let value = if value.borrowed_address.is_some() {
+                            value
+                        } else {
+                            self.own(value)
+                        };
+                        let memory = memory_image(&value.address(), 0, false);
+                        after = MemoryImageAfter::Discard(value);
+                        memory
+                    }
+                    IrMemoryImage::Target(lhs) => {
+                        if let Some((root, offset)) = self.memory_image_in_place(lhs, width) {
+                            let target = self.target(root)?;
+                            let memory = memory_image(&target.binding.address, offset, true);
+                            after = MemoryImageAfter::Release(target);
+                            memory
+                        } else {
+                            let target = self.target(lhs)?;
+                            if target.width != width {
+                                return Err(
+                                    "memory image width disagrees with its cells".to_owned()
+                                );
+                            }
+                            let value = self.read_target(&target);
+                            let value = self.convert(value, width, false, false, false);
+                            let value = self.own(value);
+                            let memory = memory_image(&value.address(), 0, false);
+                            after = MemoryImageAfter::Store(target, value);
+                            memory
+                        }
+                    }
+                };
+                (runtime, memory, cells)
             }
             IrMemoryStorage::Container(container) => {
                 let queue = matches!(
@@ -147,7 +184,70 @@ impl Frame<'_, '_> {
             enum_values: task.enum_values.as_deref(),
             start: task.start.as_ref(),
             finish: task.finish.as_ref(),
-        })
+        })?;
+        match after {
+            MemoryImageAfter::None => {}
+            MemoryImageAfter::Discard(value) => self.discard(value),
+            MemoryImageAfter::Release(target) => self.release_target(target),
+            MemoryImageAfter::Store(target, value) => {
+                // One blocking store of the whole copy, through the target
+                // resolved before the load.
+                self.store(&target, value, false, "0")?;
+                self.release_target(target);
+            }
+        }
+        Ok(())
+    }
+
+    /// The stable packed cell a load can address in place, with the bit
+    /// offset of the image in it: a whole variable or local that is neither
+    /// a net, a reference nor a sequence local, or a member of one selected
+    /// by constant in-range steps. Every other root is copied.
+    fn memory_image_in_place<'l>(&self, lhs: &'l IrLhs, width: u32) -> Option<(&'l IrLhs, u32)> {
+        if self.read_only_callback {
+            return None;
+        }
+        let (root, offset) = match lhs {
+            IrLhs::PackedSelect { target, steps, .. } => {
+                let mut available = self.memory_image_root_width(target)?;
+                let mut offset = 0u32;
+                for step in steps {
+                    let IrExprKind::Const(constant) = step.base.kind() else {
+                        return None;
+                    };
+                    let low = memory_image_constant(constant)?;
+                    if low.checked_add(step.width)? > available {
+                        return None;
+                    }
+                    offset = offset.checked_add(low)?;
+                    available = step.width;
+                }
+                (target.as_ref(), offset)
+            }
+            _ => (lhs, 0),
+        };
+        let root_width = self.memory_image_root_width(root)?;
+        (offset.checked_add(width)? <= root_width).then_some((root, offset))
+    }
+
+    fn memory_image_root_width(&self, lhs: &IrLhs) -> Option<u32> {
+        match lhs {
+            IrLhs::Whole(index) => {
+                let signal = self.ctx.model.signal(*index);
+                (signal.net_driver.is_none()
+                    && signal.net_alias.is_empty()
+                    && signal.ty.width() != 0)
+                    .then(|| signal.ty.width())
+            }
+            IrLhs::WholeRef {
+                addr,
+                width,
+                shortreal,
+                ..
+            } => (*width != 0 && !*shortreal && !self.sequence_addresses.contains_key(addr))
+                .then_some(*width),
+            _ => None,
+        }
     }
 
     /// Evaluate the path, runtime selectors and bounds of a memory task in
@@ -408,6 +508,44 @@ struct MemoryElement {
     width: u32,
     signed: bool,
     two_state: bool,
+}
+
+/// What follows the runtime call of an image memory task.
+enum MemoryImageAfter {
+    None,
+    /// A dump's evaluated root.
+    Discard(Value),
+    /// The in-place target of a load.
+    Release(Target),
+    /// The copy of a load's root and the target it is stored back to.
+    Store(Target, Value),
+}
+
+/// An `llg_memory_image_t` compound literal for `storage`.
+fn memory_image(storage: &str, offset: u32, publish: bool) -> String {
+    format!(
+        "&(llg_memory_image_t){{ (sv4_t*)({storage}), {offset}u, {} }}",
+        u8::from(publish)
+    )
+}
+
+/// A known, non-negative constant selector that fits a packed offset.
+fn memory_image_constant(constant: &IrConst) -> Option<u32> {
+    if constant.real.is_some()
+        || constant.fill.is_some()
+        || constant.x.iter().chain(&constant.z).any(|word| *word != 0)
+        || constant.bits.iter().skip(1).any(|word| *word != 0)
+    {
+        return None;
+    }
+    let low = constant.bits.first().copied().unwrap_or(0);
+    if constant.signed && constant.width != 0 && constant.width <= 64 {
+        let sign = 1u64 << (constant.width - 1);
+        if low & sign != 0 {
+            return None;
+        }
+    }
+    u32::try_from(low).ok()
 }
 
 /// One memory file task call: runtime entry point, storage and view.

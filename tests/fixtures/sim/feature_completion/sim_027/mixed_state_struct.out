@@ -1,0 +1,13 @@
+module four 1x z2 34 xz
+module two 10 02 34 00
+module tag a mark x
+module four dump 1x z2 34 xz
+automatic four 1x z2 34 xz
+automatic two 10 02 34 00
+automatic tag 5 mark z
+automatic two dump 10 02 34 00
+inout four 1x z2 34 xz
+inout two 10 02 34 00
+inout tag a mark x
+inout four dump 1x z2 34 xz
+inout two dump 10 02 34 00

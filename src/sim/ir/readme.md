@@ -126,10 +126,12 @@ after the record's columns; no `IrFixedValue` carries a native payload.
 
 SIM-027 adds one statement variant, `IrStmt::MemoryAccess`
 (`IrMemoryAccess`), for `$readmem*`/`$writemem*` on memories without model
-array storage. `IrMemoryStorage::Image` names a lexical packed local that
-holds the memory's image (cell 0 in the most significant bits); lowering
-declares it from the memory's value, runs the access and, for a load, assigns
-it back to the memory in one blocking store. `IrMemoryStorage::Container`
+array storage. `IrMemoryStorage::Image` addresses the memory's packed image
+(cell 0 in the most significant bits) through its root, evaluated once: a
+load carries the root as an lvalue (`IrMemoryImage::Target`, which the task
+writes; optimizer and effect walks treat it as read and written), a dump as a
+value. The emitter loads a stable packed cell in place and copies any other
+root, storing it back in one blocking store. `IrMemoryStorage::Container`
 names a dynamic array or queue (or a fixed class property's container) that
 is accessed in place; an empty `root_dims` means its size is read at run time.
 The view geometry (`origin`, `selectors`, `dims`, `strides`, `total`) is the

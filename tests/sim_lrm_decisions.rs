@@ -1040,3 +1040,11 @@ fn s27_d12_rejected_dump_keeps_file() {
         include_str!("fixtures/sim/lrm_decisions/S27-D12_rejected_dump_keeps_file.out"),
     );
 }
+
+#[test]
+fn s27_d13_memory_name_evaluated_once() {
+    run_decision(
+        "S27-D13_memory_name_evaluated_once",
+        include_str!("fixtures/sim/lrm_decisions/S27-D13_memory_name_evaluated_once.out"),
+    );
+}

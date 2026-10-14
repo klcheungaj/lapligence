@@ -380,6 +380,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             }
         }
         IrStmt::MemoryAccess(task) => {
+            if let Some(lhs) = task.image_target_mut() {
+                walk_lhs_mut(lhs, f);
+            }
             task.expressions_mut(&mut |child| walk_expr_mut(child, f));
         }
         IrStmt::Memory {

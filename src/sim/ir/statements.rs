@@ -155,21 +155,32 @@ pub struct IrMemorySelector {
 /// Storage a [`IrMemoryAccess`] addresses, cell by cell in declaration order.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrMemoryStorage {
-    /// Lexical packed local holding the packed image of a fixed array that
-    /// has no model array storage (a static or automatic subroutine or block
-    /// local, `ref` formal or structure member). Cell 0 occupies the most
-    /// significant bits, the flattened fixed-value order. Lowering declares
-    /// the local from the array's current value before the task and, for a
-    /// load, stores it back with one blocking assignment afterwards, so the
-    /// root and its selectors are evaluated once and a load that stops early
-    /// keeps the words it already placed.
-    Image(String),
+    /// The packed image of a fixed array that has no model array storage (a
+    /// static or automatic subroutine or block local, `ref` formal or
+    /// structure member). Cell 0 occupies the most significant bits, the
+    /// flattened fixed-value order.
+    Image(IrMemoryImage),
     /// A container of packed elements, written in place through its element
     /// stores: a fixed-size class property (its declaration order is the
     /// container index), or a dynamic array or queue, whose current size
     /// gives the addresses `[0:size-1]` and is never changed (IEEE 1800-2009
     /// 21.4.1).
     Container(usize),
+}
+
+/// The root of an image-represented memory task, evaluated exactly once.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrMemoryImage {
+    /// A load's root as a packed lvalue. The emitter resolves it once, so its
+    /// selectors run once for both the read and the store. A whole packed
+    /// variable or local, or a constant member of one, is loaded in place and
+    /// each changed word is published as it is stored; any other lvalue is
+    /// copied into a lexical image and stored back with one blocking
+    /// assignment. Either way a load that stops early keeps the words it
+    /// already placed.
+    Target(IrLhs),
+    /// A dump's root as a packed value, evaluated once and only read.
+    Value(IrExpr),
 }
 
 /// A `$readmem*`/`$writemem*` task over storage other than model array
@@ -216,8 +227,28 @@ impl IrMemoryAccess {
             })
     }
 
-    /// Visit every expression the statement evaluates, in evaluation order.
+    /// The image target of a load, which the task writes.
+    pub fn image_target(&self) -> Option<&IrLhs> {
+        match &self.storage {
+            IrMemoryStorage::Image(IrMemoryImage::Target(lhs)) => Some(lhs),
+            _ => None,
+        }
+    }
+
+    pub(in crate::sim) fn image_target_mut(&mut self) -> Option<&mut IrLhs> {
+        match &mut self.storage {
+            IrMemoryStorage::Image(IrMemoryImage::Target(lhs)) => Some(lhs),
+            _ => None,
+        }
+    }
+
+    /// Visit every expression the statement evaluates, in evaluation order,
+    /// except those inside a load's image target (see [`Self::image_target`]),
+    /// whose selectors callers visit as an lvalue.
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        if let IrMemoryStorage::Image(IrMemoryImage::Value(value)) = &self.storage {
+            visit(value);
+        }
         self.path.expressions(visit);
         for selector in &self.selectors {
             visit(&selector.value);
@@ -228,6 +259,9 @@ impl IrMemoryAccess {
     }
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        if let IrMemoryStorage::Image(IrMemoryImage::Value(value)) = &mut self.storage {
+            visit(value);
+        }
         self.path.expressions_mut(visit);
         for selector in &mut self.selectors {
             visit(&mut selector.value);

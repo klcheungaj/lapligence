@@ -1429,17 +1429,28 @@ void llg_fixed_memory_write_view(llg_string_t path, llg_fixed_array_t* memory, u
                            const sv4_t* enum_values, uint32_t enum_count, int radix);
 
 // Image entry points address the packed image of a fixed array without model
-// storage: `memory` holds `total` cells of `elem_width` bits, cell 0 in the
-// most significant bits. Writes into it publish nothing; the generated code
-// stores the image back to its array after a load.
-void llg_image_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
+// storage: `width` = `total` * `elem_width` bits of `*storage` starting at bit
+// `offset`, cell 0 in the most significant bits. A published image is a
+// variable's own storage (a whole variable or local, or a constant member of
+// one): a load stores each changed word in place, skips every store when
+// `llg_ba` would (forced target, read-only region) and publishes the target
+// once after the last word. An unpublished image is a lexical copy that the
+// generated code stores back after a load; writing it publishes nothing.
+typedef struct {
+    sv4_t* storage;
+    uint32_t offset;
+    uint8_t publish;
+} llg_memory_image_t;
+void llg_image_memory_read_view(llg_string_t path, const llg_memory_image_t* memory,
+                          uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                           const int32_t* dims, int n_dims,
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
                           int has_start, int has_finish, int addressing_policy,
                           const sv4_t* enum_values, uint32_t enum_count, int radix);
-void llg_image_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
+void llg_image_memory_write_view(llg_string_t path, const llg_memory_image_t* memory,
+                           uint64_t total,
                            uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                            const int32_t* dims, int n_dims,
                            const uint64_t* strides, uint64_t origin,

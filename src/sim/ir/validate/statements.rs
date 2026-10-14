@@ -174,6 +174,7 @@ impl Validator<'_> {
                 }
             }
             IrStmt::MemoryAccess(task) => {
+                self.validate_memory_image_root(task, formals, path)?;
                 task.path.validate(self.model, self.string_return.get())?;
                 let mut result = Ok(());
                 task.path.expressions(&mut |child| {

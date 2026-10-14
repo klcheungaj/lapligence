@@ -278,6 +278,7 @@ enum and malformed-token cases remain characterizations in
 | S27-D10 | **Dynamic arrays and queues use their current size**, addresses 0 to size-1, and are never resized. Extra file words are left unread; an empty array loads nothing with a warning. | 21.4.1 L37347 | `S27-D10_resizable_memory_size` | LRM text; the empty-array result is an llg choice |
 | S27-D11 | **Dumps write one word per element, without addresses, from the lowest address to the highest**, whatever the declared direction, so a read restores the array. Explicit start and finish addresses keep their order. | 21.5 L37462-37463; 21.5.3 L37497-37498; 21.4.3 L37377-37378 | `S27-D11_dump_order_without_addresses` | LRM text |
 | S27-D12 | **A dump with a start or finish outside the array is rejected before the file is opened**, so an existing file keeps its contents. | 21.5 L37472-37473 | `S27-D12_rejected_dump_keeps_file` | llg choice (the text does not cover an invalid range) |
+| S27-D13 | **The memory_name argument is evaluated once per call.** A selector with side effects in it runs once for a load, which reads and stores the selected memory, and once for a dump. | 21.4 L37251-37252; 11.4.1 L14478-14479 | `S27-D13_memory_name_evaluated_once` | llg reading (the text does not say how often memory_name is evaluated; 11.4.1 is the nearest rule for a target that is read and written) |
 
 ## Earlier decisions
 

@@ -348,6 +348,40 @@ fn image_loads_wake_only_the_changed_words() {
     );
 }
 
+// A03: a selector with side effects in memory_name runs once per call, on
+// the copy path and in place, for loads and dumps (S27-D13).
+#[test]
+fn memory_name_is_evaluated_once() {
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "single_evaluation",
+        &[],
+        &[],
+        &exact(
+            include_str!("../fixtures/sim/feature_completion/sim_027/single_evaluation.out"),
+            &as_strs(&[more_words("words.mem")]),
+        ),
+    );
+}
+
+// A03: members of a structure mixing two- and four-state members keep X/Z
+// in the four-state member and read it as 0 in the two-state one.
+#[test]
+fn mixed_state_structure_members_round_trip() {
+    let converted =
+        "warning: memory file `digits.mem`: X/Z memory data converted to a two-state element";
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "mixed_state_struct",
+        &[],
+        &[],
+        &exact(
+            include_str!("../fixtures/sim/feature_completion/sim_027/mixed_state_struct.out"),
+            &[converted, converted, converted],
+        ),
+    );
+}
+
 // A03 nearest-illegal and unsupported forms are rejected before a model is
 // built.
 #[test]

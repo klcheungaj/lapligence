@@ -161,6 +161,43 @@ impl Validator<'_> {
         }
         Ok(())
     }
+    /// A load's image root must be a packed lvalue and a dump's a packed
+    /// value, each exactly as wide as the root's cells.
+    pub(super) fn validate_memory_image_root(
+        &self,
+        task: &crate::sim::ir::IrMemoryAccess,
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
+        use crate::sim::ir::{IrMemoryImage, IrMemoryStorage};
+        let IrMemoryStorage::Image(image) = &task.storage else {
+            return Ok(());
+        };
+        let width = task
+            .cells()
+            .and_then(|cells| cells.checked_mul(u64::from(task.element_width)));
+        let root_width = match image {
+            IrMemoryImage::Target(lhs) => {
+                if task.write {
+                    return self.fail(path, "a memory dump has no image target");
+                }
+                self.validate_lhs(lhs, formals, &format!("{path}.image"))?;
+                self.lhs_packed_width(lhs)
+            }
+            IrMemoryImage::Value(value) => {
+                if !task.write {
+                    return self.fail(path, "a memory load needs an image target");
+                }
+                self.validate_expr(value, formals, &format!("{path}.image"))?;
+                (!value.is_real()).then_some(value.width)
+            }
+        };
+        if root_width.map(u64::from) != width {
+            return self.fail(path, "memory image root width disagrees with its cells");
+        }
+        Ok(())
+    }
+
     /// Storage-specific shape checks of a memory task outside model arrays.
     pub(super) fn validate_memory_access_storage(
         &self,
