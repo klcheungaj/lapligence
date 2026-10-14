@@ -257,6 +257,28 @@ independent transcription in
 | S40-D4 | **Invalid element indices.** An out-of-range index or a wrong index count gives a NULL element pointer, reads the element type's default (X for logic, 0 for bit) and makes writes do nothing. svBit reads of a logic element map X and Z to 0. | H.12.4 L73337-73340; 7.4.6 L8235-8237 | `S40-D4_invalid_element_access` (`.sv` and `.c`) | llg choice (7.4.6 applied to the C layer) |
 | S40-D5 | **Imported-task results.** An imported task that returns nonzero when no disable is in effect stops the simulation with a fatal error; nothing is copied out. Without exports nothing can disable an imported task during its call. | 35.9 L56272-56273, L56282-56284 | `S40-D5_task_disable_protocol` (`.sv` and `.c`; runtime fatal after the first line) | LRM text |
 
+## Memory files (SIM-027)
+
+The settled Q02 cases are conformance tests in
+[`sim_027`](../tests/fixtures/sim/feature_completion/sim_027/readme.md); the
+enum and malformed-token cases remain characterizations in
+[`undefined_behavior`](../tests/fixtures/sim/undefined_behavior/readme.md).
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S27-D1 | **Loaded words are update events at the store.** A load stores each word when the task reaches it; a changed word wakes each process waiting on it once in the load's time slot, with the loaded value. A word loaded with its current value is no event, and words outside the range are untouched. The loading process sees every word in its next statement. | 4.3 L3039-3043; 21.4 L37280 | `S27-D1_load_wakes_changed_words` | LRM text (the order of the woken processes is free, 4.7 L3465-3466) |
+| S27-D2 | **A file number is an unsized unsigned literal.** A leftmost x or z digit fills the upper bits with x or z, a leftmost known digit fills them with zeros (also for a signed word), and a wider number loses its upper bits. | 21.4 L37273-37276; 5.7.1 L3921-3923, L3927-3929 | `S27-D2_word_is_unsized_literal` | LRM text |
+| S27-D3 | **Two-state words read x and z digits as 0**, after which a leftmost unknown digit pads with zeros. | 21.4.2 L37366-37368 | `S27-D3_two_state_unknown_digits` | LRM text |
+| S27-D4 | **Enum words must be member values.** The comparison uses the base type's width; extra digits must be zero (unsigned base) or repeat the sign bit (signed base); a word with x or z bits matches only a member with exactly that value. Any other word is an error that ends the load. | 21.4.2 L37368-37370 | `S27-D4_enum_word_membership` | llg reading (the text does not say how a wider number or an x/z word is compared) |
+| S27-D5 | **A malformed token ends the load with an error.** The words before it stay; the cells after it keep their values. | 21.4 L37268-37271 | `S27-D5_malformed_word_ends_load` | llg choice (the text lists the legal contents but no consequence) |
+| S27-D6 | **A file address outside the task range terminates the load with an error.** Words loaded before it stay and the simulation continues. | 21.4 L37315-37317 | `S27-D6_file_address_outside_range` | LRM text |
+| S27-D7 | **Addresses outside the memory are errors even without a task range.** A file address outside the memory terminates the load; a start or finish argument outside it rejects the call before any word is loaded. | 21.4 L37280, L37315-37317 | `S27-D7_address_outside_memory` | llg extension (the text states the error only for a task range) |
+| S27-D8 | **Words past the highest address are skipped until a later `@` address**, which resumes loading. | 21.4 L37303-37308, L37300-37301 | `S27-D8_words_past_the_end` | llg choice (the text stops at the highest address but allows later address specifications) |
+| S27-D9 | **A file that cannot be opened loads nothing**, with a warning; the memory keeps its values and the simulation continues. | 21.4 L37248-37249 | `S27-D9_missing_file` | llg choice (the text is silent) |
+| S27-D10 | **Dynamic arrays and queues use their current size**, addresses 0 to size-1, and are never resized. Extra file words are left unread; an empty array loads nothing with a warning. | 21.4.1 L37347 | `S27-D10_resizable_memory_size` | LRM text; the empty-array result is an llg choice |
+| S27-D11 | **Dumps write one word per element, without addresses, from the lowest address to the highest**, whatever the declared direction, so a read restores the array. Explicit start and finish addresses keep their order. | 21.5 L37462-37463; 21.5.3 L37497-37498; 21.4.3 L37377-37378 | `S27-D11_dump_order_without_addresses` | LRM text |
+| S27-D12 | **A dump with a start or finish outside the array is rejected before the file is opened**, so an existing file keeps its contents. | 21.5 L37472-37473 | `S27-D12_rejected_dump_keeps_file` | llg choice (the text does not cover an invalid range) |
+
 ## Earlier decisions
 
 These predate the register. Their evidence lives in the feature fixtures named

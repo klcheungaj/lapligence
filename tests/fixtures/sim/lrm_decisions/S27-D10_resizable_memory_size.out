@@ -1,0 +1,4 @@
+dyn 11 22 33 size 3
+queue 22 11 size 2
+empty size 0
+dump 11 22 33

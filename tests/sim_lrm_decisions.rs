@@ -944,3 +944,99 @@ fn s09_d7_fork_shared_native_wait() {
         include_str!("fixtures/sim/lrm_decisions/S09-D7_fork_shared_native_wait.out"),
     );
 }
+
+#[test]
+fn s27_d1_load_wakes_changed_words() {
+    run_decision(
+        "S27-D1_load_wakes_changed_words",
+        include_str!("fixtures/sim/lrm_decisions/S27-D1_load_wakes_changed_words.out"),
+    );
+}
+
+#[test]
+fn s27_d2_word_is_unsized_literal() {
+    run_decision(
+        "S27-D2_word_is_unsized_literal",
+        include_str!("fixtures/sim/lrm_decisions/S27-D2_word_is_unsized_literal.out"),
+    );
+}
+
+#[test]
+fn s27_d3_two_state_unknown_digits() {
+    run_decision(
+        "S27-D3_two_state_unknown_digits",
+        include_str!("fixtures/sim/lrm_decisions/S27-D3_two_state_unknown_digits.out"),
+    );
+}
+
+#[test]
+fn s27_d4_enum_word_membership() {
+    run_decision(
+        "S27-D4_enum_word_membership",
+        include_str!("fixtures/sim/lrm_decisions/S27-D4_enum_word_membership.out"),
+    );
+}
+
+#[test]
+fn s27_d5_malformed_word_ends_load() {
+    run_decision(
+        "S27-D5_malformed_word_ends_load",
+        include_str!("fixtures/sim/lrm_decisions/S27-D5_malformed_word_ends_load.out"),
+    );
+}
+
+#[test]
+fn s27_d6_file_address_outside_range() {
+    run_decision(
+        "S27-D6_file_address_outside_range",
+        include_str!("fixtures/sim/lrm_decisions/S27-D6_file_address_outside_range.out"),
+    );
+}
+
+#[test]
+fn s27_d7_address_outside_memory() {
+    run_decision(
+        "S27-D7_address_outside_memory",
+        include_str!("fixtures/sim/lrm_decisions/S27-D7_address_outside_memory.out"),
+    );
+}
+
+#[test]
+fn s27_d8_words_past_the_end() {
+    run_decision(
+        "S27-D8_words_past_the_end",
+        include_str!("fixtures/sim/lrm_decisions/S27-D8_words_past_the_end.out"),
+    );
+}
+
+#[test]
+fn s27_d9_missing_file() {
+    run_decision(
+        "S27-D9_missing_file",
+        include_str!("fixtures/sim/lrm_decisions/S27-D9_missing_file.out"),
+    );
+}
+
+#[test]
+fn s27_d10_resizable_memory_size() {
+    run_decision(
+        "S27-D10_resizable_memory_size",
+        include_str!("fixtures/sim/lrm_decisions/S27-D10_resizable_memory_size.out"),
+    );
+}
+
+#[test]
+fn s27_d11_dump_order_without_addresses() {
+    run_decision(
+        "S27-D11_dump_order_without_addresses",
+        include_str!("fixtures/sim/lrm_decisions/S27-D11_dump_order_without_addresses.out"),
+    );
+}
+
+#[test]
+fn s27_d12_rejected_dump_keeps_file() {
+    run_decision(
+        "S27-D12_rejected_dump_keeps_file",
+        include_str!("fixtures/sim/lrm_decisions/S27-D12_rejected_dump_keeps_file.out"),
+    );
+}
