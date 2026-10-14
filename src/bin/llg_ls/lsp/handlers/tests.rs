@@ -3100,3 +3100,42 @@ async fn overlapping_watcher_registrations_end_with_the_newest_set() {
         Some(newest.as_str())
     );
 }
+
+/// A job that outlived its root (workspace folder removed and added again
+/// while it compiled) shares the root key with the new root. Finishing it
+/// must not free the new root's running slot.
+#[test]
+fn a_job_of_a_replaced_root_does_not_release_the_new_roots_slot() {
+    let root = PathBuf::from(hp("/tmp/llg_replaced_root"));
+    let mut initial = single_root_state(&root, Vec::new());
+    let replacement_generation = 7;
+    {
+        let replacement = initial.roots.get_mut(&root).expect("root");
+        replacement.generation = replacement_generation;
+        assert_eq!(replacement.scheduler.trigger(), TriggerDecision::ArmTimer);
+        assert_eq!(replacement.scheduler.timer_fired(), FireDecision::StartJob);
+    }
+    let state = Arc::new(Mutex::new(initial));
+
+    let old_generation = 3;
+    assert!(!Backend::finish_root_run(&state, &root, old_generation));
+    assert_eq!(
+        state
+            .lock()
+            .expect("state")
+            .roots
+            .get_mut(&root)
+            .expect("root")
+            .scheduler
+            .trigger(),
+        TriggerDecision::Coalesce,
+        "the replacement's job is still running"
+    );
+    // The owner of the slot releases it and owes the follow-up its dirty mark
+    // asked for.
+    assert!(Backend::finish_root_run(
+        &state,
+        &root,
+        replacement_generation
+    ));
+}

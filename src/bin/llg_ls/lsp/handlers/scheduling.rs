@@ -223,7 +223,7 @@ pub(super) fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>
             );
             // Aborted mid-flight (stale/shutdown): still release the slot so
             // a dirty marker from this window is honored.
-            if Backend::finish_root_run(&state, &key) {
+            if Backend::finish_root_run(&state, &key, generation) {
                 spawn_debounced_run(client, state, key);
             }
             return;
@@ -293,7 +293,7 @@ pub(super) fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>
         }
         // Latest-wins coalescing: at most ONE debounced follow-up run when
         // triggers landed while this job executed.
-        if Backend::finish_root_run(&state, &key) {
+        if Backend::finish_root_run(&state, &key, generation) {
             end_to_end_span.complete("ok-follow-up", publication_count);
             crate::llg_debug!(
                 "event=root_job.end outcome=ok-follow-up root={} generation={} publications={} elapsed_us={}",
@@ -750,7 +750,16 @@ impl Backend {
     /// `true` when triggers arrived during the run and one debounced
     /// follow-up must be armed now.  A vanished or shutting-down root never
     /// owes a follow-up.
-    pub(super) fn finish_root_run(state: &Arc<Mutex<BackendState>>, key: &RootKey) -> bool {
+    ///
+    /// Only the job holding the root's current `generation` releases the slot.
+    /// A job that outlived its root (folder removed and added again while it
+    /// ran) shares the key with the new root; letting it finish would free the
+    /// new root's running slot and allow two concurrent jobs.
+    pub(super) fn finish_root_run(
+        state: &Arc<Mutex<BackendState>>,
+        key: &RootKey,
+        generation: u64,
+    ) -> bool {
         let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
         if guard.shutting_down {
             return false;
@@ -758,6 +767,7 @@ impl Backend {
         guard
             .roots
             .get_mut(key)
+            .filter(|root| root.generation == generation)
             .is_some_and(|root| root.scheduler.job_finished())
     }
 
