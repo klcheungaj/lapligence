@@ -665,9 +665,6 @@ targets, and queue a whole-container commit for nonblocking unpacks.
 - `$fread` into an unpacked structure is rejected by the frontend
   (`invalid argument type`). The LRM names only integral variables and
   memories.
-- The `undriven-signal` lint warning does not count destinations of input
-  functions, or output actuals of task and function calls, as drivers. A
-  variable written only by `$fscanf` is reported as read with no driver.
 
 ### Cause
 
@@ -1592,9 +1589,6 @@ undefined symbols. On Windows, a DPI DLL cannot import the `svdpi.h` routines
 from the model executable; such a library must be linked as a static archive
 (see [DPI-C export limits](#dpi-c-export-limits-sim-041)).
 
-The lint pass reports `undriven-signal` warnings for variables written only as
-DPI output or inout actuals.
-
 ### Cause
 
 The thunk moves each aggregate through the packed payload, which has no
@@ -1641,28 +1635,22 @@ call chains; these cases remain outside it.
   levels with large C frames can exceed small thread stacks.
 - An export function that disables a block which called it is undefined in
   SV 9.6.2; llg follows the 35.9 protocol for it (S41-D5).
-- The lint pass reports variables read only by exported subroutines as unused
-  (`unused-signal`), and names instances inside loop generate blocks through
-  both the array and the block (`tb.g.g[0].c`).
 
 ### Cause
 
 A suspending export would need the C caller's native stack preserved across
 the suspension (ADV-018). Windows DLLs resolve imports only from libraries
-named at link time, and the model executable has no import library. The
-lint driver has its own hierarchy naming and use analysis.
+named at link time, and the model executable has no import library.
 
 ### Intended direction
 
 ADV-018 for time-consuming exports; a function-pointer table handed to a
-loaded DLL if shared Windows companions are needed; teach lint that exported
-subroutines are used.
+loaded DLL if shared Windows companions are needed.
 
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_041/neg_timed_export_task.sv`;
-`tests/fixtures/sim/lrm_decisions/S41-D1_context_scope_chain.sv` (lint
-naming).
+`tests/fixtures/sim/lrm_decisions/S41-D1_context_scope_chain.sv`.
 
 ## Legacy constructs unsupported by design
 

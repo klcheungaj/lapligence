@@ -272,6 +272,8 @@ pub fn collect_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
 /// This has the same whole-object behavior as [`collect_writes`], including
 /// selected LHS expressions, but deliberately excludes `release` and
 /// `deassign`: those statements cancel a driver rather than establish one.
+/// Output, inout and non-`const` `ref` actuals of calls are drivers too (see
+/// `call_written_actuals`).
 pub fn collect_driver_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
@@ -447,11 +449,12 @@ fn walk_driver_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &m
     match db.node_kind(node) {
         NodeKind::Stmt(StmtKind::ProcContAssign { lhs, .. } | StmtKind::Force { lhs, .. }) => {
             add_driver_lhs_write(db, *lhs, seen, out);
-            return;
         }
         NodeKind::Stmt(StmtKind::VariableDecl { declaration }) => {
-            if db.var_initializer(*declaration).is_some() {
+            if let Some(initializer) = db.var_initializer(*declaration) {
                 add_driver_lhs_write(db, *declaration, seen, out);
+                // An initializer can call a subroutine with output actuals.
+                walk_driver_writes(db, initializer, seen, out);
             }
             return;
         }
@@ -459,16 +462,95 @@ fn walk_driver_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &m
             if let Some(lhs) = db.node(node).children.first() {
                 add_driver_lhs_write(db, *lhs, seen, out);
             }
-            return;
         }
         NodeKind::Stmt(StmtKind::Release { .. }) | NodeKind::Stmt(StmtKind::Deassign { .. }) => {
             return;
         }
+        NodeKind::FuncCall { .. } | NodeKind::SysCall { .. } | NodeKind::MethodCall { .. } => {
+            for actual in call_written_actuals(db, node) {
+                add_driver_lhs_write(db, actual, seen, out);
+            }
+        }
         _ => {}
     }
+    // Calls nest inside assignment right-hand sides, conditions and actuals.
     for c in &db.node(node).children {
         walk_driver_writes(db, *c, seen, out);
     }
+}
+
+/// The actuals a call writes: output and inout actuals of any subroutine
+/// (user task or function, DPI import, `$sscanf`/`$fscanf`/`$fgets`/`$fread`
+/// destinations, `std::randomize` arguments, ...) and non-`const` `ref`
+/// actuals. Slang binds every output/inout actual as an assignment operation
+/// whose first operand is the written lvalue, so this needs no per-task table;
+/// `ref` actuals are plain references and follow the callee's formal
+/// direction. `$random`'s seed is the one system argument that is written
+/// without that wrapper (IEEE 1364-2001 17.9.1: the seed is an in-out
+/// parameter, as for the `$dist_*` functions in 17.9.2).
+fn call_written_actuals(db: &Db, call: NodeId) -> Vec<NodeId> {
+    let children = db.node(call).children.as_slice();
+    let (actuals, callee) = match db.node_kind(call) {
+        NodeKind::MethodCall {
+            receiver, callee, ..
+        } => (
+            if receiver.is_some() && children.first() == receiver.as_ref() {
+                &children[1..]
+            } else {
+                children
+            },
+            *callee,
+        ),
+        NodeKind::FuncCall { callee, .. } => (children, *callee),
+        NodeKind::SysCall { name } => {
+            let seed = (name == "$random")
+                .then(|| children.first().copied())
+                .flatten();
+            let mut written = call_assigned_actuals(db, children);
+            written.extend(seed);
+            return written;
+        }
+        _ => return Vec::new(),
+    };
+    let mut written = call_assigned_actuals(db, actuals);
+    let formals: Vec<NodeId> = callee
+        .map(|callee| {
+            db.node(callee)
+                .children
+                .iter()
+                .copied()
+                .filter(|child| matches!(db.node_kind(*child), NodeKind::FuncArg { .. }))
+                .collect()
+        })
+        .unwrap_or_default();
+    for (actual, formal) in actuals.iter().zip(&formals) {
+        if matches!(
+            db.node_kind(*formal),
+            NodeKind::FuncArg {
+                direction: Direction::Ref,
+                const_ref: false,
+                ..
+            }
+        ) {
+            written.push(*actual);
+        }
+    }
+    written
+}
+
+/// First operands of the assignment-wrapped (output/inout) actuals.
+fn call_assigned_actuals(db: &Db, actuals: &[NodeId]) -> Vec<NodeId> {
+    actuals
+        .iter()
+        .filter_map(|actual| match db.node_kind(*actual) {
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Assignment,
+                operands,
+                ..
+            }) => operands.first().copied(),
+            _ => None,
+        })
+        .collect()
 }
 
 fn add_lhs_write(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {

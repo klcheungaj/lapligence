@@ -49,7 +49,11 @@ native traversal or I/O.
   also covers plain level-sensitive always and initial/final processes.
 - `undriven.rs` — `undriven-signal`: flags a declared signal that is read
   but has no active procedural/continuous driver, declaration initializer,
-  connected output/inout flow, or primitive output terminal. Top-level
+  connected output/inout flow, or primitive output terminal. Output, inout and
+  non-`const` `ref` actuals of any call are drivers: DPI imports, tasks,
+  `$sscanf`/`$fscanf`/`$fgets`/`$fread`/`$readmem*`/`$sformat` destinations and
+  `std::randomize` arguments (Slang wraps each written actual in an assignment
+  operation), plus the `$random` seed. Top-level
   external inputs/inouts, explicitly open child ports, implicit nets,
   and intrinsic pull/supply nets are skipped.
   Input/inout actual expressions are read through the owned port
