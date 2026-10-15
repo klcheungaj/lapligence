@@ -647,7 +647,7 @@ Unpacked aggregates other than 1-D byte arrays reject before C generation.
 ## Constrained randomization
 
 `randomization/` lowers `randomize()`, `std::randomize()` and the mode methods
-(IEEE 1800-2009 clause 18; scope and decisions S29-D1..D10 in
+(IEEE 1800-2009 clause 18; scope and decisions S29-D1..D10 and S30-D1..D11 in
 [docs/lrm_decisions.md](../../../docs/lrm_decisions.md)). Each call site and
 dynamic class case owns one static `IrRandProblem`; constraint expressions are
 lowered by the ordinary expression path while `RandLowering` maps every random
@@ -669,6 +669,20 @@ is hoisted into `rand_prelude` only where it runs exactly once per statement
 evaluation; short-circuit/conditional operands and loop conditions reject.
 Commit writes only after a successful solve, so a failed call leaves every
 variable unchanged (18.6.3).
+
+Arrays, `foreach` and `rand` object members make a problem a template with
+units (`templates.rs`, decisions S30-D5..D11): unit 0 is the randomized object
+or `std::randomize` scope, each other unit a class an object reached through a
+`rand` handle can have; variables, arrays and handle slots are problem-wide,
+one per property declaration. `template_forms` runs before a constraint
+expression is lowered and registers array selects, `size()`, reductions
+(`item`, `item.index`), `inside` an array, members and null tests through
+`rand` handles as `_llg_randvar_t<n>` placeholders that `random_placeholder`
+returns; `check_template_uses` rejects a form lowered another way and a random
+array read directly. The generated code walks the instances the runtime
+registers (`pre_randomize`, variables, blocks, leaves, arrays, links), then
+commits arrays and member objects and runs `post_randomize` in registration
+order (S30-D7). Problems without these forms keep the flat SIM-029 shape.
 
 ## Time, output and native services
 

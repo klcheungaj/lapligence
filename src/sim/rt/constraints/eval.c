@@ -699,19 +699,8 @@ static void cr_classify_elem(llg_cr_session_t* s, uint32_t n) {
     s->status[n] = CR_R;
 }
 
-static void cr_classify_node(llg_cr_session_t* s, uint32_t n);
-
-/* Classify every node not marked CR_SKIP, in post-order. */
-static void cr_classify(llg_cr_session_t* s) {
-    s->need_calls = 0;
-    for (uint32_t n = 0; n < s->p->node_count; ++n) {
-        if (s->status[n] == CR_SKIP) continue;
-        cr_classify_node(s, n);
-    }
-}
-
 /* Classify node n from its operands' classification. */
-static void cr_classify_node(llg_cr_session_t* s, uint32_t n) {
+CR_INLINE void cr_classify_node(llg_cr_session_t* s, uint32_t n) {
     const llg_cr_problem_t* p = s->p;
     {
         const llg_cr_node_t* nd = &p->nodes[n];
@@ -856,5 +845,14 @@ static void cr_classify_node(llg_cr_session_t* s, uint32_t n) {
         s->status[n] = CR_K;
         int reason = cr_eval_op(s, n);
         if (reason) cr_set_error(s, n, reason, n);
+    }
+}
+
+/* Classify every node not marked CR_SKIP, in post-order. */
+static void cr_classify(llg_cr_session_t* s) {
+    s->need_calls = 0;
+    for (uint32_t n = 0; n < s->p->node_count; ++n) {
+        if (s->status[n] == CR_SKIP) continue;
+        cr_classify_node(s, n);
     }
 }

@@ -11,6 +11,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Forced inlining for the per-node steps of the traversals every solve runs
+ * (classification has two callers, which otherwise keeps it out of line). */
+#if defined(__GNUC__) || defined(__clang__)
+#define CR_INLINE static inline __attribute__((always_inline))
+#elif defined(_MSC_VER)
+#define CR_INLINE static __forceinline
+#else
+#define CR_INLINE static inline
+#endif
+
 #define CR_WORDS(width) ((width) == 0u ? 1u : (((width) + 63u) / 64u))
 
 static void cr_fatal(const char* message) {
@@ -160,8 +170,8 @@ struct llg_cr_session {
     uint64_t* node_hash;
     /* Exact-engine cache (most recent components). */
     cr_cache_entry_t* cache;
-    uint32_t cache_count;
-    uint32_t cache_next;
+    uint32_t cache_count;       /* slots used so far (they fill in order) */
+    uint64_t cache_clock;       /* LRU stamp source */
 };
 
 static llg_cr_session_t* cr_all_sessions;

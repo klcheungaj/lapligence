@@ -61,9 +61,10 @@ direct element. With random dynamic arrays or queues, a first expansion
 solves the sizes before every other variable and drops the conjuncts that
 need elements of arrays of unknown size; the second fixes those sizes
 (S30-D5). A size no kept conjunct of an enabled block names keeps its value.
-Expanded problems and their sessions are cached by structure (four per call
-site), so repeated randomization of the same graph reuses the exact-engine
-caches.
+Expanded problems and their sessions are cached by structure (sixteen per
+call site, least recently used replaced first), so repeated randomization of
+the same graph reuses the exact-engine caches. Random sizes give one graph
+per size combination, which is why this cache is larger than one.
 
 ## Solving
 
@@ -144,11 +145,15 @@ The AIG bound (8x `LLG_RAND_BDD_NODES`, at least 4096) also bounds the CDCL
 encoding. Changing a budget may change the values drawn.
 
 Each call site keeps one session for the run. A session caches the exact
-model of its eight most recent components, keyed exactly by the conjuncts,
+model of its 32 most recently used components (an expanded problem has a
+component per independent element or object, so the cache must hold all of
+one call's components or each call would rebuild the evicted ones), keyed exactly by the conjuncts,
 the variables and every known operand value, so a loop that randomizes with
 unchanged state samples without rebuilding. Budget overflows are cached the
 same way so a repeated overflow goes straight to the fallbacks. Layered
-entries also key the variables' layers and keep the projections and weights. The CDCL
+entries also key the variables' layers and keep the projections and weights.
+Components without dist, randc or solve-before skip the layer plan, so
+SIM-029 problems pay nothing for the layered engine. The CDCL
 search keeps nothing between calls: it re-encodes the component each time.
 
 ## Determinism

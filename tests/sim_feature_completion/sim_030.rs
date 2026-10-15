@@ -109,6 +109,31 @@ fn std_randomize_solves_scope_arrays() {
     );
 }
 
+/// A03: every 2009 constraint production executes.
+#[test]
+fn every_2009_constraint_production_has_a_witness() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "productions",
+        include_str!("../fixtures/sim/feature_completion/sim_030/productions.out"),
+        &[],
+        &[],
+    );
+}
+
+/// A03: later-edition constraint syntax stays rejected under sv2009.
+#[test]
+fn later_edition_constraints_are_rejected() {
+    sim_cli::reject_case(SUITE, "neg_soft", "expected ';'");
+    names_source_position("neg_soft");
+    sim_cli::reject_case(
+        SUITE,
+        "neg_unique",
+        "`uniqueness constraint` is not available in IEEE 2009",
+    );
+    names_source_position("neg_unique");
+}
+
 #[test]
 fn unsupported_array_and_object_forms_are_located_errors() {
     sim_cli::reject_case(

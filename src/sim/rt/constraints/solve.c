@@ -15,13 +15,16 @@ struct cr_cache_entry {
     cr_exact_t exact;
     uint32_t* level_var;
     uint32_t* level_bit;
-    int used;
+    uint64_t used; /* last use (0: free), for least-recently-used replacement */
     int failed;   /* the exact engine exceeded its budget for this key */
     int layered;  /* sample with `layout` (layers, weights, randc) */
     cr_layout_t layout;
 };
 
-#define CR_CACHE_ENTRIES 8u
+/* Exact models kept per session. An expanded problem has a component per
+ * array element or object, so the cache must hold every component one call
+ * solves, or each call would rebuild (or re-overflow) the evicted ones. */
+#define CR_CACHE_ENTRIES 32u
 
 static void cr_validate_problem(const llg_cr_problem_t* p) {
     for (uint32_t n = 0; n < p->node_count; ++n) {
@@ -314,7 +317,44 @@ uint32_t llg_cr_var_words(const llg_cr_session_t* s, uint32_t var) {
 
 /* ---- solve helpers -------------------------------------------------------- */
 
-static void cr_push_operands(const llg_cr_problem_t* p, uint32_t n, cr_u32vec_t* out) {
+static void cr_push_dist_operands(const llg_cr_problem_t* p, const llg_cr_node_t* nd,
+                                  cr_u32vec_t* out) {
+    const llg_cr_dist_t* d = &p->dists[nd->a];
+    cr_u32_push(out, d->expr);
+    if (d->guard != LLG_CR_NONE) cr_u32_push(out, d->guard);
+    for (uint32_t i = 0; i < d->item_count; ++i) {
+        const llg_cr_dist_item_t* item = &p->dist_items[d->item_first + i];
+        cr_u32_push(out, item->match);
+        cr_u32_push(out, item->lo);
+        cr_u32_push(out, item->hi);
+        if (item->weight != LLG_CR_NONE) cr_u32_push(out, item->weight);
+    }
+}
+
+/* An element's operands: the index and every entry, or, for a classified
+ * node (`live`) with a known index, only the index and the selected entry,
+ * so a known index does not join the other entries' variables into one
+ * component. */
+static void cr_push_elem_operands(const llg_cr_problem_t* p, llg_cr_session_t* live,
+                                  const llg_cr_node_t* nd, cr_u32vec_t* out) {
+    const llg_cr_table_t* t = &p->tables[nd->a];
+    cr_u32_push(out, nd->b);
+    if (live && live->status[nd->b] == CR_K) {
+        const llg_cr_node_t* ni = &p->nodes[nd->b];
+        int64_t index;
+        if (bv_index(cr_node_val(live, nd->b), ni->bit_width, ni->sign_flag, &index) && index >= 0 &&
+            (uint64_t)index < t->count && p->table_items[t->first + (uint32_t)index] != LLG_CR_NONE)
+            cr_u32_push(out, p->table_items[t->first + (uint32_t)index]);
+        return;
+    }
+    for (uint32_t i = 0; i < t->count; ++i)
+        if (p->table_items[t->first + i] != LLG_CR_NONE) cr_u32_push(out, p->table_items[t->first + i]);
+}
+
+/* The rare dist and element cases stay out of line so this switch remains
+ * small enough to inline into the traversals that run on every solve. */
+static void cr_push_node(const llg_cr_problem_t* p, llg_cr_session_t* live, uint32_t n,
+                         cr_u32vec_t* out) {
     const llg_cr_node_t* nd = &p->nodes[n];
     switch (nd->op) {
     case LLG_CR_CONST:
@@ -330,26 +370,12 @@ static void cr_push_operands(const llg_cr_problem_t* p, uint32_t n, cr_u32vec_t*
     case LLG_CR_ALL:
         for (uint32_t i = 0; i < nd->c; ++i) cr_u32_push(out, p->args[nd->b + i]);
         return;
-    case LLG_CR_DIST: {
-        const llg_cr_dist_t* d = &p->dists[nd->a];
-        cr_u32_push(out, d->expr);
-        if (d->guard != LLG_CR_NONE) cr_u32_push(out, d->guard);
-        for (uint32_t i = 0; i < d->item_count; ++i) {
-            const llg_cr_dist_item_t* item = &p->dist_items[d->item_first + i];
-            cr_u32_push(out, item->match);
-            cr_u32_push(out, item->lo);
-            cr_u32_push(out, item->hi);
-            if (item->weight != LLG_CR_NONE) cr_u32_push(out, item->weight);
-        }
+    case LLG_CR_DIST:
+        cr_push_dist_operands(p, nd, out);
         return;
-    }
-    case LLG_CR_ELEM: {
-        const llg_cr_table_t* t = &p->tables[nd->a];
-        cr_u32_push(out, nd->b);
-        for (uint32_t i = 0; i < t->count; ++i)
-            if (p->table_items[t->first + i] != LLG_CR_NONE) cr_u32_push(out, p->table_items[t->first + i]);
+    case LLG_CR_ELEM:
+        cr_push_elem_operands(p, live, nd, out);
         return;
-    }
     case LLG_CR_REPL:
     case LLG_CR_SLICE:
     case LLG_CR_RESIZE:
@@ -376,23 +402,14 @@ static void cr_push_operands(const llg_cr_problem_t* p, uint32_t n, cr_u32vec_t*
     }
 }
 
-/* Operands a classified node depends on: an element with a known index
- * depends only on the index and the selected entry, so a known index does
- * not join the other entries' variables into one component. */
+/* Every structural operand of node n. */
+static void cr_push_operands(const llg_cr_problem_t* p, uint32_t n, cr_u32vec_t* out) {
+    cr_push_node(p, NULL, n, out);
+}
+
+/* Operands a classified node depends on (see cr_push_elem_operands). */
 static void cr_push_live(llg_cr_session_t* s, uint32_t n, cr_u32vec_t* out) {
-    const llg_cr_problem_t* p = s->p;
-    const llg_cr_node_t* nd = &p->nodes[n];
-    if (nd->op == LLG_CR_ELEM && s->status[nd->b] == CR_K) {
-        const llg_cr_node_t* ni = &p->nodes[nd->b];
-        const llg_cr_table_t* t = &p->tables[nd->a];
-        int64_t index;
-        cr_u32_push(out, nd->b);
-        if (bv_index(cr_node_val(s, nd->b), ni->bit_width, ni->sign_flag, &index) && index >= 0 &&
-            (uint64_t)index < t->count && p->table_items[t->first + (uint32_t)index] != LLG_CR_NONE)
-            cr_u32_push(out, p->table_items[t->first + (uint32_t)index]);
-        return;
-    }
-    cr_push_operands(p, n, out);
+    cr_push_node(s->p, s, n, out);
 }
 
 static uint32_t cr_next_stamp(llg_cr_session_t* s) {
@@ -487,16 +504,25 @@ static void cr_cache_key(llg_cr_session_t* s, const uint32_t* conj, uint32_t nco
     }
 }
 
-/* Take the next cache slot (round robin), releasing what it held. */
+/* Take the next never-used slot, or else the least recently used one,
+ * releasing what it held. Slots fill in index order, so lookups scan only
+ * the first cache_count entries. */
 static cr_cache_entry_t* cr_cache_slot(llg_cr_session_t* s) {
-    cr_cache_entry_t* e = &s->cache[s->cache_next];
-    s->cache_next = (s->cache_next + 1u) % CR_CACHE_ENTRIES;
+    cr_cache_entry_t* e;
+    if (s->cache_count < CR_CACHE_ENTRIES) {
+        e = &s->cache[s->cache_count++];
+    } else {
+        e = &s->cache[0];
+        for (uint32_t i = 1; i < CR_CACHE_ENTRIES; ++i)
+            if (s->cache[i].used < e->used) e = &s->cache[i];
+    }
     free(e->key.data);
     cr_exact_free(&e->exact);
     free(e->level_var);
     free(e->level_bit);
     cr_layout_free(&e->layout);
     memset(e, 0, sizeof(*e));
+    e->used = ++s->cache_clock;
     return e;
 }
 
@@ -505,7 +531,6 @@ static void cr_remember_failure(llg_cr_session_t* s, cr_u64vec_t* key) {
     e->key = *key;
     key->data = NULL;
     key->len = key->cap = 0;
-    e->used = 1;
     e->failed = 1;
 }
 
@@ -549,7 +574,7 @@ static int cr_eval_cone(llg_cr_session_t* s, const uint8_t* in_cone, const uint3
 typedef struct {
     uint32_t* layer;        /* per problem variable (component members only) */
     uint32_t layer_count;
-    uint32_t* cyclic;       /* per layer: randc variable or LLG_CR_NONE */
+    uint32_t* cyclic;       /* per layer: randc variable or LLG_CR_NONE; NULL when plain */
     cr_u32vec_t dists;      /* R dist nodes in the cone */
     uint32_t* dist_layer;   /* per entry of dists */
     uint32_t selectors;     /* selector levels: one per weighted item + one per dist */
@@ -676,6 +701,15 @@ static llg_cr_status_t cr_plan_build(cr_solve_t* st, cr_plan_t* plan, const uint
     llg_cr_session_t* s = st->s;
     const llg_cr_problem_t* p = s->p;
     memset(plan, 0, sizeof(*plan));
+    /* The plain uniform measure needs no per-variable layers: one layer, no
+     * cyclic variable and no selector. This keeps unweighted components free
+     * of per-solve allocation and node scans. */
+    int plain = !st->height && !p->dist_count;
+    for (uint32_t i = 0; i < nvars && plain; ++i) plain = !p->vars[vars[i]].cyclic;
+    if (plain) {
+        plan->layer_count = 1u;
+        return LLG_CR_OK;
+    }
     plan->layer = (uint32_t*)cr_alloc(p->var_count ? p->var_count : 1u, sizeof(uint32_t));
     uint32_t cyclic = 0;
     for (uint32_t i = 0; i < nvars; ++i)
@@ -1134,7 +1168,7 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
         return result;
     }
     int cyclic = 0;
-    for (uint32_t l = 0; l < plan.layer_count; ++l) cyclic |= plan.cyclic[l] != LLG_CR_NONE;
+    for (uint32_t l = 0; plan.cyclic && l < plan.layer_count; ++l) cyclic |= plan.cyclic[l] != LLG_CR_NONE;
     uint64_t signature = cyclic ? cr_component_signature(s, conj, ncon) : 0u;
     result = LLG_CR_RESOURCE;
     int done = 0;
@@ -1147,11 +1181,12 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
         if (plan.layered)
             for (uint32_t i = 0; i < nvars; ++i) cr_u64_push(&key, ((uint64_t)1 << 63) | plan.layer[vars[i]]);
         int known_failure = 0;
-        for (uint32_t i = 0; i < CR_CACHE_ENTRIES && !done && !known_failure; ++i) {
+        for (uint32_t i = 0; i < s->cache_count && !done && !known_failure; ++i) {
             cr_cache_entry_t* e = &s->cache[i];
             if (!e->used || e->key.len != key.len ||
                 memcmp(e->key.data, key.data, key.len * sizeof(uint64_t)) != 0)
                 continue;
+            e->used = ++s->cache_clock;
             if (e->failed) {
                 /* Same inputs as an earlier overflow: skip straight to the
                  * fallbacks, as a rebuild would overflow identically. */
@@ -1218,7 +1253,6 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
                         e->level_bit = (uint32_t*)cr_alloc(aig.levels ? aig.levels : 1u, sizeof(uint32_t));
                         memcpy(e->level_var, aig.level_var, aig.levels * sizeof(uint32_t));
                         memcpy(e->level_bit, aig.level_bit, aig.levels * sizeof(uint32_t));
-                        e->used = 1;
                         if (plan.layered) {
                             e->layered = 1;
                             cr_layout_copy(&e->layout, &aig.layout);

@@ -24,7 +24,7 @@
  * LLG_CR_RESOURCE.
  */
 
-#define CR_TPL_FLATS 4u
+#define CR_TPL_FLATS 16u
 #define CR_X_NULL 0xFFFFFFFEu /* a ref that names no object */
 #define CR_X_DROP 0xFFFFFFFDu /* needs elements of an array of unknown size */
 
