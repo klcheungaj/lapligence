@@ -7,6 +7,8 @@ struct cr_cache_entry {
     uint32_t* level_bit;
     int used;
     int failed;   /* the exact engine exceeded its budget for this key */
+    int layered;  /* sample with `layout` (layers, weights, randc) */
+    cr_layout_t layout;
 };
 
 #define CR_CACHE_ENTRIES 8u
@@ -40,6 +42,21 @@ static void cr_validate_problem(const llg_cr_problem_t* p) {
             for (uint32_t i = 0; i < nd->c; ++i)
                 if (p->args[nd->b + i] >= n) cr_fatal("operand after its node");
             break;
+        case LLG_CR_DIST: {
+            if (nd->a >= p->dist_count) cr_fatal("dist out of range");
+            const llg_cr_dist_t* d = &p->dists[nd->a];
+            if (d->expr >= n || (d->guard != LLG_CR_NONE && d->guard >= n))
+                cr_fatal("dist operand after its node");
+            if ((uint64_t)d->item_first + d->item_count > p->dist_item_count)
+                cr_fatal("dist items out of range");
+            for (uint32_t i = 0; i < d->item_count; ++i) {
+                const llg_cr_dist_item_t* item = &p->dist_items[d->item_first + i];
+                if (item->match >= n || item->lo >= n || item->hi >= n ||
+                    (item->weight != LLG_CR_NONE && item->weight >= n))
+                    cr_fatal("dist item operand after its node");
+            }
+            break;
+        }
         case LLG_CR_REPL:
         case LLG_CR_SLICE:
         case LLG_CR_RESIZE:
@@ -64,8 +81,14 @@ static void cr_validate_problem(const llg_cr_problem_t* p) {
     }
     for (uint32_t b = 0; b < p->block_count; ++b)
         if (p->blocks[b].root >= p->node_count) cr_fatal("block root out of range");
+    for (uint32_t o = 0; o < p->order_count; ++o)
+        if (p->orders[o].block >= p->block_count || p->orders[o].before >= p->var_count ||
+            p->orders[o].after >= p->var_count)
+            cr_fatal("solve-before order out of range");
     for (uint32_t v = 0; v < p->var_count; ++v) {
         if (p->vars[v].bit_width == 0u) cr_fatal("zero-width variable");
+        if (p->vars[v].cyclic && p->vars[v].bit_width > LLG_CR_CYCLIC_MAX_WIDTH)
+            cr_fatal("randc variable too wide");
         if (p->vars[v].domain_node != LLG_CR_NONE && p->vars[v].domain_node >= p->node_count)
             cr_fatal("domain node out of range");
     }
@@ -137,6 +160,14 @@ llg_cr_session_t* llg_cr_session_get(const llg_cr_problem_t* p, llg_cr_session_t
     s->tmp_c = (uint64_t*)cr_alloc((size_t)s->max_words + 1u, sizeof(uint64_t));
     s->tmp_d = (uint64_t*)cr_alloc((size_t)s->max_words + 1u, sizeof(uint64_t));
     s->cache = (cr_cache_entry_t*)cr_alloc(CR_CACHE_ENTRIES, sizeof(cr_cache_entry_t));
+    s->cyc_off = (uint32_t*)cr_alloc(vars, sizeof(uint32_t));
+    words = 0;
+    for (uint32_t v = 0; v < p->var_count; ++v) {
+        s->cyc_off[v] = (uint32_t)words;
+        if (p->vars[v].cyclic) words += LLG_CR_CYCLIC_WORDS(p->vars[v].bit_width);
+    }
+    s->cyc = (uint64_t*)cr_alloc(words ? words : 1u, sizeof(uint64_t));
+    s->node_hash = (uint64_t*)cr_alloc(nodes, sizeof(uint64_t));
     s->next_session = cr_all_sessions;
     cr_all_sessions = s;
     if (slot) *slot = s;
@@ -150,8 +181,12 @@ static void cr_session_free(llg_cr_session_t* s) {
         cr_exact_free(&e->exact);
         free(e->level_var);
         free(e->level_bit);
+        cr_layout_free(&e->layout);
     }
     free(s->cache);
+    free(s->cyc_off);
+    free(s->cyc);
+    free(s->node_hash);
     free(s->node_off); free(s->val); free(s->status); free(s->ereason);
     free(s->eitem); free(s->stamp);
     free(s->var_off); free(s->var_cur); free(s->sol); free(s->var_active);
@@ -197,6 +232,17 @@ void llg_cr_set_leaf(llg_cr_session_t* s, uint32_t leaf, const uint64_t* words,
     s->leaf_input[leaf] = (uint8_t)input_state;
 }
 
+void llg_cr_set_cyclic(llg_cr_session_t* s, uint32_t var, const uint64_t* words) {
+    if (var >= s->p->var_count || !s->p->vars[var].cyclic) cr_fatal("not a randc variable");
+    uint32_t n = LLG_CR_CYCLIC_WORDS(s->p->vars[var].bit_width);
+    uint64_t* d = s->cyc + s->cyc_off[var];
+    for (uint32_t i = 0; i < n; ++i) d[i] = words ? words[i] : 0u;
+}
+
+const uint64_t* llg_cr_cyclic(const llg_cr_session_t* s, uint32_t var) {
+    return s->cyc + s->cyc_off[var];
+}
+
 const uint64_t* llg_cr_value(const llg_cr_session_t* s, uint32_t var) {
     return s->sol + s->var_off[var];
 }
@@ -223,6 +269,19 @@ static void cr_push_operands(const llg_cr_problem_t* p, uint32_t n, cr_u32vec_t*
     case LLG_CR_ALL:
         for (uint32_t i = 0; i < nd->c; ++i) cr_u32_push(out, p->args[nd->b + i]);
         return;
+    case LLG_CR_DIST: {
+        const llg_cr_dist_t* d = &p->dists[nd->a];
+        cr_u32_push(out, d->expr);
+        if (d->guard != LLG_CR_NONE) cr_u32_push(out, d->guard);
+        for (uint32_t i = 0; i < d->item_count; ++i) {
+            const llg_cr_dist_item_t* item = &p->dist_items[d->item_first + i];
+            cr_u32_push(out, item->match);
+            cr_u32_push(out, item->lo);
+            cr_u32_push(out, item->hi);
+            if (item->weight != LLG_CR_NONE) cr_u32_push(out, item->weight);
+        }
+        return;
+    }
     case LLG_CR_REPL:
     case LLG_CR_SLICE:
     case LLG_CR_RESIZE:
@@ -300,6 +359,9 @@ typedef struct {
     uint64_t reject_tries;
     uint64_t conflicts;
     uint32_t components;
+    /* solve-before height of each variable (longest order path to a sink
+     * over the whole problem), or NULL without orders (S30-D2). */
+    uint32_t* height;
 } cr_solve_t;
 
 /* Mark the R nodes below the conjuncts (ascending index order is post-order). */
@@ -346,6 +408,7 @@ static cr_cache_entry_t* cr_cache_slot(llg_cr_session_t* s) {
     cr_exact_free(&e->exact);
     free(e->level_var);
     free(e->level_bit);
+    cr_layout_free(&e->layout);
     memset(e, 0, sizeof(*e));
     return e;
 }
@@ -362,7 +425,8 @@ static void cr_remember_failure(llg_cr_session_t* s, cr_u64vec_t* key) {
 static void cr_assign_from_levels(llg_cr_session_t* s, const uint8_t* bits, uint32_t levels,
                                   const uint32_t* level_var, const uint32_t* level_bit) {
     for (uint32_t l = 0; l < levels; ++l)
-        bv_set_bit(s->sol + s->var_off[level_var[l]], level_bit[l], bits[l]);
+        if (level_var[l] != LLG_CR_NONE)
+            bv_set_bit(s->sol + s->var_off[level_var[l]], level_bit[l], bits[l]);
 }
 
 static void cr_sample_exact(cr_solve_t* st, const cr_exact_t* e, const uint32_t* level_var,
@@ -373,28 +437,144 @@ static void cr_sample_exact(cr_solve_t* st, const cr_exact_t* e, const uint32_t*
     free(bits);
 }
 
-/* Evaluate the cone's R nodes with the candidate values in `sol`. */
+/* Evaluate the cone with the candidate values in `sol`: the component's
+ * variables are fixed while the cone is classified again, so errors follow
+ * the same Figure 18-3 tables as verification (an error conjunct never
+ * holds), then the cone's R statuses are restored. */
 static int cr_eval_cone(llg_cr_session_t* s, const uint8_t* in_cone, const uint32_t* conj,
-                        uint32_t ncon) {
+                        uint32_t ncon, const uint32_t* vars, uint32_t nvars) {
     const llg_cr_problem_t* p = s->p;
-    for (uint32_t n = 0; n < p->node_count; ++n) {
-        if (!in_cone[n]) continue;
-        const llg_cr_node_t* nd = &p->nodes[n];
-        if (nd->op == LLG_CR_VAR) {
-            const llg_cr_var_t* var = &p->vars[nd->a];
-            cr_copy_input(s, n, s->sol + s->var_off[nd->a], var->bit_width, var->sign_flag);
-        } else if (cr_eval_op(s, n)) {
-            return 0; /* an evaluation error never satisfies a constraint */
-        }
+    for (uint32_t i = 0; i < nvars; ++i) s->var_fixed[vars[i]] = 1;
+    for (uint32_t n = 0; n < p->node_count; ++n)
+        if (in_cone[n]) cr_classify_node(s, n);
+    int ok = 1;
+    for (uint32_t i = 0; i < ncon && ok; ++i)
+        ok = s->status[conj[i]] == CR_K && cr_truth(s, conj[i]);
+    for (uint32_t i = 0; i < nvars; ++i) s->var_fixed[vars[i]] = 0;
+    for (uint32_t n = 0; n < p->node_count; ++n)
+        if (in_cone[n]) s->status[n] = CR_R;
+    return ok;
+}
+
+/* ---- component layering (S30-D1 to S30-D3) ------------------------------- */
+
+/* Layers, weights and cyclic variables of one component. */
+typedef struct {
+    uint32_t* layer;        /* per problem variable (component members only) */
+    uint32_t layer_count;
+    uint32_t* cyclic;       /* per layer: randc variable or LLG_CR_NONE */
+    cr_u32vec_t dists;      /* R dist nodes in the cone */
+    uint32_t* dist_layer;   /* per entry of dists */
+    uint32_t selectors;     /* selector levels: one per weighted item + one per dist */
+    int layered;            /* not the plain uniform measure */
+} cr_plan_t;
+
+static void cr_plan_free(cr_plan_t* plan) {
+    free(plan->layer);
+    free(plan->cyclic);
+    free(plan->dists.data);
+    free(plan->dist_layer);
+    memset(plan, 0, sizeof(*plan));
+}
+
+/* Number of values of dist item `item` ([lo:hi] in its comparison type) as
+ * a natural in `out` (limbs words); 0 when hi < lo. */
+static void cr_item_size(llg_cr_session_t* s, const llg_cr_dist_item_t* item, uint64_t* out,
+                         uint32_t limbs) {
+    const llg_cr_node_t* nl = &s->p->nodes[item->lo];
+    uint32_t w = nl->bit_width;
+    uint32_t words = CR_WORDS(w + 1u);
+    uint64_t* lo = (uint64_t*)cr_alloc(words, sizeof(uint64_t));
+    uint64_t* hi = (uint64_t*)cr_alloc(words, sizeof(uint64_t));
+    uint64_t* d = (uint64_t*)cr_alloc(words, sizeof(uint64_t));
+    int sgn = item->lo_signed;
+    bv_extend(lo, w + 1u, cr_node_val(s, item->lo), w, sgn);
+    bv_extend(hi, w + 1u, cr_node_val(s, item->hi), s->p->nodes[item->hi].bit_width, sgn);
+    for (uint32_t i = 0; i < limbs; ++i) out[i] = 0;
+    int less = sgn ? bv_scmp(hi, lo, w + 1u) < 0 : bv_ucmp(hi, lo, w + 1u) < 0;
+    if (!less) {
+        bv_sub(d, hi, lo, w + 1u);
+        for (uint32_t i = 0; i < words && i < limbs; ++i) out[i] = d[i];
+        uint64_t one[1] = {1};
+        bn_add(out, one, 1u);
     }
-    for (uint32_t i = 0; i < ncon; ++i)
-        if (!cr_truth(s, conj[i])) return 0;
-    return 1;
+    free(lo);
+    free(hi);
+    free(d);
+}
+
+/* Assign layers: randc variables first (one layer each), then the
+ * solve-before DAG as late as possible (18.5.9 L30075-30080). Returns
+ * LLG_CR_ERROR for a circular order. */
+static llg_cr_status_t cr_plan_build(cr_solve_t* st, cr_plan_t* plan, const uint32_t* vars,
+                                     uint32_t nvars, const uint8_t* in_cone) {
+    llg_cr_session_t* s = st->s;
+    const llg_cr_problem_t* p = s->p;
+    memset(plan, 0, sizeof(*plan));
+    plan->layer = (uint32_t*)cr_alloc(p->var_count ? p->var_count : 1u, sizeof(uint32_t));
+    uint32_t cyclic = 0;
+    for (uint32_t i = 0; i < nvars; ++i)
+        if (p->vars[vars[i]].cyclic) plan->layer[vars[i]] = cyclic++;
+    /* Ordered layers: the distinct global heights of the members, highest
+     * first; heights come from every order of the problem, so an order
+     * through another component still places its variable early. */
+    uint32_t max_height = 0;
+    uint32_t* height = (uint32_t*)cr_alloc(p->var_count ? p->var_count : 1u, sizeof(uint32_t));
+    if (st->height) {
+        uint32_t* distinct = (uint32_t*)cr_alloc(nvars ? nvars : 1u, sizeof(uint32_t));
+        uint32_t count = 0;
+        for (uint32_t i = 0; i < nvars; ++i) {
+            if (p->vars[vars[i]].cyclic) continue;
+            uint32_t h = st->height[vars[i]], k = 0;
+            while (k < count && distinct[k] != h) ++k;
+            if (k == count) distinct[count++] = h;
+        }
+        for (uint32_t i = 0; i < nvars; ++i) {
+            if (p->vars[vars[i]].cyclic) continue;
+            uint32_t rank = 0;
+            for (uint32_t k = 0; k < count; ++k) rank += distinct[k] < st->height[vars[i]];
+            height[vars[i]] = rank;
+            if (rank > max_height) max_height = rank;
+        }
+        free(distinct);
+    }
+    for (uint32_t i = 0; i < nvars; ++i)
+        if (!p->vars[vars[i]].cyclic) plan->layer[vars[i]] = cyclic + max_height - height[vars[i]];
+    plan->layer_count = cyclic + max_height + 1u;
+    plan->cyclic = (uint32_t*)cr_alloc(plan->layer_count, sizeof(uint32_t));
+    for (uint32_t l = 0; l < plan->layer_count; ++l) plan->cyclic[l] = LLG_CR_NONE;
+    for (uint32_t i = 0; i < nvars; ++i)
+        if (p->vars[vars[i]].cyclic) plan->cyclic[plan->layer[vars[i]]] = vars[i];
+    /* Weighted dists: each weighs the layer of its latest variable. */
+    cr_u32vec_t support = {0, 0, 0}, stack = {0, 0, 0};
+    for (uint32_t n = 0; n < p->node_count; ++n) {
+        if (!in_cone[n] || p->nodes[n].op != LLG_CR_DIST) continue;
+        const llg_cr_dist_t* d = &p->dists[p->nodes[n].a];
+        uint32_t items = 0;
+        for (uint32_t i = 0; i < d->item_count; ++i)
+            if (!cr_dist_item_zero(s, &p->dist_items[d->item_first + i])) ++items;
+        support.len = 0;
+        cr_support(s, n, 0, &support, NULL, &stack);
+        uint32_t layer = 0;
+        for (size_t i = 0; i < support.len; ++i)
+            if (plan->layer[support.data[i]] > layer) layer = plan->layer[support.data[i]];
+        cr_u32_push(&plan->dists, n);
+        plan->dist_layer = (uint32_t*)realloc(plan->dist_layer, plan->dists.len * sizeof(uint32_t));
+        if (!plan->dist_layer) cr_fatal("out of memory");
+        plan->dist_layer[plan->dists.len - 1u] = layer;
+        plan->selectors += items + 1u;
+    }
+    free(support.data);
+    free(stack.data);
+    free(height);
+    plan->layered = plan->layer_count > 1u || plan->dists.len > 0u;
+    return LLG_CR_OK;
 }
 
 /* A component bit-blasted into one AIG, shared by the exact engine and the
  * CDCL fallback. Level l (BDD order: bit positions most significant first,
- * variables interleaved in index order) is AIG input l + 1. */
+ * variables interleaved in index order, then the dist selectors) is AIG
+ * input l + 1. A selector level has level_var LLG_CR_NONE. */
 typedef struct {
     cr_blast_t blast;
     uint32_t* level_var;
@@ -403,11 +583,19 @@ typedef struct {
     uint32_t out;       /* AIG literal of the conjunction */
     int built;
     int overflow;       /* the AIG exceeded its node bound */
+    cr_layout_t layout; /* filled for a layered plan */
 } cr_comp_aig_t;
+
+/* Literal of a guard (truth and no error); true without a guard. */
+static uint32_t cr_guard_lit(llg_cr_session_t* s, cr_blast_t* b, uint32_t guard) {
+    if (guard == LLG_CR_NONE) return CR_TRUE;
+    if (s->status[guard] == CR_K) return cr_truth(s, guard) ? CR_TRUE : CR_FALSE;
+    return cr_conjunct_lit(s, b, guard);
+}
 
 static void cr_comp_aig_build(cr_solve_t* st, cr_comp_aig_t* c, const uint32_t* vars,
                               uint32_t nvars, const uint32_t* conj, uint32_t ncon,
-                              const uint8_t* in_cone) {
+                              const uint8_t* in_cone, const cr_plan_t* plan) {
     llg_cr_session_t* s = st->s;
     const llg_cr_problem_t* p = s->p;
     uint64_t bits = 0;
@@ -416,16 +604,18 @@ static void cr_comp_aig_build(cr_solve_t* st, cr_comp_aig_t* c, const uint32_t* 
         bits += p->vars[vars[i]].bit_width;
         if (p->vars[vars[i]].bit_width > maxw) maxw = p->vars[vars[i]].bit_width;
     }
-    if (bits >= (uint64_t)(UINT32_MAX >> 2)) {
+    uint32_t selectors = plan && plan->layered ? plan->selectors : 0u;
+    if (bits + selectors >= (uint64_t)(UINT32_MAX >> 2)) {
         c->built = c->overflow = 1;
         return;
     }
-    uint32_t levels = (uint32_t)bits;
+    uint32_t var_levels = (uint32_t)bits;
+    uint32_t levels = var_levels + selectors;
     c->levels = levels;
     c->level_var = (uint32_t*)cr_alloc(levels ? levels : 1u, sizeof(uint32_t));
     c->level_bit = (uint32_t*)cr_alloc(levels ? levels : 1u, sizeof(uint32_t));
     uint32_t* var_base = (uint32_t*)cr_alloc(p->var_count, sizeof(uint32_t));
-    uint32_t* bit_input = (uint32_t*)cr_alloc(levels ? levels : 1u, sizeof(uint32_t));
+    uint32_t* bit_input = (uint32_t*)cr_alloc(var_levels ? var_levels : 1u, sizeof(uint32_t));
     uint32_t base = 0;
     for (uint32_t i = 0; i < nvars; ++i) {
         var_base[vars[i]] = base;
@@ -442,10 +632,15 @@ static void cr_comp_aig_build(cr_solve_t* st, cr_comp_aig_t* c, const uint32_t* 
             ++l;
         }
     }
+    for (uint32_t k = 0; k < selectors; ++k) {
+        c->level_var[var_levels + k] = LLG_CR_NONE;
+        c->level_bit[var_levels + k] = k;
+    }
     uint64_t aig_limit = st->t->bdd_nodes > (UINT64_MAX / 8u) ? UINT64_MAX : st->t->bdd_nodes * 8u;
     if (aig_limit < 4096u) aig_limit = 4096u;
     cr_aig_init(&c->blast.aig, levels, aig_limit + levels);
     c->blast.lit_off = (uint32_t*)cr_alloc(p->node_count ? p->node_count : 1u, sizeof(uint32_t));
+    c->blast.err = (uint32_t*)cr_alloc(p->node_count ? p->node_count : 1u, sizeof(uint32_t));
     for (uint32_t n = 0; n < p->node_count; ++n) c->blast.lit_off[n] = UINT32_MAX;
     c->blast.lits.data = NULL;
     c->blast.lits.len = c->blast.lits.cap = 0;
@@ -453,7 +648,115 @@ static void cr_comp_aig_build(cr_solve_t* st, cr_comp_aig_t* c, const uint32_t* 
         if (in_cone[n]) cr_blast_node(s, &c->blast, n, var_base, bit_input);
     uint32_t out = CR_TRUE;
     for (uint32_t i = 0; i < ncon && !c->blast.aig.overflow; ++i)
-        out = cr_and(&c->blast.aig, out, cr_operand_truth(s, &c->blast, conj[i]));
+        out = cr_and(&c->blast.aig, out, cr_conjunct_lit(s, &c->blast, conj[i]));
+    if (selectors && !c->blast.aig.overflow) {
+        /* Layout: layers per level, selector weights (S30-D1). */
+        cr_layout_t* lay = &c->layout;
+        lay->levels = levels;
+        lay->layer_count = plan->layer_count;
+        uint32_t weight_bits = 0;
+        for (size_t d = 0; d < plan->dists.len; ++d) {
+            const llg_cr_dist_t* dist = &p->dists[p->nodes[plan->dists.data[d]].a];
+            for (uint32_t i = 0; i < dist->item_count; ++i) {
+                const llg_cr_dist_item_t* item = &p->dist_items[dist->item_first + i];
+                weight_bits += p->nodes[item->lo].bit_width + 2u;
+                if (item->weight != LLG_CR_NONE) weight_bits += p->nodes[item->weight].bit_width;
+            }
+            weight_bits += 2u;
+        }
+        uint32_t limbs = (var_levels + 2u * weight_bits) / 64u + 3u;
+        lay->limbs = limbs;
+        lay->layer = (uint8_t*)cr_alloc(levels ? levels : 1u, 1u);
+        lay->selector = (uint8_t*)cr_alloc(levels ? levels : 1u, 1u);
+        lay->weight = (uint64_t*)cr_alloc((size_t)(levels ? levels : 1u) * limbs, sizeof(uint64_t));
+        lay->cyclic = (uint32_t*)cr_alloc(plan->layer_count, sizeof(uint32_t));
+        memcpy(lay->cyclic, plan->cyclic, plan->layer_count * sizeof(uint32_t));
+        for (uint32_t lv = 0; lv < var_levels; ++lv) lay->layer[lv] = (uint8_t)plan->layer[c->level_var[lv]];
+        uint64_t* scale = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
+        uint64_t* size = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
+        uint64_t* t = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
+        uint32_t level = var_levels;
+        cr_aig_t* g = &c->blast.aig;
+        for (size_t d = 0; d < plan->dists.len && !g->overflow; ++d) {
+            uint32_t dnode = plan->dists.data[d];
+            const llg_cr_dist_t* dist = &p->dists[p->nodes[dnode].a];
+            /* Scale: the product of the :/ range sizes, so every per-value
+             * weight w or w/n is an integer (S30-D1). */
+            for (uint32_t i = 0; i < limbs; ++i) scale[i] = 0;
+            scale[0] = 1;
+            for (uint32_t i = 0; i < dist->item_count; ++i) {
+                const llg_cr_dist_item_t* item = &p->dist_items[dist->item_first + i];
+                if (!item->per_range || cr_dist_item_zero(s, item)) continue;
+                cr_item_size(s, item, size, limbs);
+                if (!bn_bits(size, limbs)) continue;
+                bn_mul(t, scale, size, limbs);
+                memcpy(scale, t, limbs * sizeof(uint64_t));
+            }
+            uint32_t guard = cr_guard_lit(s, &c->blast, dist->guard);
+            uint32_t first = level;
+            /* Selector 0: the guard does not hold; weight = scale. */
+            uint32_t s0 = (level + 1u) << 1;
+            lay->selector[level] = 1;
+            lay->layer[level] = (uint8_t)plan->dist_layer[d];
+            memcpy(lay->weight + (size_t)level * limbs, scale, limbs * sizeof(uint64_t));
+            out = cr_and(g, out, cr_or(g, s0 ^ 1u, guard ^ 1u));
+            ++level;
+            for (uint32_t i = 0; i < dist->item_count; ++i) {
+                const llg_cr_dist_item_t* item = &p->dist_items[dist->item_first + i];
+                if (cr_dist_item_zero(s, item)) continue;
+                uint32_t sel = (level + 1u) << 1;
+                lay->selector[level] = 1;
+                lay->layer[level] = (uint8_t)plan->dist_layer[d];
+                uint64_t* w = lay->weight + (size_t)level * limbs;
+                for (uint32_t k = 0; k < limbs; ++k) w[k] = 0;
+                if (item->weight == LLG_CR_NONE) {
+                    w[0] = 1;
+                } else {
+                    const uint64_t* wv = cr_node_val(s, item->weight);
+                    for (uint32_t k = 0; k < CR_WORDS(p->nodes[item->weight].bit_width) && k < limbs; ++k)
+                        w[k] = wv[k];
+                }
+                /* w * scale, divided by this item's range size for :/ :
+                 * the product of the other :/ sizes. */
+                for (uint32_t k = 0; k < limbs; ++k) t[k] = 0;
+                t[0] = 1;
+                for (uint32_t j = 0; j < dist->item_count; ++j) {
+                    const llg_cr_dist_item_t* other = &p->dist_items[dist->item_first + j];
+                    if (!other->per_range || cr_dist_item_zero(s, other)) continue;
+                    if (j == i && item->per_range) continue;
+                    cr_item_size(s, other, size, limbs);
+                    if (!bn_bits(size, limbs)) continue;
+                    uint64_t* prod = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
+                    bn_mul(prod, t, size, limbs);
+                    memcpy(t, prod, limbs * sizeof(uint64_t));
+                    free(prod);
+                }
+                if (item->per_range) {
+                    cr_item_size(s, item, size, limbs);
+                    if (!bn_bits(size, limbs)) for (uint32_t k = 0; k < limbs; ++k) t[k] = 0;
+                }
+                uint64_t* prod = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
+                bn_mul(prod, w, t, limbs);
+                memcpy(w, prod, limbs * sizeof(uint64_t));
+                free(prod);
+                out = cr_and(g, out, cr_or(g, sel ^ 1u,
+                                          cr_and(g, guard, cr_conjunct_lit(s, &c->blast, item->match))));
+                ++level;
+            }
+            /* Exactly one selector of this dist. */
+            uint32_t any = CR_FALSE;
+            for (uint32_t a = first; a < level; ++a) {
+                uint32_t la = (a + 1u) << 1;
+                any = cr_or(g, any, la);
+                for (uint32_t b2 = a + 1u; b2 < level; ++b2)
+                    out = cr_and(g, out, cr_and(g, la, (b2 + 1u) << 1) ^ 1u);
+            }
+            out = cr_and(g, out, any);
+        }
+        free(scale);
+        free(size);
+        free(t);
+    }
     c->out = out;
     c->built = 1;
     c->overflow = c->blast.aig.overflow;
@@ -464,10 +767,153 @@ static void cr_comp_aig_build(cr_solve_t* st, cr_comp_aig_t* c, const uint32_t* 
 static void cr_comp_aig_free(cr_comp_aig_t* c) {
     if (c->blast.aig.left || c->blast.aig.table) cr_aig_free(&c->blast.aig);
     free(c->blast.lit_off);
+    free(c->blast.err);
     free(c->blast.lits.data);
     free(c->level_var);
     free(c->level_bit);
+    cr_layout_free(&c->layout);
     memset(c, 0, sizeof(*c));
+}
+
+/* Structural hash of node n (operators, widths, constants, variable, state
+ * and call names; never state values), memoised per session. */
+static uint64_t cr_node_hash(llg_cr_session_t* s, uint32_t n) {
+    if (s->node_hash[n]) return s->node_hash[n];
+    const llg_cr_problem_t* p = s->p;
+    const llg_cr_node_t* nd = &p->nodes[n];
+    uint64_t h = cr_mix(((uint64_t)nd->op << 40) ^ ((uint64_t)nd->sign_flag << 32) ^ nd->bit_width);
+    switch (nd->op) {
+    case LLG_CR_CONST:
+        for (uint32_t i = 0; i < CR_WORDS(nd->bit_width); ++i) h = cr_mix(h ^ p->consts[nd->a + i]);
+        break;
+    case LLG_CR_VAR: h = cr_mix(h ^ cr_hash_text(p->vars[nd->a].name)); break;
+    case LLG_CR_STATE: h = cr_mix(h ^ cr_hash_text(p->leaves[nd->a].name)); break;
+    case LLG_CR_CALL: h = cr_mix(h ^ cr_hash_text(p->calls[nd->a].name)); break;
+    case LLG_CR_SLICE:
+    case LLG_CR_REPL: h = cr_mix(h ^ nd->b); break;
+    default: break;
+    }
+    cr_u32vec_t ops = {0, 0, 0};
+    cr_push_operands(p, n, &ops);
+    for (size_t i = 0; i < ops.len; ++i) h = cr_mix(h + cr_node_hash(s, ops.data[i]) * (i + 1u));
+    free(ops.data);
+    if (!h) h = 1u;
+    s->node_hash[n] = h;
+    return h;
+}
+
+/* randc signature of a component: its conjuncts' structure (S30-D3). */
+static uint64_t cr_component_signature(llg_cr_session_t* s, const uint32_t* conj, uint32_t ncon) {
+    uint64_t sum = 0;
+    for (uint32_t i = 0; i < ncon; ++i) sum += cr_mix(cr_node_hash(s, conj[i]));
+    return cr_mix(sum ^ ncon);
+}
+
+#define CR_CYCLIC_TRIES 64u
+
+/* Draw one sample from a layered exact model (S30-D1 to S30-D3). Returns
+ * LLG_CR_OK or LLG_CR_UNSAT (no value of a layer has a completion). */
+static llg_cr_status_t cr_layered_sample(cr_solve_t* st, const cr_exact_t* e,
+                                         const cr_layout_t* lay, const uint32_t* level_var,
+                                         const uint32_t* level_bit, uint64_t signature) {
+    llg_cr_session_t* s = st->s;
+    uint32_t levels = e->levels;
+    int8_t* fixed = (int8_t*)cr_alloc(levels ? levels : 1u, 1u);
+    uint8_t* bits = (uint8_t*)cr_alloc(levels ? levels : 1u, 1u);
+    for (uint32_t l = 0; l < levels; ++l) fixed[l] = -1;
+    cr_wcount_t c;
+    memset(&c, 0, sizeof(c));
+    c.e = e;
+    c.l = lay;
+    c.fixed = fixed;
+    c.cnt = (uint64_t*)cr_alloc((size_t)e->nodes * lay->limbs, sizeof(uint64_t));
+    c.count_prefix = (uint32_t*)cr_alloc((size_t)levels + 1u, sizeof(uint32_t));
+    c.t1 = (uint64_t*)cr_alloc(lay->limbs, sizeof(uint64_t));
+    c.t2 = (uint64_t*)cr_alloc(lay->limbs, sizeof(uint64_t));
+    llg_cr_status_t status = LLG_CR_OK;
+    for (uint32_t layer = 0; layer < lay->layer_count && status == LLG_CR_OK; ++layer) {
+        uint32_t root = layer + 1u < lay->layer_count ? e->roots[layer + 1u] : e->roots[0];
+        c.layer = layer;
+        cr_wcount_prepare(&c);
+        uint32_t var = lay->cyclic[layer];
+        if (var == LLG_CR_NONE) {
+            if (!cr_wcount_draw(&c, root, st->rng, bits)) status = LLG_CR_UNSAT;
+        } else {
+            cr_cyc_check(s, var, cr_mix(signature ^ cr_hash_text(s->p->vars[var].name)));
+            uint64_t value = 0;
+            int found = 0;
+            for (uint32_t t = 0; t < CR_CYCLIC_TRIES && !found; ++t) {
+                if (!cr_wcount_draw(&c, root, st->rng, bits)) {
+                    status = LLG_CR_UNSAT;
+                    break;
+                }
+                value = 0;
+                for (uint32_t l = 0; l < levels; ++l)
+                    if (lay->layer[l] == layer && fixed[l] < 0 && bits[l])
+                        value |= UINT64_C(1) << level_bit[l];
+                found = !cr_cyc_used(s, var, value);
+            }
+            if (status == LLG_CR_OK && !found) {
+                cr_u64vec_t values = {0, 0, 0};
+                cr_enum_values(&c, root, 0u, 0u, level_bit, &values);
+                uint64_t unused = 0;
+                for (size_t i = 0; i < values.len; ++i) unused += !cr_cyc_used(s, var, values.data[i]);
+                if (!unused) {
+                    /* Nothing left in this cycle can satisfy the constraints:
+                     * a new cycle starts (18.4.2 L29445-29447). */
+                    cr_cyc_reset(s, var);
+                    unused = values.len;
+                }
+                if (!unused) {
+                    status = LLG_CR_UNSAT;
+                } else {
+                    uint64_t bound[2] = {unused, 0}, r[2];
+                    bn_uniform(st->rng, r, bound, 2u);
+                    for (size_t i = 0; i < values.len; ++i) {
+                        if (cr_cyc_used(s, var, values.data[i])) continue;
+                        if (r[0]-- == 0u) {
+                            value = values.data[i];
+                            break;
+                        }
+                    }
+                }
+                free(values.data);
+            }
+            if (status == LLG_CR_OK) {
+                cr_cyc_mark(s, var, value);
+                for (uint32_t l = 0; l < levels; ++l)
+                    if (lay->layer[l] == layer && fixed[l] < 0)
+                        bits[l] = (uint8_t)((value >> level_bit[l]) & 1u);
+            }
+        }
+        for (uint32_t l = 0; l < levels; ++l)
+            if (lay->layer[l] == layer && fixed[l] < 0) fixed[l] = (int8_t)bits[l];
+    }
+    if (status == LLG_CR_OK)
+        for (uint32_t l = 0; l < levels; ++l)
+            if (level_var[l] != LLG_CR_NONE)
+                bv_set_bit(s->sol + s->var_off[level_var[l]], level_bit[l], fixed[l] > 0);
+    free(fixed);
+    free(bits);
+    free(c.cnt);
+    free(c.count_prefix);
+    free(c.t1);
+    free(c.t2);
+    return status;
+}
+
+/* Build the projections Q_i = exists(levels of later layers). F for every
+ * layer but the last; roots[0] = F, roots[1 + i] = Q_i. */
+static int cr_layer_roots(cr_bdd_t* m, uint32_t root, const cr_layout_t* lay, uint32_t* roots) {
+    roots[0] = root;
+    uint8_t* quant = (uint8_t*)cr_alloc(lay->levels ? lay->levels : 1u, 1u);
+    for (uint32_t layer = 0; layer + 1u < lay->layer_count; ++layer) {
+        for (uint32_t l = 0; l < lay->levels; ++l) quant[l] = lay->layer[l] > layer;
+        roots[layer + 1u] = cr_bdd_exists(m, root, quant, layer);
+        if (m->overflow) break;
+    }
+    free(quant);
+    return !m->overflow;
 }
 
 static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, uint32_t nvars,
@@ -480,14 +926,27 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
     uint8_t* in_cone = (uint8_t*)cr_alloc(p->node_count ? p->node_count : 1u, 1u);
     cr_u32vec_t stack = {0, 0, 0};
     cr_mark_cone(s, conj, ncon, in_cone, &stack);
-    llg_cr_status_t result = LLG_CR_RESOURCE;
+    cr_plan_t plan;
+    llg_cr_status_t result = cr_plan_build(st, &plan, vars, nvars, in_cone);
+    if (result != LLG_CR_OK) {
+        cr_plan_free(&plan);
+        free(stack.data);
+        free(in_cone);
+        return result;
+    }
+    int cyclic = 0;
+    for (uint32_t l = 0; l < plan.layer_count; ++l) cyclic |= plan.cyclic[l] != LLG_CR_NONE;
+    uint64_t signature = cyclic ? cr_component_signature(s, conj, ncon) : 0u;
+    result = LLG_CR_RESOURCE;
     int done = 0;
     cr_comp_aig_t aig;
     memset(&aig, 0, sizeof(aig));
 
-    if (bits <= st->t->bdd_bits) {
+    if (bits + plan.selectors <= st->t->bdd_bits) {
         cr_u64vec_t key = {0, 0, 0};
         cr_cache_key(s, conj, ncon, vars, nvars, in_cone, &key, &stack);
+        if (plan.layered)
+            for (uint32_t i = 0; i < nvars; ++i) cr_u64_push(&key, ((uint64_t)1 << 63) | plan.layer[vars[i]]);
         int known_failure = 0;
         for (uint32_t i = 0; i < CR_CACHE_ENTRIES && !done && !known_failure; ++i) {
             cr_cache_entry_t* e = &s->cache[i];
@@ -501,13 +960,18 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
                 st->budget = st->budget ? st->budget : "LLG_RAND_BDD_NODES";
                 continue;
             }
-            cr_sample_exact(st, &e->exact, e->level_var, e->level_bit);
+            if (e->layered)
+                result = cr_layered_sample(st, &e->exact, &e->layout, e->level_var, e->level_bit,
+                                           signature);
+            else {
+                cr_sample_exact(st, &e->exact, e->level_var, e->level_bit);
+                result = LLG_CR_OK;
+            }
             st->report->engines |= LLG_CR_ENGINE_BDD | LLG_CR_ENGINE_CACHE;
-            result = LLG_CR_OK;
             done = 1;
         }
         if (!done && !known_failure) {
-            cr_comp_aig_build(st, &aig, vars, nvars, conj, ncon, in_cone);
+            cr_comp_aig_build(st, &aig, vars, nvars, conj, ncon, in_cone, &plan);
             if (aig.overflow) {
                 cr_remember_failure(s, &key);
                 if (!st->budget) st->budget = "LLG_RAND_BDD_NODES";
@@ -518,6 +982,28 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
                 cr_bdd_t m;
                 cr_bdd_init(&m, aig.levels, st->t->bdd_nodes);
                 uint32_t root = cr_bdd_from_aig(&m, &aig.blast.aig, aig.out);
+                uint32_t* roots = (uint32_t*)cr_alloc(plan.layer_count + 1u, sizeof(uint32_t));
+                uint32_t root_count = 1u;
+                if (!m.overflow && root != 0u && plan.layered) {
+                    if (!aig.layout.levels) {
+                        /* Layers without dists: no selector levels. */
+                        aig.layout.levels = aig.levels;
+                        aig.layout.layer_count = plan.layer_count;
+                        aig.layout.limbs = aig.levels / 64u + 3u;
+                        aig.layout.layer = (uint8_t*)cr_alloc(aig.levels ? aig.levels : 1u, 1u);
+                        aig.layout.selector = (uint8_t*)cr_alloc(aig.levels ? aig.levels : 1u, 1u);
+                        aig.layout.weight = (uint64_t*)cr_alloc(
+                            (size_t)(aig.levels ? aig.levels : 1u) * aig.layout.limbs, sizeof(uint64_t));
+                        aig.layout.cyclic = (uint32_t*)cr_alloc(plan.layer_count, sizeof(uint32_t));
+                        memcpy(aig.layout.cyclic, plan.cyclic, plan.layer_count * sizeof(uint32_t));
+                        for (uint32_t l = 0; l < aig.levels; ++l)
+                            aig.layout.layer[l] = (uint8_t)plan.layer[aig.level_var[l]];
+                    }
+                    cr_layer_roots(&m, root, &aig.layout, roots);
+                    root_count = plan.layer_count;
+                } else {
+                    roots[0] = root;
+                }
                 st->bdd_nodes += m.count;
                 if (!m.overflow) {
                     if (root == 0u) {
@@ -527,15 +1013,22 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
                         e->key = key;
                         key.data = NULL;
                         key.len = key.cap = 0;
-                        cr_exact_build(&e->exact, &m, root);
+                        cr_exact_build(&e->exact, &m, roots, root_count);
                         /* The entry keeps copies of the level maps. */
                         e->level_var = (uint32_t*)cr_alloc(aig.levels ? aig.levels : 1u, sizeof(uint32_t));
                         e->level_bit = (uint32_t*)cr_alloc(aig.levels ? aig.levels : 1u, sizeof(uint32_t));
                         memcpy(e->level_var, aig.level_var, aig.levels * sizeof(uint32_t));
                         memcpy(e->level_bit, aig.level_bit, aig.levels * sizeof(uint32_t));
                         e->used = 1;
-                        cr_sample_exact(st, &e->exact, e->level_var, e->level_bit);
-                        result = LLG_CR_OK;
+                        if (plan.layered) {
+                            e->layered = 1;
+                            cr_layout_copy(&e->layout, &aig.layout);
+                            result = cr_layered_sample(st, &e->exact, &e->layout, e->level_var,
+                                                       e->level_bit, signature);
+                        } else {
+                            cr_sample_exact(st, &e->exact, e->level_var, e->level_bit);
+                            result = LLG_CR_OK;
+                        }
                     }
                     st->report->engines |= LLG_CR_ENGINE_BDD;
                     done = 1;
@@ -543,6 +1036,7 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
                     cr_remember_failure(s, &key);
                     if (!st->budget) st->budget = "LLG_RAND_BDD_NODES";
                 }
+                free(roots);
                 cr_bdd_free(&m);
             }
         }
@@ -551,14 +1045,22 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
         st->budget = "LLG_RAND_BDD_BITS";
     }
 
+    if (!done && cyclic) {
+        /* A randc cycle needs the exact model (S30-D9). */
+        st->budget = st->budget ? st->budget : "LLG_RAND_BDD_NODES";
+        done = 1;
+        result = LLG_CR_RESOURCE;
+    }
+
     if (!done) {
         /* Uniform rejection: every accepted draw is uniform over the
-         * solutions because draws cover each variable's whole domain. */
+         * solutions because draws cover each variable's whole domain.
+         * dist weights and solve-before orders are not applied (S30-D9). */
         for (uint64_t attempt = 0; attempt < st->t->reject_tries; ++attempt) {
             for (uint32_t i = 0; i < nvars; ++i)
                 cr_draw_bits(st->rng, s->sol + s->var_off[vars[i]], p->vars[vars[i]].bit_width);
             st->reject_tries++;
-            if (cr_eval_cone(s, in_cone, conj, ncon)) {
+            if (cr_eval_cone(s, in_cone, conj, ncon, vars, nvars)) {
                 st->report->engines |= LLG_CR_ENGINE_REJECT;
                 result = LLG_CR_OK;
                 done = 1;
@@ -571,7 +1073,7 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
     if (!done) {
         /* Search fallback (not uniform, S29-D10): complete, so its budget is
          * the one to raise. It shares the AIG and its node bound. */
-        if (!aig.built) cr_comp_aig_build(st, &aig, vars, nvars, conj, ncon, in_cone);
+        if (!aig.built) cr_comp_aig_build(st, &aig, vars, nvars, conj, ncon, in_cone, &plan);
         if (aig.overflow) {
             st->budget = "LLG_RAND_BDD_NODES";
         } else if (st->t->conflicts == 0u) {
@@ -595,6 +1097,7 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
         }
     }
     cr_comp_aig_free(&aig);
+    cr_plan_free(&plan);
     free(stack.data);
     free(in_cone);
     return result;
@@ -691,6 +1194,45 @@ static void cr_print_stats(const cr_solve_t* st, llg_cr_status_t status) {
 
 static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach);
 
+/* Order an edge applies to: from an enabled block, between two distinct
+ * active non-randc variables (18.5.9 L30061-30062 excludes randc). */
+static int cr_order_live(const llg_cr_session_t* s, const llg_cr_order_t* o) {
+    const llg_cr_problem_t* p = s->p;
+    return s->block_enabled[o->block] && o->before != o->after && s->var_active[o->before] &&
+           s->var_active[o->after] && !p->vars[o->before].cyclic && !p->vars[o->after].cyclic;
+}
+
+/* Heights of the solve-before DAG: a variable's longest path to a sink.
+ * Unordered variables have height 0 and so join the last ordered set, as
+ * late as possible (18.5.9 L30075-30080, S30-D2). */
+static llg_cr_status_t cr_order_heights(cr_solve_t* st) {
+    llg_cr_session_t* s = st->s;
+    const llg_cr_problem_t* p = s->p;
+    uint32_t live = 0;
+    for (uint32_t o = 0; o < p->order_count; ++o) live += (uint32_t)cr_order_live(s, &p->orders[o]);
+    if (!live) return LLG_CR_OK;
+    st->height = (uint32_t*)cr_alloc(p->var_count, sizeof(uint32_t));
+    for (uint32_t round = 0;; ++round) {
+        int changed = 0;
+        for (uint32_t o = 0; o < p->order_count; ++o) {
+            const llg_cr_order_t* ord = &p->orders[o];
+            if (!cr_order_live(s, ord)) continue;
+            if (st->height[ord->before] < st->height[ord->after] + 1u) {
+                if (round > p->var_count) {
+                    /* Still growing after more rounds than variables: a
+                     * circular order (18.5.9 L30071-30072). */
+                    st->report->reason = LLG_CR_REASON_ORDER;
+                    st->report->item = ord->before;
+                    return LLG_CR_ERROR;
+                }
+                st->height[ord->before] = st->height[ord->after] + 1u;
+                changed = 1;
+            }
+        }
+        if (!changed) return LLG_CR_OK;
+    }
+}
+
 void llg_cr_begin(llg_cr_session_t* s) {
     for (uint32_t v = 0; v < s->p->var_count; ++v) s->var_fixed[v] = 0;
     for (uint32_t c = 0; c < s->p->call_count; ++c) s->call_state[c] = 0;
@@ -710,9 +1252,13 @@ llg_cr_status_t llg_cr_step(llg_cr_session_t* s, const llg_cr_rng_t* rng,
     st.rng = rng;
     st.report = report;
     st.t = llg_cr_tunables();
-    uint8_t* reach = (uint8_t*)cr_alloc(s->p->node_count ? s->p->node_count : 1u, 1u);
-    llg_cr_status_t status = cr_solve_inner(&st, reach);
-    free(reach);
+    llg_cr_status_t status = cr_order_heights(&st);
+    if (status == LLG_CR_OK) {
+        uint8_t* reach = (uint8_t*)cr_alloc(s->p->node_count ? s->p->node_count : 1u, 1u);
+        status = cr_solve_inner(&st, reach);
+        free(reach);
+    }
+    free(st.height);
     s->engines = report->engines;
     if (status == LLG_CR_RESOURCE) report->budget = st.budget ? st.budget : "LLG_RAND_REJECT_TRIES";
     if (st.t->stats && status != LLG_CR_NEED_CALLS) cr_print_stats(&st, status);
@@ -909,7 +1455,10 @@ static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach) {
             if (!ccount) {
                 for (uint32_t i = 0; i < vcount; ++i) {
                     uint32_t v = comp_vars.data[vfirst + i];
-                    cr_draw_bits(st->rng, s->sol + s->var_off[v], p->vars[v].bit_width);
+                    if (p->vars[v].cyclic)
+                        cr_cyc_free_draw(s, v, st->rng);
+                    else
+                        cr_draw_bits(st->rng, s->sol + s->var_off[v], p->vars[v].bit_width);
                 }
                 st->report->engines |= LLG_CR_ENGINE_DIRECT;
                 continue;

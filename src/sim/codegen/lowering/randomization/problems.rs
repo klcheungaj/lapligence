@@ -99,6 +99,7 @@ impl ProblemBuilder {
             width,
             signed,
             domain: None,
+            cyclic: false,
         });
         self.placeholders.insert(placeholder.clone(), index);
         self.var_nodes.push(None);

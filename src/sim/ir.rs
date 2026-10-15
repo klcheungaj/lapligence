@@ -88,8 +88,9 @@ pub(in crate::sim) use calls::call_argument_name;
 pub use calls::{IrCall, IrCallArg, IrCallExpr, IrDepth, IrVirtualCall};
 mod randomize;
 pub use randomize::{
-    IrRandBlock, IrRandCall, IrRandLeaf, IrRandNode, IrRandOp, IrRandProblem, IrRandStmt,
-    IrRandVar, RAND_STEP_FAILED, RAND_STEP_NEED_CALLS, RAND_STEP_OK,
+    rand_cyclic_state_width, IrRandBlock, IrRandCall, IrRandDist, IrRandDistItem, IrRandLeaf,
+    IrRandNode, IrRandOp, IrRandOrder, IrRandProblem, IrRandStmt, IrRandVar, RAND_CYCLIC_MAX_WIDTH,
+    RAND_STEP_FAILED, RAND_STEP_NEED_CALLS, RAND_STEP_OK,
 };
 mod statements;
 pub use statements::{

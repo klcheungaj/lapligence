@@ -78,12 +78,13 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                 .iter()
                 .map(|var| {
                     format!(
-                        "{{{}, {}u, {}u, {}}}",
+                        "{{{}, {}u, {}u, {}, {}u}}",
                         c_string_literal(&var.name),
                         var.width,
                         u8::from(var.signed),
                         var.domain
-                            .map_or_else(|| "LLG_CR_NONE".to_owned(), |node| format!("{node}u"))
+                            .map_or_else(|| "LLG_CR_NONE".to_owned(), |node| format!("{node}u")),
+                        u8::from(var.cyclic)
                     )
                 })
                 .collect(),
@@ -134,8 +135,45 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                 })
                 .collect(),
         );
+        let optional =
+            |node: Option<u32>| node.map_or_else(|| "LLG_CR_NONE".to_owned(), |n| format!("{n}u"));
+        let mut item_rows = Vec::new();
+        let mut dist_rows = Vec::with_capacity(problem.dists.len());
+        for dist in &problem.dists {
+            dist_rows.push(format!(
+                "{{{}u, {}, {}u, {}u}}",
+                dist.expr,
+                optional(dist.guard),
+                item_rows.len(),
+                dist.items.len()
+            ));
+            item_rows.extend(dist.items.iter().map(|item| {
+                format!(
+                    "{{{}u, {}u, {}u, {}, {}u, {}u}}",
+                    item.matches,
+                    item.lo,
+                    item.hi,
+                    optional(item.weight),
+                    u8::from(item.per_range),
+                    u8::from(item.signed)
+                )
+            }));
+        }
+        let item_count = item_rows.len();
+        let dists = array(out, "llg_cr_dist_t", "dists", dist_rows);
+        let dist_items = array(out, "llg_cr_dist_item_t", "dist_items", item_rows);
+        let orders = array(
+            out,
+            "llg_cr_order_t",
+            "orders",
+            problem
+                .orders
+                .iter()
+                .map(|order| format!("{{{}u, {}u, {}u}}", order.block, order.before, order.after))
+                .collect(),
+        );
         out.push_str(&format!(
-            "static const llg_cr_problem_t {name} = {{\n    {}, {nodes}, {}u, {arg_table}, {}u, {consts}, {}u,\n    {vars}, {}u, {blocks}, {}u, {leaves}, {}u, {calls}, {}u\n}};\n",
+            "static const llg_cr_problem_t {name} = {{\n    {}, {nodes}, {}u, {arg_table}, {}u, {consts}, {}u,\n    {vars}, {}u, {blocks}, {}u, {leaves}, {}u, {calls}, {}u,\n    {dists}, {}u, {dist_items}, {item_count}u, {orders}, {}u\n}};\n",
             c_string_literal(&problem.name),
             problem.nodes.len(),
             args.len(),
@@ -144,6 +182,8 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
             problem.blocks.len(),
             problem.leaves.len(),
             problem.calls.len(),
+            problem.dists.len(),
+            problem.orders.len(),
         ));
         out.push_str(&format!(
             "static llg_cr_session_t* llg_rand_slot_{index};\nstatic llg_cr_session_t* llg_rand_session_{index}(void) {{\n    return llg_cr_session_get(&{name}, &llg_rand_slot_{index});\n}}\n"

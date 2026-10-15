@@ -624,7 +624,10 @@ impl Codegen<'_> {
         object: &IrChandleExpr,
         expr: NodeId,
     ) -> Result<u32, String> {
-        if matches!(self.kind(expr), NodeKind::Expr(ExprKind::Other)) {
+        if matches!(
+            self.kind(expr),
+            NodeKind::Expr(ExprKind::Other | ExprKind::Dist { .. })
+        ) {
             return Err(self.rand_error(
                 expr,
                 path,

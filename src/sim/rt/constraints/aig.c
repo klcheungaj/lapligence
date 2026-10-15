@@ -231,11 +231,39 @@ static void cr_blast_shift(cr_aig_t* g, uint32_t* out, const uint32_t* a, uint32
 
 /* ---- blasting a component ----------------------------------------------- */
 
+/* Besides its value bits every blasted node has one error literal: the
+ * node's value is an evaluation error (18.5.12 E) for the input values, from
+ * a random divisor of zero, a random out-of-range index or `0 ** negative`
+ * (S30-D4). `&&`, `||`, `->`, `?:` and dist follow Figure 18-3, every other
+ * operator is an error when an operand is. Known nodes have no error. */
 typedef struct {
     cr_aig_t aig;
     uint32_t* lit_off;      /* per node offset into lits, UINT32_MAX if none */
     cr_u32vec_t lits;
+    uint32_t* err;          /* per node error literal (CR_FALSE if none) */
 } cr_blast_t;
+
+static uint32_t cr_node_err(const cr_blast_t* b, uint32_t n) {
+    return b->lit_off[n] == UINT32_MAX ? CR_FALSE : b->err[n];
+}
+
+/* Figure 18-3 over operands (truth t[i], error e[i]): a disjunction is 1
+ * when some operand is a known 1, a conjunction 0 when some operand is a
+ * known 0; otherwise an error operand makes the result an error. Returns
+ * the value literal and stores the error literal. */
+static uint32_t cr_blast_logic(cr_aig_t* g, const uint32_t* t, const uint32_t* e,
+                               uint32_t count, int disjunction, uint32_t* err) {
+    uint32_t dominant = CR_FALSE, any_err = CR_FALSE, value = disjunction ? CR_FALSE : CR_TRUE;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t decided = disjunction ? t[i] : t[i] ^ 1u;
+        dominant = cr_or(g, dominant, cr_and(g, e[i] ^ 1u, decided));
+        any_err = cr_or(g, any_err, e[i]);
+        value = disjunction ? cr_or(g, value, cr_and(g, e[i] ^ 1u, t[i]))
+                            : cr_and(g, value, cr_or(g, e[i], t[i]));
+    }
+    *err = cr_and(g, dominant ^ 1u, any_err);
+    return disjunction ? value : cr_and(g, value, dominant ^ 1u);
+}
 
 static const uint32_t* cr_node_lits(llg_cr_session_t* s, cr_blast_t* b, uint32_t n) {
     if (b->lit_off[n] == UINT32_MAX) {
@@ -264,6 +292,56 @@ static uint32_t cr_operand_truth(llg_cr_session_t* s, cr_blast_t* b, uint32_t x)
     return cr_blast_any(&b->aig, cr_node_lits(s, b, x), s->p->nodes[x].bit_width);
 }
 
+static void cr_push_operands(const llg_cr_problem_t* p, uint32_t n, cr_u32vec_t* out);
+
+/* Disjunction of the operands' error literals. */
+static uint32_t cr_operands_err(llg_cr_session_t* s, cr_blast_t* b, uint32_t n) {
+    cr_u32vec_t ops = {0, 0, 0};
+    cr_push_operands(s->p, n, &ops);
+    uint32_t err = CR_FALSE;
+    for (size_t i = 0; i < ops.len; ++i) err = cr_or(&b->aig, err, cr_node_err(b, ops.data[i]));
+    free(ops.data);
+    return err;
+}
+
+/* Literal of "a == k" for the constant k (a extended by `sgn` to `w` bits). */
+static uint32_t cr_blast_eq_const(cr_aig_t* g, const uint32_t* a, uint32_t aw, int sgn,
+                                  uint64_t k, uint32_t w) {
+    uint32_t eq = CR_TRUE;
+    for (uint32_t i = 0; i < w; ++i) {
+        uint32_t bit = i < aw ? a[i] : (sgn && aw ? a[aw - 1u] : CR_FALSE);
+        uint32_t want = i < 64u ? (uint32_t)((k >> i) & 1u) : 0u;
+        eq = cr_and(g, eq, want ? bit : bit ^ 1u);
+    }
+    return eq;
+}
+
+/* Square-and-multiply a ** e modulo 2^w for unsigned exponent bits e. */
+static void cr_blast_pow(cr_aig_t* g, uint32_t* out, const uint32_t* a, const uint32_t* e,
+                         uint32_t ew, uint32_t w) {
+    uint32_t* acc = cr_lits(w);
+    uint32_t* base = cr_lits(w);
+    uint32_t* t = cr_lits(w);
+    for (uint32_t i = 0; i < w; ++i) {
+        acc[i] = i == 0u ? CR_TRUE : CR_FALSE;
+        base[i] = a[i];
+    }
+    for (uint32_t k = 0; k < ew && !g->overflow; ++k) {
+        if (e[k] != CR_FALSE) {
+            cr_blast_mul(g, t, acc, base, w);
+            for (uint32_t i = 0; i < w; ++i) acc[i] = cr_mux(g, e[k], t[i], acc[i]);
+        }
+        if (k + 1u < ew) {
+            cr_blast_mul(g, t, base, base, w);
+            memcpy(base, t, w * sizeof(uint32_t));
+        }
+    }
+    memcpy(out, acc, w * sizeof(uint32_t));
+    free(acc);
+    free(base);
+    free(t);
+}
+
 /* Blast R node n (all its R operands are already blasted). */
 static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
                           const uint32_t* var_base, const uint32_t* bit_input) {
@@ -274,6 +352,8 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
     uint32_t* out = cr_lits(w);
     for (uint32_t i = 0; i < w; ++i) out[i] = CR_FALSE;
     const llg_cr_node_t* na = nd->a < p->node_count ? &p->nodes[nd->a] : NULL;
+    /* Error literal: operand errors by default; the cases below refine it. */
+    uint32_t err = nd->op == LLG_CR_VAR ? CR_FALSE : cr_operands_err(s, b, n);
     switch (nd->op) {
     case LLG_CR_VAR: {
         const llg_cr_var_t* var = &p->vars[nd->a];
@@ -321,22 +401,65 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
         out[0] = cr_operand_truth(s, b, nd->a) ^ 1u;
         break;
     case LLG_CR_LAND:
-        out[0] = cr_and(g, cr_operand_truth(s, b, nd->a), cr_operand_truth(s, b, nd->b));
-        break;
     case LLG_CR_LOR:
-        out[0] = cr_or(g, cr_operand_truth(s, b, nd->a), cr_operand_truth(s, b, nd->b));
+    case LLG_CR_IMPL: {
+        uint32_t t[2] = {cr_operand_truth(s, b, nd->a), cr_operand_truth(s, b, nd->b)};
+        uint32_t e[2] = {cr_node_err(b, nd->a), cr_node_err(b, nd->b)};
+        if (nd->op == LLG_CR_IMPL) t[0] ^= 1u;
+        out[0] = cr_blast_logic(g, t, e, 2u, nd->op != LLG_CR_LAND, &err);
         break;
-    case LLG_CR_IMPL:
-        out[0] = cr_or(g, cr_operand_truth(s, b, nd->a) ^ 1u, cr_operand_truth(s, b, nd->b));
+    }
+    case LLG_CR_DIST: {
+        const llg_cr_dist_t* d = &p->dists[nd->a];
+        cr_u32vec_t t = {0, 0, 0}, e = {0, 0, 0};
+        for (uint32_t i = 0; i < d->item_count; ++i) {
+            const llg_cr_dist_item_t* item = &p->dist_items[d->item_first + i];
+            if (cr_dist_item_zero(s, item)) continue;
+            cr_u32_push(&t, cr_operand_truth(s, b, item->match));
+            cr_u32_push(&e, cr_node_err(b, item->match));
+        }
+        out[0] = cr_blast_logic(g, t.data, e.data, (uint32_t)t.len, 1, &err);
+        free(t.data);
+        free(e.data);
         break;
+    }
+    case LLG_CR_POW: {
+        const llg_cr_node_t* nb = &p->nodes[nd->b];
+        uint32_t* a = cr_operand_lits(s, b, nd->a, w);
+        const uint32_t* e = cr_node_lits(s, b, nd->b);
+        uint32_t ew = nb->bit_width;
+        uint32_t negative = nb->sign_flag ? e[ew - 1u] : CR_FALSE;
+        uint32_t* pos = cr_lits(w);
+        cr_blast_pow(g, pos, a, e, ew, w);
+        /* Table 11-4 for a negative exponent. */
+        uint32_t a_zero = cr_blast_any(g, a, w) ^ 1u;
+        uint32_t a_minus_one = nd->sign_flag ? CR_TRUE : CR_FALSE;
+        for (uint32_t i = 0; i < w && a_minus_one != CR_FALSE; ++i) a_minus_one = cr_and(g, a_minus_one, a[i]);
+        uint32_t a_one = cr_and(g, a_minus_one ^ 1u, cr_blast_eq_const(g, a, w, 0, 1u, w));
+        for (uint32_t i = 0; i < w; ++i) {
+            uint32_t one_bit = i == 0u ? CR_TRUE : CR_FALSE;
+            uint32_t minus = cr_mux(g, e[0], CR_TRUE, one_bit);
+            uint32_t neg_bit = cr_or(g, cr_and(g, a_one, one_bit), cr_and(g, a_minus_one, minus));
+            out[i] = cr_mux(g, negative, neg_bit, pos[i]);
+        }
+        err = cr_or(g, err, cr_and(g, negative, a_zero));
+        free(pos);
+        free(a);
+        break;
+    }
     case LLG_CR_EQUIV:
         out[0] = cr_xor(g, cr_operand_truth(s, b, nd->a), cr_operand_truth(s, b, nd->b)) ^ 1u;
         break;
     case LLG_CR_ALL: {
-        uint32_t r = CR_TRUE;
-        for (uint32_t i = 0; i < nd->c; ++i)
-            r = cr_and(g, r, cr_operand_truth(s, b, p->args[nd->b + i]));
-        out[0] = r;
+        uint32_t* t = cr_lits(nd->c);
+        uint32_t* e = cr_lits(nd->c);
+        for (uint32_t i = 0; i < nd->c; ++i) {
+            t[i] = cr_operand_truth(s, b, p->args[nd->b + i]);
+            e[i] = cr_node_err(b, p->args[nd->b + i]);
+        }
+        out[0] = cr_blast_logic(g, t, e, nd->c, 0, &err);
+        free(t);
+        free(e);
         break;
     }
     case LLG_CR_ADD:
@@ -372,6 +495,7 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
             cr_blast_neg(g, t, c, w);
             for (uint32_t i = 0; i < w; ++i) ub[i] = cr_mux(g, sb, t[i], c[i]);
             cr_blast_udivmod(g, q, r, ua, ub, w);
+            err = cr_or(g, err, cr_blast_any(g, c, w) ^ 1u);
             if (nd->op == LLG_CR_DIV) {
                 uint32_t flip = cr_xor(g, sa, sb);
                 cr_blast_neg(g, t, q, w);
@@ -432,6 +556,8 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
         uint32_t* t = cr_operand_lits(s, b, nd->b, w);
         uint32_t* f = cr_operand_lits(s, b, nd->c, w);
         for (uint32_t i = 0; i < w; ++i) out[i] = cr_mux(g, c, t[i], f[i]);
+        err = cr_or(g, cr_node_err(b, nd->a),
+                    cr_mux(g, c, cr_node_err(b, nd->b), cr_node_err(b, nd->c)));
         free(t);
         free(f);
         break;
@@ -453,8 +579,27 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
             for (uint32_t bit = 0; bit < na->bit_width && pos < w; ++bit, ++pos) out[pos] = v[bit];
         break;
     }
-    case LLG_CR_SLICE:
-    case LLG_CR_DSLICE: {
+    case LLG_CR_DSLICE:
+        if (s->status[nd->b] != CR_K) {
+            /* Random index: select among the in-range positions; any other
+             * index value is an error (S30-D4). */
+            const llg_cr_node_t* ni = &p->nodes[nd->b];
+            const uint32_t* v = cr_node_lits(s, b, nd->a);
+            const uint32_t* idx = cr_node_lits(s, b, nd->b);
+            uint32_t cw = ni->bit_width + 1u;
+            while (cw < 66u && na->bit_width >> (cw - 1u)) ++cw;
+            uint32_t any = CR_FALSE;
+            for (uint32_t pos = 0; w <= na->bit_width && pos + w <= na->bit_width && !g->overflow; ++pos) {
+                uint32_t eq = cr_blast_eq_const(g, idx, ni->bit_width, ni->sign_flag, pos, cw);
+                any = cr_or(g, any, eq);
+                for (uint32_t bit = 0; bit < w; ++bit)
+                    out[bit] = cr_or(g, out[bit], cr_and(g, eq, v[pos + bit]));
+            }
+            err = cr_or(g, err, any ^ 1u);
+            break;
+        }
+        /* fall through */
+    case LLG_CR_SLICE: {
         uint64_t lsb = nd->b;
         if (nd->op == LLG_CR_DSLICE) {
             int64_t index = 0;
@@ -472,7 +617,13 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
         cr_fatal("unexpected random node in bit-blasting");
     }
     b->lit_off[n] = (uint32_t)b->lits.len;
+    b->err[n] = err;
     for (uint32_t i = 0; i < w; ++i) cr_u32_push(&b->lits, out[i]);
     if (w == 0u) cr_u32_push(&b->lits, CR_FALSE);
     free(out);
+}
+
+/* A conjunct holds: its value is 1 and it is not an error. */
+static uint32_t cr_conjunct_lit(llg_cr_session_t* s, cr_blast_t* b, uint32_t x) {
+    return cr_and(&b->aig, cr_operand_truth(s, b, x), cr_node_err(b, x) ^ 1u);
 }

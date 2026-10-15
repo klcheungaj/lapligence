@@ -145,6 +145,11 @@ struct llg_cr_session {
     uint64_t* tmp_b;
     uint64_t* tmp_c;
     uint64_t* tmp_d;
+    /* randc cycle state (LLG_CR_CYCLIC_WORDS per cyclic variable). */
+    uint32_t* cyc_off;
+    uint64_t* cyc;
+    /* Structural hash of each node (randc signatures), 0 until computed. */
+    uint64_t* node_hash;
     /* Exact-engine cache (most recent components). */
     cr_cache_entry_t* cache;
     uint32_t cache_count;

@@ -55,6 +55,11 @@ pub enum IrRandOp {
     Slice,
     DynSlice,
     All,
+    /// `a ** b` (11.4.3, Table 11-4); `b` is self-determined.
+    Pow,
+    /// `a` indexes [`IrRandProblem::dists`]; 1 when the expression matches
+    /// an item of nonzero weight (18.5.4).
+    Dist,
 }
 
 impl IrRandOp {
@@ -65,7 +70,13 @@ impl IrRandOp {
     /// Operand count fixed by the operation (list operations use `args`).
     fn fixed_operands(self) -> usize {
         match self {
-            Self::Const | Self::Var | Self::State | Self::Call | Self::Concat | Self::All => 0,
+            Self::Const
+            | Self::Var
+            | Self::State
+            | Self::Call
+            | Self::Concat
+            | Self::All
+            | Self::Dist => 0,
             Self::Resize
             | Self::Not
             | Self::Neg
@@ -104,6 +115,9 @@ pub struct IrRandVar {
     pub width: u32,
     pub signed: bool,
     pub domain: Option<u32>,
+    /// `randc` (18.4.2): solved first and cycling through its values; the
+    /// cycle state lives with the variable (decision S30-D3).
+    pub cyclic: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -129,6 +143,37 @@ pub struct IrRandCall {
     pub args: Vec<u32>,
 }
 
+/// One `dist` constraint (`llg_cr_dist_t`, 18.5.4). `guard` is the
+/// conjunction of the enclosing implication and `if` conditions; the weights
+/// apply where it holds (decision S30-D1).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct IrRandDist {
+    pub expr: u32,
+    pub guard: Option<u32>,
+    pub items: Vec<IrRandDistItem>,
+}
+
+/// One dist item (`llg_cr_dist_item_t`): `matches` is the 1-bit node "the
+/// expression is in the item"; `lo`/`hi` are its bounds in the comparison
+/// type; `weight` is `None` for the default weight 1.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct IrRandDistItem {
+    pub matches: u32,
+    pub lo: u32,
+    pub hi: u32,
+    pub weight: Option<u32>,
+    pub per_range: bool,
+    pub signed: bool,
+}
+
+/// `solve before before after` from constraint block `block` (18.5.9).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IrRandOrder {
+    pub block: u32,
+    pub before: u32,
+    pub after: u32,
+}
+
 /// One randomize problem: the static tables of `llg_cr_problem_t`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct IrRandProblem {
@@ -141,6 +186,22 @@ pub struct IrRandProblem {
     pub blocks: Vec<IrRandBlock>,
     pub leaves: Vec<IrRandLeaf>,
     pub calls: Vec<IrRandCall>,
+    pub dists: Vec<IrRandDist>,
+    pub orders: Vec<IrRandOrder>,
+}
+
+/// Widest `randc` variable (`LLG_CR_CYCLIC_MAX_WIDTH`).
+pub const RAND_CYCLIC_MAX_WIDTH: u32 = 16;
+
+/// Packed width of a `randc` variable's cycle state
+/// (`LLG_CR_CYCLIC_WORDS` 64-bit words).
+pub fn rand_cyclic_state_width(width: u32) -> u32 {
+    let words = if width >= 6 {
+        (1 << (width - 6)) + 1
+    } else {
+        2
+    };
+    words * 64
 }
 
 fn words(width: u32) -> usize {
@@ -201,6 +262,20 @@ impl IrRandProblem {
                         return fail(format!("list node {index} reads a later operand"));
                     }
                 }
+                IrRandOp::Dist => {
+                    let Some(dist) = self.dists.get(node.a as usize) else {
+                        return fail(format!("dist node {index} is out of range"));
+                    };
+                    let mut operands = vec![dist.expr];
+                    operands.extend(dist.guard);
+                    for item in &dist.items {
+                        operands.extend([item.matches, item.lo, item.hi]);
+                        operands.extend(item.weight);
+                    }
+                    if dist.items.is_empty() || operands.iter().any(|x| !before(*x)) {
+                        return fail(format!("dist node {index} reads a later operand"));
+                    }
+                }
                 IrRandOp::Repl | IrRandOp::Slice => {
                     if !before(node.a) {
                         return fail(format!("node {index} reads a later operand"));
@@ -215,7 +290,10 @@ impl IrRandProblem {
             }
         }
         for (index, var) in self.vars.iter().enumerate() {
-            if var.width == 0 || var.domain.is_some_and(|d| d >= count) {
+            if var.width == 0
+                || var.domain.is_some_and(|d| d >= count)
+                || (var.cyclic && var.width > RAND_CYCLIC_MAX_WIDTH)
+            {
                 return fail(format!("variable {index} is malformed"));
             }
         }
@@ -227,6 +305,15 @@ impl IrRandProblem {
         for (index, leaf) in self.leaves.iter().enumerate() {
             if leaf.width == 0 {
                 return fail(format!("state leaf {index} has no packed width"));
+            }
+        }
+        let vars = self.vars.len() as u32;
+        for (index, order) in self.orders.iter().enumerate() {
+            if order.block as usize >= self.blocks.len()
+                || order.before >= vars
+                || order.after >= vars
+            {
+                return fail(format!("solve-before order {index} is out of range"));
             }
         }
         Ok(())

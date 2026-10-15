@@ -72,6 +72,10 @@ enum {
     LLG_CR_DSLICE,      /* a[idx +: width], idx = node b (state only);
                            a bit outside a is an evaluation error */
     LLG_CR_ALL,         /* conjunction of args[b .. b+c), Figure 18-3 */
+    LLG_CR_POW,         /* a ** b (11.4.3, Table 11-4); b self-determined;
+                           0 ** negative is an evaluation error */
+    LLG_CR_DIST,        /* a = dists index; 1 when the expression matches an
+                           item of nonzero weight (18.5.4) */
     LLG_CR_OP_LIMIT
 };
 
@@ -90,7 +94,49 @@ typedef struct {
     /* Domain constraint applied only while the variable is active (an enum
      * variable takes its named values, decision S29-D2), or LLG_CR_NONE. */
     uint32_t domain_node;
+    /* randc (18.4.2): solved first, cycling through its values; its state
+     * is set with llg_cr_set_cyclic. Width at most LLG_CR_CYCLIC_MAX_WIDTH. */
+    uint8_t cyclic;
 } llg_cr_var_t;
+
+/* Widest randc variable: its cycle state holds one bit per value. */
+#define LLG_CR_CYCLIC_MAX_WIDTH 16u
+
+/* Words of a randc variable's cycle state: one "returned in this cycle" bit
+ * per value, then a 64-bit signature of the constraints of the cycle. */
+#define LLG_CR_CYCLIC_WORDS(width) \
+    ((width) >= 6u ? (1u << ((width) - 6u)) + 1u : 2u)
+
+/* One `dist` constraint (18.5.4). `expr` is the distributed expression,
+ * `guard` the conjunction of the enclosing implication and if conditions
+ * (LLG_CR_NONE when unconditional): the weight applies to solutions where
+ * the guard holds (decision S30-D1). */
+typedef struct {
+    uint32_t expr;
+    uint32_t guard;
+    uint32_t item_first;  /* in problem dist_items */
+    uint32_t item_count;
+} llg_cr_dist_t;
+
+/* One dist item. `match` is the 1-bit node "expr is in the item"; `lo` and
+ * `hi` are the range bounds in the comparison type (equal for a single
+ * value), used to count the values a `:/` weight is shared by. `weight` is
+ * a node (LLG_CR_NONE for the default weight 1). */
+typedef struct {
+    uint32_t match;
+    uint32_t lo;
+    uint32_t hi;
+    uint32_t weight;
+    uint8_t per_range;    /* `:/` */
+    uint8_t lo_signed;    /* the bounds compare as signed values */
+} llg_cr_dist_item_t;
+
+/* `solve before before after` from constraint block `block` (18.5.9). */
+typedef struct {
+    uint32_t block;
+    uint32_t before;
+    uint32_t after;
+} llg_cr_order_t;
 
 typedef struct {
     const char* name;
@@ -127,6 +173,12 @@ typedef struct {
     uint32_t leaf_count;
     const llg_cr_call_t* calls;
     uint32_t call_count;
+    const llg_cr_dist_t* dists;
+    uint32_t dist_count;
+    const llg_cr_dist_item_t* dist_items;
+    uint32_t dist_item_count;
+    const llg_cr_order_t* orders;
+    uint32_t order_count;
 } llg_cr_problem_t;
 
 typedef enum {
@@ -153,7 +205,9 @@ enum {
     LLG_CR_REASON_XZ_CALL,   /* call: result holds X/Z */
     LLG_CR_REASON_DIVZERO,   /* node: division or modulo by zero */
     LLG_CR_REASON_INDEX,     /* node: select index out of range */
-    LLG_CR_REASON_ORDER      /* var: circular function-argument order */
+    LLG_CR_REASON_ORDER,     /* var: circular function-argument or
+                                solve...before order */
+    LLG_CR_REASON_WEIGHT     /* node: negative dist weight (S30-D8) */
 };
 
 /* Engines, as bits of llg_cr_report_t.engines. */
@@ -201,6 +255,11 @@ void llg_cr_set_var(llg_cr_session_t* s, uint32_t var, const uint64_t* words,
 void llg_cr_set_block(llg_cr_session_t* s, uint32_t block, int enabled);
 void llg_cr_set_leaf(llg_cr_session_t* s, uint32_t leaf, const uint64_t* words,
                      int input_state);
+/* Cycle state of a randc variable (LLG_CR_CYCLIC_WORDS(width) words; NULL
+ * starts a new cycle). After LLG_CR_OK, llg_cr_cyclic returns the updated
+ * state to store back. */
+void llg_cr_set_cyclic(llg_cr_session_t* s, uint32_t var, const uint64_t* words);
+const uint64_t* llg_cr_cyclic(const llg_cr_session_t* s, uint32_t var);
 
 /* Step-wise solving for generated code: llg_cr_begin, then llg_cr_step
  * until it returns something other than LLG_CR_NEED_CALLS. On NEED_CALLS,
