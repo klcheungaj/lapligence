@@ -118,7 +118,7 @@ impl EmitCtx<'_, '_> {
         Ok(IrStringExpr::Format {
             format: Box::new(IrStringExpr::Literal(format)),
             args: values,
-            scope: self.cg.format_scope(&self.path, site),
+            scope: self.format_scope(site),
         })
     }
 
@@ -218,10 +218,13 @@ impl EmitCtx<'_, '_> {
 
     pub(super) fn finish_location(&self, node: NodeId) -> String {
         let source = self.cg.node(node);
+        // A hidden assertion host reports the assertion's scope, not its own
+        // synthetic name.
+        let scope = self.display_scope.as_ref().map_or(&self.path, |(s, _)| s);
         if source.line == 0 {
-            return self.path.clone();
+            return scope.clone();
         }
-        format!("{}:{}:{}", self.path, source.line, source.col)
+        format!("{scope}:{}:{}", source.line, source.col)
     }
 
     /// Lower the optional diagnostic level shared by `$finish` and `$stop`.

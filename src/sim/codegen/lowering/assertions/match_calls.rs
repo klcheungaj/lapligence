@@ -35,8 +35,10 @@ impl Codegen<'_> {
         // can be lowered inside a procedural `expect`, whose context returns.
         let saved = (self.func.clone(), self.depth_arg.clone(), self.inst);
         let inst = self.inst;
+        let display_scope = self.assertion_display_scope.clone();
         let lowered = {
             let mut ctx = EmitCtx::new(self, label.clone(), inst, "0", None, false);
+            ctx.display_scope = display_scope.map(|scope| (scope, None));
             ctx.call_owner = "sequence match-item call";
             ctx.lower_deferred_assertion_action(node)
                 .map(|action| (action, std::mem::take(&mut ctx.pre_fns)))

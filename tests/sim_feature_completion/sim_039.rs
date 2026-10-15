@@ -173,6 +173,21 @@ fn repeated_match_items_run_per_iteration_and_calls_run_in_reactive() {
     });
 }
 
+/// A hidden host process runs the action blocks and match-item system tasks;
+/// `%m` there names the assertion's scope instead.
+#[test]
+fn percent_m_in_actions_and_match_items_names_the_assertion_scope() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_039/match_scope_names.out");
+    sim_cli::run_case_checked_matrix(SUITE, "match_scope_names", &[], &|label, output| {
+        assert_sorted_stdout(label, output, expected);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.contains("match_call") && !stdout.contains(".assertion["),
+            "{label}: a hidden host process name reached the output: {stdout}"
+        );
+    });
+}
+
 /// A DPI-C import attached to a match receives its own attempt's local,
 /// copied into the call's owned frame when the match is evaluated.
 #[test]
@@ -221,12 +236,12 @@ fn local_formal_direction_type_and_actual_errors_are_located() {
     sim_cli::reject_case(
         SUITE,
         "neg_match_call_timing",
-        "sequence match-item call task `slow` cannot contain timing controls",
+        "sequence match-item call task `slow` cannot contain timing controls at tb.c1:11:16 (sequence match item at ",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_match_call_timing",
-        "neg_match_call_timing.sv:11:16) (assertion at",
+        "neg_match_call_timing.sv:11:16) (assertion `c1` at ",
     );
     sim_cli::reject_case(
         SUITE,

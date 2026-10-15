@@ -1635,6 +1635,14 @@ fn s39_d9_property_local_attempt_start() {
     );
 }
 
+#[test]
+fn s39_d10_match_item_scope_names() {
+    run_decision(
+        "S39-D10_match_item_scope_names",
+        include_str!("fixtures/sim/lrm_decisions/S39-D10_match_item_scope_names.out"),
+    );
+}
+
 /// Build the `.c` VPI application of a decision case into a static archive
 /// that the model links (`--dpi-lib`); its `vlog_startup_routines` table runs
 /// at startup. Static linking works on every host, so these cases need no
