@@ -1,0 +1,4 @@
+wait fork returned at 0
+m0=75.00 m1=25.00 ra=75.00 rb=25.00 h=50.00
+stopped m0=75.00
+started m0=100.00 type=62.50

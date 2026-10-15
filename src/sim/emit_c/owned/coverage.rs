@@ -123,8 +123,21 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
             ));
             format!("{prefix}_points")
         };
+        let strobe = match group.strobe {
+            None => "NULL".to_owned(),
+            Some(function) => {
+                // The Postponed flush calls the formal-free sample method
+                // with only its receiver, at recursion depth zero.
+                let sample = &model.funcs[function].c_name;
+                let trampoline = format!("{prefix}_strobe");
+                out.push_str(&format!(
+                    "static void {sample}(void * _this, int depth);\nstatic void {trampoline}(void* object) {{ {sample}(object, 0); }}\n"
+                ));
+                trampoline
+            }
+        };
         out.push_str(&format!(
-            "// Unreferenced when every handle of the group stays null.\nstatic LLG_MAYBE_UNUSED llg_cov_group_t {prefix} = {{ {}, {}u, {points_name}, &{}, NULL, 0u, 0u, NULL, 0u }};\n",
+            "// Unreferenced when every handle of the group stays null.\nstatic LLG_MAYBE_UNUSED llg_cov_group_t {prefix} = {{ {}, {}u, {points_name}, &{}, NULL, 0u, 0u, NULL, 0u, {strobe}, 0u }};\n",
             c_string_literal(&group.name),
             group.points.len(),
             type_name(group.coverage_type)
@@ -217,8 +230,19 @@ impl Frame<'_, '_> {
             }
             IrCoverageStmt::SampleRegistered {
                 group,
+                strobe: true,
+                ..
+            } => {
+                self.line(format!(
+                    "llg_cov_strobe_registered(&{});",
+                    group_name(*group)
+                ));
+            }
+            IrCoverageStmt::SampleRegistered {
+                group,
                 function,
                 depth,
+                strobe: false,
             } => {
                 let group = group_name(*group);
                 self.begin_block(&[]);
@@ -232,6 +256,56 @@ impl Frame<'_, '_> {
                 ));
                 let mut call = IrCall::new(*function, Vec::new(), *depth, Vec::new(), Vec::new());
                 call.receiver = Some(IrChandleExpr::LocalRead(object));
+                self.call_statement(&call)?;
+                self.line("}");
+                self.end_block();
+            }
+            IrCoverageStmt::Watch {
+                object,
+                waiter,
+                label,
+            } => {
+                let object = self.chandle(object)?;
+                let frame = self.declare(
+                    "llg_frame_t*",
+                    "watch_frame",
+                    "llg_frame_new(1ULL)".to_owned(),
+                );
+                self.line(format!("llg_frame_capture_opaque({frame}, 0u, {object});"));
+                self.line(format!(
+                    "llg_spawn_owned_with_frame(&{waiter}_desc, {}, {frame});",
+                    c_string_literal(label)
+                ));
+                self.line(format!("llg_frame_release({frame});"));
+            }
+            IrCoverageStmt::SampleInstance {
+                group,
+                record,
+                strobe: true,
+                object,
+                ..
+            } => {
+                let record = self.chandle(record)?;
+                let object = self.chandle(object)?;
+                self.line(format!(
+                    "llg_cov_strobe(&{}, {record}, {object});",
+                    group_name(*group)
+                ));
+            }
+            IrCoverageStmt::SampleInstance {
+                record,
+                object,
+                function,
+                depth,
+                strobe: false,
+                ..
+            } => {
+                // A stopped instance skips the whole sample (19.8 stop()).
+                self.begin_block(&[]);
+                let record = self.chandle(record)?;
+                self.line(format!("if (llg_cov_sampling({record})) {{"));
+                let mut call = IrCall::new(*function, Vec::new(), *depth, Vec::new(), Vec::new());
+                call.receiver = Some(object.clone());
                 self.call_statement(&call)?;
                 self.line("}");
                 self.end_block();

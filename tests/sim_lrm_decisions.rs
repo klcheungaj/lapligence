@@ -1896,3 +1896,27 @@ fn s44_d4_type_without_instances() {
         include_str!("fixtures/sim/lrm_decisions/S44-D4_type_without_instances.out"),
     );
 }
+
+#[test]
+fn s44_d5_instance_event_waiter() {
+    run_decision(
+        "S44-D5_instance_event_waiter",
+        include_str!("fixtures/sim/lrm_decisions/S44-D5_instance_event_waiter.out"),
+    );
+}
+
+#[test]
+fn s44_d6_waiter_starts_after_new() {
+    run_decision(
+        "S44-D6_waiter_starts_after_new",
+        include_str!("fixtures/sim/lrm_decisions/S44-D6_waiter_starts_after_new.out"),
+    );
+}
+
+#[test]
+fn s44_d9_strobe_block_event() {
+    run_decision(
+        "S44-D9_strobe_block_event",
+        include_str!("fixtures/sim/lrm_decisions/S44-D9_strobe_block_event.out"),
+    );
+}

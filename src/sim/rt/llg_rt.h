@@ -1917,6 +1917,16 @@ llg_proc_t* llg_fork_with_frame(const llg_co_desc_t* desc,
 llg_proc_t* llg_spawn_detached_with_frame(const llg_co_desc_t* desc,
                                           const char* name,
                                           llg_frame_t* frame);
+// Spawn a runtime-owned Active process that belongs to no process: no
+// parent, fork group or program origin, so `wait fork`, `disable fork` and
+// the end of the calling process or program never observe it. Callable
+// from a process or during model initialization. Its random stream is
+// derived from the root without drawing from any stream. Retains one
+// reference to `frame` like llg_fork_with_frame. Used for the per-instance
+// sampling-event waiter of a covergroup, which lives as long as its instance.
+llg_proc_t* llg_spawn_owned_with_frame(const llg_co_desc_t* desc,
+                                       const char* name,
+                                       llg_frame_t* frame);
 // Create and manage typed activation storage. Slots hold copied values by
 // default. Frame-to-frame aliases retain their source frame. Joined fork
 // aliases borrow a registered numeric cell in the suspended parent activation;
@@ -2651,6 +2661,10 @@ typedef struct llg_cov_group {
     size_t registry_capacity;
     struct llg_cov_group* next_registered;
     uint8_t registered;
+    /* type_option.strobe: calls the formal-free sample method on one
+     * object; NULL when the group samples at the event (19.7.1). */
+    void (*strobe_sample)(void* object);
+    uint8_t strobe_pending; /* a registry pass is queued for this slot */
 } llg_cov_group_t;
 /* Create the runtime record of one instance with Table 19-1 defaults; apply
  * llg_cov_option, then llg_cov_ready before the first sample or query. */
@@ -2666,6 +2680,15 @@ void llg_cov_control(void* inst, int32_t point, int start);
 /* Objects sampled by the group's coverage event, pinned for the run. */
 void llg_cov_register(llg_cov_group_t* group, void* object);
 size_t llg_cov_registered(const llg_cov_group_t* group);
+/* Whether an event-driven sample of the instance can count anything: false
+ * while the whole instance is stopped, so its waiter skips the sample. */
+int llg_cov_sampling(const void* inst);
+/* type_option.strobe (19.7.1): queue one sample of `object` (whose record
+ * is `inst`), or one pass over the group's registered objects, for the
+ * Postponed region of the current time slot. Further requests in the same
+ * slot are merged. */
+void llg_cov_strobe(llg_cov_group_t* group, void* inst, void* object);
+void llg_cov_strobe_registered(llg_cov_group_t* group);
 void* llg_cov_registered_at(const llg_cov_group_t* group, size_t index);
 /* Coverage percentages (19.11); `point` < 0 selects the whole group. */
 double llg_cov_inst_coverage(const void* inst, int32_t point);

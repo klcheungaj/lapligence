@@ -20,6 +20,19 @@ impl Validator<'_> {
             if let Err(detail) = group.validate(self.model.coverage_types.len()) {
                 return self.fail(format!("covergroups[{idx}]"), detail);
             }
+            // The Postponed flush calls the strobe sample method with only
+            // its receiver.
+            if group.strobe.is_some_and(|function| {
+                self.model
+                    .funcs
+                    .get(function)
+                    .is_none_or(|function| !function.formals.is_empty())
+            }) {
+                return self.fail(
+                    format!("covergroups[{idx}].strobe"),
+                    "strobe sample method is not a formal-free method",
+                );
+            }
         }
 
         for (idx, object) in self.model.vpi_objects.iter().enumerate() {

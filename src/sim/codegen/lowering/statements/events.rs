@@ -187,6 +187,26 @@ impl EmitCtx<'_, '_> {
         Ok(out)
     }
 
+    /// The wait of a covergroup clocking event (19.3): `@(specs)` without a
+    /// body, lowered like an event control of the code it runs in.
+    pub(in super::super) fn lower_sampling_event(
+        &mut self,
+        timing: NodeId,
+        specs: &[EventSpec],
+    ) -> Result<Vec<IrStmt>, String> {
+        self.cg.ensure_event_spec_endpoints(&self.path, specs)?;
+        let wait = if self.event_specs_need_process(specs) {
+            self.lower_process_evaluated_event(timing, specs)?
+        } else {
+            vec![IrStmt::WaitEvents {
+                specs: self.lower_event_specs(specs)?,
+                refresh: false,
+            }]
+        };
+        self.saw_wait = true;
+        Ok(wait)
+    }
+
     fn lower_event_wait(
         &mut self,
         specs: &[EventSpec],
@@ -1200,6 +1220,7 @@ impl EmitCtx<'_, '_> {
         let expression = self
             .cg
             .modport_expression_target(expression)
+            .or_else(|| self.cg.coverage_ref_actual(expression))
             .unwrap_or(expression);
         let simple = matches!(
             self.cg.kind(expression),

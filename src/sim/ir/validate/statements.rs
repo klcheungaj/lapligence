@@ -1660,11 +1660,35 @@ impl Validator<'_> {
             }
             IrCoverageStmt::Register { group, .. } => group_exists(group),
             IrCoverageStmt::SampleRegistered {
-                group, function, ..
+                group,
+                function,
+                strobe,
+                ..
+            }
+            | IrCoverageStmt::SampleInstance {
+                group,
+                function,
+                strobe,
+                ..
             } => {
                 group_exists(group)
                     && self.model.funcs.get(*function).is_some_and(|function| {
                         function.formals.is_empty() && function.receiver_class.is_some()
+                    })
+                    && (!*strobe || self.model.covergroups[*group].strobe == Some(*function))
+            }
+            IrCoverageStmt::Watch { waiter, label, .. } => {
+                // The waiter is a captured helper of a covergroup sample
+                // method whose only capture is the object handle.
+                !label.contains('\0')
+                    && self.model.funcs.iter().any(|function| {
+                        function.pre_fns.iter().any(|helper| {
+                            matches!(helper, crate::sim::ir::IrPreFn::CapturedBranch {
+                                c_name, captures, ..
+                            } if c_name == waiter
+                                && captures.len() == 1
+                                && captures[0].storage().slot() == 0)
+                        })
                     })
             }
             IrCoverageStmt::Option { value, site, .. } => !value.is_real() && !site.contains('\0'),
