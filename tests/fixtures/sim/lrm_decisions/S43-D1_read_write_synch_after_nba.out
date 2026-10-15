@@ -1,0 +1,3 @@
+cbNBASynch b=0
+cbReadWriteSynch b=1
+active c=3 b=1

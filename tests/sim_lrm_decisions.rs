@@ -1672,3 +1672,86 @@ fn s42_d13_scalar_format_vector() {
         include_str!("fixtures/sim/lrm_decisions/S42-D13_scalar_format_vector.out"),
     );
 }
+
+// SIM-043: VPI callbacks, control and Postponed system functions.
+
+#[test]
+fn s43_d1_read_write_synch_after_nba() {
+    run_vpi_decision(
+        "S43-D1_read_write_synch_after_nba",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D1_read_write_synch_after_nba.out"),
+    );
+}
+
+#[test]
+fn s43_d2_time_callback_delay_relative() {
+    run_vpi_decision(
+        "S43-D2_time_callback_delay_relative",
+        &["task $d2()"],
+        include_str!("fixtures/sim/lrm_decisions/S43-D2_time_callback_delay_relative.out"),
+    );
+}
+
+#[test]
+fn s43_d3_next_sim_time_slot() {
+    run_vpi_decision(
+        "S43-D3_next_sim_time_slot",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D3_next_sim_time_slot.out"),
+    );
+}
+
+#[test]
+fn s43_d4_one_shot_callback_handle() {
+    run_vpi_decision(
+        "S43-D4_one_shot_callback_handle",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D4_one_shot_callback_handle.out"),
+    );
+}
+
+#[test]
+fn s43_d5_read_only_rejects_puts() {
+    run_vpi_decision(
+        "S43-D5_read_only_rejects_puts",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D5_read_only_rejects_puts.out"),
+    );
+}
+
+#[test]
+fn s43_d6_value_change_dispatch() {
+    run_vpi_decision(
+        "S43-D6_value_change_dispatch",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D6_value_change_dispatch.out"),
+    );
+}
+
+#[test]
+fn s43_d7_select_and_element_watch() {
+    run_vpi_decision(
+        "S43-D7_select_and_element_watch",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D7_select_and_element_watch.out"),
+    );
+}
+
+#[test]
+fn s43_d8_control_finish_after_callback() {
+    run_vpi_decision(
+        "S43-D8_control_finish_after_callback",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D8_control_finish_after_callback.out"),
+    );
+}
+
+#[test]
+fn s43_d9_postponed_systf_read_only() {
+    run_vpi_decision(
+        "S43-D9_postponed_systf_read_only",
+        &["function int $bump(input int v)"],
+        include_str!("fixtures/sim/lrm_decisions/S43-D9_postponed_systf_read_only.out"),
+    );
+}
