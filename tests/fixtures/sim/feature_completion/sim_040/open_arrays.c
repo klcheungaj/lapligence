@@ -7,7 +7,7 @@ static int step(const svOpenArrayHandle h, int d) {
     return svLeft(h, d) > svRight(h, d) ? -1 : 1;
 }
 
-int oa_walk(const svOpenArrayHandle h) {
+DPI_DLLESPEC int oa_walk(const svOpenArrayHandle h) {
     int d, i, j, total = 0;
     printf("dims=%d bytes=%d\n", svDimensions(h), svSizeOfArray(h));
     for (d = 0; d <= 2; d++)
@@ -28,14 +28,14 @@ int oa_walk(const svOpenArrayHandle h) {
     return total;
 }
 
-void oa_fill(const svOpenArrayHandle h) {
+DPI_DLLESPEC void oa_fill(const svOpenArrayHandle h) {
     int i, j;
     for (i = svLow(h, 1); i <= svHigh(h, 1); i++)
         for (j = svLow(h, 2); j <= svHigh(h, 2); j++)
             *(int *)svGetArrElemPtr2(h, i, j) = i * 100 + j;
 }
 
-void oa_cube(const svOpenArrayHandle h) {
+DPI_DLLESPEC void oa_cube(const svOpenArrayHandle h) {
     int i, j;
     printf("cube dims=%d d3=[%d:%d]\n", svDimensions(h), svLeft(h, 3), svRight(h, 3));
     for (i = svLow(h, 1); i <= svHigh(h, 1); i++)
@@ -46,12 +46,12 @@ void oa_cube(const svOpenArrayHandle h) {
         }
 }
 
-int oa_packed(const svOpenArrayHandle h) {
+DPI_DLLESPEC int oa_packed(const svOpenArrayHandle h) {
     svBitVecVal bits = *(const svBitVecVal *)svGetArrayPtr(h);
     return svSize(h, 0) * 10000 + (int)(bits & 0x1fffu) + 100000 * svDimensions(h);
 }
 
-void oa_vectors(const svOpenArrayHandle v, const svOpenArrayHandle p) {
+DPI_DLLESPEC void oa_vectors(const svOpenArrayHandle v, const svOpenArrayHandle p) {
     int i;
     printf("v dims=%d d0=[%d:%d] d1=[%d:%d] p d0=[%d:%d] d1=[%d:%d]\n", svDimensions(v),
            svLeft(v, 0), svRight(v, 0), svLeft(v, 1), svRight(v, 1), svLeft(p, 0),
@@ -67,7 +67,7 @@ void oa_vectors(const svOpenArrayHandle v, const svOpenArrayHandle p) {
     }
 }
 
-void oa_sized(const svOpenArrayHandle s) {
+DPI_DLLESPEC void oa_sized(const svOpenArrayHandle s) {
     int i;
     printf("sized d1=[%d:%d]", svLeft(s, 1), svRight(s, 1));
     for (i = 3; i >= 1; i--) {
@@ -85,7 +85,7 @@ static int sv_byte(char c) {
     return (int)((unsigned char)c ^ 0x80u) - 0x80;
 }
 
-int oa_records(const svOpenArrayHandle s, const svOpenArrayHandle d) {
+DPI_DLLESPEC int oa_records(const svOpenArrayHandle s, const svOpenArrayHandle d) {
     int i, total = 0;
     printf("records [%d:%d] dims=%d bytes=%d\n", svLeft(s, 1), svRight(s, 1),
            svDimensions(s), svSizeOfArray(s));

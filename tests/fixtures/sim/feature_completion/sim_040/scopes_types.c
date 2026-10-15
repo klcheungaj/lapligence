@@ -2,7 +2,7 @@
 #include "svdpi.h"
 #include <stdio.h>
 
-int st_sum(const svOpenArrayHandle h)
+DPI_DLLESPEC int st_sum(const svOpenArrayHandle h)
 {
     int sum = 0;
     int i;
@@ -13,24 +13,24 @@ int st_sum(const svOpenArrayHandle h)
     return sum;
 }
 
-int st_pure(const svOpenArrayHandle h)
+DPI_DLLESPEC int st_pure(const svOpenArrayHandle h)
 {
     return st_sum(h);
 }
 
-int st_twice(int a)
+DPI_DLLESPEC int st_twice(int a)
 {
     return 2 * a;
 }
 
-int st_enum(int c, const svLogicVecVal *l, int *o)
+DPI_DLLESPEC int st_enum(int c, const svLogicVecVal *l, int *o)
 {
     printf("c l=%x/%x\n", (unsigned)(l->aval & 3u), (unsigned)(l->bval & 3u));
     *o = c + 1;
     return c + 10;
 }
 
-void st_packed(svLogicVecVal *p, const svLogicVecVal *i)
+DPI_DLLESPEC void st_packed(svLogicVecVal *p, const svLogicVecVal *i)
 {
     printf("c p=%x/%x i=%x/%x\n", (unsigned)(p->aval & 0xffu), (unsigned)(p->bval & 0xffu),
            (unsigned)i->aval, (unsigned)i->bval);
@@ -38,7 +38,7 @@ void st_packed(svLogicVecVal *p, const svLogicVecVal *i)
     p->bval = 0x03u;
 }
 
-void st_views(const svBitVecVal *a, const svLogicVecVal *b)
+DPI_DLLESPEC void st_views(const svBitVecVal *a, const svLogicVecVal *b)
 {
     printf("c bit=%x logic=%x/%x\n", (unsigned)(*a & 0xffu), (unsigned)(b->aval & 0xffu),
            (unsigned)(b->bval & 0xffu));

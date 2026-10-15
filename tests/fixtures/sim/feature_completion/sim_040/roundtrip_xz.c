@@ -17,7 +17,7 @@ static void show(const char *name, const svLogicVecVal *v, int chunks, svBitVecV
     printf("\n");
 }
 
-void rt_logic(const svLogicVecVal *i, svLogicVecVal *o, svLogicVecVal *io)
+DPI_DLLESPEC void rt_logic(const svLogicVecVal *i, svLogicVecVal *o, svLogicVecVal *io)
 {
     show("c i", i, 3, 0x3fu);
     show("c o", o, 3, 0x3fu);
@@ -34,7 +34,7 @@ void rt_logic(const svLogicVecVal *i, svLogicVecVal *o, svLogicVecVal *io)
     io[2].bval = 0xffffffffu;
 }
 
-void rt_init(svLogicVecVal *lo, svBitVecVal *bo, svLogicVecVal *la, svBitVecVal *ba)
+DPI_DLLESPEC void rt_init(svLogicVecVal *lo, svBitVecVal *bo, svLogicVecVal *la, svBitVecVal *ba)
 {
     show("c init lo", lo, 2, 0x1ffu);
     printf("c init bo %08x %08x\n", (unsigned)(bo[1] & 0x1ffu), (unsigned)bo[0]);
@@ -48,7 +48,7 @@ void rt_init(svLogicVecVal *lo, svBitVecVal *bo, svLogicVecVal *la, svBitVecVal 
     ba[0] = 0xau;
 }
 
-void rt_alias(const svBitVecVal *i, svBitVecVal *o, svBitVecVal *io)
+DPI_DLLESPEC void rt_alias(const svBitVecVal *i, svBitVecVal *o, svBitVecVal *io)
 {
     printf("c alias i=%02x%08x io=%02x%08x\n", (unsigned)(i[1] & 0xffu), (unsigned)i[0],
            (unsigned)(io[1] & 0xffu), (unsigned)io[0]);
@@ -58,7 +58,7 @@ void rt_alias(const svBitVecVal *i, svBitVecVal *o, svBitVecVal *io)
     io[1] = 0xffffff00u | io[1];
 }
 
-int rt_result(int *o)
+DPI_DLLESPEC int rt_result(int *o)
 {
     printf("c result o=%d\n", *o);
     *o = 11;
@@ -67,7 +67,7 @@ int rt_result(int *o)
 
 static char buffer[32];
 
-const char *rt_string(const char *s, const char **o)
+DPI_DLLESPEC const char *rt_string(const char *s, const char **o)
 {
     size_t len = strlen(s);
     printf("c string s=%s\n", s);
@@ -80,7 +80,7 @@ const char *rt_string(const char *s, const char **o)
     return buffer;
 }
 
-int rt_task(int i, svLogicVecVal *o)
+DPI_DLLESPEC int rt_task(int i, svLogicVecVal *o)
 {
     o[0].aval = (svBitVecVal)i;
     o[0].bval = 0u;
@@ -91,7 +91,7 @@ int rt_task(int i, svLogicVecVal *o)
     return 0;
 }
 
-void rt_wide(svLogicVecVal *v, svBitVecVal *b)
+DPI_DLLESPEC void rt_wide(svLogicVecVal *v, svBitVecVal *b)
 {
     printf("c wide v0=%x/%x v78=%x/%x v156=%x/%x b0=%x\n", (unsigned)v[0].aval,
            (unsigned)v[0].bval, (unsigned)v[78].aval, (unsigned)v[78].bval,
@@ -104,7 +104,7 @@ void rt_wide(svLogicVecVal *v, svBitVecVal *b)
     b[128] = 0x1fu;
 }
 
-void rt_scalar(svLogic a, svLogic *b, svLogic *c)
+DPI_DLLESPEC void rt_scalar(svLogic a, svLogic *b, svLogic *c)
 {
     printf("c scalar a=%d b=%d c=%d\n", (int)a, (int)*b, (int)*c);
     *b = sv_z;

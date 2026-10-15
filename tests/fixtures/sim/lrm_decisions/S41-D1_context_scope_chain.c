@@ -11,13 +11,13 @@ static const char *name_of(svScope scope)
     return name ? name : "(null)";
 }
 
-int d1_where(void)
+DPI_DLLESPEC int d1_where(void)
 {
     printf("where %s\n", name_of(svGetScope()));
     return 0;
 }
 
-int d1_root(void)
+DPI_DLLESPEC int d1_root(void)
 {
     svScope self = svGetScope();
     svScope previous;

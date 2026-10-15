@@ -5,7 +5,7 @@
 int cell_value(int k);
 void cell_bump(int d);
 int cell_nest(int k);
-int plain_twice(int k);
+DPI_DLLESPEC int plain_twice(int k);
 
 static const char *const cell_names[4] = {"tb.u1", "tb.u2", "tb.g[0].c", "tb.g[1].c"};
 
@@ -16,7 +16,7 @@ static const char *scope_name(svScope scope)
 }
 
 /* Scope lookup, naming and per-scope user data. */
-int tb_scopes(void)
+DPI_DLLESPEC int tb_scopes(void)
 {
     static int key_a;
     static int key_b;
@@ -53,7 +53,7 @@ int tb_scopes(void)
 }
 
 /* One exported symbol, every instance selected with svSetScope. */
-int tb_drive(void)
+DPI_DLLESPEC int tb_drive(void)
 {
     svScope self = svGetScope();
     int total = 0;
@@ -81,7 +81,7 @@ int tb_drive(void)
     return total;
 }
 
-int cell_visit(int k)
+DPI_DLLESPEC int cell_visit(int k)
 {
     svScope self = svGetScope();
     int v;
@@ -95,18 +95,18 @@ int cell_visit(int k)
 }
 
 /* A noncontext import has no scope even inside a context chain. */
-int cell_peek(void)
+DPI_DLLESPEC int cell_peek(void)
 {
     printf("c cell_peek scope %s\n", svGetScope() ? "set" : "NULL");
     return 1;
 }
 
-int plain_twice(int k)
+DPI_DLLESPEC int plain_twice(int k)
 {
     return 2 * k;
 }
 
-int pure_add(int a, int b)
+DPI_DLLESPEC int pure_add(int a, int b)
 {
     return a + b;
 }

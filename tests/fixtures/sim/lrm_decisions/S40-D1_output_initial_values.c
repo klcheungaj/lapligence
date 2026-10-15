@@ -8,7 +8,7 @@ typedef struct {
     svLogicVecVal l[1];
 } rec_t;
 
-void d1_outputs(svLogicVecVal *lv, svBitVecVal *bv, int *i, svLogic *s, rec_t *r,
+DPI_DLLESPEC void d1_outputs(svLogicVecVal *lv, svBitVecVal *bv, int *i, svLogic *s, rec_t *r,
                 svBitVecVal *ba)
 {
     printf("llg: lv=%03x%08x/%03x%08x bv=%03x%08x\n", (unsigned)(lv[1].aval & 0x1ffu),

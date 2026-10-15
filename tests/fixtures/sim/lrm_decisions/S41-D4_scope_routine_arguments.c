@@ -7,7 +7,7 @@ static int other_key;
 static int first = 1;
 static int second = 2;
 
-int d4_run(void)
+DPI_DLLESPEC int d4_run(void)
 {
     svScope self = svGetScope();
     int *data;

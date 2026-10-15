@@ -2,19 +2,19 @@
 #include "svdpi.h"
 #include <string.h>
 
-void d2_three(int i, int *o, int *io)
+DPI_DLLESPEC void d2_three(int i, int *o, int *io)
 {
     *o = i + 1;
     *io = *io + 2;
 }
 
-void d2_reverse(int *io, int *o)
+DPI_DLLESPEC void d2_reverse(int *io, int *o)
 {
     *o = 1;
     *io = *io + 2;
 }
 
-int d2_result(int *o)
+DPI_DLLESPEC int d2_result(int *o)
 {
     *o = 11;
     return 22;
@@ -22,7 +22,7 @@ int d2_result(int *o)
 
 static char buffer[16];
 
-const char *d2_string(const char *s, const char **o)
+DPI_DLLESPEC const char *d2_string(const char *s, const char **o)
 {
     size_t len = strlen(s);
     *o = "output";

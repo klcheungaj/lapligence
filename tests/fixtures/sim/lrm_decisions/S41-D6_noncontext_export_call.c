@@ -3,7 +3,7 @@
 
 int d6_inc(int n);
 
-int d6_plain(int n)
+DPI_DLLESPEC int d6_plain(int n)
 {
     return d6_inc(n);
 }

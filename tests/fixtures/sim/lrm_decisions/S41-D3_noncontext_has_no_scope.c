@@ -4,7 +4,7 @@
 
 int d3_back(void);
 
-int d3_plain(void)
+DPI_DLLESPEC int d3_plain(void)
 {
     const char *file = NULL;
     int line = 0;
@@ -13,7 +13,7 @@ int d3_plain(void)
     return 1;
 }
 
-int d3_ctx(void)
+DPI_DLLESPEC int d3_ctx(void)
 {
     const char *file = NULL;
     int line = 0;
