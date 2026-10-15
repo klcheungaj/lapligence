@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 23u
+#define LLG_SLANG_ABI_VERSION 24u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -491,16 +491,48 @@ enum {
  *   BODY the body scope. Auxiliary: LLG_SLANG_COVERGROUP_* bits.
  * POINT: type_id is the coverpoint type; INITIALIZER is the coverage
  *   expression, CONDITION the `iff` guard and OPERAND[i] option setter i.
- * BIN: OPERAND[i] is open-range-list item i, WIDTH the `[N]` count and
- *   CONDITION the `iff` guard. Auxiliary: the kind in the low two bits
- *   (LLG_SLANG_COVERAGE_BIN_*), shape bits above them.
- * CROSS and BODY carry no edges. */
+ * BIN: OPERAND[i] is open-range-list item i (or, for a transition bin,
+ *   TRANS_SET i), WIDTH the `[N]` count, CONDITION the `iff` guard and BODY
+ *   a cross bin's select expression (a SELECT node). Auxiliary: the kind in
+ *   the low two bits (LLG_SLANG_COVERAGE_BIN_*), shape bits above them.
+ * CROSS: ARGUMENT[i] names crossed coverpoint i (implicit coverpoints of
+ *   crossed variables included), CONDITION the `iff` guard and OPERAND[i]
+ *   option setter i. Auxiliary: LLG_SLANG_COVER_CROSS_OF_CROSS when a cross
+ *   item names another cross (a later-edition form).
+ * TRANS_SET (synthetic, parent the bin): OPERAND[i] is TRANS_RANGE i.
+ * TRANS_RANGE (synthetic, parent the bin): OPERAND[i] is range-list item
+ *   i, LEFT/RIGHT the repeat bounds. Auxiliary: LLG_SLANG_COVER_REPEAT_*.
+ * SELECT (parent the bin): auxiliary LLG_SLANG_COVER_SELECT_*. CONDITION:
+ *   REFERENCE the `binsof` coverpoint or coverpoint bin, OPERAND[i]
+ *   intersect item i. NOT: OPERAND[0]. AND/OR: OPERAND[0] and OPERAND[1].
+ *   OTHER (a later-edition or invalid form) carries no edges.
+ * BODY carries no edges. */
 enum {
   LLG_SLANG_COVERAGE_GROUP = 1,
   LLG_SLANG_COVERAGE_POINT = 2,
   LLG_SLANG_COVERAGE_BIN = 3,
   LLG_SLANG_COVERAGE_CROSS = 4,
-  LLG_SLANG_COVERAGE_BODY = 5
+  LLG_SLANG_COVERAGE_BODY = 5,
+  LLG_SLANG_COVERAGE_TRANS_SET = 6,
+  LLG_SLANG_COVERAGE_TRANS_RANGE = 7,
+  LLG_SLANG_COVERAGE_SELECT = 8
+};
+
+enum { LLG_SLANG_COVER_CROSS_OF_CROSS = 1ull << 0 };
+
+enum {
+  LLG_SLANG_COVER_REPEAT_NONE = 0,
+  LLG_SLANG_COVER_REPEAT_CONSECUTIVE = 1,
+  LLG_SLANG_COVER_REPEAT_NONCONSECUTIVE = 2,
+  LLG_SLANG_COVER_REPEAT_GOTO = 3
+};
+
+enum {
+  LLG_SLANG_COVER_SELECT_CONDITION = 1,
+  LLG_SLANG_COVER_SELECT_NOT = 2,
+  LLG_SLANG_COVER_SELECT_AND = 3,
+  LLG_SLANG_COVER_SELECT_OR = 4,
+  LLG_SLANG_COVER_SELECT_OTHER = 5
 };
 
 enum {

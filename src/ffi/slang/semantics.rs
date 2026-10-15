@@ -308,7 +308,7 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
         26 => matches!(subkind, 0 | 112..=119),
         31 => matches!(
             subkind,
-            super::SEMANTIC_COVERAGE_GROUP..=super::SEMANTIC_COVERAGE_BODY
+            super::SEMANTIC_COVERAGE_GROUP..=super::SEMANTIC_COVERAGE_SELECT
         ),
         28 => matches!(subkind, 0..=13),
         30 => matches!(
@@ -429,6 +429,13 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
                 | super::COVERAGE_BIN_SET
                 | super::COVERAGE_BIN_SELECT;
             node.auxiliary & !allowed == 0 && node.auxiliary & super::COVERAGE_BIN_KIND_MASK != 3
+        }
+        (31, super::SEMANTIC_COVERAGE_CROSS, _) => {
+            node.auxiliary & !super::COVER_CROSS_OF_CROSS == 0
+        }
+        (31, super::SEMANTIC_COVERAGE_TRANS_RANGE, _) => node.auxiliary <= super::COVER_REPEAT_GOTO,
+        (31, super::SEMANTIC_COVERAGE_SELECT, _) => {
+            (super::COVER_SELECT_CONDITION..=super::COVER_SELECT_OTHER).contains(&node.auxiliary)
         }
         // Bit i marks block event i as a `begin` event.
         (26, super::SEMANTIC_TIMING_BLOCK_EVENT_LIST, _) => true,

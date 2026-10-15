@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 23;
+const ABI_VERSION: u32 = 24;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -694,6 +694,24 @@ pub(crate) const SEMANTIC_COVERAGE_POINT: u32 = 2;
 pub(crate) const SEMANTIC_COVERAGE_BIN: u32 = 3;
 pub(crate) const SEMANTIC_COVERAGE_CROSS: u32 = 4;
 pub(crate) const SEMANTIC_COVERAGE_BODY: u32 = 5;
+/// Synthetic transition set and range list of a transition bin (19.5.1).
+pub(crate) const SEMANTIC_COVERAGE_TRANS_SET: u32 = 6;
+pub(crate) const SEMANTIC_COVERAGE_TRANS_RANGE: u32 = 7;
+/// One operator of a cross bin select expression (19.6).
+pub(crate) const SEMANTIC_COVERAGE_SELECT: u32 = 8;
+/// A cross item names another cross (not 1800-2009 syntax).
+pub(crate) const COVER_CROSS_OF_CROSS: u64 = 1 << 0;
+/// Transition range-list repetition (`auxiliary` of a TRANS_RANGE node).
+pub(crate) const COVER_REPEAT_NONE: u64 = 0;
+pub(crate) const COVER_REPEAT_CONSECUTIVE: u64 = 1;
+pub(crate) const COVER_REPEAT_NONCONSECUTIVE: u64 = 2;
+pub(crate) const COVER_REPEAT_GOTO: u64 = 3;
+/// Select-expression operator (`auxiliary` of a SELECT node).
+pub(crate) const COVER_SELECT_CONDITION: u64 = 1;
+pub(crate) const COVER_SELECT_NOT: u64 = 2;
+pub(crate) const COVER_SELECT_AND: u64 = 3;
+pub(crate) const COVER_SELECT_OR: u64 = 4;
+pub(crate) const COVER_SELECT_OTHER: u64 = 5;
 /// Covergroup qualifiers.
 pub(crate) const COVERGROUP_EMBEDDED: u64 = 1 << 0;
 pub(crate) const COVERGROUP_WITH_SAMPLE: u64 = 1 << 1;

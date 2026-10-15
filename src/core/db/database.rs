@@ -114,7 +114,8 @@ mod capture;
 mod coverage;
 use coverage::CoverageImport;
 pub use coverage::{
-    CoverageBinInfo, CoverageBinKind, CoverageBlockEvent, CoverageEvent, CoverageTables,
+    CoverageBinInfo, CoverageBinKind, CoverageBlockEvent, CoverageCrossInfo, CoverageEvent,
+    CoverageRepeat, CoverageSelect, CoverageSelectKind, CoverageTables, CoverageTransRange,
     CovergroupInfo, CoverpointInfo,
 };
 mod shared;
@@ -738,7 +739,12 @@ impl Db {
 
     /// The covergroup that declares cross `id`.
     pub fn coverage_cross_group(&self, id: NodeId) -> Option<NodeId> {
-        self.coverage.crosses.get(&id).copied()
+        self.coverage.crosses.get(&id).map(|cross| cross.group)
+    }
+
+    /// Cross declaration `id` (IEEE 1800-2009 19.6).
+    pub fn coverage_cross(&self, id: NodeId) -> Option<&CoverageCrossInfo> {
+        self.coverage.crosses.get(&id)
     }
 
     /// All owned clocking-variable metadata keyed by declaration identity.
