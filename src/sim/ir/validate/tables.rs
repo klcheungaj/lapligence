@@ -16,6 +16,12 @@ impl Validator<'_> {
             problem.validate(&format!("rand_problems[{idx}]"))?;
         }
 
+        for (idx, group) in self.model.covergroups.iter().enumerate() {
+            if let Err(detail) = group.validate(self.model.coverage_types.len()) {
+                return self.fail(format!("covergroups[{idx}]"), detail);
+            }
+        }
+
         for (idx, object) in self.model.vpi_objects.iter().enumerate() {
             let path = format!("vpi_objects[{idx}]");
             if object.full_name.is_empty() || object.name.is_empty() {

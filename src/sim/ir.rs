@@ -86,6 +86,11 @@ pub use lvalues::{
 mod calls;
 pub(in crate::sim) use calls::call_argument_name;
 pub use calls::{IrCall, IrCallArg, IrCallExpr, IrDepth, IrVirtualCall};
+mod coverage;
+pub use coverage::{
+    IrCoverBins, IrCoverSegment, IrCoverageOption, IrCoverageQuery, IrCoverageSample,
+    IrCoverageStmt, IrCoverageType, IrCovergroup, IrCoverpoint,
+};
 mod randomize;
 pub use randomize::{
     rand_cyclic_state_width, IrRandArray, IrRandArrayKind, IrRandBlock, IrRandCall, IrRandDist,
@@ -557,6 +562,11 @@ pub struct IrModel {
     /// Constraint problems of randomize calls (IEEE 1800-2009 18), one per
     /// call site and dynamic class; each owns one runtime solver session.
     pub(in crate::sim) rand_problems: Vec<IrRandProblem>,
+    /// Elaborated covergroup declarations (IEEE 1800-2009 19), indexed by
+    /// coverage statements and queries.
+    pub(in crate::sim) covergroups: Vec<IrCovergroup>,
+    /// Covergroup declaration identities whose instances type coverage merges.
+    pub(in crate::sim) coverage_types: Vec<IrCoverageType>,
     /// Instantiated scopes holding DPI-C import or export declarations, in
     /// ascending byte order of their names; an `svScope` names one (SV
     /// Annex H.9). Set by lowering.
@@ -690,6 +700,8 @@ impl IrModel {
             vpi_catalog: true,
             random: IrRandomUse::default(),
             rand_problems: Vec::new(),
+            covergroups: Vec::new(),
+            coverage_types: Vec::new(),
             dpi_scopes: Vec::new(),
             dpi_sites: Vec::new(),
         };

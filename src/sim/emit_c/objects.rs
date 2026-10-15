@@ -586,6 +586,9 @@ pub(super) fn query(
             chandle(ctx, a)?,
             chandle(ctx, b)?
         ),
+        IrObjectQuery::Coverage(_) => {
+            return Err("functional coverage requires the ownership-aware emitter".to_owned())
+        }
         IrObjectQuery::VirtualInterfaceInstance {
             handle,
             interface,

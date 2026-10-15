@@ -499,6 +499,9 @@ pub enum IrStmt {
     PlusArg(IrExpr),
     /// Feed a randomize problem's solver session (IEEE 1800-2009 18).
     Randomize(Box<super::IrRandStmt>),
+    /// Create, configure, sample or control a covergroup instance (IEEE
+    /// 1800-2009 19).
+    Coverage(Box<super::IrCoverageStmt>),
     /// IEEE stochastic analysis queue system task. This facility is kept
     /// separate from SystemVerilog queue containers and random streams.
     Stochastic(Box<IrStochasticStmt>),

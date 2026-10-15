@@ -132,6 +132,9 @@ impl Validator<'_> {
             IrStmt::Randomize(operation) => {
                 self.validate_rand_stmt(operation, formals, path)?;
             }
+            IrStmt::Coverage(operation) => {
+                self.validate_coverage_stmt(operation, formals, path)?;
+            }
             IrStmt::RandomSeed { seed } => {
                 self.validate_expr(seed, formals, &format!("{path}.seed"))?;
                 if seed.is_real() || (seed.width, seed.signed) != (32, false) {
@@ -1638,6 +1641,57 @@ impl Validator<'_> {
 }
 
 impl Validator<'_> {
+    pub(super) fn validate_coverage_stmt(
+        &self,
+        operation: &crate::sim::ir::IrCoverageStmt,
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
+        use crate::sim::ir::IrCoverageStmt;
+        let group_exists = |group: &usize| *group < self.model.covergroups.len();
+        let valid = match operation {
+            IrCoverageStmt::Create { group, target } => {
+                group_exists(group)
+                    && self
+                        .model
+                        .native_accesses
+                        .iter()
+                        .any(|access| access.name == *target)
+            }
+            IrCoverageStmt::Register { group, .. } => group_exists(group),
+            IrCoverageStmt::SampleRegistered {
+                group, function, ..
+            } => {
+                group_exists(group)
+                    && self.model.funcs.get(*function).is_some_and(|function| {
+                        function.formals.is_empty() && function.receiver_class.is_some()
+                    })
+            }
+            IrCoverageStmt::Option { value, site, .. } => !value.is_real() && !site.contains('\0'),
+            IrCoverageStmt::Sample { points, .. } => points
+                .iter()
+                .all(|sample| !sample.value.is_real() && sample.value.width <= 64),
+            IrCoverageStmt::Ready { .. } | IrCoverageStmt::Control { .. } => true,
+        };
+        if !valid {
+            return self.fail(path, "invalid coverage statement");
+        }
+        for (index, expression) in operation.expressions().into_iter().enumerate() {
+            self.validate_expr(expression, formals, &format!("{path}.values[{index}]"))?;
+        }
+        for (index, handle) in operation.chandles().into_iter().enumerate() {
+            let mut result = Ok(());
+            handle.expressions(&mut |child| {
+                if result.is_ok() {
+                    result =
+                        self.validate_expr(child, formals, &format!("{path}.handles[{index}]"));
+                }
+            });
+            result?;
+        }
+        Ok(())
+    }
+
     pub(super) fn validate_rand_stmt(
         &self,
         operation: &crate::sim::ir::IrRandStmt,
