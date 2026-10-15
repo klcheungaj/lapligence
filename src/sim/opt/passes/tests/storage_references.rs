@@ -137,3 +137,36 @@ fn unused_storage_keeps_wait_sources_of_clocked_nonblocking_operations() {
     run(&mut model, &storage_only());
     assert_only_first_omitted(&model);
 }
+
+#[test]
+fn unused_storage_keeps_handle_argument_and_receiver_selectors() {
+    // `t(q[i])` and `q[i].f()` read a class handle from a queue; the element
+    // index is evaluated at the call site, in statement and expression calls.
+    use crate::sim::ir::{IrCallExpr, IrChandleExpr};
+    let element = |signal: usize| IrChandleExpr::ContainerGet {
+        container: 0,
+        index: Box::new(read(signal)),
+    };
+    let statement_call =
+        |args: Vec<IrCallArg>| IrCall::new(0, args, IrDepth::PROC, Vec::new(), Vec::new());
+    let mut method = statement_call(Vec::new());
+    method.receiver = Some(element(2));
+    let expression_call = |args: Vec<IrCallArg>| IrCallExpr::new(0, args, IrDepth::PROC, false);
+    let test = |call: IrCallExpr| IrStmt::If {
+        cond: IrExpr::new(IrExprKind::CallFn(Box::new(call)), 1, false, None),
+        then_: Vec::new(),
+        els: None,
+        check: IrUniquePriorityCheck::None,
+    };
+    let body = vec![
+        IrStmt::Call(Box::new(statement_call(vec![IrCallArg::ChandleVal(
+            element(1),
+        )]))),
+        IrStmt::Call(Box::new(method)),
+        test(expression_call(vec![IrCallArg::ChandleVal(element(3))])),
+        test(expression_call(Vec::new()).with_receiver(element(4))),
+    ];
+    let mut model = model_with(body, sigs(5));
+    run(&mut model, &storage_only());
+    assert_only_first_omitted(&model);
+}

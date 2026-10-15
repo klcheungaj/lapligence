@@ -855,12 +855,70 @@ fn collect_stream_selector_reads(selector: &IrStreamSelector, model: &IrModel, r
 }
 
 fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) {
-    if let Some(virtual_call) = &call.virtual_call {
+    let crate::sim::ir::IrCall {
+        f,
+        args,
+        depth: _,
+        receiver,
+        virtual_dispatch: _,
+        virtual_call,
+        temps,
+        copyouts,
+        dpi_site: _,
+    } = call;
+    collect_call_target_reads(receiver.as_ref(), virtual_call.as_ref(), model, rw);
+    collect_call_args_rw(*f, args, model, rw);
+    // Caller-side output/inout temps live here, not in `args`: their
+    // initializers read the actual's current value.
+    for (_, _, init) in temps {
+        if let Some(init) = init {
+            collect_expr_reads(init, model, rw);
+        }
+    }
+    // Copy-out assignments after the call write the actual targets (their
+    // select indices are reads).
+    for (lh, ..) in copyouts {
+        collect_lhs_rw(lh, model, rw);
+    }
+}
+
+fn collect_call_expr_rw(call: &crate::sim::ir::IrCallExpr, model: &IrModel, rw: &mut Rw) {
+    let crate::sim::ir::IrCallExpr {
+        f,
+        args,
+        depth: _,
+        receiver,
+        virtual_dispatch: _,
+        virtual_call,
+        void_x: _,
+        dpi_site: _,
+    } = call;
+    collect_call_target_reads(receiver.as_ref(), virtual_call.as_ref(), model, rw);
+    collect_call_args_rw(*f, args, model, rw);
+}
+
+/// A method receiver such as `q[i].f()` evaluates its selectors at the call
+/// site.
+fn collect_call_target_reads(
+    receiver: Option<&crate::sim::ir::IrChandleExpr>,
+    virtual_call: Option<&crate::sim::ir::IrVirtualCall>,
+    model: &IrModel,
+    rw: &mut Rw,
+) {
+    if let Some(receiver) = receiver {
+        receiver.expressions(&mut |child| collect_expr_reads(child, model, rw));
+    }
+    if let Some(virtual_call) = virtual_call {
         virtual_call
             .receiver
             .expressions(&mut |child| collect_expr_reads(child, model, rw));
     }
-    for (index, arg) in call.args.iter().enumerate() {
+}
+
+/// Arguments of statement and expression calls alike: an output, inout or
+/// non-const `ref` actual is written through its address by the callee.
+fn collect_call_args_rw(function: usize, args: &[IrCallArg], model: &IrModel, rw: &mut Rw) {
+    for (index, arg) in args.iter().enumerate() {
         match arg {
             IrCallArg::FixedValue(value) => {
                 value.expressions(&mut |child| collect_expr_reads(child, model, rw));
@@ -889,9 +947,7 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
             }
             IrCallArg::RefAddr { lhs, read, .. } => {
                 collect_expr_reads(read, model, rw);
-                if call_formal(model, call.function_index(), index)
-                    .is_none_or(|formal| !formal.is_const_ref())
-                {
+                if call_formal(model, function, index).is_none_or(|formal| !formal.is_const_ref()) {
                     collect_lhs_rw(lhs, model, rw);
                 }
             }
@@ -899,7 +955,7 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
                 let name = addr.trim_start_matches('&');
                 if let Some(i) = model.signals.iter().position(|sg| sg.c_name == name) {
                     rw.read(i);
-                    if call_formal(model, call.function_index(), index)
+                    if call_formal(model, function, index)
                         .is_none_or(|formal| !formal.is_const_ref())
                     {
                         rw.write(i);
@@ -946,8 +1002,12 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
             IrCallArg::EventVal(event) | IrCallArg::EventAddr(event) => {
                 collect_event_reads(event, model, rw)
             }
-            IrCallArg::ChandleVal(_)
-            | IrCallArg::FixedArray(_)
+            // A handle argument such as `q[i]` evaluates its selectors at the
+            // call site.
+            IrCallArg::ChandleVal(value) => {
+                value.expressions(&mut |child| collect_expr_reads(child, model, rw))
+            }
+            IrCallArg::FixedArray(_)
             | IrCallArg::RealArray(_)
             | IrCallArg::NativeValue(_)
             | IrCallArg::NativeRefBound
@@ -955,18 +1015,6 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
             | IrCallArg::ChandleAddr(_)
             | IrCallArg::ChandleRefAddr(_) => {}
         }
-    }
-    // Caller-side output/inout temps live here, not in `args`: their
-    // initializers read the actual's current value.
-    for (_, _, init) in &call.temps {
-        if let Some(init) = init {
-            collect_expr_reads(init, model, rw);
-        }
-    }
-    // Copy-out assignments after the call write the actual targets (their
-    // select indices are reads).
-    for (lh, ..) in &call.copyouts {
-        collect_lhs_rw(lh, model, rw);
     }
 }
 
@@ -1083,9 +1131,7 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             left.expressions(&mut |child| collect_expr_reads(child, model, rw));
             right.expressions(&mut |child| collect_expr_reads(child, model, rw));
             for value in [left, right] {
-                value.calls(&mut |call| {
-                    collect_call_rw_readonly(call.function_index(), &call.args, model, rw)
-                });
+                value.calls(&mut |call| collect_call_rw(call, model, rw));
             }
         }
         IrExprKind::FixedArrayReduce(reduction) => {
@@ -1247,14 +1293,7 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             }
             elem_sel.expressions(&mut |idx| collect_expr_reads(idx, model, rw));
         }
-        IrExprKind::CallFn(call) => {
-            collect_call_rw_readonly(call.function_index(), &call.args, model, rw);
-            if let Some(virtual_call) = &call.virtual_call {
-                virtual_call
-                    .receiver
-                    .expressions(&mut |child| collect_expr_reads(child, model, rw));
-            }
-        }
+        IrExprKind::CallFn(call) => collect_call_expr_rw(call, model, rw),
         IrExprKind::SysFunc(sf) => match &**sf {
             IrSysFunc::TestPlusArgs { pattern } => {
                 pattern.expressions(&mut |expression| collect_expr_reads(expression, model, rw))
@@ -1386,99 +1425,6 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             IrSysFunc::Sampled(call) => collect_expr_reads(&call.argument, model, rw),
         },
         _ => {}
-    }
-}
-
-fn collect_call_rw_readonly(function: usize, args: &[IrCallArg], model: &IrModel, rw: &mut Rw) {
-    for (index, arg) in args.iter().enumerate() {
-        match arg {
-            IrCallArg::FixedValue(value) => {
-                value.expressions(&mut |child| collect_expr_reads(child, model, rw));
-                value.calls(&mut |call| {
-                    collect_call_rw_readonly(call.function_index(), &call.args, model, rw)
-                });
-            }
-            IrCallArg::Val(e) => collect_expr_reads(e, model, rw),
-            IrCallArg::StringVal(value) => {
-                value.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
-            }
-            IrCallArg::NativeLeaves { leaves, .. } => {
-                for leaf in leaves {
-                    leaf.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
-                }
-            }
-            IrCallArg::NativeCall { call, .. } | IrCallArg::RealArrayCall { call, .. } => {
-                collect_call_rw_readonly(call.function_index(), &call.args, model, rw)
-            }
-            IrCallArg::OutAddr(addr) => {
-                let name = addr.trim_start_matches('&');
-                if let Some(i) = model.signals.iter().position(|sg| sg.c_name == name) {
-                    rw.read(i);
-                }
-            }
-            IrCallArg::RefAddr { lhs, read, .. } => {
-                collect_expr_reads(read, model, rw);
-                if call_formal(model, function, index).is_none_or(|formal| !formal.is_const_ref()) {
-                    collect_lhs_rw(lhs, model, rw);
-                }
-            }
-            IrCallArg::StringOutAddr(addr) | IrCallArg::StringRefAddr { addr, .. } => {
-                let name = addr.trim_start_matches('&');
-                if let Some(i) = model.signals.iter().position(|sg| sg.c_name == name) {
-                    rw.read(i);
-                }
-            }
-            IrCallArg::OutTemp {
-                init,
-                writeback,
-                storage_lhs,
-                storage_read,
-                selector_inits,
-                ..
-            } => {
-                if let Some(init) = init {
-                    collect_expr_reads(init, model, rw);
-                }
-                // Writebacks inside expression calls copy temps back into the
-                // actuals: count as writes.
-                collect_lhs_rw(writeback, model, rw);
-                if let Some(storage_lhs) = storage_lhs {
-                    collect_lhs_rw(storage_lhs, model, rw);
-                }
-                if let Some(storage_read) = storage_read {
-                    collect_expr_reads(storage_read, model, rw);
-                }
-                for (_, _, _, _, init) in selector_inits {
-                    collect_expr_reads(init, model, rw);
-                }
-            }
-            IrCallArg::StringOutTemp {
-                init, storage_read, ..
-            } => {
-                if let Some(init) = init {
-                    init.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
-                }
-                if let Some(read) = storage_read {
-                    read.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
-                }
-            }
-            IrCallArg::RealArrayValues(values) | IrCallArg::ContainerValues { values, .. } => {
-                for value in values {
-                    collect_expr_reads(value, model, rw);
-                }
-            }
-            IrCallArg::EventVal(event) | IrCallArg::EventAddr(event) => {
-                collect_event_reads(event, model, rw)
-            }
-            IrCallArg::ChandleVal(_)
-            | IrCallArg::FixedArray(_)
-            | IrCallArg::RealArray(_)
-            | IrCallArg::NativeValue(_)
-            | IrCallArg::NativeRefBound
-            | IrCallArg::Container(_)
-            | IrCallArg::ChandleAddr(_)
-            | IrCallArg::ChandleRefAddr(_) => {}
-        }
     }
 }
 
