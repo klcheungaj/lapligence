@@ -22,9 +22,12 @@ typedef struct {
 // terminates the load. Neither ends the simulation or changes its status.
 static void llg_memory_report(const char* category, const char* path,
                               const char* format, va_list args) {
-    fprintf(stderr, "llg: %s: memory file `%s`: ", category, path ? path : "");
-    vfprintf(stderr, format, args);
-    fputc('\n', stderr);
+    llg_report_t report;
+    llg_report_init(&report);
+    llg_report_printf(&report, "llg: %s: memory file `%s`: ", category, path ? path : "");
+    llg_report_vprintf(&report, format, args);
+    llg_report_bytes(&report, "\n", 1);
+    llg_report_emit(&report, stderr);
 }
 
 static void llg_memory_warning(const char* path, const char* format, ...) {

@@ -1,10 +1,12 @@
 
 static void report_finish(int verbosity, const char* location) {
     if (verbosity >= 1) {
-        fprintf(stderr, "llg: $finish at time %llu",
-                (unsigned long long)g.now);
-        if (location && location[0] != '\0') fprintf(stderr, " at %s", location);
-        fputc('\n', stderr);
+        llg_report_t report;
+        llg_report_init(&report);
+        llg_report_printf(&report, "llg: $finish at time %llu", (unsigned long long)g.now);
+        if (location && location[0] != '\0') llg_report_printf(&report, " at %s", location);
+        llg_report_bytes(&report, "\n", 1);
+        llg_report_emit(&report, stderr);
     }
     if (verbosity >= 2) {
         fprintf(stderr, "llg: simulation statistics: processes=%d\n", g.n_procs);
@@ -76,10 +78,12 @@ void llg_rt_mark_failed(void) {
 
 static void report_stop(int verbosity, const char* location) {
     if (verbosity >= 1) {
-        fprintf(stderr, "llg: $stop at time %llu",
-                (unsigned long long)g.now);
-        if (location && location[0] != '\0') fprintf(stderr, " at %s", location);
-        fputc('\n', stderr);
+        llg_report_t report;
+        llg_report_init(&report);
+        llg_report_printf(&report, "llg: $stop at time %llu", (unsigned long long)g.now);
+        if (location && location[0] != '\0') llg_report_printf(&report, " at %s", location);
+        llg_report_bytes(&report, "\n", 1);
+        llg_report_emit(&report, stderr);
     }
     if (verbosity >= 2) {
         fprintf(stderr, "llg: simulation statistics: processes=%d\n", g.n_procs);

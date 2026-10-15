@@ -27,12 +27,14 @@ static void llg_report_severity_typed(int severity, const char* fmt,
     size_t len = 0;
     char* out = llg_typed_line_alloc(fmt, args, n, scope, &len);
     llg_severity_counts[severity]++;
-    fprintf(stderr, "llg: severity %s: %s: ",
-            llg_severity_name(severity),
-            location && location[0] ? location : "<unknown>");
-    fwrite(out, 1, len, stderr);
-    fputc('\n', stderr);
-    fflush(stderr);
+    llg_report_t report;
+    llg_report_init(&report);
+    llg_report_printf(&report, "llg: severity %s: %s: ",
+                      llg_severity_name(severity),
+                      location && location[0] ? location : "<unknown>");
+    llg_report_bytes(&report, out, len);
+    llg_report_bytes(&report, "\n", 1);
+    llg_report_emit(&report, stderr);
     free(out);
 }
 
@@ -86,12 +88,14 @@ static void assertion_report_failure(int kind, const char* label,
         abort();
     }
     llg_severity_counts[LLG_SEVERITY_ERROR]++;
-    fprintf(stderr, "llg: assertion %s failed: %s",
-            llg_assertion_name(kind),
-            location && location[0] ? location : "<unknown>");
-    if (label && label[0]) fprintf(stderr, " (%s)", label);
-    fputc('\n', stderr);
-    fflush(stderr);
+    llg_report_t report;
+    llg_report_init(&report);
+    llg_report_printf(&report, "llg: assertion %s failed: %s",
+                      llg_assertion_name(kind),
+                      location && location[0] ? location : "<unknown>");
+    if (label && label[0]) llg_report_printf(&report, " (%s)", label);
+    llg_report_bytes(&report, "\n", 1);
+    llg_report_emit(&report, stderr);
 }
 
 void llg_assertion_failure(int kind, uint64_t identity, const char* label,

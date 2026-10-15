@@ -692,9 +692,12 @@ required. Each ring-index or waiting-flag store is followed by a sequentially
 consistent fence before reading the peer's flag or index; release/acquire alone
 loses wakeups and deadlocks close/dumpflush. A second producer needs a separate ring or changed concurrency design.
 Only the simulation thread prints waveform reports, each in one stdio call: the
-writer stores its single error report and `llg_wave_slot_end`/close print it,
-because simulation output such as the `$finish` line takes several calls and a
-writer-thread print could split it (S47-D11).
+writer stores its single error report and `llg_wave_slot_end`/close print it
+(S47-D11). Every other runtime diagnostic is also one stdio call: multi-part
+messages (severity tasks, assertion failures, `$finish`/`$stop`, memory-file
+diagnostics, the coroutine backtrace) are assembled in an `llg_report_t`
+(`llg_rt_prelude.c`; inline buffer, heap growth, truncation instead of abort)
+and written with one `fwrite`. Error paths only; `$display` output is untouched.
 Separate hierarchy components with ASCII 0x1f and reversibly encode punctuation to
 avoid escaped-name collisions. Keep libfst internal parallel mode disabled;
 waveform builds require `Threads::Threads`, not C11 threads as the Windows
