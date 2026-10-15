@@ -605,6 +605,7 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
             .expect("the default timescale has non-zero precision"),
     );
     cg.build_init_steps(&mut model)?;
+    check_wave_variable_targets(&cg.wave_variable_targets, &model)?;
     cg.populate_vpi_metadata(&mut model, &tops)?;
     cg.finish_dpi(&mut model)?;
     // Final-block processes render like any other but spawn into the
@@ -652,6 +653,45 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
         design_name,
         warnings,
     })
+}
+
+/// A `$dumpvars` variable argument must name waveform storage: a packed or
+/// real signal, a record or union whose members are such signals, or a
+/// fixed array or one of its elements. Strings, class handles, events,
+/// dynamic, queue and associative arrays and activation storage have no
+/// registration; naming one is an error rather than a silently empty
+/// selection (S47-D9).
+fn check_wave_variable_targets(
+    targets: &[(String, String, String)],
+    model: &IrModel,
+) -> Result<(), String> {
+    let under = |candidate: &str, name: &str| {
+        candidate
+            .strip_prefix(name)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(['\u{1f}', '[']))
+    };
+    for (name, text, scope) in targets {
+        let signal = model
+            .signals
+            .iter()
+            .filter_map(|signal| signal.hdl_name.as_deref())
+            .any(|candidate| under(candidate, name));
+        let array = model.arrays.iter().any(|array| {
+            !array.activation
+                && !array.hdl_name.is_empty()
+                && (under(&array.hdl_name, name) || under(name, &array.hdl_name))
+        });
+        if !signal && !array {
+            return Err(format!(
+                "`$dumpvars` argument `{text}` in `{scope}` has no VCD/FST representation: \
+                 llg dumps packed and real variables and nets, their fixed unpacked \
+                 arrays and unpacked structure members declared in instance and \
+                 generate scopes; strings, class handles, dynamic, queue and \
+                 associative arrays and block or subroutine variables are not dumped"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn finish_generation(
@@ -1552,6 +1592,10 @@ struct Codegen<'a> {
     /// emission order — spawned into [`IrModel::final_spawns`] instead of
     /// the t=0 spawn list.
     final_procs: Vec<String>,
+    /// `$dumpvars` arguments naming a variable, net or array element:
+    /// (waveform name, dotted source path, calling scope). Checked against the
+    /// finished storage catalog.
+    wave_variable_targets: Vec<(String, String, String)>,
     /// Assertion action helpers are registered by the runtime and must not
     /// also be spawned as ordinary design processes at time zero.
     assertion_action_procs: HashSet<String>,
@@ -1841,6 +1885,7 @@ impl<'a> Codegen<'a> {
             structural_drivers: Vec::new(),
             structural_driver_terminal_sites: HashMap::new(),
             final_procs: Vec::new(),
+            wave_variable_targets: Vec::new(),
             assertion_action_procs: HashSet::new(),
             assertion_display_scope: None,
             sampled_clock: None,

@@ -23,16 +23,22 @@ impl EmitCtx<'_, '_> {
             },
             None => (0, 0usize),
         };
-        let mut names = args[first_selection..]
-            .iter()
-            .map(|argument| self.cg.waveform_selection_name(*argument))
-            .collect::<Result<Vec<_>, _>>()?;
-        // `$dumpvars(depth)` uses the current elaborated module instance as
-        // its implicit scope.  Keep this as owned hierarchy metadata rather
-        // than converting the textual process path at runtime.
-        if names.is_empty() && depth != 0 {
-            names.push(self.cg.waveform_name_for(self.inst));
+        let mut names = Vec::with_capacity(args.len().saturating_sub(first_selection));
+        for argument in &args[first_selection..] {
+            let name = self.cg.waveform_selection_name(*argument)?;
+            if let Some(display) = self.cg.waveform_selection_variable(*argument) {
+                // Checked against the finished storage catalog: a variable
+                // without a VCD/FST representation is rejected, never
+                // silently dumped as nothing (S47-D9).
+                self.cg
+                    .wave_variable_targets
+                    .push((name.clone(), display, self.path.clone()));
+            }
+            names.push(name);
         }
+        // `$dumpvars(depth)` without scopes applies the depth below every
+        // top-level instance, like the complete design of `$dumpvars;`
+        // (S47-D4); the runtime reads an empty list that way.
         Ok(IrStmt::WaveDumpVars(crate::sim::ir::IrWaveDumpVars::new(
             depth, names,
         )))
@@ -501,27 +507,26 @@ impl EmitCtx<'_, '_> {
             "$monitoron" => Ok(vec![IrStmt::MonitorEnable(true)]),
             "$monitoroff" => Ok(vec![IrStmt::MonitorEnable(false)]),
             "$dumpfile" => {
-                if args.len() != 1 {
-                    return Err(format!(
-                        "$dumpfile requires exactly one literal string argument in `{}`",
-                        self.path
-                    ));
-                }
-                let path = self
-                    .literal_string(args[0], "$dumpfile path")?
-                    .ok_or_else(|| {
-                        format!(
-                            "$dumpfile requires a literal string argument in `{}`",
+                // The file name is optional and defaults to `dump.vcd`
+                // (IEEE 1800-2009 21.7.1.1). A `.fst` name selects FST at
+                // run time; any other name is a VCD file (S47-D7).
+                let path = match args.as_slice() {
+                    [] => "dump.vcd".to_owned(),
+                    [argument] => self
+                        .literal_string(*argument, "$dumpfile path")?
+                        .ok_or_else(|| {
+                            format!(
+                                "$dumpfile requires a literal string argument in `{}`",
+                                self.path
+                            )
+                        })?,
+                    _ => {
+                        return Err(format!(
+                            "$dumpfile takes at most one literal string argument in `{}`",
                             self.path
-                        )
-                    })?;
-                let lower_path = path.to_ascii_lowercase();
-                if !lower_path.ends_with(".vcd") && !lower_path.ends_with(".fst") {
-                    return Err(format!(
-                        "$dumpfile path must end in .vcd or .fst in `{}`",
-                        self.path
-                    ));
-                }
+                        ))
+                    }
+                };
                 self.cg.model.waveform = true;
                 Ok(vec![IrStmt::WaveFile(path)])
             }
