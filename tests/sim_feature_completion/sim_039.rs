@@ -209,6 +209,18 @@ fn named_and_declaring_action_blocks_run_on_static_assertions() {
     );
 }
 
+/// An `initial` procedure made only of concurrent assertions queues each of
+/// them once, labeled or not and however its blocks nest (16.15.6, AH-D1);
+/// a module-level assertion attempts on every tick.
+#[test]
+fn initial_procedure_assertions_start_one_attempt_each() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_039/initial_assertion_bodies.out");
+    sim_cli::run_case_checked_matrix(SUITE, "initial_assertion_bodies", &[], &|label, output| {
+        assert_sorted_stdout(label, output, expected)
+    });
+}
+
 /// A DPI-C import attached to a match receives its own attempt's local,
 /// copied into the call's owned frame when the match is evaluated.
 #[test]

@@ -255,6 +255,27 @@ assertions, "Action blocks may only contain a single subroutine call" (16.4,
 L21208), which "implies that no begin-end construct shall surround the pass or
 fail statements" (L21227-21228). Slang rejects it.
 
+## initial_assertion_bodies
+
+"A procedural concurrent assertion is not immediately evaluated when reached
+in procedural code. Instead, the assertion ... [is] placed in a procedural
+assertion queue associated with the currently executing process" (16.15.6,
+L26749-26752); a matured instance whose clock has not occurred "will cause the
+assertion to begin an evaluation attempt upon the next clocking event"
+(L26763-26764). "The optional statement label ... creates a named block around
+the assertion statement" (16.3, L21105). An `initial` procedure runs once, so
+each of its assertions starts one attempt at the first tick (register
+decisions S38-D6 and AH-D1).
+
+Ticks at 5, 15 and 25; `a` = 1 throughout, `b` = 1 only at 15.
+
+- `st` (module level) covers at 5, 15 and 25.
+- `pc` (labeled, named action, inside `begin : ib`): 5 only, `%m` =
+  `tb.ib.pc.pact`.
+- `c1` (labeled) and the unlabeled cover share one `initial`: 5 only.
+- `lab` (labeled, nested in `begin : inner`), `a ##1 b`: the attempt at 5
+  passes at 15; there is no attempt at 15, so no failure at 25.
+
 ## match_native
 
 `(a, x = x + d)[*2]` in cycles 1-2 gives 3 at 25 and in cycles 2-3 gives 6 at
