@@ -2,7 +2,7 @@
 #include "svdpi.h"
 #include <stdio.h>
 
-void d4_access(const svOpenArrayHandle l, const svOpenArrayHandle b)
+DPI_DLLESPEC void d4_access(const svOpenArrayHandle l, const svOpenArrayHandle b)
 {
     svLogicVecVal lv;
     svBitVecVal bv;

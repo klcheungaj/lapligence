@@ -3,7 +3,7 @@
 
 int d7_inc(int n);
 
-int d7_call(int n)
+DPI_DLLESPEC int d7_call(int n)
 {
     return d7_inc(n);
 }

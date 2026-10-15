@@ -1644,9 +1644,10 @@ A library that calls `svGetTime`, `svGetTimeUnit`, `svGetTimePrecision` or a
 deprecated SV3.1a routine (H.13) fails the model link with an error naming
 the routine. A Mach-O library (macOS) is rejected with the same error before
 the build, from its symbol table, because ld64 does not check a dylib's
-undefined symbols. On Windows, a DPI DLL cannot import the `svdpi.h` routines
-from the model executable; such a library must be linked as a static archive
-(see [DPI-C export limits](#dpi-c-export-limits-sim-041)).
+undefined symbols. On Windows a DPI DLL links against the model's import
+library (`llg --dpi-import-lib`), which lacks these routines, so the DLL's own
+link fails and names the routine (see
+[DPI-C export limits](#dpi-c-export-limits-sim-041)).
 
 ### Cause
 
@@ -1678,11 +1679,18 @@ call chains; these cases remain outside it.
   directly or through a called task) is rejected: "DPI-C export task `t` (C
   identifier `t`) can consume time; exported tasks that suspend are not
   supported (ADV-018)".
-- On Windows a DPI DLL cannot call exports or `svdpi.h` routines, which the
-  model executable defines; the companion must be given to `--dpi-lib` as a
-  static library (`.lib`), which links into the model. The static route is
-  tested on Unix hosts (`sim_041::static_archive_companion_reaches_exports_and_scopes`)
-  and written for MSVC (`cl /c`, `lib`), but has not run on a Windows host.
+- On Windows a DPI DLL (or VPI plugin) reaches the exports and the `svdpi.h`
+  and VPI routines in `sim.exe` through the model's import library, written by
+  `llg --dpi-import-lib <file>` for the same design and options before the
+  DLL is linked. The DLL must export its import functions (`DPI_DLLESPEC` or a
+  `.def`), `--dpi-lib` takes the DLL's import library, and the DLL must stay
+  beside it (llg puts that directory on `PATH`; a model started by hand needs
+  it on `PATH` too). The executable must keep the name `sim.exe`, which the
+  import library names. A call of an export the design does not declare fails
+  the DLL's link instead of the model's. Only MSVC toolchains build the import
+  library; a MinGW DLL is not supported (static archives work everywhere).
+  The route is unit-tested on Linux (generated `sim.def`, CMake text) and
+  written for MSVC; its Windows run is pending CI.
 - On macOS a dylib built with `-undefined dynamic_lookup` that calls a symbol
   the design does not export is not named before the build; dyld reports it
   when the model loads.
@@ -1699,12 +1707,13 @@ call chains; these cases remain outside it.
 
 A suspending export would need the C caller's native stack preserved across
 the suspension (ADV-018). Windows DLLs resolve imports only from libraries
-named at link time, and the model executable has no import library.
+named at link time, so the model's import library must exist before the DLL
+and must name the executable.
 
 ### Intended direction
 
-ADV-018 for time-consuming exports; a function-pointer table handed to a
-loaded DLL if shared Windows companions are needed.
+ADV-018 for time-consuming exports; a `dlltool` import library if MinGW DLLs
+are needed.
 
 ### Reproduce
 

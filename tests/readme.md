@@ -264,16 +264,23 @@ run at model `-O0`/`-O3` after Db destruction. Their decisions S34-D1-D4 are in
 SIM-040's DPI-C packed, sized and open-array fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_040::)'`. Each positive fixture
 builds its checked-in C companion into a shared library (strict C11, with
-`$LLG_CFLAGS`, Unix hosts) and runs in both optimizer modes on every backend;
-negatives cover frontend, codegen and link-time errors. Decisions S40-D1-D5,
+`$LLG_CFLAGS`; a DLL on Windows, as for SIM-041 below) and runs in both
+optimizer modes on every backend; negatives cover frontend, codegen and
+link-time errors, and `model_import_library_is_explicit_about_the_toolchain`
+checks `llg --dpi-import-lib` (an import library naming `sim.exe` under MSVC,
+an explicit error elsewhere). Decisions S40-D1-D5,
 with `.c` companions, are in `sim_lrm_decisions`; component checks are the
 `sim::build::dpi_link::tests` unit tests.
 
 SIM-041's DPI-C export and context call-chain fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_041::)'`. Positives build their
-companions as shared libraries (Unix hosts) and run in both optimizer modes on
-every backend; `scopes` also links its companion as a static archive (every
-host, the Windows route) and `chains` also runs with `-funsigned-char`. The
+companions as shared libraries and run in both optimizer modes on every
+backend; `scopes` also links its companion as a static archive and `chains`
+also runs with `-funsigned-char` (MSVC `/J`). On Windows every shared companion
+is a DLL built with `/std:c11 /W4 /WX /LD` against the design's import library
+(`sim_cli::model_import_library`, `llg --dpi-import-lib`; see
+`c_compiler::shared_library`), and the undeclared-export and `svGetTime`
+negatives check the DLL link's error instead of the model link's. The
 runtime negatives share `errors.c` and must stop with a "DPI-C protocol
 violation". Decisions S41-D1-D8 are in `sim_lrm_decisions`; the component
 check is `sim_dpi::dpi_exports_lower_to_one_entry_and_sorted_scopes`. Under
@@ -283,10 +290,10 @@ instruments the companions.
 SIM-042's VPI fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_042::)'`. Each `.sv` has a C
 application that registers its system tasks and functions; positives load it
-with `LLG_VPI_PLUGIN` (Unix hosts) and run in both optimizer modes on every
-backend; `objects` and `systf` also link it as a static archive through
-`--dpi-lib` (every host, the Windows route), `values` also runs with
-`-funsigned-char`, `systf` also runs a model generated after the frontend is
+with `LLG_VPI_PLUGIN` (on Windows a DLL linked against a model import library)
+and run in both optimizer modes on every backend; `objects` and `systf` also
+link it as a static archive through `--dpi-lib`, `values` also runs with
+`-funsigned-char` (MSVC `/J`), `systf` also runs a model generated after the frontend is
 dropped, and `missing` must stop at startup. `errors` includes the handle
 churn that the ASan lane exercises
 (`LLG_CC=gcc LLG_CFLAGS='-fsanitize=address,undefined -DLLG_CO_DEBUG'`).

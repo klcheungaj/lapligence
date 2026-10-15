@@ -5,7 +5,7 @@
 int d2_pair(int a, int *x, int *y);
 void d2_both(int *p, int *q);
 
-void d2_run(void)
+DPI_DLLESPEC void d2_run(void)
 {
     int v = 0;
     int r = d2_pair(3, &v, &v);

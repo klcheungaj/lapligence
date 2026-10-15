@@ -28,7 +28,7 @@ static void show(const char *name, const rec_t *r) {
            sv_byte(r->pair[1]));
 }
 
-void ag_rec(const rec_t *i, rec_t *o, nest_t *n) {
+DPI_DLLESPEC void ag_rec(const rec_t *i, rec_t *o, nest_t *n) {
     show("i", i);
     show("n.r[c0]", &n->r[0]);
     show("n.r[c1]", &n->r[1]);
@@ -48,7 +48,7 @@ void ag_rec(const rec_t *i, rec_t *o, nest_t *n) {
     n->n = (short)(n->n - 1);
 }
 
-void ag_arrays(const char *b, svLogicVecVal *o, const svBit *f, svLogic *l) {
+DPI_DLLESPEC void ag_arrays(const char *b, svLogicVecVal *o, const svBit *f, svLogic *l) {
     int k;
     printf("b=%d,%d,%d,%d f=%u%u%u%u l=%u%u%u\n", sv_byte(b[0]), sv_byte(b[1]), sv_byte(b[2]),
            sv_byte(b[3]), (unsigned)f[0],
@@ -65,7 +65,7 @@ void ag_arrays(const char *b, svLogicVecVal *o, const svBit *f, svLogic *l) {
 
 static char result[16] = "ret:";
 
-const char *ag_strings(const char *i, const char **o, const char **io) {
+DPI_DLLESPEC const char *ag_strings(const char *i, const char **o, const char **io) {
     int k;
     printf("i=%s io=%s\n", i, *io);
     for (k = 0; i[k] != '\0' && k < 8; k++) result[4 + k] = i[k];

@@ -2,7 +2,7 @@
 #include "svdpi.h"
 #include <stddef.h>
 
-int neg_scope(void)
+DPI_DLLESPEC int neg_scope(void)
 {
     svTimeVal now;
     return svGetTime(NULL, &now);

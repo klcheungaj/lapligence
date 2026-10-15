@@ -11,7 +11,7 @@ void ch_wide(const svLogicVecVal *a, svLogicVecVal *b, svBitVecVal *c);
 char ch_byte(char b, char *o);
 int ch_tick(int k, int *o);
 
-int ch_loop(int n)
+DPI_DLLESPEC int ch_loop(int n)
 {
     int total = 0;
     int returned = 0;
@@ -62,21 +62,21 @@ int ch_loop(int n)
     return total;
 }
 
-int ch_rec(int n)
+DPI_DLLESPEC int ch_rec(int n)
 {
     return ch_down(n);
 }
 
 /* One address for both outputs of an export: copy-back writes them in
  * declaration order, so the last output wins. */
-void ch_alias(void)
+DPI_DLLESPEC void ch_alias(void)
 {
     int v = 9;
     ch_pair(3, &v, &v);
     printf("c alias v=%d\n", v);
 }
 
-int ch_task(int n, int *o)
+DPI_DLLESPEC int ch_task(int n, int *o)
 {
     int i;
     int sum = 0;

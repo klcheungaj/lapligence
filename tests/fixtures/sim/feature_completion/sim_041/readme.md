@@ -6,9 +6,11 @@ context scope of DPI-C call chains (`svGetScope`, `svSetScope`,
 the disable protocol. Each positive `<name>.sv` has a portable C11 companion
 `<name>.c`; the runtime negatives share `errors.c`. The test
 [`sim_041.rs`](../../../../sim_feature_completion/sim_041.rs) builds the
-companion into a shared library (Unix hosts) and passes it with `--dpi-lib`.
-`scopes` also runs with the companion built into a static archive, the route
-that works on every host, Windows included. Positives run on the legacy,
+companion into a shared library (a DLL linked against the design's import
+library, `llg --dpi-import-lib`, on Windows) and passes it with `--dpi-lib`;
+import definitions carry `DPI_DLLESPEC` as in
+[sim_040](../sim_040/readme.md). `scopes` also runs with the companion built
+into a static archive, which needs no import library. Positives run on the legacy,
 compact/portable and compact/GMP value backends in both optimizer modes;
 `chains` also runs with `-funsigned-char` on the companion and the model.
 Companions build with `-std=c11 -Wall -Wextra -Werror` (MSVC `/W4 /WX` for the

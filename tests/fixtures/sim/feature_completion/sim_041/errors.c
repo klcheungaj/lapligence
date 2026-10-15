@@ -10,14 +10,14 @@ int err_tick(void);
 void err_kill(void);
 
 /* 35.5.3: a noncontext import may not call an export. */
-int err_noncontext(int n)
+DPI_DLLESPEC int err_noncontext(int n)
 {
     return err_inc(n);
 }
 
 /* 35.5.3: the context scope `tb.uq` does not export err_inc. A legal call
  * in `tb` first leaves a string result alive across the failing call. */
-int err_scope(int n)
+DPI_DLLESPEC int err_scope(int n)
 {
     svScope self = svSetScope(svGetScopeFromName("tb"));
     const char *kept = err_text("held");
@@ -27,20 +27,20 @@ int err_scope(int n)
 }
 
 /* 35.8: an imported function may not call an exported task. */
-int err_task_from_function(void)
+DPI_DLLESPEC int err_task_from_function(void)
 {
     return err_tick();
 }
 
 /* 35.9 c: a disabled import function must acknowledge the disable. */
-int err_no_ack(void)
+DPI_DLLESPEC int err_no_ack(void)
 {
     err_kill();
     return 1;
 }
 
 /* 35.9 d: no export calls after the import entered the disabled state. */
-int err_after_disable(void)
+DPI_DLLESPEC int err_after_disable(void)
 {
     err_kill();
     svAckDisabledState();

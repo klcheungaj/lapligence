@@ -3,7 +3,7 @@
 
 int d8_task(void);
 
-int d8_function(void)
+DPI_DLLESPEC int d8_function(void)
 {
     return d8_task();
 }

@@ -116,32 +116,10 @@ fn b3_resume_resensitize() {
 
 #[test]
 fn b8_context_import_strobe() {
-    if !cfg!(unix) {
-        eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
-        return;
-    }
     let directory = crate::sim_harness::TempDir::new("lrm-b8").expect("temporary directory");
-    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim/lrm_decisions/B8_context_import_strobe.c");
-    let library = directory.path().join("libb8_context.so");
-    let compiler = std::env::var("LLG_CC")
-        .or_else(|_| std::env::var("CC"))
-        .unwrap_or_else(|_| "cc".to_owned());
-    let output = crate::sim_harness::run_command(
-        std::process::Command::new(compiler)
-            .args(["-shared", "-fPIC"])
-            .arg(&source)
-            .arg("-o")
-            .arg(&library),
-        std::time::Duration::from_secs(60),
-    )
-    .expect("C compiler for the DPI fixture");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let library = library.to_string_lossy();
+    let Some(library) = dpi_companion(&directory, "B8_context_import_strobe") else {
+        return;
+    };
     sim_cli::run_case_backend_parity(
         SUITE,
         "B8_context_import_strobe",
@@ -795,37 +773,30 @@ fn s34_d4_observed_wakeup_before_reactive() {
 }
 
 /// Build the `.c` companion of a DPI-C decision case into a shared library in
-/// `directory`; `None` (with a SKIP note) on hosts without shared DPI fixtures.
+/// `directory` and return the path for `--dpi-lib`. On Windows it is a DLL
+/// linked against the import library of the case's own model, so its
+/// `svdpi.h` and export calls bind to `sim.exe`, and the path is the DLL's
+/// import library. `None` (with a SKIP note) only on a Windows host whose C
+/// compiler is not MSVC.
 fn dpi_companion(directory: &crate::sim_harness::TempDir, case: &str) -> Option<String> {
-    if !cfg!(unix) {
-        eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
+    if cfg!(windows) && !crate::c_compiler::is_msvc(&crate::c_compiler::host_c_compiler()) {
+        eprintln!("SKIP: Windows DLL companions are built with MSVC only");
         return None;
     }
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let source = root.join(format!("tests/fixtures/sim/lrm_decisions/{case}.c"));
-    let library = directory.path().join(format!("lib{case}.so"));
-    let compiler = std::env::var("LLG_CC")
-        .or_else(|_| std::env::var("CC"))
-        .unwrap_or_else(|_| "cc".to_owned());
-    let mut command = std::process::Command::new(compiler);
-    command
-        .args(["-shared", "-fPIC", "-I"])
-        .arg(root.join("src/sim/rt"));
-    if cfg!(target_os = "macos") {
-        command.args(["-undefined", "dynamic_lookup"]);
-    }
-    if let Ok(flags) = std::env::var("LLG_CFLAGS") {
-        command.args(flags.split_whitespace());
-    }
-    command.arg(&source).arg("-o").arg(&library);
-    let output = crate::sim_harness::run_command(&mut command, std::time::Duration::from_secs(60))
-        .expect("C compiler for the DPI fixture");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Some(library.to_string_lossy().into_owned())
+    let fixtures = root.join("tests/fixtures/sim/lrm_decisions");
+    let import = cfg!(windows).then(|| {
+        sim_cli::model_import_library(&fixtures.join(format!("{case}.sv")), &[], directory.path())
+    });
+    let library = crate::c_compiler::shared_library(
+        &fixtures.join(format!("{case}.c")),
+        directory.path(),
+        case,
+        &[],
+        import.as_deref(),
+    )
+    .unwrap_or_else(|error| panic!("{case}.c: {error}"));
+    Some(library.link.to_string_lossy().into_owned())
 }
 
 /// [`run_decision`] for a DPI-C case with a `.c` companion.

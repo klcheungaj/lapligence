@@ -152,7 +152,13 @@ ccache needs this variable; an empty variable is none and an explicit empty libr
 option suppresses it; the `llg` driver's order is CLI > `LLG_C_LAUNCHER` >
 `build.launcher`, resolved in `settings::layered` before it fills the option). It reaches the runtime archive and model compiles, is part of the
 runtime cache key, and never touches the root `build.rs` Slang build (`LLG_CCACHE`). Repeatable `dpi_libraries`/`--dpi-lib` accepts validated explicit link
-files; include `svdpi.h` (llg's Annex I copy, `rt/svdpi.h`) in generated output. SV `byte` is C `char`
+files; include `svdpi.h` (llg's Annex I copy, `rt/svdpi.h`) in generated output. Every
+project also gets `sim.def` (provided `svdpi.h` routines, `vpi_user.h` routines and the
+design's DPI-C exports; `build/import_library.rs`): MSVC links `sim.exe` with `/DEF:sim.def`,
+and target `llg_import_library` (`build_model_import_library`, `llg --dpi-import-lib`)
+writes `sim.exe`'s import library with `lib /DEF /NAME:sim.exe` without linking the model,
+for Windows DLL companions and VPI plugins; keep the routine lists in step with the runtime
+(unit-tested). SV `byte` is C `char`
 (Table H.1), signed or not by ABI: thunks keep `char` prototypes and sign-extend each
 foreign byte explicitly. `generate_model_sources`/`--gen-only`
 writes sources/CMake without building. `CmakeBuildOpts` `cmake`/`cc`/`cflags`

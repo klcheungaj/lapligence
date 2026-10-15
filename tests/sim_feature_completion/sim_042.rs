@@ -1,9 +1,9 @@
 //! SIM-042: commonly used VPI object and value access. Every fixture has a
 //! checked-in C application, loaded as a run-time plugin through
-//! `LLG_VPI_PLUGIN` (Unix hosts) or linked as a static archive with
-//! `--dpi-lib` (every host, the Windows route). The expected outputs are
+//! `LLG_VPI_PLUGIN` (every host) or linked as a static archive with
+//! `--dpi-lib` (every host). The expected outputs are
 //! derived by hand in the fixture readme from IEEE 1800-2009 clauses 36-38.
-use super::{c_compiler, sim_cli, sim_harness};
+use super::{sim_cli, sim_harness};
 use std::path::Path;
 
 const SUITE: &str = "feature_completion/sim_042";
@@ -51,9 +51,10 @@ const ERRORS: &[&str] = &[
     "task $stress()",
 ];
 
-/// The run-time plugin route: `<stem>.c` built into a shared library.
+/// The run-time plugin route: `<stem>.c` built into a shared library (a DLL
+/// linked against a model import library on Windows).
 fn plugin(directory: &sim_harness::TempDir, stem: &str, flags: &[&str]) -> Option<String> {
-    super::sim_040::shared_companion(SUITE, directory, stem, flags)
+    super::sim_040::plugin_library(SUITE, directory, stem, flags)
 }
 
 #[test]
@@ -117,8 +118,7 @@ fn errors_report_levels_instead_of_guessed_success() {
 }
 
 /// The application linked as a static archive runs its own startup table
-/// (`vlog_startup_routines`) without `LLG_VPI_PLUGIN`: the Windows route,
-/// exercised on every host.
+/// (`vlog_startup_routines`) without `LLG_VPI_PLUGIN`, on every host.
 #[test]
 fn static_archive_application_runs_its_startup_table() {
     let directory = sim_harness::TempDir::new("sim042-static").expect("temporary directory");
@@ -170,21 +170,15 @@ fn unregistered_call_stops_at_startup() {
 }
 
 /// `char` is unsigned on the AArch64 Linux ABI. The application and the
-/// model built with `-funsigned-char` must read and write the same values.
+/// model built with `-funsigned-char` (MSVC `/J`) must read and write the
+/// same values.
 #[test]
 fn values_are_unchanged_when_char_is_unsigned() {
-    if c_compiler::is_msvc(&c_compiler::host_c_compiler()) {
-        eprintln!("SKIP: -funsigned-char is a GCC/Clang option");
-        return;
-    }
     let directory = sim_harness::TempDir::new("sim042-uchar").expect("temporary directory");
     let Some(library) = plugin(&directory, "values", &["-funsigned-char"]) else {
         return;
     };
-    let cflags = std::env::var("LLG_CFLAGS").map_or_else(
-        |_| "-funsigned-char".to_owned(),
-        |flags| format!("{flags} -funsigned-char"),
-    );
+    let cflags = super::sim_040::unsigned_char_cflags();
     for optimized in [false, true] {
         let output = sim_cli::invoke_with_env(
             SUITE,

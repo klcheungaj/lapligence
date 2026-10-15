@@ -6,7 +6,7 @@ int dt_kill(int n);
 int dt_self(void);
 int df_kill(void);
 
-int dt_outer(int n, int *o)
+DPI_DLLESPEC int dt_outer(int n, int *o)
 {
     int status = dt_kill(n);
     printf("c dt_kill returned %d disabled=%d\n", status, svIsDisabledState());
@@ -14,7 +14,7 @@ int dt_outer(int n, int *o)
     return status ? 1 : 0;
 }
 
-int dt_self_outer(int *o)
+DPI_DLLESPEC int dt_self_outer(int *o)
 {
     int status = dt_self();
     printf("c dt_self returned %d disabled=%d\n", status, svIsDisabledState());
@@ -22,7 +22,7 @@ int dt_self_outer(int *o)
     return 0;
 }
 
-int df_outer(int n)
+DPI_DLLESPEC int df_outer(int n)
 {
     int value = df_kill();
     printf("c df_kill returned disabled=%d\n", svIsDisabledState());

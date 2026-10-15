@@ -128,11 +128,16 @@ typedef s_vpi_time svTimeVal;
  */
 XXTERN const char* svDpiVersion(void);
 
+/* Lapligence: the Annex I text marks these two typedefs XXTERN. A storage
+ * attribute names no object on a typedef, and under MSVC the dllimport it
+ * expands to is an ignored-attribute diagnostic (an error at /W4 /WX in a
+ * DLL companion), so this copy omits it. */
+
 /* a handle to a scope (an instance of a module or interface) */
-XXTERN typedef void* svScope;
+typedef void* svScope;
 
 /* a handle to a generic object (actually, unsized array) */
-XXTERN typedef void* svOpenArrayHandle;
+typedef void* svOpenArrayHandle;
 
 /*
  * Bit-select utility functions.

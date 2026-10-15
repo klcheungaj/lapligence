@@ -355,8 +355,17 @@ PLI_INT32 vpi_vprintf(PLI_BYTE8* format, va_list ap);
 PLI_INT32 vpi_flush(void);
 PLI_INT32 vpi_control(PLI_INT32 operation, ...);
 
-/* Startup entry point expected from a VPI shared object. */
-extern void (*vlog_startup_routines[])(void);
+/* Startup entry point expected from a VPI shared object. As in the Annex K
+ * header, a Windows DLL exports it (PLI_DLLESPEC), so the model finds it with
+ * GetProcAddress; elsewhere the attribute is empty. */
+#ifndef PLI_DLLESPEC
+#if defined(_MSC_VER) || defined(__MINGW32__) || defined(__CYGWIN__)
+#define PLI_DLLESPEC __declspec(dllexport)
+#else
+#define PLI_DLLESPEC
+#endif
+#endif
+extern PLI_DLLESPEC void (*vlog_startup_routines[])(void);
 
 #ifdef __cplusplus
 }

@@ -16,7 +16,7 @@ pub(crate) const USAGE: &str = "usage: llg [generate options] [build options] <f
 generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi
 lint:     --lint-only  --no-lint-only  --lint-json [<path>]  -Werror  -Wno-error  # lint always runs
 wave:     --wave <file.vcd|file.fst>  --wave-depth <N>  --no-wave
-build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
+build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --dpi-import-lib <path>  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
 output:   --out-dir <dir>  --runtime-cache <dir>
 append:   --append-<list> <value>  # adds to the list instead of replacing it; see --help
 stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)
@@ -69,6 +69,9 @@ pub(crate) struct Cli {
     pub wave_depth: Option<u32>,
     pub generator: Option<String>,
     pub dpi_libraries: Vec<PathBuf>,
+    /// `--dpi-import-lib <path>`: write the model executable's import
+    /// library there instead of building and running the model.
+    pub dpi_import_lib: Option<PathBuf>,
     pub launcher: Option<String>,
     pub cc: Option<String>,
     pub cflags: Option<String>,
@@ -108,6 +111,7 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
     let mut wave_depth: Option<u32> = None;
     let mut generator: Option<String> = None;
     let mut dpi_libraries: Vec<PathBuf> = Vec::new();
+    let mut dpi_import_lib: Option<PathBuf> = None;
     let mut launcher: Option<String> = None;
     let mut cc: Option<String> = None;
     let mut cflags: Option<String> = None;
@@ -198,6 +202,10 @@ Options:
       --launcher <program>   Select the CMake C compiler launcher
                               (default: $LLG_C_LAUNCHER, build.launcher, none)
       --dpi-lib <path>       Link one explicit DPI-C library (repeatable)
+      --dpi-import-lib <path>
+                              Write the model executable's import library (MSVC)
+                              for a Windows DPI-C or VPI DLL to link against,
+                              then stop without building or running the model
       --cc <program>         C compiler for the model
                               (default: $LLG_CC, $CC, {default_cc})
       --cflags <flags>       Extra C compiler flags (default: $LLG_CFLAGS)
@@ -381,6 +389,13 @@ Options:
                     return Err(2);
                 }
             },
+            "--dpi-import-lib" => match it.next() {
+                Some(path) if !path.is_empty() => dpi_import_lib = Some(PathBuf::from(path)),
+                _ => {
+                    eprintln!("llg: --dpi-import-lib requires an output path");
+                    return Err(2);
+                }
+            },
             "--launcher" => match it.next() {
                 Some(value) if !value.is_empty() => launcher = Some(value),
                 _ => {
@@ -524,6 +539,7 @@ Options:
         wave_depth,
         generator,
         dpi_libraries,
+        dpi_import_lib,
         launcher,
         cc,
         cflags,

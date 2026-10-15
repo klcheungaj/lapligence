@@ -1,17 +1,15 @@
 //! SIM-040: DPI-C packed, sized and open-array imports. Every positive
 //! fixture has a checked-in C companion that is built here into a shared
-//! library and loaded with `--dpi-lib`; the expected outputs are derived by
-//! hand in the fixture readme from IEEE 1800-2009 35.5-35.6 and Annex H.
+//! library (a DLL on Windows) and loaded with `--dpi-lib`; the expected
+//! outputs are derived by hand in the fixture readme from IEEE 1800-2009
+//! 35.5-35.6 and Annex H.
 use super::{c_compiler, sim_cli, sim_harness};
 use std::path::Path;
 
 const SUITE: &str = "feature_completion/sim_040";
 
 /// Build `<stem>.c` from the fixture directory into a shared library in
-/// `directory` with the model's C compiler, strict C11 warnings as errors and
-/// `$LLG_CFLAGS` (so sanitizer runs instrument the companion too). `None`
-/// on hosts where shared DPI fixtures are not built (Windows DLLs cannot
-/// import the svdpi.h routines from the model executable).
+/// `directory` (see [`shared_companion`]).
 fn companion(directory: &sim_harness::TempDir, stem: &str) -> Option<String> {
     companion_with_flags(directory, stem, &[])
 }
@@ -25,43 +23,105 @@ fn companion_with_flags(
     shared_companion(SUITE, directory, stem, flags)
 }
 
+/// True on a Windows host whose C compiler is not MSVC: DLL companions are
+/// built only with MSVC there (the release matrix's Windows toolchain).
+pub(super) fn windows_without_msvc() -> bool {
+    if cfg!(windows) && !c_compiler::is_msvc(&c_compiler::host_c_compiler()) {
+        eprintln!("SKIP: Windows DLL companions are built with MSVC only");
+        return true;
+    }
+    false
+}
+
 /// Build `tests/fixtures/sim/<suite>/<stem>.c` into a shared DPI-C library
-/// as [`companion_with_flags`] does; shared with later DPI suites.
+/// for `--dpi-lib` with the model's C compiler, strict C11 warnings as
+/// errors and `$LLG_CFLAGS` (so sanitizer runs instrument the companion
+/// too); shared with later DPI suites. On Windows the DLL links against the
+/// import library of `<suite>/<stem>.sv` and the returned path is the DLL's
+/// import library. `None` only where [`windows_without_msvc`] holds.
 pub(super) fn shared_companion(
     suite: &str,
     directory: &sim_harness::TempDir,
     stem: &str,
     flags: &[&str],
 ) -> Option<String> {
-    if !cfg!(unix) {
-        eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
+    let library = try_shared_companion(suite, directory, stem, stem, flags)?
+        .unwrap_or_else(|error| panic!("{stem}.c: {error}"));
+    Some(library.link.to_string_lossy().into_owned())
+}
+
+/// Build `<suite>/<stem>.c` as [`shared_companion`] does, for the design
+/// `<suite>/<design>.sv`, whose DPI-C exports a Windows DLL may call. `Err`
+/// is the failed build's output: a DLL resolves every symbol when it is
+/// linked, so on Windows a call of an unprovided routine or an undeclared
+/// export fails here rather than at the model link.
+pub(super) fn try_shared_companion(
+    suite: &str,
+    directory: &sim_harness::TempDir,
+    stem: &str,
+    design: &str,
+    flags: &[&str],
+) -> Option<Result<c_compiler::SharedLibrary, String>> {
+    if windows_without_msvc() {
         return None;
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let source = root.join(format!("tests/fixtures/sim/{suite}/{stem}.c"));
-    let library = directory.path().join(format!("lib{stem}.so"));
-    let mut command = std::process::Command::new(c_compiler::host_c_compiler());
-    command
-        .args([
-            "-std=c11", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC",
-        ])
-        .arg("-I")
-        .arg(root.join("src/sim/rt"));
-    if cfg!(target_os = "macos") {
-        command.args(["-undefined", "dynamic_lookup"]);
+    let fixtures = root.join(format!("tests/fixtures/sim/{suite}"));
+    let import = cfg!(windows).then(|| {
+        sim_cli::model_import_library(
+            &fixtures.join(format!("{design}.sv")),
+            &[],
+            directory.path(),
+        )
+    });
+    Some(c_compiler::shared_library(
+        &fixtures.join(format!("{stem}.c")),
+        directory.path(),
+        stem,
+        flags,
+        import.as_deref(),
+    ))
+}
+
+/// Build the VPI application `<suite>/<stem>.c` into a run-time plugin and
+/// return the path for `LLG_VPI_PLUGIN`. On Windows the DLL links against
+/// the import library of a model with no DPI-C exports: every model exports
+/// the same VPI routines, so any design serves. `None` only where
+/// [`windows_without_msvc`] holds.
+pub(super) fn plugin_library(
+    suite: &str,
+    directory: &sim_harness::TempDir,
+    stem: &str,
+    flags: &[&str],
+) -> Option<String> {
+    if windows_without_msvc() {
+        return None;
     }
-    if let Ok(flags) = std::env::var("LLG_CFLAGS") {
-        command.args(flags.split_whitespace());
-    }
-    command.args(flags).arg(&source).arg("-o").arg(&library);
-    let output = sim_harness::run_command(&mut command, std::time::Duration::from_secs(60))
-        .expect("C compiler for the DPI fixture");
-    assert!(
-        output.status.success(),
-        "{stem}.c: {}",
-        String::from_utf8_lossy(&output.stderr)
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let import = cfg!(windows).then(|| {
+        let design = directory.path().join("vpi_import_design.sv");
+        std::fs::write(&design, "module tb;\nendmodule\n").expect("write the import design");
+        sim_cli::model_import_library(&design, &[], directory.path())
+    });
+    let library = c_compiler::shared_library(
+        &root.join(format!("tests/fixtures/sim/{suite}/{stem}.c")),
+        directory.path(),
+        stem,
+        flags,
+        import.as_deref(),
+    )
+    .unwrap_or_else(|error| panic!("{stem}.c: {error}"));
+    Some(library.module.to_string_lossy().into_owned())
+}
+
+/// The model C flags for a `-funsigned-char` lane: `$LLG_CFLAGS` plus the
+/// host compiler's spelling of the option (MSVC `/J`).
+pub(super) fn unsigned_char_cflags() -> String {
+    let flag = c_compiler::native_flag(
+        "-funsigned-char",
+        c_compiler::is_msvc(&c_compiler::host_c_compiler()),
     );
-    Some(library.to_string_lossy().into_owned())
+    std::env::var("LLG_CFLAGS").map_or_else(|_| flag.to_owned(), |flags| format!("{flags} {flag}"))
 }
 
 /// The `svdpi.h` written beside every model is self-contained strict C11: a
@@ -163,19 +223,15 @@ fn sized_aggregates_and_strings_use_the_c_layout() {
 
 /// SV `byte` is C `char` (Table H.1), whose signedness is the ABI's: plain
 /// `char` is unsigned on AArch64 Linux, PowerPC and RISC-V. `-funsigned-char`
-/// (GCC and Clang, the Unix hosts that build these companions) reproduces
-/// that ABI here for the companion and the model, which must print the same
-/// signed values.
+/// (GCC and Clang; MSVC `/J`) reproduces that ABI here for the companion and
+/// the model, which must print the same signed values.
 #[test]
 fn byte_members_keep_their_sign_when_char_is_unsigned() {
     let directory = sim_harness::TempDir::new("sim040-uchar").expect("temporary directory");
     let Some(library) = companion_with_flags(&directory, "aggregates", &["-funsigned-char"]) else {
         return;
     };
-    let cflags = std::env::var("LLG_CFLAGS").map_or_else(
-        |_| "-funsigned-char".to_owned(),
-        |flags| format!("{flags} -funsigned-char"),
-    );
+    let cflags = unsigned_char_cflags();
     let output = sim_cli::invoke_with_env(
         SUITE,
         "aggregates",
@@ -297,12 +353,26 @@ fn missing_import_symbol_is_named() {
     );
 }
 
+/// A library calling an `svdpi.h` routine llg does not provide is named:
+/// by llg at the model link (ELF), before the build (Mach-O, below), or by
+/// the DLL's own link on Windows, where the model's import library lacks it.
 #[test]
 fn unprovided_svdpi_routine_is_named() {
     let directory = sim_harness::TempDir::new("sim040-routine").expect("temporary directory");
-    let Some(library) = companion(&directory, "neg_unprovided_routine") else {
+    let stem = "neg_unprovided_routine";
+    let Some(built) = try_shared_companion(SUITE, &directory, stem, stem, &[]) else {
         return;
     };
+    if cfg!(windows) {
+        let error = built.expect_err("the DLL link must not resolve svGetTime");
+        assert!(error.contains("svGetTime"), "{error}");
+        return;
+    }
+    let library = built
+        .unwrap_or_else(|error| panic!("{stem}.c: {error}"))
+        .link
+        .to_string_lossy()
+        .into_owned();
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_unprovided_routine",
@@ -372,5 +442,53 @@ fn unprovided_routine_imported_by_a_mach_o_library_is_named_before_the_build() {
         "neg_unprovided_routine",
         "imports svGetTime for dyld to resolve when the model runs",
         &["--dpi-lib", &library],
+    );
+}
+
+/// `--dpi-import-lib` writes the import library a Windows DLL links against
+/// to reach `sim.exe` (an `ar` archive naming the executable). Other
+/// toolchains have no use for one and get an explicit error instead.
+#[test]
+fn model_import_library_is_explicit_about_the_toolchain() {
+    let directory = sim_harness::TempDir::new("sim040-import").expect("temporary directory");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = root.join(format!("tests/fixtures/sim/{SUITE}/svdpi_access.sv"));
+    let library = directory.path().join("model.lib");
+    let output = sim_harness::run_command(
+        std::process::Command::new(env!("CARGO_BIN_EXE_llg"))
+            .current_dir(directory.path())
+            .args(["--top", "tb", "--dpi-import-lib"])
+            .arg(&library)
+            .arg(&source),
+        std::time::Duration::from_secs(300),
+    )
+    .expect("llg should start");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if c_compiler::is_msvc(&c_compiler::host_c_compiler()) {
+        assert!(output.status.success(), "{stderr}");
+        let bytes = std::fs::read(&library).expect("import library");
+        assert!(bytes.starts_with(b"!<arch>\n"), "not an archive");
+        let contains = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+        assert!(contains(b"sim.exe"), "the import library must name sim.exe");
+        assert!(contains(b"svGetArrElemPtr1"), "missing svdpi.h routine");
+        assert!(contains(b"vpi_register_systf"), "missing VPI routine");
+        assert!(!contains(b"svGetTime"), "unprovided routine exported");
+    } else {
+        assert_eq!(output.status.code(), Some(1), "{stderr}");
+        assert!(
+            stderr.contains(
+                "an import library for the model executable is built only by MSVC toolchains"
+            ),
+            "{stderr}"
+        );
+        assert!(!library.exists());
+    }
+    // The run stops after the import library: the model is never linked.
+    let built = directory.path().join("build/sim/tb/build/bin");
+    assert!(
+        !built
+            .join(format!("sim{}", std::env::consts::EXE_SUFFIX))
+            .exists(),
+        "the model was linked"
     );
 }

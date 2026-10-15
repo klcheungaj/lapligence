@@ -5,7 +5,7 @@
 int d5_kill_task(void);
 void d5_kill_func(void);
 
-int d5_task(int *o)
+DPI_DLLESPEC int d5_task(int *o)
 {
     int status;
     *o = 50;
@@ -15,7 +15,7 @@ int d5_task(int *o)
     return 1;
 }
 
-int d5_func(int *o)
+DPI_DLLESPEC int d5_func(int *o)
 {
     *o = 60;
     d5_kill_func();

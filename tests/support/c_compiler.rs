@@ -256,3 +256,102 @@ pub(crate) fn static_archive(
     }
     Ok(archive)
 }
+
+/// A shared DPI-C or VPI library built by [`shared_library`]: `link` is the
+/// file given to `--dpi-lib` (the shared object itself, or a DLL's import
+/// library on Windows) and `module` the file the loader opens
+/// (`LLG_VPI_PLUGIN`).
+#[derive(Clone, Debug)]
+pub(crate) struct SharedLibrary {
+    pub link: PathBuf,
+    pub module: PathBuf,
+}
+
+/// `flag` in the spelling of the compiler family: GCC/Clang
+/// `-funsigned-char` is MSVC `/J` (plain `char` unsigned).
+pub(crate) fn native_flag(flag: &str, msvc: bool) -> &str {
+    match flag {
+        "-funsigned-char" if msvc => "/J",
+        _ => flag,
+    }
+}
+
+/// Build `source` (strict C11, warnings as errors, then `$LLG_CFLAGS` and the
+/// extra `flags`) into a shared library named after `stem` in `directory`,
+/// with `src/sim/rt` on the include path.
+///
+/// - GCC/Clang: `lib<stem>.so` with `-shared -fPIC`; on macOS
+///   `-undefined dynamic_lookup` leaves the model's symbols to dyld.
+/// - MSVC: `<stem>_dll.dll` with `/LD`, plus its import library
+///   `<stem>_dll.lib` for `--dpi-lib`. A DLL resolves every symbol when it
+///   is linked, so a companion that calls `svdpi.h` or VPI routines or a
+///   DPI-C export links against `model_import_library`, the model
+///   executable's import library (`llg --dpi-import-lib`). `/W4 /WX` is the
+///   MSVC counterpart of `-Wall -Wextra -Werror`.
+///
+/// `Err` carries both output streams of a failed build.
+pub(crate) fn shared_library(
+    source: &Path,
+    directory: &Path,
+    stem: &str,
+    flags: &[&str],
+    model_import_library: Option<&Path>,
+) -> Result<SharedLibrary, String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let compiler = host_c_compiler();
+    let msvc = is_msvc(&compiler);
+    let mut command = Command::new(&compiler);
+    let library = if msvc {
+        let module = directory.join(format!("{stem}_dll.dll"));
+        command
+            .args(["/nologo", "/std:c11", "/W4", "/WX", "/LD"])
+            .arg(format!("/I{}", root.join("src/sim/rt").display()))
+            .arg(format!(
+                "/Fo{}",
+                directory.join(format!("{stem}_dll.obj")).display()
+            ))
+            .arg(format!("/Fe{}", module.display()));
+        SharedLibrary {
+            link: directory.join(format!("{stem}_dll.lib")),
+            module,
+        }
+    } else {
+        let module = directory.join(format!("lib{stem}.so"));
+        command
+            .args([
+                "-std=c11", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC",
+            ])
+            .arg("-I")
+            .arg(root.join("src/sim/rt"));
+        if cfg!(target_os = "macos") {
+            command.args(["-undefined", "dynamic_lookup"]);
+        }
+        SharedLibrary {
+            link: module.clone(),
+            module,
+        }
+    };
+    if let Ok(cflags) = std::env::var("LLG_CFLAGS") {
+        command.args(cflags.split_whitespace());
+    }
+    command.args(flags.iter().map(|flag| native_flag(flag, msvc)));
+    command.arg(source);
+    if msvc {
+        if let Some(import) = model_import_library {
+            command.arg(import);
+        }
+    } else {
+        command.arg("-o").arg(&library.module);
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("{compiler}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{}: {}",
+            source.display(),
+            compiler_diagnostics(&output)
+        ));
+    }
+    Ok(library)
+}

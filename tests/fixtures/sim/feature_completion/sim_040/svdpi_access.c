@@ -9,13 +9,13 @@ static void show_logic(const char *name, const svLogicVecVal *v, svBitVecVal mas
     printf("%s=%x/%x\n", name, (unsigned)(v->aval & mask), (unsigned)(v->bval & mask));
 }
 
-void sa_version(void)
+DPI_DLLESPEC void sa_version(void)
 {
     const char *version = svDpiVersion();
     printf("version=%s\n", version ? version : "(null)");
 }
 
-void sa_select(svLogicVecVal *l, svBitVecVal *b)
+DPI_DLLESPEC void sa_select(svLogicVecVal *l, svBitVecVal *b)
 {
     svLogicVecVal part;
     svBitVecVal bits;
@@ -56,7 +56,7 @@ static void show_range(const svOpenArrayHandle h, int d)
            svHigh(h, d), svIncrement(h, d), svSize(h, d));
 }
 
-void sa_query(const svOpenArrayHandle c, const svOpenArrayHandle p, const svOpenArrayHandle s)
+DPI_DLLESPEC void sa_query(const svOpenArrayHandle c, const svOpenArrayHandle p, const svOpenArrayHandle s)
 {
     int d;
     const svBitVecVal *packed;
@@ -82,7 +82,7 @@ void sa_query(const svOpenArrayHandle c, const svOpenArrayHandle p, const svOpen
            (int)svGetLogicArrElem1(s, 2));
 }
 
-void sa_pointers(const svOpenArrayHandle c)
+DPI_DLLESPEC void sa_pointers(const svOpenArrayHandle c)
 {
     int *e;
     e = (int *)svGetArrElemPtr3(c, 1, 2, -1);
@@ -100,7 +100,7 @@ void sa_pointers(const svOpenArrayHandle c)
     *(int *)svGetArrElemPtr(c, 0, 2, -1) = -2;
 }
 
-void sa_scalars(const svOpenArrayHandle l1, const svOpenArrayHandle l2,
+DPI_DLLESPEC void sa_scalars(const svOpenArrayHandle l1, const svOpenArrayHandle l2,
                 const svOpenArrayHandle l3, const svOpenArrayHandle b1,
                 const svOpenArrayHandle b2, const svOpenArrayHandle b3)
 {
@@ -138,7 +138,7 @@ void sa_scalars(const svOpenArrayHandle l1, const svOpenArrayHandle l2,
     svPutBitArrElem3(b3, sv_1, 1, 1, 3);
 }
 
-void sa_vectors(const svOpenArrayHandle l1, const svOpenArrayHandle l2,
+DPI_DLLESPEC void sa_vectors(const svOpenArrayHandle l1, const svOpenArrayHandle l2,
                 const svOpenArrayHandle l3, const svOpenArrayHandle b1,
                 const svOpenArrayHandle b2, const svOpenArrayHandle b3)
 {

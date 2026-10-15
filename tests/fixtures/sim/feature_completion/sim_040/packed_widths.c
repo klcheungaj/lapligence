@@ -7,7 +7,7 @@ static unsigned top(svBitVecVal value, int bits) {
     return (unsigned)(value & (((svBitVecVal)1u << bits) - 1u));
 }
 
-void pw_in(const svBitVecVal *w2, const svBitVecVal *w31, const svBitVecVal *w32,
+DPI_DLLESPEC void pw_in(const svBitVecVal *w2, const svBitVecVal *w31, const svBitVecVal *w32,
            const svBitVecVal *w33, const svBitVecVal *w64, const svBitVecVal *w65,
            const svLogicVecVal *l96, const svLogicVecVal *l129) {
     printf("w2=%u w31=%08x w32=%08x\n", top(w2[0], 2), top(w31[0], 31), (unsigned)w32[0]);
@@ -21,7 +21,7 @@ void pw_in(const svBitVecVal *w2, const svBitVecVal *w31, const svBitVecVal *w32
            (unsigned)l129[0].aval, (unsigned)l129[0].bval);
 }
 
-void pw_out(svBitVecVal *o33, svLogicVecVal *o64, svBitVecVal *o65, svLogicVecVal *o128) {
+DPI_DLLESPEC void pw_out(svBitVecVal *o33, svLogicVecVal *o64, svBitVecVal *o65, svLogicVecVal *o128) {
     int k;
     o33[0] = 0x89abcdefu;
     o33[1] = 0xfffffffeu; /* only bit 0 is part of the value */
@@ -40,7 +40,7 @@ void pw_out(svBitVecVal *o33, svLogicVecVal *o64, svBitVecVal *o65, svLogicVecVa
     o128[3].bval = 0xf0000000u;
 }
 
-void pw_inout(svBitVecVal *x33, svLogicVecVal *x97) {
+DPI_DLLESPEC void pw_inout(svBitVecVal *x33, svLogicVecVal *x97) {
     printf("x33=%u:%08x x97=%u/%u %08x/%08x %08x/%08x %08x/%08x\n", top(x33[1], 1),
            (unsigned)x33[0], top(x97[3].aval, 1), top(x97[3].bval, 1),
            (unsigned)x97[2].aval, (unsigned)x97[2].bval, (unsigned)x97[1].aval,
@@ -54,7 +54,7 @@ void pw_inout(svBitVecVal *x33, svLogicVecVal *x97) {
     x97[3].bval = 0u;
 }
 
-void pw_kinds(const svLogicVecVal *i, const svLogicVecVal *t, const svLogicVecVal *ps,
+DPI_DLLESPEC void pw_kinds(const svLogicVecVal *i, const svLogicVecVal *t, const svLogicVecVal *ps,
               const svLogicVecVal *pu, const svBitVecVal *e, svLogicVecVal *oi,
               svLogicVecVal *ot) {
     printf("integer=%08x/%x time=%08x,%u ps=%02x/%x pu=%02x/%x e=%u\n",

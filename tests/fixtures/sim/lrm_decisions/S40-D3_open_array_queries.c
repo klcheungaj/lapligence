@@ -13,7 +13,7 @@ static void show(const char *name, const svOpenArrayHandle h)
     printf("\n");
 }
 
-void d3_query(const svOpenArrayHandle c, const svOpenArrayHandle v,
+DPI_DLLESPEC void d3_query(const svOpenArrayHandle c, const svOpenArrayHandle v,
               const svOpenArrayHandle r, const svOpenArrayHandle p)
 {
     show("c", c);

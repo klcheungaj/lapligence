@@ -1,12 +1,12 @@
 //! Detection of a statically linked VPI application.
 //!
-//! A VPI application normally loads at run time from `LLG_VPI_PLUGIN`. On
-//! Windows a DLL cannot import `vpi_*` from the model executable, so the
-//! application is linked into the model as a static archive with
-//! `--dpi-lib` instead (the same route as DPI-C companions). The model must
-//! then run that archive's `vlog_startup_routines` itself: the build defines
-//! `LLG_VPI_STATIC_STARTUP` for the generated model when an archive defines
-//! the table.
+//! A VPI application normally loads at run time from `LLG_VPI_PLUGIN` (a
+//! Windows DLL links against the model's import library, see
+//! `import_library.rs`). It can instead be linked into the model as a static
+//! archive with `--dpi-lib` (the same route as DPI-C companions). The model
+//! must then run that archive's `vlog_startup_routines` itself: the build
+//! defines `LLG_VPI_STATIC_STARTUP` for the generated model when an archive
+//! defines the table.
 //!
 //! GNU/System V, BSD and MSVC COFF `.lib` archives share the `ar` container.
 //! The scan reads the archive's symbol index, which lists only the global

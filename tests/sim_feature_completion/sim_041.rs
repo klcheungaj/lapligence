@@ -1,6 +1,7 @@
 //! SIM-041: zero-time DPI-C exports and context call chains. Every positive
 //! fixture has a checked-in C companion, built here into a shared library
-//! (Unix hosts) or a static archive (every host) and passed with `--dpi-lib`;
+//! (a DLL linked against the model's import library on Windows) or a static
+//! archive and passed with `--dpi-lib`;
 //! the expected outputs are derived by hand in the fixture readme from
 //! IEEE 1800-2009 35.5.3, 35.7-35.9 and Annex H.9.
 use super::{c_compiler, sim_cli, sim_harness};
@@ -14,8 +15,7 @@ fn companion(directory: &sim_harness::TempDir, stem: &str) -> Option<String> {
 
 /// Build `<stem>.c` into a static archive that the model links directly, so
 /// the companion resolves the model's exports and `svdpi.h` routines at link
-/// time. This is the route on Windows, where a DLL cannot import symbols from
-/// the model executable; it works on every host.
+/// time, with no import library; it works on every host.
 fn static_companion(directory: &sim_harness::TempDir, stem: &str) -> String {
     static_archive(SUITE, directory, stem, &[])
 }
@@ -83,8 +83,9 @@ fn chains_reenter_repeatedly_without_advancing_time() {
 }
 
 /// `byte` formals and results of an export are C `char` (Table H.1), whose
-/// signedness is the ABI's. `-funsigned-char` on the companion and the model
-/// reproduces the AArch64 Linux ABI; SystemVerilog must see the same values.
+/// signedness is the ABI's. `-funsigned-char` (MSVC `/J`) on the companion
+/// and the model reproduces the AArch64 Linux ABI; SystemVerilog must see
+/// the same values.
 #[test]
 fn export_bytes_keep_their_sign_when_char_is_unsigned() {
     let directory = sim_harness::TempDir::new("sim041-uchar").expect("temporary directory");
@@ -93,10 +94,7 @@ fn export_bytes_keep_their_sign_when_char_is_unsigned() {
     else {
         return;
     };
-    let cflags = std::env::var("LLG_CFLAGS").map_or_else(
-        |_| "-funsigned-char".to_owned(),
-        |flags| format!("{flags} -funsigned-char"),
-    );
+    let cflags = super::sim_040::unsigned_char_cflags();
     let output = sim_cli::invoke_with_env(
         SUITE,
         "chains",
@@ -153,9 +151,22 @@ fn fatal_after(
 #[test]
 fn protocol_violations_are_fatal_errors() {
     let directory = sim_harness::TempDir::new("sim041-errors").expect("temporary directory");
-    let Some(library) = companion(&directory, "errors") else {
+    // Every design below declares the exports errors.c calls, so on Windows
+    // the import library of one of them serves the whole DLL.
+    let Some(built) = super::sim_040::try_shared_companion(
+        SUITE,
+        &directory,
+        "errors",
+        "neg_noncontext_export",
+        &[],
+    ) else {
         return;
     };
+    let library = built
+        .unwrap_or_else(|error| panic!("errors.c: {error}"))
+        .link
+        .to_string_lossy()
+        .into_owned();
     let args = ["--dpi-lib", library.as_str()];
     sim_cli::run_case_checked_matrix(
         SUITE,
@@ -204,12 +215,34 @@ fn protocol_violations_are_fatal_errors() {
     );
 }
 
+/// A library that calls exports the design does not declare is named at a
+/// link: the model's on Unix hosts, the DLL's own on Windows (the design's
+/// import library lacks them).
 #[test]
 fn library_call_to_an_undeclared_export_is_named_at_link() {
     let directory = sim_harness::TempDir::new("sim041-missing").expect("temporary directory");
-    let Some(library) = companion(&directory, "errors") else {
+    let Some(built) = super::sim_040::try_shared_companion(
+        SUITE,
+        &directory,
+        "errors",
+        "neg_missing_export",
+        &[],
+    ) else {
         return;
     };
+    if cfg!(windows) {
+        let error = built.expect_err("the DLL link must not resolve undeclared exports");
+        assert!(
+            error.contains("err_kill") && error.contains("err_tick"),
+            "{error}"
+        );
+        return;
+    }
+    let library = built
+        .unwrap_or_else(|error| panic!("errors.c: {error}"))
+        .link
+        .to_string_lossy()
+        .into_owned();
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_missing_export",
@@ -254,4 +287,48 @@ fn illegal_exports_are_frontend_errors() {
         "neg_undeclared_export",
         "use of undeclared identifier 'missing_fn'",
     );
+}
+
+/// Every generated model carries `sim.def`, the names `sim.exe` exports to
+/// Windows DLLs: the provided `svdpi.h` routines, the VPI routines and the
+/// design's DPI-C exports (under their C names), and no unprovided routine.
+#[test]
+fn generated_definition_file_lists_the_design_exports() {
+    let directory = sim_harness::TempDir::new("sim041-def").expect("temporary directory");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let output = sim_harness::run_command(
+        std::process::Command::new(env!("CARGO_BIN_EXE_llg"))
+            .current_dir(directory.path())
+            .args(["--top", "tb", "--gen-only"])
+            .arg(root.join(format!("tests/fixtures/sim/{SUITE}/scopes.sv"))),
+        std::time::Duration::from_secs(120),
+    )
+    .expect("llg should start");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let definition = std::fs::read_to_string(directory.path().join("build/sim/tb/sim.def"))
+        .expect("sim.def beside the generated model");
+    let names: Vec<&str> = definition
+        .lines()
+        .skip_while(|line| *line != "EXPORTS")
+        .skip(1)
+        .map(str::trim)
+        .collect();
+    for name in [
+        "cell_value",
+        "cell_bump",
+        "cell_nest",
+        "svSetScope",
+        "svGetScope",
+        "svPutUserData",
+        "vpi_register_systf",
+    ] {
+        assert_eq!(names.iter().filter(|n| **n == name).count(), 1, "{name}");
+    }
+    for name in ["svGetTime", "tb_scopes", "plain_twice"] {
+        assert!(!names.contains(&name), "{name} must not be exported");
+    }
 }

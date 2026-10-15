@@ -34,6 +34,12 @@ Keep reusable processing in the library. Bins import `llg::config`, `llg::core`,
 - Repeated `--dpi-lib <path>` validates explicit DPI-C libraries before CMake and
   retains them in source-only output. A library naming `veriusertfs` or a PLI 1.0
   `tf_*`/`acc_*` routine is refused (unsupported by design).
+- `--dpi-import-lib <path>` (CLI only; refused with `--gen-only`, overrides a
+  configured `gen_only`) configures the model and builds only its import
+  library (`sim::build::build_model_import_library`, MSVC), copies it to
+  `<path>` and stops; other toolchains get `BuildError::ImportLibraryUnsupported`.
+  On Windows the model run puts each `--dpi-lib` directory first on `PATH`
+  (`sim::build::dll_search_path`) so the DLL behind an import library loads.
 - `--vpi` (CLI only) keeps the VPI object catalog for an application loaded at
   run time with `LLG_VPI_PLUGIN`; any `--dpi-lib` implies it, and a user system
   task call site keeps the catalog regardless (`CodegenOptions::vpi`).

@@ -1,6 +1,6 @@
 //! SIM-043: VPI callbacks, simulation control and evaluator integration.
 //! Each fixture has a checked-in C application, loaded as a run-time plugin
-//! through `LLG_VPI_PLUGIN` (Unix hosts) or linked as a static archive with
+//! through `LLG_VPI_PLUGIN` (every host) or linked as a static archive with
 //! `--dpi-lib` (every host). The expected outputs are derived by hand in the
 //! fixture readme from IEEE 1800-2009 4.4, 4.10 and 38.36.
 use super::{sim_cli, sim_harness};
@@ -10,8 +10,10 @@ const SUITE: &str = "feature_completion/sim_043";
 const VPI: &[&str] = &["--vpi"];
 const PEEK: &[&str] = &["--define-system-task", "function int $peek(input int v)"];
 
+/// The run-time plugin route: `<stem>.c` built into a shared library (a DLL
+/// linked against a model import library on Windows).
 fn plugin(directory: &sim_harness::TempDir, stem: &str) -> Option<String> {
-    super::sim_040::shared_companion(SUITE, directory, stem, &[])
+    super::sim_040::plugin_library(SUITE, directory, stem, &[])
 }
 
 /// A01: callbacks of every time reason, value changes and the start/end
@@ -121,8 +123,8 @@ late cbEndOfSimulation: null LLG_VPI_CALLBACK\n";
     );
 }
 
-/// The Windows route: the trace application linked as a static archive,
-/// which also selects the catalog without `--vpi`.
+/// The trace application linked as a static archive, which also selects the
+/// catalog without `--vpi`.
 #[test]
 fn static_archive_application_traces_regions() {
     let directory = sim_harness::TempDir::new("sim043-static").expect("temporary directory");

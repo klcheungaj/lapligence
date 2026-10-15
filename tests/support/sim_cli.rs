@@ -961,3 +961,33 @@ fn run_fixture_command(source: &Path, label: &str, build: impl Fn(&[&str]) -> Co
         }
     }
 }
+
+/// The model executable's import library for the design `source` built with
+/// `args` (`llg --dpi-import-lib`, MSVC toolchains), written into
+/// `directory`. A Windows DLL companion links against it so that its
+/// `svdpi.h` and VPI calls and its calls of the design's DPI-C exports bind
+/// to `sim.exe`. Panics with the driver's output when it fails.
+pub(crate) fn model_import_library(source: &Path, args: &[&str], directory: &Path) -> PathBuf {
+    let library = directory.join("llg_model_import.lib");
+    let work = directory.join("import");
+    std::fs::create_dir_all(&work).expect("import library work directory");
+    let label = format!("import library of {}", source.display());
+    let output = run_fixture_command(source, &label, |lint_args| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+        command
+            .current_dir(&work)
+            .args(["--top", "tb", "--dpi-import-lib"])
+            .arg(&library)
+            .args(args)
+            .args(lint_args)
+            .arg(source);
+        command
+    });
+    assert!(
+        output.status.success() && library.is_file(),
+        "{label}: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    library
+}
