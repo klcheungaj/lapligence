@@ -31,62 +31,10 @@ pub(super) fn static_archive(
 ) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = root.join(format!("tests/fixtures/sim/{suite}/{stem}.c"));
-    let compiler = c_compiler::host_c_compiler();
-    let msvc = c_compiler::is_msvc(&compiler);
-    let object = directory
-        .path()
-        .join(format!("{stem}{}", if msvc { ".obj" } else { ".o" }));
-    let mut compile = std::process::Command::new(&compiler);
-    if msvc {
-        compile
-            .args(["/nologo", "/std:c11", "/W4", "/WX", "/c"])
-            .arg(format!("/I{}", root.join("src/sim/rt").display()))
-            .arg(format!("/Fo{}", object.display()));
-    } else {
-        compile
-            .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-c", "-I"])
-            .arg(root.join("src/sim/rt"))
-            .arg("-o")
-            .arg(&object);
-    }
-    if let Ok(flags) = std::env::var("LLG_CFLAGS") {
-        compile.args(flags.split_whitespace());
-    }
-    compile.args(flags).arg(&source);
-    let output = sim_harness::run_command(&mut compile, std::time::Duration::from_secs(60))
-        .expect("C compiler for the DPI fixture");
-    assert!(
-        output.status.success(),
-        "{stem}.c: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let archive = directory.path().join(if msvc {
-        format!("{stem}.lib")
-    } else {
-        format!("lib{stem}.a")
-    });
-    let mut pack = if msvc {
-        let mut command = std::process::Command::new("lib");
-        command
-            .arg("/nologo")
-            .arg(format!("/OUT:{}", archive.display()));
-        command
-    } else {
-        let mut command = std::process::Command::new("ar");
-        command.arg("rcs").arg(&archive);
-        command
-    };
-    pack.arg(&object);
-    let output = sim_harness::run_command(&mut pack, std::time::Duration::from_secs(60))
-        .expect("archiver for the DPI fixture");
-    assert!(
-        output.status.success(),
-        "{stem} archive: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    archive.to_string_lossy().into_owned()
+    c_compiler::static_archive(&source, directory.path(), stem, flags)
+        .unwrap_or_else(|error| panic!("static archive for {stem}: {error}"))
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[test]

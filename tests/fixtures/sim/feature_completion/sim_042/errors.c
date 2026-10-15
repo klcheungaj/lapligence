@@ -55,7 +55,7 @@ static PLI_INT32 errors(PLI_BYTE8* data) {
     vpi_get_value(mem, &value);
     report("value of whole array", 0);
     report("index out of range", vpi_handle_by_index(mem, -1) != NULL);
-    PLI_INT32 indices[2] = {0, 0};
+    PLI_INT32 indices[3] = {0, 0, 0};
     report("too many indices", vpi_handle_by_multi_index(mem, 3, indices) != NULL);
     report("bit index out of range", vpi_handle_by_index(v, 8) != NULL);
     report("part select reversed", named("tb.v[2:5]") != NULL);

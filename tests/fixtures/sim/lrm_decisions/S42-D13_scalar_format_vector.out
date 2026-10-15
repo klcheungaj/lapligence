@@ -1,0 +1,5 @@
+get vector level=3
+put vector level=3
+put scalar level=0
+put bit level=0
+v=0111 s=x

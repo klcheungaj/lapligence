@@ -181,3 +181,78 @@ pub(crate) fn cmake_compiler_id(compiler: &str) -> Option<&'static str> {
         None
     }
 }
+
+/// Compile `source` (with extra `flags` and `$LLG_CFLAGS`) and pack it into a
+/// static archive `lib<stem>.a` (`<stem>.lib` for MSVC) in `directory`, with
+/// `src/sim/rt` on the include path. Static archives are the portable route
+/// for C companions that call back into the model (DPI-C exports, VPI
+/// applications): the model links them, so no dynamic symbol lookup is needed
+/// on any host.
+pub(crate) fn static_archive(
+    source: &Path,
+    directory: &Path,
+    stem: &str,
+    flags: &[&str],
+) -> Result<PathBuf, String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let compiler = host_c_compiler();
+    let msvc = is_msvc(&compiler);
+    let object = directory.join(format!("{stem}{}", if msvc { ".obj" } else { ".o" }));
+    let mut compile = Command::new(&compiler);
+    if msvc {
+        compile
+            .args(["/nologo", "/std:c11", "/W4", "/WX", "/c"])
+            .arg(format!("/I{}", root.join("src/sim/rt").display()))
+            .arg(format!("/Fo{}", object.display()));
+    } else {
+        compile
+            .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-c", "-I"])
+            .arg(root.join("src/sim/rt"))
+            .arg("-o")
+            .arg(&object);
+    }
+    if let Ok(cflags) = std::env::var("LLG_CFLAGS") {
+        compile.args(cflags.split_whitespace());
+    }
+    compile.args(flags).arg(source);
+    let output = compile
+        .output()
+        .map_err(|error| format!("{compiler}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{}: {}{}",
+            source.display(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let archive = directory.join(if msvc {
+        format!("{stem}.lib")
+    } else {
+        format!("lib{stem}.a")
+    });
+    let mut pack = if msvc {
+        let mut command = Command::new("lib");
+        command
+            .arg("/nologo")
+            .arg(format!("/OUT:{}", archive.display()));
+        command
+    } else {
+        let mut command = Command::new("ar");
+        command.arg("rcs").arg(&archive);
+        command
+    };
+    let output = pack
+        .arg(&object)
+        .output()
+        .map_err(|error| format!("archiver: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{} archive: {}{}",
+            stem,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(archive)
+}
