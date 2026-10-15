@@ -139,6 +139,23 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
   C4132 for a valid C11 tentative definition `static const T x;` completed later
   (define the object first, after a function prototype). Clang `-Wconditional-uninitialized`/`-Wunreachable-code` approximate the first
   two. Details: [runtime guide](sim/rt/AGENTS.md).
+- A Windows DLL resolves every import when it is linked, and the model links the
+  DLLs it imports DPI-C functions from, so a DPI-C or VPI DLL cannot find the
+  `svdpi.h`/`vpi_*` routines or DPI-C exports in `sim.exe` the way an ELF or
+  Mach-O library does at load time. Every model writes `sim.def` (those names);
+  MSVC links `sim.exe` with `/DEF:sim.def`, and `llg --dpi-import-lib x.lib`
+  writes `sim.exe`'s import library from the same file (`lib /DEF
+  /NAME:sim.exe`) without linking the model, which breaks the cycle. A DLL
+  linked against it binds to the loaded module named `sim.exe`, so keep that
+  name. The user's C stays Annex H/I code: it exports its import functions with
+  `svdpi.h`'s `DPI_DLLESPEC` (or a `.def`), and `vpi_user.h` exports
+  `vlog_startup_routines` (`PLI_DLLESPEC`, Annex K). `--dpi-lib` takes the DLL's
+  import library; `llg` puts each `--dpi-lib` directory first on `PATH` when it
+  runs the model. A call the import library lacks (`svGetTime`, an export the
+  design does not declare) fails the DLL's own link, which names it. This was
+  chosen over a function-pointer table because calls stay direct by name with no
+  llg stub library in the DLL (LLVM's `opt.exe` plugins work the same way);
+  static archives remain the route that needs no import library.
 - `cl` writes its diagnostics to stdout, not stderr: print both streams when a
   compile fails. A Ninja build stops at the first failing source, so one CI run
   can hide further MSVC-only errors behind it.

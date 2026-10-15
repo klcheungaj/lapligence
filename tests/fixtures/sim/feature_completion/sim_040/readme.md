@@ -9,7 +9,15 @@ companion into a shared library and passes it with `--dpi-lib`. It runs on the
 legacy, compact/portable and compact/GMP value backends, in both optimizer
 modes. The companions build with `-std=c11 -Wall -Wextra -Werror` and avoid
 constructs that MSVC `/W4 /WX` rejects (no `strcpy`/`strcat`, no shadowing,
-explicit casts).
+explicit casts); on Windows they build with `/W4 /WX`.
+
+Each DPI-C import definition carries `DPI_DLLESPEC`, the Annex I `svdpi.h`
+macro that exports it from a Windows DLL and is empty elsewhere (Annex I,
+`SystemVerilog-1800-2009.txt` L74027-74031: "/* Use to import a symbol into
+application */ / #if defined (_MSC_VER) / #define DPI_DLLESPEC
+__declspec(dllexport) / #else / #define DPI_DLLESPEC"). On Windows the
+companion is a DLL linked against the design's import library
+(`llg --dpi-import-lib`), so its `svdpi.h` calls bind to `sim.exe`.
 
 Line numbers refer to `SystemVerilog-1800-2009.txt` (a `pdftotext -layout`
 extraction of IEEE 1800-2009).

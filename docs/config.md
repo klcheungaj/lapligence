@@ -174,7 +174,8 @@ server, accepted and ignored by `llg`.
 | `output.out_dir` | string | llg | `--out-dir` |
 | `output.runtime_cache` | string | llg | `--runtime-cache` |
 
-Command-line-only: `--config`, `--help`, `--version`, and the negations
+Command-line-only: `--config`, `--help`, `--version`, `--vpi`,
+`--dpi-import-lib`, and the negations
 `--no-gen-only`, `--opt`, `--no-lint-only`, `-Wno-error`, `--no-wave`.
 
 ```toml

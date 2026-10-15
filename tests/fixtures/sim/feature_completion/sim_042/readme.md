@@ -2,8 +2,11 @@
 
 Each `<name>.sv` has a C application `<name>.c` that registers the system
 tasks and functions the HDL calls. `tests/sim_feature_completion/sim_042.rs`
-loads it as a run-time plugin (`LLG_VPI_PLUGIN`, Unix hosts) or links it as a
-static archive with `--dpi-lib` (every host; the Windows route), declares the
+loads it as a run-time plugin (`LLG_VPI_PLUGIN`; on Windows a DLL linked
+against a model import library, exporting `vlog_startup_routines` through
+`vpi_user.h`'s `PLI_DLLESPEC` as in Annex K, `SystemVerilog-1800-2009.txt`
+L75978: "PLI_VEXTERN PLI_DLLESPEC void (*vlog_startup_routines[])();") or links it as a static archive
+with `--dpi-lib` (every host), declares the
 calls with `--define-system-task`, and compares stdout with `<name>.out` in
 both optimizer modes on the legacy, compact/portable and compact/GMP value
 backends. Clause numbers are IEEE 1800-2009; line numbers refer to

@@ -2224,8 +2224,9 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   (stores, disables, `$finish`), so the optimizer and process cancellation
   treat them as barriers; noncontext and pure imports keep their declared
   properties. An exported task that can consume time is rejected (ADV-018).
-  On Windows the companion must be linked as a static archive (`--dpi-lib
-  x.lib`), since a DLL cannot import the model's exports; limits:
+  On Windows a companion DLL links against the model's import library
+  (`llg --dpi-import-lib`) and `--dpi-lib` takes the DLL's import library; a
+  static archive works on every host; limits:
   [known issue](known_issues.md#dpi-c-export-limits-sim-041). Fixtures:
   [sim_041](../tests/fixtures/sim/feature_completion/sim_041/readme.md).
   SV 35.5.3, 35.7-35.9, Annex H.9 **[SV-2005]**.
@@ -2263,8 +2264,8 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   38.34 return conventions and per-call-site user data. Handles are
   generation-checked: stale, released or invalid handles give a
   `vpi_chk_error` level, never a use-after-free. Applications load from
-  `LLG_VPI_PLUGIN` or link as a static archive with `--dpi-lib` (the Windows
-  route). Decisions S42-D1..D13 in `docs/lrm_decisions.md`; limits in
+  `LLG_VPI_PLUGIN` (a Windows DLL links against the model's import library,
+  `llg --dpi-import-lib`) or link as a static archive with `--dpi-lib`. Decisions S42-D1..D13 in `docs/lrm_decisions.md`; limits in
   `docs/known_issues.md` ("VPI object model limits"). Callbacks (SIM-043):
   `cbValueChange` on variables, nets, ports, array elements and bit/part
   selects (value, time and index per `s_cb_data`, at every changing write);
