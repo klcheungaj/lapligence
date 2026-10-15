@@ -3056,7 +3056,7 @@ typedef struct llg_vpi_cb {
     llg_vpi_target_t target;  /* cbValueChange object */
     const void* key;          /* watched storage address */
     int value_type;           /* vpiType that formats the value */
-    int is_signed;
+    int value_signed;
     int32_t index;            /* reported s_cb_data index */
     sv4_t last;               /* last value of a watched select */
     const llg_vpi_model_object_t* scope; /* time scaling object */
@@ -3349,7 +3349,7 @@ static void vpi_value_changed(const void* key) {
         if (cb->value.format != vpiSuppressVal) {
             memset(&value, 0, sizeof(value));
             value.format = cb->value.format;
-            fill_value(&datum, cb->is_signed, cb->value_type, &value);
+            fill_value(&datum, cb->value_signed, cb->value_type, &value);
             data.value = &value;
         }
         datum_destroy(&datum);
@@ -3428,7 +3428,7 @@ static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
     cb->key = key;
     cb->scope = object;
     cb->value_type = handle_type(slot);
-    cb->is_signed = target.span ? 0 : object->is_signed;
+    cb->value_signed = target.span ? 0 : object->is_signed;
     cb->index = slot->kind == SLOT_ELEMENT ? element_index(object, target.element) : 0;
     if (target.span) {
         llg_vpi_datum_t datum;
