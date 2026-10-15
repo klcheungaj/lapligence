@@ -329,8 +329,6 @@ fn catalog_for(model: &IrModel) -> Vec<Entry> {
 /// canonical runtime-visible value. The runtime only borrows it: models
 /// that never load a VPI application do not index or validate it.
 pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
-    let entries = catalog_for(model);
-    let indices = catalog_indices(&entries);
     out.push_str("\n/* owned hierarchy catalog for the VPI bridge */\n");
     // A VPI application linked as a static archive (`--dpi-lib`, the Windows
     // route) has its startup table run before LLG_VPI_PLUGIN libraries; the
@@ -343,6 +341,16 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
          #endif
 ",
     );
+    if !model.vpi_catalog {
+        // Applications loaded into this model see no design objects.
+        out.push_str(
+            "static llg_vpi_model_object_t* const llg_vpi_objects = NULL;\n\
+             static const size_t llg_vpi_object_count = 0;\n",
+        );
+        return;
+    }
+    let entries = catalog_for(model);
+    let indices = catalog_indices(&entries);
     for (index, entry) in entries.iter().enumerate() {
         if entry.dims.is_empty() {
             continue;

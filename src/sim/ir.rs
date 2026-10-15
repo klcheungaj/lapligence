@@ -546,6 +546,10 @@ pub struct IrModel {
     /// Type-only VPI call sites run through compiletf/sizetf before the
     /// generated scheduler starts. Empty for hand-built IR fixtures.
     pub(in crate::sim) vpi_compile_calls: Vec<IrVpiCompileCall>,
+    /// Whether the model emits its VPI object catalog. Generation clears it,
+    /// with `vpi_objects`, when no application can reach the catalog: no
+    /// user system task call site and no `CodegenOptions::vpi`.
+    pub(in crate::sim) vpi_catalog: bool,
     /// Random streams the model observes; set by lowering.
     pub(in crate::sim) random: IrRandomUse,
     /// Constraint problems of randomize calls (IEEE 1800-2009 18), one per
@@ -681,6 +685,7 @@ impl IrModel {
             final_spawns: parts.final_spawns,
             vpi_objects: Vec::new(),
             vpi_compile_calls: Vec::new(),
+            vpi_catalog: true,
             random: IrRandomUse::default(),
             rand_problems: Vec::new(),
             dpi_scopes: Vec::new(),

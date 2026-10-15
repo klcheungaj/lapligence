@@ -170,7 +170,8 @@ fn compact_parity_vpi_waveform() {
         "waveform",
         "partitioned_nets",
         "vpi partitioned net shapes ok\n",
-        &[],
+        // A run-time plugin without user system tasks needs the catalog.
+        &["--vpi"],
         &[("LLG_VPI_PLUGIN", plugin.to_str().expect("plugin path"))],
     );
 }

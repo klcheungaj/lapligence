@@ -384,6 +384,12 @@ pub struct CodegenOptions {
     pub value_config: crate::sim::value_backend::ValueConfig,
     /// Dump waveforms from time zero without design system tasks.
     pub waveform: Option<WaveformOptions>,
+    /// Emit the VPI object catalog even when the design calls no user system
+    /// task or function. A VPI application loaded at run time
+    /// (`LLG_VPI_PLUGIN`) or linked with `--dpi-lib` reaches design objects
+    /// only through this catalog; without it the model carries no catalog
+    /// data and keeps no storage alive for VPI visibility.
+    pub vpi: bool,
 }
 
 /// Lower an owned Slang semantic database with default optimizations.
@@ -648,10 +654,14 @@ fn finish_generation(
     options: &CodegenOptions,
 ) -> Result<GeneratedModel, String> {
     let LoweredModel {
-        model,
+        mut model,
         design_name,
         warnings,
     } = lowered;
+    if !options.vpi && model.vpi_compile_calls.is_empty() {
+        model.vpi_objects.clear();
+        model.vpi_catalog = false;
+    }
     let execution_stage = crate::profile::Stage::new("execution");
     let mut execution =
         crate::sim::execution::ExecutionModel::lower_with_options(model, options.execution)
