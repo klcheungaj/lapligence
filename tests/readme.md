@@ -339,6 +339,18 @@ in `src/sim/rt/coverage/database.c`; `vpi_coverage` loads a VPI application
 from `LLG_VPI_PLUGIN`. Decisions S46-D1-D12 are in `sim_lrm_decisions`
 (`-E 'test(/s46_d/)'`).
 
+ADV-016's randsequence fixtures use
+`-E 'binary(sim_feature_completion) & test(adv_016::)'`. Positives run in both
+optimizer modes on every backend with oracles from SV 18.17 (fixture readme):
+the clause's outcome lists, chi-square bounds for weights and join steps, and
+structural relations for random grammars; `seed_replay` compares its
+generator-dependent checksum across the six runs only. `depth_limit` and
+`invalid_runtime` must end with exit status 1 and located diagnostics.
+Decisions S16-D1-D9 are in `sim_lrm_decisions` (`-E 'test(/s16_d/)'`); the
+capture unit tests are `core::db::database::randsequence::tests`. Under ASan
+run `suspend_kill` and `recursion` with `LLG_CC=gcc
+LLG_CFLAGS='-fsanitize=address,undefined -DLLG_CO_DEBUG'`.
+
 SIM-047's waveform fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_047::)'` together with
 `-E 'test(/^sim_waveform::/) | test(/^sim_lrm_decisions::s47_/)'` and the

@@ -860,11 +860,24 @@ pub enum IrSysFunc {
     /// zero. The draw comes from the calling process stream like
     /// `$urandom_range`. `sum_width` holds the exact weight sum (widest weight
     /// plus `ceil(log2(items))` bits); `origin` names the statement in the
-    /// all-zero and negative-weight warnings.
+    /// all-zero and negative-weight warnings. `strict` selects a
+    /// randsequence production's rule (IEEE 1800-2009 18.17.1): a negative
+    /// or unknown weight is then a run-time error that marks the run failed
+    /// and selects nothing, instead of a warning.
     Randcase {
         weights: Vec<IrExpr>,
         sum_width: u32,
         origin: crate::sim::semantic::Origin,
+        strict: bool,
+    },
+    /// The next sequence a `rand join` advances (IEEE 1800-2009 18.17.5):
+    /// the signed 32-bit index of one sequence with a nonzero remaining
+    /// length in `lengths` (unsigned packed values), or -1 when all are zero.
+    /// `ratio` is the validated real join expression; the draws come from the
+    /// calling process stream (S16-D6).
+    RandJoinPick {
+        lengths: Vec<IrExpr>,
+        ratio: Box<IrExpr>,
     },
     /// One solve step of randomize problem `problem` (IEEE 1800-2009
     /// 18.6.1, 18.12): the signed 32-bit result is

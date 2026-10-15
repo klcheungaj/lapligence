@@ -927,6 +927,9 @@ impl Frame<'_, '_> {
                         args.len()
                     ));
                 } else {
+                    if *runtime_failure {
+                        self.line("llg_rt_mark_failed();");
+                    }
                     let level = match level {
                         IrSeverityLevel::Info => "LLG_SEVERITY_INFO",
                         IrSeverityLevel::Warning => "LLG_SEVERITY_WARNING",

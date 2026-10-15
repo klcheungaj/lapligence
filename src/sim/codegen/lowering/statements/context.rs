@@ -34,6 +34,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             display_scope: None,
             coverage_end_exit: None,
             coverage_end_exit_used: false,
+            randseq: Vec::new(),
         }
     }
 

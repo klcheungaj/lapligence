@@ -1355,8 +1355,14 @@ impl Validator<'_> {
                 if location.is_empty() {
                     return self.fail(path, "severity source location must not be empty");
                 }
-                if *runtime_failure && !level.is_fatal() {
-                    return self.fail(path, "runtime failure must use fatal severity");
+                if *runtime_failure
+                    && !matches!(
+                        level,
+                        crate::sim::ir::IrSeverityLevel::Error
+                            | crate::sim::ir::IrSeverityLevel::Fatal
+                    )
+                {
+                    return self.fail(path, "runtime failure must use error or fatal severity");
                 }
                 if level.is_fatal() {
                     let Some(finish_number) = fatal_finish_number else {

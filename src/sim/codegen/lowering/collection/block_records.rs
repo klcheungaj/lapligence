@@ -54,21 +54,34 @@ impl Codegen<'_> {
         if let NodeKind::Stmt(StmtKind::VariableDecl { declaration }) = self.kind(node) {
             found.statements.entry(*declaration).or_insert(node);
         }
+        // Randsequence formals, results and implicit variables (IEEE
+        // 1800-2009 18.17.7) are declared by their statement, which resets
+        // or binds them at each generation.
+        if let NodeKind::Stmt(StmtKind::RandSequence { productions, .. }) = self.kind(node) {
+            for production in productions {
+                let mut owners = vec![*production];
+                if let NodeKind::Production(crate::core::db::ProductionKind::Declaration(decl)) =
+                    self.kind(*production)
+                {
+                    owners.extend(decl.rules.iter().copied());
+                }
+                for owner in owners {
+                    for child in &self.node(owner).children {
+                        if matches!(self.kind(*child), NodeKind::Var { .. })
+                            && self.node(*child).parent == Some(owner)
+                        {
+                            found.statements.entry(*child).or_insert(node);
+                            self.classify_block_declaration(*child, found);
+                        }
+                    }
+                }
+            }
+        }
         for child in &self.node(node).children {
             match self.kind(*child) {
                 NodeKind::Var { .. } => {
-                    if matches!(self.kind(node), NodeKind::Stmt(StmtKind::Begin))
-                        && !found.records.contains(child)
-                        && self
-                            .query_descriptor(*child)
-                            .is_some_and(Self::block_record_type)
-                    {
-                        found.records.push(*child);
-                    } else if matches!(self.kind(node), NodeKind::Stmt(StmtKind::Begin))
-                        && !found.natives.contains(child)
-                        && self.block_native_type(*child).is_some()
-                    {
-                        found.natives.push(*child);
+                    if matches!(self.kind(node), NodeKind::Stmt(StmtKind::Begin)) {
+                        self.classify_block_declaration(*child, found);
                     }
                 }
                 NodeKind::NamedEvent
@@ -87,6 +100,21 @@ impl Codegen<'_> {
                 | NodeKind::ClassDef => {}
                 _ => self.block_record_declarations(*child, found),
             }
+        }
+    }
+
+    /// Note a block variable whose storage is a record or a model object.
+    fn classify_block_declaration(&self, declaration: NodeId, found: &mut BlockDeclarations) {
+        if found.records.contains(&declaration) || found.natives.contains(&declaration) {
+            return;
+        }
+        if self
+            .query_descriptor(declaration)
+            .is_some_and(Self::block_record_type)
+        {
+            found.records.push(declaration);
+        } else if self.block_native_type(declaration).is_some() {
+            found.natives.push(declaration);
         }
     }
 

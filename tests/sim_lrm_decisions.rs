@@ -2434,3 +2434,114 @@ fn s46_d7_merged_bin_counts() {
         include_str!("fixtures/sim/lrm_decisions/S46-D7_merged_bin_counts.out"),
     );
 }
+
+#[test]
+fn s16_d1_single_rule_weight() {
+    run_decision(
+        "S16-D1_single_rule_weight",
+        include_str!("fixtures/sim/lrm_decisions/S16-D1_single_rule_weight.out"),
+    );
+}
+
+#[test]
+fn s16_d2_weight_code_block_order() {
+    run_decision(
+        "S16-D2_weight_code_block_order",
+        include_str!("fixtures/sim/lrm_decisions/S16-D2_weight_code_block_order.out"),
+    );
+}
+
+#[test]
+fn s16_d3_invalid_weight_error() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S16-D3_invalid_weight_error.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S16-D3_invalid_weight_error",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "the weight of rule 1 is negative; no rule is generated",
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("the weight of rule 1 has unknown bits; no rule is generated"),
+                "{label}: {output:?}"
+            );
+            assert!(
+                stderr.contains("all rule weights are zero; nothing is generated"),
+                "{label}: {output:?}"
+            );
+        },
+    );
+}
+
+#[test]
+fn s16_d4_invalid_repeat_count() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S16-D4_invalid_repeat_count.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S16-D4_invalid_repeat_count",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "randsequence repeat count is negative or unknown",
+            );
+        },
+    );
+}
+
+#[test]
+fn s16_d5_rand_join_steps() {
+    run_decision(
+        "S16-D5_rand_join_steps",
+        include_str!("fixtures/sim/lrm_decisions/S16-D5_rand_join_steps.out"),
+    );
+}
+
+#[test]
+fn s16_d6_rand_join_ratio() {
+    run_decision(
+        "S16-D6_rand_join_ratio",
+        include_str!("fixtures/sim/lrm_decisions/S16-D6_rand_join_ratio.out"),
+    );
+}
+
+#[test]
+fn s16_d7_rand_join_ratio_range() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S16-D7_rand_join_ratio_range.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S16-D7_rand_join_ratio_range",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "rand join expression is not a real number in 0.0 to 1.0; 0.5 is used",
+            );
+        },
+    );
+}
+
+#[test]
+fn s16_d8_default_values() {
+    run_decision(
+        "S16-D8_default_values",
+        include_str!("fixtures/sim/lrm_decisions/S16-D8_default_values.out"),
+    );
+}
+
+#[test]
+fn s16_d9_draw_is_urandom_range() {
+    run_decision(
+        "S16-D9_draw_is_urandom_range",
+        include_str!("fixtures/sim/lrm_decisions/S16-D9_draw_is_urandom_range.out"),
+    );
+}

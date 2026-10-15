@@ -452,7 +452,12 @@ fn current_statement_and_expression_subkinds_are_admitted() {
     assert!(validate_semantic_subkind(25, SEMANTIC_SCOPE_CLOCKING_BLOCK).is_ok());
     assert!(validate_semantic_subkind(9, SEMANTIC_VARIABLE_CLOCKING).is_ok());
     assert!(validate_semantic_subkind(26, SEMANTIC_TIMING_ONE_STEP_DELAY).is_ok());
-    assert!(validate_semantic_subkind(18, 70).is_err());
+    assert!(validate_semantic_subkind(18, SEMANTIC_STMT_RANDSEQUENCE).is_ok());
+    assert!(validate_semantic_subkind(18, 71).is_err());
+    assert!(validate_semantic_subkind(32, SEMANTIC_PRODUCTION_DECLARATION).is_ok());
+    assert!(validate_semantic_subkind(32, SEMANTIC_PRODUCTION_CASE).is_ok());
+    assert!(validate_semantic_subkind(32, 0).is_err());
+    assert!(validate_semantic_subkind(32, 8).is_err());
     assert!(validate_semantic_subkind(19, 79).is_err());
     assert!(validate_semantic_subkind(28, SEMANTIC_ASSERTION_EXPR_SIMPLE).is_ok());
     assert!(validate_semantic_subkind(28, SEMANTIC_ASSERTION_EXPR_DISABLE_IFF).is_ok());
@@ -681,7 +686,16 @@ fn sequential_predicate_pattern_edge_decodes_and_unknown_roles_still_fail() {
         .expect("default disable role (ABI 19)")
         .semantic_edges;
     assert_eq!(decoded[0].role, SemanticEdgeRole::DefaultDisable);
-    let message = invalid_native_message(stream(&tables(edge(40, 2, 0))));
+    for (raw, role) in [
+        (40, SemanticEdgeRole::Weight),
+        (41, SemanticEdgeRole::RandJoin),
+    ] {
+        let decoded = stream(&tables(edge(raw, 0, 0)))
+            .expect("randsequence role (ABI 25)")
+            .semantic_edges;
+        assert_eq!(decoded[0].role, role);
+    }
+    let message = invalid_native_message(stream(&tables(edge(42, 2, 0))));
     assert!(message.contains("unknown role"), "{message}");
 }
 

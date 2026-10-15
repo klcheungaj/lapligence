@@ -56,6 +56,7 @@ pub enum CapturedSemanticKind {
     ConstraintBlock,
     Constraint,
     Coverage,
+    Production,
     Unsupported,
 }
 
@@ -93,6 +94,7 @@ impl From<crate::ffi::slang::SemanticKind> for CapturedSemanticKind {
             crate::ffi::slang::SemanticKind::ConstraintBlock => Self::ConstraintBlock,
             crate::ffi::slang::SemanticKind::Constraint => Self::Constraint,
             crate::ffi::slang::SemanticKind::Coverage => Self::Coverage,
+            crate::ffi::slang::SemanticKind::Production => Self::Production,
             crate::ffi::slang::SemanticKind::Unsupported => Self::Unsupported,
         }
     }

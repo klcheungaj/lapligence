@@ -67,7 +67,11 @@ S30-D8 must end with exit status 1 after its line, reporting "negative or
 unevaluated dist weight", and S30-D11 after both lines, reporting "select
 index out of range in a constraint". S29-D1 must end with exit status
 1 after both lines, reporting "X or Z value in a constraint", and S29-D9 after
-its first line, reporting "null class handle access". The scripted run is in
+its first line, reporting "null class handle access". S16-D3 must end with
+exit status 1 after both lines, reporting "the weight of rule 1 is negative",
+S16-D4 after all its lines, reporting "randsequence repeat count is negative or
+unknown", and S16-D7 after both lines, reporting "rand join expression is not a
+real number in 0.0 to 1.0". The scripted run is in
 [tests/readme.md](../tests/readme.md):
 
 ```sh
@@ -331,6 +335,20 @@ case.
 | S31-D5 | **X and Z weight bits read as 0.** An all-X or all-Z weight is 0, the conversion `$urandom_range` arguments get. | 18.16 L31311; 6.11.2 | `S31-D5_unknown_weight_bits` | llg choice (the clause does not address four-state weights) |
 | S31-D6 | **Every weight is evaluated once, in source order.** All weight expressions run top to bottom exactly once per execution, including those of branches that are not chosen, and equal expressions are not cached. | 18.16 L31347-31349 | `S31-D6_weight_evaluation_order` | llg choice (the clause allows any order and caching of identical expressions) |
 | S31-D7 | **One draw, equal to `$urandom_range(sum - 1, 0)`.** A `randcase` consumes exactly one value of the calling thread's stream, the value `$urandom_range(sum - 1, 0)` would return at that point; the first branch whose running total exceeds it is taken. A sum above 32 bits combines more 32-bit draws. | 18.16 L31353-31359 | `S31-D7_draw_is_urandom_range` | llg policy ("the range 0 to the sum" and the number of draws are open; only the equality of the two forms is compared, never a value) |
+
+## Random sequence generation (ADV-016)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S16-D1 | **A single rule needs no weight.** A production with one rule generates it without evaluating its weight, even a zero weight, and takes no random value from the stream. | 18.17.1 L31489-31492 | `S16-D1_single_rule_weight` | llg choice (a weight "is only meaningful when assigned to alternative productions") |
+| S16-D2 | **The weight code block runs after the production list.** The `rs_code_block` after a rule's weight runs once the rule's production list has been generated, as its last element; a `return` there gives the production its value. | 18.17.1 L31485; 18.17.7 L31766-31767 | `S16-D2_weight_code_block_order` | llg choice (the syntax places the block but the clause does not order it) |
+| S16-D3 | **A negative or unknown rule weight is a run-time error.** When choosing between rules, a weight that is negative (by its own type) or has X or Z bits reports an error naming the production and rule; no rule is generated, generation continues after the production and the run ends with exit status 1. All-zero weights generate nothing and only warn. Unlike `randcase` (S31-D4, S31-D5), whose clause has no such requirement. | 18.17.1 L31489-31490 | `S16-D3_invalid_weight_error` (stderr not compared on another simulator) | llg choice (the requirement is stated, the consequence is not) |
+| S16-D4 | **A negative or unknown repeat count is a run-time error.** The production is not generated, generation continues and the run ends with exit status 1. | 18.17.4 L31599-31600 | `S16-D4_invalid_repeat_count` | llg choice (the requirement is stated, the consequence is not) |
+| S16-D5 | **`rand join` steps are rule elements.** The rules of all joined productions are chosen first, in item order; then each step generates one whole element (production item, code block, `if`, `case` or `repeat` production) of one sequence. A rule's weight code block follows its last element, and a `return` drops the rest of its own sequence only. | 18.17.5 L31615-31616, L31671 | `S16-D5_rand_join_steps` | llg choice (the steps are given only by example) |
+| S16-D6 | **The ratio restricts the candidates.** At each step a ratio r above 0.5 restricts the choice to the sequences with the most remaining elements with probability 2r - 1, and r below 0.5 to those with the fewest with probability 1 - 2r; one candidate is then chosen uniformly. 0.0 and 1.0 produce exactly the clause's priority lists; 0.5 produces every interleaving. | 18.17.5 L31655-31669 | `S16-D6_rand_join_ratio` | llg choice ("priority" is not quantified; the case compares only the set of sequences) |
+| S16-D7 | **A ratio outside 0.0 to 1.0 is a run-time error.** A ratio below 0.0, above 1.0 or not a number reports an error; the join uses 0.5 and the run ends with exit status 1. | 18.17.5 L31655 | `S16-D7_rand_join_ratio_range` | llg choice (the requirement is stated, the consequence is not) |
+| S16-D8 | **Results and implicit variables start at their default.** Each generation of a value-returning production starts from its type's default, and each implicit variable starts from its default when its rule is generated; a production that does not return, or that the rule did not generate (an `if` branch not taken, a zero repeat count), reads as the default. | 18.17 L31470-31471; 18.17.7 L31766-31768 | `S16-D8_default_values` | llg choice (the clause gives no value; llg follows the automatic scope) |
+| S16-D9 | **Rule choice is one `randcase` draw.** Choosing among two or more rules evaluates every weight once in source order (a missing weight is 1) and takes one value, the one `$urandom_range(sum - 1, 0)` would return, exactly as S31-D7. | 18.17.1 L31491-31492, L31502-31503 | `S16-D9_draw_is_urandom_range` | llg policy (only the equality of the two forms is compared, never a value) |
 
 ## DPI-C imports (SIM-040)
 

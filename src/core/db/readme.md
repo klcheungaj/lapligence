@@ -46,6 +46,18 @@ unique/disable-soft/soft forms the 2009 profile rejects); `ExprKind::Dist` keeps
 `dist` expression's items and `:=`/`:/` weights. `Db::rand_qualifier` gives a class property's `rand`/`randc`, and
 `Db::randomize_call` identifies a class or scope `randomize` call and its inline
 `with` constraints (`constraints.rs`).
+`randsequence` (18.17) is `StmtKind::RandSequence` (productions and the item
+that generates the first one) over `NodeKind::Production` nodes: declarations
+(formals as automatic variables, a synthesized result variable for a non-void
+production, rules), rules (elements, `:=` weight, weight code block, implicit
+result variables of 18.17.7, `rand join` ratio) and items, code blocks, `if`,
+`repeat` and `case` elements. Formal bindings and result copies are ordinary
+assignment expressions on the item, and the result and implicit variables
+carry reset assignments from a never-written variable of the same type, so
+each generation starts from its type's default (`randsequence.rs`). Only the
+randsequence statement lists the productions as children; they are members of
+its block scope but not that scope's children, so a tree walk visits each code
+block once.
 Modport expression ports `.p(expr)` keep their port expression in a side
 table (`Db::modport_port_expression`); references still target the port.
 Typed references distinguish subroutine

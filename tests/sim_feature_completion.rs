@@ -9,6 +9,9 @@ mod sim_harness;
 #[path = "support/vcd.rs"]
 mod vcd;
 
+#[path = "sim_feature_completion/adv_016.rs"]
+mod adv_016;
+
 #[path = "sim_feature_completion/adv_032.rs"]
 mod adv_032;
 

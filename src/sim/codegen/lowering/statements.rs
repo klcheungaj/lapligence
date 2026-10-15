@@ -22,7 +22,10 @@ mod forks;
 mod formatting;
 mod memory_tasks;
 mod native_delays;
+mod randsequence;
 mod system_tasks;
+
+pub(in crate::sim::codegen) use randsequence::RandseqState;
 
 fn default_real_local_initializer(width: u32) -> Option<Box<IrExpr>> {
     (width == 0).then(|| {

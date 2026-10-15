@@ -47,9 +47,15 @@ pub use types::{
     ValueEqualitySemantics,
 };
 mod constraints;
-use constraints::{constraint_block_from_slang, constraint_from_slang};
+use constraints::{constraint_block_from_slang, constraint_from_slang, ordered_targets};
 pub use constraints::{
     ConstraintBlockInfo, ConstraintKind, RandQualifier, RandomizeCall, RandomizeForm,
+};
+mod randsequence;
+use randsequence::production_from_slang;
+pub use randsequence::{
+    ProductionBinding, ProductionCaseItem, ProductionDecl, ProductionItem, ProductionKind,
+    ProductionResult, ProductionRule,
 };
 mod nodes;
 pub use nodes::{

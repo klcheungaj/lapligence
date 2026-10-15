@@ -493,6 +493,110 @@ int32_t llg_randcase_select(const sv4_t* const* weights, size_t count,
         : randcase_select_wide(rng, weights, count, sum_width, location);
 }
 
+/* randsequence rule selection (IEEE 1800-2009 18.17.1): "A
+ * weight_specification shall evaluate to an integral non-negative value", so
+ * a negative or unknown weight is a run-time error that marks the run failed
+ * and selects no rule (S16-D3). Valid weights draw exactly like randcase. */
+static int randsequence_weight_invalid(const sv4_t* weight, size_t index,
+                                       const char* location) {
+    const char* problem = NULL;
+    if (llg_sv4_width(*weight) != 0 && sv4_is_unknown(*weight)) {
+        problem = "has unknown bits";
+    } else if (llg_sv4_signed(*weight) && llg_sv4_width(*weight) != 0) {
+        sv4_t sign =
+            sv4_bit_select(*weight, (uint64_t)llg_sv4_width(*weight) - 1u);
+        if (sv4_to_bool(sign)) problem = "is negative";
+        sv4_destroy(&sign);
+    }
+    if (!problem) return 0;
+    fprintf(stderr,
+            "llg: error: randsequence production at %s: the weight of rule %zu "
+            "%s; no rule is generated\n",
+            randcase_where(location), index + 1u, problem);
+    llg_rt_mark_failed();
+    return 1;
+}
+
+int32_t llg_randsequence_select(const sv4_t* const* weights, size_t count,
+                                uint32_t sum_width, const char* location) {
+    int invalid = 0;
+    for (size_t index = 0; index < count; ++index)
+        invalid |= randsequence_weight_invalid(weights[index], index, location);
+    if (invalid) return -1;
+    int any = 0;
+    for (size_t index = 0; index < count && !any; ++index)
+        any = llg_sv4_width(*weights[index]) != 0 && sv4_to_bool(*weights[index]);
+    if (!any) {
+        fprintf(stderr,
+                "llg: warning: randsequence production at %s: all rule weights "
+                "are zero; nothing is generated\n",
+                randcase_where(location));
+        return -1;
+    }
+    return llg_randcase_select(weights, count, sum_width, location);
+}
+
+/* rand join (IEEE 1800-2009 18.17.5): the next sequence to advance among
+ * those with a nonzero remaining length (S16-D6). With probability
+ * p = |2*ratio - 1| the choice is restricted to the longest sequences
+ * (ratio > 0.5) or the shortest (ratio < 0.5); the restriction is decided by
+ * one 32-bit draw only when 0 < p < 1 (p is quantized to T = round(p * 2^32)
+ * and the draw restricts when below T). One more draw picks uniformly among
+ * the candidates when there are at least two. Returns -1 when every sequence
+ * is exhausted. The caller validated `ratio`. */
+int32_t llg_randsequence_join_pick(const sv4_t* const* remaining, size_t count,
+                                   double ratio) {
+    llg_rng_state_t* rng = llg_process_rng();
+    uint64_t lengths_stack[16];
+    uint64_t* lengths = count <= 16u
+        ? lengths_stack
+        : (uint64_t*)llg_checked_calloc(count, sizeof(uint64_t),
+                                        "rand join lengths");
+    size_t live = 0;
+    uint64_t shortest = UINT64_MAX, longest = 0;
+    for (size_t index = 0; index < count; ++index) {
+        uint64_t length = randcase_weight_u64(remaining[index]);
+        lengths[index] = length;
+        if (length == 0) continue;
+        live++;
+        if (length < shortest) shortest = length;
+        if (length > longest) longest = length;
+    }
+    int32_t chosen = -1;
+    if (live != 0) {
+        double bias = ratio * 2.0 - 1.0;
+        double p = bias < 0.0 ? -bias : bias;
+        double scaled = p * 4294967296.0 + 0.5;
+        uint64_t threshold = scaled >= 4294967296.0 ? UINT64_C(4294967296)
+                                                    : (uint64_t)scaled;
+        int restrict_length = 0;
+        if (threshold >= UINT64_C(4294967296))
+            restrict_length = 1;
+        else if (threshold != 0)
+            restrict_length = (uint64_t)llg_rng_state_next(rng) < threshold;
+        uint64_t target = bias > 0.0 ? longest : shortest;
+        size_t candidates = 0;
+        for (size_t index = 0; index < count; ++index)
+            if (lengths[index] != 0 &&
+                (!restrict_length || lengths[index] == target))
+                candidates++;
+        size_t pick = candidates > 1u
+            ? (size_t)llg_rng_state_uniform(rng, (uint32_t)(candidates - 1u), 0)
+            : 0u;
+        for (size_t index = 0; index < count; ++index) {
+            if (lengths[index] == 0 ||
+                (restrict_length && lengths[index] != target))
+                continue;
+            if (pick-- == 0) {
+                chosen = (int32_t)index;
+                break;
+            }
+        }
+    }
+    if (lengths != lengths_stack) free(lengths);
+    return chosen;
+}
+
 void llg_process_srandom(sv4_t seed) {
     llg_rng_state_seed(llg_process_rng(), llg_rng_argument(seed));
 }

@@ -22,10 +22,11 @@ pub use database::{
     DbError, DistItem, DpiImportInfo, DpiOpenType, DriverDelay, ElaboratedTypeRanges, EnumMember,
     EnumTypeMetadata, EventSpec, EventTriggerTiming, ExprKind, GateTerm, ImmediateAssertionKind,
     IntraControl, LegacyDirective, Node, NodeId, NodeKind, PackedMember, PackedRange,
-    PredicateClause, PrimClass, ProcessKind, RandQualifier, RandomizeCall, RandomizeForm, StmtKind,
-    StreamOperand, StreamingDirection, TimeLiteralScale, TimeUnit, TypeDescriptor, TypeId,
-    TypeShape, UdpRow, UdpTable, ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics,
-    ValueEqualitySemantics, VariableLifetime, VariableLifetimeQualifier,
+    PredicateClause, PrimClass, ProcessKind, ProductionBinding, ProductionCaseItem, ProductionDecl,
+    ProductionItem, ProductionKind, ProductionResult, ProductionRule, RandQualifier, RandomizeCall,
+    RandomizeForm, StmtKind, StreamOperand, StreamingDirection, TimeLiteralScale, TimeUnit,
+    TypeDescriptor, TypeId, TypeShape, UdpRow, UdpTable, ValueCopySemantics, ValueDefaultSemantics,
+    ValueDestroySemantics, ValueEqualitySemantics, VariableLifetime, VariableLifetimeQualifier,
 };
 pub use domain::{
     AlwaysKind, CapturedSemanticKind, CaseKind, ConstantType, Direction, JoinKind, NetType,

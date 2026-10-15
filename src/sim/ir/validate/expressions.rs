@@ -1408,6 +1408,26 @@ impl Validator<'_> {
                         return self.fail(path, "$urandom_range requires a 32-bit unsigned result");
                     }
                 }
+                IrSysFunc::RandJoinPick { lengths, ratio } => {
+                    if lengths.len() < 2 {
+                        return self.fail(path, "rand join requires at least two sequences");
+                    }
+                    for (index, length) in lengths.iter().enumerate() {
+                        let length_path = format!("{path}.lengths[{index}]");
+                        self.validate_expr(length, formals, &length_path)?;
+                        if length.is_real() || length.width == 0 || length.signed {
+                            return self
+                                .fail(length_path, "rand join lengths must be unsigned packed");
+                        }
+                    }
+                    self.validate_expr(ratio, formals, &format!("{path}.ratio"))?;
+                    if !ratio.is_real() || (expr.width, expr.signed) != (32, true) {
+                        return self.fail(
+                            path,
+                            "rand join requires a real ratio and a signed 32-bit result",
+                        );
+                    }
+                }
                 IrSysFunc::Randcase {
                     weights, sum_width, ..
                 } => {

@@ -732,6 +732,7 @@ impl NodeKind {
             NodeKind::Expr(expr) => expression_refs(expr, refs),
             NodeKind::ConstraintBlock(block) => refs.extend(block.body),
             NodeKind::Constraint(constraint) => constraint.referenced_nodes(refs),
+            NodeKind::Production(production) => production.referenced_nodes(refs),
             NodeKind::ModuleInst { .. }
             | NodeKind::InstanceArray
             | NodeKind::Package
@@ -847,6 +848,10 @@ fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
             for item in items {
                 refs.extend([item.weight, item.body]);
             }
+        }
+        StmtKind::RandSequence { productions, top } => {
+            refs.extend(productions.iter().copied());
+            refs.extend(*top);
         }
         StmtKind::For {
             vars,

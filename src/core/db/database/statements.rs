@@ -69,6 +69,13 @@ pub enum StmtKind {
     RandCase {
         items: Vec<RandCaseItem>,
     },
+    /// `randsequence` (IEEE 1800-2009 18.17): its productions in source
+    /// order and the [`super::ProductionKind::Item`] that generates the
+    /// first one. `top` is `None` for an empty `randsequence()`.
+    RandSequence {
+        productions: Vec<NodeId>,
+        top: Option<NodeId>,
+    },
     For {
         /// Variables declared in the initializer (`for (int i = ...; ...)`).
         vars: Vec<NodeId>,

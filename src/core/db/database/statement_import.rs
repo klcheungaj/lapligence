@@ -241,6 +241,15 @@ pub(super) fn statement_from_slang(
             }
             StmtKind::RandCase { items }
         }
+        crate::ffi::slang::SEMANTIC_STMT_RANDSEQUENCE => StmtKind::RandSequence {
+            productions: ordered_targets(
+                ids,
+                edges,
+                SemanticEdgeRole::Declaration,
+                "randsequence production",
+            )?,
+            top: first(SemanticEdgeRole::Body)?,
+        },
         35 => StmtKind::For {
             vars: Vec::new(),
             init: edge_targets(ids, edges, SemanticEdgeRole::Initializer)?,

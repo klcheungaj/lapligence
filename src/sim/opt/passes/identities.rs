@@ -281,6 +281,12 @@ fn ident_children(e: &mut IrExpr) {
             | IrSysFunc::BitsToReal(a)
             | IrSysFunc::ShortRealToBits(a)
             | IrSysFunc::BitsToShortReal(a) => ident_expr(a),
+            IrSysFunc::RandJoinPick { lengths, ratio } => {
+                for length in lengths {
+                    ident_expr(length);
+                }
+                ident_expr(ratio);
+            }
             IrSysFunc::Randcase { weights, .. } => {
                 for weight in weights {
                     ident_expr(weight);

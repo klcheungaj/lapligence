@@ -305,6 +305,11 @@ The weights are evaluated in order into separate temporaries before the one
 runtime call; traversal, reads, effects (`RuntimeService`) and folding visit
 every weight. Only the owned emitter renders it; the detached legacy emitter
 rejects it. It draws from the calling thread's stream like `$urandom_range`.
+`strict: true` (randsequence rule selection, ADV-016) makes a negative or
+X/Z weight a run-time error instead of its unsigned bit pattern.
+`IrSysFunc::RandJoinPick { lengths, ratio }` is the signed 32-bit index of the
+next `rand join` sequence to advance (remaining element counts and the real
+ratio), or -1 when all are exhausted; it has the same effect and emitter rules.
 
 ## Fixed-array reductions
 

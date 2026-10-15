@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 24u
+#define LLG_SLANG_ABI_VERSION 25u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -425,6 +425,9 @@ enum {
   /* A functional-coverage declaration (IEEE 1800-2009 19); subkind is
    * LLG_SLANG_COVERAGE_*. */
   LLG_SLANG_SEMANTIC_COVERAGE = 31,
+  /* A randsequence production or one of its synthetic rule and production
+   * list nodes (IEEE 1800-2009 18.17); subkind is LLG_SLANG_PRODUCTION_*. */
+  LLG_SLANG_SEMANTIC_PRODUCTION = 32,
   LLG_SLANG_SEMANTIC_UNSUPPORTED = 255
 };
 
@@ -541,6 +544,44 @@ enum {
   LLG_SLANG_COVERGROUP_BLOCK_EVENT = 1ull << 2,
   LLG_SLANG_COVERGROUP_EXTENDS = 1ull << 3
 };
+
+/* Randsequence subkinds (IEEE 1800-2009 18.17). Only DECLARATION is a
+ * symbol; every other node is synthetic, owned by its production or rule.
+ * DECLARATION (the production): type_id is the return type (void when none);
+ *   ARGUMENT[i] is formal i, exported as an automatic VARIABLE, and
+ *   OPERAND[i] a reference to it; DECLARATION the synthesized automatic
+ *   result variable of a non-void production, LHS a reference to it and
+ *   DEFAULT_VALUE the assignment that resets it from a never-written
+ *   automatic variable of its type (a CHILD); BRANCH[r] rule r. Auxiliary bit i (bit 63 for i >= 63) marks a formal
+ *   that is not an input.
+ * RULE: OPERAND[e] is production-list element e, WEIGHT the `:=` weight,
+ *   BODY the weight clause's CODE_BLOCK, DECLARATION[v] implicit result
+ *   variable v (18.17.7), INITIALIZER[v] its reset assignment (as for the
+ *   production result) and RAND_JOIN the rand join expression.
+ *   Auxiliary: LLG_SLANG_PRODUCTION_RULE_RAND_JOIN.
+ * ITEM: CALLEE is the generated production; ARGUMENT[j] the assignment
+ *   expression that binds input formal j to its actual (or default), and
+ *   RHS the assignment of the production's result variable to this
+ *   occurrence's implicit variable or element.
+ * CODE_BLOCK: BODY is the code block statement.
+ * IF: CONDITION, THEN and ELSE (ITEM nodes).
+ * REPEAT: CONDITION is the count, BODY the ITEM.
+ * CASE: CASE_EXPRESSION is the selector, CASE_ITEM[(i << 16) | j]
+ *   expression j of item i, BRANCH[i] its ITEM and ELSE the default ITEM.
+ * The randsequence statement (LLG_SLANG_STMT_RANDSEQUENCE) has
+ * DECLARATION[p] production p and BODY the ITEM that generates the top
+ * production. */
+enum {
+  LLG_SLANG_PRODUCTION_DECLARATION = 1,
+  LLG_SLANG_PRODUCTION_RULE = 2,
+  LLG_SLANG_PRODUCTION_ITEM = 3,
+  LLG_SLANG_PRODUCTION_CODE_BLOCK = 4,
+  LLG_SLANG_PRODUCTION_IF = 5,
+  LLG_SLANG_PRODUCTION_REPEAT = 6,
+  LLG_SLANG_PRODUCTION_CASE = 7
+};
+
+enum { LLG_SLANG_PRODUCTION_RULE_RAND_JOIN = 1ull << 0 };
 
 enum {
   LLG_SLANG_COVERAGE_BIN_BINS = 0,
@@ -718,6 +759,8 @@ enum {
   /* `randcase` (IEEE 1800-2009 18.16): CASE_ITEM edges carry the weight
    * expressions and BRANCH edges the bodies, both indexed by item. */
   LLG_SLANG_STMT_RANDCASE = 69,
+  /* `randsequence` (IEEE 1800-2009 18.17); see LLG_SLANG_PRODUCTION_*. */
+  LLG_SLANG_STMT_RANDSEQUENCE = 70,
   /* Pattern-matching case statements are kept distinct from ordinary case so
    * the owned database cannot reduce a surviving pattern to an empty case
    * before G3-01 implements matching. */
@@ -1054,7 +1097,10 @@ enum {
   LLG_SLANG_EDGE_CONDITION_PATTERN = 38,
   /* `default disable iff` condition inferred for a concurrent assertion
    * statement (IEEE 1800-2009 16.16); shared by every assertion it covers. */
-  LLG_SLANG_EDGE_DEFAULT_DISABLE = 39
+  LLG_SLANG_EDGE_DEFAULT_DISABLE = 39,
+  /* A randsequence rule's `:=` weight and rand join expression. */
+  LLG_SLANG_EDGE_WEIGHT = 40,
+  LLG_SLANG_EDGE_RAND_JOIN = 41
 };
 
 typedef struct {

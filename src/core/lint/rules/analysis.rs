@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::core::db::Operation;
 use crate::core::db::{
-    AlwaysKind, Db, Direction, ExprKind, IntraControl, NodeId, NodeKind, StmtKind,
+    AlwaysKind, Db, Direction, ExprKind, IntraControl, NodeId, NodeKind, ProductionKind, StmtKind,
 };
 use crate::core::value::ValueData;
 
@@ -469,6 +469,21 @@ fn walk_driver_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &m
         NodeKind::FuncCall { .. } | NodeKind::SysCall { .. } | NodeKind::MethodCall { .. } => {
             for actual in call_written_actuals(db, node) {
                 add_driver_lhs_write(db, actual, seen, out);
+            }
+        }
+        // A randsequence production's formals and result, a rule's implicit
+        // result variables and their default-valued reset sources are
+        // written or initialized by each generation of the production
+        // (IEEE 1800-2009 18.17.6, 18.17.7).
+        NodeKind::Production(ProductionKind::Declaration(_) | ProductionKind::Rule(_)) => {
+            for child in &db.node(node).children {
+                if matches!(
+                    db.node_kind(*child),
+                    NodeKind::Var { .. } | NodeKind::Array { .. }
+                ) && db.node(*child).parent == Some(node)
+                {
+                    add_driver_lhs_write(db, *child, seen, out);
+                }
             }
         }
         _ => {}

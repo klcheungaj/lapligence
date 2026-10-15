@@ -371,6 +371,18 @@ impl Db {
                     // `conditional_pattern_fields` below.
                     continue;
                 }
+                if child_semantic.kind == SemanticKind::Production
+                    && child_semantic.subkind == crate::ffi::slang::SEMANTIC_PRODUCTION_DECLARATION
+                    && semantic.kind != SemanticKind::Statement
+                {
+                    // A randsequence production is a member of the statement's
+                    // block scope, and that scope is also a child of the
+                    // enclosing statement. Productions own executable code, so
+                    // only the randsequence statement lists them as children;
+                    // a second path would make tree walks visit each code
+                    // block more than once.
+                    continue;
+                }
                 if !matches!(
                     edge.role,
                     SemanticEdgeRole::Reference
