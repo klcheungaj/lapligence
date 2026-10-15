@@ -35,6 +35,13 @@ pub fn vpi_sources() -> (&'static str, &'static str) {
     )
 }
 
+/// The `sv_vpi_user.h` written beside every generated model: the assertion
+/// and coverage constants of IEEE 1800-2009 Annex M that the VPI bridge
+/// supports. It includes `vpi_user.h`.
+pub fn sv_vpi_header() -> &'static str {
+    include_str!("sv_vpi_user.h")
+}
+
 /// The `svdpi.h` (IEEE 1800-2009 Annex I) written beside every generated
 /// model, for the model and for DPI-C libraries compiled against it. It
 /// defines the fixed-width types through `<inttypes.h>` on every host (I.2).

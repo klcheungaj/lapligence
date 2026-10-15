@@ -61,6 +61,7 @@ pub(crate) fn write_sim_sources(
         ("llg_co.h", coroutine_h),
         ("llg_co.c", coroutine_c),
         ("vpi_user.h", vpi_h),
+        ("sv_vpi_user.h", rt::sv_vpi_header()),
         ("llg_vpi.h", vpi_bridge_h),
         ("llg_vpi.c", vpi_c),
         ("llg_container.h", container_h),

@@ -2395,6 +2395,15 @@ fn s46_d9_assertion_items() {
 }
 
 #[test]
+fn s46_d10_vpi_coverage_control() {
+    run_vpi_decision(
+        "S46-D10_vpi_coverage_control",
+        &["task $d10(input int phase)"],
+        include_str!("fixtures/sim/lrm_decisions/S46-D10_vpi_coverage_control.out"),
+    );
+}
+
+#[test]
 fn s46_d11_failed_merge() {
     let expected = include_str!("fixtures/sim/lrm_decisions/S46-D11_failed_merge.out");
     sim_cli::run_case_checked_matrix(SUITE, "S46-D11_failed_merge", &[], &|label, output| {

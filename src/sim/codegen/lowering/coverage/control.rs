@@ -30,11 +30,17 @@ pub(in crate::sim::codegen::lowering) struct CoverageInstances {
     index: HashMap<NodeId, u32>,
 }
 
+/// The hierarchical name of a labelled assertion. The display scope of a
+/// labelled statement already ends with its label.
 fn full_name(scope: &str, label: &str) -> String {
-    match (label.is_empty(), scope.is_empty()) {
-        (true, _) => String::new(),
-        (false, true) => label.to_owned(),
-        (false, false) => format!("{scope}.{label}"),
+    if label.is_empty() {
+        String::new()
+    } else if scope == label || scope.ends_with(&format!(".{label}")) {
+        scope.to_owned()
+    } else if scope.is_empty() {
+        label.to_owned()
+    } else {
+        format!("{scope}.{label}")
     }
 }
 

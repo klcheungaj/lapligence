@@ -568,3 +568,21 @@ fn final_procedures_query_and_save_live_coverage() {
         assert!(llg_messages(output).is_empty(), "{label}");
     });
 }
+
+/// Step 3: assertion handles (39.3), their coverage properties and coverage
+/// control through VPI (40.5) for an application loaded at run time.
+#[test]
+fn vpi_reads_and_controls_assertion_coverage() {
+    let directory = super::sim_harness::TempDir::new("sim046-vpi").expect("temporary directory");
+    let Some(library) = super::sim_040::plugin_library(SUITE, &directory, "vpi_coverage", &[])
+    else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "vpi_coverage",
+        include_str!("../fixtures/sim/feature_completion/sim_046/vpi_coverage.out"),
+        &["--define-system-task", "task $vpi_cov(input int phase)"],
+        &[("LLG_VPI_PLUGIN", &library)],
+    );
+}

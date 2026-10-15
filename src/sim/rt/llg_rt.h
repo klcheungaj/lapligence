@@ -2983,6 +2983,24 @@ void llg_acov_check(llg_acov_item_t* item, int passed);
 int32_t llg_coverage_call(int function, const sv4_t* args, int n_args, int32_t instance,
                           llg_string_t text, int has_text, const char* site);
 
+/* The assertion coverage tables for the VPI bridge (llg_vpi.c, 39.3,
+ * 40.5): NULL beyond the bound tables. */
+size_t llg_acov_item_count(void);
+const llg_acov_item_t* llg_acov_item_at(size_t index);
+size_t llg_acov_instance_count(void);
+const llg_acov_instance_t* llg_acov_instance_at(size_t index);
+/* The instance index of the instance named `path`, or -1. */
+int32_t llg_acov_instance_named(const char* path);
+/* The items owned directly by `instance` with a nonvacuous success
+ * (S46-D4, MODULE semantics). */
+size_t llg_acov_covered_in(int32_t instance);
+/* vpi_control coverage operations (40.5.4, S46-D10): `control` and `type`
+ * are the SV_COV_* values of 40.3.1. `item` >= 0 selects one item;
+ * otherwise `instance` (MODULE semantics). Returns the SV_COV_* status. */
+int32_t llg_coverage_control_vpi(int control, int type, int32_t instance, int64_t item);
+/* vpiCoverageSave (`merge` 0) and vpiCoverageMerge (`merge` 1). */
+int32_t llg_coverage_file_vpi(int merge, int type, const char* name);
+
 #ifdef __cplusplus
 }
 #endif

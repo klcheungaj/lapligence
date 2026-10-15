@@ -9,6 +9,7 @@
 // object.
 
 #include "llg_vpi.h"
+#include "sv_vpi_user.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -49,6 +50,7 @@ typedef enum {
     SLOT_ARGUMENT,  /* expression or literal argument snapshot */
     SLOT_CALLBACK,
     SLOT_EVENT,     /* vpiSchedEvent */
+    SLOT_ASSERTION, /* assertion coverage item `left` (39.3) */
 } llg_vpi_slot_kind_t;
 
 enum {
@@ -1579,6 +1581,7 @@ void vpi_get_systf_info(vpiHandle object, p_vpi_systf_data data) {
 /* ── lookup by name and index ───────────────────────────────────────────── */
 
 static vpiHandle select_from_suffix(uint32_t row, const char* suffix);
+static vpiHandle assertion_by_name(const char* name, vpiHandle scope);
 
 /* Resolve `name` with optional trailing `[i]`, `[i][j]` or `[l:r]` selects
  * after a catalog name. Catalog names themselves may contain brackets
@@ -1711,6 +1714,16 @@ vpiHandle vpi_handle_by_name(PLI_BYTE8* name, vpiHandle scope) {
     } else {
         result = lookup_full_name((const char*)name);
     }
+    /* A labelled assertion is also a named scope of the catalog; the name
+     * denotes the assertion (39.3.1). */
+    if (!g_vpi.error_pending) {
+        llg_vpi_slot_t* found = result ? decode_handle(result, NULL) : NULL;
+        llg_vpi_model_object_t* row = found ? row_object(found->object) : NULL;
+        if (!result || (row && row->type == vpiNamedBegin && found->kind == SLOT_OBJECT)) {
+            vpiHandle assertion = assertion_by_name((const char*)name, scope);
+            if (assertion) result = assertion;
+        }
+    }
     if (!result && !g_vpi.error_pending)
         vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_NOT_FOUND", "VPI object `%s` was not found",
                        (const char*)name);
@@ -1820,6 +1833,196 @@ vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32
 
 /* ── one-to-one relations ───────────────────────────────────────────────── */
 
+/* ── assertions and coverage (39.3, 40.5) ───────────────────────────────── */
+
+static vpiHandle make_list_iterator(int type, uintptr_t* items, uint32_t count);
+
+static const llg_acov_item_t* slot_item(const llg_vpi_slot_t* slot) {
+    if (!slot || slot->kind != SLOT_ASSERTION || slot->left < 0) return NULL;
+    return llg_acov_item_at((size_t)slot->left);
+}
+
+/* The 39.3.2 assertion type of an item. */
+static int assertion_type(const llg_acov_item_t* item) {
+    if (!item) return vpiUndefined;
+    int immediate = item->form == LLG_ACOV_IMMEDIATE || item->form == LLG_ACOV_DEFERRED;
+    switch (item->kind) {
+        case LLG_ASSERTION_ASSERT: return immediate ? vpiImmediateAssert : vpiAssert;
+        case LLG_ASSERTION_ASSUME: return immediate ? vpiImmediateAssume : vpiAssume;
+        default: return immediate ? vpiImmediateCover : vpiCover;
+    }
+}
+
+static vpiHandle assertion_handle(size_t item) {
+    uint32_t index = alloc_slot(SLOT_ASSERTION);
+    if (index == LLG_VPI_NONE) return NULL;
+    g_vpi.slots[index].left = (int64_t)item;
+    return encode_handle(index);
+}
+
+/* The coverage instance of a module or interface handle, or -1. */
+static int32_t slot_instance(const llg_vpi_slot_t* slot) {
+    llg_vpi_model_object_t* object = row_object(slot->object);
+    if (slot->kind != SLOT_OBJECT || !object ||
+        (object->type != vpiModule && object->type != vpiInterface))
+        return -1;
+    return llg_acov_instance_named(object->full_name);
+}
+
+/* vpi_iterate(vpiAssertion, NULL | instance): every item, or the items of
+ * one instance (39.3.1). */
+static vpiHandle iterate_assertions(vpiHandle reference) {
+    int32_t instance = -1;
+    if (reference) {
+        llg_vpi_slot_t* slot = checked_handle(reference, NULL);
+        if (!slot) return NULL;
+        llg_vpi_model_object_t* object = row_object(slot->object);
+        if (slot->kind != SLOT_OBJECT || !object ||
+            (object->type != vpiModule && object->type != vpiInterface)) {
+            vpi_error("LLG_VPI_RELATION", "vpiAssertion iterates from NULL or an instance");
+            return NULL;
+        }
+        instance = slot_instance(slot);
+        if (instance < 0) return NULL;
+    }
+    size_t total = llg_acov_item_count(), count = 0;
+    uintptr_t* items = (uintptr_t*)calloc(total ? total : 1u, sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    for (size_t i = 0; i < total; ++i) {
+        if (reference && llg_acov_item_at(i)->instance != instance) continue;
+        vpiHandle handle = assertion_handle(i);
+        if (!handle) break;
+        items[count++] = (uintptr_t)handle;
+    }
+    return make_list_iterator(vpiAssertion, items, (uint32_t)count);
+}
+
+/* A named assertion by its full name, or `name` below `scope` (39.3.1:
+ * unnamed assertions cannot be found by name). */
+static vpiHandle assertion_by_name(const char* name, vpiHandle scope) {
+    const char* prefix = NULL;
+    if (scope) {
+        llg_vpi_slot_t* slot = decode_handle(scope, NULL);
+        llg_vpi_model_object_t* parent = slot ? row_object(slot->object) : NULL;
+        if (!parent) return NULL;
+        prefix = parent->full_name;
+    }
+    size_t prefix_length = prefix ? strlen(prefix) : 0u;
+    for (size_t i = 0; i < llg_acov_item_count(); ++i) {
+        const char* full = llg_acov_item_at(i)->full_name;
+        if (!full[0]) continue;
+        if (prefix) {
+            if (strncmp(full, prefix, prefix_length) != 0 || full[prefix_length] != '.' ||
+                strcmp(full + prefix_length + 1u, name) != 0)
+                continue;
+        } else if (strcmp(full, name) != 0) {
+            continue;
+        }
+        return assertion_handle(i);
+    }
+    return NULL;
+}
+
+static vpiHandle assertion_relation(int type, const llg_vpi_slot_t* slot) {
+    const llg_acov_item_t* item = slot_item(slot);
+    if (item && (type == vpiScope || type == vpiModule)) {
+        /* The owning instance; NULL for an assertion owned by $root. */
+        const llg_acov_instance_t* owner =
+            item->instance >= 0 ? llg_acov_instance_at((size_t)item->instance) : NULL;
+        if (!owner) return NULL;
+        uint32_t row = find_row(owner->path);
+        if (row != LLG_VPI_NONE) return object_handle(row);
+        vpi_error("LLG_VPI_NOT_FOUND", "the assertion's instance is not in the VPI catalog");
+        return NULL;
+    }
+    vpi_error("LLG_VPI_RELATION", "unsupported VPI one-to-one relation for this object");
+    return NULL;
+}
+
+/* An integer property of an assertion handle (39.3.2, 40.5.3). */
+static int assertion_property(const llg_vpi_slot_t* slot, int property, uint64_t* value) {
+    const llg_acov_item_t* item = slot_item(slot);
+    if (!item) return 0;
+    switch (property) {
+        case vpiIsDeferred: *value = item->form == LLG_ACOV_DEFERRED; return 1;
+        case vpiCovered:
+            /* Attempted, succeeded at least once and never failed (40.5.3). */
+            *value = item->attempts && item->successes && !item->failures;
+            return 1;
+        case vpiCoverMax: *value = 1; return 1;
+        case vpiCoveredCount:
+        case vpiAssertSuccessCovered: *value = item->successes; return 1;
+        case vpiAssertAttemptCovered: *value = item->attempts; return 1;
+        case vpiAssertFailureCovered: *value = item->failures; return 1;
+        case vpiAssertVacuousSuccessCovered: *value = item->vacuous; return 1;
+        case vpiAssertDisableCovered: *value = item->disabled; return 1;
+        case vpiAssertKillCovered: *value = item->killed; return 1;
+        default: return 0;
+    }
+}
+
+static int is_coverage_type_property(int property) {
+    return property >= vpiAssertCoverage && property <= vpiToggleCoverage;
+}
+
+/* vpi_get(<coverage type>, instance): the covered items of that type owned
+ * by the instance (40.5.3, S46-D10). */
+static PLI_INT32 instance_coverage(const llg_vpi_slot_t* slot, int property) {
+    if (property != vpiAssertCoverage) {
+        vpi_error("LLG_VPI_UNSUPPORTED",
+                  "statement, toggle and FSM coverage are not implemented (S46-D5)");
+        return vpiUndefined;
+    }
+    int32_t instance = slot_instance(slot);
+    if (instance < 0) {
+        vpi_error("LLG_VPI_RELATION", "coverage properties need a module or interface instance");
+        return vpiUndefined;
+    }
+    size_t covered = llg_acov_covered_in(instance);
+    return covered > INT32_MAX ? INT32_MAX : (PLI_INT32)covered;
+}
+
+/* The 40.3.1 coverage type of a VPI coverage type property, or -1. */
+static int sv_coverage_type(int type) {
+    return is_coverage_type_property(type) ? 20 + (type - vpiAssertCoverage) : -1;
+}
+
+/* vpi_control(vpiCoverageStart/Stop/Reset/Check, type, instance or
+ * assertion): the SV_COV_* status of $coverage_control (40.5.4, S46-D10). */
+static PLI_INT32 coverage_control(int operation, int type, vpiHandle object) {
+    llg_vpi_slot_t* slot = checked_handle(object, NULL);
+    if (!slot) return SV_COV_ERROR;
+    int control = operation == vpiCoverageStart ? 0
+                  : operation == vpiCoverageStop ? 1
+                  : operation == vpiCoverageReset ? 2 : 3;
+    int sv_type = sv_coverage_type(type);
+    if (sv_type < 0) {
+        vpi_error("LLG_VPI_ARGUMENT", "unknown VPI coverage type");
+        return SV_COV_ERROR;
+    }
+    if (slot->kind == SLOT_ASSERTION)
+        return llg_coverage_control_vpi(control, sv_type, -1, slot->left);
+    int32_t instance = slot_instance(slot);
+    if (instance < 0) {
+        vpi_error("LLG_VPI_RELATION", "coverage control needs an instance or an assertion");
+        return SV_COV_ERROR;
+    }
+    return llg_coverage_control_vpi(control, sv_type, instance, -1);
+}
+
+/* vpi_control(vpiCoverageSave/Merge, type, name) (40.5.4). */
+static PLI_INT32 coverage_file_control(int operation, int type, const char* name) {
+    int sv_type = sv_coverage_type(type);
+    if (sv_type < 0 || !name) {
+        vpi_error("LLG_VPI_ARGUMENT", "coverage save and merge need a coverage type and a name");
+        return SV_COV_ERROR;
+    }
+    return llg_coverage_file_vpi(operation == vpiCoverageMerge, sv_type, name);
+}
+
 static vpiHandle call_handle_for(llg_vpi_callsite_t* site) {
     if (site->call_slot) {
         uint32_t index = site->call_slot - 1u;
@@ -1887,6 +2090,7 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
     uint32_t index;
     llg_vpi_slot_t* slot = checked_handle(ref_handle, &index);
     if (!slot) return NULL;
+    if (slot->kind == SLOT_ASSERTION) return assertion_relation(type, slot);
     llg_vpi_model_object_t* object = row_object(slot->object);
     switch (type) {
         case vpiParent:
@@ -2054,6 +2258,7 @@ static vpiHandle iterate_children(int type, uint32_t parent) {
 vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     vpi_enter();
     if (!vpi_ready()) return NULL;
+    if (type == vpiAssertion) return iterate_assertions(ref_handle);
     if (!ref_handle) {
         if (type != vpiModule && type != vpiInterface) {
             vpi_error("LLG_VPI_UNSUPPORTED", "only vpiModule iterates from a NULL reference");
@@ -2260,6 +2465,7 @@ static int handle_type(const llg_vpi_slot_t* slot) {
         case SLOT_ARGUMENT: return argument_type(slot);
         case SLOT_CALLBACK: return vpiCallback;
         case SLOT_EVENT: return vpiSchedEvent;
+        case SLOT_ASSERTION: return assertion_type(slot_item(slot));
         default: return vpiUndefined;
     }
 }
@@ -2331,6 +2537,12 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
     uint32_t index;
     llg_vpi_slot_t* slot = checked_handle(handle, &index);
     if (!slot) return vpiUndefined;
+    if (slot->kind == SLOT_ASSERTION && property != vpiType) {
+        uint64_t value;
+        if (!assertion_property(slot, property, &value)) return unsupported_property();
+        return value > INT32_MAX ? INT32_MAX : (PLI_INT32)value;
+    }
+    if (is_coverage_type_property(property)) return instance_coverage(slot, property);
     llg_vpi_model_object_t* object = row_object(slot->object);
     int type = handle_type(slot);
     uint32_t width = 0;
@@ -2456,6 +2668,14 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
 }
 
 PLI_INT64 vpi_get64(PLI_INT32 property, vpiHandle handle) {
+    /* Assertion counters keep their full 64-bit value (40.5.3). */
+    llg_vpi_slot_t* slot = decode_handle(handle, NULL);
+    uint64_t value;
+    if (slot && slot->kind == SLOT_ASSERTION && property != vpiType) {
+        vpi_enter();
+        if (!assertion_property(slot, property, &value)) return unsupported_property();
+        return value > INT64_MAX ? INT64_MAX : (PLI_INT64)value;
+    }
     return (PLI_INT64)vpi_get(property, handle);
 }
 
@@ -2497,6 +2717,12 @@ static const char* type_name(int type) {
         case vpiSysFuncCall: return "vpiSysFuncCall";
         case vpiCallback: return "vpiCallback";
         case vpiSchedEvent: return "vpiSchedEvent";
+        case vpiAssert: return "vpiAssert";
+        case vpiAssume: return "vpiAssume";
+        case vpiCover: return "vpiCover";
+        case vpiImmediateAssert: return "vpiImmediateAssert";
+        case vpiImmediateAssume: return "vpiImmediateAssume";
+        case vpiImmediateCover: return "vpiImmediateCover";
         default: return NULL;
     }
 }
@@ -2583,6 +2809,19 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
             llg_vpi_callsite_t* site = (llg_vpi_callsite_t*)slot->pointer;
             if (property == vpiName) return (PLI_BYTE8*)site->name;
             if (property == vpiFile && site->file) return (PLI_BYTE8*)site->file;
+            break;
+        }
+        case SLOT_ASSERTION: {
+            const llg_acov_item_t* item = slot_item(slot);
+            if (!item) break;
+            /* An unnamed assertion has no name (39.3.1). */
+            if (property == vpiName) return item->name[0] ? (PLI_BYTE8*)item->name : NULL;
+            if (property == vpiFullName)
+                return item->full_name[0] ? (PLI_BYTE8*)item->full_name : NULL;
+            if (property == vpiDefName) {
+                const llg_acov_instance_t* owner = llg_acov_instance_at((size_t)item->instance);
+                if (item->instance >= 0 && owner) return (PLI_BYTE8*)owner->definition;
+            }
             break;
         }
         default:
@@ -2919,7 +3158,8 @@ static int handle_identity(const llg_vpi_slot_t* slot, uint32_t index, uint64_t 
     }
     identity[0] = 2u + slot->kind;
     identity[1] = slot->kind == SLOT_CALL || slot->kind == SLOT_SYSTF ||
-                  slot->kind == SLOT_EVENT ? (uint64_t)(uintptr_t)slot->pointer : index;
+                  slot->kind == SLOT_EVENT ? (uint64_t)(uintptr_t)slot->pointer
+                  : slot->kind == SLOT_ASSERTION ? (uint64_t)slot->left : index;
     identity[2] = slot->kind == SLOT_CONSTANT ? (uint64_t)slot->left : 0;
     identity[3] = 0;
     return 1;
@@ -4023,6 +4263,21 @@ PLI_INT32 vpi_flush(void) {
  * and interactive scopes are not provided. */
 PLI_INT32 vpi_control(PLI_INT32 operation, ...) {
     vpi_enter();
+    if (operation >= vpiCoverageStart && operation <= vpiCoverageSave) {
+        va_list ap;
+        va_start(ap, operation);
+        int type = va_arg(ap, int);
+        PLI_INT32 status;
+        if (operation == vpiCoverageMerge || operation == vpiCoverageSave) {
+            const char* name = va_arg(ap, const char*);
+            status = coverage_file_control(operation, type, name);
+        } else {
+            vpiHandle object = va_arg(ap, vpiHandle);
+            status = coverage_control(operation, type, object);
+        }
+        va_end(ap);
+        return status;
+    }
     if (operation != vpiStop && operation != vpiFinish) {
         vpi_error("LLG_VPI_UNSUPPORTED", "unsupported vpi_control operation");
         return 0;

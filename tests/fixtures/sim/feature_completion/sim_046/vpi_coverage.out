@@ -1,0 +1,25 @@
+vpiAssert name=p full=tb.u1.p scope=tb.u1 def=unit deferred=0
+vpiCover name=c full=tb.u1.c scope=tb.u1 def=unit deferred=0
+vpiAssert name=p full=tb.u2.p scope=tb.u2 def=unit deferred=0
+vpiCover name=c full=tb.u2.c scope=tb.u2 def=unit deferred=0
+vpiImmediateAssert name=im full=tb.im scope=tb def=tb deferred=0
+vpiImmediateAssert name=d full=tb.d scope=tb def=tb deferred=1
+u1 items=2
+by name vpiAssert same=1
+missing LLG_VPI_NOT_FOUND
+stop u1 1 stop u2.c 1 check u1 1
+statement check 0 stop 1
+bad type -1 LLG_VPI_ARGUMENT
+25000 tb.u1.p failed
+25000 tb.u2.p failed
+d failed
+tb.u1.p attempts=0 success=0 vacuous=0 failure=0 disable=0 kill=0 covered=0 max=1 count=0
+tb.u1.c attempts=0 success=0 vacuous=0 failure=0 disable=0 kill=0 covered=0 max=1 count=0
+tb.u2.p attempts=3 success=2 vacuous=0 failure=1 disable=0 kill=0 covered=0 max=1 count=2
+tb.u2.c attempts=0 success=0 vacuous=0 failure=0 disable=0 kill=0 covered=0 max=1 count=0
+tb.im attempts=1 success=1 vacuous=0 failure=0 disable=0 kill=0 covered=1 max=1 count=1
+tb.d attempts=1 success=0 vacuous=0 failure=1 disable=0 kill=0 covered=0 max=1 count=0
+assert coverage u1=0 u2=1 tb=1
+toggle coverage -1 LLG_VPI_UNSUPPORTED
+save 1 merge 1
+tb.u2.p attempts=6 success=4 vacuous=0 failure=2 disable=0 kill=0 covered=0 max=1 count=4

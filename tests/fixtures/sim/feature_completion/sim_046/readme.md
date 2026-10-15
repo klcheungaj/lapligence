@@ -297,6 +297,35 @@ failed merge is a run-time error: exit status 1 (S46-D11).
 instance has `lo` hit, 1/2 = 50.00 (instance, type and total); `ap` succeeded
 at tick 1: 1/1; the save returns OK.
 
+## vpi_coverage.sv and vpi_coverage.c
+
+A run-time VPI application (`LLG_VPI_PLUGIN`, built against the shipped
+`sv_vpi_user.h`) called as `$vpi_cov(0)` at time 0 and `$vpi_cov(1)` at
+time 31. Clauses: 39.3.1 L65498-65524 (iterate all assertions or those of
+an instance; "Obtain the assertion by name"), 39.3.2 L65550-65565 (name,
+instance, definition and type), 40.5.3 L66585-66660 and 40.5.4
+L66756-66771.
+
+- Phase 0: `vpi_iterate(vpiAssertion, NULL)` gives the six items in table
+  order: `tb.u1.p` (vpiAssert), `tb.u1.c` (vpiCover), the same in `tb.u2`,
+  `tb.im` (vpiImmediateAssert) and `tb.d` (vpiImmediateAssert, deferred).
+  `vpiScope` is the owning instance, `vpiDefName` its definition. `tb.u1`
+  owns two items. `vpi_handle_by_name("tb.u1.p")` and `("p", tb.u1)` find
+  the same assertion; a missing name is `LLG_VPI_NOT_FOUND`. Stopping `u1`
+  (an instance handle) and `tb.u2.c` (an assertion handle) return SV_COV_OK
+  (1); CHECK of `u1` is 1. Statement coverage: CHECK 0 (NOCOV), STOP 1
+  (S46-D5). An unknown coverage type is -1 with `LLG_VPI_ARGUMENT`.
+- Ticks at 5 and 15 sample a = b = 1; the tick at 25 samples b = 0: both
+  `p` fail (u1 still checks while its coverage is stopped). At time 30 `im`
+  passes and `d` fails when its report matures.
+- Phase 1 counters: u1's items and `u2.c` counted nothing (stopped);
+  `u2.p` (3, 2, 0, 1, 0, 0) with vpiCovered 0 (it failed) and
+  vpiCoveredCount 2; `im` (1, 1, 0, 0, 0, 0), covered; `d` (1, 0, 0, 1, 0,
+  0). `vpi_get(vpiAssertCoverage, ...)`: u1 0, u2 1 (`p` succeeded,
+  S46-D10), tb 1 (`im`). Toggle coverage is `vpiUndefined` with
+  `LLG_VPI_UNSUPPORTED`. vpiCoverageSave and vpiCoverageMerge of the same
+  file return 1, after which `u2.p` reads (6, 4, 0, 2, 0, 0).
+
 ## Negative cases
 
 | Fixture | Rejected construct | Owner |
