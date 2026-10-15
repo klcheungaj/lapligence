@@ -926,6 +926,37 @@ void llg_rt_request_stop(int verbosity, const char* location);
 // scheduler after the action returns; the remaining matured reports run when
 // it resumes. During $finish/final draining it only reports.
 void llg_rt_action_stop(int verbosity, const char* location);
+// vpi_control(vpiStop/vpiFinish) from any VPI context (SV 38.4: the task runs
+// "upon return of the application routine"). A stop inside a process turn is
+// the deferred llg_rt_request_stop; inside a region callback it is
+// llg_rt_action_stop. Both return 0, reporting nothing, when no running and
+// unfinished scheduler can take the request. `verbosity` must be 0..2.
+int llg_rt_control_stop(int verbosity);
+// Report the `$finish` message for `verbosity` (0..2) once and request
+// termination like llg_rt_request_finish. Returns 0 when a finish is already
+// pending.
+int llg_rt_control_finish(int verbosity);
+// The time at which the last run ended (the time final procedures see), or
+// the current time while the scheduler state is live (running or suspended).
+uint64_t llg_rt_end_time(void);
+
+// Value-change watches (VPI cbValueChange). A watch on a published packed or
+// real storage address makes every changing publication of that address call
+// the installed hook after all runtime consumers ran. Storage without a watch
+// pays nothing: publication already finds the address's wait row. Watches
+// are counted per address and end with the runtime lifetime (cleanup);
+// removing a watch from an earlier lifetime is a no-op.
+typedef void (*llg_value_watch_fn)(const void* key);
+// True while llg_rt_run drains the scheduler (not during startup, after the
+// run ended, while suspended or in final procedures).
+int llg_rt_running(void);
+// Hook called at the start of every Pre-Active PLI pass (each scheduler
+// iteration of a time slot, SV 4.10), with the current region set to
+// LLG_REGION_PRE_ACTIVE_PLI so it may queue zero-delay callbacks there.
+void llg_time_slot_hook(void (*hook)(void));
+void llg_value_watch_hook(llg_value_watch_fn hook);
+int llg_value_watch_add(const void* key);
+void llg_value_watch_remove(const void* key);
 
 enum {
     LLG_STOP_POLICY_RESUME = 0,

@@ -698,6 +698,7 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
     llg_wave_changed_sv4(target, &published, g.now);
 #endif
     llg_wait_source_t* source = wait_source_find(target);
+    int watched = source && source->watchers;
     llg_wait_subscription_t cursor = {0};
     if (source) {
         cursor.source = source;
@@ -772,6 +773,8 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
     }
     fixed_array_changed(target);
     force_dependency_changed(target, NULL, 0);
+    // Watches run last, after every runtime consumer saw the new value.
+    if (LLG_CO_UNLIKELY(watched) && value_watch_hook) value_watch_hook(target);
 }
 
 // Set while a clocking block publishes its own sampled clockvars. #0 inputs
@@ -889,6 +892,7 @@ static void real_write(double* target, double value) {
     llg_wave_changed_real(target, value, g.now);
 #endif
     llg_wait_source_t* source = wait_source_find(target);
+    int watched = source && source->watchers;
     llg_wait_subscription_t cursor = {0};
     if (source) {
         cursor.source = source;
@@ -921,6 +925,7 @@ static void real_write(double* target, double value) {
             llg_dependency_changed(binding->dependency);
     }
     force_dependency_changed(NULL, target, 1);
+    if (LLG_CO_UNLIKELY(watched) && value_watch_hook) value_watch_hook(target);
     if (target_pin) llg_value_scope_end(target_pin);
 }
 

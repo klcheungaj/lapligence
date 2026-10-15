@@ -23,7 +23,6 @@
 #define LLG_VPI_MAX_OBJECTS (1u << 20)
 #define LLG_VPI_MAX_LIVE_HANDLES (1u << 21)
 #define LLG_VPI_MAX_REGISTRATIONS 4096
-#define LLG_VPI_MAX_CALLBACKS 256
 #define LLG_VPI_MAX_STARTUP_ROUTINES 1024
 #define LLG_VPI_MAX_ARGS 256
 #define LLG_VPI_MAX_PLUGINS 16
@@ -52,6 +51,13 @@ typedef enum {
     SLOT_EVENT,     /* vpiSchedEvent */
 } llg_vpi_slot_kind_t;
 
+enum {
+    LLG_VPI_PHASE_STARTUP = 0, /* startup routines and compiletf */
+    LLG_VPI_PHASE_COMPILED,    /* cbEndOfCompile ran */
+    LLG_VPI_PHASE_RUNNING,     /* cbStartOfSimulation ran */
+    LLG_VPI_PHASE_ENDED,       /* cbEndOfSimulation ran */
+};
+
 typedef enum {
     ITER_LIST = 0,  /* precomputed handle list */
     ITER_ELEMENTS,  /* array elements, created on scan */
@@ -62,6 +68,7 @@ typedef enum {
 struct llg_vpi_callsite;
 struct llg_vpi_registration;
 struct llg_vpi_event;
+struct llg_vpi_cb;
 
 typedef struct {
     uint32_t generation;
@@ -170,14 +177,23 @@ typedef struct {
     llg_vpi_registration_t** registrations;
     int registration_count;
     int registration_capacity;
-    uint32_t callbacks;       /* callback list head: index + 1 through next_owned */
-    int callback_count;
+    struct llg_vpi_cb* cbs;       /* live callbacks, registration order */
+    struct llg_vpi_cb** cbs_tail;
+    struct llg_vpi_cb* retired;   /* removed while a dispatch was running */
+    struct llg_vpi_cb** watch_buckets; /* cbValueChange records by storage key */
+    size_t watch_capacity;
+    size_t watch_count;
+    uint64_t cb_sequence;
+    int dispatch_depth;
+    int next_time_pending;        /* cbNextSimTime records waiting */
+    int phase;                    /* LLG_VPI_PHASE_* */
     llg_vpi_callsite_t** sites;   /* dense generated site ids */
     size_t site_capacity;
     size_t site_count;
     llg_vpi_call_t* active_call;
     int call_depth;
     llg_vpi_event_t* events;      /* pending scheduled puts */
+    int initialized;          /* llg_vpi_model_init ran */
     int startup_called;
     int running;
     int failed;
@@ -349,7 +365,7 @@ static uint32_t next_generation(uint32_t generation) {
  * model whose run loads no application never walks its catalog. */
 static int vpi_ready(void) {
     if (g_vpi.indexed) return 1;
-    if (!g_vpi.objects) {
+    if (!g_vpi.initialized) {
         vpi_set_error(vpiPLI, vpiError, "LLG_VPI_MODEL", "VPI used without model metadata");
         return 0;
     }
@@ -364,10 +380,12 @@ static int vpi_ready(void) {
     }
     size_t capacity = count + 64u;
     g_vpi.slots = (llg_vpi_slot_t*)calloc(capacity, sizeof(*g_vpi.slots));
-    g_vpi.sorted = (uint32_t*)malloc(count * sizeof(*g_vpi.sorted));
-    g_vpi.first_child = (uint32_t*)calloc(count, sizeof(*g_vpi.first_child));
-    g_vpi.next_sibling = (uint32_t*)calloc(count, sizeof(*g_vpi.next_sibling));
-    g_vpi.element_counts = (uint64_t*)calloc(count, sizeof(*g_vpi.element_counts));
+    /* One extra row keeps the allocations non-empty for a model built
+     * without a catalog (no `--vpi`), whose applications see no objects. */
+    g_vpi.sorted = (uint32_t*)malloc((count + 1u) * sizeof(*g_vpi.sorted));
+    g_vpi.first_child = (uint32_t*)calloc(count + 1u, sizeof(*g_vpi.first_child));
+    g_vpi.next_sibling = (uint32_t*)calloc(count + 1u, sizeof(*g_vpi.next_sibling));
+    g_vpi.element_counts = (uint64_t*)calloc(count + 1u, sizeof(*g_vpi.element_counts));
     if (!g_vpi.slots || !g_vpi.sorted || !g_vpi.first_child ||
         !g_vpi.next_sibling || !g_vpi.element_counts) {
         free(g_vpi.slots);
@@ -1374,7 +1392,7 @@ static int value_from_vpi(const s_vpi_value* input, uint32_t width, int is_signe
 
 int llg_vpi_model_init(const char* design_name,
                        llg_vpi_model_object_t* objects, size_t object_count) {
-    if (g_vpi.objects || !objects || object_count == 0 ||
+    if (g_vpi.initialized || (!objects && object_count) || (objects && !object_count) ||
         object_count > LLG_VPI_MAX_OBJECTS) {
         vpi_set_error(vpiCompile, vpiError, "LLG_VPI_MODEL", "invalid or duplicate VPI model metadata");
         return 0;
@@ -1385,6 +1403,7 @@ int llg_vpi_model_init(const char* design_name,
     g_vpi.design_name = design_name ? design_name : "llg";
     g_vpi.objects = objects;
     g_vpi.object_count = object_count;
+    g_vpi.initialized = 1;
     snprintf(g_vpi.error_product, sizeof(g_vpi.error_product), "lapligence");
     return 1;
 }
@@ -1421,12 +1440,15 @@ static int load_one_plugin(const char* path) {
         return 0;
     }
     g_vpi.plugin_handles[g_vpi.plugin_count++] = module;
+    if (!g_vpi.object_count && g_vpi.plugin_count == 1)
+        fprintf(stderr, "llg: warning: the model was built without the VPI object catalog; "
+                        "rebuild it with --vpi to reach design objects from `%s`\n", path);
     if (!run_startup_table((void (*const*)(void))startup, path)) return 0;
     return !g_vpi.failed;
 }
 
 int llg_vpi_startup_static(void (*const* routines)(void)) {
-    if (!g_vpi.objects) {
+    if (!g_vpi.initialized) {
         vpi_set_error(vpiCompile, vpiError, "LLG_VPI_MODEL", "VPI startup ran without model metadata");
         return 0;
     }
@@ -1435,7 +1457,7 @@ int llg_vpi_startup_static(void (*const* routines)(void)) {
 }
 
 int llg_vpi_startup(void) {
-    if (!g_vpi.objects) {
+    if (!g_vpi.initialized) {
         vpi_set_error(vpiCompile, vpiError, "LLG_VPI_MODEL", "VPI startup ran without model metadata");
         return 0;
     }
@@ -2754,6 +2776,14 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
         datum_destroy(&datum);
         return NULL;
     }
+    /* 38.36.2: no write or event scheduling from cbReadOnlySynch or any
+     * other read-only phase; the put is rejected with no state change. */
+    if (g_vpi.phase == LLG_VPI_PHASE_RUNNING && llg_rt_running() && llg_region_is_read_only()) {
+        vpi_set_errorf(vpiRun, vpiError, "LLG_VPI_READ_ONLY",
+                       "vpi_put_value is not allowed in the read-only %s region",
+                       llg_region_name(llg_current_region()));
+        return NULL;
+    }
     llg_vpi_target_t target;
     if (!handle_target(slot, &target)) {
         vpi_error("LLG_VPI_VALUE", slot->kind == SLOT_ARGUMENT
@@ -2996,101 +3026,574 @@ PLI_INT32 vpi_put_userdata(vpiHandle handle, void* userdata) {
     return 1;
 }
 
-/* ── simulation callbacks (start/end only; SIM-043 owns the rest) ───────── */
+/* ── simulation callbacks (SV 38.36, Table 4-1) ─────────────────────────── */
+
+/* Callback records. A record is owned by the registry list from registration
+ * until it is removed or, for a one-shot reason, retired after it ran. A
+ * dispatch never frees a record: removal during a dispatch moves it to the
+ * retired list, freed when the outermost dispatch returns, so callbacks may
+ * register and remove any callback (including themselves) while running. */
+
+typedef enum {
+    CB_ACTION = 0, /* cbEndOfCompile, cbStartOfSimulation, cbEndOfSimulation */
+    CB_TIME,       /* a region callback of one time slot */
+    CB_NEXT_TIME,  /* cbNextSimTime */
+    CB_VALUE,      /* cbValueChange */
+} llg_vpi_cb_kind_t;
+
+typedef struct llg_vpi_cb {
+    s_cb_data data;           /* registration; time/value point at the copies */
+    s_vpi_time time;
+    s_vpi_value value;        /* format only */
+    uint32_t slot;            /* vpiCallback handle index */
+    uint64_t sequence;
+    uint64_t registered_at;   /* simulation time of the registration */
+    llg_vpi_cb_kind_t kind;
+    int removed;
+    int scheduled;            /* a region callback is queued */
+    int waiting;              /* cbNextSimTime not yet queued */
+    llg_region_callback_id_t id;
+    llg_vpi_target_t target;  /* cbValueChange object */
+    const void* key;          /* watched storage address */
+    int value_type;           /* vpiType that formats the value */
+    int is_signed;
+    int32_t index;            /* reported s_cb_data index */
+    sv4_t last;               /* last value of a watched select */
+    const llg_vpi_model_object_t* scope; /* time scaling object */
+    struct llg_vpi_cb* next;
+    struct llg_vpi_cb** prev_link;
+    struct llg_vpi_cb* next_watch;
+} llg_vpi_cb_t;
+
+static void vpi_cb_free(llg_vpi_cb_t* cb) {
+    sv4_destroy(&cb->last);
+    free(cb);
+}
+
+static size_t watch_bucket(const void* key, size_t capacity) {
+    uint64_t hash = (uint64_t)(uintptr_t)key;
+    hash ^= hash >> 33;
+    hash *= UINT64_C(0xff51afd7ed558ccd);
+    hash ^= hash >> 33;
+    return (size_t)hash & (capacity - 1u);
+}
+
+static int watch_insert(llg_vpi_cb_t* cb) {
+    if (g_vpi.watch_count + 1u > g_vpi.watch_capacity - g_vpi.watch_capacity / 4u) {
+        size_t capacity = g_vpi.watch_capacity ? g_vpi.watch_capacity * 2u : 64u;
+        llg_vpi_cb_t** table = (llg_vpi_cb_t**)calloc(capacity, sizeof(*table));
+        if (!table) return 0;
+        for (size_t i = 0; i < g_vpi.watch_capacity; ++i) {
+            for (llg_vpi_cb_t* cursor = g_vpi.watch_buckets[i]; cursor;) {
+                llg_vpi_cb_t* next = cursor->next_watch;
+                size_t bucket = watch_bucket(cursor->key, capacity);
+                cursor->next_watch = table[bucket];
+                table[bucket] = cursor;
+                cursor = next;
+            }
+        }
+        free(g_vpi.watch_buckets);
+        g_vpi.watch_buckets = table;
+        g_vpi.watch_capacity = capacity;
+    }
+    if (!llg_value_watch_add(cb->key)) return 0;
+    size_t bucket = watch_bucket(cb->key, g_vpi.watch_capacity);
+    cb->next_watch = g_vpi.watch_buckets[bucket];
+    g_vpi.watch_buckets[bucket] = cb;
+    ++g_vpi.watch_count;
+    return 1;
+}
+
+static void watch_unlink(llg_vpi_cb_t* cb) {
+    size_t bucket = watch_bucket(cb->key, g_vpi.watch_capacity);
+    for (llg_vpi_cb_t** link = &g_vpi.watch_buckets[bucket]; *link; link = &(*link)->next_watch) {
+        if (*link != cb) continue;
+        *link = cb->next_watch;
+        cb->next_watch = NULL;
+        --g_vpi.watch_count;
+        llg_value_watch_remove(cb->key);
+        return;
+    }
+}
+
+/* Detach a record from every trigger, invalidate its handle and free it now
+ * or, inside a dispatch, when the outermost dispatch ends. */
+static void vpi_cb_retire(llg_vpi_cb_t* cb) {
+    if (cb->removed) return;
+    cb->removed = 1;
+    if (cb->scheduled) {
+        llg_cancel_region_callback(cb->id);
+        cb->scheduled = 0;
+    }
+    if (cb->kind == CB_VALUE) watch_unlink(cb);
+    if (cb->waiting) {
+        cb->waiting = 0;
+        --g_vpi.next_time_pending;
+    }
+    release_slot(cb->slot);
+    *cb->prev_link = cb->next;
+    if (cb->next) cb->next->prev_link = cb->prev_link;
+    else g_vpi.cbs_tail = cb->prev_link;
+    if (g_vpi.dispatch_depth) {
+        cb->next = g_vpi.retired;
+        g_vpi.retired = cb;
+    } else {
+        vpi_cb_free(cb);
+    }
+}
+
+static void dispatch_begin(void) { ++g_vpi.dispatch_depth; }
+
+static void dispatch_end(void) {
+    if (--g_vpi.dispatch_depth) return;
+    while (g_vpi.retired) {
+        llg_vpi_cb_t* cb = g_vpi.retired;
+        g_vpi.retired = cb->next;
+        vpi_cb_free(cb);
+    }
+}
+
+/* Simulation time in the requested representation; NULL for
+ * vpiSuppressTime. `out` is the storage behind the returned pointer. */
+static p_vpi_time callback_time(int type, const llg_vpi_model_object_t* scope, uint64_t now,
+                                s_vpi_time* out) {
+    memset(out, 0, sizeof(*out));
+    if (type == vpiScaledRealTime) {
+        uint64_t precision = llg_time_precision_fs();
+        uint64_t unit = time_unit_of(scope);
+        if (!precision) precision = 1;
+        if (!unit) unit = precision;
+        out->type = vpiScaledRealTime;
+        out->real = (double)((long double)now * precision / unit);
+        return out;
+    }
+    if (type != vpiSimTime) return NULL;
+    out->type = vpiSimTime;
+    out->high = (PLI_UINT32)(now >> 32);
+    out->low = (PLI_UINT32)now;
+    return out;
+}
+
+/* Run one callback routine. A nonzero return marks the VPI application
+ * failed and ends the simulation, as for the start/end reasons. */
+static void invoke_cb(llg_vpi_cb_t* cb, s_cb_data* data) {
+    if (data->cb_rtn(data) != 0) {
+        g_vpi.failed = 1;
+        vpi_set_error(vpi_state(), vpiError, "LLG_VPI_CALLBACK", "VPI callback returned failure");
+        llg_rt_request_finish();
+    }
+    (void)cb;
+}
+
+static void base_data(const llg_vpi_cb_t* cb, s_cb_data* out) {
+    memset(out, 0, sizeof(*out));
+    out->reason = cb->data.reason;
+    out->cb_rtn = cb->data.cb_rtn;
+    out->obj = cb->data.obj;
+    out->user_data = cb->data.user_data;
+}
+
+/* Collect the live records matching `match`, in registration order, before
+ * running any of them: records registered by a running callback wait for the
+ * next occurrence, and removed ones are skipped. */
+#define LLG_VPI_DISPATCH_INLINE 16
+
+typedef int (*cb_match_fn)(const llg_vpi_cb_t* cb, const void* context);
+
+static llg_vpi_cb_t** collect_cbs(llg_vpi_cb_t* first, int watch_chain, cb_match_fn match,
+                                  const void* context, llg_vpi_cb_t** inline_buffer,
+                                  size_t* count) {
+    llg_vpi_cb_t** items = inline_buffer;
+    size_t capacity = LLG_VPI_DISPATCH_INLINE;
+    *count = 0;
+    for (llg_vpi_cb_t* cb = first; cb; cb = watch_chain ? cb->next_watch : cb->next) {
+        if (cb->removed || !match(cb, context)) continue;
+        if (*count == capacity) {
+            size_t grown_capacity = capacity * 2u;
+            llg_vpi_cb_t** grown = (llg_vpi_cb_t**)malloc(grown_capacity * sizeof(*grown));
+            if (!grown) {
+                fputs("llg runtime fatal: VPI callback dispatch allocation failed\n", stderr);
+                abort();
+            }
+            memcpy(grown, items, *count * sizeof(*grown));
+            if (items != inline_buffer) free(items);
+            items = grown;
+            capacity = grown_capacity;
+        }
+        items[(*count)++] = cb;
+    }
+    /* Registration order. Lists are short: insertion sort. */
+    for (size_t i = 1; i < *count; ++i) {
+        llg_vpi_cb_t* cb = items[i];
+        size_t j = i;
+        for (; j > 0 && items[j - 1]->sequence > cb->sequence; --j) items[j] = items[j - 1];
+        items[j] = cb;
+    }
+    return items;
+}
+
+static int matches_reason(const llg_vpi_cb_t* cb, const void* context) {
+    return cb->data.reason == *(const int*)context;
+}
+
+/* cbEndOfCompile, cbStartOfSimulation and cbEndOfSimulation: each occurs
+ * once, so its records retire after they ran. */
+static void invoke_action(int reason) {
+    if (!g_vpi.indexed) return;
+    llg_vpi_cb_t* buffer[LLG_VPI_DISPATCH_INLINE];
+    size_t count;
+    dispatch_begin();
+    llg_vpi_cb_t** items = collect_cbs(g_vpi.cbs, 0, matches_reason, &reason, buffer, &count);
+    for (size_t i = 0; i < count; ++i) {
+        llg_vpi_cb_t* cb = items[i];
+        if (cb->removed) continue;
+        s_cb_data data;
+        s_vpi_time time;
+        base_data(cb, &data);
+        data.time = callback_time(vpiSimTime, NULL,
+                                  reason == cbEndOfSimulation ? llg_rt_end_time() : llg_time(),
+                                  &time);
+        invoke_cb(cb, &data);
+        vpi_cb_retire(cb);
+    }
+    if (items != buffer) free(items);
+    dispatch_end();
+}
+
+static void time_fire(void* context) {
+    llg_vpi_cb_t* cb = (llg_vpi_cb_t*)context;
+    cb->scheduled = 0;
+    if (cb->removed) return;
+    s_cb_data data;
+    s_vpi_time time;
+    base_data(cb, &data);
+    data.time = callback_time(cb->time.type, cb->scope, llg_time(), &time);
+    dispatch_begin();
+    invoke_cb(cb, &data);
+    /* Time callbacks are one-shot (38.36.2); the handle is now stale. */
+    vpi_cb_retire(cb);
+    dispatch_end();
+}
+
+static int matches_next_time(const llg_vpi_cb_t* cb, const void* context) {
+    return cb->waiting && cb->registered_at < *(const uint64_t*)context;
+}
+
+/* Runtime time-slot hook, called at the start of every Pre-Active pass:
+ * queue the cbNextSimTime records registered in an earlier slot. */
+static void vpi_time_slot(void) {
+    if (!g_vpi.next_time_pending) return;
+    uint64_t now = llg_time();
+    llg_vpi_cb_t* buffer[LLG_VPI_DISPATCH_INLINE];
+    size_t count;
+    llg_vpi_cb_t** items = collect_cbs(g_vpi.cbs, 0, matches_next_time, &now, buffer, &count);
+    for (size_t i = 0; i < count; ++i) {
+        llg_vpi_cb_t* cb = items[i];
+        if (llg_schedule_region_callback_id(LLG_REGION_PRE_ACTIVE_PLI, time_fire, cb, 0,
+                                            &cb->id)) {
+            cb->scheduled = 1;
+            cb->waiting = 0;
+            --g_vpi.next_time_pending;
+        }
+    }
+    if (items != buffer) free(items);
+}
+
+static int matches_key(const llg_vpi_cb_t* cb, const void* context) {
+    return cb->key == context && cb->sequence < g_vpi.cb_sequence;
+}
+
+/* Index reported for an array element: its index in the rightmost unpacked
+ * range (38.36.1). */
+static int32_t element_index(const llg_vpi_model_object_t* object, uint64_t element) {
+    if (element == LLG_VPI_NO_ELEMENT || object->dim_count == 0) return 0;
+    int64_t left = object->dims[2u * (object->dim_count - 1u)];
+    int64_t right = object->dims[2u * (object->dim_count - 1u) + 1u];
+    uint64_t size = (uint64_t)(left >= right ? left - right : right - left) + 1u;
+    uint64_t offset = element % size;
+    int64_t index = left >= right ? left - (int64_t)offset : left + (int64_t)offset;
+    return (int32_t)index;
+}
+
+/* Runtime value-watch hook: the storage at `key` published a new value. */
+static void vpi_value_changed(const void* key) {
+    if (!g_vpi.watch_count) return;
+    llg_vpi_cb_t* buffer[LLG_VPI_DISPATCH_INLINE];
+    size_t count;
+    dispatch_begin();
+    llg_vpi_cb_t** items =
+        collect_cbs(g_vpi.watch_buckets[watch_bucket(key, g_vpi.watch_capacity)], 1, matches_key,
+                    key, buffer, &count);
+    for (size_t i = 0; i < count; ++i) {
+        llg_vpi_cb_t* cb = items[i];
+        if (cb->removed) continue;
+        llg_vpi_datum_t datum;
+        if (!read_target(&cb->target, &datum)) {
+            datum_destroy(&datum);
+            continue;
+        }
+        if (cb->target.span) {
+            /* A select fires only when its own bits changed. */
+            if (sv4_same(cb->last, datum.packed)) {
+                datum_destroy(&datum);
+                continue;
+            }
+            sv4_copy(&cb->last, &datum.packed);
+        }
+        s_cb_data data;
+        s_vpi_time time;
+        s_vpi_value value;
+        base_data(cb, &data);
+        data.index = cb->index;
+        data.time = callback_time(cb->time.type, cb->scope, llg_time(), &time);
+        if (cb->value.format != vpiSuppressVal) {
+            memset(&value, 0, sizeof(value));
+            value.format = cb->value.format;
+            fill_value(&datum, cb->is_signed, cb->value_type, &value);
+            data.value = &value;
+        }
+        datum_destroy(&datum);
+        invoke_cb(cb, &data);
+    }
+    if (items != buffer) free(items);
+    dispatch_end();
+}
+
+/* Region, delay rules and recurrence of each time reason (Table 4-1,
+ * 38.36.2). Returns 0 with the error recorded when it cannot be placed. */
+static int schedule_time_cb(llg_vpi_cb_t* cb, uint64_t ticks) {
+    llg_region_t region;
+    switch (cb->data.reason) {
+        case cbAtStartOfSimTime:
+        case cbAfterDelay: region = LLG_REGION_PRE_ACTIVE_PLI; break;
+        case cbNBASynch: region = LLG_REGION_PRE_NBA_PLI; break;
+        case cbReadWriteSynch: region = LLG_REGION_POST_NBA_PLI; break;
+        case cbAtEndOfSimTime: region = LLG_REGION_PRE_POSTPONED_PLI; break;
+        default: region = LLG_REGION_POSTPONED_PLI; break; /* cbReadOnlySynch */
+    }
+    if (ticks == 0 && g_vpi.phase == LLG_VPI_PHASE_RUNNING && llg_rt_running()) {
+        llg_region_t current = llg_current_region();
+        if (llg_region_is_read_only()) {
+            vpi_error("LLG_VPI_CALLBACK",
+                      "a zero-delay time callback cannot be placed from a read-only region");
+            return 0;
+        }
+        if (region == LLG_REGION_PRE_ACTIVE_PLI && current != LLG_REGION_PRE_ACTIVE_PLI) {
+            vpi_error("LLG_VPI_CALLBACK",
+                      "a zero-delay start-of-time callback needs the slot's Pre-Active region");
+            return 0;
+        }
+        if (region == LLG_REGION_PRE_POSTPONED_PLI && current > region) {
+            vpi_error("LLG_VPI_CALLBACK", "this time slot already left its Pre-Postponed region");
+            return 0;
+        }
+    }
+    if (!llg_schedule_region_callback_id(region, time_fire, cb, ticks, &cb->id)) {
+        vpi_error("LLG_VPI_SCHEDULE", "the scheduler rejected the VPI time callback");
+        return 0;
+    }
+    cb->scheduled = 1;
+    return 1;
+}
+
+/* Bind a cbValueChange record to its storage. */
+static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
+    llg_vpi_slot_t* slot = checked_handle(data->obj, NULL);
+    if (!slot) return 0;
+    llg_vpi_target_t target;
+    if (!handle_target(slot, &target)) {
+        vpi_error("LLG_VPI_CALLBACK",
+                  slot->kind == SLOT_OBJECT && is_array_type(row_object(slot->object)->type)
+                      ? "cbValueChange needs an array element, not the whole array"
+                      : "cbValueChange needs a variable, net, element or select handle");
+        return 0;
+    }
+    llg_vpi_model_object_t* object = row_object(target.object);
+    if (object->type == vpiParameter) {
+        vpi_error("LLG_VPI_CALLBACK", "a parameter never changes value");
+        return 0;
+    }
+    const void* key = object->is_real ? (const void*)real_cell(&target)
+                                      : (const void*)packed_cell(&target);
+    if (!key) {
+        vpi_error("LLG_VPI_CALLBACK", "this VPI object has no watchable storage");
+        return 0;
+    }
+    if (data->value && data->value->format != vpiSuppressVal &&
+        (data->value->format < vpiBinStrVal || data->value->format > vpiObjTypeVal)) {
+        vpi_error("LLG_VPI_CALLBACK", "unsupported cbValueChange value format");
+        return 0;
+    }
+    cb->target = target;
+    cb->key = key;
+    cb->scope = object;
+    cb->value_type = handle_type(slot);
+    cb->is_signed = target.span ? 0 : object->is_signed;
+    cb->index = slot->kind == SLOT_ELEMENT ? element_index(object, target.element) : 0;
+    if (target.span) {
+        llg_vpi_datum_t datum;
+        if (read_target(&target, &datum)) sv4_move(&cb->last, &datum.packed);
+        datum_destroy(&datum);
+    }
+    return 1;
+}
+
+static int time_reason(int reason) {
+    return reason == cbAtStartOfSimTime || reason == cbReadWriteSynch ||
+           reason == cbReadOnlySynch || reason == cbAfterDelay || reason == cbNBASynch ||
+           reason == cbAtEndOfSimTime;
+}
 
 vpiHandle vpi_register_cb(p_cb_data data) {
     vpi_enter();
-    if (!data || !data->cb_rtn ||
-        (data->reason != cbStartOfSimulation && data->reason != cbEndOfSimulation) ||
-        g_vpi.callback_count >= LLG_VPI_MAX_CALLBACKS) {
+    if (!data || !data->cb_rtn) {
         vpi_set_error(vpi_state(), vpiError, "LLG_VPI_CALLBACK",
                       "unsupported or invalid VPI callback registration");
         return NULL;
     }
-    uint32_t index = alloc_slot(SLOT_CALLBACK);
-    if (index == LLG_VPI_NONE) return NULL;
-    s_cb_data* copy = (s_cb_data*)malloc(sizeof(*copy));
-    if (!copy) {
-        release_slot(index);
+    llg_vpi_cb_kind_t kind;
+    int reason = data->reason;
+    if (reason == cbEndOfCompile || reason == cbStartOfSimulation || reason == cbEndOfSimulation) {
+        kind = CB_ACTION;
+        int late = reason == cbEndOfCompile ? g_vpi.phase >= LLG_VPI_PHASE_COMPILED
+                   : reason == cbStartOfSimulation ? g_vpi.phase >= LLG_VPI_PHASE_RUNNING
+                                                    : g_vpi.phase >= LLG_VPI_PHASE_ENDED;
+        if (late) {
+            vpi_error("LLG_VPI_CALLBACK", "this simulator action has already occurred");
+            return NULL;
+        }
+    } else if (reason == cbValueChange) {
+        kind = CB_VALUE;
+    } else if (reason == cbNextSimTime || time_reason(reason)) {
+        kind = reason == cbNextSimTime ? CB_NEXT_TIME : CB_TIME;
+        if (g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
+            vpi_error("LLG_VPI_CALLBACK", "the simulation has ended; no time callback can occur");
+            return NULL;
+        }
+    } else {
+        vpi_set_error(vpi_state(), vpiError, "LLG_VPI_CALLBACK",
+                      "unsupported or invalid VPI callback registration");
+        return NULL;
+    }
+    if (kind == CB_VALUE && g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
+        vpi_error("LLG_VPI_CALLBACK", "the simulation has ended; no value can change");
+        return NULL;
+    }
+    uint64_t ticks = 0;
+    const llg_vpi_model_object_t* scope = NULL;
+    if (kind == CB_TIME) {
+        if (!data->time ||
+            (data->time->type != vpiSimTime && data->time->type != vpiScaledRealTime)) {
+            vpi_error("LLG_VPI_TIME", "a time callback needs a vpiSimTime or vpiScaledRealTime time");
+            return NULL;
+        }
+        if (data->obj) {
+            llg_vpi_slot_t* slot = checked_handle(data->obj, NULL);
+            if (!slot) return NULL;
+            scope = row_object(slot->object);
+        }
+        int ok;
+        ticks = ticks_from_time(data->time, scope, &ok);
+        if (!ok || ticks > UINT64_MAX - llg_time()) {
+            vpi_error("LLG_VPI_TIME", "unsupported or negative callback delay");
+            return NULL;
+        }
+    }
+    if (!vpi_ready()) return NULL;
+    llg_vpi_cb_t* cb = (llg_vpi_cb_t*)calloc(1, sizeof(*cb));
+    if (!cb) {
         vpi_error("LLG_VPI_NOMEM", "VPI callback allocation failed");
         return NULL;
     }
-    *copy = *data;
-    llg_vpi_slot_t* slot = &g_vpi.slots[index];
-    slot->pointer = copy;
-    slot->next_owned = g_vpi.callbacks;
-    g_vpi.callbacks = index + 1u;
-    ++g_vpi.callback_count;
+    cb->kind = kind;
+    cb->data = *data;
+    cb->last = VPI_EMPTY;
+    cb->scope = scope;
+    cb->time.type = vpiSuppressTime;
+    if (data->time) cb->time = *data->time;
+    cb->value.format = data->value ? data->value->format : vpiSuppressVal;
+    if (kind == CB_VALUE && !bind_value_cb(cb, data)) {
+        vpi_cb_free(cb);
+        return NULL;
+    }
+    cb->data.time = data->time ? &cb->time : NULL;
+    cb->data.value = data->value ? &cb->value : NULL;
+    uint32_t index = alloc_slot(SLOT_CALLBACK);
+    if (index == LLG_VPI_NONE) {
+        vpi_cb_free(cb);
+        return NULL;
+    }
+    if (kind == CB_VALUE && !watch_insert(cb)) {
+        release_slot(index);
+        vpi_cb_free(cb);
+        vpi_error("LLG_VPI_NOMEM", "VPI value-change watch allocation failed");
+        return NULL;
+    }
+    g_vpi.slots[index].pointer = cb;
+    cb->slot = index;
+    cb->sequence = g_vpi.cb_sequence++;
+    cb->registered_at = llg_time();
+    if (!g_vpi.cbs_tail) g_vpi.cbs_tail = &g_vpi.cbs;
+    cb->prev_link = g_vpi.cbs_tail;
+    *g_vpi.cbs_tail = cb;
+    g_vpi.cbs_tail = &cb->next;
+    if (kind == CB_VALUE) llg_value_watch_hook(vpi_value_changed);
+    if (kind == CB_NEXT_TIME) {
+        cb->waiting = 1;
+        ++g_vpi.next_time_pending;
+        llg_time_slot_hook(vpi_time_slot);
+    }
+    if (kind == CB_TIME && !schedule_time_cb(cb, ticks)) {
+        vpi_cb_retire(cb);
+        return NULL;
+    }
     return encode_handle(index);
+}
+
+static llg_vpi_cb_t* callback_record(vpiHandle handle, const char* routine) {
+    llg_vpi_slot_t* slot = checked_handle(handle, NULL);
+    if (!slot) return NULL;
+    if (slot->kind != SLOT_CALLBACK) {
+        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_HANDLE", "%s needs a callback handle",
+                       routine);
+        return NULL;
+    }
+    return (llg_vpi_cb_t*)slot->pointer;
 }
 
 PLI_INT32 vpi_remove_cb(vpiHandle handle) {
     vpi_enter();
-    uint32_t index;
-    llg_vpi_slot_t* slot = checked_handle(handle, &index);
-    if (!slot) return 0;
-    if (slot->kind != SLOT_CALLBACK) {
-        vpi_error("LLG_VPI_HANDLE", "vpi_remove_cb needs a callback handle");
-        return 0;
-    }
-    uint32_t* link = &g_vpi.callbacks;
-    while (*link && *link != index + 1u) link = &g_vpi.slots[*link - 1u].next_owned;
-    if (*link) *link = slot->next_owned;
-    free(slot->pointer);
-    slot->pointer = NULL;
-    if (g_vpi.callback_count > 0) --g_vpi.callback_count;
-    release_slot(index);
+    llg_vpi_cb_t* cb = callback_record(handle, "vpi_remove_cb");
+    if (!cb) return 0;
+    vpi_cb_retire(cb);
     return 1;
 }
 
 void vpi_get_cb_info(vpiHandle handle, p_cb_data output) {
     vpi_enter();
-    llg_vpi_slot_t* slot = checked_handle(handle, NULL);
-    if (!slot) return;
-    if (slot->kind != SLOT_CALLBACK) {
-        vpi_error("LLG_VPI_HANDLE", "vpi_get_cb_info needs a callback handle");
-        return;
-    }
+    llg_vpi_cb_t* cb = callback_record(handle, "vpi_get_cb_info");
+    if (!cb) return;
     if (!output) {
         vpi_error("LLG_VPI_ARGUMENT", "null VPI callback info output");
         return;
     }
-    *output = *(s_cb_data*)slot->pointer;
-}
-
-static void invoke_callbacks(int reason) {
-    if (!g_vpi.indexed) return;
-    for (uint32_t cursor = g_vpi.callbacks; cursor;) {
-        uint32_t index = cursor - 1u;
-        cursor = g_vpi.slots[index].next_owned;
-        s_cb_data* registered = (s_cb_data*)g_vpi.slots[index].pointer;
-        if (!registered || registered->reason != reason) continue;
-        s_vpi_time time;
-        memset(&time, 0, sizeof(time));
-        time.type = vpiSimTime;
-        uint64_t now = llg_time();
-        time.high = (PLI_UINT32)(now >> 32);
-        time.low = (PLI_UINT32)now;
-        s_cb_data data = *registered;
-        data.time = &time;
-        data.value = NULL;
-        if (data.cb_rtn(&data) != 0) {
-            g_vpi.failed = 1;
-            vpi_set_error(vpiRun, vpiError, "LLG_VPI_CALLBACK", "VPI callback returned failure");
-            llg_rt_request_finish();
-        }
-    }
+    *output = cb->data;
 }
 
 void llg_vpi_start_simulation(void) {
-    if (!g_vpi.objects || g_vpi.failed) return;
+    if (!g_vpi.initialized || g_vpi.failed || g_vpi.phase >= LLG_VPI_PHASE_RUNNING) return;
     g_vpi.running = 1;
-    invoke_callbacks(cbStartOfSimulation);
+    g_vpi.phase = LLG_VPI_PHASE_COMPILED;
+    invoke_action(cbEndOfCompile);
+    g_vpi.phase = LLG_VPI_PHASE_RUNNING;
+    invoke_action(cbStartOfSimulation);
 }
 
 void llg_vpi_end_simulation(void) {
-    if (!g_vpi.objects) return;
-    invoke_callbacks(cbEndOfSimulation);
+    /* Once per model run, whichever of advance and close gets here first. */
+    if (!g_vpi.initialized || g_vpi.phase != LLG_VPI_PHASE_RUNNING) return;
+    g_vpi.phase = LLG_VPI_PHASE_ENDED;
+    invoke_action(cbEndOfSimulation);
     g_vpi.running = 0;
 }
 
@@ -3424,7 +3927,7 @@ static void (*g_vpi_dpi_shutdown)(void) = NULL;
 void llg_vpi_on_shutdown(void (*hook)(void)) { g_vpi_dpi_shutdown = hook; }
 
 void llg_vpi_shutdown(void) {
-    if (g_vpi.running) llg_vpi_end_simulation();
+    llg_vpi_end_simulation();
     if (g_vpi_dpi_shutdown) {
         void (*hook)(void) = g_vpi_dpi_shutdown;
         g_vpi_dpi_shutdown = NULL;
@@ -3435,9 +3938,14 @@ void llg_vpi_shutdown(void) {
         event->slot = 0;
         vpi_event_cancel(event);
     }
+    /* Callback records: cancel queued region callbacks and drop watches
+     * (no-ops once the runtime lifetime ended) before freeing them. */
+    llg_value_watch_hook(NULL);
+    llg_time_slot_hook(NULL);
+    while (g_vpi.cbs) vpi_cb_retire(g_vpi.cbs);
+    free(g_vpi.watch_buckets);
     for (size_t i = g_vpi.object_count; i < g_vpi.slot_count; ++i) {
         llg_vpi_slot_t* slot = &g_vpi.slots[i];
-        if (slot->kind == SLOT_CALLBACK) free(slot->pointer);
         if (slot->kind == SLOT_EVENT && slot->pointer) {
             llg_vpi_event_t* event = (llg_vpi_event_t*)slot->pointer;
             if (!event->pending) free(event);
@@ -3510,19 +4018,33 @@ PLI_INT32 vpi_flush(void) {
     return fflush(stdout) == 0 ? 0 : 1;
 }
 
+/* 38.4: vpiStop and vpiFinish take the diagnostic level of $stop/$finish
+ * and act when the application routine returns. vpiReset ($reset, Annex D)
+ * and interactive scopes are not provided. */
 PLI_INT32 vpi_control(PLI_INT32 operation, ...) {
     vpi_enter();
-    switch (operation) {
-        case vpiFinish:
-            llg_rt_request_finish();
-            return 1;
-        case vpiStop:
-            llg_rt_request_stop(0, NULL);
-            return 1;
-        default:
-            vpi_error("LLG_VPI_UNSUPPORTED", "unsupported vpi_control operation");
-            return 0;
+    if (operation != vpiStop && operation != vpiFinish) {
+        vpi_error("LLG_VPI_UNSUPPORTED", "unsupported vpi_control operation");
+        return 0;
     }
+    va_list ap;
+    va_start(ap, operation);
+    int level = va_arg(ap, int);
+    va_end(ap);
+    if (level < 0 || level > 2) {
+        vpi_error("LLG_VPI_ARGUMENT", "the vpi_control diagnostic level must be 0, 1 or 2");
+        return 0;
+    }
+    if (g_vpi.phase >= LLG_VPI_PHASE_ENDED) return 1; /* the simulation already ended */
+    if (operation == vpiFinish) {
+        llg_rt_control_finish(level);
+        return 1;
+    }
+    if (!llg_rt_control_stop(level)) {
+        vpi_error("LLG_VPI_CONTROL", "vpiStop needs a running, unfinished simulation");
+        return 0;
+    }
+    return 1;
 }
 
 /* Destination-passing `_to` forms, see value/destinations.h. */

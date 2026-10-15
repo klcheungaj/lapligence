@@ -407,6 +407,12 @@ static void run_end_of_simulation_assertions(void) {
     g.finish = saved_finish || g.finish;
 }
 
+static void (*time_slot_hook)(void);
+
+void llg_time_slot_hook(void (*hook)(void)) { time_slot_hook = hook; }
+
+int llg_rt_running(void) { return g.running; }
+
 void llg_rt_run(void) {
     if (g.config_error) {
         llg_rt_cleanup();
@@ -423,6 +429,10 @@ void llg_rt_run(void) {
         sample_preponed_values();
         if (!run_region_queue(LLG_REGION_PREPONED)) break;
         if (!run_region_queue(LLG_REGION_PREPONED_PLI)) break;
+        if (time_slot_hook) {
+            g.current_region = LLG_REGION_PRE_ACTIVE_PLI;
+            time_slot_hook();
+        }
         if (!run_region_queue(LLG_REGION_PRE_ACTIVE_PLI)) break;
         for (;;) {
             if (!run_design_set()) break;

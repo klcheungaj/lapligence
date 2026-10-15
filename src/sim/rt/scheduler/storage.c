@@ -238,6 +238,11 @@ struct llg_wait_source {
     llg_wait_subscription_t* head;
     llg_wait_source_t* next;
     llg_wait_source_t** prev_link;
+    // Value-change watch (VPI cbValueChange): a waiter-less subscription that
+    // keeps the row alive, and the number of watches sharing it. Publication
+    // already looks this row up, so unwatched storage pays nothing extra.
+    llg_wait_subscription_t* watch;
+    uint32_t watchers;
 };
 
 // One limb covers scalar clocks and packed values through 64 bits. Larger

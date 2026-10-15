@@ -309,6 +309,7 @@ void llg_rt_cleanup(void) {
     }
     for (int level = 0; level < g.proc_free_levels; level++)
         free(g.proc_free_bits[level]);
+    free_value_watches();
     free(g.wait_sources);
     free(g.all_procs);
     g.all_procs = NULL;

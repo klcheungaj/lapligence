@@ -244,7 +244,9 @@ typedef struct t_vpi_value {
 #define vpiOneValue 0x4000
 #define vpiPropagateOff 0x8000
 
-/* Callback records and the supported start/end reasons. */
+/* Callback records (38.36). llg runs cbValueChange, the time reasons, and
+ * cbEndOfCompile/cbStartOfSimulation/cbEndOfSimulation; registering any
+ * other reason is a vpi_chk_error() error. */
 typedef struct t_cb_data {
     PLI_INT32 reason;
     PLI_INT32 (*cb_rtn)(struct t_cb_data*);
@@ -255,8 +257,37 @@ typedef struct t_cb_data {
     PLI_BYTE8* user_data;
 } s_cb_data, *p_cb_data;
 
+#define cbValueChange 1
+#define cbStmt 2
+#define cbForce 3
+#define cbRelease 4
+#define cbAtStartOfSimTime 5
+#define cbReadWriteSynch 6
+#define cbReadOnlySynch 7
+#define cbNextSimTime 8
+#define cbAfterDelay 9
+#define cbEndOfCompile 10
 #define cbStartOfSimulation 11
 #define cbEndOfSimulation 12
+#define cbError 13
+#define cbTchkViolation 14
+#define cbStartOfSave 15
+#define cbEndOfSave 16
+#define cbStartOfRestart 17
+#define cbEndOfRestart 18
+#define cbStartOfReset 19
+#define cbEndOfReset 20
+#define cbEnterInteractive 21
+#define cbExitInteractive 22
+#define cbInteractiveScopeChange 23
+#define cbUnresolvedSystf 24
+#define cbAssign 25
+#define cbDeassign 26
+#define cbDisable 27
+#define cbPLIError 28
+#define cbSignal 29
+#define cbNBASynch 30
+#define cbAtEndOfSimTime 31
 
 typedef struct t_vpi_vlog_info {
     PLI_INT32 argc;
@@ -288,6 +319,7 @@ typedef struct t_vpi_error_info {
 #define vpiStop 66
 #define vpiFinish 67
 #define vpiReset 68
+#define vpiSetInteractiveScope 69
 
 vpiHandle vpi_register_cb(p_cb_data cb_data_p);
 PLI_INT32 vpi_remove_cb(vpiHandle cb_obj);
