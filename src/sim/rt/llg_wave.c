@@ -6,6 +6,15 @@
 // allocations move producer -> ring -> writer using release/acquire publication
 // and are destroyed after processing, including ignored/error-path events.
 // Mutexes and condition variables are used for full/empty and flush waits.
+//
+// Value changes are recorded once per time step with the value at the end of
+// the step (IEEE 1364-2001 18.1.4, IEEE 1800-2009 21.7.1.4; llg decisions
+// S47-D1/D2): a store only marks its registration dirty, and the scheduler's
+// end-of-step call snapshots the dirty storage. A $dumpvars likewise starts
+// the dump at the end of its time step (18.1.3/21.7.1.3), so the $dumpvars
+// checkpoint holds the step's final values. The producer-side dump state
+// (`dump_state`) decides which controls take effect; the writer thread only
+// formats the events it receives.
 
 #define LLG_PLATFORM_POSIX_2008 1
 #include "llg_platform.h"
@@ -59,9 +68,20 @@ typedef struct {
     void* ptr;
     uint32_t width;
     uint32_t next_alias;
+    // On the first registration of a storage address: the selected alias
+    // whose identifier code carries the address's values, or LLG_WAVE_NO_REG.
+    // Fixed when the dump starts; producer-only afterwards.
+    uint32_t dump_reg;
     uint8_t is_real;
     uint8_t selected;
+    // Producer-only: queued in `dirty` for the end of the current time step.
+    uint8_t dirty;
 } registration_t;
+
+// Producer-side dump state (S47-D3..D6). IDLE: no $dumpvars yet, nothing is
+// written. PENDING: a $dumpvars ran in the current time step; the dump starts
+// at the end of the step. ON/OFF: started, value changes recorded or not.
+typedef enum { DUMP_IDLE, DUMP_PENDING, DUMP_ON, DUMP_OFF } dump_state_t;
 
 typedef struct {
     void* key;
@@ -82,6 +102,9 @@ typedef struct {
     uint64_t byte_limit;
     int have_time;
     int header_written;
+    // The declarations are written whole: $dumplimit stops value dumping,
+    // not the header (S47-D8).
+    int in_header;
     int active;
     int snapshot_open;
     int limit_reached;
@@ -110,7 +133,23 @@ typedef struct {
     llg_thread_id_t producer;
     int initialized;
     int worker_started;
-    int producer_dumping;
+    dump_state_t dump_state;
+    // A $dumpoff executed while the start is pending: the dump starts in the
+    // off state (S47-D5).
+    int pending_off;
+    // Whether EV_FILE was queued; later $dumpfile calls are ignored.
+    int file_sent;
+    uint64_t dump_start_time;
+    // Last $dumpfile name before the dump starts (S47-D7), or NULL for the
+    // default `dump.vcd`.
+    char* pending_file;
+    // Registrations changed during the current time step, in first-change
+    // order; capacity reg_count, allocated with the frozen map.
+    uint32_t* dirty;
+    uint32_t dirty_count;
+    // One-time warnings for ignored controls.
+    int warned_dumpvars;
+    int warned_dumpfile;
     // Set by llg_wave_start: the driver chose the file and selection, so the
     // design's $dumpfile/$dumpvars calls are ignored.
     int driver_selection;
@@ -134,6 +173,18 @@ static void wave_error(const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     fputs("llg: waveform: ", stderr);
+    vfprintf(stderr, fmt, ap);
+    fputc('\n', stderr);
+    va_end(ap);
+}
+
+// Ignored controls warn once per kind and leave the dump running.
+static void wave_warning(int* once, const char* fmt, ...) {
+    if (*once) return;
+    *once = 1;
+    va_list ap;
+    va_start(ap, fmt);
+    fputs("llg: waveform: warning: ", stderr);
     vfprintf(stderr, fmt, ap);
     fputc('\n', stderr);
     va_end(ap);
@@ -169,6 +220,12 @@ static int freeze_registrations(void) {
         return 0;
     }
     g_wave.map_cap = cap;
+    g_wave.dirty = (uint32_t*)malloc(
+        (size_t)(g_wave.reg_count ? g_wave.reg_count : 1u) * sizeof(uint32_t));
+    if (!g_wave.dirty) {
+        wave_error("out of memory while freezing signal registrations");
+        return 0;
+    }
     for (uint32_t i = 0; i < g_wave.reg_count; i++) {
         registration_t* reg = &g_wave.regs[i];
         uint32_t slot = hash_ptr(reg->ptr) & (cap - 1u);
@@ -363,20 +420,39 @@ static void precision_string(uint64_t fs, char out[32]) {
     (void)snprintf(out, 32u, "%llufs", (unsigned long long)fs);
 }
 
-static int writer_bytes(writer_t* w, const char* bytes, size_t len) {
-    if (!w->file || w->limit_reached) return 0;
-    if (w->byte_limit &&
-        (w->bytes_written > w->byte_limit ||
-         len > w->byte_limit - w->bytes_written)) {
-        w->limit_reached = 1;
-        return 0;
-    }
+static int writer_raw(writer_t* w, const char* bytes, size_t len) {
     if (fwrite(bytes, 1u, len, w->file) != len) {
         wave_error("write failed for `%s`: %s", w->path, strerror(errno));
         return 0;
     }
     w->bytes_written += len;
     return 1;
+}
+
+// The first record that does not fit stops the dump. An open checkpoint is
+// closed so the file stays well-formed, and a comment records the stop
+// (IEEE 1364-2001 18.1.5); these closing bytes may pass the limit.
+static void writer_limit_reached(writer_t* w) {
+    static const char comment[] = "$comment\n  dump limit reached\n$end\n";
+    w->limit_reached = 1;
+    if (w->snapshot_open && !writer_raw(w, "$end\n", 5u)) return;
+    w->snapshot_open = 0;
+    (void)writer_raw(w, comment, sizeof(comment) - 1u);
+}
+
+static int writer_fits(writer_t* w, size_t len) {
+    if (!w->byte_limit || w->in_header) return 1;
+    if (w->bytes_written <= w->byte_limit &&
+        len <= w->byte_limit - w->bytes_written)
+        return 1;
+    writer_limit_reached(w);
+    return 0;
+}
+
+static int writer_bytes(writer_t* w, const char* bytes, size_t len) {
+    if (!w->file || w->limit_reached) return 0;
+    if (!writer_fits(w, len)) return 0;
+    return writer_raw(w, bytes, len);
 }
 
 /* Writes "<prefix><bits> <id>\n" as one record without a width-scaled
@@ -389,16 +465,11 @@ static int writer_value_record(writer_t* w, const char* prefix, size_t prefix_le
     size_t id_len = strlen(id);
     size_t total = prefix_len + bits_len + (bits_len ? 1u : 0u) + id_len + 1u;
     if (!w->file || w->limit_reached) return 0;
-    if (w->byte_limit &&
-        (w->bytes_written > w->byte_limit ||
-         total > w->byte_limit - w->bytes_written)) {
-        w->limit_reached = 1;
-        return 0;
-    }
-    return writer_bytes(w, prefix, prefix_len) &&
-           writer_bytes(w, bits, bits_len) &&
-           (!bits_len || writer_bytes(w, " ", 1u)) &&
-           writer_bytes(w, id, id_len) && writer_bytes(w, "\n", 1u);
+    if (!writer_fits(w, total)) return 0;
+    return writer_raw(w, prefix, prefix_len) &&
+           writer_raw(w, bits, bits_len) &&
+           (!bits_len || writer_raw(w, " ", 1u)) &&
+           writer_raw(w, id, id_len) && writer_raw(w, "\n", 1u);
 }
 
 static int writer_printf(writer_t* w, const char* fmt, ...) {
@@ -459,8 +530,17 @@ static int registration_matches(const registration_t* reg, const char* selection
         memcmp(reg->name, selection, selection_len) != 0)
         return 0;
     if (registration_len == selection_len) return 1;
-    if (reg->name[selection_len] == '[') return 1;
-    if (reg->name[selection_len] != LLG_WAVE_HIER_SEP) return 0;
+    const char* rest = reg->name + selection_len;
+    // A selected array or loop generate block covers its indexed elements
+    // (`mem[3]`, `g[0]`); below an element scope the depth counts as below
+    // the selection itself.
+    while (*rest == '[') {
+        const char* close = strchr(rest, ']');
+        if (!close) return 0;
+        rest = close + 1;
+    }
+    if (*rest == 0) return 1;
+    if (*rest != LLG_WAVE_HIER_SEP) return 0;
     if (depth == 0) return 1;
     uint32_t reg_depth = separator_count(reg->name);
     uint32_t selection_depth = separator_count(selection);
@@ -468,11 +548,16 @@ static int registration_matches(const registration_t* reg, const char* selection
            reg_depth - selection_depth <= depth;
 }
 
+// Adds one $dumpvars call's selection: every call of the step contributes
+// (S47-D3). Without names, `depth` levels below every top-level scope are
+// selected, all of them for depth 0 (S47-D4).
 static void select_registrations(uint32_t depth, const char* const* names,
                                  uint32_t name_count) {
     for (uint32_t i = 0; i < g_wave.reg_count; i++) {
         registration_t* reg = &g_wave.regs[i];
-        reg->selected = name_count == 0 && depth == 0;
+        if (reg->selected) continue;
+        reg->selected = name_count == 0 &&
+                        (depth == 0 || separator_count(reg->name) <= depth);
         if (reg->selected) continue;
         for (uint32_t name_index = 0; name_index < name_count; name_index++) {
             if (names[name_index] &&
@@ -717,15 +802,10 @@ static int writer_open(writer_t* w, const char* requested) {
     return ok;
 }
 
+// `.fst` (any case) selects FST; every other name is a VCD file, like the
+// LRM's own `dump1.dump` and `verilog.dump` examples (S47-D7).
 static int writer_open_resolved(writer_t* w, const char* path) {
-    const char* ext = path_extension(path);
-    if (extension_is(ext, ".vcd")) w->format = FORMAT_VCD;
-    else if (extension_is(ext, ".fst")) w->format = FORMAT_FST;
-    else {
-        wave_error("unsupported waveform extension in `%s` (expected .vcd or .fst)",
-                   path);
-        return 0;
-    }
+    w->format = extension_is(path_extension(path), ".fst") ? FORMAT_FST : FORMAT_VCD;
     w->path = wave_strdup(path);
     if (!w->path) {
         wave_error("out of memory while opening `%s`", path);
@@ -745,14 +825,17 @@ static int writer_open_resolved(writer_t* w, const char* path) {
             w->format = FORMAT_NONE;
             return 0;
         }
+        if (w->byte_limit) fstWriterSetDumpSizeLimit(w->fst, w->byte_limit);
     }
     return !llg_atomic_int_load(&g_wave.error);
 }
 
 static int writer_write_header(writer_t* w) {
     if (w->header_written) return 1;
+    w->in_header = 1;
     if (w->format == FORMAT_VCD) vcd_header(w);
     else if (w->format == FORMAT_FST) fst_header(w);
+    w->in_header = 0;
     w->header_written = 1;
     return !llg_atomic_int_load(&g_wave.error);
 }
@@ -842,7 +925,14 @@ static void process_event(writer_t* w, const wave_event_t* e) {
         if (!llg_atomic_int_load(&g_wave.error)) (void)writer_open(w, e->payload.path);
         return;
     }
-    if (llg_atomic_int_load(&g_wave.error)) {
+    if (e->kind == EV_LIMIT) {
+        w->byte_limit = e->arg;
+        if (w->format == FORMAT_FST) fstWriterSetDumpSizeLimit(w->fst, e->arg);
+        return;
+    }
+    // A flush or limit before the dump starts creates no file.
+    if (llg_atomic_int_load(&g_wave.error) ||
+        (w->format == FORMAT_NONE && e->kind == EV_FLUSH)) {
         if (e->kind == EV_FLUSH) acknowledge(e->arg);
         return;
     }
@@ -859,27 +949,27 @@ static void process_event(writer_t* w, const wave_event_t* e) {
             if (w->format == FORMAT_VCD) {
                 const char* directive = kind == SNAP_DUMPVARS ? "$dumpvars\n" :
                                         kind == SNAP_ON ? "$dumpon\n" : "$dumpall\n";
-                writer_bytes(w, directive, strlen(directive));
-                w->snapshot_open = 1;
+                if (writer_bytes(w, directive, strlen(directive)))
+                    w->snapshot_open = 1;
             } else if (kind == SNAP_DUMPVARS || kind == SNAP_ON) {
                 fstWriterEmitDumpActive(w->fst, 1);
             }
             break;
         }
         case EV_SNAPSHOT_END:
-            if (w->format == FORMAT_VCD && w->snapshot_open) {
-                writer_bytes(w, "$end\n", 5u);
+            if (w->format == FORMAT_VCD && w->snapshot_open &&
+                writer_bytes(w, "$end\n", 5u))
                 w->snapshot_open = 0;
-            }
             break;
         case EV_OFF:
             if (!writer_write_header(w)) break;
             writer_time(w, e->now);
             w->active = 0;
             if (w->format == FORMAT_VCD) {
-                writer_bytes(w, "$dumpoff\n", 9u);
+                if (writer_bytes(w, "$dumpoff\n", 9u)) w->snapshot_open = 1;
                 vcd_off_values(w);
-                writer_bytes(w, "$end\n", 5u);
+                if (w->snapshot_open && writer_bytes(w, "$end\n", 5u))
+                    w->snapshot_open = 0;
             } else {
                 fstWriterEmitDumpActive(w->fst, 0);
             }
@@ -897,10 +987,6 @@ static void process_event(writer_t* w, const wave_event_t* e) {
                 writer_time(w, e->now);
                 writer_real_aliases(w, e->first_reg, e->payload.real);
             }
-            break;
-        case EV_LIMIT:
-            w->byte_limit = e->arg;
-            if (w->format == FORMAT_FST) fstWriterSetDumpSizeLimit(w->fst, e->arg);
             break;
         case EV_FLUSH:
             if (!writer_write_header(w)) {
@@ -920,6 +1006,7 @@ static void process_event(writer_t* w, const wave_event_t* e) {
             break;
         case EV_CLOSE:
         case EV_FILE:
+        case EV_LIMIT:
             break;
     }
 }
@@ -991,24 +1078,86 @@ static int capture_sv4(wave_event_t* event, const sv4_t* value) {
     return 1;
 }
 
+// Streams the current values of every selected address; the ring's
+// backpressure bounds the snapshot memory whatever the design size.
 static void enqueue_snapshot(uint64_t now, snapshot_kind_t kind) {
-    if (!start_worker()) return;
     enqueue_simple(EV_SNAPSHOT_BEGIN, now, (uint64_t)kind);
     for (uint32_t i = 0; i < g_wave.reg_count; i++) {
         registration_t* reg = &g_wave.regs[i];
-        if (lookup_registration(reg->ptr) != i) continue;
-        uint32_t selected = selected_canonical(i);
-        if (selected == LLG_WAVE_NO_REG) continue;
+        if (reg->dump_reg == LLG_WAVE_NO_REG) continue;
         wave_event_t event = {0};
         event.kind = reg->is_real ? EV_CHANGE_REAL : EV_CHANGE_SV4;
         event.now = now;
-        event.first_reg = selected;
+        event.first_reg = reg->dump_reg;
         event.snapshot = 1;
         if (reg->is_real) event.payload.real = *(double*)reg->ptr;
         else if (!capture_sv4(&event, (const sv4_t*)reg->ptr)) continue;
         queue_push(&event);
     }
     enqueue_simple(EV_SNAPSHOT_END, now, 0);
+}
+
+// Record the end-of-step value of every address changed since the last
+// flush. Values are read from model storage on the producer thread and
+// copied into the ring.
+static void flush_dirty(uint64_t now) {
+    for (uint32_t n = 0; n < g_wave.dirty_count; n++) {
+        registration_t* reg = &g_wave.regs[g_wave.dirty[n]];
+        reg->dirty = 0;
+        wave_event_t event = {0};
+        event.kind = reg->is_real ? EV_CHANGE_REAL : EV_CHANGE_SV4;
+        event.now = now;
+        event.first_reg = reg->dump_reg;
+        if (reg->is_real) event.payload.real = *(double*)reg->ptr;
+        else if (!capture_sv4(&event, (const sv4_t*)reg->ptr)) continue;
+        queue_push(&event);
+    }
+    g_wave.dirty_count = 0;
+}
+
+// A checkpoint already carries the current value of every dirty address.
+static void clear_dirty(void) {
+    for (uint32_t n = 0; n < g_wave.dirty_count; n++)
+        g_wave.regs[g_wave.dirty[n]].dirty = 0;
+    g_wave.dirty_count = 0;
+}
+
+static void send_file(const char* path) {
+    if (g_wave.file_sent) return;
+    g_wave.file_sent = 1;
+    wave_event_t event = {0};
+    event.kind = EV_FILE;
+    size_t len = strlen(path);
+    event.payload.path = (char*)malloc(len + 1u);
+    if (!event.payload.path) {
+        wave_error("$dumpfile path allocation failed");
+        return;
+    }
+    memcpy(event.payload.path, path, len + 1u);
+    queue_push(&event);
+}
+
+// The pending $dumpvars takes effect: open the file, fix the selection and
+// write the $dumpvars checkpoint with the values at this point, the end of
+// the step that called it (or the close of the run).
+static void start_dump(uint64_t now) {
+    if (!start_worker()) {
+        g_wave.dump_state = DUMP_IDLE;
+        return;
+    }
+    send_file(g_wave.pending_file ? g_wave.pending_file : "dump.vcd");
+    for (uint32_t i = 0; i < g_wave.reg_count; i++) {
+        registration_t* reg = &g_wave.regs[i];
+        reg->dump_reg = lookup_registration(reg->ptr) == i ? selected_canonical(i)
+                                                           : LLG_WAVE_NO_REG;
+    }
+    g_wave.dump_state = DUMP_ON;
+    enqueue_snapshot(now, SNAP_DUMPVARS);
+    if (g_wave.pending_off) {
+        g_wave.pending_off = 0;
+        g_wave.dump_state = DUMP_OFF;
+        enqueue_simple(EV_OFF, now, 0);
+    }
 }
 
 static void free_state(void) {
@@ -1019,12 +1168,14 @@ static void free_state(void) {
     for (uint32_t i = 0; i < g_wave.reg_count; i++) free(g_wave.regs[i].name);
     free(g_wave.regs);
     free(g_wave.map);
+    free(g_wave.dirty);
     llg_mutex_destroy(&g_wave.mutex);
     llg_cond_destroy(&g_wave.not_empty);
     llg_cond_destroy(&g_wave.not_full);
     llg_cond_destroy(&g_wave.ack_changed);
     free(g_wave.out_dir);
     free(g_wave.file_override);
+    free(g_wave.pending_file);
     memset(&g_wave, 0, sizeof(g_wave));
 }
 
@@ -1092,7 +1243,9 @@ static int register_value(const char* name, void* ptr, uint32_t width,
     reg->width = width;
     reg->is_real = (uint8_t)is_real;
     reg->next_alias = LLG_WAVE_NO_REG;
-    reg->selected = 1;
+    reg->selected = 0;
+    reg->dirty = 0;
+    reg->dump_reg = LLG_WAVE_NO_REG;
     if (!reg->name) {
         g_wave.reg_count--;
         wave_error("out of memory while registering `%s`", name);
@@ -1109,19 +1262,24 @@ int llg_wave_register_real(const char* name, double* value) {
     return register_value(name, value, 64u, 1);
 }
 
+// The last name before the dump starts is used (S47-D7); the file is opened
+// when the dump starts, so a run without $dumpvars writes no file.
 void llg_wave_file(const char* path, uint64_t now) {
-    if (!require_producer("$dumpfile") || g_wave.driver_selection || !path ||
-        !start_worker())
+    (void)now;
+    if (!require_producer("$dumpfile") || g_wave.driver_selection || !path) return;
+    if (g_wave.dump_state == DUMP_ON || g_wave.dump_state == DUMP_OFF) {
+        wave_warning(&g_wave.warned_dumpfile,
+                     "$dumpfile(\"%s\") ignored: the dump started at time %llu",
+                     path, (unsigned long long)g_wave.dump_start_time);
         return;
-    wave_event_t event = {0};
-    event.kind = EV_FILE;
-    event.now = now;
-    size_t len = strlen(path);
-    if (len == SIZE_MAX) { wave_error("$dumpfile path size overflow"); return; }
-    event.payload.path = malloc(len + 1u);
-    if (!event.payload.path) { wave_error("$dumpfile path allocation failed"); return; }
-    memcpy(event.payload.path, path, len + 1u);
-    queue_push(&event);
+    }
+    char* copy = wave_strdup(path);
+    if (!copy) {
+        wave_error("$dumpfile path allocation failed");
+        return;
+    }
+    free(g_wave.pending_file);
+    g_wave.pending_file = copy;
 }
 
 void llg_wave_dumpvars(uint64_t now) {
@@ -1135,9 +1293,20 @@ void llg_wave_dumpvars_select(uint64_t now, uint32_t depth,
         wave_error("$dumpvars selection list is null");
         return;
     }
+    if (g_wave.dump_state == DUMP_ON || g_wave.dump_state == DUMP_OFF) {
+        // All $dumpvars calls shall execute at the same simulation time
+        // (IEEE 1364-2001 18.1.2); a later call cannot change the header.
+        wave_warning(&g_wave.warned_dumpvars,
+                     "$dumpvars at time %llu ignored: the dump started at time %llu",
+                     (unsigned long long)now,
+                     (unsigned long long)g_wave.dump_start_time);
+        return;
+    }
     select_registrations(depth, names, name_count);
-    g_wave.producer_dumping = 1;
-    enqueue_snapshot(now, SNAP_DUMPVARS);
+    if (g_wave.dump_state == DUMP_IDLE) {
+        g_wave.dump_state = DUMP_PENDING;
+        g_wave.dump_start_time = now;
+    }
 }
 
 int llg_wave_start(const char* path, uint32_t depth, const char* const* names,
@@ -1155,31 +1324,41 @@ int llg_wave_start(const char* path, uint32_t depth, const char* const* names,
             return -1;
         }
     }
-    llg_wave_file(path, 0);
     llg_wave_dumpvars_select(0, depth, names, name_count);
     g_wave.driver_selection = 1;
+    // The driver's file is certain to be written: open it now so an
+    // unwritable path is reported before the run.
+    if (start_worker()) send_file(path);
     return llg_atomic_int_load(&g_wave.error) ? -1 : 0;
 }
 
 void llg_wave_on(uint64_t now) {
     if (!require_producer("$dumpon")) return;
-    g_wave.producer_dumping = 1;
+    if (g_wave.dump_state == DUMP_PENDING) g_wave.pending_off = 0;
+    if (g_wave.dump_state != DUMP_OFF) return;
+    g_wave.dump_state = DUMP_ON;
     enqueue_snapshot(now, SNAP_ON);
 }
 
 void llg_wave_off(uint64_t now) {
-    if (!require_producer("$dumpoff") || !start_worker()) return;
-    g_wave.producer_dumping = 0;
+    if (!require_producer("$dumpoff")) return;
+    if (g_wave.dump_state == DUMP_PENDING) g_wave.pending_off = 1;
+    if (g_wave.dump_state != DUMP_ON) return;
+    flush_dirty(now);
+    g_wave.dump_state = DUMP_OFF;
     enqueue_simple(EV_OFF, now, 0);
 }
 
 void llg_wave_dumpall(uint64_t now) {
-    if (!require_producer("$dumpall")) return;
+    if (!require_producer("$dumpall") || g_wave.dump_state != DUMP_ON) return;
+    clear_dirty();
     enqueue_snapshot(now, SNAP_ALL);
 }
 
 void llg_wave_flush(uint64_t now) {
-    if (!require_producer("$dumpflush") || !start_worker()) return;
+    if (!require_producer("$dumpflush")) return;
+    if (g_wave.dump_state == DUMP_ON) flush_dirty(now);
+    if (!g_wave.worker_started) return;
     uint64_t sequence = llg_atomic_u64_load(&g_wave.ack) + 1u;
     enqueue_simple(EV_FLUSH, now, sequence);
     llg_mutex_lock(&g_wave.mutex);
@@ -1194,35 +1373,31 @@ void llg_wave_limit(uint64_t bytes, uint64_t now) {
     enqueue_simple(EV_LIMIT, now, bytes);
 }
 
-void llg_wave_changed_sv4(sv4_t* ptr, const sv4_t* value, uint64_t now) {
-    if (!g_wave.initialized || !g_wave.worker_started ||
-        !g_wave.producer_dumping || !require_producer("signal change")) return;
-    uint32_t first = lookup_registration(ptr);
-    if (first == LLG_WAVE_NO_REG) return;
-    wave_event_t event = {0};
-    event.kind = EV_CHANGE_SV4;
-    event.now = now;
-    event.first_reg = first;
-    if (!capture_sv4(&event, value)) return;
-    queue_push(&event);
+void llg_wave_slot_end(uint64_t now) {
+    if (g_wave.dump_state == DUMP_PENDING) start_dump(now);
+    else if (g_wave.dirty_count) flush_dirty(now);
 }
 
-void llg_wave_changed_real(double* ptr, double value, uint64_t now) {
-    if (!g_wave.initialized || !g_wave.worker_started ||
-        !g_wave.producer_dumping || !require_producer("real change")) return;
+static void mark_changed(const void* ptr) {
+    if (g_wave.dump_state != DUMP_ON || !require_producer("signal change")) return;
     uint32_t first = lookup_registration(ptr);
     if (first == LLG_WAVE_NO_REG) return;
-    wave_event_t event = {0};
-    event.kind = EV_CHANGE_REAL;
-    event.now = now;
-    event.first_reg = first;
-    event.payload.real = value;
-    queue_push(&event);
+    registration_t* reg = &g_wave.regs[first];
+    if (reg->dirty || reg->dump_reg == LLG_WAVE_NO_REG) return;
+    reg->dirty = 1;
+    g_wave.dirty[g_wave.dirty_count++] = first;
 }
+
+void llg_wave_changed_sv4(const sv4_t* ptr) { mark_changed(ptr); }
+
+void llg_wave_changed_real(const double* ptr) { mark_changed(ptr); }
 
 int llg_wave_close(uint64_t now) {
     if (!g_wave.initialized) return 0;
     if (!require_producer("waveform close")) return -1;
+    // Final procedures belong to the last time step: its pending start or
+    // changes are recorded at the close time.
+    llg_wave_slot_end(now);
     if (g_wave.worker_started) {
         enqueue_simple(EV_CLOSE, now, 0);
         join_worker();

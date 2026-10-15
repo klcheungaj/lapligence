@@ -533,24 +533,12 @@ static void llg_memory_image_end(llg_memory_storage_t* storage) {
     }
     sv4_t* target = storage->image;
     llg_value_scope_t* target_pin = value_target_pin(target);
-    llg_value_scope_t* snapshots = llg_value_scope_begin(
-#ifdef LLG_WAVEFORM
-        3
-#else
-        2
-#endif
-    );
+    llg_value_scope_t* snapshots = llg_value_scope_begin(2);
     sv4_t* edges = llg_value_scope_values(snapshots);
     sv4_replace(&edges[0], storage->image_old_lsb);
     storage->image_old_lsb = (sv4_t)SV4_EMPTY;
     sv4_replace(&edges[1], sv4_bit_select(*target, 0));
-#ifdef LLG_WAVEFORM
-    sv4_copy(&edges[2], target);
-    sv4_t published = edges[2];
-#else
-    sv4_t published = SV4_EMPTY;
-#endif
-    sig_publish_changed(target, edges[0], edges[1], published);
+    sig_publish_changed(target, edges[0], edges[1]);
     llg_value_scope_end(snapshots);
     if (target_pin) llg_value_scope_end(target_pin);
 }

@@ -29,11 +29,17 @@ void llg_wave_flush(uint64_t now);
 void llg_wave_limit(uint64_t bytes, uint64_t now);
 int llg_wave_close(uint64_t now);
 
-// Runtime-internal hooks. The packed input is borrowed only for this call and
-// deep-copied before return. The queue/consumer own the snapshot allocation;
-// the writer thread never reads mutable model storage or borrowed limb arrays.
-void llg_wave_changed_sv4(sv4_t* ptr, const sv4_t* value, uint64_t now);
-void llg_wave_changed_real(double* ptr, double value, uint64_t now);
+// End of the current time step (the scheduler calls it before advancing
+// time; close calls it for the last step): starts a pending $dumpvars dump or
+// records the step's final value of every changed address.
+void llg_wave_slot_end(uint64_t now);
+
+// Runtime-internal hooks, called after a store changed the registered
+// storage at `ptr`. They only mark the address; llg_wave_slot_end copies its
+// value, on the simulation thread, into an event the writer thread owns, so
+// the writer never reads mutable model storage.
+void llg_wave_changed_sv4(const sv4_t* ptr);
+void llg_wave_changed_real(const double* ptr);
 
 #ifdef __cplusplus
 }

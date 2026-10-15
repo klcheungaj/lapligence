@@ -41,6 +41,10 @@ int main(void) {
     const char* path = "wakeup.vcd";
     CHECK(llg_wave_model_init(1) == 0);
     llg_wave_file(path, 0);
+    // The writer thread starts with the dump, at the end of the $dumpvars
+    // time step.
+    llg_wave_dumpvars(0);
+    llg_wave_slot_end(0);
     CHECK(g_wave.worker_started);
 
     unsigned seed = 0x2545f491u;

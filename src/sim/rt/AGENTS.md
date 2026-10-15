@@ -661,6 +661,16 @@ fatal region check; zero-delay time callbacks are refused there before
 scheduling. `vpi_control` stop/finish use `llg_rt_control_stop/finish`;
 `cbEndOfSimulation` runs once, from advance or close.
 
+Waveforms record end-of-step values (SIM-047, S47-D1/D2): a publication only
+marks its registration dirty (`llg_wave_changed_*`, no value copy), and the
+scheduler calls `llg_wave_slot_end` before advancing time (close calls it for
+the last step and final procedures), which copies each dirty address once.
+`$dumpvars` makes the dump pending; it starts at that end of step, opening the
+last `$dumpfile` name. The producer-side dump state (idle, pending, on, off)
+decides which controls act (S47-D3..D8); selection is fixed when the dump
+starts, so the writer reads registrations without races. Registrations name
+static model storage only (signals, record members, fixed arrays); nothing
+collectable is registered, so no handle outlives its storage.
 Waveforms use one simulation-thread producer and one POSIX/Win32 writer owning the
 file. Ring events own values; release/acquire publication, condition-variable
 backpressure, acknowledged FIFO dumpflush and in-band close followed by join are

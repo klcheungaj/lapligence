@@ -105,12 +105,17 @@ static void check_vcd_snapshots(void) {
     CHECK(llg_wave_register_sv4("top\037empty", &empty, 1) == 0);
     llg_wave_file(path, 0);
     llg_wave_dumpvars(0);
+    // The dump starts at the end of the step; the end-of-step snapshots are
+    // independent of later stores to the source.
+    llg_wave_slot_end(0);
     probe_set_bits(&packed, 0, 0xa5);
-    llg_wave_changed_sv4(&packed, &packed, 1);
+    llg_wave_changed_sv4(&packed);
+    llg_wave_slot_end(1);
     probe_set_bits(&packed, 0, 0x5a);
     for (uint64_t now = 2; now <= 4096; now++) {
         probe_set_bits(&packed, 0, now & 0xffu);
-        llg_wave_changed_sv4(&packed, &packed, now);
+        llg_wave_changed_sv4(&packed);
+        llg_wave_slot_end(now);
         probe_set_bits(&packed, 0, 0xff);
     }
     llg_wave_flush(4096);
@@ -150,8 +155,10 @@ static void check_fst_snapshots(void) {
     CHECK(llg_wave_register_sv4("top\037alias", &packed, 8) == 0);
     llg_wave_file(path, 0);
     llg_wave_dumpvars(0);
+    llg_wave_slot_end(0);
     probe_set_bits(&packed, 0, 0xa5);
-    llg_wave_changed_sv4(&packed, &packed, 7);
+    llg_wave_changed_sv4(&packed);
+    llg_wave_slot_end(7);
     probe_set_bits(&packed, 0, 0x5a);
     llg_wave_off(8);
     llg_wave_on(9);
@@ -177,16 +184,19 @@ static void check_discard_and_close(void) {
     sv4_t source = SV4_EMPTY;
     for (int cycle = 0; cycle < 6; cycle++) {
         int error_case = cycle % 3 == 0;
-        const char* path = error_case ? "snapshot-error.unsupported" : "snapshot-close.vcd";
+        const char* path = error_case ? "missing-directory/snapshot-error.vcd"
+                                      : "snapshot-close.vcd";
         set_value(&source, 8, 0);
         CHECK(llg_wave_model_init(1) == 0);
         CHECK(llg_wave_register_sv4("top\037packed", &source, 8) == 0);
         llg_wave_file(path, 0);
         if (cycle % 3 == 1) llg_wave_limit(1, 0);
         llg_wave_dumpvars(0);
+        llg_wave_slot_end(0);
         for (uint64_t now = 1; now <= 3000; now++) {
             probe_set_bits(&source, 0, now & 0xffu);
-            llg_wave_changed_sv4(&source, &source, now);
+            llg_wave_changed_sv4(&source);
+            llg_wave_slot_end(now);
         }
         if (error_case) llg_wave_flush(3000);
         // Non-error cases deliberately close without a flush: queued owners

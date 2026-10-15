@@ -80,14 +80,19 @@ int main(void) {
     llg_ba(&packed, write_value); // equality-suppressed runtime write
     llg_ba_d(&real_value, 2.0);
     llg_ba_d(&real_value, 2.0); // bitwise-equal real write is suppressed
+    // The dump starts at the end of the $dumpvars time step.
+    llg_wave_slot_end(0);
     // More than two queue capacities forces the producer through the bounded
-    // full-ring wait while preserving every committed event.
+    // full-ring wait while preserving every committed event. Repeated
+    // changes within one step are recorded once.
     for (uint64_t now = 1; now <= 2500; now++) {
         sv4_replace(&packed, SV4_C(now, 8));
-        llg_wave_changed_sv4(&packed, &packed, now);
+        llg_wave_changed_sv4(&packed);
+        llg_wave_changed_sv4(&packed);
+        llg_wave_slot_end(now);
     }
     real_value = 2.5;
-    llg_wave_changed_real(&real_value, real_value, 2500);
+    llg_wave_changed_real(&real_value);
     llg_wave_flush(2500);
     // FLUSH is an acknowledgement barrier: the file is readable through the
     // last prior event before close joins the worker.
@@ -113,6 +118,7 @@ int main(void) {
     CHECK(llg_wave_register_sv4("top\037mem[2]", &mem_two, 8) == 0);
     llg_wave_file(selected_vcd_path, 0);
     llg_wave_dumpvars_select(0, 0, selections, 2);
+    llg_wave_slot_end(0);
     llg_wave_flush(0);
     CHECK(file_contains(selected_vcd_path, "alias $end"));
     CHECK(!file_contains(selected_vcd_path, "value $end"));
@@ -126,8 +132,10 @@ int main(void) {
     CHECK(llg_wave_register_sv4("top\037alias", &packed, 8) == 0);
     llg_wave_file(fst_path, 0);
     llg_wave_dumpvars(0);
+    llg_wave_slot_end(0);
     sv4_replace(&packed, SV4_C(0xa5, 8));
-    llg_wave_changed_sv4(&packed, &packed, 7);
+    llg_wave_changed_sv4(&packed);
+    llg_wave_slot_end(7);
     llg_wave_off(8);
     llg_wave_on(9);
     CHECK(llg_wave_close(9) == 0);

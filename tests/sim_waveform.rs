@@ -577,20 +577,29 @@ fn checked_in_vcd_byte_limit_applies_to_whole_wide_records() {
             full.len()
         );
 
+        // When a record no longer fits, the dump stops and a comment says
+        // so (IEEE 1364-2001 18.1.5); the comment may pass the limit.
+        const STOPPED: &str = "$comment\n  dump limit reached\n$end\n";
+
         // A limit exactly at the end of the second record keeps it whole and
         // drops everything after it.
         let exact = record_ends[1];
         let define = format!("LIMIT={exact}");
         let (_dir, limited) = read_fixture_vcd_with_defines("wide_limit", optimized, &[&define]);
-        assert_eq!(limited.len(), exact, "exact-fit limit");
-        assert_eq!(limited, full[..exact]);
+        assert_eq!(
+            limited,
+            format!("{}{STOPPED}", &full[..exact]),
+            "exact-fit limit"
+        );
 
         // One byte less rejects the whole second record, not a prefix of it.
         let define = format!("LIMIT={}", exact - 1);
         let (_dir, limited) = read_fixture_vcd_with_defines("wide_limit", optimized, &[&define]);
-        assert!(limited.len() < exact, "limit exceeded: {}", limited.len());
-        assert_eq!(limited, full[..record_starts[1]], "partial record kept");
-        assert!(limited.ends_with('\n'));
+        assert_eq!(
+            limited,
+            format!("{}{STOPPED}", &full[..record_starts[1]]),
+            "partial record kept"
+        );
     }
 }
 
@@ -1020,32 +1029,22 @@ fn cli_wave_dumps_every_level_of_a_design_without_dump_tasks() {
                 "tb.top_value",
             ],
         );
-        // Times are in 1ps precision ticks.
+        // Times are in 1ps precision ticks. The driver's selection starts the
+        // dump at the end of time step 0, so the $dumpvars checkpoint holds
+        // the values the initial blocks assigned (SIM-047, S47-D1).
         assert_eq!(
             vcd_changes(&vcd, &declarations["tb.top_value"].2),
-            [
-                (0, "xxxx".to_owned()),
-                (0, "0011".to_owned()),
-                (3000, "1010".to_owned())
-            ],
+            [(0, "0011".to_owned()), (3000, "1010".to_owned())],
             "optimized={optimized}: {vcd}"
         );
         assert_eq!(
             vcd_changes(&vcd, &declarations["tb.child.child_value"].2),
-            [
-                (0, "x".to_owned()),
-                (0, "0".to_owned()),
-                (1000, "1".to_owned())
-            ],
+            [(0, "0".to_owned()), (1000, "1".to_owned())],
             "optimized={optimized}: {vcd}"
         );
         assert_eq!(
             vcd_changes(&vcd, &declarations["tb.child.leaf.leaf_value"].2),
-            [
-                (0, "xx".to_owned()),
-                (0, "01".to_owned()),
-                (2000, "10".to_owned())
-            ],
+            [(0, "01".to_owned()), (2000, "10".to_owned())],
             "optimized={optimized}: {vcd}"
         );
     }
