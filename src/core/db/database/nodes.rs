@@ -219,6 +219,10 @@ pub enum NodeKind {
     EnumConst {
         value: Option<Val>,
     },
+    /// A named class constraint block (IEEE 1800-2009 18.5).
+    ConstraintBlock(super::ConstraintBlockInfo),
+    /// One constraint item of a constraint block or inline constraint set.
+    Constraint(super::ConstraintKind),
     /// Anything the walk does not model explicitly (never fails the build).
     Other,
 }

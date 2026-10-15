@@ -1,0 +1,5 @@
+signed: bad=0 boundary values seen=5
+mixed sign is unsigned: bad=0
+unsigned -1: ok=0
+state range: bad=0
+state bounds: ok=1 in=1

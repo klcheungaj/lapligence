@@ -25,6 +25,21 @@ impl EmitCtx<'_, '_> {
             &mut self.cg.mailbox_statement_prelude,
             mailbox_hoist.then(Vec::new),
         );
+        // A value-form randomize call runs before a statement that evaluates
+        // it exactly once (IEEE 1800-2009 18.6.1).
+        let rand_hoist = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::Assign { .. })
+            | NodeKind::Stmt(StmtKind::IfElse { .. })
+            | NodeKind::Stmt(StmtKind::Return { .. })
+            | NodeKind::Stmt(StmtKind::VariableDecl { .. })
+            | NodeKind::SysCall { .. } => true,
+            NodeKind::Stmt(StmtKind::ImmediateAssertion { deferred, .. }) => !deferred,
+            _ => false,
+        };
+        let saved_rand = std::mem::replace(
+            &mut self.cg.rand_prelude,
+            rand_hoist.then(|| (h, Vec::new())),
+        );
         let outer = self.cg.record_binding_declarations.replace(Vec::new());
         // Queue and dynamic-array members of container record elements are
         // staged around statements that evaluate their operands once.
@@ -55,7 +70,12 @@ impl EmitCtx<'_, '_> {
         let prelude = std::mem::replace(&mut self.cg.container_call_prelude, saved);
         let mailbox_prelude =
             std::mem::replace(&mut self.cg.mailbox_statement_prelude, saved_mailbox);
+        let rand_prelude = std::mem::replace(&mut self.cg.rand_prelude, saved_rand);
         let mut statements = lowered?;
+        if let Some((_, mut prelude)) = rand_prelude.filter(|(_, prelude)| !prelude.is_empty()) {
+            prelude.append(&mut statements);
+            statements = prelude;
+        }
         if let Some(mut prelude) = prelude.filter(|prelude| !prelude.is_empty()) {
             prelude.append(&mut statements);
             statements = prelude;
@@ -79,6 +99,9 @@ impl EmitCtx<'_, '_> {
     }
 
     fn lower_stmt_operations(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
+        if let Some(statements) = self.cg.lower_random_statement(&self.path, h)? {
+            return Ok(statements);
+        }
         match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::Begin) => {
                 let mut body = Vec::new();

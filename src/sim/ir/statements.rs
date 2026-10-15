@@ -497,6 +497,8 @@ pub enum IrStmt {
     /// A system plusarg query used in statement position. The expression is
     /// retained so `$value$plusargs` still performs its destination write.
     PlusArg(IrExpr),
+    /// Feed a randomize problem's solver session (IEEE 1800-2009 18).
+    Randomize(Box<super::IrRandStmt>),
     /// IEEE stochastic analysis queue system task. This facility is kept
     /// separate from SystemVerilog queue containers and random streams.
     Stochastic(Box<IrStochasticStmt>),

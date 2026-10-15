@@ -1,0 +1,10 @@
+all rand: ok=1 holds=1
+list x: ok=1 y_same=1 holds=1
+list v,w: ok=1 x=3 y=5 holds=1
+checker true: ok=1 unchanged=1
+checker false: ok=0 x=127
+with scope variable: bad=0
+with in a method: ok=1 len_ok=1 hdr_ok=1
+std::randomize: ok=1 holds=1
+std::randomize 4-state: ok=1 known=1
+std::randomize checker: ok=1

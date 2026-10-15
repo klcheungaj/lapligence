@@ -741,6 +741,11 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             command.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
         IrStmt::RandomSeed { seed } => collect_expr_reads(seed, model, rw),
+        IrStmt::Randomize(operation) => {
+            for expression in operation.expressions() {
+                collect_expr_reads(expression, model, rw);
+            }
+        }
         IrStmt::RandomStateSet { state } => {
             state.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
@@ -1247,6 +1252,12 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                     collect_expr_reads(weight, model, rw);
                 }
             }
+            IrSysFunc::RandStep { stream, .. } => {
+                if let Some(stream) = stream {
+                    stream.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+                }
+            }
+            IrSysFunc::RandCallReady { .. } | IrSysFunc::RandValue { .. } => {}
             IrSysFunc::Math { args, .. } => {
                 for arg in args {
                     collect_expr_reads(arg, model, rw);

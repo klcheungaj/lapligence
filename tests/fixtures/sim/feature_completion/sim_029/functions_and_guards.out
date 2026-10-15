@@ -1,0 +1,3 @@
+function ordering: bad=0
+null guard: bad=0
+guard true: bad=0

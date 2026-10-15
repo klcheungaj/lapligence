@@ -1358,6 +1358,110 @@ fn s27_d25_associative_row_dump_no_addresses() {
     );
 }
 
+/// Run-time error after portable output: exact stdout, exit status 1 and
+/// `diagnostic` on stderr.
+fn runtime_error(label: &str, output: &std::process::Output, expected: &str, diagnostic: &str) {
+    assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(diagnostic),
+        "{label}: {output:?}"
+    );
+}
+
+#[test]
+fn s29_d1_unknown_state_fails() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S29-D1_unknown_state_fails.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S29-D1_unknown_state_fails",
+        &[],
+        &|label, output| {
+            runtime_error(label, output, expected, "X or Z value in a constraint");
+        },
+    );
+}
+
+#[test]
+fn s29_d2_enum_named_values() {
+    run_decision(
+        "S29-D2_enum_named_values",
+        include_str!("fixtures/sim/lrm_decisions/S29-D2_enum_named_values.out"),
+    );
+}
+
+#[test]
+fn s29_d3_scope_randomize_thread_stream() {
+    run_decision(
+        "S29-D3_scope_randomize_thread_stream",
+        include_str!("fixtures/sim/lrm_decisions/S29-D3_scope_randomize_thread_stream.out"),
+    );
+}
+
+#[test]
+fn s29_d4_inside_uniform_per_value() {
+    run_decision(
+        "S29-D4_inside_uniform_per_value",
+        include_str!("fixtures/sim/lrm_decisions/S29-D4_inside_uniform_per_value.out"),
+    );
+}
+
+#[test]
+fn s29_d5_unsat_warns_and_continues() {
+    run_decision(
+        "S29-D5_unsat_warns_and_continues",
+        include_str!("fixtures/sim/lrm_decisions/S29-D5_unsat_warns_and_continues.out"),
+    );
+}
+
+#[test]
+fn s29_d6_failed_call_consumes_draws() {
+    run_decision(
+        "S29-D6_failed_call_consumes_draws",
+        include_str!("fixtures/sim/lrm_decisions/S29-D6_failed_call_consumes_draws.out"),
+    );
+}
+
+#[test]
+fn s29_d7_random_index_select() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!("fixtures/sim/lrm_decisions/S29-D7_random_index_select.out").is_empty());
+    sim_cli::reject_case(
+        SUITE,
+        "S29-D7_random_index_select",
+        "a select whose index is a random variable is not supported",
+    );
+}
+
+#[test]
+fn s29_d8_hook_order() {
+    run_decision(
+        "S29-D8_hook_order",
+        include_str!("fixtures/sim/lrm_decisions/S29-D8_hook_order.out"),
+    );
+}
+
+#[test]
+fn s29_d9_null_receiver() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S29-D9_null_receiver.out");
+    sim_cli::run_case_checked_matrix(SUITE, "S29-D9_null_receiver", &[], &|label, output| {
+        runtime_error(
+            label,
+            output,
+            expected,
+            "null class handle access: randomize() at tb:",
+        );
+    });
+}
+
+#[test]
+fn s29_d10_search_not_uniform() {
+    run_decision(
+        "S29-D10_search_not_uniform",
+        include_str!("fixtures/sim/lrm_decisions/S29-D10_search_not_uniform.out"),
+    );
+}
+
 #[test]
 fn s39_d1_action_controls() {
     run_decision(

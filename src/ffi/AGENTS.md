@@ -37,6 +37,13 @@ remain on the calling thread; do not implement `Send` or `Sync`.
 - ABI v20 adds variable auxiliary bit 8 (`LLG_SLANG_VARIABLE_CONST`) above
   the resolved-lifetime byte (`LLG_SLANG_VARIABLE_LIFETIME_MASK`) for `const`
   variables and class properties; validation admits no other variable bits.
+- ABI v21 adds semantic kinds 29 (`LLG_SLANG_SEMANTIC_CONSTRAINT_BLOCK`,
+  auxiliary block flags, BODY edge to the root constraint) and 30
+  (`LLG_SLANG_SEMANTIC_CONSTRAINT`, subkinds 1-8 with documented edge roles;
+  only an expression item carries `LLG_SLANG_CONSTRAINT_SOFT`), variable bits
+  9-10 (`RAND`/`RANDC`, mutually exclusive) and call bits 1-2
+  (`LLG_SLANG_CALL_CLASS_RANDOMIZE`/`SCOPE_RANDOMIZE`, at most one) with a
+  BODY edge to inline `with` constraints. Invalid constraints stay unsupported.
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;

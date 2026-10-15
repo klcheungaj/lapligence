@@ -283,6 +283,8 @@ fn decode_semantic_kind(raw: u32) -> Result<SemanticKind, SlangError> {
         26 => SemanticKind::TimingControl,
         27 => SemanticKind::NetAlias,
         28 => SemanticKind::AssertionExpr,
+        29 => SemanticKind::ConstraintBlock,
+        30 => SemanticKind::Constraint,
         255 => SemanticKind::Unsupported,
         _ => return Err(invalid_native("semantic node has an unknown kind")),
     })
@@ -304,6 +306,10 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
         ),
         26 => matches!(subkind, 0 | 112..=118),
         28 => matches!(subkind, 0..=13),
+        30 => matches!(
+            subkind,
+            super::SEMANTIC_CONSTRAINT_LIST..=super::SEMANTIC_CONSTRAINT_FOREACH
+        ),
         20..=22 => matches!(subkind, 0 | 76),
         9 => matches!(
             subkind,
@@ -312,7 +318,7 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
                 | SEMANTIC_VARIABLE_ASSERTION_LOCAL
                 | SEMANTIC_VARIABLE_PATTERN_BINDING
         ),
-        2 | 3 | 5..=7 | 10..=12 | 16 | 17 | 23 | 24 | 27 => subkind == 0,
+        2 | 3 | 5..=7 | 10..=12 | 16 | 17 | 23 | 24 | 27 | 29 => subkind == 0,
         255 => matches!(
             subkind,
             0 | SEMANTIC_PATTERN_INVALID
@@ -347,10 +353,27 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
                 & !(CLOCKING_EDGE_MASK | (CLOCKING_EDGE_MASK << CLOCKING_VAR_OUTPUT_EDGE_SHIFT))
                 == 0
         }
-        // The low byte is the lifetime; `const` is the only qualifier above it.
+        // The low byte is the lifetime; `const` and one of `rand`/`randc`
+        // are the qualifiers above it.
         (9 | 11, _, _) => {
+            let qualifiers = super::VARIABLE_CONST | super::VARIABLE_RAND | super::VARIABLE_RANDC;
             matches!(node.auxiliary & super::VARIABLE_LIFETIME_MASK, 0..=2)
-                && node.auxiliary & !(super::VARIABLE_LIFETIME_MASK | super::VARIABLE_CONST) == 0
+                && node.auxiliary & !(super::VARIABLE_LIFETIME_MASK | qualifiers) == 0
+                && node.auxiliary & (super::VARIABLE_RAND | super::VARIABLE_RANDC)
+                    != super::VARIABLE_RAND | super::VARIABLE_RANDC
+        }
+        (29, _, _) => {
+            let allowed = super::CONSTRAINT_BLOCK_STATIC
+                | super::CONSTRAINT_BLOCK_PURE
+                | super::CONSTRAINT_BLOCK_EXTERN
+                | super::CONSTRAINT_BLOCK_EXPLICIT_EXTERN
+                | super::CONSTRAINT_BLOCK_INITIAL
+                | super::CONSTRAINT_BLOCK_EXTENDS
+                | super::CONSTRAINT_BLOCK_FINAL;
+            node.auxiliary & !allowed == 0
+        }
+        (30, super::SEMANTIC_CONSTRAINT_EXPRESSION, _) => {
+            node.auxiliary & !super::CONSTRAINT_SOFT == 0
         }
         (25, SEMANTIC_SCOPE_CLOCKING_BLOCK, _) => {
             let edge_mask = CLOCKING_EDGE_MASK << CLOCKING_INPUT_EDGE_SHIFT
@@ -413,7 +436,13 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         (19, 87, _) => node.auxiliary & !NEW_CLASS_SUPER == 0,
         // A call qualified with `super` must bind directly to its declaring
         // base implementation instead of participating in virtual dispatch.
-        (22, 76, _) => node.auxiliary & !CALL_SUPER == 0,
+        // Randomize calls also record whether they are the class method or
+        // the scope function; a call is at most one of the two.
+        (20..=22, 76, _) => {
+            let randomize = super::CALL_CLASS_RANDOMIZE | super::CALL_SCOPE_RANDOMIZE;
+            node.auxiliary & !(CALL_SUPER | randomize) == 0
+                && (node.auxiliary & randomize).count_ones() <= 1
+        }
         (19, 69, 40) => node.auxiliary == 0 || node.flags & 1 != 0,
         (19, 69, 41) => node.auxiliary > 0 || node.flags & 1 != 0,
         _ => node.auxiliary == 0,

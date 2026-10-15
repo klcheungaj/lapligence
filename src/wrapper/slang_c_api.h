@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 20u
+#define LLG_SLANG_ABI_VERSION 21u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -414,6 +414,12 @@ enum {
    * downstream consumers can reject unsupported forms without falling back
    * to native Slang pointers. */
   LLG_SLANG_SEMANTIC_ASSERTION_EXPR = 28,
+  /* A named class constraint block (IEEE 1800-2009 18.5). Its qualifiers
+   * are LLG_SLANG_CONSTRAINT_BLOCK_* bits in auxiliary; the BODY edge names
+   * the root constraint when the block has one. */
+  LLG_SLANG_SEMANTIC_CONSTRAINT_BLOCK = 29,
+  /* One constraint item (18.5); subkind is LLG_SLANG_CONSTRAINT_*. */
+  LLG_SLANG_SEMANTIC_CONSTRAINT = 30,
   LLG_SLANG_SEMANTIC_UNSUPPORTED = 255
 };
 
@@ -510,9 +516,48 @@ enum {
   LLG_SLANG_NEW_CLASS_SUPER = 1ull << 0
 };
 
-/* User subroutine-call qualifiers carried in auxiliary. */
+/* Subroutine-call qualifiers carried in auxiliary. */
 enum {
-  LLG_SLANG_CALL_SUPER = 1ull << 0
+  LLG_SLANG_CALL_SUPER = 1ull << 0,
+  /* The built-in class randomize() method (IEEE 1800-2009 18.6.1), with an
+   * explicit RECEIVER edge or the implicit `this` of a class method. */
+  LLG_SLANG_CALL_CLASS_RANDOMIZE = 1ull << 1,
+  /* The scope randomize function std::randomize() (18.12). */
+  LLG_SLANG_CALL_SCOPE_RANDOMIZE = 1ull << 2
+};
+
+/* Constraint item subkinds (IEEE 1800-2009 18.5). Edges: LIST items are
+ * OPERAND[i]; EXPRESSION has OPERAND[0]; IMPLICATION has CONDITION and BODY;
+ * CONDITIONAL has CONDITION, THEN and an optional ELSE; UNIQUENESS items are
+ * OPERAND[i]; DISABLE_SOFT has OPERAND[0]; SOLVE_BEFORE has LEFT[i] (solve)
+ * and RIGHT[i] (before); FOREACH has BASE (the array) and BODY. Randomize
+ * calls name their inline constraint block with a BODY edge. */
+enum {
+  LLG_SLANG_CONSTRAINT_LIST = 1,
+  LLG_SLANG_CONSTRAINT_EXPRESSION = 2,
+  LLG_SLANG_CONSTRAINT_IMPLICATION = 3,
+  LLG_SLANG_CONSTRAINT_CONDITIONAL = 4,
+  LLG_SLANG_CONSTRAINT_UNIQUENESS = 5,
+  LLG_SLANG_CONSTRAINT_DISABLE_SOFT = 6,
+  LLG_SLANG_CONSTRAINT_SOLVE_BEFORE = 7,
+  LLG_SLANG_CONSTRAINT_FOREACH = 8
+};
+
+/* Constraint item qualifiers carried in auxiliary. */
+enum {
+  LLG_SLANG_CONSTRAINT_SOFT = 1ull << 0
+};
+
+/* Constraint block qualifiers carried in auxiliary. INITIAL, EXTENDS and
+ * FINAL are later-edition forms kept so edition checks can reject them. */
+enum {
+  LLG_SLANG_CONSTRAINT_BLOCK_STATIC = 1ull << 0,
+  LLG_SLANG_CONSTRAINT_BLOCK_PURE = 1ull << 1,
+  LLG_SLANG_CONSTRAINT_BLOCK_EXTERN = 1ull << 2,
+  LLG_SLANG_CONSTRAINT_BLOCK_EXPLICIT_EXTERN = 1ull << 3,
+  LLG_SLANG_CONSTRAINT_BLOCK_INITIAL = 1ull << 4,
+  LLG_SLANG_CONSTRAINT_BLOCK_EXTENDS = 1ull << 5,
+  LLG_SLANG_CONSTRAINT_BLOCK_FINAL = 1ull << 6
 };
 
 /* Conditional/case qualifiers carried in LlgSlangSemanticNode::auxiliary.
@@ -855,7 +900,10 @@ enum {
 enum {
   LLG_SLANG_VARIABLE_LIFETIME_MASK = 0xffull,
   /* Declared `const` (SV 6.20.6), including const class properties. */
-  LLG_SLANG_VARIABLE_CONST = 1ull << 8
+  LLG_SLANG_VARIABLE_CONST = 1ull << 8,
+  /* Class property declared `rand` or `randc` (IEEE 1800-2009 18.4). */
+  LLG_SLANG_VARIABLE_RAND = 1ull << 9,
+  LLG_SLANG_VARIABLE_RANDC = 1ull << 10
 };
 
 enum {

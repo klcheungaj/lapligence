@@ -1,0 +1,14 @@
+initial modes: 1 1 1
+a off: ok=0 a=123 mode=0 b=0
+a off, a_c off: ok=1 a=123
+blocks off: ok=1 a=200 b=3 cmode=0
+blocks on: ok=1 a_ok=1 b_ok=1
+static block mode seen from x: 0
+static rand off: ok=0 s=9 mode=0
+static state, block off: ok=1 s=9
+static rand on: ok=1 s=5
+all off: ok=1 a=250 b=255 d=77 dmode=0
+all off, d_c fails: ok=0 d=1
+all blocks off: ok=1 d=3 a=4
+override active: ok=1 a_ok=1 d=77
+override off: ok=1 a=1

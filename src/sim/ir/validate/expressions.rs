@@ -1334,6 +1334,51 @@ impl Validator<'_> {
                         );
                     }
                 }
+                IrSysFunc::RandStep {
+                    problem,
+                    stream,
+                    site,
+                } => {
+                    if *problem >= self.model.rand_problems.len() || site.contains('\0') {
+                        return self.fail(path, "randomize step names no problem");
+                    }
+                    if (expr.width, expr.signed) != (32, true) {
+                        return self.fail(path, "randomize step requires a signed 32-bit result");
+                    }
+                    if let Some(stream) = stream {
+                        let mut result = Ok(());
+                        stream.expressions(&mut |child| {
+                            if result.is_ok() {
+                                result =
+                                    self.validate_expr(child, formals, &format!("{path}.stream"));
+                            }
+                        });
+                        result?;
+                    }
+                }
+                IrSysFunc::RandCallReady { problem, call } => {
+                    let valid = self
+                        .model
+                        .rand_problems
+                        .get(*problem)
+                        .is_some_and(|p| (*call as usize) < p.calls.len());
+                    if !valid || (expr.width, expr.signed) != (1, false) {
+                        return self.fail(path, "invalid randomize call-ready query");
+                    }
+                }
+                IrSysFunc::RandValue { problem, var } => {
+                    let Some(variable) = self
+                        .model
+                        .rand_problems
+                        .get(*problem)
+                        .and_then(|p| p.vars.get(*var as usize))
+                    else {
+                        return self.fail(path, "randomize value names no variable");
+                    };
+                    if (expr.width, expr.signed) != (variable.width, variable.signed) {
+                        return self.fail(path, "randomize value changes the variable type");
+                    }
+                }
                 IrSysFunc::Math { kind, args } => {
                     if args.len() != kind.arity() || !expr.is_real() {
                         return self.fail(

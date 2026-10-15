@@ -360,6 +360,10 @@ impl Codegen<'_> {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
             _ => Some(node),
         };
+        // `this` of a constraint block names the randomized object.
+        if let Some(receiver) = target.and_then(|target| self.rand_this_receiver(target)) {
+            return Ok(receiver);
+        }
         // `this` (a reserved word) names the frontend's implicit receiver
         // variable of a non-static method: the activation's receiver.
         if let Some(receiver) = target

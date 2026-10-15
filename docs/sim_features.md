@@ -68,10 +68,10 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 0 | 7 |
 | 10. System tasks/functions | 12 | 8 | 2 | 4 | 0 | 0 | 26 |
 | 11. Compiler directives | 6 | 1 | 0 | 1 | 0 | 0 | 8 |
-| 12. Verification/foreign interfaces | 1 | 12 | 0 | 1 | 3 | 0 | 17 |
-| **Total** | **48** | **77** | **6** | **8** | **3** | **1** | **143** |
+| 12. Verification/foreign interfaces | 1 | 13 | 0 | 1 | 3 | 0 | 18 |
+| **Total** | **48** | **78** | **6** | **8** | **3** | **1** | **144** |
 
-**126 rows have some source implementation; 77 of those remain partial and one
+**127 rows have some source implementation; 78 of those remain partial and one
 is accepted.** The accepted row (`always_ff` and writer rules) carries
 post-change HDL execution evidence from RTL-013 and RTL-099; other rows have no
 row-level acceptance promotion yet, which does not mean they lack passing tests.
@@ -225,6 +225,7 @@ not convert is an error naming the override.
 | Scheduler region passes | Default 10,000,000 per time slot; `LLG_ZERO_LOOP_LIMIT` accepts a positive decimal `uint64`. Exhaustion diagnoses a zero-delay loop. |
 | Process back-edges | Default 10,000,000 per process; `LLG_PROCESS_STEP_LIMIT` overrides the `LLG_NONCONVERGENCE_LIMIT` alias. An explicitly set region limit also supplies the process limit when neither process variable is set. Both require positive decimal `uint64` values. |
 | Concurrent-assertion sequence threads | Default 1,000,000 live pending sequence threads plus attempts across the model; `LLG_SEQUENCE_THREAD_LIMIT` accepts a positive decimal `uint64`. Exhaustion stops the run with an error naming the assertion and time; no attempt is dropped ([SIM-037](../tests/sim_feature_completion/sim_037.rs)). Sequence automata are limited to 1,048,576 states per assertion graph (repetition bodies unroll once per literal bound). |
+| Constraint solving per `randomize()` component | Exact BDD up to `LLG_RAND_BDD_BITS` (512) variable bits and `LLG_RAND_BDD_NODES` (1,048,576) nodes, `LLG_RAND_REJECT_TRIES` (4,096) rejection draws, then `LLG_RAND_CONFLICTS` (100,000) CDCL conflicts. Exhaustion is a run-time error naming the budget, distinct from infeasible constraints (S29-D5). |
 | Driver, alias, process, final, event-waiter, procedural-driver and force registries | Size to the design or grow with checked allocation; the former 16-driver and 256-alias ceilings do not apply. |
 
 The required capacity lane executes 16,777,216-element storage in both editions
@@ -1801,7 +1802,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   source-addressed lowering error
   ([sim_031](../tests/fixtures/sim/feature_completion/sim_031/readme.md),
   decisions S31-D1 to S31-D7 in [lrm_decisions](lrm_decisions.md)).
-  Constrained and structured randomization are a separate row.
+  Constrained and structured randomization are separate rows.
   V §17.9; SV ch.18 **[1995/SV-2005]**.
 - 🟨 **Stochastic queues** — `$q_initialize/$q_add/$q_remove/$q_full/$q_exam`
   support ID-indexed FIFO/LIFO state, job/information IDs, status codes,
@@ -1962,7 +1963,7 @@ These are bounded implementations, not full verification-infrastructure support.
   memory files) and multidimensional properties of non-packed elements,
   container
   properties selected through other handle expressions or outside procedural
-  statements, and constrained randomization remain restricted.
+  statements remain restricted; constrained randomization has its own row.
   SV ch.8 **[SV-2005]**.
 - 🟨 **Virtual interfaces** — Typed instance/modport identity survives rebinding,
   class/formal storage, record members, fixed arrays (any range) and dynamic,
@@ -2242,11 +2243,29 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
 - ⬜ **Functional coverage** — Covergroups, coverpoints, bins, crosses and their
   sampling/query/control/database services are not implemented. `cover` assertions
   and waveform/VPI observation are separate capabilities. SV **[SV-2005]**.
-- ⬜ **Constrained and structured randomization** — `rand/randc`, constraints,
-  object or `std::randomize` and `randsequence` are not implemented.
-  `randcase` is implemented (see the random-number row). Numeric random
-  functions and container shuffle do not establish these features.
-  SV **[SV-2005]**.
+- 🟨 **Constrained randomization** — `rand` packed integral and enum class
+  properties (instance and static, inherited, with virtual `randomize()`),
+  named, external and static constraint blocks with derived-class overrides,
+  expressions, implication, `if`/`else`, `inside`, constraint functions with
+  their 18.5.11 ordering, 18.5.12 guards, `randomize() with`, variable lists
+  and `randomize(null)`, `std::randomize()` with and without `with`,
+  `rand_mode`/`constraint_mode` in every form, and `pre_randomize`/
+  `post_randomize`. Values come from an in-house C11 solver: exact BDD
+  counting with uniform sampling, uniform rejection sampling, then a CDCL
+  search that is not uniform (S29-D10), each bounded by a named budget
+  (`LLG_RAND_*`, see the [solver readme](../src/sim/rt/constraints/readme.md)).
+  A failed call leaves every variable unchanged; infeasible constraints warn,
+  evaluation errors and exhausted budgets are run-time errors (S29-D1 to
+  S29-D10 in [lrm_decisions](lrm_decisions.md)). `randc`, `dist`,
+  `solve...before`, `foreach`, random arrays, random object
+  members, a random select index and a random divisor are located errors
+  (planned for SIM-030); see
+  [known issues](known_issues.md#constrained-randomization-limits-sim-029) and
+  [sim_029](../tests/fixtures/sim/feature_completion/sim_029/readme.md).
+  SV ch.18 **[SV-2005]**.
+- ⬜ **Structured randomization** — `randsequence` is not implemented.
+  `randcase` is implemented (see the random-number row). SV §18.17
+  **[SV-2005]**.
 
 ## Source and regression evidence
 
@@ -2267,6 +2286,7 @@ rows above remain the authority for scope and known gaps.
 | Subroutines and callback limits (§9) | [Call contracts](../src/sim/codegen/lowering/collection/call_contracts.rs), [function bodies](../src/sim/codegen/lowering/collection/function_bodies.rs), [owned emitter](../src/sim/emit_c/owned/) | [Functions](../tests/sim_function.rs), [zero-time calls](../tests/sim_syn013_zero_time_calls.rs), [activation frames](../tests/sim_partial_features/activation_frames.rs) |
 | System tasks and memory I/O (§10) | [System tasks](../src/sim/codegen/lowering/statements/system_tasks.rs), [system functions](../src/sim/codegen/lowering/expressions/system_functions.rs), [runtime](../src/sim/rt/llg_rt.c) | [File I/O](../tests/sim_file_io.rs), [memory views](../tests/sim_memory_views.rs), [memory editions](../tests/sim_memory_editions.rs), [time reporting](../tests/sim_timescale.rs) |
 | Assertions, clocking and verification objects (§12) | [Immediate/deferred assertions](../src/sim/codegen/lowering/statements/assertions.rs), [concurrent assertions](../src/sim/codegen/lowering/assertions.rs), [clocking](../src/sim/codegen/lowering/clocking_context.rs), [class collection](../src/sim/codegen/lowering/collection/classes.rs) | [Concurrent assertions](../tests/sim_concurrent_assertions.rs), [deferred assertions](../tests/sim_partial_features/assertions.rs), [clocking](../tests/sim_partial_features/clocking.rs), [classes](../tests/sim_classes.rs), [virtual interfaces](../tests/sim_virtual_interfaces.rs) |
+| Constrained randomization (§12) | [Randomization lowering](../src/sim/codegen/lowering/randomization/), [problem IR](../src/sim/ir/randomize.rs), [constraint solver](../src/sim/rt/constraints/) | [SIM-029 fixtures](../tests/sim_feature_completion/sim_029.rs), [solver probes](../tests/runtime_constraints.rs), [S29 decisions](../tests/sim_lrm_decisions.rs) |
 | Foreign interfaces and observation (§§10, 12) | [Native access IR](../src/sim/ir/native_access.rs), [VPI runtime](../src/sim/rt/llg_vpi.c), [waveforms](../src/sim/rt/llg_wave.c) | [DPI](../tests/sim_dpi.rs), [VPI](../tests/sim_vpi.rs), [waveforms](../tests/sim_waveform.rs) |
 | Executable validation and cross-feature boundaries | [Semantic coverage](../src/sim/semantic.rs), [IR validation](../src/sim/ir/validate.rs), [whole-model emission](../src/sim/emit_c.rs) | [Optimizer comparison](../tests/sim_opt_differential.rs), [integrated profile](../tests/sim_syn039_acceptance.rs), [Q02 characterization](../tests/sim_undefined_behavior.rs) |
 

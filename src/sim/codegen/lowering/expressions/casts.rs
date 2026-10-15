@@ -81,7 +81,7 @@ impl<'a> Codegen<'a> {
         })
     }
 
-    fn class_node_for_type_expr(&self, node: NodeId) -> Option<NodeId> {
+    pub(in super::super) fn class_node_for_type_expr(&self, node: NodeId) -> Option<NodeId> {
         let candidate = match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref { target }) => target.unwrap_or(node),
             NodeKind::Expr(ExprKind::NewClass { class_type, .. }) => {

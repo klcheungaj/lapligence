@@ -51,6 +51,7 @@
 #include "llg_value.h"
 #include "llg_string.h"
 #include "llg_rng.h"
+#include "llg_constraint.h"
 #include "llg_container.h"
 
 typedef struct llg_fixed_cell llg_fixed_cell_t;
@@ -416,7 +417,8 @@ struct llg_pattern_type {
     const int32_t* bounds;
     uint32_t element;
 };
-// One property of a class layout, base class properties first.
+// One property of a class layout, base class properties first. A NULL name
+// marks a hidden member (a randomization mode bit) that is not displayed.
 typedef struct {
     const char* name;
     uint32_t type;
@@ -1029,6 +1031,28 @@ void llg_object_rng_create(llg_rng_state_t* object);
 void llg_object_srandom(llg_rng_state_t* object, sv4_t seed);
 llg_string_t llg_object_get_randstate(const llg_rng_state_t* object);
 void llg_object_set_randstate(llg_rng_state_t* object, llg_string_t state);
+
+// randomize() glue (IEEE 1800-2009 18.6, 18.12; scheduler/randomize.c).
+// Values are resized to `width` (zero extension) and passed as 2-state words;
+// an X/Z bit marks the input LLG_CR_INPUT_XZ (S29-D1). A leaf whose
+// evaluation met a null handle passes `null_dereference` (18.5.12 E).
+void llg_cr_set_var_sv4(llg_cr_session_t* s, uint32_t var, sv4_t value, uint32_t width,
+                        int active);
+void llg_cr_set_leaf_sv4(llg_cr_session_t* s, uint32_t leaf, sv4_t value, uint32_t width,
+                         int null_dereference);
+// The solved value of an active variable as an independent owner.
+sv4_t llg_cr_value_sv4(const llg_cr_session_t* s, uint32_t var, uint32_t width,
+                       int8_t is_signed);
+// A constraint function's result for the solver (X/Z marks the input).
+void llg_cr_set_call_result_sv4(llg_cr_session_t* s, uint32_t call, sv4_t value,
+                                uint32_t width);
+// One solve step (llg_cr_step) drawing from `stream`, or from the calling
+// thread's stream when NULL (S29-D3). Returns 4 while constraint functions
+// are ready (LLG_CR_NEED_CALLS); otherwise reports the outcome and returns
+// 1 when the caller may commit, 0 after a failure. UNSAT warns; RESOURCE and
+// ERROR are run-time errors (exit status 1, S29-D5).
+int32_t llg_randomize_step(const llg_cr_problem_t* problem, llg_cr_session_t* s,
+                           llg_rng_state_t* stream, const char* site);
 
 // Stable dependency markers used by generated fixed-array and container
 // readers. A marker's address remains valid when a resizable container moves

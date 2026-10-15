@@ -129,6 +129,9 @@ impl Validator<'_> {
                     self.validate_expr(arg, formals, &format!("{path}.args[{index}]"))?;
                 }
             }
+            IrStmt::Randomize(operation) => {
+                self.validate_rand_stmt(operation, formals, path)?;
+            }
             IrStmt::RandomSeed { seed } => {
                 self.validate_expr(seed, formals, &format!("{path}.seed"))?;
                 if seed.is_real() || (seed.width, seed.signed) != (32, false) {
@@ -1629,6 +1632,37 @@ impl Validator<'_> {
             | IrStmt::Label(_)
             | IrStmt::Goto(_)
             | IrStmt::Nop => {}
+        }
+        Ok(())
+    }
+}
+
+impl Validator<'_> {
+    pub(super) fn validate_rand_stmt(
+        &self,
+        operation: &crate::sim::ir::IrRandStmt,
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
+        use crate::sim::ir::IrRandStmt;
+        let Some(problem) = self.model.rand_problems.get(operation.problem()) else {
+            return self.fail(path, "randomize statement names no problem");
+        };
+        let in_range = match operation {
+            IrRandStmt::Begin { .. } => true,
+            IrRandStmt::SetVar { var, .. } => (*var as usize) < problem.vars.len(),
+            IrRandStmt::SetBlock { block, .. } => (*block as usize) < problem.blocks.len(),
+            IrRandStmt::SetLeaf { leaf, .. } => (*leaf as usize) < problem.leaves.len(),
+            IrRandStmt::SetCallResult { call, .. } => (*call as usize) < problem.calls.len(),
+        };
+        if !in_range {
+            return self.fail(path, "randomize statement index is out of range");
+        }
+        for (index, expression) in operation.expressions().into_iter().enumerate() {
+            self.validate_expr(expression, formals, &format!("{path}.operands[{index}]"))?;
+            if expression.is_real() || expression.width == 0 {
+                return self.fail(path, "randomize operands must be packed");
+            }
         }
         Ok(())
     }

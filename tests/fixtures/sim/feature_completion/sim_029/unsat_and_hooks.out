@@ -1,0 +1,5 @@
+unsat: ok=0 a=11 b=-5 s=3 pre=1 post=0 lim=0
+sat: ok=1 a_ok=1 b_ok=1 s_ok=1 pre=2 post=1 post_saw_a=1
+frozen by pre: ok=0 b=7 mode=0 post=1
+std unsat: ok=0 p=40 q=41
+std sat: ok=1 holds=1

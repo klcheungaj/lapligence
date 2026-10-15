@@ -38,6 +38,13 @@ use declaration IDs rather than names. Assignment-pattern nodes also retain thei
 including canonical identity and ranges, for type-key matching after snapshot
 destruction. Each `std::mailbox #(T)` specialization retains the descriptor of
 its `T`, resolved in the specializing scope, keyed by the class type identity.
+Constrained randomization (IEEE 1800-2009 clause 18) is captured as typed
+data: `NodeKind::ConstraintBlock` (qualifiers and the root constraint) and
+`NodeKind::Constraint` (list, expression, implication, if-else, solve-before,
+foreach and the later-edition unique/disable-soft/soft forms the 2009 profile
+rejects). `Db::rand_qualifier` gives a class property's `rand`/`randc`, and
+`Db::randomize_call` identifies a class or scope `randomize` call and its inline
+`with` constraints (`constraints.rs`).
 Modport expression ports `.p(expr)` keep their port expression in a side
 table (`Db::modport_port_expression`); references still target the port.
 Typed references distinguish subroutine

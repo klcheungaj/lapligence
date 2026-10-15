@@ -1043,7 +1043,11 @@ fn classify_simulation_node(
         } if !is_simulation_gate(*class, *prim_type, *strength0, *strength1) => {
             SimulationNodeClass::Unsupported
         }
-        NodeKind::Package | NodeKind::ClassDef => SimulationNodeClass::DeclarationOnly,
+        // Constraint blocks are class members consumed by randomize calls;
+        // their items are lowered (or rejected) by the randomize that uses them.
+        NodeKind::Package | NodeKind::ClassDef | NodeKind::ConstraintBlock(_) => {
+            SimulationNodeClass::DeclarationOnly
+        }
         NodeKind::Param { .. }
         | NodeKind::ParamAssign { .. }
         | NodeKind::Genvar { .. }
@@ -1067,6 +1071,7 @@ fn classify_simulation_node(
         | NodeKind::Gate { .. }
         | NodeKind::Stmt(_)
         | NodeKind::AssertionExpr(_)
+        | NodeKind::Constraint(_)
         | NodeKind::Expr(_)
         | NodeKind::SysCall { .. }
         | NodeKind::MethodCall { .. }

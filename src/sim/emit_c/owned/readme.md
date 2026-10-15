@@ -24,6 +24,7 @@ and payloads; escaping or unproven cells retain stable heap owners. Feature guar
 | `containers.rs`, `containers/` | Ordered operands, keys, item snapshots and mutations. |
 | `input.rs`, `native_tasks.rs` | File/plusarg targets, text, queue/random calls and VPI arguments. |
 | `native_access.rs`, `references.rs`, `mailboxes.rs` | Member/ref resolution, retained identities and message transfers. |
+| `randomize.rs` | Static `llg_cr_problem_t` tables, per-site solver sessions and the solver-step primitives. |
 | `streaming.rs` | RHS snapshots, sequential selectors, bounds checks and publication. |
 | `tests.rs`, `tests/` | Structural, ownership-boundary and actual IR-to-C regressions. |
 

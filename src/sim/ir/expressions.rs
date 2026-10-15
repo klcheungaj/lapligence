@@ -853,6 +853,22 @@ pub enum IrSysFunc {
         sum_width: u32,
         origin: crate::sim::semantic::Origin,
     },
+    /// One solve step of randomize problem `problem` (IEEE 1800-2009
+    /// 18.6.1, 18.12): the signed 32-bit result is
+    /// [`super::RAND_STEP_NEED_CALLS`] while constraint functions are ready
+    /// to be called, then [`super::RAND_STEP_OK`], or
+    /// [`super::RAND_STEP_FAILED`] after the runtime reported the failure.
+    /// `stream` is the object whose stream supplies the draws; `None` uses
+    /// the calling thread's stream (S29-D3). `site` names the call.
+    RandStep {
+        problem: usize,
+        stream: Option<Box<IrChandleExpr>>,
+        site: String,
+    },
+    /// Whether constraint function call `call` is ready (one bit).
+    RandCallReady { problem: usize, call: u32 },
+    /// The solved value of active variable `var`, typed like the variable.
+    RandValue { problem: usize, var: u32 },
     /// Real math functions defined by IEEE 1800-2009 table 20-4.
     Math { kind: IrMathFunc, args: Vec<IrExpr> },
     /// Fractional time in the calling module's time unit.

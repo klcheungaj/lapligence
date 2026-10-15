@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 20;
+const ABI_VERSION: u32 = 21;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -672,6 +672,10 @@ pub enum SemanticKind {
     TimingControl,
     NetAlias,
     AssertionExpr,
+    /// A named class constraint block (IEEE 1800-2009 18.5).
+    ConstraintBlock,
+    /// One constraint item; the subkind is a `SEMANTIC_CONSTRAINT_*` code.
+    Constraint,
     Unsupported,
 }
 
@@ -681,6 +685,28 @@ const ARGUMENT_REF_STATIC: u64 = 1 << 1;
 pub(crate) const VARIABLE_LIFETIME_MASK: u64 = 0xff;
 /// A variable or class property declared `const` (SV 6.20.6).
 pub(crate) const VARIABLE_CONST: u64 = 1 << 8;
+/// A class property declared `rand` or `randc` (IEEE 1800-2009 18.4).
+pub(crate) const VARIABLE_RAND: u64 = 1 << 9;
+pub(crate) const VARIABLE_RANDC: u64 = 1 << 10;
+/// Constraint item subkinds (IEEE 1800-2009 18.5).
+pub(crate) const SEMANTIC_CONSTRAINT_LIST: u32 = 1;
+pub(crate) const SEMANTIC_CONSTRAINT_EXPRESSION: u32 = 2;
+pub(crate) const SEMANTIC_CONSTRAINT_IMPLICATION: u32 = 3;
+pub(crate) const SEMANTIC_CONSTRAINT_CONDITIONAL: u32 = 4;
+pub(crate) const SEMANTIC_CONSTRAINT_UNIQUENESS: u32 = 5;
+pub(crate) const SEMANTIC_CONSTRAINT_DISABLE_SOFT: u32 = 6;
+pub(crate) const SEMANTIC_CONSTRAINT_SOLVE_BEFORE: u32 = 7;
+pub(crate) const SEMANTIC_CONSTRAINT_FOREACH: u32 = 8;
+/// A `soft` expression constraint (a later-edition form).
+pub(crate) const CONSTRAINT_SOFT: u64 = 1 << 0;
+/// Constraint block qualifiers.
+pub(crate) const CONSTRAINT_BLOCK_STATIC: u64 = 1 << 0;
+pub(crate) const CONSTRAINT_BLOCK_PURE: u64 = 1 << 1;
+pub(crate) const CONSTRAINT_BLOCK_EXTERN: u64 = 1 << 2;
+pub(crate) const CONSTRAINT_BLOCK_EXPLICIT_EXTERN: u64 = 1 << 3;
+pub(crate) const CONSTRAINT_BLOCK_INITIAL: u64 = 1 << 4;
+pub(crate) const CONSTRAINT_BLOCK_EXTENDS: u64 = 1 << 5;
+pub(crate) const CONSTRAINT_BLOCK_FINAL: u64 = 1 << 6;
 pub(crate) const SUBROUTINE_STATIC: u64 = 1 << 0;
 /// DPI-C import metadata copied from Slang's method flags and syntax.
 pub(crate) const SUBROUTINE_DPI_IMPORT: u64 = 1 << 8;
@@ -702,6 +728,10 @@ pub(crate) const UNCONNECTED_PULL0: u64 = 1 << 16;
 pub(crate) const UNCONNECTED_PULL1: u64 = 1 << 17;
 pub(crate) const NEW_CLASS_SUPER: u64 = 1 << 0;
 pub(crate) const CALL_SUPER: u64 = 1 << 0;
+/// The built-in class `randomize()` method (IEEE 1800-2009 18.6.1).
+pub(crate) const CALL_CLASS_RANDOMIZE: u64 = 1 << 1;
+/// The scope randomize function `std::randomize()` (18.12).
+pub(crate) const CALL_SCOPE_RANDOMIZE: u64 = 1 << 2;
 
 /// Repository-owned qualifier tags stored in a statement's auxiliary field.
 /// Keep these values in lockstep with the C ABI, rather than exposing Slang's

@@ -293,6 +293,7 @@ mod containers;
 mod expressions;
 mod objects;
 use objects::NativeNbaValue;
+mod randomization;
 mod statements;
 
 /// The lowered computation of one builtin gate primitive
@@ -1735,6 +1736,18 @@ struct Codegen<'a> {
     virtual_interface_views: HashMap<(usize, String), HashMap<String, DbDirection>>,
     /// Methods explicitly imported/exported by each modport view.
     virtual_interface_view_methods: HashMap<(usize, String), HashSet<String>>,
+    /// Hidden `rand_mode` off bit of each `rand`/`randc` class property
+    /// (IEEE 1800-2009 18.8), by declaration.
+    rand_mode_bits: HashMap<NodeId, randomization::ModeBit>,
+    /// Hidden `constraint_mode` off bit of each constraint block (18.9), by
+    /// declaration; an override shares the bit of the root declaration.
+    constraint_mode_bits: HashMap<NodeId, randomization::ModeBit>,
+    /// Set while lowering the constraints of one randomize problem.
+    rand_lowering: Option<randomization::RandLowering>,
+    /// Statements running value-form randomize calls before the statement
+    /// being lowered (its node), open only for statements that evaluate the
+    /// call exactly once.
+    rand_prelude: Option<(NodeId, Vec<IrStmt>)>,
 }
 
 /// Runtime-visible bindings for one array-method `with` expression. A zero
@@ -1950,6 +1963,10 @@ impl<'a> Codegen<'a> {
             virtual_interface_methods: HashMap::new(),
             virtual_interface_views: HashMap::new(),
             virtual_interface_view_methods: HashMap::new(),
+            rand_mode_bits: HashMap::new(),
+            constraint_mode_bits: HashMap::new(),
+            rand_lowering: None,
+            rand_prelude: None,
         }
     }
 

@@ -39,7 +39,7 @@ Each `<ID>_<name>.sv` file is:
    cases include `svdpi.h`) and load it with the simulator's DPI library option.
 3. Compare stdout with the `.out` file. Ignore the simulator's own banners and
    its `$finish` message.
-4. **Negative cases have an empty `.out`.** For AA-D7, S14-D5, S22-D3, S22-D4 and S23-D2, the
+4. **Negative cases have an empty `.out`.** For AA-D7, S14-D5, S22-D3, S22-D4, S23-D2 and S29-D7, the
    expected result is a compile error, and no simulation should run.
 
 ### In llg
@@ -61,7 +61,10 @@ compile with "`$past` of a real expression is illegal", S14-D5 with
 "nonblocking assignment to class property `x`", and S23-D2 with "is an
 unpacked structure or union, which is not a singular variable". S22-D3 must
 fail with "calls `watch`, whose fork at" and S22-D4 with "`push_back` modifies
-`limits`, which is declared const". The scripted run is in
+`limits`, which is declared const". S29-D7 must fail with "a select whose
+index is a random variable is not supported". S29-D1 must end with exit status
+1 after both lines, reporting "X or Z value in a constraint", and S29-D9 after
+its first line, reporting "null class handle access". The scripted run is in
 [tests/readme.md](../tests/readme.md):
 
 ```sh
@@ -212,6 +215,25 @@ independent transcription in
 | S28-D7 | **Each instance has its own initialization stream.** A static process is seeded from the initialization stream of the instance that declares it, in that instance's creation order. Each instance's stream derives from the default seed and the instance's hierarchical name, so identical instances draw different values, and processes added to one instance never move another instance's seeds. | 18.14.1 L31148-31156 | `S28-D7_instance_streams` | llg choice (the default seed is implementation dependent; the text says every initialization RNG starts from "the default seed") |
 | S28-D8 | **X/Z in 2-state random arguments read as 0.** `srandom`, `$urandom` seeds and `$urandom_range` bounds are 2-state `int`/`int unsigned` formals; X/Z bits read as 0. Real seeds round. | 18.13.1 L31018; 18.13.2 L31044-31045; 18.13.3 L31086; 6.11.2 L5489-5490 | `S28-D8_two_state_random_arguments` | LRM text |
 | S28-D9 | **A foreign state string is a run-time error.** `set_randstate` with a string not produced by llg's `get_randstate` prints `invalid randstate string`, leaves the stream unchanged, lets the run continue and makes it exit with status 1. | 18.13.5 L31117-31119 | no portable case: the text says the result is undefined; covered by the [sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md) `neg_randstate_invalid` fixture | llg choice |
+
+## Constrained randomization (SIM-029)
+
+Most randomization results are random, so these cases print relations every
+legal solution satisfies, or statistics with wide margins, rather than drawn
+values. S29-D1 and S29-D9 end with exit status 1; S29-D7 is a negative case.
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S29-D1 | **X/Z state makes randomize fail.** An X or Z bit in a value an active constraint reads (state variable, inactive random variable, function result) is an error: the call returns 0, the random variables keep their values, `X or Z value in a constraint` is reported and the run ends with exit status 1. | 18.3 L29236-29237; 18.6.1 L30402-30403 | `S29-D1_unknown_state_fails` | llg reading (the text calls 4-state values in constraints an error but does not say whether this covers run-time values; the alternative reads X/Z as 0 as S28-D3 does) |
+| S29-D2 | **A random enum takes only named values.** A `rand` enum variable is solved over its named values only. | 18.3 L29224-29225 | `S29-D2_enum_named_values` | llg choice (the text lists enum as a legal type but does not restrict its values) |
+| S29-D3 | **`std::randomize` draws from the calling thread.** Scope randomize uses the calling thread's RNG: reseeding the thread repeats its values, and the call advances the thread's stream. Object `randomize()` uses the object's RNG. | 18.12 L30918; 18.14 L31136-31139; 18.15 L31270 | `S29-D3_scope_randomize_thread_stream` | llg choice (the text names no stream for scope randomize) |
+| S29-D4 | **`inside` is uniform per value.** Every legal value is equally likely; a range is not weighted as one list item. | 18.5.3 L29617-29618; 18.5.9 L30013-30014 | `S29-D4_inside_uniform_per_value` | llg reading of the two sentences together |
+| S29-D5 | **Infeasible constraints only warn.** An unsatisfiable call returns 0, keeps the variables, prints a warning and the run continues with exit status 0. Evaluation errors (S29-D1, an `ERROR` guard, a circular function-argument order) and an exhausted solver budget (`solver budget LLG_RAND_... exhausted`) are run-time errors: the call returns 0 and the run ends with exit status 1. | 18.6.1 L30402-30403; 18.6.3 L30471-30472; 18.5.12 L30257 | `S29-D5_unsat_warns_and_continues` | llg choice (the text gives only the return value); the budget outcome is an implementation limit with no portable case |
+| S29-D6 | **A failed call keeps its draws.** Draws made before the constraints are found infeasible advance the object's RNG. | 18.15 L31270; 18.6.3 L30471-30472 | `S29-D6_failed_call_consumes_draws` | llg choice (the text does not say whether a failed call advances the RNG) |
+| S29-D7 | **A random select index is rejected.** A bit or part select whose index is a random variable is a located compile error until SIM-030; a state-valued index is fixed at solve time. | 18.5.7.1 L29926-29927 | `S29-D7_random_index_select` (negative: llg must fail with "a select whose index is a random variable is not supported") | llg deferral (the clause covers array indices only) |
+| S29-D8 | **Hook order.** `pre_randomize()` runs before any state value or mode is read, so its changes apply to the call; `post_randomize()` runs after the commit and only on success. | 18.6.2 L30445-30447; 18.6.3 L30473 | `S29-D8_hook_order` | LRM text |
+| S29-D9 | **`randomize()` through a null handle is a run-time error.** The run stops at the call with `null class handle access` and exit status 1. | 18.6.1 L30392-30400 | `S29-D9_null_receiver` | llg choice (the rule for every method call through a null handle) |
+| S29-D10 | **The search fallback is not uniform.** When the exact model and rejection sampling both exceed their budgets, a CDCL search returns a legal solution that varies between calls but is not uniformly distributed. | 18.5.9 L30013-30014 | `S29-D10_search_not_uniform` (prints only properties every simulator shares) | llg limit (a deviation from the uniformity requirement, also in [known issues](known_issues.md)) |
 
 ## Deferred immediate assertions (SIM-036)
 

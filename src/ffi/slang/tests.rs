@@ -457,6 +457,12 @@ fn current_statement_and_expression_subkinds_are_admitted() {
     assert!(validate_semantic_subkind(28, SEMANTIC_ASSERTION_EXPR_SIMPLE).is_ok());
     assert!(validate_semantic_subkind(28, SEMANTIC_ASSERTION_EXPR_DISABLE_IFF).is_ok());
     assert!(validate_semantic_subkind(28, 14).is_err());
+    assert!(validate_semantic_subkind(29, 0).is_ok());
+    assert!(validate_semantic_subkind(29, 1).is_err());
+    assert!(validate_semantic_subkind(30, SEMANTIC_CONSTRAINT_LIST).is_ok());
+    assert!(validate_semantic_subkind(30, SEMANTIC_CONSTRAINT_FOREACH).is_ok());
+    assert!(validate_semantic_subkind(30, 0).is_err());
+    assert!(validate_semantic_subkind(30, SEMANTIC_CONSTRAINT_FOREACH + 1).is_err());
     assert_eq!(
         decode_semantic_operation(47).expect("list operation must decode"),
         SemanticOperation::List
@@ -1452,7 +1458,7 @@ fn assertion_metadata_is_boxed_only_when_it_differs_from_the_defaults() {
 }
 
 #[test]
-fn variable_auxiliary_carries_the_lifetime_byte_and_only_the_const_bit() {
+fn variable_auxiliary_carries_the_lifetime_byte_and_const_rand_qualifiers() {
     let variable = |auxiliary: u64| {
         let mut raw = raw_semantic_node(0);
         raw.kind = 9;
@@ -1469,12 +1475,53 @@ fn variable_auxiliary_carries_the_lifetime_byte_and_only_the_const_bit() {
         assert_ne!(node.semantic_nodes[0].auxiliary & VARIABLE_CONST, 0);
     }
     assert!(variable(3).is_err(), "unknown lifetime code");
+    assert!(variable(1 | VARIABLE_RAND).is_ok(), "rand property");
+    assert!(variable(1 | VARIABLE_RANDC).is_ok(), "randc property");
     assert!(
-        variable(VARIABLE_CONST << 1).is_err(),
+        variable(1 | VARIABLE_RAND | VARIABLE_RANDC).is_err(),
+        "rand and randc are exclusive"
+    );
+    assert!(
+        variable(VARIABLE_RANDC << 1).is_err(),
         "unknown qualifier bit"
     );
     assert!(
         variable(3 | VARIABLE_CONST).is_err(),
         "const does not mask a bad lifetime"
     );
+}
+
+#[test]
+fn constraint_and_randomize_auxiliary_bits_are_validated() {
+    let node = |kind: u32, subkind: u32, auxiliary: u64| {
+        let mut raw = raw_semantic_node(0);
+        raw.kind = kind;
+        raw.subkind = subkind;
+        raw.auxiliary = auxiliary;
+        stream(&nodes(vec![raw]))
+    };
+    let block_flags = CONSTRAINT_BLOCK_STATIC
+        | CONSTRAINT_BLOCK_PURE
+        | CONSTRAINT_BLOCK_EXTERN
+        | CONSTRAINT_BLOCK_EXPLICIT_EXTERN
+        | CONSTRAINT_BLOCK_INITIAL
+        | CONSTRAINT_BLOCK_EXTENDS
+        | CONSTRAINT_BLOCK_FINAL;
+    assert!(node(29, 0, block_flags).is_ok());
+    assert!(node(29, 0, CONSTRAINT_BLOCK_FINAL << 1).is_err());
+    assert!(node(30, SEMANTIC_CONSTRAINT_EXPRESSION, CONSTRAINT_SOFT).is_ok());
+    assert!(node(30, SEMANTIC_CONSTRAINT_LIST, CONSTRAINT_SOFT).is_err());
+    assert!(node(30, SEMANTIC_CONSTRAINT_EXPRESSION, CONSTRAINT_SOFT << 1).is_err());
+    for kind in 20..=22 {
+        assert!(node(kind, 76, CALL_CLASS_RANDOMIZE).is_ok(), "kind {kind}");
+        assert!(node(kind, 76, CALL_SCOPE_RANDOMIZE).is_ok(), "kind {kind}");
+        assert!(
+            node(kind, 76, CALL_CLASS_RANDOMIZE | CALL_SCOPE_RANDOMIZE).is_err(),
+            "kind {kind}"
+        );
+        assert!(
+            node(kind, 76, CALL_SCOPE_RANDOMIZE << 1).is_err(),
+            "kind {kind}"
+        );
+    }
 }

@@ -44,6 +44,7 @@ mod operands;
 pub(super) mod patterns;
 mod pure_calls;
 mod qualifiers;
+pub(super) mod randomize;
 mod references;
 mod repeated_values;
 mod runtime_tasks;

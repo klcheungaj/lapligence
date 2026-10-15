@@ -529,8 +529,12 @@ static void llg_pattern_object(llg_pattern_out_t* out, void* handle) {
     if (layout->count < count) count = layout->count;
     out->chain[out->depth++] = handle;
     llg_pattern_put(out, "'{", 2);
+    int first = 1;
     for (size_t i = 0; i < count && !out->truncated; ++i) {
-        if (i) llg_pattern_separator(out);
+        /* Hidden members (randomization mode bits) have no name. */
+        if (!layout->fields[i].name) continue;
+        if (!first) llg_pattern_separator(out);
+        first = 0;
         llg_pattern_label(out, layout->fields[i].name);
         llg_pattern_field(out, &layout->fields[i], g_pattern_field(handle, i));
     }

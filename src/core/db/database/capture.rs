@@ -280,6 +280,8 @@ impl Db {
         let mut var_lifetimes = HashMap::new();
         let mut var_lifetime_qualifiers = HashMap::new();
         let mut const_variables = HashSet::new();
+        let mut rand_qualifiers = HashMap::new();
+        let mut randomize_calls = HashMap::new();
         let mut method_calls_with_clause = HashSet::new();
         let mut method_call_iterators = HashMap::new();
         let mut packed_members = HashMap::new();
@@ -486,6 +488,27 @@ impl Db {
             if semantic.is_implicit_conversion() {
                 implicit_conversions.insert(id);
             }
+            if matches!(
+                semantic.kind,
+                SemanticKind::SystemCall | SemanticKind::MethodCall
+            ) {
+                let form = if semantic.auxiliary & crate::ffi::slang::CALL_CLASS_RANDOMIZE != 0 {
+                    Some(RandomizeForm::Class)
+                } else if semantic.auxiliary & crate::ffi::slang::CALL_SCOPE_RANDOMIZE != 0 {
+                    Some(RandomizeForm::Scope)
+                } else {
+                    None
+                };
+                if let Some(form) = form {
+                    randomize_calls.insert(
+                        id,
+                        RandomizeCall {
+                            form,
+                            inline: edge_target(&ids, edges, SemanticEdgeRole::Body)?,
+                        },
+                    );
+                }
+            }
             if semantic.kind == SemanticKind::MethodCall && semantic.method_with_clause() {
                 method_calls_with_clause.insert(id);
                 if let Some(iterator) = semantic.target_id() {
@@ -625,6 +648,11 @@ impl Db {
             {
                 if semantic.auxiliary & crate::ffi::slang::VARIABLE_CONST != 0 {
                     const_variables.insert(id);
+                }
+                if semantic.auxiliary & crate::ffi::slang::VARIABLE_RAND != 0 {
+                    rand_qualifiers.insert(id, RandQualifier::Rand);
+                } else if semantic.auxiliary & crate::ffi::slang::VARIABLE_RANDC != 0 {
+                    rand_qualifiers.insert(id, RandQualifier::RandC);
                 }
                 let resolved_lifetime =
                     match semantic.auxiliary & crate::ffi::slang::VARIABLE_LIFETIME_MASK {
@@ -1209,6 +1237,8 @@ impl Db {
             var_lifetimes,
             var_lifetime_qualifiers,
             const_variables,
+            rand_qualifiers,
+            randomize_calls,
             method_calls_with_clause,
             method_call_iterators,
             packed_members,
@@ -1374,5 +1404,118 @@ mod tests {
             db.variable_lifetime(named("local_c")),
             VariableLifetime::Automatic
         );
+    }
+
+    #[test]
+    fn rand_qualifiers_constraint_blocks_and_randomize_calls_are_typed() {
+        let source = "module top; class B; rand bit [7:0] a; randc bit [3:0] c; int s; \
+            static rand int sr; \
+            constraint ca { a < 10; if (s > 0) a != 3; else a != 4; (a == 1) -> c != 2; } \
+            constraint proto; static constraint sc { sr > 0; } \
+            function int go(); return randomize(); endfunction endclass \
+            constraint B::proto { a > 1; } \
+            class D extends B; constraint ca { a < 20; } endclass \
+            int x, y, ok; initial begin static D d = new; \
+            ok = d.randomize() with { a > x; }; ok = std::randomize(x, y) with { x < y; }; \
+            ok = d.randomize(null); end endmodule";
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "randomization.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let var = |name: &str| {
+            db.node_ids()
+                .find(|id| {
+                    matches!(db.node_kind(*id), NodeKind::Var { .. }) && db.node(*id).name == name
+                })
+                .unwrap_or_else(|| panic!("variable `{name}`"))
+        };
+        assert_eq!(db.rand_qualifier(var("a")), RandQualifier::Rand);
+        assert_eq!(db.rand_qualifier(var("c")), RandQualifier::RandC);
+        assert_eq!(db.rand_qualifier(var("sr")), RandQualifier::Rand);
+        assert_eq!(db.rand_qualifier(var("s")), RandQualifier::None);
+        assert_eq!(db.rand_qualifier(var("x")), RandQualifier::None);
+
+        let blocks = db
+            .node_ids()
+            .filter_map(|id| match db.node_kind(id) {
+                NodeKind::ConstraintBlock(info) => Some((db.node(id).name.clone(), *info)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let block = |name: &str, nth: usize| {
+            blocks
+                .iter()
+                .filter(|(block, _)| block == name)
+                .nth(nth)
+                .map(|(_, info)| *info)
+                .unwrap_or_else(|| panic!("constraint block `{name}`"))
+        };
+        assert_eq!(blocks.iter().filter(|(name, _)| name == "ca").count(), 2);
+        let ca = block("ca", 0);
+        assert!(!ca.is_static && !ca.is_extern && !ca.is_pure);
+        let proto = block("proto", 0);
+        assert!(proto.is_extern && !proto.explicit_extern);
+        assert!(block("sc", 0).is_static);
+        // The external body is bound to the prototype.
+        let NodeKind::Constraint(ConstraintKind::List { items }) =
+            db.node_kind(proto.body.expect("external body"))
+        else {
+            panic!("prototype body is a constraint list");
+        };
+        assert_eq!(items.len(), 1);
+        let NodeKind::Constraint(ConstraintKind::List { items }) =
+            db.node_kind(ca.body.expect("ca body"))
+        else {
+            panic!("ca body is a constraint list");
+        };
+        assert!(matches!(
+            db.node_kind(items[0]),
+            NodeKind::Constraint(ConstraintKind::Expr { soft: false, .. })
+        ));
+        let NodeKind::Constraint(ConstraintKind::Conditional {
+            predicate,
+            else_body: Some(_),
+            ..
+        }) = db.node_kind(items[1])
+        else {
+            panic!("if/else constraint");
+        };
+        assert!(matches!(db.node_kind(*predicate), NodeKind::Expr(_)));
+        assert!(matches!(
+            db.node_kind(items[2]),
+            NodeKind::Constraint(ConstraintKind::Implication { .. })
+        ));
+
+        let calls = db
+            .node_ids()
+            .filter_map(|id| db.randomize_call(id).map(|call| (id, *call)))
+            .collect::<Vec<_>>();
+        assert_eq!(calls.len(), 4);
+        let forms = calls.iter().map(|(_, call)| call.form).collect::<Vec<_>>();
+        assert_eq!(
+            forms
+                .iter()
+                .filter(|form| **form == RandomizeForm::Scope)
+                .count(),
+            1
+        );
+        let with_inline = calls
+            .iter()
+            .filter(|(_, call)| call.inline.is_some())
+            .count();
+        assert_eq!(with_inline, 2);
+        // The method's own randomize() is the class form without a receiver.
+        assert!(calls.iter().any(|(id, call)| {
+            call.form == RandomizeForm::Class
+                && matches!(db.node_kind(*id), NodeKind::SysCall { .. })
+        }));
     }
 }

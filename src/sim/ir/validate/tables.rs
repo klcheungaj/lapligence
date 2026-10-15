@@ -12,6 +12,10 @@ impl Validator<'_> {
             self.validate_udp_table(table, &format!("udp_tables[{idx}]"))?;
         }
 
+        for (idx, problem) in self.model.rand_problems.iter().enumerate() {
+            problem.validate(&format!("rand_problems[{idx}]"))?;
+        }
+
         for (idx, object) in self.model.vpi_objects.iter().enumerate() {
             let path = format!("vpi_objects[{idx}]");
             if object.full_name.is_empty() || object.name.is_empty() {

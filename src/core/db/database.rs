@@ -45,6 +45,11 @@ pub use types::{
     TypeId, TypeShape, ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics,
     ValueEqualitySemantics,
 };
+mod constraints;
+use constraints::{constraint_block_from_slang, constraint_from_slang};
+pub use constraints::{
+    ConstraintBlockInfo, ConstraintKind, RandQualifier, RandomizeCall, RandomizeForm,
+};
 mod nodes;
 pub use nodes::{
     CaseItem, GateTerm, Node, NodeKind, PatternCaseItem, PrimClass, ProcessKind, RandCaseItem,
@@ -245,6 +250,10 @@ pub struct Db {
     var_lifetime_qualifiers: HashMap<NodeId, VariableLifetimeQualifier>,
     /// Variables and class properties declared `const` (SV 6.20.6).
     const_variables: HashSet<NodeId>,
+    /// Class properties declared `rand` or `randc` (IEEE 1800-2009 18.4).
+    rand_qualifiers: HashMap<NodeId, RandQualifier>,
+    /// Randomize calls (18.6.1, 18.12) and their inline constraint blocks.
+    randomize_calls: HashMap<NodeId, RandomizeCall>,
     method_calls_with_clause: HashSet<NodeId>,
     /// Method-call node → the frontend-owned iterator declaration used by its
     /// `with` expression.  Slang visits the expression itself as a structural
@@ -355,6 +364,8 @@ impl Db {
             var_lifetimes: HashMap::new(),
             var_lifetime_qualifiers: HashMap::new(),
             const_variables: HashSet::new(),
+            rand_qualifiers: HashMap::new(),
+            randomize_calls: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
             method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
@@ -429,6 +440,8 @@ impl Db {
             var_lifetimes: HashMap::new(),
             var_lifetime_qualifiers: HashMap::new(),
             const_variables: HashSet::new(),
+            rand_qualifiers: HashMap::new(),
+            randomize_calls: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
             method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
@@ -831,6 +844,23 @@ impl Db {
     /// method that modifies its value.
     pub fn is_const_variable(&self, id: NodeId) -> bool {
         self.const_variables.contains(&id)
+    }
+
+    /// Random qualifier of a class property (IEEE 1800-2009 18.4).
+    pub fn rand_qualifier(&self, id: NodeId) -> RandQualifier {
+        self.rand_qualifiers
+            .get(&id)
+            .copied()
+            .unwrap_or(RandQualifier::None)
+    }
+
+    pub(crate) fn randomize_call_entries(&self) -> impl Iterator<Item = (&NodeId, &RandomizeCall)> {
+        self.randomize_calls.iter()
+    }
+
+    /// The randomize form and inline constraints of a randomize call node.
+    pub fn randomize_call(&self, id: NodeId) -> Option<&RandomizeCall> {
+        self.randomize_calls.get(&id)
     }
 
     pub fn variable_lifetime_qualifier(&self, id: NodeId) -> VariableLifetimeQualifier {

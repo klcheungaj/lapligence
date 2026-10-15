@@ -1033,6 +1033,7 @@ fn render_model(
     render_class_decls(model, &mut out);
     out.push_str(&super::owned::patterns::pattern_tables(model));
     super::owned::udp::tables(model, &mut out);
+    super::owned::randomize::tables(model, &mut out);
     render_signal_decls(model, &mut out);
     render_vpi_metadata(model, &mut out);
     render_vpi_compile_calls(model, &mut out);

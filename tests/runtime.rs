@@ -11,6 +11,7 @@ mod c_compiler;
 mod sim_harness;
 
 mod runtime_boundaries;
+mod runtime_constraints;
 mod runtime_containers;
 mod runtime_coroutine_library;
 mod runtime_file_io;

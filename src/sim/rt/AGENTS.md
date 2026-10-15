@@ -92,6 +92,13 @@ when creating a child, not when operating on an existing child. Static processes
 and objects built by static handle initializers seed from their instance's
 initialization stream; keep the `LLG_RNG_V1` state
 text versioned and pointer-free (see readme "Random streams").
+The constraint solver (`llg_constraint.c`, [readme](constraints/readme.md))
+stays independent of every other runtime module: 2-state words in and out,
+draws through a callback, no floating point or pointer-ordered decisions.
+Keep its BDD recursion bounded by `LLG_RAND_BDD_BITS`, the CDCL fallback
+iterative and used only after BDD and rejection fail (it is not uniform,
+S29-D10), every budget a named tunable, and verification on the word-level evaluator, separate from the
+bit-blasted engines. Only `scheduler/randomize.c` converts packed values.
 
 Strings clone reads, consume expression operands and replace/update mutations.
 Stable callback markers belong only to persistent storage; unchanged writes do

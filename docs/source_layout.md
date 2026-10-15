@@ -17,7 +17,8 @@ signal, not a reason to cut an algorithm or introduce a generic helper module.
 | [`lowering/expressions.rs`](../src/sim/codegen/lowering/expressions.rs) | [`expressions/`](../src/sim/codegen/lowering/expressions/): dispatch, operations, casts, aggregates, streaming, membership, array queries, system functions, external input | Expression metadata and typed conversions are decided during lowering. |
 | [`lowering/containers.rs`](../src/sim/codegen/lowering/containers.rs) | [`containers/`](../src/sim/codegen/lowering/containers/): initialization, patterns, indexing, queries, fixed arrays, streaming, assignments, methods, callbacks | Container operations preserve typed storage and existing alias/callback contracts. |
 | [`lowering/objects.rs`](../src/sim/codegen/lowering/objects.rs) | [`objects/`](../src/sim/codegen/lowering/objects/): classification, initialization, classes, virtual interfaces, mailboxes, processes, enumerations, handles, strings, queries, assignments, methods | Non-integral values remain distinct from packed-bit storage. |
-| [`sim/ir.rs`](../src/sim/ir.rs) | [`ir/`](../src/sim/ir/): constants, expressions, lvalues, calls, statements, events, assertions, processes, functions, initialization, storage, VPI, containers and objects | The facade retains `IrModel` and re-exports the existing typed operation API. |
+| [`lowering/randomization.rs`](../src/sim/codegen/lowering/randomization.rs) | [`randomization/`](../src/sim/codegen/lowering/randomization/): sites (class, inline and scope randomize, hooks, solver feeding), problems (constraint expressions to solver nodes), modes (`rand_mode`/`constraint_mode` bits) | One `IrRandProblem` per call site and dynamic class case; random variables are placeholders while constraints lower, so constraint semantics reuse ordinary expression lowering. |
+| [`sim/ir.rs`](../src/sim/ir.rs) | [`ir/`](../src/sim/ir/): constants, expressions, lvalues, calls, statements, events, assertions, processes, functions, initialization, storage, VPI, randomize problems, containers and objects | The facade retains `IrModel` and re-exports the existing typed operation API. |
 | [`sim/execution.rs`](../src/sim/execution.rs) | [`execution/analysis.rs`](../src/sim/execution/analysis.rs): coroutine membership, suspendable call graph, call-site anchoring and resume numbering | `ExecutionModel` owns executable blocks, validated effect summaries and the deterministic stackless-emission side table. |
 | [`ir/validate.rs`](../src/sim/ir/validate.rs) | [`validate/`](../src/sim/ir/validate/): tables, dependencies, values, expressions, calls, lvalues, events, statements, initialization, file input | Validation shares its original model/context owner and runs at the same pipeline boundaries. |
 | [`sim/opt/passes.rs`](../src/sim/opt/passes.rs) | [`passes/`](../src/sim/opt/passes/): constants, traversal, folding, identities, control flow, storage | Passes transform typed IR without recomputing wake behavior or changing scheduling ownership. |
@@ -53,6 +54,11 @@ fragments of one translation unit each**, not independently linked modules:
   [`llg_container_prelude.c`](../src/sim/rt/llg_container_prelude.c) and
   [`container/`](../src/sim/rt/container/) domains for value descriptors,
   dynamic arrays, queues, pinned queue references and associative arrays.
+- [`llg_constraint.c`](../src/sim/rt/llg_constraint.c) includes the
+  [`constraints/`](../src/sim/rt/constraints/) solver fragments (classification,
+  bit-blasting, exact BDD counting and sampling, CDCL search fallback,
+  layered solving) behind
+  `randomize()`; it depends on no other runtime module.
 
 The standalone compact value backend in
 [`value_gmp/`](../src/sim/rt/value_gmp/) has its own header and separately compiled

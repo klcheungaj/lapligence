@@ -644,6 +644,32 @@ staged through locals declared in an `IrExprKind::Sequence`. The staged value is
 stored only when the call's result exceeds that destination's ordinal.
 Unpacked aggregates other than 1-D byte arrays reject before C generation.
 
+## Constrained randomization
+
+`randomization/` lowers `randomize()`, `std::randomize()` and the mode methods
+(IEEE 1800-2009 clause 18; scope and decisions S29-D1..D10 in
+[docs/lrm_decisions.md](../../../docs/lrm_decisions.md)). Each call site and
+dynamic class case owns one static `IrRandProblem`; constraint expressions are
+lowered by the ordinary expression path while `RandLowering` maps every random
+variable to a `_llg_randvar_<k>` placeholder (`lower_expr`, `class_field_cell`,
+receiver and `this` hooks), and `ProblemBuilder` turns the placeholder-bearing
+IR into solver nodes. Subtrees without placeholders become state leaves read
+once before the solve; logical operators keep their structure so guards
+(18.5.12) can suppress an erroring leaf. Never let a constraint read random
+storage directly: `check_direct_reads` is the backstop, and a constraint a
+problem cannot express is a located error, never silently dropped.
+
+`rand_mode`/`constraint_mode` state is hidden one-bit two-state storage per
+random property and per root constraint block (overriding blocks share the
+root's bit; static members use a static signal), invisible to `%p`. The
+dynamic class is resolved through `DynamicCast` cases, most derived first; the
+most-derived user `pre_randomize`/`post_randomize` (declared line != 0) runs
+before modes and state are read and after the commit. A value-form randomize
+is hoisted into `rand_prelude` only where it runs exactly once per statement
+evaluation; short-circuit/conditional operands and loop conditions reject.
+Commit writes only after a successful solve, so a failed call leaves every
+variable unchanged (18.6.3).
+
 ## Time, output and native services
 
 Use the owned units/precision of the nearest module instance, package, `$unit` or

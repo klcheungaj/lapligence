@@ -551,6 +551,21 @@ impl Codegen<'_> {
                 ));
             }
         }
+        // Hidden randomization mode bits (18.8, 18.9) are not properties.
+        let hidden = if self.rand_mode_bits.is_empty() && self.constraint_mode_bits.is_empty() {
+            None
+        } else {
+            Some(self.intern_pattern_type(IrPatternType::Packed {
+                width: 1,
+                signed: false,
+                enum_members: Vec::new(),
+            }))
+        };
+        if let Some(ty) = hidden {
+            for (class_index, entries) in own.iter_mut().enumerate() {
+                entries.extend(self.hidden_pattern_fields(class_index, ty));
+            }
+        }
         for index in 0..classes.len() {
             self.pattern_class_layout(index, &mut own, &mut classes)?;
         }
