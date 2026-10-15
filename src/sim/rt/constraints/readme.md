@@ -160,6 +160,17 @@ Components without dist, randc or solve-before skip the layer plan, so
 SIM-029 problems pay nothing for the layered engine. The CDCL
 search keeps nothing between calls: it re-encodes the component each time.
 
+A solve's working memory (reachability and cone marks, conjunct and support
+lists, union-find and bucket arrays, the cache key, sampling temporaries)
+lives in the session and is reused by every call, so a call that hits the
+exact cache allocates nothing. Without calls to constraint functions the
+18.5.11 pass is skipped and each conjunct's support is computed once. The
+BDD manager's buffers (`bdd.c`) are pooled across builds, up to
+`CR_BDD_POOL_KEEP_BYTES` (2 MiB); larger ones are freed. A rebuild on every
+call (state that changes per call) would otherwise allocate and free about
+200 KiB each time, which the C library may return to the system and fault in
+again. None of this changes which values are drawn.
+
 ## Determinism
 
 No floating point, pointer ordering or host word size affects a decision.

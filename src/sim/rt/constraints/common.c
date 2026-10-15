@@ -123,6 +123,24 @@ enum { CR_K = 0, CR_R = 1, CR_E = 2, CR_SKIP = 3 };
 typedef struct cr_cache_entry cr_cache_entry_t;
 typedef struct cr_tpl cr_tpl_t;
 
+/* Working memory of one solve, owned by the session and reused by every
+ * call, so a solve that hits the exact cache allocates nothing. Nothing in
+ * it outlives one llg_cr_step. */
+typedef struct {
+    uint8_t* reach;             /* per node: reachable from an enabled root */
+    uint8_t* in_cone;           /* per node: in the current component's cone;
+                                 * all zero between components */
+    uint8_t* var_flags;         /* 3 x vars: has_pred, in_p, in_layer */
+    uint32_t* var_words;        /* 4 x (vars + 1): uf, bucket, conj_bucket, fill */
+    cr_u32vec_t conj, stack, support, calls, layer_conj, comp_vars, comp_conj, conj_rep;
+    cr_u32vec_t comp_stack;     /* cr_solve_component's traversal stack */
+    cr_u64vec_t key;            /* exact-cache key of the current component */
+    uint8_t* bits;              /* sampled level values */
+    size_t bits_cap;
+    uint64_t* limbs;            /* sampling big-integer temporaries */
+    size_t limbs_cap;
+} cr_scratch_t;
+
 struct llg_cr_session {
     const llg_cr_problem_t* p;
     llg_cr_session_t* next_session;
@@ -177,6 +195,7 @@ struct llg_cr_session {
     cr_cache_entry_t* cache;
     uint32_t cache_count;       /* slots used so far (they fill in order) */
     uint64_t cache_clock;       /* LRU stamp source */
+    cr_scratch_t scratch;
 };
 
 static llg_cr_session_t* cr_all_sessions;

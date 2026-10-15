@@ -202,7 +202,20 @@ static llg_cr_session_t* cr_session_new(const llg_cr_problem_t* p) {
     }
     s->cyc = (uint64_t*)cr_alloc(words ? words : 1u, sizeof(uint64_t));
     s->node_hash = (uint64_t*)cr_alloc(nodes, sizeof(uint64_t));
+    s->scratch.reach = (uint8_t*)cr_alloc(nodes, 1u);
+    s->scratch.in_cone = (uint8_t*)cr_alloc(nodes, 1u);
+    s->scratch.var_flags = (uint8_t*)cr_alloc(3u * (size_t)vars, 1u);
+    s->scratch.var_words = (uint32_t*)cr_alloc(4u * ((size_t)vars + 1u), sizeof(uint32_t));
     return s;
+}
+
+static void cr_scratch_free(cr_scratch_t* x) {
+    free(x->reach); free(x->in_cone); free(x->var_flags); free(x->var_words);
+    free(x->conj.data); free(x->stack.data); free(x->support.data); free(x->calls.data);
+    free(x->layer_conj.data); free(x->comp_vars.data); free(x->comp_conj.data);
+    free(x->conj_rep.data); free(x->comp_stack.data); free(x->key.data);
+    free(x->bits); free(x->limbs);
+    memset(x, 0, sizeof(*x));
 }
 
 llg_cr_session_t* llg_cr_session_get(const llg_cr_problem_t* p, llg_cr_session_t** slot) {
@@ -231,6 +244,7 @@ static void cr_session_free(llg_cr_session_t* s) {
         cr_layout_free(&e->layout);
     }
     free(s->cache);
+    cr_scratch_free(&s->scratch);
     free(s->cyc_off);
     free(s->cyc);
     free(s->node_hash);
@@ -251,6 +265,7 @@ void llg_cr_session_release_all(void) {
         cr_session_free(cr_all_sessions);
         cr_all_sessions = next;
     }
+    cr_bdd_pool_release();
 }
 
 void llg_cr_set_var(llg_cr_session_t* s, uint32_t var, const uint64_t* words,
@@ -531,11 +546,16 @@ static cr_cache_entry_t* cr_cache_slot(llg_cr_session_t* s) {
     return e;
 }
 
-static void cr_remember_failure(llg_cr_session_t* s, cr_u64vec_t* key) {
+/* A cache entry's own copy of `key` (the scratch key is reused). */
+static void cr_cache_set_key(cr_cache_entry_t* e, const cr_u64vec_t* key) {
+    e->key.data = (uint64_t*)cr_alloc(key->len ? key->len : 1u, sizeof(uint64_t));
+    if (key->len) memcpy(e->key.data, key->data, key->len * sizeof(uint64_t));
+    e->key.len = e->key.cap = key->len;
+}
+
+static void cr_remember_failure(llg_cr_session_t* s, const cr_u64vec_t* key) {
     cr_cache_entry_t* e = cr_cache_slot(s);
-    e->key = *key;
-    key->data = NULL;
-    key->len = key->cap = 0;
+    cr_cache_set_key(e, key);
     e->failed = 1;
 }
 
@@ -548,10 +568,11 @@ static void cr_assign_from_levels(llg_cr_session_t* s, const uint8_t* bits, uint
 
 static void cr_sample_exact(cr_solve_t* st, const cr_exact_t* e, const uint32_t* level_var,
                             const uint32_t* level_bit) {
-    uint8_t* bits = (uint8_t*)cr_alloc(e->levels ? e->levels : 1u, 1u);
-    cr_exact_sample(e, st->rng, bits);
-    cr_assign_from_levels(st->s, bits, e->levels, level_var, level_bit);
-    free(bits);
+    cr_scratch_t* x = &st->s->scratch;
+    x->bits = (uint8_t*)cr_grow(x->bits, &x->bits_cap, e->levels ? e->levels : 1u, 1u);
+    x->limbs = (uint64_t*)cr_grow(x->limbs, &x->limbs_cap, 3u * (size_t)e->limbs, sizeof(uint64_t));
+    cr_exact_sample(e, st->rng, x->bits, x->limbs);
+    cr_assign_from_levels(st->s, x->bits, e->levels, level_var, level_bit);
 }
 
 /* Evaluate the cone with the candidate values in `sol`: the component's
@@ -587,6 +608,7 @@ typedef struct {
 } cr_plan_t;
 
 static void cr_plan_free(cr_plan_t* plan) {
+    if (!plan->layer && !plan->cyclic && !plan->dists.data && !plan->dist_layer) return;
     free(plan->layer);
     free(plan->cyclic);
     free(plan->dists.data);
@@ -1189,15 +1211,14 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
     st->components++;
     uint64_t bits = 0;
     for (uint32_t i = 0; i < nvars; ++i) bits += p->vars[vars[i]].bit_width;
-    uint8_t* in_cone = (uint8_t*)cr_alloc(p->node_count ? p->node_count : 1u, 1u);
-    cr_u32vec_t stack = {0, 0, 0};
-    cr_mark_cone(s, conj, ncon, in_cone, &stack);
+    uint8_t* in_cone = s->scratch.in_cone;
+    cr_u32vec_t* stack = &s->scratch.comp_stack;
+    cr_mark_cone(s, conj, ncon, in_cone, stack);
     cr_plan_t plan;
     llg_cr_status_t result = cr_plan_build(st, &plan, vars, nvars, in_cone);
     if (result != LLG_CR_OK) {
         cr_plan_free(&plan);
-        free(stack.data);
-        free(in_cone);
+        memset(in_cone, 0, p->node_count);
         return result;
     }
     int cyclic = 0;
@@ -1209,15 +1230,15 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
     memset(&aig, 0, sizeof(aig));
 
     if (bits + plan.selectors <= st->t->bdd_bits) {
-        cr_u64vec_t key = {0, 0, 0};
-        cr_cache_key(s, conj, ncon, vars, nvars, in_cone, &key, &stack);
+        cr_u64vec_t* key = &s->scratch.key;
+        cr_cache_key(s, conj, ncon, vars, nvars, in_cone, key, stack);
         if (plan.layered)
-            for (uint32_t i = 0; i < nvars; ++i) cr_u64_push(&key, ((uint64_t)1 << 63) | plan.layer[vars[i]]);
+            for (uint32_t i = 0; i < nvars; ++i) cr_u64_push(key, ((uint64_t)1 << 63) | plan.layer[vars[i]]);
         int known_failure = 0;
         for (uint32_t i = 0; i < s->cache_count && !done && !known_failure; ++i) {
             cr_cache_entry_t* e = &s->cache[i];
-            if (!e->used || e->key.len != key.len ||
-                memcmp(e->key.data, key.data, key.len * sizeof(uint64_t)) != 0)
+            if (!e->used || e->key.len != key->len ||
+                memcmp(e->key.data, key->data, key->len * sizeof(uint64_t)) != 0)
                 continue;
             e->used = ++s->cache_clock;
             if (e->failed) {
@@ -1240,7 +1261,7 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
         if (!done && !known_failure) {
             cr_comp_aig_build(st, &aig, vars, nvars, conj, ncon, in_cone, &plan);
             if (aig.overflow) {
-                cr_remember_failure(s, &key);
+                cr_remember_failure(s, key);
                 if (!st->budget) st->budget = "LLG_RAND_BDD_NODES";
             } else if (aig.out == CR_FALSE) {
                 result = LLG_CR_UNSAT;
@@ -1277,9 +1298,7 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
                         result = LLG_CR_UNSAT;
                     } else {
                         cr_cache_entry_t* e = cr_cache_slot(s);
-                        e->key = key;
-                        key.data = NULL;
-                        key.len = key.cap = 0;
+                        cr_cache_set_key(e, key);
                         cr_exact_build(&e->exact, &m, roots, root_count);
                         /* The entry keeps copies of the level maps. */
                         e->level_var = (uint32_t*)cr_alloc(aig.levels ? aig.levels : 1u, sizeof(uint32_t));
@@ -1299,14 +1318,13 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
                     st->report->engines |= LLG_CR_ENGINE_BDD;
                     done = 1;
                 } else {
-                    cr_remember_failure(s, &key);
+                    cr_remember_failure(s, key);
                     if (!st->budget) st->budget = "LLG_RAND_BDD_NODES";
                 }
                 free(roots);
                 cr_bdd_free(&m);
             }
         }
-        free(key.data);
     } else if (!st->budget) {
         st->budget = "LLG_RAND_BDD_BITS";
     }
@@ -1364,10 +1382,9 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
             free(model);
         }
     }
-    cr_comp_aig_free(&aig);
+    if (aig.built) cr_comp_aig_free(&aig);
     cr_plan_free(&plan);
-    free(stack.data);
-    free(in_cone);
+    memset(in_cone, 0, p->node_count);
     return result;
 }
 
@@ -1391,21 +1408,20 @@ static void cr_flatten(llg_cr_session_t* s, uint32_t root, cr_u32vec_t* conj, cr
     }
 }
 
-static void cr_mark_reachable(llg_cr_session_t* s, uint8_t* reach) {
+static void cr_mark_reachable(llg_cr_session_t* s, uint8_t* reach, cr_u32vec_t* stack) {
     const llg_cr_problem_t* p = s->p;
-    cr_u32vec_t stack = {0, 0, 0};
+    stack->len = 0;
     for (uint32_t b = 0; b < p->block_count; ++b)
-        if (s->block_enabled[b]) cr_u32_push(&stack, p->blocks[b].root);
+        if (s->block_enabled[b]) cr_u32_push(stack, p->blocks[b].root);
     for (uint32_t v = 0; v < p->var_count; ++v)
         if (s->var_active[v] && p->vars[v].domain_node != LLG_CR_NONE)
-            cr_u32_push(&stack, p->vars[v].domain_node);
-    while (stack.len) {
-        uint32_t n = stack.data[--stack.len];
+            cr_u32_push(stack, p->vars[v].domain_node);
+    while (stack->len) {
+        uint32_t n = stack->data[--stack->len];
         if (reach[n]) continue;
         reach[n] = 1;
-        cr_push_operands(p, n, &stack);
+        cr_push_operands(p, n, stack);
     }
-    free(stack.data);
 }
 
 /* Gather the root items. Returns OK, UNSAT or ERROR. */
@@ -1527,9 +1543,9 @@ llg_cr_status_t llg_cr_step(llg_cr_session_t* s, const llg_cr_rng_t* rng,
     st.t = llg_cr_tunables();
     llg_cr_status_t status = cr_order_heights(&st);
     if (status == LLG_CR_OK) {
-        uint8_t* reach = (uint8_t*)cr_alloc(s->p->node_count ? s->p->node_count : 1u, 1u);
+        uint8_t* reach = s->scratch.reach;
+        memset(reach, 0, s->p->node_count);
         status = cr_solve_inner(&st, reach);
-        free(reach);
     }
     free(st.height);
     s->engines = report->engines;
@@ -1596,17 +1612,24 @@ llg_cr_status_t llg_cr_solve(llg_cr_session_t* s, const llg_cr_rng_t* rng, llg_c
 static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach) {
     llg_cr_session_t* s = st->s;
     const llg_cr_problem_t* p = s->p;
-    cr_mark_reachable(s, reach);
+    cr_scratch_t* x = &s->scratch;
+    cr_u32vec_t* conj = &x->conj;
+    cr_u32vec_t* stack = &x->stack;
+    cr_u32vec_t* support = &x->support;
+    cr_u32vec_t* calls = &x->calls;
+    cr_u32vec_t* layer_conj = &x->layer_conj;
+    cr_u32vec_t* comp_vars = &x->comp_vars;
+    cr_u32vec_t* comp_conj = &x->comp_conj;
+    cr_mark_reachable(s, reach, stack);
 
-    cr_u32vec_t conj = {0, 0, 0}, stack = {0, 0, 0}, support = {0, 0, 0}, calls = {0, 0, 0};
-    cr_u32vec_t layer_conj = {0, 0, 0}, comp_vars = {0, 0, 0}, comp_conj = {0, 0, 0};
     uint32_t vars = p->var_count ? p->var_count : 1u;
-    uint8_t* has_pred = (uint8_t*)cr_alloc(vars, 1u);
-    uint8_t* in_p = (uint8_t*)cr_alloc(vars, 1u);
-    uint8_t* in_layer = (uint8_t*)cr_alloc(vars, 1u);
-    uint32_t* uf = (uint32_t*)cr_alloc(vars, sizeof(uint32_t));
-    uint32_t* conj_rep = NULL;
-    size_t conj_rep_cap = 0;
+    uint8_t* has_pred = x->var_flags;
+    uint8_t* in_p = x->var_flags + vars;
+    uint8_t* in_layer = x->var_flags + 2u * (size_t)vars;
+    uint32_t* uf = x->var_words;
+    uint32_t* bucket = x->var_words + ((size_t)vars + 1u);
+    uint32_t* conj_bucket = x->var_words + 2u * ((size_t)vars + 1u);
+    uint32_t* fill = x->var_words + 3u * ((size_t)vars + 1u);
     llg_cr_status_t status = LLG_CR_OK;
 
     for (;;) {
@@ -1616,35 +1639,38 @@ static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach) {
             status = LLG_CR_NEED_CALLS;
             break;
         }
-        status = cr_roots(st, &conj, &stack);
+        status = cr_roots(st, conj, stack);
         if (status != LLG_CR_OK) break;
 
-        /* Function-argument priorities (18.5.11). */
-        memset(has_pred, 0, vars);
-        memset(in_p, 0, vars);
+        /* Function-argument priorities (18.5.11); a problem without calls
+         * has none. */
         int pending = 0;
-        for (size_t k = 0; k < conj.len; ++k) {
-            calls.len = 0;
-            support.len = 0;
-            cr_support(s, conj.data[k], 0, &support, &calls, &stack);
+        if (p->call_count) {
+            memset(has_pred, 0, vars);
+            memset(in_p, 0, vars);
+        }
+        for (size_t k = 0; k < conj->len && p->call_count; ++k) {
+            calls->len = 0;
+            support->len = 0;
+            cr_support(s, conj->data[k], 0, support, calls, stack);
             /* Each pending call (and nested ones) orders its argument
              * variables before the variables that use its result. */
-            for (size_t ci = 0; ci < calls.len; ++ci) {
-                uint32_t call_node = calls.data[ci];
+            for (size_t ci = 0; ci < calls->len; ++ci) {
+                uint32_t call_node = calls->data[ci];
                 pending = 1;
-                for (size_t i = 0; i < support.len; ++i) has_pred[support.data[i]] = 1;
+                for (size_t i = 0; i < support->len; ++i) has_pred[support->data[i]] = 1;
                 cr_u32vec_t args_direct = {0, 0, 0}, args_all = {0, 0, 0}, nested = {0, 0, 0};
                 cr_u32vec_t sub = {0, 0, 0};
                 cr_push_operands(p, call_node, &sub);
                 for (size_t ai = 0; ai < sub.len; ++ai) {
-                    cr_support(s, sub.data[ai], 1, &args_all, NULL, &stack);
-                    cr_support(s, sub.data[ai], 0, &args_direct, &nested, &stack);
+                    cr_support(s, sub.data[ai], 1, &args_all, NULL, stack);
+                    cr_support(s, sub.data[ai], 0, &args_direct, &nested, stack);
                 }
                 for (size_t i = 0; i < args_all.len; ++i) in_p[args_all.data[i]] = 1;
                 if (nested.len)
                     for (size_t i = 0; i < args_direct.len; ++i) has_pred[args_direct.data[i]] = 1;
                 /* Nested calls are revisited as their own pending calls. */
-                for (size_t ni = 0; ni < nested.len; ++ni) cr_u32_push(&calls, nested.data[ni]);
+                for (size_t ni = 0; ni < nested.len; ++ni) cr_u32_push(calls, nested.data[ni]);
                 free(args_direct.data);
                 free(args_all.data);
                 free(nested.data);
@@ -1669,28 +1695,36 @@ static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach) {
             }
         }
 
-        /* Conjuncts of this layer: no pending call, support inside it. */
-        layer_conj.len = 0;
-        for (size_t k = 0; k < conj.len; ++k) {
-            calls.len = 0;
-            support.len = 0;
-            cr_support(s, conj.data[k], 0, &support, &calls, &stack);
-            if (calls.len) continue;
-            int inside = 1;
-            for (size_t i = 0; i < support.len; ++i)
-                if (!in_layer[support.data[i]]) { inside = 0; break; }
-            if (inside) cr_u32_push(&layer_conj, conj.data[k]);
+        /* Conjuncts of this layer: no pending call, support inside it.
+         * Without pending calls that is every conjunct: an R variable is
+         * active and not fixed, which is exactly the layer. */
+        const cr_u32vec_t* lconj = conj;
+        if (pending) {
+            layer_conj->len = 0;
+            for (size_t k = 0; k < conj->len; ++k) {
+                calls->len = 0;
+                support->len = 0;
+                cr_support(s, conj->data[k], 0, support, calls, stack);
+                if (calls->len) continue;
+                int inside = 1;
+                for (size_t i = 0; i < support->len; ++i)
+                    if (!in_layer[support->data[i]]) { inside = 0; break; }
+                if (inside) cr_u32_push(layer_conj, conj->data[k]);
+            }
+            lconj = layer_conj;
         }
 
         /* Components by union-find over conjunct supports. */
         for (uint32_t v = 0; v < p->var_count; ++v) uf[v] = v;
-        conj_rep = (uint32_t*)cr_grow(conj_rep, &conj_rep_cap, layer_conj.len + 1u, sizeof(uint32_t));
-        for (size_t k = 0; k < layer_conj.len; ++k) {
-            support.len = 0;
-            cr_support(s, layer_conj.data[k], 0, &support, NULL, &stack);
+        x->conj_rep.data = (uint32_t*)cr_grow(x->conj_rep.data, &x->conj_rep.cap, lconj->len + 1u,
+                                              sizeof(uint32_t));
+        uint32_t* conj_rep = x->conj_rep.data;
+        for (size_t k = 0; k < lconj->len; ++k) {
+            support->len = 0;
+            cr_support(s, lconj->data[k], 0, support, NULL, stack);
             uint32_t first = UINT32_MAX;
-            for (size_t i = 0; i < support.len; ++i) {
-                uint32_t v = support.data[i];
+            for (size_t i = 0; i < support->len; ++i) {
+                uint32_t v = support->data[i];
                 while (uf[v] != v) v = uf[v] = uf[uf[v]];
                 if (first == UINT32_MAX) first = v;
                 else if (v != first) {
@@ -1701,7 +1735,7 @@ static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach) {
             if (first == UINT32_MAX) cr_fatal("random constraint without variables");
             conj_rep[k] = first;
         }
-        for (size_t k = 0; k < layer_conj.len; ++k) {
+        for (size_t k = 0; k < lconj->len; ++k) {
             uint32_t v = conj_rep[k];
             while (uf[v] != v) v = uf[v];
             conj_rep[k] = v;
@@ -1709,8 +1743,8 @@ static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach) {
 
         /* Bucket variables and conjuncts by component (representative = the
          * smallest variable index), then solve components in that order. */
-        uint32_t* bucket = (uint32_t*)cr_alloc((size_t)vars + 1u, sizeof(uint32_t));
-        uint32_t* conj_bucket = (uint32_t*)cr_alloc((size_t)vars + 1u, sizeof(uint32_t));
+        memset(bucket, 0, ((size_t)vars + 1u) * sizeof(uint32_t));
+        memset(conj_bucket, 0, ((size_t)vars + 1u) * sizeof(uint32_t));
         for (uint32_t v = 0; v < p->var_count; ++v) {
             if (!in_layer[v]) continue;
             uint32_t r = v;
@@ -1718,31 +1752,27 @@ static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach) {
             uf[v] = r;
             bucket[r + 1u]++;
         }
-        for (size_t k = 0; k < layer_conj.len; ++k) conj_bucket[conj_rep[k] + 1u]++;
+        for (size_t k = 0; k < lconj->len; ++k) conj_bucket[conj_rep[k] + 1u]++;
         for (uint32_t v = 0; v < p->var_count; ++v) {
             bucket[v + 1u] += bucket[v];
             conj_bucket[v + 1u] += conj_bucket[v];
         }
-        comp_vars.len = 0;
-        comp_vars.data = (uint32_t*)cr_grow(comp_vars.data, &comp_vars.cap, layer_vars + 1u, sizeof(uint32_t));
-        comp_conj.data = (uint32_t*)cr_grow(comp_conj.data, &comp_conj.cap, layer_conj.len + 1u, sizeof(uint32_t));
-        {
-            uint32_t* fill = (uint32_t*)cr_alloc((size_t)vars + 1u, sizeof(uint32_t));
-            memcpy(fill, bucket, ((size_t)vars + 1u) * sizeof(uint32_t));
-            for (uint32_t v = 0; v < p->var_count; ++v)
-                if (in_layer[v]) comp_vars.data[fill[uf[v]]++] = v;
-            memcpy(fill, conj_bucket, ((size_t)vars + 1u) * sizeof(uint32_t));
-            for (size_t k = 0; k < layer_conj.len; ++k)
-                comp_conj.data[fill[conj_rep[k]]++] = layer_conj.data[k];
-            free(fill);
-        }
+        comp_vars->len = 0;
+        comp_vars->data = (uint32_t*)cr_grow(comp_vars->data, &comp_vars->cap, layer_vars + 1u, sizeof(uint32_t));
+        comp_conj->data = (uint32_t*)cr_grow(comp_conj->data, &comp_conj->cap, lconj->len + 1u, sizeof(uint32_t));
+        memcpy(fill, bucket, ((size_t)vars + 1u) * sizeof(uint32_t));
+        for (uint32_t v = 0; v < p->var_count; ++v)
+            if (in_layer[v]) comp_vars->data[fill[uf[v]]++] = v;
+        memcpy(fill, conj_bucket, ((size_t)vars + 1u) * sizeof(uint32_t));
+        for (size_t k = 0; k < lconj->len; ++k)
+            comp_conj->data[fill[conj_rep[k]]++] = lconj->data[k];
         for (uint32_t r = 0; r < p->var_count && status == LLG_CR_OK; ++r) {
             uint32_t vfirst = bucket[r], vcount = bucket[r + 1u] - bucket[r];
             if (!vcount) continue;
             uint32_t cfirst = conj_bucket[r], ccount = conj_bucket[r + 1u] - conj_bucket[r];
             if (!ccount) {
                 for (uint32_t i = 0; i < vcount; ++i) {
-                    uint32_t v = comp_vars.data[vfirst + i];
+                    uint32_t v = comp_vars->data[vfirst + i];
                     if (p->vars[v].cyclic)
                         cr_cyc_free_draw(s, v, st->rng);
                     else
@@ -1751,11 +1781,9 @@ static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach) {
                 st->report->engines |= LLG_CR_ENGINE_DIRECT;
                 continue;
             }
-            status = cr_solve_component(st, comp_vars.data + vfirst, vcount,
-                                        comp_conj.data + cfirst, ccount);
+            status = cr_solve_component(st, comp_vars->data + vfirst, vcount,
+                                        comp_conj->data + cfirst, ccount);
         }
-        free(bucket);
-        free(conj_bucket);
         if (status != LLG_CR_OK) break;
         for (uint32_t v = 0; v < p->var_count; ++v)
             if (in_layer[v]) s->var_fixed[v] = 1;
@@ -1765,13 +1793,10 @@ static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach) {
         cr_prepare_classify(s, reach);
         cr_classify(s);
         llg_cr_report_t saved = *st->report;
-        if (cr_roots(st, &conj, &stack) != LLG_CR_OK || conj.len)
+        if (cr_roots(st, conj, stack) != LLG_CR_OK || conj->len)
             cr_fatal("internal error: a solution failed verification");
         *st->report = saved;
         break;
     }
-    free(conj.data); free(stack.data); free(support.data); free(calls.data);
-    free(layer_conj.data); free(comp_vars.data); free(comp_conj.data);
-    free(has_pred); free(in_p); free(in_layer); free(uf); free(conj_rep);
     return status;
 }
