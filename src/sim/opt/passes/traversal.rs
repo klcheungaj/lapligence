@@ -317,6 +317,12 @@ pub(in crate::sim) fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrEx
             | IrSysFunc::BitsToReal(a)
             | IrSysFunc::ShortRealToBits(a)
             | IrSysFunc::BitsToShortReal(a) => walk_expr_mut(a, f),
+            IrSysFunc::RandJoinPick { lengths, ratio } => {
+                for length in lengths {
+                    walk_expr_mut(length, f);
+                }
+                walk_expr_mut(ratio, f);
+            }
             IrSysFunc::Randcase { weights, .. } => {
                 for weight in weights {
                     walk_expr_mut(weight, f);

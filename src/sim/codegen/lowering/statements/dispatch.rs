@@ -423,6 +423,7 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(StmtKind::Case { .. }) => self.lower_case(h),
             NodeKind::Stmt(StmtKind::PatternCase { .. }) => self.lower_pattern_case(h),
             NodeKind::Stmt(StmtKind::RandCase { .. }) => self.lower_randcase(h),
+            NodeKind::Stmt(StmtKind::RandSequence { .. }) => self.lower_randsequence(h),
             NodeKind::Stmt(StmtKind::For { .. }) => self.lower_for(h),
             NodeKind::Stmt(StmtKind::While { cond, body }) => {
                 let c = self.cg.lower_boolean_expr(&self.path, *cond)?;
@@ -569,7 +570,11 @@ impl EmitCtx<'_, '_> {
             }
             NodeKind::Stmt(StmtKind::Empty) => Ok(vec![IrStmt::Nop]),
             NodeKind::Stmt(StmtKind::Return { value }) => {
-                let statement = self.lower_return(*value)?;
+                let value = *value;
+                if let Some(statements) = self.lower_randsequence_return(value)? {
+                    return Ok(statements);
+                }
+                let statement = self.lower_return(value)?;
                 match self.coverage_end_exit.clone() {
                     Some(exit) => {
                         self.coverage_end_exit_used = true;

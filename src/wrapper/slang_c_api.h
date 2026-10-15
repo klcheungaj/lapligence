@@ -550,12 +550,14 @@ enum {
  * DECLARATION (the production): type_id is the return type (void when none);
  *   ARGUMENT[i] is formal i, exported as an automatic VARIABLE, and
  *   OPERAND[i] a reference to it; DECLARATION the synthesized automatic
- *   result variable of a non-void production and LHS a reference to it;
- *   BRANCH[r] rule r. Auxiliary bit i (bit 63 for i >= 63) marks a formal
+ *   result variable of a non-void production, LHS a reference to it and
+ *   DEFAULT_VALUE the assignment that resets it from a never-written
+ *   automatic variable of its type (a CHILD); BRANCH[r] rule r. Auxiliary bit i (bit 63 for i >= 63) marks a formal
  *   that is not an input.
  * RULE: OPERAND[e] is production-list element e, WEIGHT the `:=` weight,
  *   BODY the weight clause's CODE_BLOCK, DECLARATION[v] implicit result
- *   variable v (18.17.7) and RAND_JOIN the rand join expression.
+ *   variable v (18.17.7), INITIALIZER[v] its reset assignment (as for the
+ *   production result) and RAND_JOIN the rand join expression.
  *   Auxiliary: LLG_SLANG_PRODUCTION_RULE_RAND_JOIN.
  * ITEM: CALLEE is the generated production; ARGUMENT[j] the assignment
  *   expression that binds input formal j to its actual (or default), and

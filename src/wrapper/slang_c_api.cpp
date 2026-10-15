@@ -3446,6 +3446,24 @@ private:
     return it->second;
   }
 
+  // `variable = fresh`, where `fresh` is a never-written automatic variable
+  // of the same type owned by `owner`: it resets `variable` to its type's
+  // default, so every generation of a production starts with fresh automatic
+  // values (18.17, 18.17.7) whatever the type.
+  Expression& productionReset(Compilation& compilation, uint64_t owner,
+                              const VariableSymbol& variable, SourceRange range) {
+    auto* fresh = compilation.emplace<VariableSymbol>(variable.name, variable.location,
+                                                      VariableLifetime::Automatic);
+    fresh->setType(variable.getType());
+    parents.push_back(owner);
+    handle(*fresh);
+    parents.pop_back();
+    auto& destination = *compilation.emplace<NamedValueExpression>(variable, range);
+    auto& source = *compilation.emplace<NamedValueExpression>(*fresh, range);
+    return *compilation.emplace<AssignmentExpression>(
+        std::nullopt, false, variable.getType(), destination, source, nullptr, range);
+  }
+
   uint64_t productionNode(uint64_t owner, uint32_t subkind, uint64_t auxiliary,
                           SourceRange range, std::string_view detail) {
     const uint64_t id = capture.newSyntheticSemantic();
@@ -3495,6 +3513,8 @@ private:
       capture.semanticRole(id, result, LLG_SLANG_EDGE_DECLARATION);
       auto& target = *compilation.emplace<NamedValueExpression>(*result, range);
       productionOperand(id, target, LLG_SLANG_EDGE_LHS);
+      productionOperand(id, productionReset(compilation, id, *result, range),
+                        LLG_SLANG_EDGE_DEFAULT_VALUE);
     }
     index = 0;
     for (const auto& rule : production.getRules()) {
@@ -3526,7 +3546,12 @@ private:
       parents.push_back(id);
       handle(variable);
       parents.pop_back();
-      capture.semanticRole(id, &variable, LLG_SLANG_EDGE_DECLARATION, index++);
+      capture.semanticRole(id, &variable, LLG_SLANG_EDGE_DECLARATION, index);
+      productionOperand(id,
+                        productionReset(rule.ruleBlock->getCompilation(), id, variable,
+                                        ruleSyntax.sourceRange()),
+                        LLG_SLANG_EDGE_INITIALIZER, index);
+      index++;
       variables.emplace(variable.name, &variable);
     }
     if (rule.weightExpr)

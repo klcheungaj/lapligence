@@ -523,6 +523,7 @@ fn randcase_requires_packed_weights_and_an_exact_sum_width() {
                 weights,
                 sum_width,
                 origin: origin.clone(),
+                strict: false,
             })),
             width,
             signed,

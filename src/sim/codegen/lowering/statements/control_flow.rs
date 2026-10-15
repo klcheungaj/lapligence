@@ -108,6 +108,19 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                     });
                 }
                 CtrlScope::Block => {}
+                // Outside a loop, `break` in a code block ends the whole
+                // randsequence (18.17.6); `continue` has no target there.
+                CtrlScope::RandSequence { exit, exit_used } => {
+                    if !is_break {
+                        return Err(format!(
+                            "`continue` in a randsequence code block outside a loop in `{}` \
+                             is illegal",
+                            self.path
+                        ));
+                    }
+                    *exit_used = true;
+                    return Ok(vec![IrStmt::Goto(exit.clone())]);
+                }
             }
         }
         Err(format!(
@@ -359,6 +372,71 @@ impl EmitCtx<'_, '_> {
         Ok(lowered)
     }
 
+    /// One weighted random selection: the signed 32-bit index of the chosen
+    /// weight, or -1. Weights are lowered self-determined in source order; a
+    /// `None` weight is 1 (an unweighted randsequence rule, 18.17.1). `strict`
+    /// makes a negative or unknown weight a run-time error (randsequence).
+    pub(super) fn lower_weighted_selection(
+        &mut self,
+        weights: &[Option<NodeId>],
+        origin: crate::sim::semantic::Origin,
+        strict: bool,
+        what: &str,
+    ) -> Result<IrExpr, String> {
+        let mut lowered = Vec::with_capacity(weights.len());
+        let mut widest = 0u32;
+        for weight in weights {
+            let weight = match weight {
+                Some(weight) => self.cg.lower_expr(&self.path, *weight)?,
+                None => {
+                    let one = IrConst::packed(vec![1], vec![], vec![], 1, false, None)
+                        .map_err(|error| error.to_string())?;
+                    IrExpr::new(IrExprKind::Const(one), 1, false, None)
+                }
+            };
+            if weight.is_real() || weight.width == 0 {
+                return Err(format!(
+                    "{what} weight must be an integral value in `{}`",
+                    self.path
+                ));
+            }
+            widest = widest.max(weight.width);
+            lowered.push(weight);
+        }
+        // The sum of n weights needs ceil(log2(n)) bits beyond the widest one
+        // to be exact, so the draw never sees a wrapped total.
+        let spare = usize::BITS - (weights.len().max(1) - 1).leading_zeros();
+        let sum_width = widest.saturating_add(spare);
+        if sum_width >= crate::sim::emit_c::LLG_WIDTH_LIMIT {
+            let location = match &origin {
+                crate::sim::semantic::Origin::Source {
+                    path, line, column, ..
+                } => format!("{path}:{line}:{column}"),
+                crate::sim::semantic::Origin::Synthetic { reason } => reason.clone(),
+            };
+            return Err(format!(
+                "{what} at {location} in `{}`: the exact weight sum of {} items with \
+                 {widest}-bit weights needs {sum_width} bits, but packed values must be \
+                 narrower than {} bits",
+                self.path,
+                weights.len(),
+                crate::sim::emit_c::LLG_WIDTH_LIMIT
+            ));
+        }
+        self.cg.model.random.threads = true;
+        Ok(IrExpr::new(
+            IrExprKind::SysFunc(Box::new(IrSysFunc::Randcase {
+                weights: lowered,
+                sum_width,
+                origin,
+                strict,
+            })),
+            32,
+            true,
+            None,
+        ))
+    }
+
     /// `randcase` (IEEE 1800-2009 18.16): one runtime selection over the
     /// weights, then an ordinary case over the chosen index, so each body is
     /// lowered by the common statement path and waits, forks, `return` and
@@ -372,56 +450,18 @@ impl EmitCtx<'_, '_> {
         if items.is_empty() {
             return Ok(Vec::new());
         }
-        let mut weights = Vec::with_capacity(items.len());
-        let mut widest = 0u32;
-        for item in items {
-            let weight = self.cg.lower_expr(&self.path, item.weight)?;
-            if weight.is_real() || weight.width == 0 {
-                return Err(format!(
-                    "randcase weight must be an integral value in `{}`",
-                    self.path
-                ));
-            }
-            widest = widest.max(weight.width);
-            weights.push(weight);
-        }
-        // The sum of n weights needs ceil(log2(n)) bits beyond the widest one
-        // to be exact, so the draw never sees a wrapped total.
-        let spare = usize::BITS - (items.len() - 1).leading_zeros();
-        let sum_width = widest.saturating_add(spare);
-        if sum_width >= crate::sim::emit_c::LLG_WIDTH_LIMIT {
-            let location = match &origin {
-                crate::sim::semantic::Origin::Source {
-                    path, line, column, ..
-                } => format!("{path}:{line}:{column}"),
-                crate::sim::semantic::Origin::Synthetic { reason } => reason.clone(),
-            };
-            return Err(format!(
-                "randcase at {location} in `{}`: the exact weight sum of {} items with \
-                 {widest}-bit weights needs {sum_width} bits, but packed values must be \
-                 narrower than {} bits",
-                self.path,
-                items.len(),
-                crate::sim::emit_c::LLG_WIDTH_LIMIT
-            ));
-        }
-        self.cg.model.random.threads = true;
+        let weights = items
+            .iter()
+            .map(|item| Some(item.weight))
+            .collect::<Vec<_>>();
+        let selection = self.lower_weighted_selection(&weights, origin, false, "randcase")?;
         let name = self.new_label("randcase");
         let selector = IrStmt::DeclLocal {
             name: name.clone(),
             width: 32,
             signed: true,
             two_state: false,
-            init: Some(Box::new(IrExpr::new(
-                IrExprKind::SysFunc(Box::new(IrSysFunc::Randcase {
-                    weights,
-                    sum_width,
-                    origin,
-                })),
-                32,
-                true,
-                None,
-            ))),
+            init: Some(Box::new(selection)),
         };
         let mut ir_items = Vec::with_capacity(items.len());
         for (index, item) in items.iter().enumerate() {
@@ -461,6 +501,38 @@ impl EmitCtx<'_, '_> {
             .first()
             .copied()
             .ok_or_else(|| "case without selector".to_string())?;
+        self.lower_case_items(case_type, qualifier, sel, items, None)
+    }
+
+    /// The body of item `item`: the next of `lowered` when the caller
+    /// lowered the bodies already (a randsequence case production generates
+    /// production items rather than statements), else its statement.
+    fn case_item_body(
+        &mut self,
+        item: &crate::core::db::CaseItem,
+        lowered: &mut Option<std::vec::IntoIter<Vec<IrStmt>>>,
+    ) -> Result<Vec<IrStmt>, String> {
+        if let Some(lowered) = lowered {
+            return lowered
+                .next()
+                .ok_or_else(|| "case item has no lowered body".to_owned());
+        }
+        match item.body {
+            Some(stmt) => self.lower_stmt(stmt),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// A `case` over `items` with selector `sel`; see [`Self::case_item_body`]
+    /// for `lowered`.
+    pub(super) fn lower_case_items(
+        &mut self,
+        case_type: DbCaseKind,
+        qualifier: IrUniquePriorityCheck,
+        sel: NodeId,
+        items: &[crate::core::db::CaseItem],
+        mut lowered: Option<std::vec::IntoIter<Vec<IrStmt>>>,
+    ) -> Result<Vec<IrStmt>, String> {
         // A string selector compares items as strings (SV 11.4.5, 12.5); an
         // ordinary item list is the same membership test as `case inside`
         // without ranges, so both share the string lowering.
@@ -468,11 +540,11 @@ impl EmitCtx<'_, '_> {
             && self.cg.is_string_expr(&self.path, sel)
         {
             let selector = self.cg.lower_string(&self.path, sel)?;
-            return self.lower_case_inside_string(items, selector, qualifier);
+            return self.lower_case_inside_string(items, selector, qualifier, lowered);
         }
         let mut sel_ir = self.cg.lower_expr(&self.path, sel)?;
         if case_type == DbCaseKind::Inside {
-            return self.lower_case_inside(items, sel_ir, qualifier);
+            return self.lower_case_inside(items, sel_ir, qualifier, lowered);
         }
         // `casez` and `casex` keep wildcard matching per LRM 12.5.1 instead
         // of degrading to exact equality.
@@ -500,10 +572,7 @@ impl EmitCtx<'_, '_> {
                 common_signed &= c.signed;
                 exprs.push(c);
             }
-            let mut body = Vec::new();
-            if let Some(s) = item.body {
-                body = self.lower_stmt(s)?;
-            }
+            let body = self.case_item_body(item, &mut lowered)?;
             ir_items.push(IrCaseItem { exprs, body });
         }
         if has_real {
@@ -610,6 +679,7 @@ impl EmitCtx<'_, '_> {
         items: &[crate::core::db::CaseItem],
         selector: IrExpr,
         check: IrUniquePriorityCheck,
+        mut lowered: Option<std::vec::IntoIter<Vec<IrStmt>>>,
     ) -> Result<Vec<IrStmt>, String> {
         let selector_name = self.new_label("ci");
         let selector_width = selector.width;
@@ -624,10 +694,7 @@ impl EmitCtx<'_, '_> {
         let mut ir_items = Vec::new();
         let mut default = None;
         for item in items {
-            let body = match item.body {
-                Some(stmt) => self.lower_stmt(stmt)?,
-                None => Vec::new(),
-            };
+            let body = self.case_item_body(item, &mut lowered)?;
             if item.exprs.is_empty() {
                 if !check.is_none() {
                     ir_items.push(IrCaseItem {
@@ -708,6 +775,7 @@ impl EmitCtx<'_, '_> {
         items: &[crate::core::db::CaseItem],
         selector: IrStringExpr,
         check: IrUniquePriorityCheck,
+        mut lowered: Option<std::vec::IntoIter<Vec<IrStmt>>>,
     ) -> Result<Vec<IrStmt>, String> {
         let selector_name = self.new_label("cis");
         let selector_read = IrStringExpr::LocalRead(selector_name.clone());
@@ -715,10 +783,7 @@ impl EmitCtx<'_, '_> {
         let mut ir_items = Vec::new();
         let mut default = None;
         for item in items {
-            let body = match item.body {
-                Some(stmt) => self.lower_stmt(stmt)?,
-                None => Vec::new(),
-            };
+            let body = self.case_item_body(item, &mut lowered)?;
             if item.exprs.is_empty() {
                 if !check.is_none() {
                     ir_items.push(IrCaseItem {

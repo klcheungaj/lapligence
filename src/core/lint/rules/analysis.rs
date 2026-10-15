@@ -471,20 +471,19 @@ fn walk_driver_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &m
                 add_driver_lhs_write(db, actual, seen, out);
             }
         }
-        // A randsequence production's formals and result, and a rule's
-        // implicit result variables, are written by each generation of the
-        // production (IEEE 1800-2009 18.17.6, 18.17.7).
-        NodeKind::Production(ProductionKind::Declaration(decl)) => {
-            for formal in &decl.formals {
-                add_driver_lhs_write(db, *formal, seen, out);
-            }
-            if let Some(result) = decl.result {
-                add_driver_lhs_write(db, result.variable, seen, out);
-            }
-        }
-        NodeKind::Production(ProductionKind::Rule(rule)) => {
-            for variable in &rule.variables {
-                add_driver_lhs_write(db, *variable, seen, out);
+        // A randsequence production's formals and result, a rule's implicit
+        // result variables and their default-valued reset sources are
+        // written or initialized by each generation of the production
+        // (IEEE 1800-2009 18.17.6, 18.17.7).
+        NodeKind::Production(ProductionKind::Declaration(_) | ProductionKind::Rule(_)) => {
+            for child in &db.node(node).children {
+                if matches!(
+                    db.node_kind(*child),
+                    NodeKind::Var { .. } | NodeKind::Array { .. }
+                ) && db.node(*child).parent == Some(node)
+                {
+                    add_driver_lhs_write(db, *child, seen, out);
+                }
             }
         }
         _ => {}

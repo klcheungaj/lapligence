@@ -1455,6 +1455,12 @@ fn collect_expr_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             | IrSysFunc::BitsToReal(a)
             | IrSysFunc::ShortRealToBits(a)
             | IrSysFunc::BitsToShortReal(a) => collect_expr_reads(a, model, rw),
+            IrSysFunc::RandJoinPick { lengths, ratio } => {
+                for length in lengths {
+                    collect_expr_reads(length, model, rw);
+                }
+                collect_expr_reads(ratio, model, rw);
+            }
             IrSysFunc::Randcase { weights, .. } => {
                 for weight in weights {
                     collect_expr_reads(weight, model, rw);

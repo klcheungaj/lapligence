@@ -978,6 +978,9 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                     fill: None,
                 }
             }
+            IrSysFunc::RandJoinPick { .. } => {
+                return Err("rand join requires the ownership-aware emitter".to_owned())
+            }
             IrSysFunc::Randcase { .. } => {
                 return Err("randcase requires the ownership-aware emitter".to_owned())
             }

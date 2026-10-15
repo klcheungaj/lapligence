@@ -127,10 +127,38 @@ impl Frame<'_, '_> {
                 self.discard(minimum);
                 result
             }
+            IrSysFunc::RandJoinPick { lengths, ratio } => {
+                let mut values = Vec::with_capacity(lengths.len());
+                for length in lengths {
+                    values.push(self.expression(length)?);
+                }
+                let ratio = self.expression(ratio)?;
+                let addresses = values
+                    .iter()
+                    .map(Value::address)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let result = self.value(
+                    format!(
+                        "sv4_from_i64(llg_randsequence_join_pick((const sv4_t* const[]){{{addresses}}}, \
+                         {}, {}), 32)",
+                        values.len(),
+                        ratio.real()
+                    ),
+                    32,
+                    true,
+                );
+                for value in values {
+                    self.discard(value);
+                }
+                self.discard(ratio);
+                result
+            }
             IrSysFunc::Randcase {
                 weights,
                 sum_width,
                 origin,
+                strict,
             } => {
                 // Each weight lands in its own slot, in source order, before
                 // the one runtime call: C argument order never reorders the
@@ -154,8 +182,13 @@ impl Frame<'_, '_> {
                 };
                 let result = self.value(
                     format!(
-                        "sv4_from_i64(llg_randcase_select((const sv4_t* const[]){{{addresses}}}, \
+                        "sv4_from_i64({}((const sv4_t* const[]){{{addresses}}}, \
                          {}, {sum_width}, {}), 32)",
+                        if *strict {
+                            "llg_randsequence_select"
+                        } else {
+                            "llg_randcase_select"
+                        },
                         values.len(),
                         c_string_literal(&location)
                     ),

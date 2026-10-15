@@ -12,10 +12,11 @@ use super::*;
 /// One randsequence node.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProductionKind {
-    /// A production declaration (18.17).
-    Declaration(ProductionDecl),
+    /// A production declaration (18.17). Boxed, like [`Self::Rule`], to
+    /// keep [`NodeKind`] compact.
+    Declaration(Box<ProductionDecl>),
     /// One `|`-separated rule of a production (18.17.1).
-    Rule(ProductionRule),
+    Rule(Box<ProductionRule>),
     /// A generation of a production with bound arguments (18.17.6).
     Item(ProductionItem),
     /// A `{ ... }` code block (18.17.2); `body` is its statement.
@@ -41,6 +42,8 @@ pub enum ProductionKind {
 pub struct ProductionDecl {
     /// Formal arguments, as automatic variables, in declaration order.
     pub formals: Vec<NodeId>,
+    /// A reference expression to each formal, in the same order.
+    pub formal_refs: Vec<NodeId>,
     /// Per formal: `true` when its direction is not `input`. Formals past
     /// the 63rd share one flag, so this is conservative for them.
     pub non_input: Vec<bool>,
@@ -55,6 +58,9 @@ pub struct ProductionDecl {
 pub struct ProductionResult {
     pub variable: NodeId,
     pub reference: NodeId,
+    /// Assignment that resets the variable to its type's default from a
+    /// never-written automatic variable (a child of the production).
+    pub reset: NodeId,
 }
 
 /// One rule: a production list, its weight and implicit variables.
@@ -69,6 +75,9 @@ pub struct ProductionRule {
     pub weight_code: Option<NodeId>,
     /// Implicit variables of the non-void productions the rule generates.
     pub variables: Vec<NodeId>,
+    /// The assignment that resets each implicit variable (same order), as
+    /// for [`ProductionResult::reset`].
+    pub resets: Vec<NodeId>,
     /// `Some` for a `rand join` rule; the inner value is its optional
     /// real expression (18.17.5).
     pub rand_join: Option<Option<NodeId>>,
@@ -104,8 +113,9 @@ impl ProductionKind {
         match self {
             ProductionKind::Declaration(decl) => {
                 refs.extend(decl.formals.iter().copied());
+                refs.extend(decl.formal_refs.iter().copied());
                 if let Some(result) = decl.result {
-                    refs.extend([result.variable, result.reference]);
+                    refs.extend([result.variable, result.reference, result.reset]);
                 }
                 refs.extend(decl.rules.iter().copied());
             }
@@ -114,6 +124,7 @@ impl ProductionKind {
                 refs.extend(rule.weight);
                 refs.extend(rule.weight_code);
                 refs.extend(rule.variables.iter().copied());
+                refs.extend(rule.resets.iter().copied());
                 refs.extend(rule.rand_join.flatten());
             }
             ProductionKind::Item(item) => {
@@ -166,45 +177,70 @@ pub(super) fn production_from_slang(
         SEMANTIC_PRODUCTION_DECLARATION => {
             let formals =
                 ordered_targets(ids, edges, SemanticEdgeRole::Argument, "production formal")?;
+            let formal_refs =
+                ordered_targets(ids, edges, SemanticEdgeRole::Operand, "production formal")?;
+            if formal_refs.len() != formals.len() {
+                return Err(DbError::InvalidSnapshot(
+                    "production formal references disagree with its formals".into(),
+                ));
+            }
             let non_input = (0..formals.len())
                 .map(|index| node.auxiliary & (1u64 << index.min(63)) != 0)
                 .collect();
             let result = match (
                 edge_target(ids, edges, SemanticEdgeRole::Declaration)?,
                 edge_target(ids, edges, SemanticEdgeRole::Lhs)?,
+                edge_target(ids, edges, SemanticEdgeRole::DefaultValue)?,
             ) {
-                (Some(variable), Some(reference)) => Some(ProductionResult {
+                (Some(variable), Some(reference), Some(reset)) => Some(ProductionResult {
                     variable,
                     reference,
+                    reset,
                 }),
-                (None, None) => None,
+                (None, None, None) => None,
                 _ => {
                     return Err(DbError::InvalidSnapshot(
                         "production result variable and reference disagree".into(),
                     ))
                 }
             };
-            ProductionKind::Declaration(ProductionDecl {
+            ProductionKind::Declaration(Box::new(ProductionDecl {
                 formals,
+                formal_refs,
                 non_input,
                 result,
                 rules: ordered_targets(ids, edges, SemanticEdgeRole::Branch, "production rule")?,
-            })
+            }))
         }
-        SEMANTIC_PRODUCTION_RULE => ProductionKind::Rule(ProductionRule {
-            elements: ordered_targets(ids, edges, SemanticEdgeRole::Operand, "rule element")?,
-            weight: edge_target(ids, edges, SemanticEdgeRole::Weight)?,
-            weight_code: edge_target(ids, edges, SemanticEdgeRole::Body)?,
-            variables: ordered_targets(
+        SEMANTIC_PRODUCTION_RULE => {
+            let variables = ordered_targets(
                 ids,
                 edges,
                 SemanticEdgeRole::Declaration,
                 "rule implicit variable",
-            )?,
-            rand_join: (node.auxiliary & PRODUCTION_RULE_RAND_JOIN != 0)
-                .then(|| edge_target(ids, edges, SemanticEdgeRole::RandJoin))
-                .transpose()?,
-        }),
+            )?;
+            let resets = ordered_targets(
+                ids,
+                edges,
+                SemanticEdgeRole::Initializer,
+                "rule implicit variable reset",
+            )?;
+            if resets.len() != variables.len() {
+                return Err(DbError::InvalidSnapshot(
+                    "rule implicit variable resets disagree with its variables".into(),
+                ));
+            }
+            ProductionKind::Rule(Box::new(ProductionRule {
+                elements: ordered_targets(ids, edges, SemanticEdgeRole::Operand, "rule element")?,
+                weight: edge_target(ids, edges, SemanticEdgeRole::Weight)?,
+                weight_code: edge_target(ids, edges, SemanticEdgeRole::Body)?,
+                variables,
+                resets,
+                rand_join: (node.auxiliary & PRODUCTION_RULE_RAND_JOIN != 0)
+                    .then(|| edge_target(ids, edges, SemanticEdgeRole::RandJoin))
+                    .transpose()?,
+            }))
+        }
         SEMANTIC_PRODUCTION_ITEM => {
             let mut bindings = edges
                 .iter()
@@ -314,7 +350,7 @@ mod tests {
                 NodeKind::Production(ProductionKind::Declaration(decl))
                     if db.node(id).name == name =>
                 {
-                    Some((id, decl.clone()))
+                    Some((id, decl.as_ref().clone()))
                 }
                 _ => None,
             })
@@ -323,7 +359,7 @@ mod tests {
 
     fn rule(db: &Db, id: NodeId) -> ProductionRule {
         match db.node_kind(id) {
-            NodeKind::Production(ProductionKind::Rule(rule)) => rule.clone(),
+            NodeKind::Production(ProductionKind::Rule(rule)) => rule.as_ref().clone(),
             other => panic!("rule expected, found {other:?}"),
         }
     }
@@ -406,8 +442,18 @@ mod tests {
             db.node_kind(result.variable),
             NodeKind::Var { .. }
         ));
+        let NodeKind::Expr(ExprKind::Operation { operands, .. }) = db.node_kind(result.reset)
+        else {
+            panic!("result reset assignment");
+        };
+        assert!(matches!(
+            db.node_kind(operands[0]),
+            NodeKind::Expr(ExprKind::Ref { target: Some(target) }) if *target == result.variable
+        ));
+        assert_eq!(second_decl.formal_refs.len(), 1);
         let if_rule = rule(&db, second_decl.rules[0]);
         assert_eq!(if_rule.variables.len(), 2);
+        assert_eq!(if_rule.resets.len(), 2);
         let NodeKind::Production(ProductionKind::If {
             then_item,
             else_item,

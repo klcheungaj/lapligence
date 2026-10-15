@@ -1041,6 +1041,17 @@ sv4_t llg_urandom_range(sv4_t max, sv4_t min, int has_min);
 // their exact sum and `count` is at least 1.
 int32_t llg_randcase_select(const sv4_t* const* weights, size_t count,
                             uint32_t sum_width, const char* location);
+// A randsequence production's rule (IEEE 1800-2009 18.17.1): like
+// `llg_randcase_select`, but a negative or unknown weight is an error that
+// marks the run failed and selects no rule (-1), and the all-zero warning
+// names the production.
+int32_t llg_randsequence_select(const sv4_t* const* weights, size_t count,
+                                uint32_t sum_width, const char* location);
+// `rand join` (18.17.5): the index of the next sequence to advance given the
+// remaining lengths (unsigned, borrowed) and a ratio in [0, 1], or -1 when
+// every length is zero. Draws from the calling process stream.
+int32_t llg_randsequence_join_pick(const sv4_t* const* remaining, size_t count,
+                                   double ratio);
 void llg_process_srandom(sv4_t seed);
 llg_string_t llg_process_get_randstate(void);
 int llg_process_set_randstate(llg_string_t state);

@@ -2656,6 +2656,12 @@ enum CtrlScope {
         cont: String,
         cont_used: bool,
     },
+    /// A randsequence statement: `break` outside a loop in one of its code
+    /// blocks jumps to `exit` (IEEE 1800-2009 18.17.6).
+    RandSequence {
+        exit: String,
+        exit_used: bool,
+    },
 }
 
 struct EmitCtx<'c, 'a> {
@@ -2701,6 +2707,8 @@ struct EmitCtx<'c, 'a> {
     /// A `return` jumped to [`EmitCtx::coverage_end_exit`], so its label is
     /// emitted (an unused C label is a warning).
     coverage_end_exit_used: bool,
+    /// Randsequence statements being lowered, innermost last.
+    randseq: Vec<statements::RandseqState>,
 }
 
 /// Shape of an image-represented fixed array `with` operand.

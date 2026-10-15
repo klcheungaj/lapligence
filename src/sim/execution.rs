@@ -1856,6 +1856,13 @@ fn collect_expression_effects(
                     collect_expression_effects(ir, min, effects, visited_calls);
                 }
             }
+            IrSysFunc::RandJoinPick { lengths, ratio } => {
+                effects.push(ExecutionEffect::RuntimeService);
+                for length in lengths {
+                    collect_expression_effects(ir, length, effects, visited_calls);
+                }
+                collect_expression_effects(ir, ratio, effects, visited_calls);
+            }
             IrSysFunc::Randcase { weights, .. } => {
                 effects.push(ExecutionEffect::RuntimeService);
                 for weight in weights {
