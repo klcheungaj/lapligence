@@ -178,11 +178,6 @@ fn unsupported_coverage_forms_are_located_errors() {
     );
     sim_cli::reject_case(
         SUITE,
-        "neg_merge_instances",
-        "neg_merge_instances.sv:6:5: type_option.merge_instances in covergroup `g` (merged type coverage) is not supported yet (SIM-045)",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "neg_wide_point",
         "neg_wide_point.sv:6:16: coverpoint `a` of covergroup `g` is 80 bits wide",
     );

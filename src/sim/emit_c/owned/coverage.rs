@@ -124,12 +124,13 @@ fn cross_tables(out: &mut String, prefix: &str, cross: &IrCoverCross) -> String 
     );
     let bins = static_array(out, "llg_cov_xbin_t", &format!("{prefix}_xbins"), bins);
     format!(
-        "{{ .name = {}, .n_dims = {}u, .dims = {dims}, .n_selects = {}u, .selects = {selects}, .items = {items}, .n_boxes = {n_boxes}u, .boxes = {boxes}, .box_selects = {box_selects}, .n_bins = {}u, .bins = {bins}, .dynamic = {}u }}",
+        "{{ .name = {}, .n_dims = {}u, .dims = {dims}, .n_selects = {}u, .selects = {selects}, .items = {items}, .n_boxes = {n_boxes}u, .boxes = {boxes}, .box_selects = {box_selects}, .n_bins = {}u, .bins = {bins}, .dynamic = {}u, .type_weight = INT64_C({}) }}",
         c_string_literal(&cross.name),
         cross.points.len(),
         cross.selects.len(),
         cross.bins.len(),
-        u8::from(cross.dynamic())
+        u8::from(cross.dynamic()),
+        cross.type_weight
     )
 }
 
@@ -226,9 +227,19 @@ fn transition_tables(out: &mut String, prefix: &str, tables: &IrCoverTransitions
             })
             .collect(),
     );
+    let overlaps = static_array(
+        out,
+        "uint32_t",
+        &format!("{prefix}_toverlaps"),
+        tables
+            .overlaps
+            .iter()
+            .flat_map(|(a, b)| [format!("{a}u"), format!("{b}u")])
+            .collect(),
+    );
     let name = format!("{prefix}_trans");
     out.push_str(&format!(
-        "static const llg_cov_trans_t {name} = {{ .n_classes = {}u, .bounds = {bounds}, .words = {}u, .accept = {accept}, .n_steps = {}u, .steps = {steps}, .n_sets = {}u, .sets = {sets}, .start_index = {start_index}, .start_sets = {start_sets}, .n_states = {}u, .window = {}u, .n_bins = {}u, .bins = {bins}, .default_bin = {} }};\n",
+        "static const llg_cov_trans_t {name} = {{ .n_classes = {}u, .bounds = {bounds}, .words = {}u, .accept = {accept}, .n_steps = {}u, .steps = {steps}, .n_sets = {}u, .sets = {sets}, .start_index = {start_index}, .start_sets = {start_sets}, .n_states = {}u, .window = {}u, .n_bins = {}u, .bins = {bins}, .default_bin = {}, .n_overlaps = {}u, .overlaps = {overlaps} }};\n",
         tables.bounds.len(),
         tables.words,
         tables.steps.len(),
@@ -236,7 +247,8 @@ fn transition_tables(out: &mut String, prefix: &str, tables: &IrCoverTransitions
         tables.states,
         tables.window,
         tables.bins.len(),
-        tables.default_bin.map_or(-1, i64::from)
+        tables.default_bin.map_or(-1, i64::from),
+        tables.overlaps.len()
     ));
     format!("&{name}")
 }
@@ -245,10 +257,11 @@ fn transition_tables(out: &mut String, prefix: &str, tables: &IrCoverTransitions
 pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
     for (index, coverage_type) in model.coverage_types.iter().enumerate() {
         out.push_str(&format!(
-            "static LLG_MAYBE_UNUSED llg_cov_type_t {} = {{ .name = {}, .weight = INT64_C({}) }};\n",
+            "static LLG_MAYBE_UNUSED llg_cov_type_t {} = {{ .name = {}, .weight = INT64_C({}), .merge = {}u }};\n",
             type_name(index),
             c_string_literal(&coverage_type.name),
-            coverage_type.weight
+            coverage_type.weight,
+            u8::from(coverage_type.merge)
         ));
     }
     for (index, group) in model.covergroups.iter().enumerate() {
@@ -319,7 +332,7 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                 |tables| transition_tables(out, &point_prefix, tables),
             );
             points.push(format!(
-                "{{ .name = {}, .width = {}u, .is_signed = {}u, .kind = {kind}, .dynamic = {}u, .n_keys = {}u, .keys = {keys_name}, .n_bins = {}u, .bins = {bins_name}, .items = {items_name}, .trans = {trans}, .crossed = {}u }}",
+                "{{ .name = {}, .width = {}u, .is_signed = {}u, .kind = {kind}, .dynamic = {}u, .n_keys = {}u, .keys = {keys_name}, .n_bins = {}u, .bins = {bins_name}, .items = {items_name}, .trans = {trans}, .crossed = {}u, .type_weight = INT64_C({}) }}",
                 c_string_literal(&point.name),
                 point.width,
                 u8::from(point.signed),
@@ -327,6 +340,7 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                 keys.map_or(0, Vec::len),
                 point.bins.len(),
                 u8::from(point.crossed),
+                point.type_weight,
             ));
         }
         let crosses = group

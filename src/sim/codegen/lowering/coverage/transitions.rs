@@ -186,7 +186,11 @@ fn removed_at_end(tables: &Tables, removals: &[Vec<usize>], window: &[usize]) ->
 
 /// Build the transition tables of one coverpoint of `width` bits. An error
 /// names the bin (by index) that exceeds a limit.
-pub(super) fn build(width: u32, bins: Vec<BinSpec>) -> Result<IrCoverTransitions, (usize, String)> {
+pub(super) fn build(
+    width: u32,
+    bins: Vec<BinSpec>,
+    detect_overlap: bool,
+) -> Result<IrCoverTransitions, (usize, String)> {
     let max_key = if width >= 64 {
         u64::MAX
     } else {
@@ -392,6 +396,32 @@ pub(super) fn build(width: u32, bins: Vec<BinSpec>) -> Result<IrCoverTransitions
             coverable,
         });
     }
+    // option.detect_overlap (19.7): pairs of `bins` declarations that
+    // share a sequence, checked only when the option may be set.
+    let mut overlaps = Vec::new();
+    if detect_overlap {
+        let mut budget = MAX_CLASS_SEQUENCES;
+        'pairs: for a in 0..ir_bins.len() {
+            for b in a + 1..ir_bins.len() {
+                if ir_bins[a].kind != IrCoverBinKind::Bins
+                    || ir_bins[b].kind != IrCoverBinKind::Bins
+                {
+                    continue;
+                }
+                let found = sets.iter().filter(|set| set.bin as usize == a).any(|left| {
+                    sets.iter()
+                        .filter(|set| set.bin as usize == b)
+                        .any(|right| sets_overlap(&tables, left, right, &mut budget) == Some(true))
+                });
+                if found {
+                    overlaps.push((a as u32, b as u32));
+                }
+                if budget == 0 {
+                    break 'pairs;
+                }
+            }
+        }
+    }
     Ok(IrCoverTransitions {
         bounds,
         words: words as u32,
@@ -404,7 +434,62 @@ pub(super) fn build(width: u32, bins: Vec<BinSpec>) -> Result<IrCoverTransitions
         window,
         bins: ir_bins,
         default_bin,
+        overlaps,
     })
+}
+
+/// Whether two sets match one same sequence: their automata run in
+/// lockstep from a common first sample and complete together. `None` past
+/// the budget.
+fn sets_overlap(
+    tables: &Tables,
+    left: &IrCoverTransSet,
+    right: &IrCoverTransSet,
+    budget: &mut u64,
+) -> Option<bool> {
+    type Pair = (usize, u32, usize, u32);
+    let classes = tables.bounds.len();
+    let mut visited: HashSet<Pair> = HashSet::new();
+    let mut queue: VecDeque<Pair> = VecDeque::new();
+    let (mut a, mut b) = (Vec::new(), Vec::new());
+    let mut advance = |pair: Pair, class: usize, queue: &mut VecDeque<Pair>| -> Option<bool> {
+        *budget = budget.checked_sub(1)?;
+        a.clear();
+        b.clear();
+        tables.consume(pair.0, pair.1, class, &mut a);
+        tables.consume(pair.2, pair.3, class, &mut b);
+        if a.contains(&Event::Done) && b.contains(&Event::Done) {
+            return Some(true);
+        }
+        for left in &a {
+            for right in &b {
+                if let (Event::State(x, y), Event::State(u, v)) = (left, right) {
+                    let next = (*x, *y, *u, *v);
+                    if visited.insert(next) {
+                        queue.push_back(next);
+                    }
+                }
+            }
+        }
+        Some(false)
+    };
+    let first = (left.first_step as usize, 0, right.first_step as usize, 0);
+    for class in 0..classes {
+        if tables.accepts(first.0, class)
+            && tables.accepts(first.2, class)
+            && advance(first, class, &mut queue)?
+        {
+            return Some(true);
+        }
+    }
+    while let Some(pair) = queue.pop_front() {
+        for class in 0..classes {
+            if advance(pair, class, &mut queue)? {
+                return Some(true);
+            }
+        }
+    }
+    Some(false)
 }
 
 /// The number of distinct sequences of an array bin that contain no
@@ -568,6 +653,7 @@ mod tests {
                     vec![plain(4), plain(5), plain(6)],
                 ],
             )],
+            false,
         )
         .unwrap();
         assert_eq!(tables.bins[0].coverable, 9);
@@ -585,6 +671,7 @@ mod tests {
                 true,
                 vec![vec![step(&[(3, 3)], IrCoverRepeat::Consecutive, 3, 5)]],
             )],
+            false,
         )
         .unwrap();
         assert_eq!(tables.bins[0].coverable, 3);
@@ -636,6 +723,7 @@ mod tests {
                 ),
                 ignore,
             ],
+            false,
         )
         .unwrap();
         let coverable: Vec<u64> = tables.bins.iter().map(|bin| bin.coverable).collect();
@@ -671,6 +759,7 @@ mod tests {
                     vec![vec![plain(3), plain(3)]],
                 ),
             ],
+            false,
         )
         .unwrap();
         let coverable: Vec<u64> = tables.bins.iter().map(|bin| bin.coverable).collect();
@@ -692,6 +781,7 @@ mod tests {
                     plain(5),
                 ]],
             )],
+            false,
         )
         .unwrap();
         let five = tables.bounds.partition_point(|bound| *bound <= 5) - 1;
@@ -708,5 +798,43 @@ mod tests {
         events.clear();
         view.consume(1, 1, gap, &mut events);
         assert_eq!(events, [Event::State(1, 1)]);
+    }
+
+    #[test]
+    fn overlap_needs_one_common_sequence() {
+        // (1 => 2 [-> 1]) and (1 => 5 => 2) share 1 5 2; (1 => 2) and
+        // (1 => 2 => 3) share none.
+        let tables = build(
+            4,
+            vec![
+                bin(
+                    "goto",
+                    IrCoverBinKind::Bins,
+                    false,
+                    vec![vec![plain(1), step(&[(2, 2)], IrCoverRepeat::GoTo, 1, 1)]],
+                ),
+                bin(
+                    "via",
+                    IrCoverBinKind::Bins,
+                    false,
+                    vec![vec![plain(1), plain(5), plain(2)]],
+                ),
+                bin(
+                    "short",
+                    IrCoverBinKind::Bins,
+                    false,
+                    vec![vec![plain(7), plain(8)]],
+                ),
+                bin(
+                    "long",
+                    IrCoverBinKind::Bins,
+                    false,
+                    vec![vec![plain(7), plain(8), plain(9)]],
+                ),
+            ],
+            true,
+        )
+        .unwrap();
+        assert_eq!(tables.overlaps, [(0, 1)]);
     }
 }

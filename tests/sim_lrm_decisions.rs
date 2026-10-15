@@ -2130,3 +2130,37 @@ fn s45_d16_negated_bin_condition() {
         include_str!("fixtures/sim/lrm_decisions/S45-D16_negated_bin_condition.out"),
     );
 }
+
+#[test]
+fn s45_d17_detect_overlap() {
+    sim_cli::run_case_checked_matrix(SUITE, "S45-D17_detect_overlap", &[], &|label, output| {
+        assert!(output.status.success(), "{label}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            include_str!("fixtures/sim/lrm_decisions/S45-D17_detect_overlap.out"),
+            "{label}"
+        );
+        let warnings: Vec<_> = String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter(|line| line.starts_with("llg: warning: covergroup"))
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(
+            warnings,
+            [
+                "llg: warning: covergroup `g` coverpoint `c1`: bins `lo` and `mid` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "llg: warning: covergroup `g` coverpoint `c2`: bins `r` and `r2` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "llg: warning: covergroup `g` coverpoint `c3`: bins `v` and `w` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+            ],
+            "{label}"
+        );
+    });
+}
+
+#[test]
+fn s45_d18_merged_at_least() {
+    run_decision(
+        "S45-D18_merged_at_least",
+        include_str!("fixtures/sim/lrm_decisions/S45-D18_merged_at_least.out"),
+    );
+}

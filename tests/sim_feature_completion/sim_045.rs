@@ -188,3 +188,47 @@ fn invalid_crosses_are_located_errors() {
         "neg_cross_set.sv:8:24 `covergroup bins with or matches clause` is not available in IEEE 2009",
     );
 }
+
+#[test]
+fn options_follow_19_7_and_19_11() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/options.out");
+    sim_cli::run_case_checked_matrix(SUITE, "options", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert_eq!(
+            llg_messages(output),
+            [
+                "llg: warning: covergroup `go` coverpoint `cx`: bins `lo` and `mid` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "llg: warning: covergroup `go` coverpoint `tx`: bins `t1` and `t2` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+            ],
+            "{label}"
+        );
+    });
+}
+
+#[test]
+fn merged_crosses_need_the_same_cross_bins() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/merge_cross.out");
+    sim_cli::run_case_checked_matrix(SUITE, "merge_cross", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(1), "{label}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+        assert_eq!(
+            llg_messages(output),
+            ["llg: runtime error: covergroup `g` cross `ab`: merged type coverage needs every instance to have the same cross bins (llg limitation)"],
+            "{label}"
+        );
+    });
+}
+
+#[test]
+fn invalid_options_are_located_errors() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_type_weight",
+        "neg_type_weight.sv:6:24: type_option.weight in covergroup `g` must be a non-negative integral value (IEEE 1800-2009 Table 19-3)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_merge_argument",
+        "neg_merge_argument.sv:6:35 cannot refer to automatic variable 'm' from static initializer",
+    );
+}

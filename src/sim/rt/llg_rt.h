@@ -2621,7 +2621,9 @@ enum {
     LLG_COV_OPTION_WEIGHT = 0,
     LLG_COV_OPTION_GOAL = 1,
     LLG_COV_OPTION_AT_LEAST = 2,
-    LLG_COV_OPTION_AUTO_BIN_MAX = 3
+    LLG_COV_OPTION_AUTO_BIN_MAX = 3,
+    LLG_COV_OPTION_DETECT_OVERLAP = 4,
+    LLG_COV_OPTION_GET_INST_COVERAGE = 5
 };
 /* The keyword of a declared bin (19.5); DEFAULT is `bins b = default`. */
 enum {
@@ -2707,6 +2709,10 @@ typedef struct {
     uint32_t n_bins;
     const llg_cov_tbin_t* bins;
     int32_t default_bin; /* the `default sequence` bin, or -1 */
+    /* Pairs of `bins` declarations that share a sequence, for
+     * option.detect_overlap. */
+    uint32_t n_overlaps;
+    const uint32_t* overlaps;
 } llg_cov_trans_t;
 typedef struct {
     const char* name;
@@ -2721,6 +2727,7 @@ typedef struct {
     const llg_cov_item_t* items;
     const llg_cov_trans_t* trans; /* transition bins, or NULL */
     uint8_t crossed;              /* a cross reads the bins each sample counts */
+    int64_t type_weight;          /* type_option.weight, for merged type coverage */
 } llg_cov_point_t;
 /* Crosses (19.6). Along each dimension (a crossed coverpoint), the
  * coordinates are the coverpoint's coverable bins in counter order. A select
@@ -2757,6 +2764,7 @@ typedef struct {
     uint32_t n_bins;
     const llg_cov_xbin_t* bins;
     uint8_t dynamic; /* an intersect value reads a slot */
+    int64_t type_weight;
 } llg_cov_cross_t;
 typedef struct llg_cov_inst llg_cov_inst_t;
 typedef struct llg_cov_layout llg_cov_layout_t;
@@ -2770,6 +2778,8 @@ typedef struct llg_cov_type {
     uint64_t n_instances;
     struct llg_cov_type* next_used;
     uint8_t used;
+    uint8_t merge;       /* type_option.merge_instances (19.11.3) */
+    uint8_t merge_error; /* a merged cross limitation was reported */
 } llg_cov_type_t;
 /* One elaborated covergroup declaration: its coverpoints and the objects its
  * coverage event samples. */

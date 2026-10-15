@@ -68,6 +68,11 @@ struct llg_cov_layout {
     // (zero for other kinds), for cross selections of one bin.
     uint64_t* decl_base;
     uint64_t* decl_size;
+    // `b[]` declarations: their values in element order, for bin names.
+    uint32_t n_decls;
+    llg_cov_span_t** decl_values;
+    size_t* n_decl_values;
+    uint8_t overlap_reported;  // option.detect_overlap warnings were issued
 };
 
 // One pending transition attempt: an automaton state of a set's step, the
@@ -121,6 +126,8 @@ typedef struct {
     int64_t auto_bin_max;
     uint8_t has_at_least;
     uint8_t has_auto_bin_max;
+    uint8_t detect_overlap;
+    uint8_t has_detect_overlap;
     uint8_t stopped;
     const llg_cov_layout_t* layout;  // set by llg_cov_ready
     uint64_t* dense;  // n_bins counters when n_bins <= LLG_COV_DENSE_BINS
@@ -150,6 +157,8 @@ struct llg_cov_inst {
     uint8_t stopped;
     uint8_t ready;
     uint8_t strobe_pending;  // a Postponed sample is queued for this slot
+    uint8_t detect_overlap;
+    uint8_t get_inst_coverage;
     uint64_t serial;  // samples begun, for crosses
     llg_cov_slot_value_t* slots;
     llg_cov_point_state_t points[];  // points, then crosses
@@ -439,6 +448,10 @@ static llg_cov_layout_t* llg_cov_build_layout(const llg_cov_inst_t* inst, uint32
     size_t decls = point->n_bins ? point->n_bins : 1u;
     layout->decl_base = (uint64_t*)llg_checked_calloc(decls, sizeof(uint64_t), "coverage layout");
     layout->decl_size = (uint64_t*)llg_checked_calloc(decls, sizeof(uint64_t), "coverage layout");
+    layout->n_decls = point->n_bins;
+    layout->decl_values =
+        (llg_cov_span_t**)llg_checked_calloc(decls, sizeof(void*), "coverage layout");
+    layout->n_decl_values = (size_t*)llg_checked_calloc(decls, sizeof(size_t), "coverage layout");
     for (uint32_t d = 0; d < point->n_bins; ++d) {
         const llg_cov_bin_t* bin = &point->bins[d];
         layout->decl_base[d] = n_bins;
@@ -486,6 +499,12 @@ static llg_cov_layout_t* llg_cov_build_layout(const llg_cov_inst_t* inst, uint32
         // A value listed twice is still one value of the bin.
         n_spans = llg_cov_spans_merge(spans, n_spans);
         if (bin->kind == LLG_COV_BIN_BINS && bin->shape == LLG_COV_SHAPE_PER_VALUE) {
+            if (n_spans) {
+                layout->decl_values[d] = (llg_cov_span_t*)llg_checked_malloc(
+                    n_spans, sizeof(llg_cov_span_t), "coverage layout");
+                memcpy(layout->decl_values[d], spans, n_spans * sizeof(llg_cov_span_t));
+                layout->n_decl_values[d] = n_spans;
+            }
             entry.div = 1;
             entry.last = UINT64_MAX;
             for (size_t i = 0; i < n_spans; ++i) {
@@ -1314,8 +1333,10 @@ static int llg_cov_option_value(sv4_t value, int64_t* out, const char* option, c
 
 void llg_cov_option(void* record, int32_t point, uint32_t option, sv4_t value, const char* site) {
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
-    static const char* const names[] = {"weight", "goal", "at_least", "auto_bin_max"};
-    if (!inst || option > LLG_COV_OPTION_AUTO_BIN_MAX) return;
+    static const char* const names[] = {"weight",         "goal",
+                                        "at_least",       "auto_bin_max",
+                                        "detect_overlap", "get_inst_coverage"};
+    if (!inst || option > LLG_COV_OPTION_GET_INST_COVERAGE) return;
     int64_t number;
     if (!llg_cov_option_value(value, &number, names[option], site)) return;
     // Table 19-1: weight is non-negative; a bin count needs at least one bin.
@@ -1331,6 +1352,8 @@ void llg_cov_option(void* record, int32_t point, uint32_t option, sv4_t value, c
         case LLG_COV_OPTION_WEIGHT: inst->weight = number; break;
         case LLG_COV_OPTION_GOAL: inst->goal = number; break;
         case LLG_COV_OPTION_AT_LEAST: inst->at_least = number; break;
+        case LLG_COV_OPTION_DETECT_OVERLAP: inst->detect_overlap = number != 0; break;
+        case LLG_COV_OPTION_GET_INST_COVERAGE: inst->get_inst_coverage = number != 0; break;
         default: inst->auto_bin_max = number; break;
         }
         return;
@@ -1344,6 +1367,11 @@ void llg_cov_option(void* record, int32_t point, uint32_t option, sv4_t value, c
         state->at_least = number;
         state->has_at_least = 1;
         break;
+    case LLG_COV_OPTION_DETECT_OVERLAP:
+        state->detect_overlap = number != 0;
+        state->has_detect_overlap = 1;
+        break;
+    case LLG_COV_OPTION_GET_INST_COVERAGE: break;
     default:
         state->auto_bin_max = number;
         state->has_auto_bin_max = 1;
@@ -1369,6 +1397,62 @@ void llg_cov_slot(void* record, uint32_t slot, sv4_t value) {
     target->raw = bits;
 }
 
+static int llg_cov_pair_order(const void* a, const void* b) {
+    const uint32_t* x = (const uint32_t*)a;
+    const uint32_t* y = (const uint32_t*)b;
+    if (x[0] != y[0]) return x[0] < y[0] ? -1 : 1;
+    return x[1] < y[1] ? -1 : x[1] > y[1];
+}
+
+static void llg_cov_overlap_warning(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
+                                    const char* a, const char* b) {
+    fprintf(stderr,
+            "llg: warning: covergroup `%s` coverpoint `%s`: bins `%s` and `%s` overlap "
+            "(option.detect_overlap, IEEE 1800-2009 19.7)\n",
+            inst->group->name, point->name, a, b);
+}
+
+// option.detect_overlap (19.7): `bins` declarations whose values (after
+// ignore and illegal removal) or transition sequences meet, once per layout
+// (decision S45-D17).
+static void llg_cov_report_overlaps(const llg_cov_inst_t* inst, uint32_t index) {
+    const llg_cov_point_t* point = &inst->group->points[index];
+    llg_cov_layout_t* layout = (llg_cov_layout_t*)inst->points[index].layout;
+    if (!layout || layout->overlap_reported) return;
+    layout->overlap_reported = 1;
+    uint32_t(*pairs)[2] = NULL;
+    size_t n_pairs = 0, cap = 0;
+    for (uint32_t s = 0; s < layout->n_segments; ++s) {
+        const llg_cov_seg_t* segment = &layout->segments[s];
+        if (segment->removed) continue;
+        for (uint32_t e = 0; e < segment->count; ++e)
+            for (uint32_t f = e + 1u; f < segment->count; ++f) {
+                uint32_t a = layout->entries[segment->first + e].decl;
+                uint32_t b = layout->entries[segment->first + f].decl;
+                if (a == b) continue;
+                if (n_pairs == cap) {
+                    cap = cap ? cap * 2u : 8u;
+                    pairs = llg_cov_grow(pairs, cap, sizeof(*pairs), "coverage overlaps");
+                }
+                pairs[n_pairs][0] = a < b ? a : b;
+                pairs[n_pairs][1] = a < b ? b : a;
+                n_pairs++;
+            }
+    }
+    qsort(pairs, n_pairs, sizeof(*pairs), llg_cov_pair_order);
+    for (size_t i = 0; i < n_pairs; ++i) {
+        if (i && pairs[i][0] == pairs[i - 1u][0] && pairs[i][1] == pairs[i - 1u][1]) continue;
+        llg_cov_overlap_warning(inst, point, point->bins[pairs[i][0]].name,
+                                point->bins[pairs[i][1]].name);
+    }
+    free(pairs);
+    if (point->trans)
+        for (uint32_t i = 0; i < point->trans->n_overlaps; ++i)
+            llg_cov_overlap_warning(inst, point,
+                                    point->trans->bins[point->trans->overlaps[2u * i]].name,
+                                    point->trans->bins[point->trans->overlaps[2u * i + 1u]].name);
+}
+
 // Group-level at_least and auto_bin_max are coverpoint defaults (19.7); bin
 // layouts and counters are built once the options and arguments are final.
 void llg_cov_ready(void* record) {
@@ -1385,6 +1469,8 @@ void llg_cov_ready(void* record) {
                                                          sizeof(uint64_t), "coverage bins");
         const llg_cov_trans_t* trans = inst->group->points[i].trans;
         if (trans) state->history = llg_cov_history_new(trans);
+        if (!state->has_detect_overlap) state->detect_overlap = inst->detect_overlap;
+        if (state->detect_overlap) llg_cov_report_overlaps(inst, i);
     }
     for (uint32_t k = 0; k < inst->group->n_crosses; ++k) llg_cov_cross_ready(inst, k);
 }
@@ -1607,10 +1693,10 @@ static llg_cov_sequence_t* llg_cov_sequence_slot(llg_cov_sequence_t* table, size
     }
 }
 
-// Count one sequence of an array bin once per sample; the table holds only
-// sequences that occurred.
-static void llg_cov_sequence_count(llg_cov_history_t* history, uint32_t bin,
-                                   const uint64_t* keys, uint32_t length) {
+// The entry of one array-bin sequence, inserted with count 0 when new; the
+// table holds only sequences that occurred.
+static llg_cov_sequence_t* llg_cov_sequence_entry(llg_cov_history_t* history, uint32_t bin,
+                                                  const uint64_t* keys, uint32_t length) {
     if ((history->n_sequences + 1u) * 2u > history->sequence_capacity) {
         size_t capacity = history->sequence_capacity ? history->sequence_capacity * 2u : 16u;
         llg_cov_sequence_t* table = (llg_cov_sequence_t*)llg_checked_calloc(
@@ -1641,6 +1727,13 @@ static void llg_cov_sequence_count(llg_cov_history_t* history, uint32_t bin,
         history->pool_used += length;
         history->n_sequences++;
     }
+    return entry;
+}
+
+// Count one sequence of an array bin once per sample.
+static void llg_cov_sequence_count(llg_cov_history_t* history, uint32_t bin,
+                                   const uint64_t* keys, uint32_t length) {
+    llg_cov_sequence_t* entry = llg_cov_sequence_entry(history, bin, keys, length);
     if (entry->stamp == history->serial) return;
     entry->stamp = history->serial;
     if (entry->count != UINT64_MAX) entry->count++;
@@ -1994,6 +2087,354 @@ static void llg_cov_point_bins(const llg_cov_inst_t* inst, uint32_t index, uint6
     *defined = llg_cov_saturating_add(*defined, more_defined);
 }
 
+// ── Merged type coverage (19.11.3) ────────────────────────────────────────
+//
+// With type_option.merge_instances, type coverage counts the union of the
+// bins of every instance, bins being equal when their names are (19.11.3):
+// a scalar bin by its declaration, `b[]` elements by value, `b[N]` elements
+// by index, automatic bins by their key range, transition bins by
+// declaration and sequence, cross bins by name. A merged bin's count is the
+// sum over the instances that have it; it is covered when the sum reaches
+// the largest at_least among them (decision S45-D18).
+
+typedef struct {
+    uint32_t tag;  // 1 automatic range, 2 enum, 3 declaration element, 4 `b[]` value
+    uint64_t a, b;
+} llg_cov_name_t;
+
+typedef struct {
+    llg_cov_name_t name;
+    uint64_t sum;
+    uint64_t at_least;
+    uint8_t used;
+} llg_cov_merged_t;
+
+typedef struct {
+    llg_cov_merged_t* slots;
+    size_t capacity, used;
+} llg_cov_merge_table_t;
+
+static uint64_t llg_cov_name_hash(llg_cov_name_t name) {
+    uint64_t hash = (name.a * UINT64_C(0x9E3779B97F4A7C15)) ^ (name.b + name.tag);
+    return hash ^ (hash >> 31) ^ (name.b * UINT64_C(0xC2B2AE3D27D4EB4F));
+}
+
+static void llg_cov_merge_add(llg_cov_merge_table_t* table, llg_cov_name_t name, uint64_t count,
+                              uint64_t at_least) {
+    if ((table->used + 1u) * 2u > table->capacity) {
+        size_t capacity = table->capacity ? table->capacity * 2u : 64u;
+        llg_cov_merged_t* slots = (llg_cov_merged_t*)llg_checked_calloc(
+            capacity, sizeof(llg_cov_merged_t), "merged coverage");
+        for (size_t i = 0; i < table->capacity; ++i) {
+            if (!table->slots[i].used) continue;
+            size_t slot = (size_t)llg_cov_name_hash(table->slots[i].name) & (capacity - 1u);
+            while (slots[slot].used) slot = (slot + 1u) & (capacity - 1u);
+            slots[slot] = table->slots[i];
+        }
+        free(table->slots);
+        table->slots = slots;
+        table->capacity = capacity;
+    }
+    size_t slot = (size_t)llg_cov_name_hash(name) & (table->capacity - 1u);
+    while (table->slots[slot].used &&
+           !(table->slots[slot].name.tag == name.tag && table->slots[slot].name.a == name.a &&
+             table->slots[slot].name.b == name.b))
+        slot = (slot + 1u) & (table->capacity - 1u);
+    llg_cov_merged_t* entry = &table->slots[slot];
+    if (!entry->used) {
+        entry->used = 1;
+        entry->name = name;
+        table->used++;
+    }
+    entry->sum = llg_cov_saturating_add(entry->sum, count);
+    if (at_least > entry->at_least) entry->at_least = at_least;
+}
+
+static void llg_cov_merge_result(const llg_cov_merge_table_t* table, uint64_t* covered,
+                                 uint64_t* defined) {
+    for (size_t i = 0; i < table->capacity; ++i) {
+        const llg_cov_merged_t* entry = &table->slots[i];
+        if (!entry->used) continue;
+        (*defined)++;
+        if (entry->sum >= entry->at_least) (*covered)++;
+    }
+}
+
+static uint64_t llg_cov_sparse_get(const llg_cov_sparse_t* table, uint64_t bin) {
+    if (!table->capacity) return 0;
+    uint64_t key = bin + 1u;
+    size_t slot = (size_t)(key * UINT64_C(0x9E3779B97F4A7C15)) & (table->capacity - 1u);
+    while (table->keys[slot]) {
+        if (table->keys[slot] == key) return table->counts[slot];
+        slot = (slot + 1u) & (table->capacity - 1u);
+    }
+    return 0;
+}
+
+static uint64_t llg_cov_bin_count_of(const llg_cov_point_state_t* state, uint64_t bin) {
+    return state->dense ? state->dense[bin] : llg_cov_sparse_get(&state->sparse, bin);
+}
+
+// The name of a coverable counter of a value layout (19.11.3).
+static llg_cov_name_t llg_cov_bin_name(const llg_cov_point_t* point,
+                                       const llg_cov_layout_t* layout, uint64_t bin) {
+    if (bin < layout->n_auto) {
+        if (point->kind == LLG_COV_POINT_ENUM) return (llg_cov_name_t){2u, point->keys[bin], 0};
+        uint64_t n = layout->n_auto, span;
+        if (point->width >= 64u) {
+            span = UINT64_MAX / n;
+            if (UINT64_MAX % n == n - 1u) span++;
+        } else {
+            span = (UINT64_C(1) << point->width) / n;
+        }
+        uint64_t lo = bin * span;
+        uint64_t hi = bin + 1u == n ? llg_cov_mask(point) : lo + span - 1u;
+        return (llg_cov_name_t){1u, lo, hi};
+    }
+    uint32_t d = 0;
+    while (d + 1u < layout->n_decls &&
+           !(layout->decl_size[d] && bin >= layout->decl_base[d] &&
+             bin - layout->decl_base[d] < layout->decl_size[d]))
+        d++;
+    uint64_t element = bin - layout->decl_base[d];
+    if (point->bins[d].shape != LLG_COV_SHAPE_PER_VALUE) return (llg_cov_name_t){3u, d, element};
+    for (size_t i = 0; i < layout->n_decl_values[d]; ++i) {
+        llg_cov_span_t span = layout->decl_values[d][i];
+        uint64_t size = span.hi - span.lo + 1u;
+        if (element < size) return (llg_cov_name_t){4u, d, span.lo + element};
+        element -= size;
+    }
+    return (llg_cov_name_t){3u, d, element};
+}
+
+static uint64_t llg_cov_at_least(const llg_cov_point_state_t* state) {
+    return state->at_least < 0 ? 0u : (uint64_t)state->at_least;
+}
+
+// Merged value bins of coverpoint `index` over the type's instances.
+static void llg_cov_merged_values(const llg_cov_type_t* type, uint32_t index, uint64_t* covered,
+                                  uint64_t* defined) {
+    const llg_cov_inst_t* first = type->first;
+    const llg_cov_layout_t* shared = first->points[index].layout;
+    uint64_t at_least = 0;
+    int same = 1;
+    for (const llg_cov_inst_t* inst = first; inst; inst = inst->next) {
+        same &= inst->points[index].layout == shared;
+        uint64_t value = llg_cov_at_least(&inst->points[index]);
+        if (value > at_least) at_least = value;
+    }
+    if (same && shared) {
+        // One layout: sum the counters bin by bin.
+        *defined = shared->n_coverable;
+        if (!at_least) {
+            *covered = *defined;
+            return;
+        }
+        llg_cov_merge_table_t sums = {0};
+        for (const llg_cov_inst_t* inst = first; inst; inst = inst->next) {
+            const llg_cov_point_state_t* state = &inst->points[index];
+            if (state->dense) {
+                for (uint64_t bin = 0; bin < shared->n_bins; ++bin)
+                    if (state->dense[bin])
+                        llg_cov_merge_add(&sums, (llg_cov_name_t){0u, bin, 0}, state->dense[bin], 0);
+            } else {
+                for (size_t slot = 0; slot < state->sparse.capacity; ++slot)
+                    if (state->sparse.keys[slot])
+                        llg_cov_merge_add(&sums,
+                                          (llg_cov_name_t){0u, state->sparse.keys[slot] - 1u, 0},
+                                          state->sparse.counts[slot], 0);
+            }
+        }
+        for (size_t i = 0; i < sums.capacity; ++i)
+            if (sums.slots[i].used && sums.slots[i].sum >= at_least &&
+                llg_cov_cover_rank(shared, sums.slots[i].name.a) >= 0)
+                (*covered)++;
+        free(sums.slots);
+        return;
+    }
+    // Layouts differ (arguments or auto_bin_max): merge by bin name.
+    const llg_cov_point_t* point = &first->group->points[index];
+    llg_cov_merge_table_t merged = {0};
+    for (const llg_cov_inst_t* inst = first; inst; inst = inst->next) {
+        const llg_cov_point_state_t* state = &inst->points[index];
+        const llg_cov_layout_t* layout = state->layout;
+        if (!layout) continue;
+        uint64_t mine = llg_cov_at_least(state);
+        for (uint32_t c = 0; c < layout->n_cover; ++c)
+            for (uint64_t bin = layout->cover[c].lo;; ++bin) {
+                llg_cov_merge_add(&merged, llg_cov_bin_name(point, layout, bin),
+                                  llg_cov_bin_count_of(state, bin), mine);
+                if (bin == layout->cover[c].hi) break;
+            }
+    }
+    llg_cov_merge_result(&merged, covered, defined);
+    free(merged.slots);
+}
+
+// Merged transition bins of coverpoint `index`: the tables are the same in
+// every instance of the declaration.
+static void llg_cov_merged_transitions(const llg_cov_type_t* type, uint32_t index,
+                                       uint64_t* covered, uint64_t* defined) {
+    const llg_cov_trans_t* trans = type->first->group->points[index].trans;
+    if (!trans) return;
+    uint64_t at_least = 0;
+    for (const llg_cov_inst_t* inst = type->first; inst; inst = inst->next) {
+        uint64_t value = llg_cov_at_least(&inst->points[index]);
+        if (value > at_least) at_least = value;
+    }
+    for (uint32_t b = 0; b < trans->n_bins; ++b) {
+        const llg_cov_tbin_t* bin = &trans->bins[b];
+        if (bin->kind != LLG_COV_BIN_BINS) continue;
+        *defined = llg_cov_saturating_add(*defined, bin->coverable);
+        if (!at_least) {
+            *covered = llg_cov_saturating_add(*covered, bin->coverable);
+            continue;
+        }
+        if (bin->array || !bin->coverable) continue;
+        uint64_t sum = 0;
+        for (const llg_cov_inst_t* inst = type->first; inst; inst = inst->next)
+            if (inst->points[index].history)
+                sum = llg_cov_saturating_add(sum, inst->points[index].history->counts[b]);
+        if (sum >= at_least) (*covered)++;
+    }
+    if (!at_least) return;
+    // Array-bin sequences are named by their bin and keys.
+    llg_cov_history_t merged = {0};
+    for (const llg_cov_inst_t* inst = type->first; inst; inst = inst->next) {
+        const llg_cov_history_t* history = inst->points[index].history;
+        if (!history) continue;
+        for (size_t i = 0; i < history->sequence_capacity; ++i) {
+            const llg_cov_sequence_t* entry = &history->sequences[i];
+            if (!entry->length) continue;
+            llg_cov_sequence_t* sum = llg_cov_sequence_entry(&merged, entry->bin,
+                                                             history->pool + entry->keys,
+                                                             entry->length);
+            sum->count = llg_cov_saturating_add(sum->count, entry->count);
+        }
+    }
+    for (size_t i = 0; i < merged.sequence_capacity; ++i)
+        if (merged.sequences[i].length && merged.sequences[i].count >= at_least) (*covered)++;
+    free(merged.sequences);
+    free(merged.pool);
+}
+
+static int llg_cov_xlayout_same(const llg_cov_xlayout_t* a, const llg_cov_xlayout_t* b) {
+    if (a == b) return 1;
+    if (a->n_dims != b->n_dims || a->words != b->words || a->product != b->product ||
+        a->n_auto != b->n_auto || a->n_user != b->n_user)
+        return 0;
+    for (uint32_t d = 0; d < a->n_dims; ++d) {
+        if (a->sizes[d] != b->sizes[d] || a->n_runs[d] != b->n_runs[d]) return 0;
+        if (memcmp(a->runs[d], b->runs[d], a->n_runs[d] * sizeof(llg_cov_span_t)) ||
+            memcmp(a->sigs[d], b->sigs[d], (size_t)a->n_runs[d] * a->words * sizeof(uint64_t)))
+            return 0;
+    }
+    return 1;
+}
+
+// Merged bins of cross `index`; instances must have the same cross bins.
+static void llg_cov_merged_cross(llg_cov_type_t* type, uint32_t index, uint64_t* covered,
+                                 uint64_t* defined) {
+    const llg_cov_inst_t* first = type->first;
+    uint32_t item = first->group->n_points + index;
+    const llg_cov_xstate_t* base = first->points[item].cross;
+    if (!base) return;
+    const llg_cov_xlayout_t* xl = base->layout;
+    uint64_t at_least = 0;
+    for (const llg_cov_inst_t* inst = first; inst; inst = inst->next) {
+        const llg_cov_xstate_t* cross = inst->points[item].cross;
+        if (!cross || !llg_cov_xlayout_same(cross->layout, xl)) {
+            if (!type->merge_error) {
+                type->merge_error = 1;
+                fprintf(stderr,
+                        "llg: runtime error: covergroup `%s` cross `%s`: merged type coverage "
+                        "needs every instance to have the same cross bins (llg limitation)\n",
+                        first->group->name, first->group->crosses[index].name);
+                llg_rt_mark_failed();
+            }
+            return;
+        }
+        uint64_t value = llg_cov_at_least(&inst->points[item]);
+        if (value > at_least) at_least = value;
+    }
+    *defined = llg_cov_saturating_add(xl->n_auto, xl->n_user);
+    if (!at_least) {
+        *covered = *defined;
+        return;
+    }
+    const llg_cov_cross_t* cross = &first->group->crosses[index];
+    for (uint32_t b = 0; b < cross->n_bins; ++b) {
+        if (!xl->significant[b]) continue;
+        uint64_t sum = 0;
+        for (const llg_cov_inst_t* inst = first; inst; inst = inst->next)
+            sum = llg_cov_saturating_add(sum, inst->points[item].cross->counts[b]);
+        if (sum >= at_least) (*covered)++;
+    }
+    llg_cov_merge_table_t sums = {0};
+    for (const llg_cov_inst_t* inst = first; inst; inst = inst->next) {
+        const llg_cov_point_state_t* state = &inst->points[item];
+        if (state->dense) {
+            for (uint64_t i = 0; i < xl->product; ++i)
+                if (state->dense[i])
+                    llg_cov_merge_add(&sums, (llg_cov_name_t){0u, i, 0}, state->dense[i], 0);
+        } else {
+            for (size_t slot = 0; slot < state->sparse.capacity; ++slot)
+                if (state->sparse.keys[slot])
+                    llg_cov_merge_add(&sums, (llg_cov_name_t){0u, state->sparse.keys[slot] - 1u, 0},
+                                      state->sparse.counts[slot], 0);
+        }
+    }
+    for (size_t i = 0; i < sums.capacity; ++i)
+        if (sums.slots[i].used && sums.slots[i].sum >= at_least) (*covered)++;
+    free(sums.slots);
+}
+
+static void llg_cov_merged_item(llg_cov_type_t* type, uint32_t index, uint64_t* covered,
+                                uint64_t* defined) {
+    *covered = 0;
+    *defined = 0;
+    if (!type->first) return;
+    uint32_t points = type->first->group->n_points;
+    if (index >= points) {
+        llg_cov_merged_cross(type, index - points, covered, defined);
+        return;
+    }
+    llg_cov_merged_values(type, index, covered, defined);
+    llg_cov_merged_transitions(type, index, covered, defined);
+}
+
+static int64_t llg_cov_item_type_weight(const llg_cov_group_t* group, uint32_t index) {
+    return index < group->n_points ? group->points[index].type_weight
+                                   : group->crosses[index - group->n_points].type_weight;
+}
+
+// Merged type coverage of one item, or of the group weighted by the items'
+// type_option.weight (19.7.1, 19.11.3). Returns 0 for a zero denominator.
+static int llg_cov_merged_score(llg_cov_type_t* type, int32_t point, double* score) {
+    if (!type->first) return 0;
+    const llg_cov_group_t* group = type->first->group;
+    uint32_t items = group->n_points + group->n_crosses;
+    double numerator = 0.0, denominator = 0.0;
+    for (uint32_t i = 0; i < items; ++i) {
+        if (point >= 0 && (uint32_t)point != i) continue;
+        uint64_t covered, defined;
+        llg_cov_merged_item(type, i, &covered, &defined);
+        if (!defined) continue;
+        double value = 100.0 * (double)covered / (double)defined;
+        if (point >= 0) {
+            *score = value;
+            return 1;
+        }
+        int64_t weight = llg_cov_item_type_weight(group, i);
+        if (weight <= 0) continue;
+        numerator += (double)weight * value;
+        denominator += (double)weight;
+    }
+    if (denominator == 0.0) return 0;
+    *score = numerator / denominator;
+    return 1;
+}
+
 // Weighted coverpoint average of one instance (19.11); `point` < 0 selects
 // the whole group. Returns 0 when the denominator is zero.
 static int llg_cov_inst_score(const llg_cov_inst_t* inst, int32_t point, double* score) {
@@ -2022,6 +2463,13 @@ static int llg_cov_inst_score(const llg_cov_inst_t* inst, int32_t point, double*
 double llg_cov_inst_coverage(const void* record, int32_t point) {
     const llg_cov_inst_t* inst = (const llg_cov_inst_t*)record;
     if (!inst) return 0.0;
+    // Table 19-1 get_inst_coverage: with merged type coverage, an instance
+    // reports the type's coverage unless the option is set.
+    if (inst->group->type->merge && !inst->get_inst_coverage)
+        return llg_cov_type_coverage(inst->group->type, point,
+                                     point < 0 ? inst->group->type->weight
+                                               : llg_cov_item_type_weight(inst->group,
+                                                                          (uint32_t)point));
     double score;
     if (llg_cov_inst_score(inst, point, &score)) return score;
     int64_t weight = point < 0 ? inst->weight : inst->points[point].weight;
@@ -2031,6 +2479,7 @@ double llg_cov_inst_coverage(const void* record, int32_t point) {
 // Type coverage with merge_instances = 0 (19.11.3): instances weighted by
 // their option.weight (or a coverpoint's option.weight for one coverpoint).
 static int llg_cov_type_score(const llg_cov_type_t* type, int32_t point, double* score) {
+    if (type->merge) return llg_cov_merged_score((llg_cov_type_t*)type, point, score);
     double numerator = 0.0, denominator = 0.0;
     for (const llg_cov_inst_t* inst = type->first; inst; inst = inst->next) {
         if (point >= 0 && (uint32_t)point >= inst->group->n_points + inst->group->n_crosses)
@@ -2103,6 +2552,7 @@ void llg_cov_release_all(void) {
         type->first = type->last = NULL;
         type->n_instances = 0;
         type->used = 0;
+        type->merge_error = 0;
         type->next_used = NULL;
     }
     while (llg_cov_groups_registered) {
@@ -2136,6 +2586,9 @@ void llg_cov_release_all(void) {
         free(layout->entries);
         free(layout->cover);
         free(layout->cover_rank);
+        for (uint32_t d = 0; d < layout->n_decls; ++d) free(layout->decl_values[d]);
+        free(layout->decl_values);
+        free(layout->n_decl_values);
         free(layout->decl_base);
         free(layout->decl_size);
         free(layout);

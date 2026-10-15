@@ -14,6 +14,8 @@ pub struct IrCoverageType {
     pub(in crate::sim) name: String,
     /// `type_option.weight` of the group (Table 19-3).
     pub(in crate::sim) weight: i64,
+    /// `type_option.merge_instances` (19.11.3).
+    pub(in crate::sim) merge: bool,
 }
 
 /// One elaborated covergroup declaration.
@@ -135,6 +137,9 @@ pub struct IrCoverTransitions {
     pub(in crate::sim) bins: Vec<IrCoverTransBin>,
     /// The `default sequence` bin.
     pub(in crate::sim) default_bin: Option<u32>,
+    /// Pairs of `bins` declarations that share a sequence, reported when
+    /// option.detect_overlap is set (19.7).
+    pub(in crate::sim) overlaps: Vec<(u32, u32)>,
 }
 
 /// The repetition of a step; a step without repetition is `[* 1]`.
@@ -295,6 +300,8 @@ pub enum IrCoverageOption {
     Goal,
     AtLeast,
     AutoBinMax,
+    DetectOverlap,
+    GetInstCoverage,
 }
 
 impl IrCoverageOption {
@@ -304,6 +311,8 @@ impl IrCoverageOption {
             Self::Goal => 1,
             Self::AtLeast => 2,
             Self::AutoBinMax => 3,
+            Self::DetectOverlap => 4,
+            Self::GetInstCoverage => 5,
         }
     }
 }
@@ -555,6 +564,10 @@ impl IrCoverTransitions {
             && self
                 .default_bin
                 .is_none_or(|bin| (bin as usize) < self.bins.len())
+            && self
+                .overlaps
+                .iter()
+                .all(|(a, b)| a < b && (*b as usize) < self.bins.len())
     }
 }
 

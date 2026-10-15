@@ -72,6 +72,8 @@ pub(super) struct CoverageBuild {
     guards: Vec<NodeId>,
     /// Bins values read from covergroup arguments, evaluated by `new`.
     slots: Vec<NodeId>,
+    /// The group sets option.detect_overlap to a value that may be true.
+    detect_overlap: bool,
 }
 
 impl CoverageBuild {
@@ -195,10 +197,26 @@ impl<'a> Codegen<'a> {
             })
             .and_then(|weight| i64::try_from(weight).ok())
             .unwrap_or(1);
+        let merge = self
+            .db
+            .covergroup(group)
+            .map(|info| info.options.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .any(|option| {
+                self.coverage_option_parts(option)
+                    .is_some_and(|(scope, member, value)| {
+                        scope == "type_option"
+                            && member == "merge_instances"
+                            && self.eval_bound_i128(value).is_ok_and(|value| value != 0)
+                    })
+            });
         let name = self.covergroup_name(group);
-        self.model
-            .coverage_types
-            .push(IrCoverageType { name, weight });
+        self.model.coverage_types.push(IrCoverageType {
+            name,
+            weight,
+            merge,
+        });
         self.coverage_types.insert(key, index);
         index
     }
@@ -397,6 +415,10 @@ impl<'a> Codegen<'a> {
             path: self.source_path(&self.covergroup_path(group)),
             ..CoverageBuild::default()
         };
+        build.detect_overlap = info
+            .options
+            .iter()
+            .any(|setter| self.coverage_option_may_be_set(*setter, "detect_overlap"));
         for (index, point) in info.coverpoints.iter().copied().enumerate() {
             let metadata = self.db.coverpoint(point).cloned().ok_or_else(|| {
                 self.coverage_error(point, "coverpoint has no captured structure")
@@ -659,6 +681,17 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// Whether `setter` assigns option `member` a value that is not the
+    /// constant 0.
+    fn coverage_option_may_be_set(&self, setter: NodeId, member: &str) -> bool {
+        self.coverage_option_parts(setter)
+            .is_some_and(|(scope, name, value)| {
+                scope == "option"
+                    && name == member
+                    && !self.eval_bound_i128(value).is_ok_and(|value| value == 0)
+            })
+    }
+
     fn check_group_option(&self, group_name: &str, setter: NodeId) -> Result<(), String> {
         let (scope, member, value) = self.coverage_option_parts(setter).ok_or_else(|| {
             self.coverage_error(setter, "coverage option setter has no option member")
@@ -677,7 +710,6 @@ impl<'a> Codegen<'a> {
         setter: NodeId,
         group_level: bool,
     ) -> Result<(), String> {
-        let constant_zero = || self.eval_bound_i128(value).is_ok_and(|value| value == 0);
         let unsupported = |what: &str| {
             Err(self.coverage_error(
                 setter,
@@ -685,19 +717,18 @@ impl<'a> Codegen<'a> {
             ))
         };
         match (scope, member) {
+            // The frontend checks which options each level declares
+            // (19.10) and rejects duplicates (19.7).
             ("option", "weight" | "goal" | "at_least" | "auto_bin_max") => Ok(()),
             ("option", "name" | "comment" | "per_instance" | "get_inst_coverage") => Ok(()),
-            ("option", "cross_num_print_missing") => Ok(()),
-            ("option", "detect_overlap") if constant_zero() => Ok(()),
-            ("option", "detect_overlap") => {
-                unsupported("(overlap warnings) is not supported yet (SIM-045)")
-            }
-            ("type_option", "weight") => {
-                if self.eval_bound_i128(value).is_err() {
-                    return unsupported("must be a constant expression (IEEE 1800-2009 19.7.1)");
+            ("option", "cross_num_print_missing" | "detect_overlap") => Ok(()),
+            ("type_option", "weight") => match self.eval_bound_i128(value) {
+                Err(_) => unsupported("must be a constant expression (IEEE 1800-2009 19.7.1)"),
+                Ok(weight) if weight < 0 => {
+                    unsupported("must be a non-negative integral value (IEEE 1800-2009 Table 19-3)")
                 }
-                Ok(())
-            }
+                Ok(_) => Ok(()),
+            },
             ("type_option", "goal" | "comment") => Ok(()),
             ("type_option", "strobe") if !group_level => {
                 unsupported("can only be set for a covergroup (IEEE 1800-2009 Table 19-4)")
@@ -706,10 +737,10 @@ impl<'a> Codegen<'a> {
                 unsupported("must be a constant expression (IEEE 1800-2009 19.7.1)")
             }
             ("type_option", "strobe") => Ok(()),
-            ("type_option", "merge_instances") if group_level && constant_zero() => Ok(()),
-            ("type_option", "merge_instances") => {
-                unsupported("(merged type coverage) is not supported yet (SIM-045)")
+            ("type_option", "merge_instances") if self.eval_bound_i128(value).is_err() => {
+                unsupported("must be a constant expression (IEEE 1800-2009 19.7.1)")
             }
+            ("type_option", "merge_instances") => Ok(()),
             _ => unsupported("is not a coverage option"),
         }
     }
@@ -817,7 +848,12 @@ impl<'a> Codegen<'a> {
             self.coverage_value_bin(group_name, point, bin, &mut coverpoint, build)?;
         }
         if !transition_bins.is_empty() {
-            let tables = transitions::build(width, transition_bins).map_err(|(index, message)| {
+            let detect_overlap = build.detect_overlap
+                || info
+                    .options
+                    .iter()
+                    .any(|setter| self.coverage_option_may_be_set(*setter, "detect_overlap"));
+            let tables = transitions::build(width, transition_bins, detect_overlap).map_err(|(index, message)| {
                 let bin = transition_nodes[index];
                 self.coverage_error(
                     bin,
@@ -2839,6 +2875,8 @@ impl<'a> Codegen<'a> {
                         ("option", "goal") => IrCoverageOption::Goal,
                         ("option", "at_least") => IrCoverageOption::AtLeast,
                         ("option", "auto_bin_max") => IrCoverageOption::AutoBinMax,
+                        ("option", "detect_overlap") => IrCoverageOption::DetectOverlap,
+                        ("option", "get_inst_coverage") => IrCoverageOption::GetInstCoverage,
                         _ => continue,
                     };
                     let lowered = self

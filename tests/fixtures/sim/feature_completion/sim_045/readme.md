@@ -145,6 +145,40 @@ are the register decisions
 - 19.11.3, L33937-33938: "When type_option.merge_instances is false, type
   coverage is computed as the weighted average of all instances."
 
+- 19.7, Table 19-1, L33254-33260: weight "If set at the covergroup
+  syntactic level, it specifies the weight of this covergroup instance for
+  computing the overall instance coverage of the simulation. If set at the
+  coverpoint (or cross) syntactic level, it specifies the weight of a
+  coverpoint (or cross) for computing the instance coverage of the enclosing
+  covergroup."
+- 19.7, Table 19-1, L33273-33277: "at_least=number 1 Minimum number of hits
+  for each bin." "detect_overlap=boolean 0 When true, a warning is issued if
+  there is an overlap between the range list (or transition list) of two
+  bins of a coverpoint."
+- 19.7, Table 19-1, L33291-33295: get_inst_coverage "Only applies when the
+  merge_instances type option is set. [...] When false, the value returned by
+  get_inst_coverage shall equal the value returned by get_coverage."
+- 19.7, Table 19-2, L33389: "at_least Yes (default for coverpoints &
+  crosses) Yes Yes".
+- 19.7.1, Table 19-3, L33409-33415: type_option weight "If set at the
+  coverpoint (or cross) syntactic level, it specifies the weight of a
+  coverpoint (or cross) for computing the cumulative (or type) coverage of
+  the enclosing covergroup. The specified weight shall be a non-negative
+  integral value."
+- 19.7.1, L33449-33450: "Different instances of a covergroup cannot assign
+  different values to type options. This is syntactically disallowed because
+  these options can only be initialized via constant expressions".
+- 19.11.3, L33939-33940: "When type_option.merge_instances is true, type
+  coverage is computed as if instances were merged together into the type, as
+  a union of coverage of all instances."
+- 19.11.3, L33960-33962: "When bins overlap among instances, the cumulative
+  coverage count of an overlapping bin is the sum of counts of that bin in all
+  instances containing it."
+- 19.11.3, L33987-34000: bins are compared by name: "binname[value]" for
+  `[]` state bins, "binname[0]" through "binname[N-1]" for fixed arrays,
+  "auto[value]" or "auto[low:high]" for automatic bins, "binname[transition]"
+  for transition arrays, and "<binname1,...,binnameN>" for automatic cross
+  bins; the `gt` and `ga` examples (66.6667; 100.0 and 50.0; 96 bins).
 ## Expected values
 
 `bins.sv` (every weight is 1, so a covergroup is the mean of its coverpoints):
@@ -256,6 +290,41 @@ with nothing pending: two more reports. Coverage: `pair` only, 100.00.
 Bc = 8, Bu = 1. (3,2) is illegal although ignored: a run-time error, nothing
 counts. (1,1) counts `diag`: 1/9 = 11.11; (0,0) an automatic bin: 22.22.
 
+`options.sv`:
+
+- `gw` (merge_instances 0): group option.at_least = 2 is the default of `cy`
+  and `xy` (Table 19-2); `cx` overrides it with 1. `w1` has `cx` weight 1,
+  `w2` weight 0; `cy` weight 1 (its type_option.weight 0 only affects type
+  coverage); `xy` weight 3; goal, comment, per_instance and
+  cross_num_print_missing change no number. After (1,1) once: `cx` `lo` 1/2
+  = 50.00, `cy` 0.00 (1 hit < 2), `xy` 0.00, `w1` (50·1 + 0 + 0·3)/5 = 10.00.
+  After (1,1) again in `w1`: `cy` 1/4 = 25.00, `xy` 1/8 = 12.50, `w1` (50 + 25
+  + 37.5)/5 = 22.50; `w2` 0.00 (`cx` has weight 0); `gw::get_coverage()` is
+  the option.weight (2 and 2) average of the instances: 11.2500.
+- `gt` and `gi` are the 19.11.3 example: 66.6667; `gt` instances report the
+  type value (get_inst_coverage 0): 66.67 66.67; `gi` sets
+  get_inst_coverage: 100.00 and 50.00.
+- `ga` is the 19.11.3 automatic-bin example: 16 + 64 = 96 names, none shared
+  (`auto[0:3]` ... vs `auto[0:7]` ...). 5 hits `auto[4:7]` and `auto[0:7]`:
+  2/96 = 2.0833.
+- `gm` merges `m1` (0,0) and `m2` (0,0), (1,1): `cx` `lo` and `mid`: 100.00;
+  `tx` has `up`, `any[0=>1]`, `any[0=>2]`, `m2` completes 0 => 1: 2/3 =
+  66.67; `cy` 2/4 = 50; `xy` (lo,0), (lo,1), (mid,1) of 8: 37.50. The type is
+  weighted by type_option.weight (cx 3, tx 0, cy 1, xy 1): (300 + 50 +
+  37.5)/5 = 77.5000, and `m1.get_inst_coverage()` returns it (Table 19-1).
+- `go` warns for `lo`/`mid` (they share 1; `top` is emptied by `skip`, S45-D17)
+  and for `t1`/`t2` (both hold 0 => 1); `quiet` turns the check off. After
+  sample 0: `cx` `lo` of `lo`, `mid` = 50, `tx` 0, `quiet` `p` (y = 1) 1/2 =
+  50: 33.33.
+- `$get_coverage()` averages the type coverage of the six types with their
+  type_option.weight (`gm` 2): (11.25 + 66.6667 + 66.6667 + 2.0833 + 2·77.5
+  + 33.3333)/7 = 47.8571.
+
+`merge_cross.sv`: `ab` has 2 × 2 bins in `g1` and 3 × 2 in `g2`, so the
+merged cross has no common layout: a run-time error at the type query (llg
+limitation), which reports 0.00; the instance values (get_inst_coverage 1)
+are 1/4 = 25.00 and 1/6 = 16.67.
+
 ## Negative cases
 
 | Fixture | Error |
@@ -272,3 +341,5 @@ counts. (1,1) counts `diag`: 1/9 = 11.11; (0,0) an automatic bin: 22.22.
 | `neg_cross_of_cross` | a cross of a cross (not 1800-2009 syntax) |
 | `neg_cross_transition` | a cross of a coverpoint with transition bins (llg limitation) |
 | `neg_cross_set` | a cross bin `with` filter, 1800-2012 syntax |
+| `neg_type_weight` | `type_option.weight = -2` (Table 19-3) |
+| `neg_merge_argument` | type_option.merge_instances from an argument (Slang: not a constant, 19.7.1) |
