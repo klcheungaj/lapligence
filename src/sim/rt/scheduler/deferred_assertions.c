@@ -118,12 +118,24 @@ void llg_deferred_assertion_scoped(int kind, int passed, uint64_t identity,
     }
     // A passing assert/assume without a pass action, and a failing cover,
     // report nothing. Flush points act on the process queue, never on a
-    // later report, so omitting these records changes no outcome.
-    if ((kind == LLG_ASSERTION_COVER && !passed) ||
-        (kind != LLG_ASSERTION_COVER && passed && !action) ||
-        !llg_deferred_assertion_enabled(kind, label, scope)) {
+    // later report, so omitting these records changes no outcome. With
+    // assertion coverage they are queued to be counted when they mature
+    // (S46-D8), still running no report or action.
+    int silent = (kind == LLG_ASSERTION_COVER && !passed) ||
+                 (kind != LLG_ASSERTION_COVER && passed && !action);
+    if (!llg_deferred_assertion_enabled(kind, label, scope)) {
         llg_frame_release(frame);
         return;
+    }
+    llg_acov_item_t* item = llg_acov_find(identity);
+    if (silent && !item) {
+        llg_frame_release(frame);
+        return;
+    }
+    if (silent) {
+        llg_frame_release(frame);
+        frame = NULL;
+        action = NULL;
     }
     llg_proc_t* current = g.in_deferred_action ? NULL : llg_current();
     // Resolve the previous head before appending: a stale index may equal
@@ -141,6 +153,8 @@ void llg_deferred_assertion_scoped(int kind, int passed, uint64_t identity,
     report->kind = (uint8_t)kind;
     report->passed = (uint8_t)passed;
     report->live = 1;
+    report->count_only = (uint8_t)silent;
+    report->acov = item;
     g.deferred_pending_live++;
     if (current) {
         report->owner_prev = previous;
@@ -195,6 +209,13 @@ static void deferred_report_execute(llg_deferred_assertion_report_t* report) {
         g.in_deferred_action = 1;
         report->action(frame);
         g.in_deferred_action = saved;
+        llg_frame_release(frame);
+        return;
+    }
+    // The check is an attempt with this outcome once its report matures.
+    llg_acov_attempt(report->acov);
+    llg_acov_result(report->acov, report->passed, 0);
+    if (report->count_only) {
         llg_frame_release(frame);
         return;
     }

@@ -172,6 +172,32 @@ static void free_assertion_attempts(llg_concurrent_assertion_t* assertion) {
     free_property_attempts(assertion);
 }
 
+/* The evaluation attempts of `assertion` that have reported no result
+ * (40.5.3 "in progress"): simple attempts, property attempts, sequence
+ * attempts without a shared evaluation (each its own attempt, as every
+ * cover sequence attempt is), and once each undecided implication
+ * evaluation, whose antecedent and consequent threads share one record. */
+static uint64_t assertion_attempts_in_progress(const llg_concurrent_assertion_t* assertion) {
+    uint64_t count = 0;
+    for (const llg_assertion_attempt_t* a = assertion->attempts; a; a = a->next) count++;
+    for (const llg_property_inst_t* a = assertion->property_attempts; a; a = a->next) count++;
+    for (const llg_sequence_attempt_t* a = assertion->sequence_antecedents; a; a = a->next)
+        count += !a->eval || (a->eval_owner && !a->eval->decided);
+    for (const llg_sequence_attempt_t* a = assertion->sequence_consequents; a; a = a->next) {
+        if (!a->eval) {
+            count++;
+            continue;
+        }
+        if (a->eval->decided || a->eval->antecedent_live) continue;
+        // An evaluation whose antecedent has finished: count it at its
+        // first consequent thread only.
+        const llg_sequence_attempt_t* first = assertion->sequence_consequents;
+        while (first->eval != a->eval) first = first->next;
+        count += first == a;
+    }
+    return count;
+}
+
 static void free_assertions(void) {
     while (g.assertions) {
         llg_concurrent_assertion_t* next = g.assertions->next;

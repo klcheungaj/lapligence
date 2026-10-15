@@ -93,8 +93,9 @@ fn u64_at(bytes: &[u8], at: usize) -> u64 {
     u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap())
 }
 
-/// A database with `payload` and the header of `template` (its version,
-/// sections and schema hashes), framed and checksummed as the format says.
+/// A database with `payload` (its sections, each framed by a u64 byte
+/// length) and the header of `template` (its version, sections and schema
+/// hashes), framed and checksummed as the format says.
 fn database_with_payload(template: &[u8], payload: &[u8]) -> Vec<u8> {
     let mut bytes = template[..32].to_vec();
     bytes.extend_from_slice(&(payload.len() as u64).to_le_bytes());
@@ -109,8 +110,10 @@ fn database_with_payload(template: &[u8], payload: &[u8]) -> Vec<u8> {
 /// the offset of its first counter entry's bin index within them.
 fn single_record(good: &[u8]) -> (Vec<u8>, usize) {
     assert_eq!(&good[..8], b"LLGCOVDB");
-    let payload = &good[40..good.len() - 8];
-    assert_eq!(u64_at(good, 32) as usize, payload.len());
+    assert_eq!(u32_at(good, 12), 1, "only the functional section");
+    assert_eq!(u64_at(good, 32) as usize, good.len() - 48);
+    let payload = &good[48..good.len() - 8];
+    assert_eq!(u64_at(good, 40) as usize, payload.len());
     assert_eq!(u32_at(payload, 0), 1, "one type");
     let name = u32_at(payload, 4);
     assert_eq!(u32_at(payload, 8 + name), 1, "one record");
@@ -131,14 +134,17 @@ fn single_record(good: &[u8]) -> (Vec<u8>, usize) {
     (record, at + 8)
 }
 
+/// A framed functional section of type `g` holding `records`.
 fn functional_payload(records: &[&[u8]]) -> Vec<u8> {
-    let mut payload = 1u32.to_le_bytes().to_vec();
-    payload.extend_from_slice(&1u32.to_le_bytes());
-    payload.push(b'g');
-    payload.extend_from_slice(&(records.len() as u32).to_le_bytes());
+    let mut body = 1u32.to_le_bytes().to_vec();
+    body.extend_from_slice(&1u32.to_le_bytes());
+    body.push(b'g');
+    body.extend_from_slice(&(records.len() as u32).to_le_bytes());
     for record in records {
-        payload.extend_from_slice(record);
+        body.extend_from_slice(record);
     }
+    let mut payload = (body.len() as u64).to_le_bytes().to_vec();
+    payload.extend_from_slice(&body);
     payload
 }
 
@@ -173,7 +179,7 @@ fn corrupt_and_foreign_databases_change_nothing() {
         outside[bin_at..bin_at + 8].copy_from_slice(&16u64.to_le_bytes());
         let valid = database_with_payload(&good, &functional_payload(&[&record, &other]));
         let mut flipped = good.clone();
-        flipped[50] ^= 1;
+        flipped[58] ^= 1;
         let cases: Vec<(&str, Vec<u8>, String)> = vec![
             ("two valid records", valid, String::new()),
             (
@@ -301,7 +307,264 @@ fn definition_only_options_and_partial_counts_are_rejected() {
     );
     sim_cli::reject_case(
         SUITE,
+        "neg_coverage_scope",
+        "neg_coverage_scope.sv:10:68 expected module instance",
+    );
+    sim_cli::reject_case(
+        SUITE,
         "neg_count_args",
         "neg_count_args.sv:12:9: `get_inst_coverage` takes either no arguments or both covered and total bin arguments (IEEE 1800-2009 19.8)",
     );
+}
+
+/// The assertion section of a database: per item, in table order,
+/// (attempts, successes, vacuous, failures, disabled, killed).
+fn assertion_counters(bytes: &[u8]) -> Vec<[u64; 6]> {
+    assert_eq!(&bytes[..8], b"LLGCOVDB");
+    let sections = u32_at(bytes, 12);
+    assert_ne!(sections & 2, 0, "an assertion section");
+    let mut at = 40;
+    if sections & 1 != 0 {
+        at += 8 + u64_at(bytes, at) as usize;
+    }
+    let length = u64_at(bytes, at) as usize;
+    let items = u32_at(bytes, at + 8);
+    assert_eq!(length, 4 + items * 48, "section length");
+    let first = at + 12;
+    (0..items)
+        .map(|item| std::array::from_fn(|counter| u64_at(bytes, first + item * 48 + counter * 8)))
+        .collect()
+}
+
+/// The `assertions` run's counters, in elaboration order (readme.md).
+const ASSERTION_COUNTERS: [[u64; 6]; 12] = [
+    [4, 3, 0, 1, 0, 0], // checks::check.pk
+    [5, 2, 2, 1, 0, 0], // tb.u1.p
+    [5, 2, 0, 0, 0, 0], // tb.u1.c
+    [5, 1, 4, 0, 0, 0], // tb.u1.s
+    [7, 2, 2, 0, 2, 1], // tb.u2.p
+    [7, 2, 0, 0, 2, 1], // tb.u2.c
+    [7, 0, 3, 0, 2, 2], // tb.u2.s
+    [8, 3, 0, 0, 0, 0], // tb.cs
+    [4, 3, 0, 1, 0, 0], // tb.im
+    [4, 1, 0, 0, 0, 0], // tb.ic
+    [4, 1, 0, 0, 0, 0], // tb.dc
+    [1, 0, 0, 1, 0, 0], // tb.im2
+];
+
+#[test]
+fn assertion_coverage_counts_selects_and_merges_across_runs() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_046/assertions.out");
+    let doubled = ASSERTION_COUNTERS.map(|row| row.map(|count| 2 * count));
+    for optimized in [false, true] {
+        for (backend, controls) in sim_cli::backend_matrix() {
+            let envs = controls
+                .iter()
+                .map(|(name, value)| (*name, value.as_str()))
+                .collect::<Vec<_>>();
+            let (directory, outputs) = sim_cli::run_case_sequence(
+                SUITE,
+                "assertions",
+                optimized,
+                &envs,
+                &[],
+                &[(&[], &[]), (&[], &["+merge"])],
+            );
+            let label = format!("{SUITE}/assertions, {backend}, optimized={optimized}");
+            let mut stdout = String::new();
+            for output in &outputs {
+                assert!(
+                    output.status.success(),
+                    "{label}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(llg_messages(output).is_empty(), "{label}");
+                stdout.push_str(&String::from_utf8_lossy(&output.stdout));
+            }
+            assert_eq!(stdout, expected, "{label}");
+            let first = std::fs::read(directory.path().join("acov.db")).expect("acov.db");
+            assert_eq!(assertion_counters(&first), ASSERTION_COUNTERS, "{label}");
+            // The second run merged the first run's counters, then counted
+            // the same run again.
+            let second = std::fs::read(directory.path().join("acov2.db")).expect("acov2.db");
+            assert_eq!(assertion_counters(&second), doubled, "{label}");
+        }
+    }
+}
+
+#[test]
+fn coverage_control_status_values_follow_table_40_1() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_046/control.out");
+    sim_cli::run_case_checked_matrix(SUITE, "control", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert!(llg_messages(output).is_empty(), "{label}");
+    });
+    // Unavailable kinds and a bad type save nothing.
+    let (directory, outputs) =
+        sim_cli::run_case_sequence(SUITE, "control", false, &[], &[], &[(&[], &[])]);
+    assert_stdout("control files", &outputs[0], expected);
+    assert!(directory.path().join("c.db").exists());
+    assert!(!directory.path().join("never.db").exists());
+}
+
+#[test]
+fn failed_assertion_merges_change_no_counter() {
+    let error = |name: &str, reason: &str| {
+        format!(
+            "llg: runtime error: $coverage_merge at tb:15:29: coverage database `{name}` was not merged: {reason}; no coverage changed"
+        )
+    };
+    let one = vec![[1, 1, 0, 0, 0, 0]; 2];
+    for optimized in [false, true] {
+        let label = format!("{SUITE}/merge_errors, optimized={optimized}");
+        let (directory, outputs) = sim_cli::run_case_sequence(
+            SUITE,
+            "merge_errors",
+            optimized,
+            &[],
+            &[],
+            &[
+                (&[], &["+save=good.db"]),
+                (&[], &["+merge=good.db", "+save=two.db"]),
+            ],
+        );
+        assert_stdout(&label, &outputs[0], "merged 0/2\nsave 1\n");
+        assert_stdout(&label, &outputs[1], "merge 1\nmerged 2/2\nsave 1\n");
+        let good = std::fs::read(directory.path().join("good.db")).expect("good.db");
+        assert_eq!(assertion_counters(&good), one, "{label}");
+        let two = std::fs::read(directory.path().join("two.db")).expect("two.db");
+        assert_eq!(
+            assertion_counters(&two),
+            vec![[2, 2, 0, 0, 0, 0]; 2],
+            "{label}"
+        );
+        // A functional-only database, from a model without assertion items.
+        let (functional_run, _) = sim_cli::run_case_sequence(
+            SUITE,
+            "db_errors",
+            optimized,
+            &[],
+            &[],
+            &[(&[], &["+save=functional.db"])],
+        );
+        let functional =
+            std::fs::read(functional_run.path().join("functional.db")).expect("functional.db");
+        let mut flipped = good.clone();
+        flipped[60] ^= 1;
+        // The right hash and checksum, but an item table of one item.
+        let mut short = 52u64.to_le_bytes().to_vec();
+        short.extend_from_slice(&1u32.to_le_bytes());
+        for count in [1u64, 1, 0, 0, 0, 0] {
+            short.extend_from_slice(&count.to_le_bytes());
+        }
+        let short = database_with_payload(&good, &short);
+        // (case, compile options, database, stdout, run-time error)
+        type MergeCase<'a> = (&'a str, &'a [&'a str], Vec<u8>, &'a str, Option<String>);
+        let cases: Vec<MergeCase> = vec![
+            (
+                "another design",
+                &["-G", "N=3"],
+                good.clone(),
+                "merge -1\nmerged 0/3\nsave 1\n",
+                Some(error(
+                    "bad.db",
+                    "it was saved by a model with different assertions",
+                )),
+            ),
+            (
+                "flipped bit",
+                &[],
+                flipped,
+                "merge -1\nmerged 0/2\nsave 1\n",
+                Some(error(
+                    "bad.db",
+                    "the checksum does not match (the file is corrupt)",
+                )),
+            ),
+            (
+                "short item table",
+                &[],
+                short,
+                "merge -1\nmerged 0/2\nsave 1\n",
+                Some(error(
+                    "bad.db",
+                    "the assertion section does not match its item table",
+                )),
+            ),
+            (
+                "no assertion section",
+                &[],
+                functional,
+                "merge 0\nmerged 0/2\nsave 1\n",
+                None,
+            ),
+        ];
+        for (case, options, bytes, stdout, message) in cases {
+            let label = format!("{label}, {case}");
+            let (rerun, outputs) = sim_cli::run_case_sequence(
+                SUITE,
+                "merge_errors",
+                optimized,
+                &[],
+                &[("bad.db", &bytes)],
+                &[(options, &["+merge=bad.db", "+save=after.db"])],
+            );
+            let output = &outputs[0];
+            assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{label}");
+            match message {
+                Some(message) => {
+                    assert_eq!(output.status.code(), Some(1), "{label}");
+                    assert_eq!(llg_messages(output), [message], "{label}");
+                }
+                None => {
+                    assert!(output.status.success(), "{label}");
+                    assert!(llg_messages(output).is_empty(), "{label}");
+                }
+            }
+            // The run's own counters only: nothing was merged.
+            if options.is_empty() {
+                let after = std::fs::read(rerun.path().join("after.db")).expect("after.db");
+                assert_eq!(assertion_counters(&after), one, "{label}");
+            }
+        }
+        // A database of another kind merges nothing (40.3.2.4 NOCOV); a
+        // missing one is an error for every kind.
+        let (_rerun, outputs) = sim_cli::run_case_sequence(
+            SUITE,
+            "merge_errors",
+            optimized,
+            &[],
+            &[("good.db", &good)],
+            &[
+                (&[], &["+toggle=good.db"]),
+                (&[], &["+merge=missing.db", "+toggle=missing.db"]),
+            ],
+        );
+        assert_stdout(&label, &outputs[0], "toggle 0\nmerged 0/2\n");
+        assert_eq!(outputs[1].status.code(), Some(1), "{label}");
+        assert_eq!(
+            String::from_utf8_lossy(&outputs[1].stdout),
+            "merge -1\ntoggle -1\nmerged 0/2\n",
+            "{label}"
+        );
+        let messages = llg_messages(&outputs[1]);
+        assert_eq!(messages.len(), 2, "{label}: {messages:?}");
+        for (message, site) in messages.iter().zip(["tb:15:29", "tb:17:30"]) {
+            assert!(
+                message.starts_with(&format!(
+                    "llg: runtime error: $coverage_merge at {site}: coverage database `missing.db` was not merged: "
+                )),
+                "{label}: {message}"
+            );
+        }
+    }
+}
+
+#[test]
+fn final_procedures_query_and_save_live_coverage() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_046/final_query.out");
+    sim_cli::run_case_checked_matrix(SUITE, "final_query", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert!(llg_messages(output).is_empty(), "{label}");
+    });
 }

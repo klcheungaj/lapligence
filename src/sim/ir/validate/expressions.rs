@@ -1248,6 +1248,49 @@ impl Validator<'_> {
                         }
                     }
                 }
+                IrSysFunc::CoverageApi(call) => {
+                    use crate::sim::ir::{IrCoverageApiFunction, IrCoverageScope};
+                    let scoped = matches!(
+                        call.function,
+                        IrCoverageApiFunction::Control
+                            | IrCoverageApiFunction::GetMax
+                            | IrCoverageApiFunction::Get
+                    );
+                    if call.args.len() != call.function.integral_arguments()
+                        || call.scope.is_some() != scoped
+                        || call.name.is_some() == scoped
+                        || expr.width != 32
+                        || !expr.signed
+                    {
+                        return self.fail(path, "malformed coverage access function");
+                    }
+                    if let Some(IrCoverageScope::Instance(instance)) = &call.scope {
+                        if self
+                            .model
+                            .assertion_coverage
+                            .as_ref()
+                            .is_none_or(|table| *instance as usize >= table.instances.len())
+                        {
+                            return self.fail(path, "coverage scope names an unknown instance");
+                        }
+                    }
+                    for (index, arg) in call.args.iter().enumerate() {
+                        self.validate_expr(arg, formals, &format!("{path}.args[{index}]"))?;
+                        if arg.is_real() {
+                            return self.fail(path, "coverage access arguments must be integral");
+                        }
+                    }
+                    for text in call.strings() {
+                        text.validate(self.model, self.string_return.get())?;
+                        let mut result = Ok(());
+                        text.expressions(&mut |child| {
+                            result = result
+                                .clone()
+                                .and_then(|_| self.validate_expr(child, formals, path));
+                        });
+                        result?;
+                    }
+                }
                 IrSysFunc::System(command) => {
                     if let Some(command) = command {
                         command.validate(self.model, self.string_return.get())?;

@@ -904,3 +904,232 @@ impl IrCoverageTextQuery {
         }
     }
 }
+
+/// The assertion statement kind of an assertion coverage item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrAssertionItemKind {
+    Assert,
+    Assume,
+    Cover,
+}
+
+impl IrAssertionItemKind {
+    /// The runtime `LLG_ASSERTION_*` kind constant.
+    pub(in crate::sim) fn runtime_name(self) -> &'static str {
+        match self {
+            Self::Assert => "LLG_ASSERTION_ASSERT",
+            Self::Assume => "LLG_ASSERTION_ASSUME",
+            Self::Cover => "LLG_ASSERTION_COVER",
+        }
+    }
+}
+
+/// How an assertion coverage item is evaluated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrAssertionItemForm {
+    /// A concurrent `assert`/`assume`/`cover property`.
+    Concurrent,
+    /// A concurrent `cover sequence`: every match is a success (16.15.3).
+    CoverSequence,
+    /// A simple immediate assertion (16.3).
+    Immediate,
+    /// A deferred immediate assertion (16.4).
+    Deferred,
+}
+
+impl IrAssertionItemForm {
+    /// The runtime `LLG_ACOV_*` form constant.
+    pub(in crate::sim) fn runtime_name(self) -> &'static str {
+        match self {
+            Self::Concurrent => "LLG_ACOV_CONCURRENT",
+            Self::CoverSequence => "LLG_ACOV_COVER_SEQUENCE",
+            Self::Immediate => "LLG_ACOV_IMMEDIATE",
+            Self::Deferred => "LLG_ACOV_DEFERRED",
+        }
+    }
+}
+
+/// One assertion coverage item (IEEE 1800-2009 40.2.2): an elaborated
+/// assertion statement instance with its own attempt and result counters.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrAssertionItem {
+    /// The owned semantic node of the statement, as the assertion runtime
+    /// and the immediate assertion statements name it.
+    pub(in crate::sim) identity: u64,
+    pub(in crate::sim) kind: IrAssertionItemKind,
+    pub(in crate::sim) form: IrAssertionItemForm,
+    /// The statement label; empty for an unnamed assertion.
+    pub(in crate::sim) name: String,
+    /// The hierarchical name of a labelled assertion; empty otherwise.
+    pub(in crate::sim) full_name: String,
+    /// The module instance that owns the statement, as an index of
+    /// [`IrAssertionCoverage::instances`]; `None` for a statement outside
+    /// every instance (a class or package subroutine), owned by `$root`.
+    pub(in crate::sim) instance: Option<u32>,
+}
+
+/// One elaborated module, interface or program instance of the hierarchy
+/// that `$coverage_*` scope arguments select (40.3.2.1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrCoverageInstance {
+    pub(in crate::sim) path: String,
+    pub(in crate::sim) definition: String,
+    /// The enclosing instance; `None` for a top-level instance.
+    pub(in crate::sim) parent: Option<u32>,
+}
+
+/// The assertion coverage tables of a model (40.2.2, 40.3.2, 40.5.3).
+/// Items are sorted by identity; parents precede their children.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct IrAssertionCoverage {
+    pub(in crate::sim) items: Vec<IrAssertionItem>,
+    pub(in crate::sim) instances: Vec<IrCoverageInstance>,
+}
+
+impl IrAssertionCoverage {
+    /// The item index of the assertion statement `identity`.
+    pub(in crate::sim) fn item_index(&self, identity: u64) -> Option<usize> {
+        self.items
+            .binary_search_by_key(&identity, |item| item.identity)
+            .ok()
+    }
+
+    /// Items strictly ordered by identity, instance indices in range and
+    /// every parent before its child, so the runtime can binary-search
+    /// items and walk parents without cycles.
+    pub(in crate::sim) fn validate(&self) -> Result<(), String> {
+        if self
+            .items
+            .windows(2)
+            .any(|pair| pair[0].identity >= pair[1].identity)
+        {
+            return Err("assertion items are not ordered by identity".to_owned());
+        }
+        if self.items.len() > i32::MAX as usize || self.instances.len() > i32::MAX as usize {
+            return Err("assertion coverage table is too large".to_owned());
+        }
+        for item in &self.items {
+            if item
+                .instance
+                .is_some_and(|instance| instance as usize >= self.instances.len())
+            {
+                return Err("assertion item names an unknown instance".to_owned());
+            }
+        }
+        for (index, instance) in self.instances.iter().enumerate() {
+            if instance
+                .parent
+                .is_some_and(|parent| parent as usize >= index)
+            {
+                return Err("coverage instance parent does not precede it".to_owned());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn items(&self) -> &[IrAssertionItem] {
+        &self.items
+    }
+
+    pub fn instances(&self) -> &[IrCoverageInstance] {
+        &self.instances
+    }
+}
+
+/// A built-in coverage access function of IEEE 1800-2009 40.3.2.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrCoverageApiFunction {
+    /// `$coverage_control(control, type, scope_def, scope)`.
+    Control,
+    /// `$coverage_get_max(type, scope_def, scope)`.
+    GetMax,
+    /// `$coverage_get(type, scope_def, scope)`.
+    Get,
+    /// `$coverage_merge(type, name)`.
+    Merge,
+    /// `$coverage_save(type, name)`.
+    Save,
+}
+
+impl IrCoverageApiFunction {
+    /// The runtime `LLG_COVERAGE_*` function constant.
+    pub(in crate::sim) fn runtime_name(self) -> &'static str {
+        match self {
+            Self::Control => "LLG_COVERAGE_CONTROL",
+            Self::GetMax => "LLG_COVERAGE_GET_MAX",
+            Self::Get => "LLG_COVERAGE_GET",
+            Self::Merge => "LLG_COVERAGE_MERGE",
+            Self::Save => "LLG_COVERAGE_SAVE",
+        }
+    }
+
+    /// The number of integral arguments before the scope or name.
+    pub(in crate::sim) fn integral_arguments(self) -> usize {
+        match self {
+            Self::Control => 3,
+            Self::GetMax | Self::Get => 2,
+            Self::Merge | Self::Save => 1,
+        }
+    }
+}
+
+/// The `modules_or_instance` argument of 40.3.2.1-40.3.2.3.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrCoverageScope {
+    /// An instance of [`IrAssertionCoverage::instances`], named by a
+    /// hierarchical reference.
+    Instance(u32),
+    /// `$root`.
+    Root,
+    /// A string naming a module definition (Table 40-2).
+    Definition(IrStringExpr),
+}
+
+/// One call of a 40.3.2 coverage function; the result is a signed `int`
+/// status or count.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCoverageApiCall {
+    pub(in crate::sim) function: IrCoverageApiFunction,
+    /// The integral arguments in source order (control, type, scope_def).
+    pub(in crate::sim) args: Vec<IrExpr>,
+    /// The hierarchy argument of control, get_max and get.
+    pub(in crate::sim) scope: Option<IrCoverageScope>,
+    /// The database name of merge and save.
+    pub(in crate::sim) name: Option<IrStringExpr>,
+    /// `file:line:column` of the call, for run-time errors.
+    pub(in crate::sim) site: String,
+}
+
+impl IrCoverageApiCall {
+    /// The string operands: a definition-name scope and a database name.
+    pub(in crate::sim) fn strings(&self) -> impl Iterator<Item = &IrStringExpr> {
+        let scope = match &self.scope {
+            Some(IrCoverageScope::Definition(text)) => Some(text),
+            _ => None,
+        };
+        scope.into_iter().chain(self.name.as_ref())
+    }
+
+    /// Visit every expression operand, string operands included.
+    pub(in crate::sim) fn expressions(&self, f: &mut dyn FnMut(&IrExpr)) {
+        for arg in &self.args {
+            f(arg);
+        }
+        for text in self.strings() {
+            text.expressions(&mut |child| f(child));
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, f: &mut dyn FnMut(&mut IrExpr)) {
+        for arg in &mut self.args {
+            f(arg);
+        }
+        let Self { scope, name, .. } = self;
+        if let Some(IrCoverageScope::Definition(text)) = scope {
+            text.expressions_mut(&mut |child| f(child));
+        }
+        if let Some(text) = name {
+            text.expressions_mut(&mut |child| f(child));
+        }
+    }
+}

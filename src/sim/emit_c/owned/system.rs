@@ -19,6 +19,7 @@ impl Frame<'_, '_> {
                     | IrSysFunc::UrandomRange { .. }
                     | IrSysFunc::RandStep { .. }
                     | IrSysFunc::CoverageCounts { .. }
+                    | IrSysFunc::CoverageApi(_)
             )
         {
             return Err(pending(
@@ -39,6 +40,7 @@ impl Frame<'_, '_> {
             }
             IrSysFunc::QFull { q_id, status } => self.queue_full(q_id, status)?,
             IrSysFunc::System(command) => self.system_command(command.as_ref())?,
+            IrSysFunc::CoverageApi(call) => self.coverage_api(call)?,
             IrSysFunc::Sampled(call) => match call.kind {
                 IrSampledFunc::Sampled => {
                     let previous = self.sampled_reads;

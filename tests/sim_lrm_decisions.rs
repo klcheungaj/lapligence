@@ -2355,6 +2355,70 @@ fn s46_d3_failed_load_changes_nothing() {
 }
 
 #[test]
+fn s46_d4_assertion_covered_means_success() {
+    run_decision(
+        "S46-D4_assertion_covered_means_success",
+        include_str!("fixtures/sim/lrm_decisions/S46-D4_assertion_covered_means_success.out"),
+    );
+}
+
+#[test]
+fn s46_d5_unavailable_kinds() {
+    run_decision(
+        "S46-D5_unavailable_kinds",
+        include_str!("fixtures/sim/lrm_decisions/S46-D5_unavailable_kinds.out"),
+    );
+}
+
+#[test]
+fn s46_d6_string_scope_is_definition() {
+    run_decision(
+        "S46-D6_string_scope_is_definition",
+        include_str!("fixtures/sim/lrm_decisions/S46-D6_string_scope_is_definition.out"),
+    );
+}
+
+#[test]
+fn s46_d8_assertion_attempts() {
+    run_decision(
+        "S46-D8_assertion_attempts",
+        include_str!("fixtures/sim/lrm_decisions/S46-D8_assertion_attempts.out"),
+    );
+}
+
+#[test]
+fn s46_d9_assertion_items() {
+    run_decision(
+        "S46-D9_assertion_items",
+        include_str!("fixtures/sim/lrm_decisions/S46-D9_assertion_items.out"),
+    );
+}
+
+#[test]
+fn s46_d11_failed_merge() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S46-D11_failed_merge.out");
+    sim_cli::run_case_checked_matrix(SUITE, "S46-D11_failed_merge", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(1), "{label}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(
+                "llg: runtime error: $coverage_merge at tb:18:27: coverage database `s46_d11_no_such_database` was not merged: "
+            ),
+            "{label}: {stderr}"
+        );
+    });
+}
+
+#[test]
+fn s46_d12_check_full_or_none() {
+    run_decision(
+        "S46-D12_check_full_or_none",
+        include_str!("fixtures/sim/lrm_decisions/S46-D12_check_full_or_none.out"),
+    );
+}
+
+#[test]
 fn s46_d7_merged_bin_counts() {
     run_decision(
         "S46-D7_merged_bin_counts",

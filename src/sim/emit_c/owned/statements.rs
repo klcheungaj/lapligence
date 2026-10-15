@@ -849,7 +849,18 @@ impl Frame<'_, '_> {
                     self.line(format!("if ({query} & LLG_IMMEDIATE_CHECKED) {{"));
                 }
                 let condition = self.condition(condition)?;
+                // Assertion coverage counts each enabled check (S46-D8).
+                let item = self
+                    .ctx
+                    .model
+                    .assertion_coverage
+                    .as_ref()
+                    .and_then(|table| table.item_index(*identity))
+                    .map(|index| format!("&llg_model_acov_items[{index}]"));
                 self.line(format!("if ({condition}) {{"));
+                if let Some(item) = &item {
+                    self.line(format!("llg_acov_check({item}, 1);"));
+                }
                 if *kind == IrImmediateAssertionKind::Cover {
                     self.line(format!(
                         "llg_assertion_cover({identity}ULL, {label}, {location});"
@@ -865,6 +876,9 @@ impl Frame<'_, '_> {
                     }
                 }
                 self.line("} else {");
+                if let Some(item) = &item {
+                    self.line(format!("llg_acov_check({item}, 0);"));
+                }
                 let default_failure =
                     if_false.is_none() && *kind != IrImmediateAssertionKind::Cover;
                 if let Some(query) = &controls {

@@ -97,6 +97,8 @@ int llg_assertion_endpoint(uint64_t identity, uint32_t index, llg_event_t* event
     g.sequence_endpoints = endpoints;
     g.sequence_endpoint_count = index + 1u;
     assertion->endpoint_event = event;
+    // An end point is no assertion statement: it has no coverage item.
+    assertion->acov = NULL;
     if (slot_count) {
         assertion->endpoint_slots = (llg_matched_slot_t*)llg_checked_calloc(
             slot_count, sizeof(*assertion->endpoint_slots), "sequence matched slots");
@@ -125,6 +127,7 @@ static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
         return;
     }
     if (vacuous) assertion_vacuous();
+    llg_acov_result(assertion->acov, success, vacuous);
     if (success) {
         // Cover counts and pass actions represent a non-vacuous match. An
         // implication with a false antecedent is accounted separately but is
@@ -172,12 +175,33 @@ static int assertion_attempt_starts(llg_concurrent_assertion_t* assertion) {
     if (assertion->single_attempt) {
         if (assertion->single_attempt_started) return 0;
         assertion->single_attempt_started = 1;
+        llg_acov_attempt(assertion->acov);
         return 1;
     }
-    if (assertion->kind != LLG_ASSERTION_EXPECT) return 1;
+    if (assertion->kind != LLG_ASSERTION_EXPECT) {
+        llg_acov_attempt(assertion->acov);
+        return 1;
+    }
     if (!assertion->expect_active || assertion->expect_started) return 0;
     assertion->expect_started = 1;
     return 1;
+}
+
+/* Whether a clock event of `assertion` would begin a new attempt, for the
+ * disabled-attempt count of an event that arrives while disable iff holds
+ * (40.5.3 "an attempt starts when the disable iff is true"). */
+static int assertion_would_start(const llg_concurrent_assertion_t* assertion) {
+    return assertion->acov && assertion->enabled && !assertion->single_attempt &&
+           assertion->kind != LLG_ASSERTION_EXPECT;
+}
+
+/* Discard every running attempt of `assertion` because its disable iff
+ * condition holds (`killed` 0) or a control task killed it, counting them
+ * for assertion coverage. */
+static void end_assertion_attempts(llg_concurrent_assertion_t* assertion, int killed) {
+    if (assertion->acov)
+        llg_acov_end_attempts(assertion->acov, assertion_attempts_in_progress(assertion), killed);
+    free_assertion_attempts(assertion);
 }
 
 static void assertion_disable_signal_changed(sv4_t* signal) {
@@ -185,7 +209,7 @@ static void assertion_disable_signal_changed(sv4_t* signal) {
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
         if (assertion->disable == signal && sv4_to_bool(*signal))
-            free_assertion_attempts(assertion);
+            end_assertion_attempts(assertion, 0);
     }
 }
 
@@ -310,7 +334,13 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
         if ((!assertion->enabled && !assertion_has_attempts(assertion)) ||
             (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active))
             continue;
-        if (assertion->disable && sv4_to_bool(*assertion->disable)) continue;
+        if (assertion->disable && sv4_to_bool(*assertion->disable)) {
+            if (assertion_would_start(assertion) && assertion->clock == signal &&
+                ev_matches_changed(old, value, assertion->edge) &&
+                (!assertion->clock_gate || assertion->clock_gate(NULL)))
+                llg_acov_disabled_attempt(assertion->acov);
+            continue;
+        }
         if (assertion->clock == signal &&
             ev_matches_changed(old, value, assertion->edge)) {
             // A gated-off edge is no clock tick at all, for new attempts and
@@ -504,8 +534,16 @@ static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
         return;
     }
     if (assertion->disable && sv4_to_bool(*assertion->disable)) {
+        // A leading-clock event recorded before disable iff became true
+        // starts an attempt that is disabled at once (40.5.3).
+        int root_event = assertion->edge_pending;
+        for (const llg_assertion_clock_event_t* event = assertion->clock_events;
+             event && !root_event; event = event->next)
+            root_event = event->signal == assertion->clock && event->edge == assertion->edge;
         assertion->edge_pending = 0;
-        free_assertion_attempts(assertion);
+        end_assertion_attempts(assertion, 0);
+        if (root_event && assertion_would_start(assertion))
+            llg_acov_disabled_attempt(assertion->acov);
         return;
     }
     if (assertion->property) {
@@ -541,9 +579,11 @@ static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
                 assertion_abort_attempts(assertion);
                 // A synchronous accept/reject control also controls the new
                 // attempt begun at this sampled leading-clock edge.
-                if (!had_pending && assertion->enabled && !g.finish)
+                if (!had_pending && assertion->enabled && !g.finish) {
+                    llg_acov_attempt(assertion->acov);
                     assertion_result(assertion, assertion->abort_reject ? 0 : 1,
                                      assertion->abort_reject ? 0 : 1);
+                }
                 assertion_clock_event_recycle(event);
                 if (g.finish) return;
                 continue;
@@ -569,9 +609,11 @@ static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
         // A synchronous accept/reject control also controls the new attempt
         // begun at this sampled edge. Emit one result even when no older
         // attempt was pending, matching the per-clock evaluation contract.
-        if (!had_pending && assertion->enabled && !g.finish)
+        if (!had_pending && assertion->enabled && !g.finish) {
+            llg_acov_attempt(assertion->acov);
             assertion_result(assertion, assertion->abort_reject ? 0 : 1,
                              assertion->abort_reject ? 0 : 1);
+        }
         return;
     }
 
@@ -654,6 +696,8 @@ int llg_assertion_register_control(
     assertion->abort_reject = abort_reject;
     assertion->abort_sync = abort_sync;
     assertion->identity = identity;
+    assertion->acov =
+        assertion->kind == LLG_ASSERTION_EXPECT ? NULL : llg_acov_find(identity);
     assertion->label = label;
     assertion->location = location;
     assertion->scope = scope;
@@ -786,6 +830,8 @@ int llg_assertion_register_sequence_control(
     assertion->abort_reject = abort_reject;
     assertion->abort_sync = abort_sync;
     assertion->identity = identity;
+    assertion->acov =
+        assertion->kind == LLG_ASSERTION_EXPECT ? NULL : llg_acov_find(identity);
     assertion->label = label;
     assertion->location = location;
     assertion->scope = scope;

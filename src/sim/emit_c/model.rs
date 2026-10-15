@@ -1035,6 +1035,7 @@ fn render_model(
     super::owned::udp::tables(model, &mut out);
     super::owned::randomize::tables(model, &mut out);
     super::owned::coverage::tables(model, &mut out);
+    super::owned::coverage::assertion_tables(model, &mut out);
     render_signal_decls(model, &mut out);
     render_static_local_decls(model, &mut out);
     super::owned::model::persistent_returns(model, &mut out);

@@ -8,6 +8,10 @@
 //   "LLGCOVDB" | u32 version | u32 sections | u64 functional hash |
 //   u64 assertion hash | u64 payload bytes | payload | u64 FNV-1a 64 checksum
 //
+// The payload holds each section of `sections`, in bit order (functional,
+// then assertion), as a u64 byte length and its body, so a reader finds
+// one section without parsing the others.
+//
 // The hashes identify the model's coverage schema: every covergroup
 // declaration's static shape (names, widths, bins, transitions, crosses; no
 // options or source sites) and the assertion item table. A database is only
@@ -36,6 +40,7 @@ static uint64_t* llg_cov_group_hashes;
 // Assertion coverage (coverage/assertions.c) contributes its own section.
 static int llg_acov_available(void);
 static uint64_t llg_acov_schema_hash(void);
+static void llg_acov_release(void);
 
 // ── Hashing ─────────────────────────────────────────────────────────────────
 
@@ -530,8 +535,18 @@ static void llg_cov_db_image(llg_cov_buf_t* buf, uint32_t sections) {
     llg_cov_put_u64(buf, sections & LLG_COV_DB_ASSERTION ? llg_acov_schema_hash() : 0u);
     size_t length_at = buf->len;
     llg_cov_put_u64(buf, 0);
-    if (sections & LLG_COV_DB_FUNCTIONAL) llg_cov_put_functional(buf);
-    if (sections & LLG_COV_DB_ASSERTION) llg_acov_put_section(buf);
+    if (sections & LLG_COV_DB_FUNCTIONAL) {
+        size_t at = buf->len;
+        llg_cov_put_u64(buf, 0);
+        llg_cov_put_functional(buf);
+        llg_cov_patch_u64(buf, at, (uint64_t)(buf->len - at - 8u));
+    }
+    if (sections & LLG_COV_DB_ASSERTION) {
+        size_t at = buf->len;
+        llg_cov_put_u64(buf, 0);
+        llg_acov_put_section(buf);
+        llg_cov_patch_u64(buf, at, (uint64_t)(buf->len - at - 8u));
+    }
     llg_cov_patch_u64(buf, length_at, (uint64_t)(buf->len - LLG_COV_DB_HEADER_BYTES));
     uint64_t checksum = LLG_COV_FNV_OFFSET;
     llg_cov_fnv(&checksum, buf->data, buf->len);
@@ -581,6 +596,9 @@ typedef struct {
     uint64_t assertion_hash;
     size_t payload;  // offset of the payload
     size_t end;      // offset of the checksum
+    // [start, end) of the body of each present section.
+    size_t functional_at, functional_end;
+    size_t assertion_at, assertion_end;
 } llg_cov_db_file_t;
 
 // Read and check the frame of database `name`: magic, version, lengths and
@@ -638,6 +656,22 @@ static const char* llg_cov_db_read(const char* name, llg_cov_db_file_t* db, int*
     llg_cov_fnv(&checksum, db->data, db->end);
     for (int i = 0; i < 8; ++i) stored |= (uint64_t)db->data[db->end + (size_t)i] << (8 * i);
     if (checksum != stored) return "the checksum does not match (the file is corrupt)";
+    // Section framing: each present section's length and body, exactly
+    // filling the payload.
+    reader.pos = db->payload;
+    reader.len = db->end;
+    for (uint32_t bit = LLG_COV_DB_FUNCTIONAL; bit <= LLG_COV_DB_ASSERTION; bit <<= 1) {
+        if (!(db->sections & bit)) continue;
+        uint64_t bytes;
+        if (!llg_cov_get_u64(&reader, &bytes) || bytes > reader.len - reader.pos)
+            return "the database sections are malformed";
+        size_t* at = bit == LLG_COV_DB_FUNCTIONAL ? &db->functional_at : &db->assertion_at;
+        size_t* end = bit == LLG_COV_DB_FUNCTIONAL ? &db->functional_end : &db->assertion_end;
+        *at = reader.pos;
+        *end = reader.pos + (size_t)bytes;
+        reader.pos = *end;
+    }
+    if (reader.pos != reader.len) return "the database sections are malformed";
     return NULL;
 }
 
@@ -896,11 +930,11 @@ void llg_cov_load_db(llg_string_t name, const char* site) {
     llg_cov_inst_t** staged = NULL;
     size_t n_staged = 0, staged_cap = 0;
     if (!error) {
-        llg_cov_reader_t reader = {db.data, db.end, db.payload, NULL};
+        llg_cov_reader_t reader = {db.data, db.functional_end, db.functional_at, NULL};
         if (!llg_cov_db_functional(&reader, &staged, &n_staged, &staged_cap, NULL))
             error = reader.error;
-        else if (!(db.sections & LLG_COV_DB_ASSERTION) && reader.pos != reader.len)
-            error = "the file has trailing data";
+        else if (reader.pos != reader.len)
+            error = "the functional section has trailing data";
     }
     if (error) {
         fprintf(stderr,
@@ -917,7 +951,7 @@ void llg_cov_load_db(llg_string_t name, const char* site) {
             targets[i] = llg_cov_db_target(staged[i]);
             if (targets[i] != staged[i]) staged[i]->loaded = 2;  // merged away below
         }
-        llg_cov_reader_t reader = {db.data, db.end, db.payload, NULL};
+        llg_cov_reader_t reader = {db.data, db.functional_end, db.functional_at, NULL};
         (void)llg_cov_db_functional(&reader, NULL, NULL, NULL, targets);
         for (size_t i = 0; i < n_staged; ++i)
             if (staged[i]->loaded == 2) llg_cov_free_record(staged[i]);
@@ -944,6 +978,7 @@ void llg_cov_end_of_run(void) {
 }
 
 static void llg_cov_db_release(void) {
+    llg_acov_release();
     free(llg_cov_db_name);
     llg_cov_db_name = NULL;
     free(llg_cov_group_hashes);

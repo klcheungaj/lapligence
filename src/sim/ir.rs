@@ -88,6 +88,10 @@ pub(in crate::sim) use calls::call_argument_name;
 pub use calls::{IrCall, IrCallArg, IrCallExpr, IrDepth, IrVirtualCall};
 mod coverage;
 pub use coverage::{
+    IrAssertionCoverage, IrAssertionItem, IrAssertionItemForm, IrAssertionItemKind,
+    IrCoverageApiCall, IrCoverageApiFunction, IrCoverageInstance, IrCoverageScope,
+};
+pub use coverage::{
     IrCoverAutomatic, IrCoverBin, IrCoverBinKind, IrCoverBinShape, IrCoverBound, IrCoverCount,
     IrCoverCross, IrCoverCrossBin, IrCoverItem, IrCoverRepeat, IrCoverSelect, IrCoverTransBin,
     IrCoverTransSet, IrCoverTransStep, IrCoverTransitions, IrCoverageCrossSample, IrCoverageOption,
@@ -570,6 +574,11 @@ pub struct IrModel {
     pub(in crate::sim) covergroups: Vec<IrCovergroup>,
     /// Covergroup declaration identities whose instances type coverage merges.
     pub(in crate::sim) coverage_types: Vec<IrCoverageType>,
+    /// Assertion coverage items and the instance hierarchy of `$coverage_*`
+    /// scopes (40.3.2). Present only when the design calls a coverage
+    /// access function or the model emits its VPI catalog, so other models
+    /// pay nothing for assertion coverage. Set by lowering.
+    pub(in crate::sim) assertion_coverage: Option<IrAssertionCoverage>,
     /// Instantiated scopes holding DPI-C import or export declarations, in
     /// ascending byte order of their names; an `svScope` names one (SV
     /// Annex H.9). Set by lowering.
@@ -705,6 +714,7 @@ impl IrModel {
             rand_problems: Vec::new(),
             covergroups: Vec::new(),
             coverage_types: Vec::new(),
+            assertion_coverage: None,
             dpi_scopes: Vec::new(),
             dpi_sites: Vec::new(),
         };

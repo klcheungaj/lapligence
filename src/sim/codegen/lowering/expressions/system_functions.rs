@@ -446,6 +446,8 @@ impl<'a> Codegen<'a> {
             }
             "$cast" => self.lower_dynamic_cast(scope_path, &args),
             "$test$plusargs" | "$value$plusargs" => self.lower_plusarg_expr(scope_path, name, call),
+            "$coverage_control" | "$coverage_get_max" | "$coverage_get" | "$coverage_merge"
+            | "$coverage_save" => self.lower_coverage_api(scope_path, name, call),
             "$system" => Ok(IrExpr::new(
                 IrExprKind::SysFunc(Box::new(IrSysFunc::System(
                     self.lower_system_command(scope_path, &args)?,

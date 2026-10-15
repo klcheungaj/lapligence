@@ -4,7 +4,8 @@ use super::native::NativeKind;
 use super::*;
 use crate::sim::ir::{
     IrCoverAutomatic, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverCross,
-    IrCoverTransitions, IrCoverageQuery, IrCoverageStmt, IrCoverageTextQuery, IrPlusArgTarget,
+    IrCoverTransitions, IrCoverageApiCall, IrCoverageQuery, IrCoverageScope, IrCoverageStmt,
+    IrCoverageTextQuery, IrPlusArgTarget,
 };
 
 fn group_name(group: usize) -> String {
@@ -434,22 +435,85 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
     ));
 }
 
-/// The startup call that registers the model's coverage declarations, or
-/// nothing for a model without covergroup types.
-pub(in crate::sim::emit_c) fn startup(model: &IrModel) -> String {
-    if model.coverage_types.is_empty() {
-        return String::new();
-    }
-    let groups = if model.covergroups.is_empty() {
-        "NULL"
-    } else {
-        "llg_model_cov_groups"
+/// The assertion coverage item and instance tables (IEEE 1800-2009
+/// 40.2.2, 40.3.2), present only in models that keep them. Items carry
+/// their runtime counters, zeroed by `llg_acov_model`.
+pub(in crate::sim::emit_c) fn assertion_tables(model: &IrModel, out: &mut String) {
+    let Some(table) = &model.assertion_coverage else {
+        return;
     };
-    format!(
-        "    llg_cov_model({groups}, {}u, llg_model_cov_types, {}u);\n",
-        model.covergroups.len(),
-        model.coverage_types.len()
-    )
+    let index = |instance: Option<u32>| instance.map_or(-1, i64::from);
+    if !table.items.is_empty() {
+        let rows = table
+            .items
+            .iter()
+            .map(|item| {
+                format!(
+                    "{{ .identity = UINT64_C({}), .name = {}, .full_name = {}, .instance = {}, .kind = {}, .form = {} }}",
+                    item.identity,
+                    c_string_literal(&item.name),
+                    c_string_literal(&item.full_name),
+                    index(item.instance),
+                    item.kind.runtime_name(),
+                    item.form.runtime_name()
+                )
+            })
+            .collect::<Vec<_>>();
+        out.push_str(&format!(
+            "static llg_acov_item_t llg_model_acov_items[] = {{\n    {}\n}};\n",
+            rows.join(",\n    ")
+        ));
+    }
+    let rows = table
+        .instances
+        .iter()
+        .map(|instance| {
+            format!(
+                "{{ .path = {}, .definition = {}, .parent = {} }}",
+                c_string_literal(&instance.path),
+                c_string_literal(&instance.definition),
+                index(instance.parent)
+            )
+        })
+        .collect::<Vec<_>>();
+    static_array(out, "llg_acov_instance_t", "llg_model_acov_instances", rows);
+}
+
+/// The startup calls that register the model's coverage declarations and
+/// assertion coverage tables; empty for a model without either.
+pub(in crate::sim::emit_c) fn startup(model: &IrModel) -> String {
+    let mut out = String::new();
+    if !model.coverage_types.is_empty() {
+        let groups = if model.covergroups.is_empty() {
+            "NULL"
+        } else {
+            "llg_model_cov_groups"
+        };
+        out.push_str(&format!(
+            "    llg_cov_model({groups}, {}u, llg_model_cov_types, {}u);\n",
+            model.covergroups.len(),
+            model.coverage_types.len()
+        ));
+    }
+    if let Some(table) = &model.assertion_coverage {
+        // Before the assertions register: each binds its item by identity.
+        out.push_str(&format!(
+            "    llg_acov_model({}, {}u, {}, {}u);\n",
+            if table.items.is_empty() {
+                "NULL"
+            } else {
+                "llg_model_acov_items"
+            },
+            table.items.len(),
+            if table.instances.is_empty() {
+                "NULL"
+            } else {
+                "llg_model_acov_instances"
+            },
+            table.instances.len()
+        ));
+    }
+    out
 }
 
 fn point_index(point: Option<u32>) -> String {
@@ -785,6 +849,55 @@ impl Frame<'_, '_> {
 
     /// The two-argument coverage methods (19.8): the coverage, then the
     /// covered and total bin numbers stored into the `ref int` actuals.
+    /// A coverage access function of 40.3.2: the integral arguments as
+    /// value descriptors (the runtime rejects unknown bits), the scope as an
+    /// instance index (-1 `$root`, -2 a definition name in `text`) and the
+    /// database name of merge and save in `text`.
+    pub(super) fn coverage_api(&mut self, call: &IrCoverageApiCall) -> Result<Value, String> {
+        let mut values = Vec::with_capacity(call.args.len());
+        for arg in &call.args {
+            let value = self.expression(arg)?;
+            if value.width == 0 {
+                return Err("coverage access arguments must be integral".to_owned());
+            }
+            values.push(value);
+        }
+        let entries = values
+            .iter()
+            .map(|value| value.code.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let array = self.declare_array_init("sv4_t", "coverage_args", values.len(), &entries);
+        let (instance, text) = match (&call.scope, &call.name) {
+            (Some(IrCoverageScope::Instance(index)), _) => (i64::from(*index), None),
+            (Some(IrCoverageScope::Root), _) => (-1, None),
+            (Some(IrCoverageScope::Definition(name)), _) => (-2, Some(self.string(name)?)),
+            (None, Some(name)) => (-1, Some(self.string(name)?)),
+            (None, None) => return Err("coverage access function without operand".to_owned()),
+        };
+        let (text_code, has_text) = match &text {
+            Some(text) => (text.take_string(), 1),
+            None => ("(llg_string_t){0}".to_owned(), 0),
+        };
+        let result = self.value(
+            format!(
+                "sv4_from_i64((int64_t)llg_coverage_call({}, {array}, {}, {instance}, {text_code}, {has_text}, {}), 32)",
+                call.function.runtime_name(),
+                values.len(),
+                c_string_literal(&call.site)
+            ),
+            32,
+            true,
+        );
+        if let Some(text) = text {
+            self.native_discard(text);
+        }
+        for value in values {
+            self.discard(value);
+        }
+        Ok(result)
+    }
+
     pub(super) fn coverage_counts(
         &mut self,
         query: &IrCoverageQuery,

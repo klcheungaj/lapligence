@@ -1,0 +1,27 @@
+start: tb 0/11 u1 0/3 u2 0/3 unit 0/6 root 0/1 top 0/5
+45000 tb.u1.p failed
+tick 5: tb 6/11 u1 3/3 u2 2/3 unit 5/6 root 0/1 top 1/5
+stop u1 1
+tick 8: tb 6/11 u1 3/3 u2 2/3 unit 5/6 root 0/1 top 1/5
+start u1 1
+negative -1
+im failed for 1
+im2 failed for 3
+checks: tb 9/11 u1 3/3 u2 2/3 unit 5/6 root 1/1 top 4/5
+save 1
+reset u2 1
+reset: tb 7/11 u1 3/3 u2 0/3 unit 3/6 root 1/1 top 4/5
+merge 1
+start: tb 9/11 u1 3/3 u2 2/3 unit 5/6 root 1/1 top 4/5
+45000 tb.u1.p failed
+tick 5: tb 9/11 u1 3/3 u2 2/3 unit 5/6 root 1/1 top 4/5
+stop u1 1
+tick 8: tb 9/11 u1 3/3 u2 2/3 unit 5/6 root 1/1 top 4/5
+start u1 1
+negative -1
+im failed for 1
+im2 failed for 3
+checks: tb 9/11 u1 3/3 u2 2/3 unit 5/6 root 1/1 top 4/5
+save 1
+reset u2 1
+reset: tb 7/11 u1 3/3 u2 0/3 unit 3/6 root 1/1 top 4/5

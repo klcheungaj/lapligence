@@ -938,6 +938,11 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             IrSysFunc::CoverageCounts { .. } => {
                 return Err("functional coverage requires the ownership-aware emitter".to_owned())
             }
+            IrSysFunc::CoverageApi(_) => {
+                return Err(
+                    "coverage access functions require the ownership-aware emitter".to_owned(),
+                )
+            }
             IrSysFunc::System(command) => {
                 let (command, has_command) = match command.as_ref() {
                     Some(command) => (super::objects::string(ctx, command)?, 1),

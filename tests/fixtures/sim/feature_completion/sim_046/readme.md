@@ -74,6 +74,45 @@ are the register decisions
   the merge_instances type option is set. ... When false, the value returned
   by get_inst_coverage shall equal the value returned by get_coverage."
 
+- 40.2.2, L66035-66036: "assertion coverage: For each assertion, whether it
+  has had at least one success."
+- 40.3.1, L66077-66100: the constants `SV_COV_START 0`, `SV_COV_STOP 1`,
+  `SV_COV_RESET 2`, `SV_COV_CHECK 3`, `SV_COV_MODULE 10`, `SV_COV_HIER 11`,
+  `SV_COV_ASSERTION 20`, `SV_COV_FSM_STATE 21`, `SV_COV_STATEMENT 22`,
+  `SV_COV_TOGGLE 23`, `SV_COV_OVERFLOW -2`, `SV_COV_ERROR -1`,
+  `SV_COV_NOCOV 0`, `SV_COV_OK 1`, `SV_COV_PARTIAL 2`.
+- 40.3.2.1, L66123-66132: "`SV_COV_START, if possible, starts collecting
+  coverage information in the specified hierarchy ... `SV_COV_STOP stops
+  collecting coverage information in the specified hierarchy ...
+  `SV_COV_RESET resets all available coverage information in the specified
+  hierarchy ... `SV_COV_CHECK checks whether coverage information can be
+  obtained from the specified hierarchy."; L66138-66141: "`SV_COV_ERROR, on
+  all operations, means that the control operation failed without any
+  effect, typically due to errors in arguments, such as a nonexisting
+  module. `SV_COV_NOCOV, on a check or start operation, denotes that
+  coverage is not available at any point in the specified hierarchy."
+- 40.3.2.1 Table 40-2, L66189-66205: MODULE with a definition name: "The sum
+  of coverage for all instances of the named module, excluding any hierarchy
+  below those instances"; with an instance: "Coverage for just the named
+  instance"; HIER: "including all coverage for all hierarchy below";
+  "Definition names are represented as strings, whereas instance names are
+  referenced by hierarchical paths."
+- 40.3.2.2-40.3.2.3, L66286-66305: `$coverage_get_max` is "the sum of all
+  coverable items of that type over the given hierarchy(ies)", and
+  `$coverage_get` "the number of the coverable items that have been covered".
+- 40.3.2.4, L66334-66343: "If name does not exist or does not correspond to a
+  coverage database from the same design, an error shall occur ...
+  `SV_COV_NOCOV. The coverage data have been found, but did not contain the
+  coverage type requested."
+- 40.3.2.5, L66352-66360: "Saving coverage shall not have any effect on the
+  state of coverage in this simulation ... `SV_COV_NOCOV. No such coverage
+  is available in this design (nothing was saved)."
+- 40.5.3, L66612-66652: the attempt, nonvacuous success (cover sequence:
+  match), vacuous success, disabled ("as a result of disable iff condition
+  becoming true or if an attempt starts when the disable iff is true"),
+  killed and failure counts, and "in progress = attempts - (successes +
+  vacuous success + disabled + killed + failures)".
+
 ## options.sv
 
 Group `g`: `p` has bins `lo` {0..3}, `mid` {4..7}, `hi` {8..15}
@@ -148,13 +187,115 @@ loads each with `+load=bad.db`:
 | --- | --- | --- |
 | two valid records (good.db's and a copy named `other1` counting bin 5) | none | 2 of 32 bins: two members of 1/16 |
 | first 30 bytes | the file is not an llg coverage database | unchanged 1/16 |
-| one bit of a name flipped | the checksum does not match | unchanged |
+| one bit flipped | the checksum does not match | unchanged |
 | foreign magic | the file is not an llg coverage database | unchanged |
 | `other1`, then a record counting bin 16 of 16 | a counter is outside its bins | unchanged: the valid first record is not published either |
 | good.db read by the W = 3 model | it was saved by a model with different covergroups | 1/8 = 12.5 of the narrower model |
 | missing.db, and saving to `nodir/x.db` | was not loaded / was not saved | no database and no temporary file left |
 
 Every failed load or save is a run-time error: the run exits with status 1.
+
+## assertions.sv
+
+Assertion coverage counters, scopes and control in two runs (the second
+with `+merge`). Posedge k of `clk` is at time 10k - 5; the values that
+posedge k samples are set at time 10(k - 1). `unit` has `p: a |=> b`,
+`c: cover a ##1 b` and `s: (a ##1 a) |=> b`, all `disable iff (off)`.
+
+| k | u1 a b | u2 a b off |
+| --- | --- | --- |
+| 1 | 1 0 | 1 0 0 |
+| 2 | 1 1 | 1 0 1 (off2 = 1 at t 10..20) |
+| 3 | 0 1 | 1 0 0 |
+| 4 | 1 0 | 1 1 0 |
+| 5 | 0 0 | 0 0 0 (`$assertkill(0, tb.u2)` at t 40, `$asserton` at t 50) |
+| 6-8 | u1 stopped at t 50; 6: 0 0, 7: 1 0, 8: 0 1 | 6: 0 0, 7: 1 0, 8: 0 1 |
+
+Counters (attempts, successes, vacuous, failures, disabled, killed), in
+table (elaboration) order; the test reads them from `acov.db`:
+
+- `checks::check.pk` (owned by `$root`, S46-D9): values -1, 0, 1, 2:
+  (4, 3, 0, 1, 0, 0).
+- `u1.p` (ticks 1-5 before the STOP): 1 -> b(2) success, 2 -> b(3)
+  success, 3 vacuous, 4 -> b(5) = 0 failure (the message at 45000), 5
+  vacuous: (5, 2, 2, 1, 0, 0). `u1.c`: matches 1-2 and 2-3; 4-5 does not
+  match, which is no failure (S46-D8): (5, 2, 0, 0, 0, 0). `u1.s`: 1-2
+  matches the antecedent, b(3) = 1 succeeds; 2 (a(3) = 0), 3, 4 (a(5) = 0)
+  and 5 are vacuous: (5, 1, 4, 0, 0, 0). Ticks 6-8 count nothing: u1 is
+  stopped.
+- `u2.p`: 1 pending, disabled when off2 rises at t 10; 2 starts while off2
+  holds: an attempt, disabled; 3 -> b(4) success; 4 pending, killed at t
+  40; 5 none (killed assertions are off until `$asserton`); 6 vacuous; 7 ->
+  b(8) success; 8 vacuous: (7, 2, 2, 0, 2, 1). `u2.c` likewise, with 6 and
+  8 non-matches: (7, 2, 0, 0, 2, 1). `u2.s`: 1 disabled, 2 disabled; 3
+  matches its antecedent at 4 and waits for b(5); 4 waits for a(5): both
+  killed; 6, 8 vacuous, 7 vacuous at 8 (a(8) = 0): (7, 0, 3, 0, 2, 2).
+- `tb.cs` (cover sequence a1 ##1 b1, never stopped): ticks 1-8, matches
+  1-2, 2-3, 7-8: (8, 3, 0, 0, 0, 0).
+- `tb.im` (x = -1..2, fails for 1), `tb.ic` (x == 2), `tb.dc` (deferred,
+  x == 0): (4, 3, 0, 1, 0, 0), (4, 1, 0, 0, 0, 0), (4, 1, 0, 0, 0, 0).
+- `tb.im2` is checked once: the first pass runs under `$assertoff`
+  (S46-D8): (1, 0, 0, 1, 0, 0).
+
+Queries (covered/items, S46-D4: an item with a nonvacuous success):
+`tb` HIER holds 11 items (3 + 3 + cs, im, ic, dc, im2), `u1` MODULE 3,
+`u2` HIER 3, `"unit"` MODULE 6 (both instances), `$root` MODULE 1 (pk) and
+`tb` MODULE 5.
+
+- start: nothing covered.
+- tick 5 (t 50): u1 3/3, u2 2/3 (s has no success), cs covered: tb 6/11,
+  unit 5/6, top 1/5.
+- tick 8: unchanged (u1 stopped; u2's p and c were already covered).
+- checks: pk, im, ic, dc covered: tb 9/11, root 1/1, top 4/5.
+- `$coverage_save` writes `acov.db` (OK); RESET of `u2` HIER zeroes its
+  three items: tb 7/11, u2 0/3, unit 3/6.
+- Second run: `$coverage_merge` adds `acov.db` (OK), so 9 items are covered
+  at the start; the run counts the same again, and `acov2.db` holds twice
+  every counter above (the save precedes the RESET in both runs).
+
+## control.sv
+
+Status values of Table 40-1 and the scopes of Table 40-2. `tb` has `m1` and
+`m2` (`mid`, each with `leaf l` holding `lp`) and `e` (`empty_unit`, no
+assertion).
+
+- CHECK: `tb` HIER 1 (two items below); `tb` MODULE 0 (tb owns none); `m1.l`
+  MODULE 1; `"mid"` HIER 1; `"mid"` MODULE 0 (mid owns none); `$root` HIER 1.
+- `e`: CHECK 0, START 0 (no coverage), STOP 1, RESET 1 (no effect), get 0,
+  max 0 (S46-D12).
+- Errors (-1): control 4, type 19, type 24, scope_def 12, the unknown
+  definition `"nosuch"`, the instance name `"m1"` as a string (S46-D6), an
+  all-x type, a save of type 19, a STOP with scope_def 9.
+- Kinds 21-23 (S46-D5): CHECK 0, START 0, STOP 1, RESET 1, get 0, max 0,
+  save 0; `never.db` is not written.
+- After tick 1: covered 2/2. A RESET of `m1` HIER written as a statement
+  zeroes `m1.l.lp`: 1. `c.db` saved (OK); merging it as toggle coverage
+  returns 0 (found, no toggle data), as assertion coverage 1: m2's success
+  is added again, m1 still has none: 1.
+
+## merge_errors.sv
+
+`N` generate blocks each hold `ap: assert property (1)`. One tick before
+`+save`: each item (1, 1, 0, 0, 0, 0).
+
+| Case | Status | Message |
+| --- | --- | --- |
+| `+merge=good.db` | 1, covered 2/2 at time 0; `two.db` holds (2, 2, 0, 0, 0, 0) | none |
+| good.db merged by the N = 3 model | -1, 0/3 | it was saved by a model with different assertions |
+| one bit flipped | -1 | the checksum does not match (the file is corrupt) |
+| a valid frame and hash with an item table of one item | -1 | the assertion section does not match its item table |
+| a functional-only database (`db_errors`) | 0 (NOCOV) | none |
+| good.db merged as toggle coverage | 0 (NOCOV) | none |
+| `missing.db` as assertion and as toggle coverage | -1, -1 | was not merged: (system reason) |
+
+After each failed merge `after.db` holds the run's own counters only. A
+failed merge is a run-time error: exit status 1 (S46-D11).
+
+## final_query.sv
+
+`final` procedures run after `$finish` and still query live records: the
+instance has `lo` hit, 1/2 = 50.00 (instance, type and total); `ap` succeeded
+at tick 1: 1/1; the save returns OK.
 
 ## Negative cases
 
@@ -165,3 +306,4 @@ Every failed load or save is a run-time error: the run exits with status 1.
 | `neg_type_strobe` | `g::type_option.strobe = 1` (19.7.1) | frontend |
 | `neg_option_compound` | `c.option.weight += 1` | llg limitation |
 | `neg_count_args` | `get_inst_coverage(covered)` with one bin argument | llg (19.8 pairs them) |
+| `neg_coverage_scope` | a generate scope as the `$coverage_get` hierarchy argument (40.3.2.1) | frontend |

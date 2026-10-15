@@ -93,6 +93,9 @@ typedef struct llg_deferred_assertion_report {
     uint8_t kind;
     uint8_t passed;
     uint8_t live; // cleared when flushed, cancelled or killed before maturing
+    // Queued only to count assertion coverage: no report or action runs.
+    uint8_t count_only;
+    llg_acov_item_t* acov; // assertion coverage item, or NULL
 } llg_deferred_assertion_report_t;
 
 // Growable report array; capacity is retained across time steps so a steady
@@ -352,6 +355,15 @@ typedef struct llg_matched_slot {
     uint64_t visible_tick;
 } llg_matched_slot_t;
 
+/* Assertion coverage hooks (coverage/assertions.c, IEEE 1800-2009 40.5.3).
+ * Every hook accepts a NULL item: a model without assertion coverage
+ * tables, an `expect` or a sequence end point. */
+static llg_acov_item_t* llg_acov_find(uint64_t identity);
+static void llg_acov_attempt(llg_acov_item_t* item);
+static void llg_acov_result(llg_acov_item_t* item, int success, int vacuous);
+static void llg_acov_end_attempts(llg_acov_item_t* item, uint64_t count, int killed);
+static void llg_acov_disabled_attempt(llg_acov_item_t* item);
+
 typedef struct llg_concurrent_assertion {
     struct llg_concurrent_assertion* next;
     sv4_t* clock;
@@ -400,6 +412,8 @@ typedef struct llg_concurrent_assertion {
     uint32_t endpoint_slot_count;
     llg_matched_slot_t* endpoint_slots;
     uint64_t identity;
+    /* Assertion coverage item bound at registration, or NULL. */
+    llg_acov_item_t* acov;
     const char* label;
     const char* location;
     const char* scope;
@@ -433,6 +447,11 @@ typedef struct llg_concurrent_assertion {
     int property_async;
     uint64_t property_async_checked;
 } llg_concurrent_assertion_t;
+
+/* Discard the running attempts of an assertion whose disable iff holds or
+ * that a control task kills, counting them for assertion coverage
+ * (concurrent_assertions.c). */
+static void end_assertion_attempts(llg_concurrent_assertion_t* assertion, int killed);
 
 typedef struct {
     uint64_t unit_fs;

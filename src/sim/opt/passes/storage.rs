@@ -155,6 +155,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         // Coverage metadata names no storage; samples read through statements.
         covergroups: _,
         coverage_types: _,
+        assertion_coverage: _,
         dpi_scopes: _,
         dpi_sites: _,
     } = &*model;
@@ -1443,6 +1444,9 @@ fn collect_expr_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             }
             IrSysFunc::System(Some(command)) => {
                 command.expressions(&mut |child| collect_expr_reads(child, model, rw));
+            }
+            IrSysFunc::CoverageApi(call) => {
+                call.expressions(&mut |child| collect_expr_reads(child, model, rw));
             }
             IrSysFunc::System(None) => {}
             IrSysFunc::VpiCall { args, .. } => {

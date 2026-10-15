@@ -2925,6 +2925,64 @@ void llg_cov_load_db(llg_string_t name, const char* site);
 void llg_cov_end_of_run(void);
 void llg_cov_release_all(void);
 
+/* ── Assertion coverage and coverage access (IEEE 1800-2009 40.2-40.3) ──
+ *
+ * One item per assertion statement instance, with the counters of 40.5.3.
+ * The generated model owns the item array (static storage); llg_acov_model
+ * zeroes the counters and binds the table before assertions register. A
+ * model without the table has no assertion coverage: every assertion runs
+ * with a NULL item and the 40.3.2 functions report SV_COV_NOCOV for it. */
+enum {
+    LLG_ACOV_CONCURRENT = 0,
+    LLG_ACOV_COVER_SEQUENCE = 1,
+    LLG_ACOV_IMMEDIATE = 2,
+    LLG_ACOV_DEFERRED = 3,
+};
+
+typedef struct llg_acov_item {
+    uint64_t identity;    /* the statement's owned semantic identity */
+    const char* name;     /* label; "" when unnamed */
+    const char* full_name; /* hierarchical name; "" when unnamed */
+    int32_t instance;     /* owning instance index, -1 for $root */
+    uint8_t kind;         /* LLG_ASSERTION_ASSERT/ASSUME/COVER */
+    uint8_t form;         /* LLG_ACOV_* */
+    /* Run-time state: collection stopped by $coverage_control (40.3.2.1). */
+    uint8_t stopped;
+    /* 40.5.3 counters. successes are nonvacuous (matches of a cover
+     * sequence); failures count assert/assume only. */
+    uint64_t attempts;
+    uint64_t successes;
+    uint64_t vacuous;
+    uint64_t failures;
+    uint64_t disabled;
+    uint64_t killed;
+} llg_acov_item_t;
+
+typedef struct llg_acov_instance {
+    const char* path;
+    const char* definition;
+    int32_t parent; /* -1 for a top-level instance */
+} llg_acov_instance_t;
+
+enum {
+    LLG_COVERAGE_CONTROL = 0,
+    LLG_COVERAGE_GET_MAX = 1,
+    LLG_COVERAGE_GET = 2,
+    LLG_COVERAGE_MERGE = 3,
+    LLG_COVERAGE_SAVE = 4,
+};
+
+void llg_acov_model(llg_acov_item_t* items, size_t n_items, const llg_acov_instance_t* instances,
+                    size_t n_instances);
+/* One enabled check of an immediate assertion: `passed` is its outcome. */
+void llg_acov_check(llg_acov_item_t* item, int passed);
+/* $coverage_control/_get_max/_get/_merge/_save. `args` holds the integral
+ * arguments; `instance` names the scope (an instance index, -1 $root, -2 the
+ * definition named by `text`); merge and save name the database in `text`.
+ * Returns the SV_COV_* status or the coverage count. */
+int32_t llg_coverage_call(int function, const sv4_t* args, int n_args, int32_t instance,
+                          llg_string_t text, int has_text, const char* site);
+
 #ifdef __cplusplus
 }
 #endif

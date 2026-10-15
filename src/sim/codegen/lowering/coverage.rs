@@ -128,7 +128,9 @@ pub(super) type CoverageTypeKey = (Option<std::sync::Arc<str>>, u32, u32);
 
 const COVERAGE_RECORD_FIELD: &str = "llg_cov_record";
 
+mod control;
 mod transitions;
+pub(super) use control::{CoverageInstances, ImmediateAssertionItem};
 const COVERAGE_OWNER_FIELD: &str = "llg_cov_owner";
 const COVERAGE_BIND_FIELD: &str = "llg_cov_bind";
 

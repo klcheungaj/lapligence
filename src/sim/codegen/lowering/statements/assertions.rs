@@ -32,6 +32,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             ImmediateAssertionKind::Assume => IrImmediateAssertionKind::Assume,
             ImmediateAssertionKind::Cover => IrImmediateAssertionKind::Cover,
         };
+        let scope = self.format_scope(h);
+        self.cg
+            .record_assertion_item(h, kind, *deferred, label, scope);
         if *deferred {
             // A deferred action outlives the statement activation: its
             // by-value arguments are copied into an owned action frame, so

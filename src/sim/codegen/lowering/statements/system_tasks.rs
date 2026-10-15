@@ -467,6 +467,18 @@ impl EmitCtx<'_, '_> {
             "$system" => Ok(vec![IrStmt::System(
                 self.cg.lower_system_command(&self.path, &args)?,
             )]),
+            "$coverage_control" | "$coverage_get_max" | "$coverage_get" | "$coverage_merge"
+            | "$coverage_save" => {
+                // A call whose status is discarded still acts (40.3.2).
+                let value = self.cg.lower_coverage_api(&self.path, name, h)?;
+                Ok(vec![IrStmt::DeclLocal {
+                    name: format!("_llg_coverage_status_{}", h.0),
+                    width: value.width,
+                    signed: value.signed,
+                    init: Some(Box::new(value)),
+                    two_state: false,
+                }])
+            }
             "$fgetc" | "$ungetc" | "$fgets" | "$fscanf" | "$sscanf" | "$fread" => {
                 let value = self.cg.lower_sys_func_expr(&self.path, name, h)?;
                 Ok(vec![IrStmt::DeclLocal {

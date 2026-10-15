@@ -35,6 +35,12 @@ impl Validator<'_> {
             }
         }
 
+        if let Some(table) = &self.model.assertion_coverage {
+            if let Err(detail) = table.validate() {
+                return self.fail("assertion_coverage", detail);
+            }
+        }
+
         for (idx, object) in self.model.vpi_objects.iter().enumerate() {
             let path = format!("vpi_objects[{idx}]");
             if object.full_name.is_empty() || object.name.is_empty() {

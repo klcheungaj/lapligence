@@ -244,6 +244,9 @@ fn ident_children(e: &mut IrExpr) {
             IrSysFunc::System(Some(command)) => {
                 command.expressions_mut(&mut |child| ident_expr(child));
             }
+            IrSysFunc::CoverageApi(call) => {
+                call.expressions_mut(&mut |child| ident_expr(child));
+            }
             IrSysFunc::System(None) => {}
             IrSysFunc::VpiCall { args, .. } => {
                 for arg in args {

@@ -477,6 +477,8 @@ struct LoweredModel {
     model: IrModel,
     design_name: String,
     warnings: Vec<String>,
+    /// The design calls a `$coverage_*` function (40.3.2).
+    coverage_api_used: bool,
 }
 
 fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredModel, String> {
@@ -608,6 +610,7 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
     check_wave_variable_targets(&cg.wave_variable_targets, &model)?;
     cg.populate_vpi_metadata(&mut model, &tops)?;
     cg.finish_dpi(&mut model)?;
+    cg.populate_assertion_coverage(&mut model);
     // Final-block processes render like any other but spawn into the
     // post-simulation phase: they run after `llg_rt_run` returns, not at
     // t=0.
@@ -645,6 +648,7 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
     model.validate().map_err(|error| error.to_string())?;
     let design_name = std::mem::take(&mut cg.design_name);
     let warnings = std::mem::take(&mut cg.warnings);
+    let coverage_api_used = cg.coverage_api_used;
     drop(cg);
     drop(semantic);
     drop(lowering_stage);
@@ -652,6 +656,7 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
         model,
         design_name,
         warnings,
+        coverage_api_used,
     })
 }
 
@@ -702,10 +707,16 @@ fn finish_generation(
         mut model,
         design_name,
         warnings,
+        coverage_api_used,
     } = lowered;
     if !options.vpi && model.vpi_compile_calls.is_empty() {
         model.vpi_objects.clear();
         model.vpi_catalog = false;
+    }
+    // Assertion coverage tables serve only `$coverage_*` calls and VPI
+    // applications; any other model is generated without them.
+    if !model.vpi_catalog && !coverage_api_used {
+        model.assertion_coverage = None;
     }
     let execution_stage = crate::profile::Stage::new("execution");
     let mut execution =
@@ -1272,6 +1283,14 @@ struct Codegen<'a> {
     /// Built-in `option`/`type_option` members of every covergroup,
     /// coverpoint and cross (19.10) -> their owners.
     coverage_option_vars: HashMap<NodeId, coverage::CoverageOptionOwner>,
+    /// Immediate and deferred assertion statements lowered so far, by
+    /// identity: the assertion coverage items besides the concurrent
+    /// assertions (IEEE 1800-2009 40.2.2).
+    immediate_assertion_items: BTreeMap<u64, coverage::ImmediateAssertionItem>,
+    /// The design calls a coverage access function of 40.3.2.
+    coverage_api_used: bool,
+    /// The instance hierarchy of `$coverage_*` scopes, built on first use.
+    coverage_instances: Option<coverage::CoverageInstances>,
     /// Subroutine → covergroups its block event samples `(group, begin)`.
     coverage_block_events: HashMap<NodeId, Vec<(NodeId, bool)>>,
     /// Subroutines whose bodies received their block-event samplers.
@@ -1790,6 +1809,9 @@ impl<'a> Codegen<'a> {
             covergroups: HashMap::new(),
             coverage_types: HashMap::new(),
             coverage_option_vars: HashMap::new(),
+            immediate_assertion_items: BTreeMap::new(),
+            coverage_api_used: false,
+            coverage_instances: None,
             coverage_block_events: HashMap::new(),
             coverage_block_events_applied: HashSet::new(),
             coverage_scope: None,

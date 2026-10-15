@@ -734,6 +734,8 @@ int llg_assertion_register_property(
     assertion->kind = kind;
     assertion->overlapped = 1;
     assertion->identity = identity;
+    assertion->acov =
+        assertion->kind == LLG_ASSERTION_EXPECT ? NULL : llg_acov_find(identity);
     assertion->label = label;
     assertion->location = location;
     assertion->scope = scope;

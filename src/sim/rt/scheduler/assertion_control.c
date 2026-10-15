@@ -408,8 +408,12 @@ static void assertion_kill_deferred(uint64_t types, uint64_t directives,
         llg_deferred_assertion_report_t* report = &g.deferred_pending.items[i];
         if (report->live &&
             immediate_selected(LLG_ASSERTION_TYPE_DEFERRED, report->kind, report->label,
-                               report->scope, types, directives, scopes, count))
+                               report->scope, types, directives, scopes, count)) {
+            // A killed pending check is an attempt that was killed (40.5.3).
+            llg_acov_attempt(report->acov);
+            llg_acov_end_attempts(report->acov, 1u, 1);
             deferred_report_drop(report);
+        }
     }
 }
 
@@ -484,7 +488,7 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
             case LLG_ASSERTION_CONTROL_KILL:
                 assertion->enabled = 0;
                 assertion_kill_actions(assertion);
-                free_assertion_attempts(assertion);
+                end_assertion_attempts(assertion, 1);
                 assertion->edge_pending = 0;
                 if (assertion->kind == LLG_ASSERTION_EXPECT &&
                     assertion->expect_active) {

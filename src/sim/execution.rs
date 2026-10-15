@@ -1845,6 +1845,15 @@ fn collect_expression_effects(
                     }
                 }
             }
+            IrSysFunc::CoverageApi(call) => {
+                effects.push(ExecutionEffect::RuntimeService);
+                for arg in &call.args {
+                    collect_expression_effects(ir, arg, effects, visited_calls);
+                }
+                for text in call.strings() {
+                    collect_string_effects(ir, text, effects, visited_calls);
+                }
+            }
             IrSysFunc::System(command) => {
                 effects.push(ExecutionEffect::RuntimeService);
                 if let Some(command) = command {

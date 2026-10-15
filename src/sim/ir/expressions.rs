@@ -818,6 +818,10 @@ pub enum IrSysFunc {
         covered: IrPlusArgTarget,
         total: IrPlusArgTarget,
     },
+    /// A coverage access function of IEEE 1800-2009 40.3.2
+    /// (`$coverage_control`, `_get_max`, `_get`, `_merge`, `_save`); the
+    /// result is a signed 32-bit status or count.
+    CoverageApi(Box<super::IrCoverageApiCall>),
     /// `$system` executes an optional owned host command through the generated
     /// model's explicitly permitted runtime and returns the host `system()`
     /// status. `None` preserves the standard's omitted-argument

@@ -302,6 +302,9 @@ pub(in crate::sim) fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrEx
             IrSysFunc::System(Some(command)) => {
                 command.expressions_mut(&mut |child| walk_expr_mut(child, f));
             }
+            IrSysFunc::CoverageApi(call) => {
+                call.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            }
             IrSysFunc::System(None) => {}
             IrSysFunc::VpiCall { args, .. } => {
                 for arg in args {
