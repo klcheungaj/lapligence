@@ -1537,6 +1537,11 @@ struct Codegen<'a> {
     /// Assertion action helpers are registered by the runtime and must not
     /// also be spawned as ordinary design processes at time zero.
     assertion_action_procs: HashSet<String>,
+    /// `%m` text of the concurrent assertion being lowered (SV 21.2.1.6: its
+    /// label names a block around it): the scope reported by its action
+    /// blocks and match-item system tasks, which run on hidden host processes
+    /// whose own names must not reach the user.
+    assertion_display_scope: Option<String>,
     /// Clock inferred while lowering a property or its Reactive action.
     sampled_clock: Option<SampledClock>,
     /// Leading clock of the procedural `expect` just registered; its action
@@ -1813,6 +1818,7 @@ impl<'a> Codegen<'a> {
             structural_driver_terminal_sites: HashMap::new(),
             final_procs: Vec::new(),
             assertion_action_procs: HashSet::new(),
+            assertion_display_scope: None,
             sampled_clock: None,
             expect_action_clock: None,
             assertion_leading_clock: None,
@@ -2606,6 +2612,9 @@ struct EmitCtx<'c, 'a> {
     /// What a call lowered with a captured argument frame belongs to, for
     /// diagnostics: a deferred assertion action or a sequence match item.
     call_owner: &'static str,
+    /// Replaces the `%m` scope of a hidden host process: the text plus the
+    /// node whose named blocks extend it (`None` when no block can lie below).
+    display_scope: Option<(String, Option<NodeId>)>,
 }
 
 /// Shape of an image-represented fixed array `with` operand.

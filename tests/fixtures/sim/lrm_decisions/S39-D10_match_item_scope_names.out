@@ -1,0 +1,4 @@
+function tb.fshow tag=7
+task tb.tshow tag=7
+direct tb.c1
+action tb.c2

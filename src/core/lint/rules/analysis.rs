@@ -669,7 +669,9 @@ pub fn iter_instances(db: &Db) -> impl Iterator<Item = (NodeId, String)> + '_ {
         out.push((id, scope_path(db, id)));
         for c in &db.node(id).children {
             match db.node_kind(*c) {
-                NodeKind::ModuleInst { .. } => walk_scopes(db, *c, out),
+                // A conditional or case generate block is a scope of its own,
+                // a direct child of the enclosing scope (no loop array).
+                NodeKind::ModuleInst { .. } | NodeKind::GenScope => walk_scopes(db, *c, out),
                 NodeKind::GenScopeArray => {
                     for g in &db.node(*c).children {
                         if matches!(db.node_kind(*g), NodeKind::GenScope) {

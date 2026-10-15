@@ -1709,7 +1709,9 @@ these forms remain outside them.
 - When the exact model and rejection sampling both exceed their budgets, the
   CDCL search returns a legal solution that is not uniformly distributed
   (S29-D10), against 18.5.9 L30013-30014; the fallbacks also ignore dist
-  weights and solve-before orders (S30-D9).
+  weights and solve-before orders (S30-D9). The run prints one warning per
+  call site naming the site and the budget (`LLG_RAND_BDD_NODES` or
+  `LLG_RAND_BDD_BITS`) to raise.
 - The search re-encodes the component on every call; a loop that keeps
   needing the search pays the encoding each time (about 18 ms per call for a
   16-bit factoring constraint on x86-64).

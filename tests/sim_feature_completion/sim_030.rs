@@ -257,3 +257,46 @@ fn foreach_index_outside_the_array_fails_randomize() {
         ),
     );
 }
+
+/// S30-D9: a component that falls back past the exact engine loses its dist
+/// weights and orders; the run says so once per call site, naming the budget.
+/// The unweighted call site and an unconstrained budget stay silent.
+#[test]
+fn fallback_that_drops_weights_warns_once_per_call_site() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_030/dist_fallback_warning.out");
+    for (variable, budget) in [("LLG_RAND_BDD_NODES", "1"), ("LLG_RAND_BDD_BITS", "1")] {
+        sim_cli::run_case_checked_matrix_with_env(
+            SUITE,
+            "dist_fallback_warning",
+            &[],
+            &[(variable, budget)],
+            &|label: &str, output: &Output| {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+                let warnings: Vec<&str> = stderr
+                    .lines()
+                    .filter(|line| line.contains("the fallback solvers ignore its dist weights"))
+                    .collect();
+                assert_eq!(warnings.len(), 2, "{label}: {stderr}");
+                for (site, class) in [("tb:23:", "(Weighted)"), ("tb:29:", "(Sized)")] {
+                    let text = format!("llg: warning: randomize() at {site}");
+                    assert!(
+                        warnings
+                            .iter()
+                            .any(|w| w.starts_with(&text) && w.contains(class)),
+                        "{label}: no warning for {class}: {stderr}"
+                    );
+                }
+                for line in &warnings {
+                    assert!(
+                        line.contains(&format!("exceeds the exact solver budget ({variable})"))
+                            && line.contains(&format!("Raise {variable} to keep them")),
+                        "{label}: {line}"
+                    );
+                }
+            },
+        );
+    }
+    sim_cli::run_case_backend_parity(SUITE, "dist_fallback_warning", expected, &[], &[]);
+}

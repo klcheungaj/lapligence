@@ -117,6 +117,7 @@ typedef struct {
 
 struct cr_tpl {
     const llg_cr_problem_t* p;
+    llg_cr_session_t* site; /* the session that owns this template */
     uint32_t vc, ac, sc, uc;
     uint32_t* var_pos;      /* [unit * vc + var] -> position, or NONE */
     uint32_t* arr_pos;
@@ -1886,7 +1887,7 @@ static cr_flat_t* cr_flat_build(cr_tpl_t* t, int phase, const char** budget) {
         for (size_t v = 0; v < f->vars_len; ++v) any |= f->var_kind.data[v] == CR_FV_SIZE;
         if (any) {
             llg_cr_block_t* b = CR_VEC_PUSH(f->blocks, f->blocks_len, f->blocks_cap);
-            b->name = "array sizes";
+            b->name = cr_sizes_block_name;
             b->root = cr_fb_small(&ex, 1, 1u, 0);
             uint32_t fb = (uint32_t)(f->blocks_len - 1u);
             cr_u32_push(&f->block_inst, LLG_CR_NONE);
@@ -1941,6 +1942,7 @@ static cr_flat_t* cr_flat_build(cr_tpl_t* t, int phase, const char** budget) {
     fp->table_items = f->table_items.data;
     fp->table_item_count = (uint32_t)f->table_items.len;
     f->session = cr_session_new(fp);
+    f->session->site = t->site;
     return f;
 }
 
@@ -2237,7 +2239,9 @@ static void cr_tpl_free(cr_tpl_t* t) {
 static llg_cr_session_t* cr_tpl_session_new(const llg_cr_problem_t* p) {
     llg_cr_session_t* s = (llg_cr_session_t*)cr_alloc(1u, sizeof(*s));
     s->p = p;
+    s->site = s;
     s->tpl = cr_tpl_new(p);
+    s->tpl->site = s;
     uint32_t max_args = 1u;
     s->max_words = 1u;
     for (uint32_t c = 0; c < p->call_count; ++c) {

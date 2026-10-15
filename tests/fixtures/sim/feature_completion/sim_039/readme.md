@@ -197,6 +197,22 @@ Cycle n is the posedge at 10n+5: `a` in cycles 1-3, `b` in 2-4, `d` = 1, 2,
   argument is the sampled `q` (1, 2, 3 at 15, 25, 35) and the body, run in the
   Reactive region (L24189-24190), reads the updated `q` (2, 3, 4) (S39-D8).
 
+## match_scope_names
+
+`%m` prints "the hierarchical name of the design element, subroutine, named
+block, or labeled statement that invokes the system task" (21.2.1.6, SV
+L36379-36381), and "the optional statement label ... creates a named block
+around the assertion statement" (16.3, L21105-21106). The action blocks and
+match-item system tasks run on hidden host processes whose names must not
+reach the output. The scope is the assertion's: the enclosing design element or
+generate block for an unlabeled assertion (the LRM leaves the tool-assigned
+name unspecified, 16.15, L26424-26426), the label below it for a labeled one,
+and a named block of the action extends it. Lines: module-level unlabeled
+`action tb` and `match tb`; `labeled-action tb.blk.lab` in generate block
+`blk`; procedural `lab` inside `ib` gives `match tb.ib.pc` and
+`procedural-action tb.ib.pc.pact`. A function or task attached to a match
+prints its own name (`tb.f`), covered by the portable S39-D10 case.
+
 ## match_native
 
 `(a, x = x + d)[*2]` in cycles 1-2 gives 3 at 25 and in cycles 2-3 gives 6 at
@@ -216,5 +232,5 @@ current `d` (2 at 25, 4 at 35).
 | `neg_empty_inout` | Slang | an inout local formal on a sequence admitting an empty match (16.8.2) |
 | `neg_property_output` | Slang | an output local formal of a property (16.13.19) |
 | `neg_match_call_output` | Slang | a match-item call with an output argument (16.11) |
-| `neg_match_call_timing` | llg | a match-item task with a timing control: it would not run within the Reactive region |
+| `neg_match_call_timing` | llg | a match-item task with a timing control: it would not run within the Reactive region; the message names the assertion (`tb.c1`, `c1`) and its location, never the hidden host |
 | `neg_property_local` | llg | a property local read by a later property operand (`always`): unsupported form |

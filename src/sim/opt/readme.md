@@ -23,6 +23,9 @@ recompute wake behavior. Key folding boundaries are:
 walk (`passes/storage.rs`) has no wildcard arms, so a new IR kind must be
 classified before it compiles; nested payloads go through the IR-owned
 `expressions()` visitors. `opt_storage_differential` compares every fixture
-with the pass on and off.
+with the pass on and off. The expression walker used by folding and identity
+simplification (`passes/traversal.rs`) and the IR-owned `expressions()` /
+`chandles()` visitors it relies on are exhaustive too; statements and
+expressions without an expression slot are listed explicitly.
 
 See the [pipeline](../readme.md) and [source map](../../../docs/source_layout.md).

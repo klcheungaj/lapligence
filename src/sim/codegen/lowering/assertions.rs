@@ -448,6 +448,27 @@ impl Codegen<'_> {
         path: &str,
         assertion: NodeId,
     ) -> Result<(), String> {
+        // The frontend wraps a labeled assertion in a named block (SV 16.15
+        // names it by label), which the suffix includes; an unlabeled
+        // assertion reports its enclosing scope, the LRM leaving the
+        // tool-assigned name unspecified.
+        let display = format!(
+            "{}{}",
+            self.display_path(path),
+            self.named_scope_suffix(path, assertion)
+        );
+        let previous = self.assertion_display_scope.replace(display);
+        let result = self.emit_concurrent_assertion_scoped(inst, path, assertion);
+        self.assertion_display_scope = previous;
+        result
+    }
+
+    fn emit_concurrent_assertion_scoped(
+        &mut self,
+        inst: NodeId,
+        path: &str,
+        assertion: NodeId,
+    ) -> Result<(), String> {
         self.inst = inst;
         let (kind, property, label, default_disable) = match self.kind(assertion) {
             NodeKind::Stmt(StmtKind::ConcurrentAssertion {
@@ -846,7 +867,18 @@ impl Codegen<'_> {
         self.assertion_property_local_init = previous_local_init;
         self.assertion_forced_locals.clear();
         let (antecedent, consequent, antecedent_sequence, consequent_sequence) = expressions
-            .map_err(|error| format!("{error} (assertion at {})", self.source_location(origin)))?;
+            .map_err(|error| {
+                let name = &self.node(origin).name;
+                let name = if name.is_empty() {
+                    String::new()
+                } else {
+                    format!(" `{name}`")
+                };
+                format!(
+                    "{error} (assertion{name} at {})",
+                    self.source_location(origin)
+                )
+            })?;
         let (abort_condition, abort_reject, abort_sync) = match abort {
             Some((condition_node, reject, sync)) => (
                 Some(self.lower_abort_condition(path, condition_node, leading_clock)?),
@@ -2483,7 +2515,9 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let action_path = format!("{path}.assertion[{}].{arm}", assertion.index());
+        let display_scope = self.assertion_display_scope.clone();
         let mut ctx = EmitCtx::new(self, action_path.clone(), inst, "0", None, false);
+        ctx.display_scope = display_scope.map(|scope| (scope, Some(assertion)));
         // Each action runs as its own spawned process (16.14.1 action blocks
         // are procedural code); timing controls suspend only that process.
         let body = ctx.lower_stmt(statement)?;

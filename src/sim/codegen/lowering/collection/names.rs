@@ -280,9 +280,14 @@ impl<'a> Codegen<'a> {
     /// `node` and the scope of `path`, outermost first; empty when the parents
     /// of `node` do not lead back to that scope.
     pub(in super::super) fn named_scope_suffix(&self, path: &str, node: NodeId) -> String {
-        let Some(&scope) = self.scope_nodes.get(path) else {
-            return String::new();
-        };
+        match self.scope_nodes.get(path) {
+            Some(&scope) => self.named_suffix_below(scope, node),
+            None => String::new(),
+        }
+    }
+
+    /// [`Self::named_scope_suffix`] for an explicit scope node.
+    pub(in super::super) fn named_suffix_below(&self, scope: NodeId, node: NodeId) -> String {
         let mut names: Vec<String> = Vec::new();
         let mut current = self.node(node).parent;
         while let Some(id) = current {

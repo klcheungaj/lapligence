@@ -6,6 +6,7 @@ mod fixed_array_reductions;
 mod sequential_predicates;
 mod singleton_concat;
 mod storage_references;
+mod traversal_slots;
 use crate::sim::ir::{
     IrAssertion, IrCall, IrCallArg, IrCaseItem, IrConcurrentAssertionKind, IrDependency, IrDepth,
     IrEdge, IrEventRef, IrFunc, IrLocal, IrProcess, IrShape, IrSignal, IrType,

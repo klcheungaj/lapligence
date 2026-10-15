@@ -637,7 +637,18 @@ impl IrRandStmt {
         match self {
             Self::InstRoot { handle, .. } => vec![handle],
             Self::Link { child, .. } => vec![child],
-            _ => Vec::new(),
+            Self::Begin { .. }
+            | Self::SetVar { .. }
+            | Self::SetBlock { .. }
+            | Self::SetLeaf { .. }
+            | Self::SetCyclic { .. }
+            | Self::SetCallResult { .. }
+            | Self::ISetVar { .. }
+            | Self::ISetBlock { .. }
+            | Self::ISetLeaf { .. }
+            | Self::ISetCyclic { .. }
+            | Self::SetArray { .. }
+            | Self::SetElem { .. } => Vec::new(),
         }
     }
 
@@ -645,7 +656,18 @@ impl IrRandStmt {
         match self {
             Self::InstRoot { handle, .. } => vec![handle],
             Self::Link { child, .. } => vec![child],
-            _ => Vec::new(),
+            Self::Begin { .. }
+            | Self::SetVar { .. }
+            | Self::SetBlock { .. }
+            | Self::SetLeaf { .. }
+            | Self::SetCyclic { .. }
+            | Self::SetCallResult { .. }
+            | Self::ISetVar { .. }
+            | Self::ISetBlock { .. }
+            | Self::ISetLeaf { .. }
+            | Self::ISetCyclic { .. }
+            | Self::SetArray { .. }
+            | Self::SetElem { .. } => Vec::new(),
         }
     }
 

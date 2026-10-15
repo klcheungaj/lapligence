@@ -530,7 +530,7 @@ impl EmitCtx<'_, '_> {
                         level: crate::sim::ir::IrSeverityLevel::Error,
                         fmt: "\"wait_order: events triggered out of order\"".to_owned(),
                         args: Vec::new(),
-                        scope: self.cg.format_scope(&self.path, h),
+                        scope: self.format_scope(h),
                         location: self.finish_location(h),
                         fatal_finish_number: None,
                         runtime_failure: false,

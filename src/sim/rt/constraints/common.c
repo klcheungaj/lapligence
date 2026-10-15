@@ -126,6 +126,11 @@ typedef struct cr_tpl cr_tpl_t;
 struct llg_cr_session {
     const llg_cr_problem_t* p;
     llg_cr_session_t* next_session;
+    /* The call site's own session: itself, or for an expanded problem's
+     * session the template session it belongs to. Holds the one-time
+     * warning state of the site. */
+    llg_cr_session_t* site;
+    uint8_t fallback_warned;    /* the weights-ignored warning was printed */
     /* Template problems (units, SIM-030): instances and expanded sessions;
      * NULL for a problem without units. */
     cr_tpl_t* tpl;

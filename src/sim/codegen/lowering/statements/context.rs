@@ -31,6 +31,21 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             label_seq: 0,
             in_final,
             call_owner: "deferred immediate assertion action",
+            display_scope: None,
+        }
+    }
+
+    /// `%m` text for the call at `node`: the enclosing assertion's scope when
+    /// this body is a hidden assertion host, otherwise the lowering path's.
+    pub(super) fn format_scope(&self, node: NodeId) -> String {
+        match &self.display_scope {
+            Some((base, root)) => {
+                let suffix = root
+                    .map(|root| self.cg.named_suffix_below(root, node))
+                    .unwrap_or_default();
+                format!("{base}{suffix}")
+            }
+            None => self.cg.format_scope(&self.path, node),
         }
     }
 

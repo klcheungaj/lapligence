@@ -242,6 +242,10 @@ static int semaphore_tail_resumed;
 LLG_PROBE_SIMPLE_PROCESS(semaphore_head, 1) {
     LLG_PROBE_SIMPLE_BEGIN(1);
     LLG_PROBE_AWAIT(1, llg_arm_semaphore_get(self, semaphore, semaphore_one));
+    // Generated code takes the grant right after the await resumes
+    // (emit_c/owned/mailboxes.rs); the granted request is otherwise owned by
+    // the process until it is killed or torn down.
+    llg_semaphore_grant_taken(self);
     semaphore_head_resumed++;
     LLG_PROBE_DONE();
 }
@@ -249,6 +253,7 @@ LLG_PROBE_SIMPLE_PROCESS(semaphore_head, 1) {
 LLG_PROBE_SIMPLE_PROCESS(semaphore_tail, 1) {
     LLG_PROBE_SIMPLE_BEGIN(1);
     LLG_PROBE_AWAIT(1, llg_arm_semaphore_get(self, semaphore, semaphore_one));
+    llg_semaphore_grant_taken(self);
     semaphore_tail_resumed++;
     LLG_PROBE_DONE();
 }

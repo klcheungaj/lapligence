@@ -50,7 +50,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 if_false: if_false.map(Box::new),
                 label: label.clone(),
                 location: self.finish_location(h),
-                scope: self.cg.format_scope(&self.path, h),
+                scope: self.format_scope(h),
                 identity: h.index() as u64,
             }]);
         }
@@ -71,7 +71,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             control_scope: self
                 .cg
                 .design_uses_assertion_controls()
-                .then(|| self.cg.format_scope(&self.path, h)),
+                .then(|| self.format_scope(h)),
         }])
     }
 
