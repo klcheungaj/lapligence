@@ -29,6 +29,7 @@ fn process_model(body: Vec<IrStmt>) -> IrModel {
         origin: crate::sim::semantic::Origin::Synthetic {
             reason: "validation fixture".to_owned(),
         },
+        callback_host: false,
     });
     model.spawns.push("proc".to_string());
     model

@@ -1,0 +1,6 @@
+release a pending callback handle: 1
+first ran at 1
+first ran at 2
+remove the callback that ran: 0, error 3
+info of cbStartOfSimulation after it ran: error 3
+late cbStartOfSimulation: NULL, error 3

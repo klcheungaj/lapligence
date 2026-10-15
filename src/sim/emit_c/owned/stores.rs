@@ -868,10 +868,26 @@ impl<'a, 'm> Frame<'a, 'm> {
             if nba {
                 return Err("sequence locals cannot be nonblocking targets".to_owned());
             }
-            self.line(format!(
-                "llg_sequence_local_write({}, {});",
-                binding.address, value.code
-            ));
+            if let Some(selection) = &target.selection {
+                // A selected local (`v[3:0] = e`, 16.10) updates its bits of
+                // the thread's current value.
+                let updated = self.value(
+                    format!("sv4_clone({})", binding.address),
+                    binding.width,
+                    binding.signed,
+                );
+                self.set_selected(selection, &updated.code, &value.code);
+                self.line(format!(
+                    "llg_sequence_local_write({}, {});",
+                    binding.address, updated.code
+                ));
+                self.discard(updated);
+            } else {
+                self.line(format!(
+                    "llg_sequence_local_write({}, {});",
+                    binding.address, value.code
+                ));
+            }
         } else if target.width == 0 {
             let call = if nba {
                 format!(

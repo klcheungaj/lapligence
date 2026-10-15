@@ -877,6 +877,11 @@ pub enum IrStmt {
         label: String,
         location: String,
         identity: u64,
+        /// Hierarchy scope matched by assertion control tasks, present only
+        /// when the design calls one (IEEE 1800-2009 20.11-20.12); without
+        /// a control task the assertion is always checked and its actions
+        /// always execute, so no runtime query is emitted.
+        control_scope: Option<String>,
     },
     /// Deferred immediate `assert`, `assume` or `cover` (`assert #0`). The
     /// condition is sampled when this statement executes; the selected action

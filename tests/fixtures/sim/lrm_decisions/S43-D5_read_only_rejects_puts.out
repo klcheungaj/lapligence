@@ -1,0 +1,8 @@
+no-delay put error 3
+delayed put error 3
+force error 3
+zero-delay cbReadWriteSynch: NULL, error 3
+cbReadWriteSynch after 2: handle
+read-only at 4: d=1
+read-write at 6: put error 0
+d=7 at 6

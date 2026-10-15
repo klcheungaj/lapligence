@@ -332,6 +332,33 @@ impl Validator<'_> {
                     }
                 }
             }
+            IrExprKind::MatchCall(action) => {
+                if expr.width != 1 || expr.signed || expr.fill.is_some() {
+                    return self.fail(path, "match-item call must be a 1-bit unsigned value");
+                }
+                let declared = self
+                    .model
+                    .processes
+                    .iter()
+                    .flat_map(|process| &process.pre_fns)
+                    .any(|pre| {
+                        matches!(
+                            pre,
+                            IrPreFn::DeferredAssertion { c_name, frame, .. }
+                                if c_name == action.c_name() && *frame == action.frame()
+                        )
+                    });
+                if action.c_name().is_empty() || !declared {
+                    return self.fail(path, "match-item call callback is not declared");
+                }
+                for (index, capture) in action.captures().iter().enumerate() {
+                    self.validate_expr(
+                        capture.initial(),
+                        formals,
+                        &format!("{path}.capture[{index}]"),
+                    )?;
+                }
+            }
             IrExprKind::EventTriggered(event) => {
                 self.validate_event_ref(event, formals, path)?;
                 if expr.width != 1 || expr.signed || expr.fill.is_some() {
@@ -359,6 +386,37 @@ impl Validator<'_> {
                             );
                         }
                         2
+                    }
+                    IrRuntimeQuery::SequenceMatched { endpoint, slot } => {
+                        let known = self.model.assertions.iter().any(|assertion| {
+                            assertion.endpoint.as_ref().is_some_and(|known| {
+                                known.index == *endpoint
+                                    && (*slot as usize) < known.matched_clocks.len()
+                            })
+                        });
+                        if !known {
+                            return self.fail(
+                                path,
+                                format!(
+                                    "`.matched` names unknown sequence endpoint {endpoint} slot {slot}"
+                                ),
+                            );
+                        }
+                        1
+                    }
+                    IrRuntimeQuery::SequenceTriggered(endpoint) => {
+                        if !self.model.assertions.iter().any(|assertion| {
+                            assertion
+                                .endpoint
+                                .as_ref()
+                                .is_some_and(|known| known.index == *endpoint)
+                        }) {
+                            return self.fail(
+                                path,
+                                format!("`.triggered` names unknown sequence endpoint {endpoint}"),
+                            );
+                        }
+                        1
                     }
                     IrRuntimeQuery::ForceSourceActive(signal) => {
                         if self.model.signals.get(*signal).is_none() {

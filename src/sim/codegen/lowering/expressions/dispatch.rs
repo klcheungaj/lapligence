@@ -1591,6 +1591,19 @@ impl<'a> Codegen<'a> {
                 name,
                 receiver: Some(receiver),
                 ..
+            } if (name == "triggered" || name == "matched")
+                && self.is_sequence_endpoint_operand(*receiver) =>
+            {
+                if name == "triggered" {
+                    self.lower_sequence_triggered(scope_path, *receiver)
+                } else {
+                    self.lower_sequence_matched(scope_path, *receiver)
+                }
+            }
+            NodeKind::MethodCall {
+                name,
+                receiver: Some(receiver),
+                ..
             } if name == "triggered" => {
                 let target = self.event_target_of(*receiver).ok_or_else(|| {
                     format!(

@@ -23,15 +23,39 @@ impl IrSeverityLevel {
 }
 
 /// Bounded assertion-control task family. The runtime accepts the standard
-/// on/off/kill directives and the corresponding full `$assertcontrol`
-/// directive; unsupported pass/fail/vacuity controls remain fail-closed in
-/// lowering.
+/// on/off/kill directives, the corresponding full `$assertcontrol` directive
+/// and the six 2009 action controls (IEEE 1800-2009 20.12), which change only
+/// which pass/fail actions execute.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IrAssertionControlKind {
     On,
     Off,
     Kill,
     Control,
+    PassOn,
+    PassOff,
+    FailOn,
+    FailOff,
+    NonvacuousOn,
+    VacuousOff,
+}
+
+impl IrAssertionControlKind {
+    /// Runtime `LLG_ASSERTION_CONTROL_*` enumerator for this task.
+    pub(crate) fn runtime_name(self) -> &'static str {
+        match self {
+            Self::On => "LLG_ASSERTION_CONTROL_ON",
+            Self::Off => "LLG_ASSERTION_CONTROL_OFF",
+            Self::Kill => "LLG_ASSERTION_CONTROL_KILL",
+            Self::Control => "LLG_ASSERTION_CONTROL_FULL",
+            Self::PassOn => "LLG_ASSERTION_CONTROL_PASS_ON",
+            Self::PassOff => "LLG_ASSERTION_CONTROL_PASS_OFF",
+            Self::FailOn => "LLG_ASSERTION_CONTROL_FAIL_ON",
+            Self::FailOff => "LLG_ASSERTION_CONTROL_FAIL_OFF",
+            Self::NonvacuousOn => "LLG_ASSERTION_CONTROL_NONVACUOUS_ON",
+            Self::VacuousOff => "LLG_ASSERTION_CONTROL_VACUOUS_OFF",
+        }
+    }
 }
 
 /// Immediate assertion flavor retained through lowering for runtime dispatch.
@@ -709,6 +733,59 @@ pub struct IrAssertion {
     pub(in crate::sim) single_attempt: bool,
     pub(in crate::sim) pass_action: Option<String>,
     pub(in crate::sim) fail_action: Option<String>,
+    /// Present when this entry is a sequence endpoint rather than an
+    /// assertion statement (see [`IrAssertionEndpoint`]).
+    pub(in crate::sim) endpoint: Option<IrAssertionEndpoint>,
+}
+
+/// A sequence endpoint: a hidden cover of every match of one sequence
+/// instance, observed through `.triggered`, `.matched` and `@(seq)` (IEEE
+/// 1800-2009 16.9.11, 16.14.5-16.14.6, 9.4.2.4, 9.4.4). It has no actions and
+/// no counters. Each match triggers `event` in the Observed region and latches
+/// `.matched` for each destination clock in `matched_clocks`, indexed by the
+/// slot a [`super::IrRuntimeQuery::SequenceMatched`] query names. `index`
+/// numbers endpoints from zero in assertion-table order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrAssertionEndpoint {
+    pub(in crate::sim) index: u32,
+    pub(in crate::sim) event: usize,
+    pub(in crate::sim) matched_clocks: Vec<(usize, bool)>,
+}
+
+impl IrAssertionEndpoint {
+    pub(in crate::sim) fn new(index: u32, event: usize) -> Self {
+        Self {
+            index,
+            event,
+            matched_clocks: Vec::new(),
+        }
+    }
+
+    pub fn index(&self) -> u32 {
+        self.index
+    }
+
+    pub fn event(&self) -> usize {
+        self.event
+    }
+
+    /// Destination clocks of `.matched` (signal, posedge), by slot.
+    pub fn matched_clocks(&self) -> &[(usize, bool)] {
+        &self.matched_clocks
+    }
+
+    /// The `.matched` slot of destination clock `clock`, added on first use.
+    pub(in crate::sim) fn matched_slot(&mut self, clock: (usize, bool)) -> Result<u32, String> {
+        let slot = match self.matched_clocks.iter().position(|known| *known == clock) {
+            Some(slot) => slot,
+            None => {
+                self.matched_clocks.push(clock);
+                self.matched_clocks.len() - 1
+            }
+        };
+        u32::try_from(slot)
+            .map_err(|_| "sequence endpoint has too many `.matched` clocks".to_owned())
+    }
 }
 
 impl IrAssertion {
@@ -750,6 +827,7 @@ impl IrAssertion {
             abort_sync: false,
             pass_action,
             fail_action,
+            endpoint: None,
         }
     }
 
@@ -791,6 +869,7 @@ impl IrAssertion {
             abort_sync: false,
             pass_action,
             fail_action,
+            endpoint: None,
         }
     }
 
@@ -831,6 +910,7 @@ impl IrAssertion {
             abort_sync: false,
             pass_action,
             fail_action,
+            endpoint: None,
         }
     }
 
@@ -930,6 +1010,20 @@ impl IrAssertion {
 
     pub fn single_attempt(&self) -> bool {
         self.single_attempt
+    }
+
+    pub fn endpoint(&self) -> Option<&IrAssertionEndpoint> {
+        self.endpoint.as_ref()
+    }
+
+    pub(in crate::sim) fn endpoint_mut(&mut self) -> Option<&mut IrAssertionEndpoint> {
+        self.endpoint.as_mut()
+    }
+
+    /// Make this cover of every match the sequence endpoint `endpoint`.
+    pub(in crate::sim) fn with_endpoint(mut self, endpoint: IrAssertionEndpoint) -> Self {
+        self.endpoint = Some(endpoint);
+        self
     }
 
     pub fn pass_action(&self) -> Option<&str> {

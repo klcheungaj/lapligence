@@ -307,6 +307,13 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
     {
         return Err("initial-procedure assertions require the owned model emitter".to_owned());
     }
+    if model
+        .assertions()
+        .iter()
+        .any(|assertion| assertion.endpoint().is_some())
+    {
+        return Err("sequence endpoints require the owned model emitter".to_owned());
+    }
     for (index, assertion) in model.assertions().iter().enumerate() {
         let clock = model.signal(assertion.clock_signal()).c_name();
         let disable = assertion
@@ -454,16 +461,17 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
         ));
     }
     out.push_str(&format!(
-        "    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count) || !llg_vpi_startup()) {{\n\
+        "    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count) || !llg_vpi_startup_static(LLG_VPI_STATIC_ROUTINES) || !llg_vpi_startup()) {{\n\
              \x20       llg_vpi_shutdown();\n\
              \x20       llg_rt_cleanup();\n\
              \x20       return 1;\n\
              \x20   }}\n",
         c_string_literal(model.design_name())
     ));
-    for (index, call) in model.vpi_compile_calls.iter().enumerate() {
+    let scopes = super::vpi::vpi_call_scopes(model);
+    for ((index, call), scope) in model.vpi_compile_calls.iter().enumerate().zip(&scopes) {
         out.push_str(&format!(
-            "    if (!llg_vpi_compile_call_site({index}ULL, {}, llg_vpi_compile_args_{index}, {}, {}ULL)) {{\n\
+            "    if (!llg_vpi_compile_call_site_at({index}ULL, {}, llg_vpi_compile_args_{index}, {}, {}ULL, {scope}, {}, {})) {{\n\
              \x20       llg_vpi_shutdown();\n\
              \x20       llg_rt_cleanup();\n\
              \x20       return 1;\n\
@@ -471,6 +479,10 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
             c_string_literal(&call.name),
             call.args.len(),
             call.time_unit_fs,
+            call.file
+                .as_deref()
+                .map_or_else(|| "NULL".to_owned(), c_string_literal),
+            call.line,
         ));
     }
     out.push_str("    llg_vpi_start_simulation();\n");

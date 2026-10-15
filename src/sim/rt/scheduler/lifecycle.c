@@ -183,10 +183,14 @@ static void free_assertions(void) {
                 free(g.assertions->property_ranks[index]);
             free(g.assertions->property_ranks);
         }
+        free(g.assertions->endpoint_slots);
         free(g.assertions);
         g.assertions = next;
     }
     g.assertion_tail = NULL;
+    free(g.sequence_endpoints);
+    g.sequence_endpoints = NULL;
+    g.sequence_endpoint_count = 0;
 }
 
 static void free_clocking_edges(void) {
@@ -305,6 +309,7 @@ void llg_rt_cleanup(void) {
     }
     for (int level = 0; level < g.proc_free_levels; level++)
         free(g.proc_free_bits[level]);
+    free_value_watches();
     free(g.wait_sources);
     free(g.all_procs);
     g.all_procs = NULL;

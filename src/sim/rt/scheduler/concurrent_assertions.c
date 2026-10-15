@@ -31,8 +31,99 @@ static void assertion_default_failure_action(void* data) {
                               assertion->location);
 }
 
+/* Report one attempt result. The result counters always change; action
+ * controls (SV 20.12: "shall not affect the statistics counters") only
+ * decide whether the pass, fail or default fail action executes. */
+/* A match of a sequence endpoint, in the Observed region: `.triggered` and
+ * `@(seq)` see the event; each `.matched` slot becomes visible at the first
+ * tick of its destination clock at or after this time step (a destination
+ * tick already in this step counts, S39-D5). */
+static void sequence_endpoint_matched(llg_concurrent_assertion_t* endpoint) {
+    // Observed is not a mutating region for process code; the runtime
+    // itself publishes the endpoint, as for clocking-block events.
+    event_trigger_object_unchecked(endpoint->endpoint_event->object);
+    for (uint32_t index = 0; index < endpoint->endpoint_slot_count; index++) {
+        llg_matched_slot_t* slot = &endpoint->endpoint_slots[index];
+        llg_clocking_edge_t* edge = find_clocking_edge(slot->clock);
+        uint64_t ticks = assertion_clock_tick(slot->clock, slot->edge);
+        unsigned flag = slot->edge == LLG_EV_POSEDGE ? CLOCKING_POSEDGE : CLOCKING_NEGEDGE;
+        int ticked_now = edge && edge->time == g.now && (edge->occurred & flag);
+        slot->visible_tick = ticked_now ? ticks : ticks + 1u;
+        slot->has_match = 1;
+    }
+}
+
+int llg_sequence_triggered(uint32_t endpoint) {
+    if (endpoint >= g.sequence_endpoint_count || !g.sequence_endpoints[endpoint]) {
+        fprintf(stderr, "llg runtime fatal: invalid sequence endpoint %u\n", (unsigned)endpoint);
+        llg_last_failure = 1;
+        g.finish = 1;
+        return 0;
+    }
+    return llg_event_triggered(g.sequence_endpoints[endpoint]->endpoint_event);
+}
+
+int llg_sequence_matched(uint32_t endpoint, uint32_t slot) {
+    if (endpoint >= g.sequence_endpoint_count || !g.sequence_endpoints[endpoint] ||
+        slot >= g.sequence_endpoints[endpoint]->endpoint_slot_count) {
+        fprintf(stderr, "llg runtime fatal: invalid sequence endpoint %u slot %u\n",
+                (unsigned)endpoint, (unsigned)slot);
+        llg_last_failure = 1;
+        g.finish = 1;
+        return 0;
+    }
+    const llg_matched_slot_t* state = &g.sequence_endpoints[endpoint]->endpoint_slots[slot];
+    return state->has_match &&
+           state->visible_tick == assertion_clock_tick(state->clock, state->edge);
+}
+
+int llg_assertion_endpoint(uint64_t identity, uint32_t index, llg_event_t* event,
+                           uint32_t slot_count, sv4_t* const* clocks, const int* edges) {
+    llg_concurrent_assertion_t* assertion = g.assertion_tail;
+    if (!g.initialized || g.running || g.config_error || !assertion || !event ||
+        assertion->identity != identity || assertion->endpoint_event ||
+        (slot_count && (!clocks || !edges)) ||
+        (assertion->kind != LLG_ASSERTION_COVER) || index != g.sequence_endpoint_count) {
+        fprintf(stderr, "llg: invalid sequence endpoint registration\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return 0;
+    }
+    llg_concurrent_assertion_t** endpoints = (llg_concurrent_assertion_t**)llg_checked_malloc(
+        (size_t)index + 1u, sizeof(*endpoints), "sequence endpoints");
+    if (index) memcpy(endpoints, g.sequence_endpoints, (size_t)index * sizeof(*endpoints));
+    free(g.sequence_endpoints);
+    endpoints[index] = assertion;
+    g.sequence_endpoints = endpoints;
+    g.sequence_endpoint_count = index + 1u;
+    assertion->endpoint_event = event;
+    if (slot_count) {
+        assertion->endpoint_slots = (llg_matched_slot_t*)llg_checked_calloc(
+            slot_count, sizeof(*assertion->endpoint_slots), "sequence matched slots");
+        assertion->endpoint_slot_count = slot_count;
+        for (uint32_t slot = 0; slot < slot_count; slot++) {
+            if (!clocks[slot] || (edges[slot] != LLG_EV_POSEDGE && edges[slot] != LLG_EV_NEGEDGE)) {
+                fprintf(stderr, "llg: invalid sequence matched clock\n");
+                llg_last_failure = 1;
+                g.finish = 1;
+                return 0;
+            }
+            assertion->endpoint_slots[slot].clock = clocks[slot];
+            assertion->endpoint_slots[slot].edge = edges[slot];
+            // Destination ticks are counted across time slots.
+            clocking_edge_get(clocks[slot])->keep_ticks = 1;
+        }
+    }
+    return 1;
+}
+
 static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
                              int vacuous) {
+    int suppressed;
+    if (assertion->endpoint_event) {
+        if (success && !vacuous) sequence_endpoint_matched(assertion);
+        return;
+    }
     if (vacuous) assertion_vacuous();
     if (success) {
         // Cover counts and pass actions represent a non-vacuous match. An
@@ -42,14 +133,18 @@ static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
         if (assertion->kind == LLG_ASSERTION_COVER && !vacuous)
             llg_assertion_cover(assertion->identity, assertion->label,
                                 assertion->location);
-        if (assertion->kind != LLG_ASSERTION_COVER || !vacuous)
+        suppressed = vacuous ? assertion->vacuous_action_off : assertion->pass_action_off;
+        if ((assertion->kind != LLG_ASSERTION_COVER || !vacuous) && !suppressed)
             assertion_action(assertion, assertion->pass_desc);
     } else {
+        suppressed = assertion->fail_action_off;
         if (assertion->kind == LLG_ASSERTION_COVER) {
-            assertion_action(assertion, assertion->fail_desc);
+            if (!suppressed) assertion_action(assertion, assertion->fail_desc);
         } else {
             assertion_record_failure(assertion->kind);
-            if (assertion->fail_desc) {
+            if (suppressed) {
+                // $assertfailoff also stops the default fail action.
+            } else if (assertion->fail_desc) {
                 // Even an explicit null else is a generated action function.
                 assertion_action(assertion, assertion->fail_desc);
             } else if (!(assertion->kind == LLG_ASSERTION_EXPECT &&
@@ -63,7 +158,8 @@ static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
     }
     if (assertion->kind == LLG_ASSERTION_EXPECT && assertion->expect_active) {
         assertion->expect_active = 0;
-        assertion->expect_outcome = success ? 1 : 2;
+        // 3: decided, but the caller's inline action arm is suppressed.
+        assertion->expect_outcome = suppressed ? 3 : success ? 1 : 2;
         wake_assertion_waiter(assertion->identity);
     }
 }

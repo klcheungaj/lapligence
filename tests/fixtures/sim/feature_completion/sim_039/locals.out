@@ -1,0 +1,17 @@
+35 acc v=4
+45 acc v=8
+55 acc v=16
+25 pick w=1
+35 pick w=2
+45 pick w=104
+45 pick w=4
+55 pick w=108
+65 pick w=116
+35 nest
+45 delay
+35 decl
+25 hold fail
+45 hold fail
+25 sel s=81
+35 sel s=82
+45 sel s=84

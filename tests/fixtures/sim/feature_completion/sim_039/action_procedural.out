@@ -1,0 +1,10 @@
+0 imm fail
+0 dfr fail
+3000 imm pass
+4000 imm fail
+4000 dfr fail
+5000 imm fail
+15000 e1 pass
+15000 after e1 0
+25000 after e1 1
+35000 after e1 2

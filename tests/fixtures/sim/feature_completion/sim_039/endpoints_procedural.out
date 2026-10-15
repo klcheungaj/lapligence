@@ -1,0 +1,12 @@
+35 P1 woke abc=1 de=0
+35 P1 inactive abc=1
+36 P1 later abc=0
+35 P2 @abc
+35 P2 wait abc
+45 P2 @abc
+45 P2 wait abc
+35 P3 active abc=0
+45 P3 active abc=0
+35 P4 reactive abc=1
+45 P4 reactive abc=1
+50 P5 @de

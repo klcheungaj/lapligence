@@ -283,9 +283,15 @@ impl Codegen<'_> {
                     }
                     builder.instances.push(body);
                     let capture = self.assertion_instance_depth == 0;
+                    // Property operands start after the property attempt, so
+                    // they cannot initialize its locals (16.10).
+                    let enclosing = self.assertion_property_locals.len();
+                    let locals = self.instance_initialized_locals(instance);
+                    self.assertion_property_locals.extend(locals);
                     let result = self.lower_assertion_instance(instance, capture, |this, body| {
                         this.lower_property_node(path, body, top, builder)
                     });
+                    self.assertion_property_locals.truncate(enclosing);
                     builder.instances.pop();
                     return result?.ok_or_else(|| "assertion instance body is missing".to_owned());
                 }

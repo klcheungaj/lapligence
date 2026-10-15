@@ -202,12 +202,17 @@ static int assertion_has_attempts(const llg_concurrent_assertion_t* assertion) {
            assertion->sequence_consequents || assertion->property_attempts;
 }
 
-static int deferred_selected(int kind, const char* label, const char* scope,
-                              uint64_t types, uint64_t directives,
+// Table 20-6 assertion-type bits of the immediate forms: simple immediate
+// and observed deferred (#0) assertions.
+#define LLG_ASSERTION_TYPE_IMMEDIATE 2u
+#define LLG_ASSERTION_TYPE_DEFERRED 4u
+
+static int immediate_selected(uint64_t type_bit, int kind, const char* label,
+                              const char* scope, uint64_t types, uint64_t directives,
                               const char* const* scopes, int count) {
     uint64_t directive = kind == LLG_ASSERTION_COVER ? 2u :
                          kind == LLG_ASSERTION_ASSUME ? 4u : 1u;
-    if (!(types & 4u) || !(directives & directive)) return 0; // #0 deferred
+    if (!(types & type_bit) || !(directives & directive)) return 0;
     if (!count) return 1;
     llg_concurrent_assertion_t view = {0};
     view.scope = scope;
@@ -217,24 +222,61 @@ static int deferred_selected(int kind, const char* label, const char* scope,
     return 0;
 }
 
-int llg_deferred_assertion_enabled(int kind, const char* label, const char* scope) {
+// The newest rule for `field` that selects the assertion decides; without
+// one the control is in its default, enabled state.
+static int immediate_rule_value(int field, uint64_t type_bit, int kind,
+                                const char* label, const char* scope) {
     for (llg_assertion_rule_t* rule = llg_assertion_rules; rule; rule = rule->next) {
+        if (rule->field != field) continue;
         const char* selectors[] = {rule->scope};
-        if (deferred_selected(kind, label, scope, rule->assertion_type,
-                              rule->directive_type, selectors, rule->scope ? 1 : 0))
+        if (immediate_selected(type_bit, kind, label, scope, rule->assertion_type,
+                               rule->directive_type, selectors, rule->scope ? 1 : 0))
             return rule->enabled;
     }
     return 1;
 }
 
-static void assertion_remember_control(int enabled, uint64_t types,
+int llg_deferred_assertion_enabled(int kind, const char* label, const char* scope) {
+    return immediate_rule_value(LLG_ASSERTION_RULE_CHECK, LLG_ASSERTION_TYPE_DEFERRED,
+                                kind, label, scope);
+}
+
+// Whether a matured deferred report may run its action now: action controls
+// apply to actions that execute after the control task (SV 20.12).
+static int deferred_action_enabled(int kind, int passed, const char* label,
+                                   const char* scope) {
+    return immediate_rule_value(passed ? LLG_ASSERTION_RULE_PASS : LLG_ASSERTION_RULE_FAIL,
+                                LLG_ASSERTION_TYPE_DEFERRED, kind, label, scope);
+}
+
+int llg_immediate_assertion_controls(int kind, const char* label, const char* scope) {
+    int state = LLG_IMMEDIATE_CHECKED | LLG_IMMEDIATE_PASS_ACTION | LLG_IMMEDIATE_FAIL_ACTION;
+    if (!llg_assertion_rules) return state;
+    if (!immediate_rule_value(LLG_ASSERTION_RULE_CHECK, LLG_ASSERTION_TYPE_IMMEDIATE, kind,
+                              label, scope))
+        state &= ~LLG_IMMEDIATE_CHECKED;
+    if (!immediate_rule_value(LLG_ASSERTION_RULE_PASS, LLG_ASSERTION_TYPE_IMMEDIATE, kind,
+                              label, scope))
+        state &= ~LLG_IMMEDIATE_PASS_ACTION;
+    if (!immediate_rule_value(LLG_ASSERTION_RULE_FAIL, LLG_ASSERTION_TYPE_IMMEDIATE, kind,
+                              label, scope))
+        state &= ~LLG_IMMEDIATE_FAIL_ACTION;
+    return state;
+}
+
+void llg_assertion_failure_quiet(int kind) {
+    assertion_record_failure(kind);
+}
+
+static void assertion_remember_control(int field, int enabled, uint64_t types,
                                        uint64_t directives, const char* scope) {
     // Replace equal selector/mask rules; repeated control in a loop must not
     // retain an unbounded history of identical commands.
     llg_assertion_rule_t** link = &llg_assertion_rules;
     llg_assertion_rule_t* rule = NULL;
     while (*link) {
-        if ((*link)->assertion_type == types && (*link)->directive_type == directives &&
+        if ((*link)->field == field &&
+            (*link)->assertion_type == types && (*link)->directive_type == directives &&
             ((!scope && !(*link)->scope) ||
              (scope && (*link)->scope && strcmp(scope, (*link)->scope) == 0))) {
             rule = *link;
@@ -250,12 +292,79 @@ static void assertion_remember_control(int enabled, uint64_t types,
             rule->scope = llg_checked_malloc(length + 1u, 1, "assertion control scope");
             memcpy(rule->scope, scope, length + 1u);
         }
+        rule->field = field;
         rule->assertion_type = types;
         rule->directive_type = directives;
     }
     rule->enabled = enabled;
     rule->next = llg_assertion_rules;
     llg_assertion_rules = rule;
+}
+
+// The rules one control operation records for immediate and deferred
+// assertions: ON/OFF/KILL set checking; each action task sets the action
+// classes it names (SV 20.12). A pass-action pair is (nonvacuous, vacuous).
+static void assertion_remember_operation(int operation, uint64_t types,
+                                         uint64_t directives, const char* scope) {
+    switch (operation) {
+        case LLG_ASSERTION_CONTROL_ON:
+        case LLG_ASSERTION_CONTROL_OFF:
+        case LLG_ASSERTION_CONTROL_KILL:
+            assertion_remember_control(LLG_ASSERTION_RULE_CHECK,
+                                       operation == LLG_ASSERTION_CONTROL_ON, types,
+                                       directives, scope);
+            break;
+        case LLG_ASSERTION_CONTROL_PASS_ON:
+        case LLG_ASSERTION_CONTROL_PASS_OFF: {
+            int enabled = operation == LLG_ASSERTION_CONTROL_PASS_ON;
+            assertion_remember_control(LLG_ASSERTION_RULE_PASS, enabled, types, directives, scope);
+            assertion_remember_control(LLG_ASSERTION_RULE_VACUOUS, enabled, types, directives,
+                                       scope);
+            break;
+        }
+        case LLG_ASSERTION_CONTROL_FAIL_ON:
+        case LLG_ASSERTION_CONTROL_FAIL_OFF:
+            assertion_remember_control(LLG_ASSERTION_RULE_FAIL,
+                                       operation == LLG_ASSERTION_CONTROL_FAIL_ON, types,
+                                       directives, scope);
+            break;
+        case LLG_ASSERTION_CONTROL_NONVACUOUS_ON:
+            assertion_remember_control(LLG_ASSERTION_RULE_PASS, 1, types, directives, scope);
+            break;
+        case LLG_ASSERTION_CONTROL_VACUOUS_OFF:
+            assertion_remember_control(LLG_ASSERTION_RULE_VACUOUS, 0, types, directives, scope);
+            break;
+        default:
+            break;
+    }
+}
+
+static void assertion_apply_action_control(llg_concurrent_assertion_t* assertion,
+                                           int operation) {
+    switch (operation) {
+        case LLG_ASSERTION_CONTROL_PASS_ON:
+            assertion->pass_action_off = 0;
+            assertion->vacuous_action_off = 0;
+            break;
+        case LLG_ASSERTION_CONTROL_PASS_OFF:
+            assertion->pass_action_off = 1;
+            assertion->vacuous_action_off = 1;
+            break;
+        case LLG_ASSERTION_CONTROL_FAIL_ON:
+            assertion->fail_action_off = 0;
+            break;
+        case LLG_ASSERTION_CONTROL_FAIL_OFF:
+            assertion->fail_action_off = 1;
+            break;
+        case LLG_ASSERTION_CONTROL_NONVACUOUS_ON:
+            assertion->pass_action_off = 0;
+            break;
+        case LLG_ASSERTION_CONTROL_VACUOUS_OFF:
+            assertion->vacuous_action_off = 1;
+            break;
+        default:
+            break;
+    }
 }
 
 static void assertion_default_failure_action(void* data);
@@ -294,8 +403,8 @@ static void assertion_kill_deferred(uint64_t types, uint64_t directives,
     for (uint32_t i = 0; i < g.deferred_pending.count; i++) {
         llg_deferred_assertion_report_t* report = &g.deferred_pending.items[i];
         if (report->live &&
-            deferred_selected(report->kind, report->label, report->scope,
-                              types, directives, scopes, count))
+            immediate_selected(LLG_ASSERTION_TYPE_DEFERRED, report->kind, report->label,
+                               report->scope, types, directives, scopes, count))
             deferred_report_drop(report);
     }
 }
@@ -303,7 +412,7 @@ static void assertion_kill_deferred(uint64_t types, uint64_t directives,
 int llg_assertion_control(int kind, const sv4_t* args, int n_args,
                           const char* const* scopes, int n_scopes) {
     if (!region_can_mutate("assertion control")) return 0;
-    if (kind < LLG_ASSERTION_CONTROL_ON || kind > LLG_ASSERTION_CONTROL_FULL ||
+    if (kind < LLG_ASSERTION_CONTROL_ON || kind > LLG_ASSERTION_CONTROL_VACUOUS_OFF ||
         n_args < 0 || n_args > 4 || n_scopes < 0 ||
         (n_args != 0 && !args) || (n_scopes != 0 && !scopes))
         return assertion_control_failure("invalid control argument shape");
@@ -344,16 +453,16 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
     }
 
     if (n_scopes == 0)
-        assertion_remember_control(operation == LLG_ASSERTION_CONTROL_ON,
-                                   assertion_type, directive_type, NULL);
+        assertion_remember_operation(operation, assertion_type, directive_type, NULL);
     for (int i = 0; i < n_scopes; ++i)
-        assertion_remember_control(operation == LLG_ASSERTION_CONTROL_ON,
-                                   assertion_type, directive_type, scopes[i]);
+        assertion_remember_operation(operation, assertion_type, directive_type, scopes[i]);
     if (operation == LLG_ASSERTION_CONTROL_KILL)
         assertion_kill_deferred(assertion_type, directive_type, scopes, n_scopes);
 
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
+        // A sequence endpoint is not an assertion statement.
+        if (assertion->endpoint_event) continue;
         if (kind == LLG_ASSERTION_CONTROL_FULL &&
             !assertion_matches_type(assertion, assertion_type, directive_type))
             continue;
@@ -378,6 +487,14 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
                     assertion->expect_active = 0;
                     wake_assertion_waiter(assertion->identity);
                 }
+                break;
+            case LLG_ASSERTION_CONTROL_PASS_ON:
+            case LLG_ASSERTION_CONTROL_PASS_OFF:
+            case LLG_ASSERTION_CONTROL_FAIL_ON:
+            case LLG_ASSERTION_CONTROL_FAIL_OFF:
+            case LLG_ASSERTION_CONTROL_NONVACUOUS_ON:
+            case LLG_ASSERTION_CONTROL_VACUOUS_OFF:
+                assertion_apply_action_control(assertion, operation);
                 break;
             default:
                 return assertion_control_failure("invalid assertion control operation");

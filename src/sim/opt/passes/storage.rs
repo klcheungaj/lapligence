@@ -215,17 +215,21 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         }
     }
     let waveform = model.waveform;
+    // One pass over the catalog: every signal is VPI-visible in a model with
+    // a full catalog, so a per-signal scan would be quadratic.
+    let mut vpi_visible = vec![false; model.signals.len()];
+    for object in &model.vpi_objects {
+        if let Some(visible) = object.signal.and_then(|signal| vpi_visible.get_mut(signal)) {
+            *visible = true;
+        }
+    }
     let mut flags: Vec<bool> = model
         .signals
         .iter()
         .enumerate()
         .map(|(i, sig)| {
-            let vpi_visible = model
-                .vpi_objects
-                .iter()
-                .any(|object| object.signal == Some(i));
             !(waveform && sig.hdl_name.is_some())
-                && !vpi_visible
+                && !vpi_visible[i]
                 && !rw.reads.contains(&i)
                 && !rw.writes.contains(&i)
         })
@@ -462,6 +466,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             }
         }
         IrStmt::Object(operation) => {
+            if let Some(target) = operation.mailbox_target() {
+                collect_mailbox_target_rw(target, model, rw);
+            }
             operation.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
         IrStmt::PlusArg(expression) => collect_expr_reads(expression, model, rw),
@@ -655,6 +662,11 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                             mark_dependency_read(dependency, model, rw);
                         }
                     }
+                    // An event-array index or handle expression is evaluated
+                    // when the wait is armed.
+                    IrWaitSrc::Event(event) | IrWaitSrc::FilteredEvent { event, .. } => {
+                        event.expressions(&mut |child| collect_expr_reads(child, model, rw))
+                    }
                     _ => {}
                 }
             }
@@ -673,6 +685,11 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                         for dependency in reads {
                             mark_dependency_read(dependency, model, rw);
                         }
+                    }
+                    // An event-array index or handle expression is evaluated
+                    // when the wait is armed.
+                    IrWaitSrc::Event(event) | IrWaitSrc::FilteredEvent { event, .. } => {
+                        event.expressions(&mut |child| collect_expr_reads(child, model, rw))
                     }
                     _ => {}
                 }
@@ -782,6 +799,24 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             }
         }
         _ => {}
+    }
+}
+
+/// A mailbox retrieval writes through a C address (`&G_sig`); like an
+/// output argument it counts as a read and a write of the named signal, so
+/// the storage stays even when nothing else reads it (function-scope names
+/// never match).
+fn collect_mailbox_target_rw(
+    target: &crate::sim::ir::IrMailboxTarget,
+    model: &IrModel,
+    rw: &mut Rw,
+) {
+    if let Some(addr) = target.address() {
+        let name = addr.trim_start_matches('&');
+        if let Some(i) = model.signals.iter().position(|sg| sg.c_name == name) {
+            rw.read(i);
+            rw.write(i);
+        }
     }
 }
 
@@ -1042,6 +1077,9 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             operation.expressions(&mut |child| collect_expr_reads(child, model, rw));
         }
         IrExprKind::ObjectQuery(query) => {
+            if let Some(target) = query.mailbox_target() {
+                collect_mailbox_target_rw(target, model, rw);
+            }
             query.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
         IrExprKind::EnumMethod(query) => {

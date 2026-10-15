@@ -38,12 +38,7 @@ pub(super) fn render_assertion_control(
     args: &[IrExpr],
     scopes: &[String],
 ) -> Result<String, String> {
-    let kind = match kind {
-        IrAssertionControlKind::On => "LLG_ASSERTION_CONTROL_ON",
-        IrAssertionControlKind::Off => "LLG_ASSERTION_CONTROL_OFF",
-        IrAssertionControlKind::Kill => "LLG_ASSERTION_CONTROL_KILL",
-        IrAssertionControlKind::Control => "LLG_ASSERTION_CONTROL_FULL",
-    };
+    let kind = kind.runtime_name();
     let mut out = String::from("    {\n");
     let mut names = Vec::with_capacity(args.len());
     for (index, arg) in args.iter().enumerate() {

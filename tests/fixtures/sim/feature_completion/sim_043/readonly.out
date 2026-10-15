@@ -1,0 +1,20 @@
+  $peek: write x -> LLG_VPI_READ_ONLY
+[0.0] monitor: peek=101 x=1
+[2.5] value: r=1.50
+[2.5] read-write: put d=5 (none)
+[2.5] active: e=6
+[2.5] active after nba: q=12
+  $peek: write x -> LLG_VPI_READ_ONLY
+[2.5] strobe: peek=102 x=2
+  $peek: write x -> LLG_VPI_READ_ONLY
+[2.5] monitor: peek=102 x=2
+[2.5] read-only:
+  no-delay put -> LLG_VPI_READ_ONLY
+  delayed put -> LLG_VPI_READ_ONLY
+  force -> LLG_VPI_READ_ONLY
+  zero-delay read-write -> null LLG_VPI_CALLBACK
+  zero-delay read-only -> null LLG_VPI_CALLBACK
+  read-write after 1.0 -> handle none
+  d=5
+[3.5] read-write after delay: d=5
+[12.5] active: x=2 d=5 e=6 q=12 r=1.50

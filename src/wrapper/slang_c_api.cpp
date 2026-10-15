@@ -2843,6 +2843,20 @@ public:
             value->visit(*this);
         }, actual);
       }
+      // Declaration assignments of the instance's own local variables
+      // (IEEE 1800-2009 16.10) are owned by each local, like any variable
+      // initializer. Local formals take their initial value from the
+      // bound actual instead, which the arguments above already carry.
+      for (const LocalAssertionVarSymbol* local : expression.localVars) {
+        const Expression* initializer = local ? local->getInitializer() : nullptr;
+        if (!initializer || local->formalPort)
+          continue;
+        const uint64_t localId = captureReferenceTarget(*local);
+        parents.push_back(localId);
+        initializer->visit(*this);
+        parents.pop_back();
+        capture.semanticRole(localId, initializer, LLG_SLANG_EDGE_INITIALIZER);
+      }
     }
     else if constexpr (std::same_as<T, BinaryExpression>) {
       // Slang expands a compound assignment into a binary RHS whose left

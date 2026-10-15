@@ -736,8 +736,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   produced by reactive code are evaluated in a further Observed pass of the same
   slot. Internal region callbacks are cancellable with lifetime-stamped
   identities ([SIM-001](../tests/sim_feature_completion/sim_001.rs)). Clocking,
-  program and assertion consumers are bounded by §12; the full PLI/VPI region API
-  is not implemented. SV §§4.4–4.5 **[SV-2005]**.
+  program and assertion consumers are bounded by §12. VPI time callbacks use the
+  PLI regions of Table 4-1 (SIM-043, §12 PLI/VPI bridge). SV §§4.4–4.5
+  **[SV-2005]**.
 
 ## 5. Procedural statements
 
@@ -2116,21 +2117,17 @@ These are bounded implementations, not full verification-infrastructure support.
 | Clock/disable flow | Leading `iff`-qualified clocks, written or inherited from default clocking (SV §§9.4.2.3, 16.17): an edge whose condition is false at the edge is no clock tick; nested `iff` clocks inside a sequence are rejected unless they are the leading clocking event. Nearest default-clock inheritance, compatible declaration/call-site clocks, legal multiclock `##0`/`##1` boundaries. `disable iff` takes any side-effect-free Boolean expression of current values (a non-signal condition becomes a hidden continuously driven net) and acts asynchronously; `default disable iff` applies to the concurrent assertions of its module and generate blocks without their own `disable iff` (not to child instances or `expect`, SV §16.16). `accept_on/reject_on` (nestable anywhere in a property) read sampled values once per time step; `sync_accept_on/sync_reject_on` at clock ticks (SV §16.13.14). |
 | Sequences | Single-clock composition under Annex F: nested `##` concatenation with fixed, ranged and unbounded delays; consecutive repetition of Booleans and of whole sequences (`[*m:n]`, `[*]`, `[+]`, empty-admitting bodies) and nonconsecutive/goto repetition; empty matches; `or`; multi-cycle `and`, `intersect`, `throughout` and `within` (runtime joins that pair operand endpoints and drop threads that can no longer pair); `first_match`. Matches are counted with multiplicity (SV §§16.9.5, 16.9.7, 16.9.8): each `or` operand, each pair of `and`/`intersect` operand matches and each delay or repetition choice is a distinct match, observable through `cover sequence` and once-per-match match items; ways of matching the empty word count once. Live sequence threads are bounded by `LLG_SEQUENCE_THREAD_LIMIT` (default 1,000,000); exhaustion is a reported execution error. |
 | Properties and instances | Every single-clock property operator of SV §16.13: sequence properties with `strong`/`weak` and the assertion-kind default, `not`, `and`, `or`, `implies`, `iff`, `\|->`/`\|=>` with property consequents, `#-#`/`#=#`, `if`/`if-else`, `case`, `nexttime`/`s_nexttime [n]`, `always`/`always [m:n]`/`always [m:$]`, `s_always [m:n]`, `eventually [m:n]`, `s_eventually`/`s_eventually [m:n]`/`[m:$]`, `until`/`s_until`/`until_with`/`s_until_with` and nested aborts, evaluated per attempt by the runtime property engine with 16.15.8 vacuity. Results are checked against an Annex F interpreter on every two-signal trace of length 5. Named sequence/property instances take positional/named/default arguments. |
-| Locals and match items | Per-attempt local input capture/defaults, ordered assignment/increment/subroutine-call items and isolated local snapshots for overlapping/branching threads. |
-| Control | Bounded blocking `expect`, sequence `.matched`, `$asserton/$assertoff/$assertkill` and hierarchy selectors. Internal post-2009 level-0 ON/OFF/KILL `$assertcontrol` support is not admitted by either target edition. |
+| Locals and match items | Local input, output and inout formals of sequences and local input formals of properties (SV §§16.8.2, 16.13.19), and declared locals with declaration assignments, initialized per attempt in the order of SV §16.10; an instance below the attempt's first tick or with an output/inout formal lowers as its §16.8.2 inlined form, copying back on every matching thread. Ordered assignment/increment items, selected-local targets (`v[3:0] = e`) and items of repeated bodies (`(a, x += d)[*3]`, `[*0:$]`) run on each thread's own locals. Subroutine calls attached to a match (tasks, void functions, system tasks, DPI-C imports) copy their by-value arguments into an owned frame when the match is evaluated and run in the Reactive region (SV §16.11). Property locals read only after the property attempt starts, e.g. inside `always`, are rejected ([SIM-039 fixtures](../tests/fixtures/sim/feature_completion/sim_039/readme.md), [decisions S39-D8, S39-D9](lrm_decisions.md#assertion-locals-match-items-end-points-and-action-controls-sim-039)). |
+| Control | Bounded blocking `expect`; `$asserton/$assertoff/$assertkill` and the six action controls `$assertpasson/off`, `$assertfailon/off`, `$assertnonvacuouson` and `$assertvacuousoff` (SV §§20.11-20.12) at level 0, on concurrent, immediate, deferred and `expect` assertions, selected by module instance, generate block, named block, subroutine or assertion name; action controls never change the result counters. Sequence end points: `.triggered` in assertions (same ending clock) and procedural code, `.matched` across clocks, `@(seq)` and `wait(seq.triggered)`, with the Observed-region and time-step lifetimes of SV §§9.4.2.4, 9.4.4 and 16.14.6, also through DPI-C exports ([decisions S39-D1-D7](lrm_decisions.md#assertion-locals-match-items-end-points-and-action-controls-sim-039)). Levels other than 0 are a runtime error. Internal post-2009 level-0 ON/OFF/KILL `$assertcontrol` support is not admitted by either target edition. |
 
-Output/inout/ref formal copy-out, delayed/nested local-formal calls, selected-local
-lvalues, repeated match-item bodies, local-variable assignments inside
-`and`/`intersect`/`throughout`/`within` operands, differently clocked operands of
-those operators, unsupported expanded bodies, conflicting
-clock/disable metadata, multiclock properties (a property clock other than the
-leading one, SV §16.14), recursive property instances (SV §16.13.17),
-automatic variables read inside an `expect` property,
-pass/fail/vacuity action controls, `.triggered` and invalid
-scopes/arguments remain rejected by the
+Local-variable assignments inside `and`/`intersect`/`throughout`/`within`
+operands, differently clocked operands of those operators, local variables
+passed to sequence end points, match-item tasks with timing controls,
+unsupported expanded bodies, conflicting clock/disable metadata, multiclock
+properties (a property clock other than the leading one, SV §16.14), recursive
+property instances (SV §16.13.17), automatic variables read inside an `expect`
+property and invalid scopes/arguments remain rejected by the
 [assertion lowerer](../src/sim/codegen/lowering/assertions.rs).
-Match-item callees and shared/native captures must also satisfy §9's read-only
-rules; graph/lowering support alone is not executable acceptance.
 
 🟨 **Sampled functions** — `$sampled/$rose/$fell/$stable/$changed/$past` and
 2009 global-clock history/status forms support explicit, inferred, default and
@@ -2234,14 +2231,48 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   without being linked, or a user system task that was never registered (the
   frontend already rejects an unknown `$name`). Use VPI (`vlog_startup_routines`)
   or DPI-C instead. V ch.20–23, Annex E–F.
-- 🟨 **PLI/VPI bridge** — Generated metadata, registration,
-  `compiletf/sizetf/calltf`, scalar/vector/real values, hierarchy lookup/iteration,
-  plugin startup and start/end callbacks have paths; arguments use registered
-  snapshots. Full `vpi_`, arbitrary properties/iterators/regions/control
-  remain unsupported. Registered packed/real system-function calls have direct
-  expression-evaluation paths; foreign calls nested in proven read-only HDL
-  helpers remain unsupported. Direct calls do not establish those helper paths.
-  V ch.20–27 **[1995/2001]**.
+- 🟨 **PLI/VPI bridge** — A generated object catalog and the common VPI
+  routines (SIM-042): `vpi_handle_by_name` (full names from the top, names
+  relative to a scope, and constant element/bit/part selects in the name),
+  `vpi_handle_by_index`/`_multi_index`, `vpi_handle` (`vpiParent`, `vpiScope`,
+  `vpiModule`, `vpiLeftRange`/`vpiRightRange`, `vpiIndex`, `vpiLowConn`,
+  `vpiUserSystf`, `vpiSysTfCall`), `vpi_iterate`/`vpi_scan` (modules from NULL,
+  `vpiModule`, `vpiInternalScope`, `vpiVariables`, `vpiNet`, `vpiReg` and the
+  other variable types, `vpiParameter`, `vpiPort`, `vpiRange`, array elements,
+  `vpiBit`, `vpiArgument`), `vpi_get`/`vpi_get_str` type, name, size, range,
+  sign, direction, net type, array and port properties, `vpi_compare_objects`,
+  `vpi_release_handle`/`vpi_free_object` and `vpi_get_vlog_info`. Objects are
+  modules, interfaces, generate scopes (SV 27.4 names), named blocks, ports,
+  parameters, nets, variables with their exact types (`vpiIntVar`,
+  `vpiBitVar`, `vpiByteVar`, `vpiTimeVar`, ...), unpacked arrays and their
+  elements, bit-selects and part-selects. `vpi_get_value` serves every Table
+  38-3 format with exact X/Z; `vpi_put_value` writes through the storage APIs
+  with no delay, inertial, transport and pure-transport delays,
+  `vpiReturnEvent`/`vpiCancelEvent`, force and release. User system tasks and
+  functions run compiletf, sizetf (once per registration) and calltf with the
+  38.34 return conventions and per-call-site user data. Handles are
+  generation-checked: stale, released or invalid handles give a
+  `vpi_chk_error` level, never a use-after-free. Applications load from
+  `LLG_VPI_PLUGIN` or link as a static archive with `--dpi-lib` (the Windows
+  route). Decisions S42-D1..D13 in `docs/lrm_decisions.md`; limits in
+  `docs/known_issues.md` ("VPI object model limits"). Callbacks (SIM-043):
+  `cbValueChange` on variables, nets, ports, array elements and bit/part
+  selects (value, time and index per `s_cb_data`, at every changing write);
+  the time reasons in their Table 4-1 PLI regions (`cbAtStartOfSimTime`,
+  `cbAfterDelay`, `cbNextSimTime` Pre-Active; `cbNBASynch` Pre-NBA;
+  `cbReadWriteSynch` Post-NBA; `cbAtEndOfSimTime` Pre-Postponed;
+  `cbReadOnlySynch` Postponed) with relative delays; `cbEndOfCompile`,
+  `cbStartOfSimulation` and `cbEndOfSimulation` (once); `vpi_remove_cb` and
+  `vpi_get_cb_info`, including registration and removal inside running
+  callbacks. Read-only regions reject `vpi_put_value` and zero-delay time
+  callbacks; `vpi_control(vpiStop/vpiFinish, level)` goes through the
+  `$stop`/`$finish` lifecycle. Decisions S43-D1..D9. The object catalog is
+  emitted only with `--vpi`, `--dpi-lib` or a user system task call site.
+  Registered packed/real system-function calls have direct
+  expression-evaluation paths and may be `$strobe`/`$monitor` arguments (their
+  design writes are rejected there); other read-only evaluators (event
+  controls, force re-evaluation) still reject them. SV ch.36-38, V ch.20–27
+  **[1995/2001]**.
 - ⬜ **Checkers** — Checker execution and checker bind are not implemented;
   module/interface structural bind and ordinary assertion instances do not imply
   checker support. SV **[SV-2009]**.

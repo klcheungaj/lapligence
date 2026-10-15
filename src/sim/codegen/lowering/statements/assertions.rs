@@ -68,6 +68,10 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             label: label.clone(),
             location: self.finish_location(h),
             identity: h.index() as u64,
+            control_scope: self
+                .cg
+                .design_uses_assertion_controls()
+                .then(|| self.cg.format_scope(&self.path, h)),
         }])
     }
 
@@ -75,7 +79,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
     /// restricted the source action to a single subroutine/system-task call;
     /// retain that shape in the IR and reject any lowering that would smuggle
     /// in a block, timing control, output copy-out, or an unowned object.
-    fn lower_deferred_assertion_action(
+    pub(in crate::sim::codegen::lowering) fn lower_deferred_assertion_action(
         &mut self,
         statement: NodeId,
     ) -> Result<IrDeferredAction, String> {
@@ -94,7 +98,8 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             _ => {
                 self.pre_fns.truncate(pre_fn_start);
                 return Err(format!(
-                    "deferred immediate assertion action at {} must be one subroutine call",
+                    "{} at {} must be one subroutine call",
+                    self.call_owner,
                     self.finish_location(statement)
                 ));
             }
@@ -178,7 +183,8 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             .resolve_callee_env(self.inst, name, is_task, callee)?;
         if is_task && self.cg.task_has_wait(callee_function, callee_inst) {
             return Err(format!(
-                "deferred immediate assertion action task `{name}` cannot contain timing controls at {}",
+                "{} task `{name}` cannot contain timing controls at {}",
+                self.call_owner,
                 self.finish_location(statement)
             ));
         }
@@ -199,21 +205,24 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             let actual = bound[idx].expr;
             if let Some(local) = self.cg.nested_proc_local_ref(actual) {
                 return Err(format!(
-                    "deferred immediate assertion action cannot retain automatic ref argument `{}` at {}",
+                    "{} cannot retain automatic ref argument `{}` at {}",
+                    self.call_owner,
                     self.cg.node(local).name,
                     self.finish_location(statement)
                 ));
             }
             if let Some(local) = self.cg.nested_capture_ref(actual) {
                 return Err(format!(
-                    "deferred immediate assertion action cannot retain captured ref argument `{}` at {}",
+                    "{} cannot retain captured ref argument `{}` at {}",
+                    self.call_owner,
                     self.cg.node(local).name,
                     self.finish_location(statement)
                 ));
             }
             if self.dynamic_ref_actual(actual) {
                 return Err(format!(
-                    "deferred immediate assertion action cannot pass a dynamic variable to ref argument `{}` at {} (SV 16.4)",
+                    "{} cannot pass a dynamic variable to ref argument `{}` at {} (SV 16.4)",
+                    self.call_owner,
                     self.cg.node(formals[idx].0).name,
                     self.finish_location(statement)
                 ));
@@ -333,16 +342,16 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             ))),
             IrStmt::Call(mut call) => {
                 if !call.temps.is_empty() || !call.copyouts.is_empty() {
-                    return Err(
-                        "deferred immediate assertion actions cannot use output or inout arguments"
-                            .to_owned(),
-                    );
+                    return Err(format!(
+                        "{}s cannot use output or inout arguments",
+                        self.call_owner
+                    ));
                 }
                 if call.virtual_call.is_some() {
-                    return Err(
-                        "virtual-interface method calls are not supported as deferred immediate assertion actions"
-                            .to_owned(),
-                    );
+                    return Err(format!(
+                        "virtual-interface method calls are not supported as {}s",
+                        self.call_owner
+                    ));
                 }
                 if let Some(receiver) = call.receiver.take() {
                     call.receiver = Some(Self::capture_deferred_handle(frame, captures, receiver));
@@ -375,8 +384,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                         | IrCallArg::EventVal(_)
                         | IrCallArg::EventAddr(_) => {
                             return Err(
-                                "unpacked aggregate, container and event arguments of deferred immediate assertion actions are not supported"
-                                    .to_owned(),
+                                format!("unpacked aggregate, container and event arguments of {}s are not supported", self.call_owner),
                             )
                         }
                         IrCallArg::ChandleAddr(_)
@@ -385,8 +393,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                         | IrCallArg::StringOutAddr(_)
                         | IrCallArg::StringOutTemp { .. } => {
                             return Err(
-                                "deferred immediate assertion actions cannot use output or inout arguments"
-                                    .to_owned(),
+                                format!("{}s cannot use output or inout arguments", self.call_owner),
                             )
                         }
                     }
@@ -408,10 +415,10 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                     frame, captures, inner,
                 )?]))
             }
-            _ => Err(
-                "deferred immediate assertion action must lower to one supported subroutine call"
-                    .to_owned(),
-            ),
+            _ => Err(format!(
+                "{} must lower to one supported subroutine call",
+                self.call_owner
+            )),
         }
     }
 

@@ -1,0 +1,4 @@
+write y: error 3
+set result: error 0
+strobe bump=11 x=1 y=0
+active x=1 y=0

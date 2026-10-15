@@ -121,6 +121,58 @@ static llg_wait_t* wait_source_next(llg_wait_subscription_t* cursor) {
     return node->wait;
 }
 
+// Value-change watches. The hook is process-global so that it survives the
+// `g` reset of llg_rt_cleanup; watches themselves end with the runtime
+// lifetime (free_value_watches).
+static llg_value_watch_fn value_watch_hook;
+
+void llg_value_watch_hook(llg_value_watch_fn hook) { value_watch_hook = hook; }
+
+int llg_value_watch_add(const void* key) {
+    if (!key) return 0;
+    llg_wait_source_t* source = wait_source_get(key);
+    if (!source->watch) {
+        llg_wait_subscription_t* node = (llg_wait_subscription_t*)llg_checked_calloc(
+            1, sizeof(*node), "value watch");
+        node->source = source;
+        wait_subscription_insert(node, &source->head);
+        source->watch = node;
+    }
+    if (source->watchers == UINT32_MAX) {
+        fputs("llg runtime fatal: value watch count overflow\n", stderr);
+        abort();
+    }
+    source->watchers++;
+    return 1;
+}
+
+static void value_watch_drop(llg_wait_source_t* source) {
+    llg_wait_subscription_t* node = source->watch;
+    source->watch = NULL;
+    source->watchers = 0;
+    // Unlinking the last subscriber frees the row itself.
+    wait_subscription_unlink(node);
+    free(node);
+}
+
+void llg_value_watch_remove(const void* key) {
+    // A watch from an earlier runtime lifetime is already gone.
+    llg_wait_source_t* source = wait_source_find(key);
+    if (!source || !source->watchers) return;
+    if (--source->watchers == 0) value_watch_drop(source);
+}
+
+static void free_value_watches(void) {
+    for (size_t slot = 0; slot < g.wait_sources_capacity; slot++) {
+        llg_wait_source_t* source = g.wait_sources[slot];
+        while (source) {
+            llg_wait_source_t* next = source->next;
+            if (source->watch) value_watch_drop(source);
+            source = next;
+        }
+    }
+}
+
 typedef struct {
     const void** keys;
     size_t count;

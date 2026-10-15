@@ -1,0 +1,26 @@
+[0] cbEndOfCompile
+late cbEndOfCompile: null LLG_VPI_CALLBACK
+[0] cbStartOfSimulation
+[5] pre-active: cbAtStartOfSimTime
+[5] pre-active: cbNextSimTime #1
+[5] active: initial
+[5] value: a=00000001
+[5] remove first watch: 1
+[5] pre-nba: cbNBASynch
+[5] value: b=2
+[5] active: b=2
+[5] value: c[0]=1 index=0
+[5] post-nba: cbReadWriteSynch: put c=7 (none)
+[5] active: c=7
+[5] active: after observed clocking event
+[5] reactive: program
+[5] pre-postponed: cbAtEndOfSimTime a=1 b=2 c=7
+[5] postponed: strobe a=1 b=2 c=7
+[5] postponed: cbReadOnlySynch: put c=9 -> LLG_VPI_READ_ONLY, c=7
+[10] pre-active: cbAfterDelay
+[10] pre-active: cbNextSimTime #2
+[10] value: a (second watch)=3
+[10] value: a (second watch)=4
+[10] value: mem[2]=5a index=2
+[20] active: mem[2]=5a
+[20] cbEndOfSimulation a=4

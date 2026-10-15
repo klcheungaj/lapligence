@@ -71,6 +71,8 @@ pub(crate) struct DriverOptions {
     pub runtime_cache: Option<PathBuf>,
     pub gen_only: bool,
     pub no_opt: bool,
+    /// Emit the VPI object catalog (`--vpi`, or any `--dpi-lib`).
+    pub vpi: bool,
     pub stop_policy: StopPolicy,
     /// Whether the command line itself named a build-tool option, so
     /// `--gen-only` can warn that it is ignored. Config values do not warn.
@@ -404,6 +406,8 @@ pub(crate) fn resolve(
         || cli.cmake.is_some()
         || cli.build_jobs.is_some()
         || cli.runtime_cache.is_some();
+    // A linked application (`--dpi-lib`) may be a VPI application.
+    let vpi = cli.vpi || !dpi_libraries.is_empty();
 
     Ok(DriverOptions {
         top: cli.top.or_else(|| config.compile.top.clone()),
@@ -460,6 +464,7 @@ pub(crate) fn resolve(
         ),
         gen_only: cli.gen_only.or(config.build.gen_only).unwrap_or(false),
         no_opt: !cli.optimize.or(config.simulator.optimize).unwrap_or(true),
+        vpi,
         stop_policy: cli
             .stop_policy
             .or(config.simulator.stop_policy)
@@ -535,6 +540,16 @@ runtime_cache = "cfgcache"
 [sources]
 files = ["a.sv"]
 "#;
+
+    #[test]
+    fn vpi_catalog_follows_vpi_and_linked_libraries() {
+        let plain = resolve_no_env(cli(&["x.sv"]), None).unwrap();
+        assert!(!plain.vpi, "no application can use the catalog");
+        let flag = resolve_no_env(cli(&["--vpi", "x.sv"]), None).unwrap();
+        assert!(flag.vpi);
+        let linked = resolve_no_env(cli(&["--dpi-lib", "app.a", "x.sv"]), None).unwrap();
+        assert!(linked.vpi, "a linked library may be a VPI application");
+    }
 
     #[test]
     fn defaults_without_a_config_match_the_historic_driver() {

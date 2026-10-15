@@ -137,6 +137,10 @@ pub struct IrProcess {
     /// Descendants inherit this origin at runtime, even in module-defined tasks.
     pub(in crate::sim) program: Option<u32>,
     pub(in crate::sim) origin: crate::sim::semantic::Origin,
+    /// Never spawned: the process only hosts callbacks in `pre_fns` that the
+    /// runtime calls directly (sequence match-item calls), so its coroutine
+    /// descriptor is unreferenced.
+    pub(in crate::sim) callback_host: bool,
 }
 
 impl IrProcess {
@@ -217,7 +221,18 @@ impl IrProcess {
             body,
             program: None,
             origin,
+            callback_host: false,
         }
+    }
+
+    /// Mark this process as a callback host (see [`IrProcess::callback_host`]).
+    pub(in crate::sim) fn into_callback_host(mut self) -> Self {
+        self.callback_host = true;
+        self
+    }
+
+    pub fn callback_host(&self) -> bool {
+        self.callback_host
     }
 
     pub fn c_name(&self) -> &str {

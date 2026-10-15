@@ -243,6 +243,7 @@ impl Db {
         let mut subroutine_arrays = HashMap::new();
         let mut array_select_paths = HashMap::new();
         let mut vars_init = HashMap::new();
+        let mut assertion_local_initializers = HashMap::new();
         let mut net_delays = HashMap::new();
         let mut two_state_types = HashSet::new();
         let assertion_local_vars = snapshot
@@ -691,7 +692,11 @@ impl Db {
             {
                 if let Some(initializer) = edge_target(&ids, edges, SemanticEdgeRole::Initializer)?
                 {
-                    vars_init.insert(id, initializer);
+                    if semantic.subkind == crate::ffi::slang::SEMANTIC_VARIABLE_ASSERTION_LOCAL {
+                        assertion_local_initializers.insert(id, initializer);
+                    } else {
+                        vars_init.insert(id, initializer);
+                    }
                 }
             }
             if is_array {
@@ -1247,6 +1252,7 @@ impl Db {
             two_state_types,
             assertion_local_vars,
             assertion_formal_directions,
+            assertion_local_initializers,
             source_identities,
             clocking_blocks,
             clocking_vars,

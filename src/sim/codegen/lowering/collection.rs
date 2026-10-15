@@ -47,6 +47,7 @@ mod net_partition;
 mod nets;
 mod packed_elements;
 pub(super) mod packed_formals;
+mod vpi;
 pub(super) use packed_elements::Select;
 pub(super) use record_columns::{
     column_tagged_union, record_cell_leaf, record_column_layout_type, RecordColumn, RecordValue,

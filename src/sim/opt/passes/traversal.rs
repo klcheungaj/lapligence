@@ -245,6 +245,11 @@ pub(in crate::sim) fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrEx
                     .expressions_mut(&mut |child| walk_expr_mut(child, f));
             }
         }
+        IrExprKind::MatchCall(action) => {
+            for capture in action.captures_mut() {
+                walk_expr_mut(capture.initial_mut(), f);
+            }
+        }
         IrExprKind::Mutation(mutation) => {
             walk_lhs_mut(&mut mutation.lhs, f);
             walk_expr_mut(&mut mutation.value, f);

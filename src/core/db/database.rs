@@ -289,6 +289,10 @@ pub struct Db {
     /// lowering distinguish per-attempt input captures from output/inout
     /// formals without changing the stable [`NodeKind::Var`] shape.
     assertion_formal_directions: HashMap<NodeId, Direction>,
+    /// Declaration assignments of local assertion variables (IEEE 1800-2009
+    /// 16.10), kept apart from `vars_init`: they run once per attempt of the
+    /// enclosing sequence or property instance, never at time zero.
+    assertion_local_initializers: HashMap<NodeId, NodeId>,
     /// Cloned Slang declarations may retain a source-identity edge to their
     /// canonical formal declaration. This map is owned metadata, not a native
     /// AST relationship.
@@ -376,6 +380,7 @@ impl Db {
             two_state_types: HashSet::new(),
             assertion_local_vars: HashSet::new(),
             assertion_formal_directions: HashMap::new(),
+            assertion_local_initializers: HashMap::new(),
             source_identities: HashMap::new(),
             clocking_blocks: HashMap::new(),
             clocking_vars: HashMap::new(),
@@ -451,6 +456,7 @@ impl Db {
             two_state_types: HashSet::new(),
             assertion_local_vars: HashSet::new(),
             assertion_formal_directions: HashMap::new(),
+            assertion_local_initializers: HashMap::new(),
             source_identities: HashMap::new(),
             clocking_blocks: HashMap::new(),
             clocking_vars: HashMap::new(),
@@ -932,6 +938,11 @@ impl Db {
     /// must never be resolved as instance-global signals.
     pub fn is_assertion_local_var(&self, id: NodeId) -> bool {
         self.assertion_local_vars.contains(&id)
+    }
+
+    /// The declaration assignment of local assertion variable `id`, if any.
+    pub fn assertion_local_initializer(&self, id: NodeId) -> Option<NodeId> {
+        self.assertion_local_initializers.get(&id).copied()
     }
 
     /// Return the direction of an assertion formal variable when Slang

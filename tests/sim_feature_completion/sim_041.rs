@@ -17,64 +17,24 @@ fn companion(directory: &sim_harness::TempDir, stem: &str) -> Option<String> {
 /// time. This is the route on Windows, where a DLL cannot import symbols from
 /// the model executable; it works on every host.
 fn static_companion(directory: &sim_harness::TempDir, stem: &str) -> String {
+    static_archive(SUITE, directory, stem, &[])
+}
+
+/// Build `tests/fixtures/sim/<suite>/<stem>.c` (with extra compiler `flags`)
+/// into a static archive in `directory` and return its path. Shared with the
+/// SIM-042 VPI fixtures, whose static route is the same `--dpi-lib` link.
+pub(super) fn static_archive(
+    suite: &str,
+    directory: &sim_harness::TempDir,
+    stem: &str,
+    flags: &[&str],
+) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let source = root.join(format!("tests/fixtures/sim/{SUITE}/{stem}.c"));
-    let compiler = c_compiler::host_c_compiler();
-    let msvc = c_compiler::is_msvc(&compiler);
-    let object = directory
-        .path()
-        .join(format!("{stem}{}", if msvc { ".obj" } else { ".o" }));
-    let mut compile = std::process::Command::new(&compiler);
-    if msvc {
-        compile
-            .args(["/nologo", "/std:c11", "/W4", "/WX", "/c"])
-            .arg(format!("/I{}", root.join("src/sim/rt").display()))
-            .arg(format!("/Fo{}", object.display()));
-    } else {
-        compile
-            .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-c", "-I"])
-            .arg(root.join("src/sim/rt"))
-            .arg("-o")
-            .arg(&object);
-    }
-    if let Ok(flags) = std::env::var("LLG_CFLAGS") {
-        compile.args(flags.split_whitespace());
-    }
-    compile.arg(&source);
-    let output = sim_harness::run_command(&mut compile, std::time::Duration::from_secs(60))
-        .expect("C compiler for the DPI fixture");
-    assert!(
-        output.status.success(),
-        "{stem}.c: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let archive = directory.path().join(if msvc {
-        format!("{stem}.lib")
-    } else {
-        format!("lib{stem}.a")
-    });
-    let mut pack = if msvc {
-        let mut command = std::process::Command::new("lib");
-        command
-            .arg("/nologo")
-            .arg(format!("/OUT:{}", archive.display()));
-        command
-    } else {
-        let mut command = std::process::Command::new("ar");
-        command.arg("rcs").arg(&archive);
-        command
-    };
-    pack.arg(&object);
-    let output = sim_harness::run_command(&mut pack, std::time::Duration::from_secs(60))
-        .expect("archiver for the DPI fixture");
-    assert!(
-        output.status.success(),
-        "{stem} archive: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    archive.to_string_lossy().into_owned()
+    let source = root.join(format!("tests/fixtures/sim/{suite}/{stem}.c"));
+    c_compiler::static_archive(&source, directory.path(), stem, flags)
+        .unwrap_or_else(|error| panic!("static archive for {stem}: {error}"))
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[test]

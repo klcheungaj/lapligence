@@ -216,6 +216,40 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
                 sampled_clock_gate_name(clock),
             ));
         }
+        if let Some(endpoint) = assertion.endpoint() {
+            let clocks = endpoint.matched_clocks();
+            let (clock_list, edge_list) = if clocks.is_empty() {
+                ("NULL".to_owned(), "NULL".to_owned())
+            } else {
+                let signals = clocks
+                    .iter()
+                    .map(|(signal, _)| format!("&{}", signal_name(model, *signal)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let edges = clocks
+                    .iter()
+                    .map(|(_, posedge)| {
+                        if *posedge {
+                            "LLG_EV_POSEDGE"
+                        } else {
+                            "LLG_EV_NEGEDGE"
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                (
+                    format!("(sv4_t* const[]){{ {signals} }}"),
+                    format!("(const int[]){{ {edges} }}"),
+                )
+            };
+            out.push_str(&format!(
+                "    if (!llg_assertion_endpoint({}ULL, {}u, &{}, {}u, {clock_list}, {edge_list})) return 0;\n",
+                assertion.identity(),
+                endpoint.index(),
+                model.event(endpoint.event()).c_name(),
+                clocks.len(),
+            ));
+        }
         if assertion.single_attempt() {
             out.push_str(&format!(
                 "    if (!llg_assertion_single_attempt({}ULL)) return 0;\n",

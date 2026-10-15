@@ -157,6 +157,25 @@ void llg_rt_action_stop(int verbosity, const char* location) {
     g.suspended = 1;
 }
 
+int llg_rt_control_stop(int verbosity) {
+    if (!g.running || g.finish || g.suspended || g.stop_proc || g.deferred_stop) return 0;
+    if (g.process_turn_active && g.current) {
+        llg_rt_request_stop(verbosity, NULL);
+        return 1;
+    }
+    llg_rt_action_stop(verbosity, NULL);
+    return 1;
+}
+
+int llg_rt_control_finish(int verbosity) {
+    if (g.finish) return 0;
+    report_finish(verbosity, NULL);
+    llg_rt_request_finish();
+    return 1;
+}
+
+uint64_t llg_rt_end_time(void) { return g.initialized ? g.now : llg_final_time; }
+
 int llg_rt_set_stop_policy(int policy) {
     if (policy != LLG_STOP_POLICY_RESUME && policy != LLG_STOP_POLICY_EXIT) return 0;
     if (g.running) return 0;

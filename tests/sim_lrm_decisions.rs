@@ -1562,3 +1562,297 @@ fn s30_d10_dist_random_weight() {
         "a dist item value, range bound or weight that reads a random variable is not supported",
     );
 }
+
+#[test]
+fn s39_d1_action_controls() {
+    run_decision(
+        "S39-D1_action_controls",
+        include_str!("fixtures/sim/lrm_decisions/S39-D1_action_controls.out"),
+    );
+}
+
+#[test]
+fn s39_d2_deferred_controls_at_maturity() {
+    run_decision(
+        "S39-D2_deferred_controls_at_maturity",
+        include_str!("fixtures/sim/lrm_decisions/S39-D2_deferred_controls_at_maturity.out"),
+    );
+}
+
+#[test]
+fn s39_d3_immediate_assertion_controls() {
+    run_decision(
+        "S39-D3_immediate_assertion_controls",
+        include_str!("fixtures/sim/lrm_decisions/S39-D3_immediate_assertion_controls.out"),
+    );
+}
+
+#[test]
+fn s39_d4_expect_action_controls() {
+    run_decision(
+        "S39-D4_expect_action_controls",
+        include_str!("fixtures/sim/lrm_decisions/S39-D4_expect_action_controls.out"),
+    );
+}
+
+#[test]
+fn s39_d5_matched_coincident_tick() {
+    run_decision(
+        "S39-D5_matched_coincident_tick",
+        include_str!("fixtures/sim/lrm_decisions/S39-D5_matched_coincident_tick.out"),
+    );
+}
+
+#[test]
+fn s39_d6_endpoint_ignores_assertoff() {
+    run_decision(
+        "S39-D6_endpoint_ignores_assertoff",
+        include_str!("fixtures/sim/lrm_decisions/S39-D6_endpoint_ignores_assertoff.out"),
+    );
+}
+
+#[test]
+fn s39_d7_triggered_active_read() {
+    run_decision(
+        "S39-D7_triggered_active_read",
+        include_str!("fixtures/sim/lrm_decisions/S39-D7_triggered_active_read.out"),
+    );
+}
+
+#[test]
+fn s39_d8_match_call_reactive() {
+    run_decision(
+        "S39-D8_match_call_reactive",
+        include_str!("fixtures/sim/lrm_decisions/S39-D8_match_call_reactive.out"),
+    );
+}
+
+#[test]
+fn s39_d9_property_local_attempt_start() {
+    run_decision(
+        "S39-D9_property_local_attempt_start",
+        include_str!("fixtures/sim/lrm_decisions/S39-D9_property_local_attempt_start.out"),
+    );
+}
+
+/// Build the `.c` VPI application of a decision case into a static archive
+/// that the model links (`--dpi-lib`); its `vlog_startup_routines` table runs
+/// at startup. Static linking works on every host, so these cases need no
+/// run-time plugin loader. `prototypes` declare the system tasks/functions.
+fn run_vpi_decision(case: &str, prototypes: &[&str], expected: &str) {
+    let directory = crate::sim_harness::TempDir::new("lrm-s42").expect("temporary directory");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = root.join(format!("tests/fixtures/sim/lrm_decisions/{case}.c"));
+    let archive = crate::c_compiler::static_archive(&source, directory.path(), case, &[])
+        .unwrap_or_else(|error| panic!("{case}: {error}"));
+    let archive = archive.to_string_lossy().into_owned();
+    let mut args = Vec::new();
+    for prototype in prototypes {
+        args.extend(["--define-system-task", prototype]);
+    }
+    args.extend(["--dpi-lib", archive.as_str()]);
+    sim_cli::run_case_backend_parity(SUITE, case, expected, &args, &[]);
+}
+
+#[test]
+fn s42_d1_put_value_returns_null() {
+    run_vpi_decision(
+        "S42-D1_put_value_returns_null",
+        &["task $d1()"],
+        include_str!("fixtures/sim/lrm_decisions/S42-D1_put_value_returns_null.out"),
+    );
+}
+
+#[test]
+fn s42_d2_chk_error_level() {
+    run_vpi_decision(
+        "S42-D2_chk_error_level",
+        &["task $d2()"],
+        include_str!("fixtures/sim/lrm_decisions/S42-D2_chk_error_level.out"),
+    );
+}
+
+#[test]
+fn s42_d3_function_default_zero() {
+    run_vpi_decision(
+        "S42-D3_function_default_zero",
+        &["function int $d3()", "task $d3_late()"],
+        include_str!("fixtures/sim/lrm_decisions/S42-D3_function_default_zero.out"),
+    );
+}
+
+#[test]
+fn s42_d4_sizetf_once() {
+    run_vpi_decision(
+        "S42-D4_sizetf_once",
+        &[
+            "function logic [5:0] $d4(input logic [7:0] x)",
+            "task $d4_report()",
+        ],
+        include_str!("fixtures/sim/lrm_decisions/S42-D4_sizetf_once.out"),
+    );
+}
+
+#[test]
+fn s42_d5_delayed_put_nba() {
+    run_vpi_decision(
+        "S42-D5_delayed_put_nba",
+        &["task $d5()"],
+        include_str!("fixtures/sim/lrm_decisions/S42-D5_delayed_put_nba.out"),
+    );
+}
+
+#[test]
+fn s42_d6_decimal_string_xz() {
+    run_vpi_decision(
+        "S42-D6_decimal_string_xz",
+        &["task $d6()"],
+        include_str!("fixtures/sim/lrm_decisions/S42-D6_decimal_string_xz.out"),
+    );
+}
+
+#[test]
+fn s42_d7_index_out_of_range() {
+    run_vpi_decision(
+        "S42-D7_index_out_of_range",
+        &["task $d7()"],
+        include_str!("fixtures/sim/lrm_decisions/S42-D7_index_out_of_range.out"),
+    );
+}
+
+#[test]
+fn s42_d8_size_of_real_undefined() {
+    run_vpi_decision(
+        "S42-D8_size_of_real_undefined",
+        &["task $d8()"],
+        include_str!("fixtures/sim/lrm_decisions/S42-D8_size_of_real_undefined.out"),
+    );
+}
+
+#[test]
+fn s42_d9_real_value_formats() {
+    run_vpi_decision(
+        "S42-D9_real_value_formats",
+        &["task $d9()"],
+        include_str!("fixtures/sim/lrm_decisions/S42-D9_real_value_formats.out"),
+    );
+}
+
+#[test]
+fn s42_d10_userdata_per_call_site() {
+    run_vpi_decision(
+        "S42-D10_userdata_per_call_site",
+        &["task $d10()"],
+        include_str!("fixtures/sim/lrm_decisions/S42-D10_userdata_per_call_site.out"),
+    );
+}
+
+#[test]
+fn s42_d11_name_lookup_scope() {
+    run_vpi_decision(
+        "S42-D11_name_lookup_scope",
+        &["task $d11()"],
+        include_str!("fixtures/sim/lrm_decisions/S42-D11_name_lookup_scope.out"),
+    );
+}
+
+#[test]
+fn s42_d12_iteration_order() {
+    run_vpi_decision(
+        "S42-D12_iteration_order",
+        &["task $d12()"],
+        include_str!("fixtures/sim/lrm_decisions/S42-D12_iteration_order.out"),
+    );
+}
+
+#[test]
+fn s42_d13_scalar_format_vector() {
+    run_vpi_decision(
+        "S42-D13_scalar_format_vector",
+        &["task $d13()"],
+        include_str!("fixtures/sim/lrm_decisions/S42-D13_scalar_format_vector.out"),
+    );
+}
+
+// SIM-043: VPI callbacks, control and Postponed system functions.
+
+#[test]
+fn s43_d1_read_write_synch_after_nba() {
+    run_vpi_decision(
+        "S43-D1_read_write_synch_after_nba",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D1_read_write_synch_after_nba.out"),
+    );
+}
+
+#[test]
+fn s43_d2_time_callback_delay_relative() {
+    run_vpi_decision(
+        "S43-D2_time_callback_delay_relative",
+        &["task $d2()"],
+        include_str!("fixtures/sim/lrm_decisions/S43-D2_time_callback_delay_relative.out"),
+    );
+}
+
+#[test]
+fn s43_d3_next_sim_time_slot() {
+    run_vpi_decision(
+        "S43-D3_next_sim_time_slot",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D3_next_sim_time_slot.out"),
+    );
+}
+
+#[test]
+fn s43_d4_one_shot_callback_handle() {
+    run_vpi_decision(
+        "S43-D4_one_shot_callback_handle",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D4_one_shot_callback_handle.out"),
+    );
+}
+
+#[test]
+fn s43_d5_read_only_rejects_puts() {
+    run_vpi_decision(
+        "S43-D5_read_only_rejects_puts",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D5_read_only_rejects_puts.out"),
+    );
+}
+
+#[test]
+fn s43_d6_value_change_dispatch() {
+    run_vpi_decision(
+        "S43-D6_value_change_dispatch",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D6_value_change_dispatch.out"),
+    );
+}
+
+#[test]
+fn s43_d7_select_and_element_watch() {
+    run_vpi_decision(
+        "S43-D7_select_and_element_watch",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D7_select_and_element_watch.out"),
+    );
+}
+
+#[test]
+fn s43_d8_control_finish_after_callback() {
+    run_vpi_decision(
+        "S43-D8_control_finish_after_callback",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D8_control_finish_after_callback.out"),
+    );
+}
+
+#[test]
+fn s43_d9_postponed_systf_read_only() {
+    run_vpi_decision(
+        "S43-D9_postponed_systf_read_only",
+        &["function int $bump(input int v)"],
+        include_str!("fixtures/sim/lrm_decisions/S43-D9_postponed_systf_read_only.out"),
+    );
+}

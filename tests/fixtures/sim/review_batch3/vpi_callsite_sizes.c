@@ -1,6 +1,9 @@
-/* R23: two call sites of one registration must retain separate return shapes.
- * Direct bridge input deliberately avoids frontend argument-width coercions.
- * Arguments and function results remain owned by this probe. */
+/* R23, revised by SIM-042 (S42-D4): sizetf runs at most once per
+ * registration (IEEE 1800-2009 36.8.1) in a phase without call access
+ * (36.10.2), so every call site of one registration returns that width while
+ * each site keeps its own argument shapes. Direct bridge input deliberately
+ * avoids frontend argument-width coercions. Arguments and function results
+ * remain owned by this probe. */
 #include "llg_vpi.h"
 #include <stdio.h>
 #include <string.h>
@@ -14,17 +17,16 @@ static PLI_INT32 check_compile(PLI_BYTE8* unused) {
 static PLI_INT32 size_call(PLI_BYTE8* unused) {
     (void)unused;
     ++size_count;
-    vpiHandle call = vpi_handle(vpiSysTfCall, NULL);
-    vpiHandle iterator = vpi_iterate(vpiArgument, call);
-    vpiHandle arg = vpi_scan(iterator);
-    return arg ? vpi_get(vpiSize, arg) : 0;
+    /* No system task/function call is active while sizing. */
+    if (vpi_handle(vpiSysTfCall, NULL) || vpi_chk_error(NULL) != vpiError) return 0;
+    return 16;
 }
 static PLI_INT32 run_call(PLI_BYTE8* unused) {
     (void)unused;
     vpiHandle call = vpi_handle(vpiSysTfCall, NULL);
     vpiHandle iterator = vpi_iterate(vpiArgument, call);
     vpiHandle arg = vpi_scan(iterator);
-    if (!arg || vpi_get(vpiSize, call) != vpi_get(vpiSize, arg)) return 1;
+    if (!arg || vpi_get(vpiSize, call) != 16) return 1;
     s_vpi_value value = {0};
     value.format = vpiIntVal;
     value.value.integer = 0x1234;
@@ -66,10 +68,10 @@ static int run_probe(void) {
     sv4_t a = llg_vpi_call_function_site(4, "$varying_size", &arg8, 1, 32, 0);
     sv4_t b = llg_vpi_call_function_site(9, "$varying_size", &arg16, 1, 32, 0);
     sv4_t c = llg_vpi_call_function_site(4, "$varying_size", &arg8, 1, 32, 0);
-    if (a.width != 8 || b.width != 16 || c.width != 8 ||
-        sv4_to_u64(a) != 0x34 || sv4_to_u64(b) != 0x1234 || sv4_to_u64(c) != 0x34)
+    if (a.width != 16 || b.width != 16 || c.width != 16 ||
+        sv4_to_u64(a) != 0x1234 || sv4_to_u64(b) != 0x1234 || sv4_to_u64(c) != 0x1234)
         return fail("callsite result widths/values");
-    if (compile_count != 2 || size_count != 2 || run_count != 3 || llg_vpi_failed())
+    if (compile_count != 2 || size_count != 1 || run_count != 3 || llg_vpi_failed())
         return fail("callback count/state");
     sv4_destroy(&a);
     sv4_destroy(&b);

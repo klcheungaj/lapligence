@@ -448,6 +448,23 @@ reports. Observed matures reports into a retained array run by one Reactive
 callback in issue order. OFF prevents new checks but does not cancel pending
 actions; KILL flushes only unmatured reports. Drain actions before cleanup and
 after each final procedure. These fields fit existing `llg_proc_t` padding.
+`llg_sequence_match_call` appends a sequence match-item call (SV 16.11) with
+its owned argument frame directly to the matured array (kind
+`LLG_DEFERRED_MATCH_CALL`): it runs in the Reactive region in queue order with
+no assertion result, counter or control.
+
+Assertion control rules (`assertion_control.c`) carry a field: checking, pass,
+vacuous pass or fail. The newest matching rule wins; the six SV 20.12 tasks
+set the action flags of matching concurrent assertions and add rules that
+immediate, deferred (read when the report executes) and `expect` actions
+consult through `llg_immediate_assertion_controls` and
+`llg_deferred_assertion_enabled`. `assertion_result` records every result and
+counter before it gates the action, so controls never change statistics; a
+suppressed default failure still counts (`llg_assertion_failure_quiet`).
+Sequence end points (`llg_assertion_endpoint`) are hidden covers skipped by
+controls and counters: a nonvacuous match triggers the end point's event in
+the Observed region (`.triggered`, `@(seq)`) and latches each `.matched` slot
+until the next tick of its destination clock (a coincident tick sees it).
 
 Sequence tokens own a transition, local snapshot and retained first-match scope
 chain. Each scope belongs to an invocation; completion cannot discard outer
@@ -595,10 +612,39 @@ never changes scheduler time. Integer queries use quotient/remainder, halves up;
 realtime is fractional. The runtime consumes integer design-precision ticks;
 codegen owns scaling.
 
-VPI handles are generation-checked; retain error records, real catalog width 0 and
-simulator-owned vector scratch valid until the next query/shutdown. Call-argument
-iterators carry owner identity and invalidate at every compiletf/sizetf/calltf exit.
-Tear down VPI/runtime queues before model storage.
+VPI handles (`llg_vpi.c`) are encodings of a slot index and a generation that the
+runtime decodes but never dereferences: catalog rows keep the model generation,
+dynamic slots (elements, selects, iterators, constants, calls, arguments, events,
+callbacks) bump theirs on release, so stale, released or forged handles are
+`vpi_chk_error` errors, never use-after-free. Every handle names static model
+storage (catalog rows and their cells); none names a collectable object, so no GC
+pin is needed. Keep model init O(1): the catalog is validated and indexed on the
+first VPI call. Slots made inside a compiletf/calltf (argument handles and
+iterators, element/select arguments) are owned by that invocation and released
+when it returns; the call handle itself persists per call site with its user
+data. sizetf runs once per registration after the first site's compiletf with no
+active call. Retain error records, real catalog width 0 and simulator-owned value
+buffers valid until the next query/shutdown. Puts go through `llg_ba`/`llg_ba_d`
+(no delay), NBA-region callbacks (delayed modes, `vpiSchedEvent` records) or the
+force table (`llg_force_value_parts`, `llg_force_real_value`, release through
+`llg_release_parts`/`llg_release_real`). Tear down VPI/runtime queues before
+model storage.
+
+VPI callbacks (SIM-043) are records owned by the registry from registration
+until removal or, for time and action reasons, retirement after they run.
+Time reasons are one-shot region callbacks in their Table 4-1 PLI region
+(`cbNextSimTime` through `llg_time_slot_hook` at each Pre-Active pass).
+`cbValueChange` uses `llg_value_watch_add`: a waiter-less subscription on the
+address's wait row that `sig_publish_changed`/`real_write` already look up,
+whose hook runs after every runtime consumer; never add a separate per-store
+lookup. Dispatch collects records in registration order before running any
+and frees removed ones only when the outermost dispatch ends, so callbacks may
+register/remove any callback. Watches end with the runtime lifetime
+(`free_value_watches`), so VPI removal after cleanup is a no-op.
+`vpi_put_value` fails in read-only regions without touching the runtime's
+fatal region check; zero-delay time callbacks are refused there before
+scheduling. `vpi_control` stop/finish use `llg_rt_control_stop/finish`;
+`cbEndOfSimulation` runs once, from advance or close.
 
 Waveforms use one simulation-thread producer and one POSIX/Win32 writer owning the
 file. Ring events own values; release/acquire publication, condition-variable

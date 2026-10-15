@@ -263,8 +263,8 @@ use crate::sim::ir::{
     IrMemoryRadix, IrMemoryView, IrModel, IrNetAliasBinding, IrProcess, IrProcessKind, IrRealBinOp,
     IrRealUnOp, IrSeverityLevel, IrShape, IrSignal, IrStmt, IrStochasticStmt, IrStreamDirection,
     IrStreamTarget, IrSysFunc, IrTimeKind, IrTransitionDelay, IrType, IrUnOp,
-    IrUniquePriorityCheck, IrVpiObject, IrVpiObjectKind, IrWaitSrc, StorageKind, StorageLifetime,
-    StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
+    IrUniquePriorityCheck, IrWaitSrc, StorageKind, StorageLifetime, StorageOwnership, StorageRef,
+    LLG_MAX_NET_DRIVERS,
 };
 
 fn sorted_node_ids<T>(map: &HashMap<NodeId, T>) -> Vec<NodeId> {
@@ -384,6 +384,12 @@ pub struct CodegenOptions {
     pub value_config: crate::sim::value_backend::ValueConfig,
     /// Dump waveforms from time zero without design system tasks.
     pub waveform: Option<WaveformOptions>,
+    /// Emit the VPI object catalog even when the design calls no user system
+    /// task or function. A VPI application loaded at run time
+    /// (`LLG_VPI_PLUGIN`) or linked with `--dpi-lib` reaches design objects
+    /// only through this catalog; without it the model carries no catalog
+    /// data and keeps no storage alive for VPI visibility.
+    pub vpi: bool,
 }
 
 /// Lower an owned Slang semantic database with default optimizations.
@@ -648,10 +654,14 @@ fn finish_generation(
     options: &CodegenOptions,
 ) -> Result<GeneratedModel, String> {
     let LoweredModel {
-        model,
+        mut model,
         design_name,
         warnings,
     } = lowered;
+    if !options.vpi && model.vpi_compile_calls.is_empty() {
+        model.vpi_objects.clear();
+        model.vpi_catalog = false;
+    }
     let execution_stage = crate::profile::Stage::new("execution");
     let mut execution =
         crate::sim::execution::ExecutionModel::lower_with_options(model, options.execution)
@@ -742,144 +752,6 @@ impl<'a> Codegen<'a> {
         self.sig_global_by_ir
             .get(&ir)
             .and_then(|nodes| nodes.values().next().copied())
-    }
-
-    /// Capture the source-owned hierarchy and storage identities used by the
-    /// generated VPI catalog.  This runs after collection has assigned stable
-    /// IR indices but before optimization can prune any otherwise dead signal.
-    fn populate_vpi_metadata(&self, model: &mut IrModel, tops: &[NodeId]) -> Result<(), String> {
-        use std::collections::BTreeMap;
-
-        fn reachable(db: &Db, node: NodeId, tops: &[NodeId]) -> bool {
-            let mut current = Some(node);
-            while let Some(id) = current {
-                if tops.contains(&id) {
-                    return true;
-                }
-                current = db.node(id).parent;
-            }
-            false
-        }
-
-        fn components(path: &str) -> impl Iterator<Item = &str> {
-            path.split('\u{1f}')
-        }
-
-        let mut objects = BTreeMap::<String, IrVpiObject>::new();
-        for id in self.db.node_ids() {
-            if !reachable(self.db, id, tops) {
-                continue;
-            }
-            let node = self.node(id);
-            match self.kind(id) {
-                NodeKind::ModuleInst { def_name, .. } => {
-                    let full_name = self.waveform_name_for(id);
-                    let name = components(&full_name)
-                        .last()
-                        .unwrap_or(&node.name)
-                        .to_owned();
-                    objects.entry(full_name.clone()).or_insert_with(|| {
-                        let mut object = IrVpiObject::module(
-                            full_name,
-                            name,
-                            def_name.clone(),
-                            node.file().map(str::to_owned),
-                            node.line,
-                        );
-                        object.time_unit_fs = self.timescale_of_node(id).unit_fs;
-                        object
-                    });
-                }
-                NodeKind::Net { .. } | NodeKind::Var { .. } => {
-                    let Some(info) = self.sig_globals.get(&id) else {
-                        continue;
-                    };
-                    let Some(signal) = model.signals.get(info.ir) else {
-                        return Err(format!(
-                            "VPI signal metadata references missing IR signal {} for `{}`",
-                            info.ir, node.full_name
-                        ));
-                    };
-                    let Some(full_name) = signal.hdl_name.clone() else {
-                        continue;
-                    };
-                    let name = components(&full_name)
-                        .last()
-                        .unwrap_or(&node.name)
-                        .to_owned();
-                    let (width, signed, real) = match signal.ty {
-                        IrType::Packed { width, signed, .. } => (width, signed, false),
-                        IrType::Real { .. } => (0, false, true),
-                    };
-                    let net = matches!(self.kind(id), NodeKind::Net { .. })
-                        || signal.net_driver.is_some()
-                        || !signal.net_alias.is_empty();
-                    let kind = if real {
-                        IrVpiObjectKind::RealVar
-                    } else if net {
-                        IrVpiObjectKind::Net
-                    } else {
-                        IrVpiObjectKind::Reg
-                    };
-                    objects
-                        .entry(full_name.clone())
-                        .or_insert_with(|| IrVpiObject {
-                            time_unit_fs: self.timescale_of_node(id).unit_fs,
-                            full_name,
-                            name,
-                            definition_name: None,
-                            file: node.file().map(str::to_owned),
-                            line: node.line,
-                            kind,
-                            width,
-                            signed,
-                            real,
-                            net,
-                            signal: Some(info.ir),
-                            array: None,
-                        });
-                }
-                NodeKind::Array { .. } => {
-                    let Some(info) = self.array_globals.get(&id) else {
-                        continue;
-                    };
-                    let Some(array) = model.arrays.get(info.ir) else {
-                        return Err(format!(
-                            "VPI array metadata references missing IR array {} for `{}`",
-                            info.ir, node.full_name
-                        ));
-                    };
-                    if array.hdl_name.is_empty() {
-                        continue;
-                    }
-                    let full_name = array.hdl_name.clone();
-                    let name = components(&full_name)
-                        .last()
-                        .unwrap_or(&node.name)
-                        .to_owned();
-                    objects
-                        .entry(full_name.clone())
-                        .or_insert_with(|| IrVpiObject {
-                            time_unit_fs: self.timescale_of_node(id).unit_fs,
-                            full_name,
-                            name,
-                            definition_name: None,
-                            file: node.file().map(str::to_owned),
-                            line: node.line,
-                            kind: IrVpiObjectKind::RegArray,
-                            width: array.elem_width,
-                            signed: array.signed,
-                            real: array.real,
-                            net: false,
-                            signal: None,
-                            array: Some(info.ir),
-                        });
-                }
-                _ => {}
-            }
-        }
-        model.vpi_objects = objects.into_values().collect();
-        Ok(())
     }
 }
 
@@ -1685,6 +1557,13 @@ struct Codegen<'a> {
     /// lowered into one sequence graph. The map is scoped to the graph so
     /// every runtime attempt receives an independent slot set.
     assertion_local_bindings: Option<HashMap<NodeId, AssertionLocalBinding>>,
+    /// Whether any assertion control task is called in the design, computed
+    /// on first use. Immediate assertions query control state only then.
+    assertion_controls_used: Option<bool>,
+    /// Sequence endpoints by (scope path, sequence declaration or instance
+    /// expression), as indices into the model's assertion table.
+    sequence_endpoints: HashMap<(String, NodeId), usize>,
+    sequence_endpoint_count: usize,
     /// Assertion formal-to-actual bindings active while recursively lowering
     /// an owned named sequence/property instance.
     assertion_formal_actuals: Option<HashMap<NodeId, NodeId>>,
@@ -1706,6 +1585,16 @@ struct Codegen<'a> {
     /// formal initializer cannot silently be evaluated at graph creation when
     /// the invocation actually starts after a temporal prefix.
     assertion_local_capture_at_attempt_entry: bool,
+    /// Local formals of the instance being lowered through its inlined form;
+    /// their initialization is a match item, not an attempt-entry capture.
+    assertion_inlined_formals: HashSet<NodeId>,
+    /// Initialized locals of the enclosing property-level instances.
+    assertion_property_locals: Vec<NodeId>,
+    /// How the graph being lowered may initialize `assertion_property_locals`.
+    assertion_property_local_init: assertion_context::PropertyLocalInit,
+    /// Property-level locals the antecedent graph being lowered initializes
+    /// whether or not it reads them, so its consequent inherits them.
+    assertion_forced_locals: Vec<NodeId>,
     /// Canonical virtual-interface type identity → execution descriptor.
     virtual_interface_types: HashMap<String, usize>,
     /// Concrete interface instance → `(descriptor, instance)` binding.
@@ -1931,11 +1820,18 @@ impl<'a> Codegen<'a> {
             sampled_domain_keys: HashMap::new(),
             sampled_event_clocks: Vec::new(),
             assertion_local_bindings: None,
+            assertion_controls_used: None,
+            sequence_endpoints: HashMap::new(),
+            sequence_endpoint_count: 0,
             assertion_formal_actuals: None,
             assertion_local_initializers: None,
             lowering_assertion_match_item: false,
             assertion_instance_depth: 0,
             assertion_local_capture_at_attempt_entry: false,
+            assertion_inlined_formals: HashSet::new(),
+            assertion_property_locals: Vec::new(),
+            assertion_property_local_init: assertion_context::PropertyLocalInit::Unsupported,
+            assertion_forced_locals: Vec::new(),
             virtual_interface_types: HashMap::new(),
             virtual_interface_instances: HashMap::new(),
             virtual_interface_members: HashMap::new(),
@@ -2707,6 +2603,9 @@ struct EmitCtx<'c, 'a> {
     /// `true` while lowering a `final begin … end` body (SV 1800-2005
     /// §10.7): timing controls (`#`/`@`/`wait`/fork suspension) are rejected.
     in_final: bool,
+    /// What a call lowered with a captured argument frame belongs to, for
+    /// diagnostics: a deferred assertion action or a sequence match item.
+    call_owner: &'static str,
 }
 
 /// Shape of an image-represented fixed array `with` operand.

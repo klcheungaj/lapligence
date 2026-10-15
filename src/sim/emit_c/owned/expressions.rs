@@ -367,6 +367,22 @@ impl Frame<'_, '_> {
                 )
             }
             IrExprKind::RuntimeQuery(query) => self.runtime_query(query)?,
+            IrExprKind::MatchCall(action) => {
+                // The arguments are copied into a new frame now (16.11: "by
+                // value use sampled values ... consistent with the variable
+                // values used to evaluate the sequence match"); the runtime
+                // owns the frame until the Reactive-region call returns.
+                let values = self.prepare_captures(
+                    action.captures().iter().map(|c| (c.storage(), c.initial())),
+                )?;
+                let frame = self.name("match_call_frame");
+                let frame = self.publish_captures(&frame, values);
+                self.line(format!(
+                    "llg_sequence_match_call({}, {frame});",
+                    action.c_name()
+                ));
+                self.value("sv4_zero(1, 0)".to_owned(), 1, false)
+            }
             IrExprKind::FixedStream { array, selector } => {
                 self.fixed_stream_source(*array, selector, expr)?
             }

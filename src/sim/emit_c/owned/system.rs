@@ -7,7 +7,9 @@ impl Frame<'_, '_> {
         function: &IrSysFunc,
         expr: &IrExpr,
     ) -> Result<Value, String> {
+        let postponed_vpi = self.postponed_reader && matches!(function, IrSysFunc::VpiCall { .. });
         if self.read_only_callback
+            && !postponed_vpi
             && matches!(
                 function,
                 IrSysFunc::VpiCall { .. }

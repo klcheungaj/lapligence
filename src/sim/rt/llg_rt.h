@@ -465,7 +465,21 @@ enum {
     LLG_ASSERTION_CONTROL_OFF = 1,
     LLG_ASSERTION_CONTROL_KILL = 2,
     LLG_ASSERTION_CONTROL_FULL = 3,
+    /* Action controls (IEEE 1800-2009 20.12) take the same level/selector
+     * arguments as ON/OFF/KILL and change only which actions execute. */
+    LLG_ASSERTION_CONTROL_PASS_ON = 4,
+    LLG_ASSERTION_CONTROL_PASS_OFF = 5,
+    LLG_ASSERTION_CONTROL_FAIL_ON = 6,
+    LLG_ASSERTION_CONTROL_FAIL_OFF = 7,
+    LLG_ASSERTION_CONTROL_NONVACUOUS_ON = 8,
+    LLG_ASSERTION_CONTROL_VACUOUS_OFF = 9,
 };
+
+/* Result of llg_immediate_assertion_controls: the assertion is checked, and
+ * whether its pass and fail actions currently execute. */
+#define LLG_IMMEDIATE_CHECKED 1
+#define LLG_IMMEDIATE_PASS_ACTION 2
+#define LLG_IMMEDIATE_FAIL_ACTION 4
 
 typedef struct {
     int kind;
@@ -912,6 +926,37 @@ void llg_rt_request_stop(int verbosity, const char* location);
 // scheduler after the action returns; the remaining matured reports run when
 // it resumes. During $finish/final draining it only reports.
 void llg_rt_action_stop(int verbosity, const char* location);
+// vpi_control(vpiStop/vpiFinish) from any VPI context (SV 38.4: the task runs
+// "upon return of the application routine"). A stop inside a process turn is
+// the deferred llg_rt_request_stop; inside a region callback it is
+// llg_rt_action_stop. Both return 0, reporting nothing, when no running and
+// unfinished scheduler can take the request. `verbosity` must be 0..2.
+int llg_rt_control_stop(int verbosity);
+// Report the `$finish` message for `verbosity` (0..2) once and request
+// termination like llg_rt_request_finish. Returns 0 when a finish is already
+// pending.
+int llg_rt_control_finish(int verbosity);
+// The time at which the last run ended (the time final procedures see), or
+// the current time while the scheduler state is live (running or suspended).
+uint64_t llg_rt_end_time(void);
+
+// Value-change watches (VPI cbValueChange). A watch on a published packed or
+// real storage address makes every changing publication of that address call
+// the installed hook after all runtime consumers ran. Storage without a watch
+// pays nothing: publication already finds the address's wait row. Watches
+// are counted per address and end with the runtime lifetime (cleanup);
+// removing a watch from an earlier lifetime is a no-op.
+typedef void (*llg_value_watch_fn)(const void* key);
+// True while llg_rt_run drains the scheduler (not during startup, after the
+// run ended, while suspended or in final procedures).
+int llg_rt_running(void);
+// Hook called at the start of every Pre-Active PLI pass (each scheduler
+// iteration of a time slot, SV 4.10), with the current region set to
+// LLG_REGION_PRE_ACTIVE_PLI so it may queue zero-delay callbacks there.
+void llg_time_slot_hook(void (*hook)(void));
+void llg_value_watch_hook(llg_value_watch_fn hook);
+int llg_value_watch_add(const void* key);
+void llg_value_watch_remove(const void* key);
 
 enum {
     LLG_STOP_POLICY_RESUME = 0,
@@ -1105,6 +1150,12 @@ void llg_assertion_failure(int kind, uint64_t identity, const char* label,
 void llg_assertion_cover(uint64_t identity, const char* label, const char* location);
 uint64_t llg_assertion_count(int kind);
 uint64_t llg_assertion_vacuous_count(void);
+// Records a failure of an immediate assertion whose fail action is
+// suppressed by $assertfailoff: the counter changes, nothing is reported.
+void llg_assertion_failure_quiet(int kind);
+// The control state (LLG_IMMEDIATE_* bits) of a simple immediate assertion
+// in `scope`. Emitted only in designs that call an assertion control task.
+int llg_immediate_assertion_controls(int kind, const char* label, const char* scope);
 // KILL may cancel the current assertion-action process. In that case it sets
 // ABANDON, or COMPLETE when program-completion bookkeeping requests finish,
 // before returning; generated callers perform an immediate Terminate check.
@@ -1235,6 +1286,11 @@ void llg_deferred_assertion_scoped(int kind, int passed, uint64_t identity,
 // of a procedure's outermost scope flushes the executing processes' report
 // queues (SV 16.4.4). Emitted before the matching llg_disable_target.
 void llg_deferred_assertion_cancel(uint64_t identity);
+// Queue a subroutine call attached to a sequence match (IEEE 1800-2009
+// 16.11). Its by-value arguments were copied into `frame` when the match
+// was evaluated; `call` runs with it in the Reactive region, in match order.
+// Takes ownership of `frame`.
+void llg_sequence_match_call(llg_deferred_assertion_fn call, llg_frame_t* frame);
 void llg_deferred_assertion_flush_scope(uint32_t declaration, uint32_t instance);
 void llg_deferred_assertion(int kind, int passed, uint64_t identity,
                             const char* label, const char* location,
@@ -2086,6 +2142,20 @@ int llg_event_triggered(const llg_event_t* ev);
 // Number of triggers of the object `ev` currently names since the runtime was
 // initialized. A null handle reports zero. Read-only and allocation-free.
 uint64_t llg_event_trigger_count(const llg_event_t* ev);
+/* Make the concurrent assertion just registered (a cover of every match of
+ * a sequence instance) the sequence endpoint `index`, numbered from zero in
+ * registration order (IEEE 1800-2009 16.9.11, 16.14.5-16.14.6, 9.4.2.4). Each
+ * match triggers `event` in the Observed region and latches the `.matched`
+ * status of each destination clock in `clocks`/`edges` (copied). Endpoints
+ * have no counters or actions and ignore assertion control tasks. */
+int llg_assertion_endpoint(uint64_t identity, uint32_t index, llg_event_t* event,
+                           uint32_t slot_count, sv4_t* const* clocks, const int* edges);
+/* `.matched` of endpoint `endpoint` at a tick of its destination clock
+ * `slot`: a match since the previous tick of that clock. */
+int llg_sequence_matched(uint32_t endpoint, uint32_t slot);
+/* `.triggered` of endpoint `endpoint` inside an assertion: it matched in the
+ * current time step. */
+int llg_sequence_triggered(uint32_t endpoint);
 // Queue a nonblocking event trigger for the NBA region. The event pointer is
 // copied into runtime-owned queue state, so the issuing process may finish
 // before the trigger commits.
@@ -2484,6 +2554,13 @@ void llg_release_real(double* target);
 // no source dependencies.
 void llg_force(sv4_t* sig, sv4_t value);
 void llg_release(sv4_t* sig);
+// Constant-value forces used by vpi_put_value(vpiForceFlag). `value` is
+// borrowed and copied into the live entry.
+void llg_force_value_parts(const llg_force_part_t* parts, int n_parts, sv4_t value);
+void llg_force_real_value(double* target, double value);
+
+// Borrowed command line of the run (argc; argv through `argv`).
+int llg_rt_command_line(char*** argv);
 
 /* Destination-passing forms of the packed-returning calls above, used by
  * generated code (see value/destinations.h). `X_to(dst, ...)` replaces the

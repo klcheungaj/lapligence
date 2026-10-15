@@ -5,7 +5,7 @@ use super::*;
 use crate::core::db::ConcurrentAssertionKind;
 use crate::sim::ir::{
     IrAssertionControlKind, IrContainerElement, IrMemorySelector, IrObjectQuery, IrObjectStmt,
-    IrStringExpr, IrVpiCompileArg, IrVpiCompileCall,
+    IrStringExpr,
 };
 
 mod assertions;

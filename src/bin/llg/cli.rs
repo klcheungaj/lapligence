@@ -13,7 +13,7 @@ use llg::sim;
 /// Usage printed when `llg` is run without arguments. `llg` never discovers
 /// `llg.toml`, so there is nothing else to run from.
 pub(crate) const USAGE: &str = "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
-generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt
+generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi
 lint:     --lint-only  --no-lint-only  --lint-json [<path>]  -Werror  -Wno-error  # lint always runs
 wave:     --wave <file.vcd|file.fst>  --wave-depth <N>  --no-wave
 build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
@@ -79,6 +79,8 @@ pub(crate) struct Cli {
     pub runtime_cache: Option<PathBuf>,
     pub gen_only: Option<bool>,
     pub optimize: Option<bool>,
+    /// `--vpi`: emit the VPI object catalog for run-time applications.
+    pub vpi: bool,
     pub stop_policy: Option<StopPolicy>,
 }
 
@@ -116,6 +118,7 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
     let mut runtime_cache: Option<PathBuf> = None;
     let mut gen_only: Option<bool> = None;
     let mut optimize: Option<bool> = None;
+    let mut vpi = false;
     let mut stop_policy: Option<StopPolicy> = None;
     let mut it = args.into_iter().peekable();
     while let Some(a) = it.next() {
@@ -183,6 +186,9 @@ Options:
       --no-gen-only          Build and run (overrides llg.toml gen_only)
       --no-opt               Disable simulator optimization passes
       --opt                  Enable simulator optimization passes (overrides llg.toml)
+      --vpi                  Keep the VPI object catalog for an application loaded
+                              with LLG_VPI_PLUGIN (implied by --dpi-lib and by
+                              --define-system-task call sites)
       --stop-policy <resume|exit>
                               Handle `$stop` by resuming (default) or exiting
       --                    Pass remaining arguments to the generated simulator
@@ -456,6 +462,7 @@ Options:
             "--no-gen-only" => gen_only = Some(false),
             "--no-opt" => optimize = Some(false),
             "--opt" => optimize = Some(true),
+            "--vpi" => vpi = true,
             "--stop-policy" => match it.next() {
                 Some(value) => match StopPolicy::parse(&value) {
                     Ok(policy) => stop_policy = Some(policy),
@@ -527,6 +534,7 @@ Options:
         runtime_cache,
         gen_only,
         optimize,
+        vpi,
         stop_policy,
     })
 }

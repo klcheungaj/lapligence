@@ -109,9 +109,18 @@ typedef struct llg_assertion_rule {
     struct llg_assertion_rule* next;
     char* scope; // NULL means the whole design
     uint64_t assertion_type, directive_type;
+    /* Which control the rule sets: checking (SV 20.11) or one action class
+     * (SV 20.12); see LLG_ASSERTION_RULE_*. */
+    int field;
     int enabled;
 } llg_assertion_rule_t;
 static llg_assertion_rule_t* llg_assertion_rules;
+enum {
+    LLG_ASSERTION_RULE_CHECK = 0,
+    LLG_ASSERTION_RULE_PASS = 1,
+    LLG_ASSERTION_RULE_VACUOUS = 2,
+    LLG_ASSERTION_RULE_FAIL = 3,
+};
 
 typedef struct llg_sampled_value {
     struct llg_sampled_value* next;
@@ -333,6 +342,16 @@ typedef struct llg_assertion_clock_event {
     uint64_t tick;
 } llg_assertion_clock_event_t;
 
+/* One destination clock of a sequence endpoint's `.matched` status (SV
+ * 16.14.6): the match is visible at destination tick `visible_tick`, the
+ * first tick of `clock` at or after the match. */
+typedef struct llg_matched_slot {
+    sv4_t* clock;
+    int edge;
+    uint8_t has_match;
+    uint64_t visible_tick;
+} llg_matched_slot_t;
+
 typedef struct llg_concurrent_assertion {
     struct llg_concurrent_assertion* next;
     sv4_t* clock;
@@ -367,6 +386,19 @@ typedef struct llg_concurrent_assertion {
     int expect_outcome;
     /* The caller's expect has an else arm, so no default failure report. */
     int expect_has_fail;
+    /* Action controls (SV 20.12). Zero, the registration default, executes
+     * the action; they gate actions only, never the result counters. */
+    uint8_t pass_action_off;
+    uint8_t vacuous_action_off;
+    uint8_t fail_action_off;
+    /* A sequence endpoint (SV 16.9.11, 16.14.5-16.14.6, 9.4.2.4) is a hidden
+     * cover of every match of a sequence instance. It is no assertion: it
+     * has no counters or actions and assertion controls skip it. Each match
+     * triggers `endpoint_event` in Observed (`.triggered`, `@(seq)`) and
+     * latches the `.matched` slots. */
+    llg_event_t* endpoint_event;
+    uint32_t endpoint_slot_count;
+    llg_matched_slot_t* endpoint_slots;
     uint64_t identity;
     const char* label;
     const char* location;
@@ -555,6 +587,9 @@ typedef struct {
     // set sends the time slot back around through Observed (SV 24.3.1).
     int assertion_edges_pending;
     llg_concurrent_assertion_t* assertion_tail;
+    // Sequence endpoints by their model index, for `.matched` queries.
+    llg_concurrent_assertion_t** sequence_endpoints;
+    uint32_t sequence_endpoint_count;
     // Sequence thread budget (LLG_SEQUENCE_THREAD_LIMIT) and the live count
     // of pending tokens plus attempts it bounds.
     uint64_t sequence_thread_limit;

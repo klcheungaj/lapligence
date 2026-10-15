@@ -1,9 +1,8 @@
 /*
- * vpi_user.h — the bounded VPI surface exported by a generated Lapligence
- * model.
+ * vpi_user.h — the VPI surface exported by a generated Lapligence model.
  *
- * This is intentionally a small, source-compatible subset of the IEEE VPI
- * declarations.  Unsupported objects and properties fail through
+ * This is a source-compatible subset of the IEEE 1800-2009 Annex K/M VPI
+ * declarations, with the standard constant values.  Unsupported objects and properties fail through
  * vpi_chk_error(); they do not return guessed values.  The header is emitted
  * beside every generated model so an application can build against the same
  * ABI without depending on the vendored frontend headers.
@@ -11,6 +10,7 @@
 #ifndef LLG_VPI_USER_H
 #define LLG_VPI_USER_H
 
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -26,34 +26,76 @@ typedef char PLI_BYTE8;
 
 typedef struct llg_vpi_handle* vpiHandle;
 
-/* Object types used by the H28 vertical slice. */
+/* Object types (Annex K vpi_user.h and Annex M sv_vpi_user.h values). */
+#define vpiConstant 7
+#define vpiIntegerVar 25
+#define vpiIterator 27
+#define vpiMemoryWord 30
 #define vpiModule 32
+#define vpiNamedBegin 33
+#define vpiNamedFork 35
 #define vpiNet 36
+#define vpiNetBit 37
+#define vpiOperation 39
+#define vpiParameter 41
+#define vpiPartSelect 42
+#define vpiPort 44
 #define vpiRealVar 47
 #define vpiReg 48
-#define vpiUserSystf 67
-#define vpiCallback 107
-#define vpiIterator 27
-#define vpiRegArray 116
-#define vpiNetArray 114
-#define vpiIteratorType 57
+#define vpiRegBit 49
+#define vpiSchedEvent 53
 #define vpiSysFuncCall 56
 #define vpiSysTaskCall 57
-#define vpiSysTfCall 85
+#define vpiTimeVar 63
+#define vpiUserSystf 67
+#define vpiCallback 107
+#define vpiNetArray 114
+#define vpiRange 115
+#define vpiRegArray 116
+#define vpiGenScope 134
+#define vpiInterface 601
+#define vpiLongIntVar 610
+#define vpiShortIntVar 611
+#define vpiIntVar 612
+#define vpiShortRealVar 613
+#define vpiByteVar 614
+#define vpiEnumVar 617
+#define vpiStructVar 618
+#define vpiUnionVar 619
+#define vpiBitVar 620
+#define vpiPackedArrayVar 623
+
+/* Scalar logic values. */
 #define vpi0 0
 #define vpi1 1
 #define vpiZ 2
 #define vpiX 3
+#define vpiH 4
+#define vpiL 5
+#define vpiDontCare 6
+
+/* Strength values. */
+#define vpiSupplyDrive 0x80
+#define vpiStrongDrive 0x40
+#define vpiPullDrive 0x20
+#define vpiWeakDrive 0x08
+#define vpiHiZ 0x01
 
 /* One-to-one and one-to-many traversal methods. */
+#define vpiIndex 78
+#define vpiLeftRange 79
+#define vpiLowConn 80
 #define vpiParent 81
+#define vpiRightRange 83
 #define vpiScope 84
+#define vpiSysTfCall 85
 #define vpiArgument 89
-#define vpiVariables 100
+#define vpiBit 90
 #define vpiInternalScope 92
+#define vpiVariables 100
 #define vpiPorts 125
 
-/* Generic properties and the bounded module/net/value properties. */
+/* Generic properties and the module/net/value properties. */
 #define vpiUndefined (-1)
 #define vpiType 1
 #define vpiName 2
@@ -61,17 +103,55 @@ typedef struct llg_vpi_handle* vpiHandle;
 #define vpiSize 4
 #define vpiFile 5
 #define vpiLineNo 6
-#define vpiDefName 9
 #define vpiTopModule 7
+#define vpiDefName 9
+#define vpiTimeUnit 11
+#define vpiTimePrecision 12
 #define vpiScalar 17
 #define vpiVector 18
 #define vpiDirection 20
+#define vpiInput 1
+#define vpiOutput 2
+#define vpiInout 3
+#define vpiMixedIO 4
+#define vpiNoDirection 5
 #define vpiNetType 22
 #define vpiWire 1
-#define vpiSigned 65
+#define vpiWand 2
+#define vpiWor 3
+#define vpiTri 4
+#define vpiTri0 5
+#define vpiTri1 6
+#define vpiTriReg 7
+#define vpiTriAnd 8
+#define vpiTriOr 9
+#define vpiSupply1 10
+#define vpiSupply0 11
+#define vpiNone 12
+#define vpiUwire 13
+#define vpiArray 28
+#define vpiPortIndex 29
+#define vpiConstType 40
+#define vpiDecConst 1
+#define vpiRealConst 2
+#define vpiBinaryConst 3
+#define vpiOctConst 4
+#define vpiHexConst 5
+#define vpiStringConst 6
+#define vpiIntConst 7
+#define vpiTimeConst 8
+#define vpiScheduled 46
+#define vpiAutomatic 50
+#define vpiIteratorType 57
 #define vpiValid 64
 #define vpiValidFalse 0
 #define vpiValidTrue 1
+#define vpiSigned 65
+#define vpiLocalParam 70
+#define vpiIsMemory 73
+#define vpiArrayType 606
+#define vpiStaticArray 1
+#define vpiArrayMember 607
 
 /* System-task/function registration. */
 #define vpiSysTask 1
@@ -81,7 +161,8 @@ typedef struct llg_vpi_handle* vpiHandle;
 #define vpiTimeFunc 3
 #define vpiSizedFunc 4
 #define vpiSizedSignedFunc 5
-#define vpiSysFuncType 44
+#define vpiFuncType 44
+#define vpiSysFuncType vpiFuncType
 #define vpiUserDefn 45
 
 typedef struct t_vpi_systf_data {
@@ -154,11 +235,18 @@ typedef struct t_vpi_value {
 #define vpiNoDelay 1
 #define vpiInertialDelay 2
 #define vpiTransportDelay 3
+#define vpiPureTransportDelay 4
 #define vpiForceFlag 5
 #define vpiReleaseFlag 6
+#define vpiCancelEvent 7
 #define vpiReturnEvent 0x1000
+#define vpiUserAllocFlag 0x2000
+#define vpiOneValue 0x4000
+#define vpiPropagateOff 0x8000
 
-/* Callback records and the supported start/end reasons. */
+/* Callback records (38.36). llg runs cbValueChange, the time reasons, and
+ * cbEndOfCompile/cbStartOfSimulation/cbEndOfSimulation; registering any
+ * other reason is a vpi_chk_error() error. */
 typedef struct t_cb_data {
     PLI_INT32 reason;
     PLI_INT32 (*cb_rtn)(struct t_cb_data*);
@@ -169,8 +257,44 @@ typedef struct t_cb_data {
     PLI_BYTE8* user_data;
 } s_cb_data, *p_cb_data;
 
+#define cbValueChange 1
+#define cbStmt 2
+#define cbForce 3
+#define cbRelease 4
+#define cbAtStartOfSimTime 5
+#define cbReadWriteSynch 6
+#define cbReadOnlySynch 7
+#define cbNextSimTime 8
+#define cbAfterDelay 9
+#define cbEndOfCompile 10
 #define cbStartOfSimulation 11
 #define cbEndOfSimulation 12
+#define cbError 13
+#define cbTchkViolation 14
+#define cbStartOfSave 15
+#define cbEndOfSave 16
+#define cbStartOfRestart 17
+#define cbEndOfRestart 18
+#define cbStartOfReset 19
+#define cbEndOfReset 20
+#define cbEnterInteractive 21
+#define cbExitInteractive 22
+#define cbInteractiveScopeChange 23
+#define cbUnresolvedSystf 24
+#define cbAssign 25
+#define cbDeassign 26
+#define cbDisable 27
+#define cbPLIError 28
+#define cbSignal 29
+#define cbNBASynch 30
+#define cbAtEndOfSimTime 31
+
+typedef struct t_vpi_vlog_info {
+    PLI_INT32 argc;
+    PLI_BYTE8** argv;
+    PLI_BYTE8* product;
+    PLI_BYTE8* version;
+} s_vpi_vlog_info, *p_vpi_vlog_info;
 
 typedef struct t_vpi_error_info {
     PLI_INT32 state;
@@ -195,6 +319,7 @@ typedef struct t_vpi_error_info {
 #define vpiStop 66
 #define vpiFinish 67
 #define vpiReset 68
+#define vpiSetInteractiveScope 69
 
 vpiHandle vpi_register_cb(p_cb_data cb_data_p);
 PLI_INT32 vpi_remove_cb(vpiHandle cb_obj);
@@ -204,6 +329,8 @@ void vpi_get_systf_info(vpiHandle object, p_vpi_systf_data systf_data_p);
 
 vpiHandle vpi_handle_by_name(PLI_BYTE8* name, vpiHandle scope);
 vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index);
+vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 num_index,
+                                    PLI_INT32* index_array);
 vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle);
 vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle);
 vpiHandle vpi_scan(vpiHandle iterator);
@@ -220,10 +347,11 @@ PLI_INT32 vpi_compare_objects(vpiHandle object1, vpiHandle object2);
 PLI_INT32 vpi_chk_error(p_vpi_error_info error_info_p);
 PLI_INT32 vpi_free_object(vpiHandle object);
 PLI_INT32 vpi_release_handle(vpiHandle object);
-PLI_INT32 vpi_get_vlog_info(void* info);
+PLI_INT32 vpi_get_vlog_info(p_vpi_vlog_info vlog_info_p);
 void* vpi_get_userdata(vpiHandle object);
 PLI_INT32 vpi_put_userdata(vpiHandle object, void* userdata);
 PLI_INT32 vpi_printf(PLI_BYTE8* format, ...);
+PLI_INT32 vpi_vprintf(PLI_BYTE8* format, va_list ap);
 PLI_INT32 vpi_flush(void);
 PLI_INT32 vpi_control(PLI_INT32 operation, ...);
 

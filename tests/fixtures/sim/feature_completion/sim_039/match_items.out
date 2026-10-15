@@ -1,0 +1,13 @@
+15 note 1 x=1
+25 note 1 x=3
+25 note 1 x=2
+35 note 1 x=7
+35 note 1 x=6
+35 note 1 x=4
+45 note 2 x=7
+45 tnote x=8
+45 cnt n=3
+15 seen arg=1 now=2
+25 seen arg=2 now=3
+35 seen arg=3 now=4
+60 calls=7

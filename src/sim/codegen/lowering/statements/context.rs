@@ -30,6 +30,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             ctrl: Vec::new(),
             label_seq: 0,
             in_final,
+            call_owner: "deferred immediate assertion action",
         }
     }
 

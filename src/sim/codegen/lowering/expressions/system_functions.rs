@@ -1146,9 +1146,10 @@ impl<'a> Codegen<'a> {
                     // remains useful until the plugin's sizetf is consulted.
                     None => (32, true),
                 };
-                let args = args
-                    .into_iter()
-                    .map(|arg| self.lower_expr(scope_path, arg))
+                let arg_nodes = args;
+                let args = arg_nodes
+                    .iter()
+                    .map(|arg| self.lower_expr(scope_path, *arg))
                     .collect::<Result<Vec<_>, _>>()?;
                 if let Some((index, _)) = args
                     .iter()
@@ -1159,19 +1160,7 @@ impl<'a> Codegen<'a> {
                         "VPI system function `{name}` argument {index} exceeds the supported width in `{scope_path}`"
                     ));
                 }
-                let site = self.model.vpi_compile_calls.len();
-                self.model.vpi_compile_calls.push(IrVpiCompileCall::new(
-                    name.to_owned(),
-                    args.iter()
-                        .map(|arg| IrVpiCompileArg {
-                            width: arg.width,
-                            signed: arg.signed,
-                            real: arg.is_real(),
-                        })
-                        .collect(),
-                ));
-                self.model.vpi_compile_calls[site].time_unit_fs =
-                    self.timescale_of_node(call).unit_fs;
+                let site = self.push_vpi_compile_call(name, call, &arg_nodes, &args);
                 Ok(IrExpr::new(
                     IrExprKind::SysFunc(Box::new(IrSysFunc::VpiCall {
                         site,

@@ -742,14 +742,26 @@ a non-integral value into packed bits (reals use their exact 64-bit image).
 Concurrent assertions use dedicated instances, immutable sampled predicates,
 explicit clocks/disable/control metadata, per-attempt/thread locals and ordered
 match-item effects. Preserve Slang actual/default expansion; reject conflicting
-clocks, unsupported temporal/cross-clock forms or unrepresented copy-out.
+clocks or unsupported temporal/cross-clock forms. Locals (`assertions/locals.rs`)
+are initialized at attempt entry when their instance starts the attempt (formals
+first, then Db `assertion_local_initializer`s in declaration order); any other
+instance with locals, and every output/inout formal, lowers as the SV 16.8.2
+inlined form `(1, f = actual) ##0 body` plus a copy-out item on a transition of
+its own. Property-level locals are forced into the antecedent graph and
+inherited by the consequent (`PropertyLocalInit`); property-engine operands
+reject them. Subroutine match items (`assertions/match_calls.rs`) lower like
+deferred assertion actions: `IrExprKind::MatchCall` fills an owned frame in the
+match callback and the callback is a `DeferredAssertion` pre-fn on a synthetic,
+never-spawned process. Sequence end points (`assertions/endpoints.rs`) are
+hidden `cover sequence` assertions with an `IrAssertionEndpoint`; `.triggered`
+and `@(seq)` read its event, `.matched` its per-destination-clock slot.
 Sequence composition chooses its mechanism per site: one-cycle operands of
 `and`/`intersect`/`throughout`/`within` stay one sampled `&&` atom; multi-cycle
 operands become an `IrSequenceJoin`. Repeated non-Boolean sequences re-lower
 their body per literal copy (an unbounded bound loops the last copy), within
 `SEQUENCE_STATE_BUDGET`; never introduce a fixed unroll depth for `$`.
 Assignments to locals inside join operands and differently clocked join
-operands stay explicit rejections (SIM-039, ADV-013). A property that the
+operands stay explicit rejections (ADV-013). A property that the
 predicate/sequence forms cannot represent (`property_requires_engine`) lowers
 whole to an `IrProperty` node table (`assertions/property.rs`): sequence
 operands on the leading clock, single-tick operands as sampled atoms, the

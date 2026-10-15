@@ -189,12 +189,14 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
             origin: crate::sim::semantic::Origin::Synthetic {
                 reason: "optimizer fixture".to_owned(),
             },
+            callback_host: false,
         }],
         init_steps: Vec::new(),
         spawns: Vec::new(),
         final_spawns: Vec::new(),
         vpi_objects: Vec::new(),
         vpi_compile_calls: Vec::new(),
+        vpi_catalog: true,
         random: Default::default(),
         dpi_scopes: Vec::new(),
         dpi_sites: Vec::new(),
@@ -1103,6 +1105,72 @@ fn unused_storage_keeps_wait_event_sources() {
 }
 
 #[test]
+fn unused_storage_keeps_event_array_index_reads() {
+    // `@(events[i])` evaluates `i` when the wait is armed; a signal read
+    // only there still needs its storage.
+    let body = vec![IrStmt::WaitEvents {
+        specs: vec![(
+            IrWaitSrc::Event(IrEventRef::Array {
+                array: 0,
+                indices: vec![IrExpr::new(IrExprKind::SigRead(1), 32, false, None)],
+            }),
+            IrEdge::Any,
+        )],
+        refresh: false,
+    }];
+    let mut m = model_with(body, sigs(3));
+    m.events.push(crate::sim::ir::IrEvent {
+        c_name: "E_tb_events".to_string(),
+        array_dims: None,
+        array_elements: Vec::new(),
+    });
+    run(&mut m, &storage_only());
+    assert!(m.signals[0].omit, "untouched signal is still omitted");
+    assert!(!m.signals[1].omit, "event-array index keeps its storage");
+}
+
+#[test]
+fn unused_storage_keeps_mailbox_retrieval_targets() {
+    // `box.get(v)` and `box.try_peek(v)` write through `&G_s<n>`; a signal
+    // written only there still needs its storage.
+    use crate::sim::ir::{IrChandleExpr, IrMailboxTarget, IrObjectQuery, IrObjectStmt};
+    let packed = |name: &str| IrMailboxTarget::Packed {
+        addr: format!("&{name}"),
+        width: 32,
+        signed: true,
+        two_state: true,
+    };
+    let try_peek = IrExpr::new(
+        IrExprKind::ObjectQuery(Box::new(IrObjectQuery::MailboxTryGet {
+            mailbox: IrChandleExpr::Null,
+            target: IrMailboxTarget::Typed {
+                type_id: 7,
+                target: Box::new(packed("G_s2")),
+            },
+            peek: true,
+        })),
+        32,
+        true,
+        None,
+    );
+    let body = vec![
+        IrStmt::Object(Box::new(IrObjectStmt::MailboxGet(
+            0,
+            IrChandleExpr::Null,
+            packed("G_s1"),
+            false,
+        ))),
+        // Any expression position; the statement only evaluates it.
+        IrStmt::PlusArg(try_peek),
+    ];
+    let mut m = model_with(body, sigs(3));
+    run(&mut m, &storage_only());
+    assert!(m.signals[0].omit, "untouched signal is still omitted");
+    assert!(!m.signals[1].omit, "get target keeps its storage");
+    assert!(!m.signals[2].omit, "try_peek target keeps its storage");
+}
+
+#[test]
 fn unused_storage_handles_mixed_event_wait_sources() {
     // A mixed @(a or ev) wait keeps the signal half's storage (its
     // address is emitted into the wait table); the named-event half is
@@ -1234,6 +1302,7 @@ fn opt_external_observation_keeps_foreign_and_callback_storage() {
         net: false,
         signal: Some(1),
         array: None,
+        ..Default::default()
     });
     m.processes[0].pre_fns.push(IrPreFn::MonEval {
         c_name: "mon".to_string(),

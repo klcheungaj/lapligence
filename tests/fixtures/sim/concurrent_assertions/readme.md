@@ -24,13 +24,13 @@ conditional properties, and accept/reject controls with synchronous forms.
 
 Output/inout/ref formal copy-out, delayed or nested local-formal invocations,
 selected-local lvalues, repeated match-item bodies, unsupported temporal
-property operators, pass/fail/vacuity assertion-action controls, future global
-sampled-value functions, complex sampled clock events, and sequence
-`.triggered` status remain intentionally rejected with source-bearing
+property operators, future global sampled-value functions and complex sampled
+clock events remain intentionally rejected with source-bearing
 diagnostics. H26 adds bounded blocking `expect`, `$asserton`/`$assertoff`/
 `$assertkill`, the level-0 ON/OFF/KILL `$assertcontrol` forms, and sequence
 `.matched` endpoint evaluation; invalid control arguments and non-hierarchical
-scopes are also rejected. Named sequence/property instances, declaration
+scopes are also rejected. The 2009 pass/fail/vacuity action controls are
+covered by `feature_completion/sim_039`. Named sequence/property instances, declaration
 defaults/named arguments, one-cycle property
 `not`/`and`/`or`/`iff`/`implies` composition, and inherited `disable iff`
 metadata are covered by `property_instances.sv`.

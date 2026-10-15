@@ -112,6 +112,9 @@ mod sim_037;
 #[path = "sim_feature_completion/sim_038.rs"]
 mod sim_038;
 
+#[path = "sim_feature_completion/sim_039.rs"]
+mod sim_039;
+
 #[path = "sim_feature_completion/ki_packed_range.rs"]
 mod ki_packed_range;
 
@@ -225,6 +228,12 @@ mod sim_040;
 
 #[path = "sim_feature_completion/sim_041.rs"]
 mod sim_041;
+
+#[path = "sim_feature_completion/sim_042.rs"]
+mod sim_042;
+
+#[path = "sim_feature_completion/sim_043.rs"]
+mod sim_043;
 
 #[test]
 fn component_fixture_integrity() {

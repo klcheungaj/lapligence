@@ -142,6 +142,7 @@ fn render_with_frame(
             // private-evaluation context that applies those Postponed stores
             // without publication (SV 4.4.2.9 forbids any visible write).
             frame.read_only_callback = !*private_effects;
+            frame.postponed_reader = true;
             frame.line("(void)out; (void)context;");
             frame.line("{");
             let values = frame.formatted_arguments(args, *time_unit_fs)?;

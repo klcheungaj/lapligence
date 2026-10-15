@@ -271,15 +271,23 @@ impl<'a> Codegen<'a> {
     /// example code shared from a package or class), the scope path alone is
     /// the conservative answer.
     pub(in super::super) fn format_scope(&self, path: &str, node: NodeId) -> String {
-        let base = self.display_path(path).to_owned();
+        let mut text = self.display_path(path).to_owned();
+        text.push_str(&self.named_scope_suffix(path, node));
+        text
+    }
+
+    /// The `.name` components of the named blocks and subroutines between
+    /// `node` and the scope of `path`, outermost first; empty when the parents
+    /// of `node` do not lead back to that scope.
+    pub(in super::super) fn named_scope_suffix(&self, path: &str, node: NodeId) -> String {
         let Some(&scope) = self.scope_nodes.get(path) else {
-            return base;
+            return String::new();
         };
         let mut names: Vec<String> = Vec::new();
         let mut current = self.node(node).parent;
         while let Some(id) = current {
             if id == scope {
-                let mut text = base;
+                let mut text = String::new();
                 for name in names.iter().rev() {
                     text.push('.');
                     text.push_str(name);
@@ -296,7 +304,7 @@ impl<'a> Codegen<'a> {
             }
             current = self.node(id).parent;
         }
-        base
+        String::new()
     }
 
     /// `%l` text for code owned by `scope` (SV §33.7): `library.cell` of the
@@ -395,8 +403,18 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn waveform_name(&self, id: NodeId) -> String {
-        const SEPARATOR: &str = "\u{1f}";
+        self.hierarchy_name(id, false).join("\u{1f}")
+    }
 
+    /// Dotted hierarchical name of an assertion-control selector target
+    /// (SV 20.11-20.12): instance and generate scopes as in waveform names,
+    /// plus the named blocks and subroutines that also name assertion
+    /// scopes (see [`Self::format_scope`]).
+    pub(in super::super) fn assertion_selector_name(&self, id: NodeId) -> String {
+        self.hierarchy_name(id, true).join(".")
+    }
+
+    fn hierarchy_name(&self, id: NodeId, named_blocks: bool) -> Vec<String> {
         let root_name = match self.kind(id) {
             NodeKind::ModuleInst { is_top: true, .. } => strip_lib(&self.node(id).name),
             _ => self.node(id).name.clone(),
@@ -419,6 +437,15 @@ impl<'a> Codegen<'a> {
                 if !name.is_empty() {
                     parts.push(name);
                 }
+            } else if named_blocks
+                && matches!(
+                    scope.kind,
+                    NodeKind::Stmt(StmtKind::Begin) | NodeKind::FuncTask { .. }
+                )
+            {
+                if !scope.name.is_empty() {
+                    parts.push(strip_lib(&scope.name).to_string());
+                }
             } else if self.is_runtime_environment(scope_id) {
                 let name = if self.is_compilation_unit(scope_id) {
                     "$unit"
@@ -432,7 +459,7 @@ impl<'a> Codegen<'a> {
             current = scope.parent;
         }
         parts.reverse();
-        parts.join(SEPARATOR)
+        parts
     }
 
     /// Resolve a `$dumpvars` argument to the owned HDL identity used by the

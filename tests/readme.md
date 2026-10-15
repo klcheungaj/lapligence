@@ -280,6 +280,33 @@ check is `sim_dpi::dpi_exports_lower_to_one_entry_and_sorted_scopes`. Under
 ASan run the set with `LLG_CFLAGS='-fsanitize=address,undefined'`, which also
 instruments the companions.
 
+SIM-042's VPI fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_042::)'`. Each `.sv` has a C
+application that registers its system tasks and functions; positives load it
+with `LLG_VPI_PLUGIN` (Unix hosts) and run in both optimizer modes on every
+backend; `objects` and `systf` also link it as a static archive through
+`--dpi-lib` (every host, the Windows route), `values` also runs with
+`-funsigned-char`, `systf` also runs a model generated after the frontend is
+dropped, and `missing` must stop at startup. `errors` includes the handle
+churn that the ASan lane exercises
+(`LLG_CC=gcc LLG_CFLAGS='-fsanitize=address,undefined -DLLG_CO_DEBUG'`).
+Decisions S42-D1-D13, with `.c` applications linked as static archives
+(`tests/support/c_compiler.rs::static_archive`), are in `sim_lrm_decisions`;
+the runtime probe is `runtime_value_storage`'s `vpi_ownership` and the unit
+checks are `sim::build::vpi_static::tests` and
+`sim::codegen::lowering::collection::vpi::tests`.
+
+SIM-043's callback fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_043::)'`. `regions`, `reentry`,
+`readonly` and `control` load their C application with `LLG_VPI_PLUGIN` and
+run in both optimizer modes on every backend; `regions` also links it as a
+static archive, `control` also runs with `--stop-policy exit`, and `catalog`
+runs with and without `--vpi`. Decisions S43-D1-D9 are in
+`sim_lrm_decisions`; the CLI check is
+`settings::tests::vpi_catalog_follows_vpi_and_linked_libraries`. Under ASan
+run the set with `LLG_CC=gcc LLG_CFLAGS='-fsanitize=address,undefined
+-DLLG_CO_DEBUG'`.
+
 SIM-037's sequence-composition fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_037::)'`. `exhaustive` compares
 36 sequences on all 1024 two-signal traces of length 5 with the test-side
@@ -805,7 +832,8 @@ compile runtime C directly with `$LLG_CC`/`$CC` (`runtime_values`,
 the launcher. Without either variable they use the model default (MSVC `cl` on
 Windows); `tests/support/c_compiler.rs` (`host_c_compiler`,
 `strict_c11_executable`) translates their strict C11 build to `/W4 /WX` for
-MSVC. The DPI, VPI and FST-reader probes stay Unix-only.
+MSVC. The DPI, VPI-plugin and FST-reader probes stay Unix-only; the static
+archive routes of SIM-041, SIM-042 and the S42 decisions run on every host.
 
 `LLG_CCACHE` now rejects invalid values or a missing requested executable instead
 of continuing uncached. Changing the launcher reconfigures the native CMake cache

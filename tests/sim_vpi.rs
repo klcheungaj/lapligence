@@ -95,6 +95,8 @@ fn build_model_with_opts(
         &sim::codegen::CodegenOptions {
             optimization: *optimization,
             value_config,
+            // The plugins reach design objects through the catalog.
+            vpi: true,
             ..Default::default()
         },
     )
@@ -314,6 +316,7 @@ fn vpi_partitioned_net_arrays_keep_declared_shapes_and_values() {
                 &sim::codegen::CodegenOptions {
                     optimization: options,
                     value_config,
+                    vpi: true,
                     ..Default::default()
                 },
             )

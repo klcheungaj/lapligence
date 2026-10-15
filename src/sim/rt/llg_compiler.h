@@ -31,4 +31,12 @@
 #define LLG_MODEL_SHARED
 #endif
 
+// A model definition that may be unreferenced, such as the descriptor of a
+// process that only hosts runtime-called callbacks.
+#if defined(__GNUC__) || defined(__clang__)
+#define LLG_MAYBE_UNUSED __attribute__((unused))
+#else
+#define LLG_MAYBE_UNUSED
+#endif
+
 #endif

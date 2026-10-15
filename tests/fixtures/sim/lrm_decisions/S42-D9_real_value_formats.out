@@ -1,0 +1,7 @@
+real=-2.50
+int=-3
+objtype format=7 real=-2.50
+format 1 level=3
+format 3 level=3
+format 8 level=3
+format 9 level=3

@@ -185,6 +185,9 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
         IrExprKind::RuntimeQuery(_) => {
             return Err("runtime scheduler queries require the owned emitter".to_owned())
         }
+        IrExprKind::MatchCall(_) => {
+            return Err("sequence match-item calls require the owned emitter".to_owned())
+        }
         IrExprKind::Mutation(mutation) => render_mutation_expr(ctx, e, mutation)?,
         IrExprKind::TaggedSelect { .. } => {
             return Err("tagged-union checked reads require the owned emitter".to_owned())
