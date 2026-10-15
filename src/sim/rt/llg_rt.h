@@ -2505,6 +2505,13 @@ void llg_release_real(double* target);
 // no source dependencies.
 void llg_force(sv4_t* sig, sv4_t value);
 void llg_release(sv4_t* sig);
+// Constant-value forces used by vpi_put_value(vpiForceFlag). `value` is
+// borrowed and copied into the live entry.
+void llg_force_value_parts(const llg_force_part_t* parts, int n_parts, sv4_t value);
+void llg_force_real_value(double* target, double value);
+
+// Borrowed command line of the run (argc; argv through `argv`).
+int llg_rt_command_line(char*** argv);
 
 /* Destination-passing forms of the packed-returning calls above, used by
  * generated code (see value/destinations.h). `X_to(dst, ...)` replaces the

@@ -122,7 +122,10 @@ pub use storage::{
     IrArray, IrNetAliasBinding, IrNetArray, IrNetCellRun, IrNetGroup, IrNetKind, IrSignal,
 };
 mod vpi;
-pub use vpi::{IrVpiCompileArg, IrVpiCompileCall, IrVpiObject, IrVpiObjectKind};
+pub use vpi::{
+    IrVpiArgRef, IrVpiCompileArg, IrVpiCompileCall, IrVpiConstant, IrVpiDirection, IrVpiObject,
+    IrVpiObjectKind, IrVpiVarKind,
+};
 
 /// Upper bound on one generated `llg_net_t`'s driver count. The runtime stores
 /// the count in a C `int`; this is a representation limit checked before

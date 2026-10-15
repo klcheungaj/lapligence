@@ -31,7 +31,7 @@ mod assertions;
 use assertions::{assertion_predicate_name, assertion_sequence_name};
 mod storage;
 use storage::{render_signal_decls, render_static_local_decls};
-mod vpi;
+pub(in crate::sim::emit_c) mod vpi;
 use vpi::{render_vpi_compile_calls, render_vpi_metadata};
 mod functions;
 pub(super) use functions::handle_marker_param;
@@ -1035,8 +1035,6 @@ fn render_model(
     super::owned::udp::tables(model, &mut out);
     super::owned::randomize::tables(model, &mut out);
     render_signal_decls(model, &mut out);
-    render_vpi_metadata(model, &mut out);
-    render_vpi_compile_calls(model, &mut out);
     render_static_local_decls(model, &mut out);
     super::owned::model::persistent_returns(model, &mut out);
     for object in &model.objects {
@@ -1142,6 +1140,10 @@ fn render_model(
     }
     out.push_str(&render_dpi_declarations(model)?);
     out.push_str(&net_tables.declarations);
+    // The VPI catalog points at signal, array, static-local and net storage,
+    // so it follows every storage declaration.
+    render_vpi_metadata(model, &mut out);
+    render_vpi_compile_calls(model, &mut out);
     out.push_str(&sharing.declarations);
     out.push_str(&sharing.prototypes);
     out.push_str(&coroutine_metadata);

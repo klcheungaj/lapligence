@@ -1,4 +1,7 @@
-/* R22: enforce the bridge's documented callback-borrow lifetime policy. */
+/* R22, revised by SIM-042: argument and iterator handles borrowed by one
+ * compiletf/calltf invocation expire when it returns; the system function
+ * call handle names the call instance and stays valid (38.14, 38.33). sizetf
+ * runs without an active call (36.10.2). */
 #include "vpi_user.h"
 #include <string.h>
 
@@ -8,7 +11,7 @@ typedef struct {
     vpiHandle argument;
 } borrowed_handles;
 
-static borrowed_handles compiled, sized, executed;
+static borrowed_handles compiled, executed;
 static vpiHandle persistent_scope;
 static int calls;
 
@@ -27,8 +30,7 @@ static int handle_error(void) {
 }
 
 static int stale(const borrowed_handles *handles) {
-    (void)vpi_get(vpiType, handles->call);
-    if (!handle_error()) return 0;
+    if (vpi_get(vpiType, handles->call) != vpiSysFuncCall || vpi_chk_error(NULL)) return 0;
     (void)vpi_get(vpiSize, handles->argument);
     if (!handle_error()) return 0;
     s_vpi_value value = {0};
@@ -48,15 +50,15 @@ static PLI_INT32 compile_call(PLI_BYTE8 *data) {
 
 static PLI_INT32 size_call(PLI_BYTE8 *data) {
     (void)data;
-    if (!stale(&compiled) || !capture(&sized)) return 0;
+    if (!stale(&compiled) || vpi_handle(vpiSysTfCall, NULL) || !vpi_chk_error(NULL)) return 0;
     return 8;
 }
 
 static PLI_INT32 run_call(PLI_BYTE8 *data) {
     (void)data;
-    if (!stale(&sized) || (calls && !stale(&executed)) ||
+    if (!stale(&compiled) || (calls && !stale(&executed)) ||
         vpi_get(vpiType, persistent_scope) != vpiModule ||
-        !capture(&executed)) return 1;
+        !capture(&executed) || !vpi_compare_objects(executed.call, compiled.call)) return 1;
     s_vpi_value value = {0};
     value.format = vpiIntVal;
     value.value.integer = 17;

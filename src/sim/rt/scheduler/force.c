@@ -359,6 +359,45 @@ void llg_force(sv4_t* sig, sv4_t value) {
     force_entry_targets(entry);
 }
 
+// Constant-value force of explicit storage parts (vpi_put_value with
+// vpiForceFlag, 38.34). `value` is borrowed; part `value_lsb` offsets select
+// from it exactly as for an expression force.
+void llg_force_value_parts(const llg_force_part_t* parts, int n_parts, sv4_t value) {
+    if (!region_can_mutate("force scheduling")) return;
+    llg_force_entry_t* entry = force_prepare_packed(parts, n_parts, 0, 0, NULL, NULL, 0);
+    sv4_copy(&entry->value, &value);
+    force_entry_targets(entry);
+}
+
+// Constant-value force of a real variable; replaces an existing real force.
+void llg_force_real_value(double* target, double value) {
+    if (!region_can_mutate("force scheduling")) return;
+    if (!target) return;
+    llg_force_entry_t* entry = NULL;
+    for (int i = 0; i < g.force_count; i++) {
+        if (g.force_table[i].active && g.force_table[i].is_real &&
+            g.force_table[i].real_target == target) {
+            entry = &g.force_table[i];
+            free(entry->reads);
+            entry->reads = NULL;
+            break;
+        }
+    }
+    if (!entry) {
+        int slot = force_find_free_slot();
+        entry = &g.force_table[slot];
+        memset(entry, 0, sizeof(*entry));
+    }
+    entry->active = 1;
+    entry->is_real = 1;
+    entry->real_target = target;
+    entry->real_eval = NULL;
+    entry->real_value = value;
+    entry->eval = NULL;
+    entry->n_reads = 0;
+    force_evaluate_entry(entry);
+}
+
 void llg_release(sv4_t* sig) {
     if (!sig) return;
     llg_force_part_t part = {

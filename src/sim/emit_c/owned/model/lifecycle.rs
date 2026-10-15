@@ -338,10 +338,12 @@ pub(in crate::sim::emit_c) fn main(
             model.dpi_scopes().len()
         ));
     }
-    out.push_str(&format!("    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count) || !llg_vpi_startup()) goto start_failed;\n", c_string_literal(model.design_name())));
-    for (index, call) in model.vpi_compile_calls.iter().enumerate() {
-        out.push_str(&format!("    if (!llg_vpi_compile_call_site({index}ULL, {}, llg_vpi_compile_args_{index}, {}, {}ULL)) goto start_failed;\n",
-            c_string_literal(&call.name), call.args.len(), call.time_unit_fs));
+    out.push_str(&format!("    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count) || !llg_vpi_startup_static(LLG_VPI_STATIC_ROUTINES) || !llg_vpi_startup()) goto start_failed;\n", c_string_literal(model.design_name())));
+    let scopes = crate::sim::emit_c::model::vpi::vpi_call_scopes(model);
+    for ((index, call), scope) in model.vpi_compile_calls.iter().enumerate().zip(&scopes) {
+        out.push_str(&format!("    if (!llg_vpi_compile_call_site_at({index}ULL, {}, llg_vpi_compile_args_{index}, {}, {}ULL, {scope}, {}, {})) goto start_failed;\n",
+            c_string_literal(&call.name), call.args.len(), call.time_unit_fs,
+            call.file.as_deref().map_or_else(|| "NULL".to_owned(), c_string_literal), call.line));
     }
     out.push_str("    llg_vpi_start_simulation();\n    if (llg_vpi_failed()) goto start_failed;\n");
     // First executable process per C name, matching the former linear search.

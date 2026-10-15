@@ -8,7 +8,7 @@ use crate::sim::ir::{
     IrChandleExpr, IrConditionalMember, IrConst, IrContainerExpr, IrContainerKind, IrFileInput,
     IrFileInputTarget, IrFileReadTarget, IrInsideArrayElement, IrInsideItem, IrObjectQuery,
     IrObjectStmt, IrObjectType, IrPlusArgTarget, IrPlusArgText, IrStreamSegment, IrStreamSelector,
-    IrStringExpr, IrStringInsideItem, IrVpiCompileArg, IrVpiCompileCall,
+    IrStringExpr, IrStringInsideItem,
 };
 
 mod aggregates;

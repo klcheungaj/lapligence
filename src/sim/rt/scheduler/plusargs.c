@@ -417,3 +417,10 @@ int llg_value_plusargs_string(const char* format_text, llg_string_t* out) {
     if (converted) llg_string_move(out, result);
     return converted;
 }
+
+// Command line of the run, borrowed for vpi_get_vlog_info (38.30). The
+// strings belong to the model's main() and outlive the run.
+int llg_rt_command_line(char*** argv) {
+    if (argv) *argv = g.argv;
+    return g.argv ? g.argc : 0;
+}

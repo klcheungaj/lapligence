@@ -41,12 +41,20 @@ impl Validator<'_> {
                 );
             }
             match object.kind {
-                IrVpiObjectKind::Module => {
+                kind if kind.is_scope() => {
                     if object.signal.is_some() || object.array.is_some() {
-                        return self.fail(path, "VPI module cannot reference value storage");
+                        return self.fail(path, "VPI scope cannot reference value storage");
                     }
                 }
-                IrVpiObjectKind::RegArray => {
+                IrVpiObjectKind::Parameter | IrVpiObjectKind::Port => {
+                    if object.signal.is_some() || object.array.is_some() {
+                        return self.fail(path, "VPI parameter or port has no own storage");
+                    }
+                    if object.kind == IrVpiObjectKind::Parameter && object.constant.is_none() {
+                        return self.fail(path, "VPI parameter is missing its value");
+                    }
+                }
+                IrVpiObjectKind::RegArray | IrVpiObjectKind::NetArray => {
                     let Some(array) = object.array else {
                         return self.fail(path, "VPI array is missing array storage");
                     };
@@ -69,7 +77,7 @@ impl Validator<'_> {
                         self.validate_width(object.width, &format!("{path}.width"))?;
                     }
                 }
-                IrVpiObjectKind::Net | IrVpiObjectKind::Reg | IrVpiObjectKind::RealVar => {
+                _ => {
                     let Some(signal) = object.signal else {
                         return self.fail(path, "VPI value object is missing signal storage");
                     };

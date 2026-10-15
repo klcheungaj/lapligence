@@ -686,9 +686,10 @@ impl EmitCtx<'_, '_> {
                 Ok(vec![])
             }
             _ if name.starts_with('$') => {
-                let args = args
-                    .into_iter()
-                    .map(|arg| self.cg.lower_expr(&self.path, arg))
+                let arg_nodes = args;
+                let args = arg_nodes
+                    .iter()
+                    .map(|arg| self.cg.lower_expr(&self.path, *arg))
                     .collect::<Result<Vec<_>, _>>()?;
                 if let Some((index, _)) = args
                     .iter()
@@ -700,19 +701,7 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ));
                 }
-                let site = self.cg.model.vpi_compile_calls.len();
-                self.cg.model.vpi_compile_calls.push(IrVpiCompileCall::new(
-                    name.to_owned(),
-                    args.iter()
-                        .map(|arg| IrVpiCompileArg {
-                            width: arg.width,
-                            signed: arg.signed,
-                            real: arg.is_real(),
-                        })
-                        .collect(),
-                ));
-                self.cg.model.vpi_compile_calls[site].time_unit_fs =
-                    self.cg.timescale_of_node(h).unit_fs;
+                let site = self.cg.push_vpi_compile_call(name, h, &arg_nodes, &args);
                 Ok(vec![IrStmt::VpiCall {
                     site,
                     name: name.to_owned(),

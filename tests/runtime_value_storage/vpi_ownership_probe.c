@@ -8,9 +8,9 @@ static PLI_INT32 function_call(PLI_BYTE8* data) {
     vpiHandle call = vpi_handle(vpiSysTfCall, NULL);
     s_vpi_value result = {.format = vpiIntVal};
     result.value.integer = 42;
-    CHECK(vpi_put_value(call, &result, NULL, vpiNoDelay) == call);
+    CHECK(vpi_put_value(call, &result, NULL, vpiNoDelay) == NULL && !vpi_chk_error(NULL));
     result.value.integer = 43;
-    CHECK(vpi_put_value(call, &result, NULL, vpiNoDelay) == call);
+    CHECK(vpi_put_value(call, &result, NULL, vpiNoDelay) == NULL && !vpi_chk_error(NULL));
     return 0;
 }
 
@@ -38,7 +38,7 @@ int main(void) {
         s_vpi_value input = {.format = vpiVectorVal};
         input.value.vector = words;
         for (unsigned i = 0; i < 1000; ++i) {
-            CHECK(vpi_put_value(handle, &input, NULL, vpiNoDelay) == handle);
+            CHECK(vpi_put_value(handle, &input, NULL, vpiNoDelay) == NULL && !vpi_chk_error(NULL));
             s_vpi_value output = {.format = vpiVectorVal};
             vpi_get_value(handle, &output);
             CHECK(output.value.vector[0].aval == 0x55);

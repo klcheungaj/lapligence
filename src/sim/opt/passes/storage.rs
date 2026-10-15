@@ -215,17 +215,21 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         }
     }
     let waveform = model.waveform;
+    // One pass over the catalog: every signal is VPI-visible in a model with
+    // a full catalog, so a per-signal scan would be quadratic.
+    let mut vpi_visible = vec![false; model.signals.len()];
+    for object in &model.vpi_objects {
+        if let Some(visible) = object.signal.and_then(|signal| vpi_visible.get_mut(signal)) {
+            *visible = true;
+        }
+    }
     let mut flags: Vec<bool> = model
         .signals
         .iter()
         .enumerate()
         .map(|(i, sig)| {
-            let vpi_visible = model
-                .vpi_objects
-                .iter()
-                .any(|object| object.signal == Some(i));
             !(waveform && sig.hdl_name.is_some())
-                && !vpi_visible
+                && !vpi_visible[i]
                 && !rw.reads.contains(&i)
                 && !rw.writes.contains(&i)
         })

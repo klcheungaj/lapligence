@@ -92,6 +92,7 @@ mod timings;
 mod toolchain_seed;
 mod tree_template;
 mod value;
+mod vpi_static;
 
 pub use timings::ENV as BUILD_TIMINGS_ENV;
 
@@ -1232,7 +1233,29 @@ fn dpi_link_setup(opts: &CmakeBuildOpts) -> Result<String, BuildError> {
         .map(|path| format!("\"{path}\""))
         .collect::<Vec<_>>()
         .join(" ");
-    Ok(format!("target_link_libraries(sim PRIVATE {libraries})"))
+    let mut setup = format!("target_link_libraries(sim PRIVATE {libraries})");
+    if static_vpi_application(opts)? {
+        setup.push_str("\ntarget_compile_definitions(sim PRIVATE LLG_VPI_STATIC_STARTUP=1)");
+    }
+    Ok(setup)
+}
+
+/// Whether a `--dpi-lib` static archive carries a VPI application's
+/// `vlog_startup_routines` table, which the model then runs at startup.
+fn static_vpi_application(opts: &CmakeBuildOpts) -> Result<bool, BuildError> {
+    for path in &opts.dpi_libraries {
+        match vpi_static::archive_has_vpi_startup(path) {
+            Ok(true) => return Ok(true),
+            Ok(false) => {}
+            Err(error) => {
+                return Err(BuildError::InvalidDpiLibrary {
+                    path: path.to_path_buf(),
+                    reason: format!("cannot read library: {error}"),
+                })
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Build or reuse the immutable runtime archive for one value-layout ABI.

@@ -1,4 +1,4 @@
-// llg_vpi.h — generated-model bridge for the bounded public VPI surface.
+// llg_vpi.h — generated-model bridge for the public VPI surface.
 #ifndef LLG_VPI_H
 #define LLG_VPI_H
 
@@ -9,27 +9,62 @@
 extern "C" {
 #endif
 
+/* Flags of llg_vpi_model_object_t. */
+#define LLG_VPI_OBJ_TWO_STATE 0x01u   /* bit/int/byte/... storage */
+#define LLG_VPI_OBJ_TOP 0x02u         /* top-level module instance */
+#define LLG_VPI_OBJ_LOCAL_PARAM 0x04u /* localparam / genvar value */
+#define LLG_VPI_OBJ_SHORTREAL 0x08u   /* writes round through float */
+#define LLG_VPI_OBJ_RANGE 0x10u       /* left/right hold the packed range */
+#define LLG_VPI_OBJ_TEXT 0x20u        /* `constant` is string-parameter text */
+
+/* One catalog row. Generated models emit a static array of these; the
+ * runtime only borrows it and indexes it on the first VPI use. */
 typedef struct llg_vpi_model_object {
-    int type;
+    int type;                 /* vpiType */
     const char* name;
-    const char* full_name;
+    const char* full_name;    /* SV 27.4 hierarchical name */
     const char* definition_name;
     const char* file;
     int line;
-    uint32_t width;
+    uint32_t width;           /* packed width; element width of an array */
     int8_t is_signed;
     int8_t is_real;
     int8_t is_net;
-    sv4_t* packed;
-    double* real;
+    sv4_t* packed;            /* value, or element 0 of an array */
+    double* real;             /* real value, or element 0 of a real array */
     struct llg_vpi_model_object* parent;
-    uint64_t time_unit_fs; /* 0 inherits the parent or simulation time unit. */
+    uint64_t time_unit_fs;    /* 0 inherits the parent or simulation time unit. */
+    int subtype;              /* array element vpiType, vpiNetType, port vpiDirection */
+    uint32_t flags;           /* LLG_VPI_OBJ_* */
+    int64_t left;             /* outermost packed range (LLG_VPI_OBJ_RANGE) */
+    int64_t right;
+    const int64_t* dims;      /* unpacked (left, right) pairs, outermost first */
+    uint32_t dim_count;
+    uint32_t port_index;
+    struct llg_vpi_model_object* target; /* a port's low connection */
+    llg_net_t* net;           /* resolved net behind `packed`, for force/release */
+    const char* constant;     /* parameter: 0/1/x/z digits MSB first, or text */
+    double real_constant;     /* real parameter value */
 } llg_vpi_model_object_t;
+
+/* How a call argument is visible to applications (llg_vpi_compile_arg_t). */
+#define LLG_VPI_ARG_EXPRESSION 0 /* read-only value snapshot (vpiOperation) */
+#define LLG_VPI_ARG_CONSTANT 1   /* literal (vpiConstant, const_type) */
+#define LLG_VPI_ARG_OBJECT 2     /* catalog object `object` */
+#define LLG_VPI_ARG_SELECT 3     /* bits [offset, offset+select_width) of `object` */
+#define LLG_VPI_ARG_ELEMENT 4    /* element `offset` (row-major) of array `object` */
 
 typedef struct {
     uint32_t width;
     int8_t is_signed;
     int8_t is_real;
+    int8_t ref_kind;          /* LLG_VPI_ARG_* */
+    int const_type;           /* vpiConstType of a constant */
+    int64_t object;           /* catalog index, or -1 */
+    uint64_t offset;
+    uint32_t select_width;
+    int64_t left;             /* declared bounds of a select */
+    int64_t right;
 } llg_vpi_compile_arg_t;
 
 typedef struct {
@@ -42,10 +77,15 @@ typedef struct {
 } llg_vpi_arg_t;
 
 /* Model metadata is static generated storage; the runtime borrows it until
- * llg_vpi_shutdown, while all public handles remain generation-checked. */
+ * llg_vpi_shutdown, while all public handles remain generation-checked.
+ * Initialization only records the table: it is validated and indexed on the
+ * first VPI use, so models that never load an application pay nothing. */
 int llg_vpi_model_init(const char* design_name,
                        llg_vpi_model_object_t* objects, size_t object_count);
 int llg_vpi_startup(void);
+/* Run a statically linked application's startup table (the model links the
+ * archive that defines it) before LLG_VPI_PLUGIN libraries are loaded. */
+int llg_vpi_startup_static(void (*const* routines)(void));
 int llg_vpi_compile_call(const char* name, const llg_vpi_compile_arg_t* args,
                          int arg_count);
 int llg_vpi_compile_calls(const char* const* names,
@@ -67,6 +107,11 @@ double llg_vpi_call_real_function(const char* name, llg_vpi_arg_t* args,
  * survive independently of the name-level registration. */
 int llg_vpi_compile_call_site(uint64_t site, const char* name,
     const llg_vpi_compile_arg_t* args, int count, uint64_t time_unit_fs);
+/* llg_vpi_compile_call_site with the call's scope row (vpiScope), source
+ * file and line. Site identities are dense from 0 in generated models. */
+int llg_vpi_compile_call_site_at(uint64_t site, const char* name,
+    const llg_vpi_compile_arg_t* args, int count, uint64_t time_unit_fs,
+    llg_vpi_model_object_t* scope, const char* file, int line);
 int llg_vpi_call_task_site(uint64_t site, const char* name, llg_vpi_arg_t* args, int count);
 sv4_t llg_vpi_call_function_site(uint64_t site, const char* name, llg_vpi_arg_t* args,
     int count, uint32_t fallback_width, int8_t fallback_signed);

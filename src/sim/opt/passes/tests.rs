@@ -1235,6 +1235,7 @@ fn opt_external_observation_keeps_foreign_and_callback_storage() {
         net: false,
         signal: Some(1),
         array: None,
+        ..Default::default()
     });
     m.processes[0].pre_fns.push(IrPreFn::MonEval {
         c_name: "mon".to_string(),
