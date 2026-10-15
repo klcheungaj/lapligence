@@ -1643,6 +1643,16 @@ fn s39_d10_match_item_scope_names() {
     );
 }
 
+#[test]
+fn ah_d1_initial_block_assertions_single_attempt() {
+    run_decision(
+        "AH-D1_initial_block_assertions_single_attempt",
+        include_str!(
+            "fixtures/sim/lrm_decisions/AH-D1_initial_block_assertions_single_attempt.out"
+        ),
+    );
+}
+
 /// Build the `.c` VPI application of a decision case into a static archive
 /// that the model links (`--dpi-lib`); its `vlog_startup_routines` table runs
 /// at startup. Static linking works on every host, so these cases need no

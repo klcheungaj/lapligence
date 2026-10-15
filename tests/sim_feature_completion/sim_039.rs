@@ -188,6 +188,39 @@ fn percent_m_in_actions_and_match_items_names_the_assertion_scope() {
     });
 }
 
+/// A labeled module-level or generate-level assertion whose action block opens
+/// a scope (a named block, or a block or loop that declares variables) runs
+/// that action like any other. The scope symbols beside the assertion once
+/// made its synthetic process an ordinary `always` without a timing control,
+/// which never left time 0.
+#[test]
+fn named_and_declaring_action_blocks_run_on_static_assertions() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_039/named_action_blocks.out");
+    sim_cli::run_case_checked_matrix(SUITE, "named_action_blocks", &[], &|label, output| {
+        assert_sorted_stdout(label, output, expected);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!stderr.contains("nonconvergent"), "{label}: {stderr}");
+    });
+    sim_cli::reject_case(
+        SUITE,
+        "neg_deferred_named_action",
+        "neg_deferred_named_action.sv:7:5 deferred assertion action must be a subroutine call",
+    );
+}
+
+/// An `initial` procedure made only of concurrent assertions queues each of
+/// them once, labeled or not and however its blocks nest (16.15.6, AH-D1);
+/// a module-level assertion attempts on every tick.
+#[test]
+fn initial_procedure_assertions_start_one_attempt_each() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_039/initial_assertion_bodies.out");
+    sim_cli::run_case_checked_matrix(SUITE, "initial_assertion_bodies", &[], &|label, output| {
+        assert_sorted_stdout(label, output, expected)
+    });
+}
+
 /// A DPI-C import attached to a match receives its own attempt's local,
 /// copied into the call's owned frame when the match is evaluated.
 #[test]

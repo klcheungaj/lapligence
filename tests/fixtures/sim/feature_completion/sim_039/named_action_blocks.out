@@ -1,0 +1,23 @@
+5 ma pass tb.ma.pass_blk.inner n=1
+15 ma pass tb.ma.pass_blk.inner n=2
+25 ma fail tb.ma.fail_blk
+35 ma pass tb.ma.pass_blk.inner n=3
+5 md fail tb.md.d_blk
+35 md fail tb.md.d_blk
+6 mc tb.mc.c_blk
+16 mc tb.mc.c_blk
+36 mc tb.mc.c_blk
+5 mu fail tb.mu.u_blk
+35 mu fail tb.mu.u_blk
+15 ua tb.ua_blk
+25 ua tb.ua_blk
+15 ld k=0
+15 ld k=1
+25 ld k=0
+25 ld k=1
+5 gc tb.g.gc.act
+15 gc tb.g.gc.act
+35 gc tb.g.gc.act
+25 ga fail tb.g.ga.act
+35 gs i=0 tb.g.n[0].gs.act
+35 gs i=1 tb.g.n[1].gs.act

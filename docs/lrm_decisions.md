@@ -301,6 +301,12 @@ case.
 | S39-D9 | **Property locals start with the attempt.** A local input formal or declared local of a property is initialized when the property attempt begins and keeps that value in the consequent of an implication. | 16.10 L23800-23807 | `S39-D9_property_local_attempt_start` | LRM text (llg formerly rejected property local formals) |
 | S39-D10 | **`%m` in match items and actions names the assertion, not a hidden host.** A subroutine attached to a sequence match prints its own name; a system task written in the match-item list and the assertion's action block print the labeled assertion's hierarchical name. An unlabeled assertion reports its enclosing scope. | 21.2.1.6 L36379-36381; 16.3 L21105-21106; 16.15 L26424-26426 | `S39-D10_match_item_scope_names` | LRM text for subroutines; llg reading for a system task in the match-item list (the text names no scope for it) and for the unlabeled name |
 
+## Assertion procedure shapes (follow-up to SIM-038 and SIM-039)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| AH-D1 | **Every assertion of an assertion-only `initial` procedure starts one attempt.** An `initial` procedure made only of concurrent assertions begins one evaluation attempt per assertion, at its first leading clock event, also when an assertion is labeled inside a `begin`-`end` block, nested in further blocks, or one of several in the procedure. | 16.15.6 L26749-26752, L26758-26766; 16.3 L21105-21106 | `AH-D1_initial_block_assertions_single_attempt` | LRM text (llg formerly started an attempt on every tick for these shapes; S38-D6 covers an assertion that is the whole procedure) |
+
 ## Waits on `ref` formals in typed tasks (SIM-009)
 
 | ID | Decision | Clause (SV) | Case | Kind |

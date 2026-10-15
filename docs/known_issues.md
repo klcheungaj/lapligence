@@ -1548,9 +1548,9 @@ Reproduce with
 - A concurrent assertion inside procedural code that also holds other
   statements, conditions or loops is treated as a static assertion: llg does
   not keep the 16.15.6 procedural assertion queue, its enabling conditions or
-  flush points. Only an assertion that is the whole body of an `always` or
-  `initial` procedure has its exact meaning (an `initial` one starts a single
-  attempt).
+  flush points. Only a procedure made only of concurrent assertions (labeled
+  or not, in any nesting of `begin`-`end` blocks) has its exact meaning (each
+  assertion of an `initial` one starts a single attempt).
 - An `expect` property that reads an automatic variable (16.18 allows it, as
   in the LRM's `wait_for` example) is rejected ("unsupported sampled ...
   expression"); static variables work and the action block may assign

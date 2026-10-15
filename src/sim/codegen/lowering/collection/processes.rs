@@ -1736,6 +1736,39 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
+    /// Whether `node`, a member of a procedure body, holds only concurrent
+    /// assertions (other than `expect`) and declarations; push the assertions
+    /// onto `assertions` in source order.
+    fn collect_assertion_only_member(&self, node: NodeId, assertions: &mut Vec<NodeId>) -> bool {
+        match self.kind(node) {
+            NodeKind::Stmt(StmtKind::ConcurrentAssertion { kind, .. })
+                if *kind != ConcurrentAssertionKind::Expect =>
+            {
+                assertions.push(node);
+                true
+            }
+            NodeKind::Stmt(StmtKind::Empty) | NodeKind::Var { .. } | NodeKind::FuncArg { .. } => {
+                true
+            }
+            NodeKind::Stmt(StmtKind::Begin) => match self.db.semantic_detail(node) {
+                // A scope symbol (a block's or an assertion label's) holds
+                // only declarations, including the scopes of named blocks in
+                // an assertion's action (`begin : act ... end`); the action
+                // statements live in the assertion's own `Block`s.
+                Some("StatementBlock") => true,
+                // A `begin`-`end` block, its statement list, or the named
+                // block a statement label creates around an assertion (16.3).
+                Some("Block" | "List") => self
+                    .node(node)
+                    .children
+                    .iter()
+                    .all(|child| self.collect_assertion_only_member(*child, assertions)),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     fn emit_process(&mut self, inst: NodeId, path: &str, proc: NodeId) -> Result<(), String> {
         // Effect collection resolves callees before EmitCtx::new installs its
         // context. Never reuse the previous process's instance for this scan.
@@ -1788,41 +1821,16 @@ impl<'a> Codegen<'a> {
         // process that would try to execute the assertion as a statement.
         // A procedural `expect` is an executable statement that blocks its
         // process (IEEE 1800-2009 16.18), never a projected assertion.
-        let projected = |kind: &NodeKind| {
-            matches!(
-                kind,
-                NodeKind::Stmt(StmtKind::ConcurrentAssertion { kind, .. })
-                    if *kind != ConcurrentAssertionKind::Expect
-            )
-        };
-        let (concurrent_assertions, assertion_only_body) = match self.kind(stmt) {
-            kind if projected(kind) => (vec![stmt], true),
-            NodeKind::Stmt(StmtKind::Begin) => {
-                let children = &self.node(stmt).children;
-                let assertions = children
-                    .iter()
-                    .filter(|child| projected(self.kind(**child)))
-                    .copied()
-                    .collect::<Vec<_>>();
-                let assertion_only = !assertions.is_empty()
-                    && children.iter().all(|child| match self.kind(*child) {
-                        kind if projected(kind) => true,
-                        NodeKind::Stmt(StmtKind::Empty)
-                        | NodeKind::Var { .. }
-                        | NodeKind::FuncArg { .. } => true,
-                        // Slang keeps a named assertion declaration scope as
-                        // an otherwise-empty begin child of its synthetic
-                        // process. It carries no executable statements.
-                        NodeKind::Stmt(StmtKind::Begin) => {
-                            self.db.semantic_detail(*child) == Some("StatementBlock")
-                                && self.node(*child).children.is_empty()
-                        }
-                        _ => false,
-                    });
-                (assertions, assertion_only)
-            }
-            _ => (Vec::new(), false),
-        };
+        // A user procedure made only of such assertions is handled the same
+        // way, labeled or not and however its blocks nest, so that an
+        // `initial` one starts a single attempt below.
+        let mut concurrent_assertions = Vec::new();
+        let assertion_only_body = match self.kind(stmt) {
+            NodeKind::Stmt(StmtKind::Begin) => self.node(stmt).children.iter().all(|child| {
+                self.collect_assertion_only_member(*child, &mut concurrent_assertions)
+            }),
+            _ => self.collect_assertion_only_member(stmt, &mut concurrent_assertions),
+        } && !concurrent_assertions.is_empty();
         if assertion_only_body {
             let first = self.model.assertions.len();
             for assertion in concurrent_assertions {
