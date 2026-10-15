@@ -163,11 +163,6 @@ fn null_covergroup_handle_is_a_runtime_error() {
 fn unsupported_coverage_forms_are_located_errors() {
     sim_cli::reject_case(
         SUITE,
-        "neg_cross",
-        "neg_cross.sv:8:5: cross coverage in covergroup `g` is not supported yet (SIM-045)",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "neg_option_access",
         "neg_option_access.sv:10:5: covergroup options can only be set in the covergroup declaration",
     );

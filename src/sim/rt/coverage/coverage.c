@@ -64,6 +64,10 @@ struct llg_cov_layout {
     llg_cov_span_t* cover;
     uint64_t* cover_rank;
     uint64_t n_coverable;
+    // Per declaration: its first counter and its number of `bins` elements
+    // (zero for other kinds), for cross selections of one bin.
+    uint64_t* decl_base;
+    uint64_t* decl_size;
 };
 
 // One pending transition attempt: an automaton state of a set's step, the
@@ -122,6 +126,11 @@ typedef struct {
     uint64_t* dense;  // n_bins counters when n_bins <= LLG_COV_DENSE_BINS
     llg_cov_sparse_t sparse;
     llg_cov_history_t* history;  // transition bins only
+    // Crossed coverpoints: the coverable ranks this sample counted.
+    uint64_t hit_serial;
+    uint32_t n_hits, hit_capacity;
+    uint64_t* hits;
+    struct llg_cov_xstate* cross;  // crosses only
 } llg_cov_point_state_t;
 
 // One argument value a bins declaration reads (19.5), as given to `new`.
@@ -141,8 +150,9 @@ struct llg_cov_inst {
     uint8_t stopped;
     uint8_t ready;
     uint8_t strobe_pending;  // a Postponed sample is queued for this slot
+    uint64_t serial;  // samples begun, for crosses
     llg_cov_slot_value_t* slots;
-    llg_cov_point_state_t points[];
+    llg_cov_point_state_t points[];  // points, then crosses
 };
 
 static llg_cov_history_t* llg_cov_history_new(const llg_cov_trans_t* trans);
@@ -354,6 +364,10 @@ static uint64_t llg_cov_add_bins(uint64_t total, uint64_t more) {
     return total + more;
 }
 
+static uint64_t llg_cov_saturating_add(uint64_t a, uint64_t b) {
+    return b > UINT64_MAX - a ? UINT64_MAX : a + b;
+}
+
 // The element range one entry covers over the keys lo..hi of a segment.
 static llg_cov_span_t llg_cov_entry_bins(const llg_cov_entry_t* entry, uint64_t lo, uint64_t hi) {
     llg_cov_span_t bins = {entry->base, entry->base};
@@ -422,8 +436,12 @@ static llg_cov_layout_t* llg_cov_build_layout(const llg_cov_inst_t* inst, uint32
     size_t n_pieces = 0, pieces_cap = 0;
     llg_cov_span_t* spans = NULL;
     size_t spans_cap = 0;
+    size_t decls = point->n_bins ? point->n_bins : 1u;
+    layout->decl_base = (uint64_t*)llg_checked_calloc(decls, sizeof(uint64_t), "coverage layout");
+    layout->decl_size = (uint64_t*)llg_checked_calloc(decls, sizeof(uint64_t), "coverage layout");
     for (uint32_t d = 0; d < point->n_bins; ++d) {
         const llg_cov_bin_t* bin = &point->bins[d];
+        layout->decl_base[d] = n_bins;
         if (bin->kind == LLG_COV_BIN_DEFAULT || bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT) {
             layout->default_decl = d;
             layout->default_illegal = bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT;
@@ -462,6 +480,7 @@ static llg_cov_layout_t* llg_cov_build_layout(const llg_cov_inst_t* inst, uint32
                 entry.pos += llg_cov_span_size(spans[i]);
             }
             n_bins = llg_cov_add_bins(n_bins, count);
+            layout->decl_size[d] = count;
             continue;
         }
         // A value listed twice is still one value of the bin.
@@ -478,13 +497,17 @@ static llg_cov_layout_t* llg_cov_build_layout(const llg_cov_inst_t* inst, uint32
                 entry.pos += size;
             }
             if (entry.pos) n_bins = llg_cov_add_bins(n_bins, entry.pos);
+            layout->decl_size[d] = entry.pos;
             continue;
         }
         for (size_t i = 0; i < n_spans; ++i) {
             llg_cov_piece_t piece = {spans[i].lo, spans[i].hi, entry, bin->kind};
             LLG_COV_PUSH(pieces, n_pieces, pieces_cap, piece, "coverage bin values");
         }
-        if (bin->kind == LLG_COV_BIN_BINS) n_bins = llg_cov_add_bins(n_bins, 1);
+        if (bin->kind == LLG_COV_BIN_BINS) {
+            n_bins = llg_cov_add_bins(n_bins, 1);
+            layout->decl_size[d] = 1;
+        }
     }
     layout->n_bins = n_bins;
 
@@ -589,10 +612,11 @@ static const llg_cov_layout_t* llg_cov_layout_for(llg_cov_inst_t* inst, uint32_t
     int64_t auto_bin_max = inst->points[index].auto_bin_max;
     if (point->dynamic) return llg_cov_build_layout(inst, index, auto_bin_max);
     if (!group->layouts) {
+        if (!group->xlayouts)
+            LLG_COV_PUSH(llg_cov_cached_groups, llg_cov_n_cached_groups, llg_cov_cached_capacity,
+                         group, "coverage layouts");
         group->layouts = (llg_cov_layout_t**)llg_checked_calloc(group->n_points, sizeof(void*),
                                                                 "coverage layouts");
-        LLG_COV_PUSH(llg_cov_cached_groups, llg_cov_n_cached_groups, llg_cov_cached_capacity,
-                     group, "coverage layouts");
     }
     llg_cov_layout_t* shared = group->layouts[index];
     if (shared && (point->kind != LLG_COV_POINT_AUTO || shared->auto_bin_max == auto_bin_max))
@@ -641,6 +665,24 @@ static void llg_cov_count(llg_cov_point_state_t* state, uint64_t bin) {
     }
 }
 
+static int64_t llg_cov_cover_rank(const llg_cov_layout_t* layout, uint64_t bin);
+
+// Count a value bin; a crossed coverpoint also notes the bin's coordinate
+// for the crosses of this sample.
+static void llg_cov_count_point(llg_cov_point_state_t* state, const llg_cov_point_t* point,
+                                uint64_t bin) {
+    llg_cov_count(state, bin);
+    if (!point->crossed) return;
+    int64_t rank = llg_cov_cover_rank(state->layout, bin);
+    if (rank < 0) return;
+    if (state->n_hits == state->hit_capacity) {
+        state->hit_capacity = state->hit_capacity ? state->hit_capacity * 2u : 4u;
+        state->hits = llg_cov_grow(state->hits, state->hit_capacity, sizeof(uint64_t),
+                                   "coverage cross");
+    }
+    state->hits[state->n_hits++] = (uint64_t)rank;
+}
+
 // The rank of `bin` among the coverable bins, or -1 when it is not one.
 static int64_t llg_cov_cover_rank(const llg_cov_layout_t* layout, uint64_t bin) {
     uint32_t lo = 0, hi = layout->n_cover;
@@ -653,10 +695,579 @@ static int64_t llg_cov_cover_rank(const llg_cov_layout_t* layout, uint64_t bin) 
     return (int64_t)(layout->cover_rank[lo] + (bin - layout->cover[lo].lo));
 }
 
+// ── Crosses (19.6) ────────────────────────────────────────────────────────
+//
+// A cross layout splits each dimension's coordinates (the crossed
+// coverpoint's coverable bins, ranked) into runs whose coordinates belong to
+// the same boxes; a run's signature is that box set. A sampled product
+// belongs to the boxes in the AND of its coordinates' signatures: none makes
+// it an automatic cross bin; otherwise it counts in the user bins of those
+// boxes, unless an ignore or illegal box holds it (19.6.2, 19.6.3).
+
+struct llg_cov_xlayout {
+    struct llg_cov_xlayout* next_all;
+    uint32_t n_dims;
+    uint32_t words;  // signature words
+    uint64_t* sizes;  // coordinates per dimension
+    uint64_t* strides;  // automatic bin index = sum of rank * stride
+    uint32_t* n_runs;
+    llg_cov_span_t** runs;
+    uint64_t** sigs;  // per dimension: `words` per run
+    uint64_t* bin_masks;  // per bin: `words` of its boxes
+    uint64_t* removal;  // boxes of ignore and illegal bins
+    const llg_cov_layout_t** from;  // the point layouts it was built from
+    uint64_t product;  // the number of cross products
+    uint64_t n_auto;  // Bc of 19.11.2
+    uint64_t n_user;  // Bu of 19.11.2
+    uint8_t* significant;  // per bin: a `bins` bin with a product left
+};
+typedef struct llg_cov_xlayout llg_cov_xlayout_t;
+
+typedef struct llg_cov_xstate {
+    const llg_cov_xlayout_t* layout;
+    uint64_t* counts;  // per bin
+    uint64_t* stamp;  // per bin: the sample that last counted it
+} llg_cov_xstate_t;
+
+static llg_cov_xlayout_t* llg_cov_xlayouts_all;
+
+// Rank spans of the coverable bins in the counter range bins.lo..bins.hi.
+static size_t llg_cov_rank_spans(const llg_cov_layout_t* layout, llg_cov_span_t bins,
+                                 llg_cov_span_t** out, size_t n, size_t* cap) {
+    uint32_t lo = 0, hi = layout->n_cover;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        if (layout->cover[mid].hi < bins.lo) lo = mid + 1u;
+        else hi = mid;
+    }
+    for (uint32_t c = lo; c < layout->n_cover && layout->cover[c].lo <= bins.hi; ++c) {
+        uint64_t first = layout->cover[c].lo > bins.lo ? layout->cover[c].lo : bins.lo;
+        uint64_t last = layout->cover[c].hi < bins.hi ? layout->cover[c].hi : bins.hi;
+        llg_cov_span_t ranks = {layout->cover_rank[c] + (first - layout->cover[c].lo),
+                                layout->cover_rank[c] + (last - layout->cover[c].lo)};
+        LLG_COV_PUSH(*out, n, *cap, ranks, "coverage cross");
+    }
+    return n;
+}
+
+// The coordinates of one select condition, as sorted disjoint rank spans.
+static size_t llg_cov_select_spans(const llg_cov_inst_t* inst, const llg_cov_cross_t* cross,
+                                   const llg_cov_xbin_t* xbin, const llg_cov_select_t* select,
+                                   llg_cov_span_t** out) {
+    uint32_t index = cross->dims[select->dim];
+    const llg_cov_point_t* point = &inst->group->points[index];
+    const llg_cov_layout_t* layout = inst->points[index].layout;
+    size_t n = 0, cap = 0;
+    uint64_t size = layout->n_coverable;
+    if (!select->intersect) {
+        if (select->decl < 0) {
+            if (size) {
+                llg_cov_span_t all = {0, size - 1u};
+                LLG_COV_PUSH(*out, n, cap, all, "coverage cross");
+            }
+        } else if (layout->decl_size[select->decl]) {
+            uint64_t base = layout->decl_base[select->decl];
+            llg_cov_span_t bins = {base, base + layout->decl_size[select->decl] - 1u};
+            n = llg_cov_rank_spans(layout, bins, out, n, &cap);
+        }
+    } else {
+        // 19.6: the bins whose values intersect the listed values.
+        llg_cov_bin_t named = {xbin->name, xbin->site, LLG_COV_BIN_BINS, 0, 0, -1, 0, 0, 0};
+        llg_cov_span_t* keys = NULL;
+        size_t n_keys = 0, keys_cap = 0;
+        for (uint32_t i = 0; i < select->n_items; ++i) {
+            llg_cov_span_t span;
+            if (llg_cov_item_keys(inst, point, &named, &cross->items[select->first_item + i], &span))
+                LLG_COV_PUSH(keys, n_keys, keys_cap, span, "coverage cross");
+        }
+        n_keys = llg_cov_spans_merge(keys, n_keys);
+        llg_cov_span_t* bins = NULL;
+        size_t n_bins = 0, bins_cap = 0;
+        for (size_t k = 0; k < n_keys; ++k) {
+            uint64_t lo = keys[k].lo, hi = keys[k].hi;
+            uint32_t s = 0, end = layout->n_segments;
+            while (s < end) {
+                uint32_t mid = s + (end - s) / 2u;
+                if (layout->segments[mid].hi < lo) s = mid + 1u;
+                else end = mid;
+            }
+            uint64_t next = lo;
+            int exhausted = 0;
+            for (; s < layout->n_segments && layout->segments[s].lo <= hi; ++s) {
+                const llg_cov_seg_t* segment = &layout->segments[s];
+                uint64_t first = segment->lo > lo ? segment->lo : lo;
+                uint64_t last = segment->hi < hi ? segment->hi : hi;
+                if (point->kind != LLG_COV_POINT_EXPLICIT && select->decl < 0 && first > next)
+                    n_bins = llg_cov_auto_spans(point, layout, next, first - 1u, &bins, n_bins,
+                                                &bins_cap);
+                if (last == UINT64_MAX) exhausted = 1;
+                else next = last + 1u;
+                if (segment->removed) continue;
+                for (uint32_t e = 0; e < segment->count; ++e) {
+                    llg_cov_entry_t entry = layout->entries[segment->first + e];
+                    if (select->decl >= 0 && entry.decl != (uint32_t)select->decl) continue;
+                    entry.pos += first - segment->lo;
+                    llg_cov_span_t span = llg_cov_entry_bins(&entry, first, last);
+                    LLG_COV_PUSH(bins, n_bins, bins_cap, span, "coverage cross");
+                }
+            }
+            if (point->kind != LLG_COV_POINT_EXPLICIT && select->decl < 0 && !exhausted &&
+                next <= hi)
+                n_bins = llg_cov_auto_spans(point, layout, next, hi, &bins, n_bins, &bins_cap);
+        }
+        for (size_t b = 0; b < n_bins; ++b) n = llg_cov_rank_spans(layout, bins[b], out, n, &cap);
+        free(bins);
+        free(keys);
+    }
+    n = llg_cov_spans_merge(*out, n);
+    if (!select->negate) return n;
+    // `!` selects the coordinates of the dimension the condition leaves out.
+    llg_cov_span_t* rest = NULL;
+    size_t n_rest = 0, rest_cap = 0;
+    uint64_t next = 0;
+    for (size_t i = 0; i < n && next < size; ++i) {
+        if ((*out)[i].lo > next) {
+            llg_cov_span_t gap = {next, (*out)[i].lo - 1u};
+            LLG_COV_PUSH(rest, n_rest, rest_cap, gap, "coverage cross");
+        }
+        next = (*out)[i].hi + 1u;
+    }
+    if (next < size) {
+        llg_cov_span_t gap = {next, size - 1u};
+        LLG_COV_PUSH(rest, n_rest, rest_cap, gap, "coverage cross");
+    }
+    free(*out);
+    *out = rest;
+    return n_rest;
+}
+
+// The intersection of two sorted disjoint span lists, into `out`.
+static size_t llg_cov_spans_and(const llg_cov_span_t* a, size_t n_a, const llg_cov_span_t* b,
+                                size_t n_b, llg_cov_span_t** out) {
+    size_t n = 0, cap = 0, i = 0, j = 0;
+    while (i < n_a && j < n_b) {
+        uint64_t lo = a[i].lo > b[j].lo ? a[i].lo : b[j].lo;
+        uint64_t hi = a[i].hi < b[j].hi ? a[i].hi : b[j].hi;
+        if (lo <= hi) {
+            llg_cov_span_t span = {lo, hi};
+            LLG_COV_PUSH(*out, n, cap, span, "coverage cross");
+        }
+        if (a[i].hi < b[j].hi) i++;
+        else j++;
+    }
+    return n;
+}
+
+static int llg_cov_spans_hold(const llg_cov_span_t* spans, size_t n, uint64_t value) {
+    size_t lo = 0, hi = n;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2u;
+        if (spans[mid].hi < value) lo = mid + 1u;
+        else hi = mid;
+    }
+    return lo < n && spans[lo].lo <= value;
+}
+
+static void llg_cov_xlayout_error(const llg_cov_inst_t* inst, const llg_cov_cross_t* cross,
+                                  const char* what) {
+    fprintf(stderr,
+            "llg: runtime error: covergroup `%s` cross `%s` %s; its bins are not counted (llg "
+            "limitation)\n",
+            inst->group->name, cross->name, what);
+    llg_rt_mark_failed();
+}
+
+typedef struct {
+    const uint64_t* sig;
+    uint64_t size;
+} llg_cov_xclass_t;
+
+static uint32_t llg_cov_sort_words;
+static int llg_cov_xclass_order(const void* a, const void* b) {
+    const llg_cov_xclass_t* x = (const llg_cov_xclass_t*)a;
+    const llg_cov_xclass_t* y = (const llg_cov_xclass_t*)b;
+    return memcmp(x->sig, y->sig, llg_cov_sort_words * sizeof(uint64_t));
+}
+
+// Bb, Bc and Bu of 19.11.2: products are enumerated per class of runs with
+// one signature in every dimension, so the work follows the select
+// expressions, not the number of products.
+static void llg_cov_xlayout_count(const llg_cov_inst_t* inst, const llg_cov_cross_t* cross,
+                                  llg_cov_xlayout_t* xl) {
+    uint32_t dims = xl->n_dims, words = xl->words;
+    llg_cov_xclass_t** classes =
+        (llg_cov_xclass_t**)llg_checked_calloc(dims, sizeof(void*), "coverage cross");
+    size_t* n_classes = (size_t*)llg_checked_calloc(dims, sizeof(size_t), "coverage cross");
+    uint64_t tuples = 1;
+    int too_many = 0;
+    for (uint32_t d = 0; d < dims; ++d) {
+        size_t runs = xl->n_runs[d];
+        llg_cov_xclass_t* list =
+            (llg_cov_xclass_t*)llg_checked_calloc(runs ? runs : 1u, sizeof(*list), "coverage cross");
+        for (size_t r = 0; r < runs; ++r)
+            list[r] = (llg_cov_xclass_t){xl->sigs[d] + r * words,
+                                         xl->runs[d][r].hi - xl->runs[d][r].lo + 1u};
+        llg_cov_sort_words = words;
+        qsort(list, runs, sizeof(*list), llg_cov_xclass_order);
+        size_t unique = 0;
+        for (size_t r = 0; r < runs; ++r) {
+            if (unique && memcmp(list[unique - 1u].sig, list[r].sig, words * sizeof(uint64_t)) == 0)
+                list[unique - 1u].size += list[r].size;
+            else list[unique++] = list[r];
+        }
+        classes[d] = list;
+        n_classes[d] = unique;
+        if (unique && tuples > LLG_COV_CROSS_CLASSES / unique) too_many = 1;
+        else tuples *= unique ? unique : 1u;
+    }
+    if (too_many) {
+        llg_cov_xlayout_error(inst, cross, "has select expressions with too many value classes");
+        xl->n_auto = 0;
+    } else if (xl->product) {
+        uint64_t* acc = (uint64_t*)llg_checked_calloc(words, sizeof(uint64_t), "coverage cross");
+        size_t* pick = (size_t*)llg_checked_calloc(dims, sizeof(size_t), "coverage cross");
+        uint64_t in_boxes = 0;
+        for (;;) {
+            uint64_t size = 1;
+            for (uint32_t w = 0; w < words; ++w) acc[w] = ~UINT64_C(0);
+            for (uint32_t d = 0; d < dims; ++d) {
+                const llg_cov_xclass_t* cls = &classes[d][pick[d]];
+                size *= cls->size;
+                for (uint32_t w = 0; w < words; ++w) acc[w] &= cls->sig[w];
+            }
+            int any = 0, removed = 0;
+            for (uint32_t w = 0; w < words; ++w) {
+                any |= acc[w] != 0;
+                removed |= (acc[w] & xl->removal[w]) != 0;
+            }
+            if (any) {
+                in_boxes += size;
+                for (uint32_t b = 0; b < cross->n_bins && !removed; ++b) {
+                    if (cross->bins[b].kind != LLG_COV_BIN_BINS || xl->significant[b]) continue;
+                    for (uint32_t w = 0; w < words; ++w)
+                        if (acc[w] & xl->bin_masks[(size_t)b * words + w]) xl->significant[b] = 1;
+                }
+            }
+            uint32_t d = 0;
+            while (d < dims && ++pick[d] == n_classes[d]) pick[d++] = 0;
+            if (d == dims) break;
+        }
+        xl->n_auto = xl->product - in_boxes;
+        free(pick);
+        free(acc);
+    }
+    for (uint32_t b = 0; b < cross->n_bins; ++b) xl->n_user += xl->significant[b];
+    for (uint32_t d = 0; d < dims; ++d) free(classes[d]);
+    free(classes);
+    free(n_classes);
+}
+
+static llg_cov_xlayout_t* llg_cov_build_xlayout(const llg_cov_inst_t* inst, uint32_t index) {
+    const llg_cov_cross_t* cross = &inst->group->crosses[index];
+    uint32_t dims = cross->n_dims, boxes = cross->n_boxes;
+    uint32_t words = boxes ? (boxes + 63u) / 64u : 1u;
+    llg_cov_xlayout_t* xl = (llg_cov_xlayout_t*)llg_checked_calloc(1, sizeof(*xl), "coverage cross");
+    xl->n_dims = dims;
+    xl->words = words;
+    xl->sizes = (uint64_t*)llg_checked_calloc(dims, sizeof(uint64_t), "coverage cross");
+    xl->strides = (uint64_t*)llg_checked_calloc(dims, sizeof(uint64_t), "coverage cross");
+    xl->n_runs = (uint32_t*)llg_checked_calloc(dims, sizeof(uint32_t), "coverage cross");
+    xl->runs = (llg_cov_span_t**)llg_checked_calloc(dims, sizeof(void*), "coverage cross");
+    xl->sigs = (uint64_t**)llg_checked_calloc(dims, sizeof(void*), "coverage cross");
+    xl->from = (const llg_cov_layout_t**)llg_checked_calloc(dims, sizeof(void*), "coverage cross");
+    size_t bins = cross->n_bins ? cross->n_bins : 1u;
+    xl->bin_masks = (uint64_t*)llg_checked_calloc(bins * words, sizeof(uint64_t), "coverage cross");
+    xl->removal = (uint64_t*)llg_checked_calloc(words, sizeof(uint64_t), "coverage cross");
+    xl->significant = (uint8_t*)llg_checked_calloc(bins, 1, "coverage cross");
+    xl->product = 1;
+    int overflow = 0;
+    for (uint32_t d = 0; d < dims; ++d) {
+        const llg_cov_layout_t* layout = inst->points[cross->dims[d]].layout;
+        xl->from[d] = layout;
+        xl->sizes[d] = layout->n_coverable;
+        xl->strides[d] = xl->product;
+        if (xl->sizes[d] && xl->product > UINT64_MAX / xl->sizes[d]) overflow = 1;
+        else xl->product *= xl->sizes[d];
+    }
+    uint32_t* box_bin = (uint32_t*)llg_checked_calloc(boxes ? boxes : 1u, sizeof(uint32_t),
+                                                      "coverage cross");
+    for (uint32_t b = 0; b < cross->n_bins; ++b) {
+        const llg_cov_xbin_t* xbin = &cross->bins[b];
+        for (uint32_t k = 0; k < xbin->n_boxes; ++k) {
+            uint32_t box = xbin->first_box + k;
+            box_bin[box] = b;
+            xl->bin_masks[(size_t)b * words + box / 64u] |= UINT64_C(1) << (box % 64u);
+            if (xbin->kind != LLG_COV_BIN_BINS) xl->removal[box / 64u] |= UINT64_C(1) << (box % 64u);
+        }
+    }
+    // Each condition once, then each box's coordinates per dimension.
+    llg_cov_span_t** select_spans = (llg_cov_span_t**)llg_checked_calloc(
+        cross->n_selects ? cross->n_selects : 1u, sizeof(void*), "coverage cross");
+    size_t* select_n = (size_t*)llg_checked_calloc(cross->n_selects ? cross->n_selects : 1u,
+                                                   sizeof(size_t), "coverage cross");
+    for (uint32_t s = 0; s < cross->n_selects; ++s) {
+        // The bin that names a condition, for 19.5.6 warnings.
+        const llg_cov_xbin_t* owner = &cross->bins[0];
+        for (uint32_t box = 0; box < boxes; ++box)
+            for (uint32_t k = 0; k < cross->boxes[box].n_selects; ++k)
+                if (cross->box_selects[cross->boxes[box].first_select + k] == s)
+                    owner = &cross->bins[box_bin[box]];
+        select_n[s] = llg_cov_select_spans(inst, cross, owner, &cross->selects[s], &select_spans[s]);
+    }
+    for (uint32_t d = 0; d < dims; ++d) {
+        uint64_t size = xl->sizes[d];
+        llg_cov_span_t** box_spans =
+            (llg_cov_span_t**)llg_checked_calloc(boxes ? boxes : 1u, sizeof(void*), "coverage cross");
+        size_t* box_n = (size_t*)llg_checked_calloc(boxes ? boxes : 1u, sizeof(size_t), "coverage cross");
+        size_t n_bounds = 0, bounds_cap = 0;
+        uint64_t* bounds = NULL;
+        for (uint32_t box = 0; box < boxes; ++box) {
+            llg_cov_span_t* spans = NULL;
+            size_t n = 0, cap = 0;
+            if (size) {
+                llg_cov_span_t all = {0, size - 1u};
+                LLG_COV_PUSH(spans, n, cap, all, "coverage cross");
+            }
+            for (uint32_t k = 0; k < cross->boxes[box].n_selects; ++k) {
+                uint32_t s = cross->box_selects[cross->boxes[box].first_select + k];
+                if (cross->selects[s].dim != d) continue;
+                llg_cov_span_t* both = NULL;
+                n = llg_cov_spans_and(spans, n, select_spans[s], select_n[s], &both);
+                free(spans);
+                spans = both;
+            }
+            box_spans[box] = spans;
+            box_n[box] = n;
+            for (size_t i = 0; i < n; ++i) {
+                LLG_COV_PUSH(bounds, n_bounds, bounds_cap, spans[i].lo, "coverage cross");
+                if (spans[i].hi + 1u < size)
+                    LLG_COV_PUSH(bounds, n_bounds, bounds_cap, spans[i].hi + 1u, "coverage cross");
+            }
+        }
+        if (size) {
+            LLG_COV_PUSH(bounds, n_bounds, bounds_cap, UINT64_C(0), "coverage cross");
+            qsort(bounds, n_bounds, sizeof(uint64_t), llg_cov_u64_order);
+            size_t unique = 0;
+            for (size_t i = 0; i < n_bounds; ++i)
+                if (!unique || bounds[unique - 1u] != bounds[i]) bounds[unique++] = bounds[i];
+            if (unique > UINT32_MAX) llg_fatal_allocation("coverage cross", unique, sizeof(uint64_t));
+            xl->n_runs[d] = (uint32_t)unique;
+            xl->runs[d] = (llg_cov_span_t*)llg_checked_malloc(unique, sizeof(llg_cov_span_t),
+                                                              "coverage cross");
+            xl->sigs[d] = (uint64_t*)llg_checked_calloc(unique * words, sizeof(uint64_t),
+                                                        "coverage cross");
+            for (size_t r = 0; r < unique; ++r) {
+                llg_cov_span_t run = {bounds[r], r + 1u < unique ? bounds[r + 1u] - 1u : size - 1u};
+                xl->runs[d][r] = run;
+                for (uint32_t box = 0; box < boxes; ++box)
+                    if (llg_cov_spans_hold(box_spans[box], box_n[box], run.lo))
+                        xl->sigs[d][r * words + box / 64u] |= UINT64_C(1) << (box % 64u);
+            }
+        }
+        for (uint32_t box = 0; box < boxes; ++box) free(box_spans[box]);
+        free(box_spans);
+        free(box_n);
+        free(bounds);
+    }
+    for (uint32_t s = 0; s < cross->n_selects; ++s) free(select_spans[s]);
+    free(select_spans);
+    free(select_n);
+    free(box_bin);
+    if (overflow) {
+        llg_cov_xlayout_error(inst, cross, "has more than 2^64 cross products");
+        xl->product = 0;
+    } else {
+        llg_cov_xlayout_count(inst, cross, xl);
+    }
+    xl->next_all = llg_cov_xlayouts_all;
+    llg_cov_xlayouts_all = xl;
+    return xl;
+}
+
+static void llg_cov_xlayout_free(llg_cov_xlayout_t* xl) {
+    for (uint32_t d = 0; d < xl->n_dims; ++d) {
+        free(xl->runs[d]);
+        free(xl->sigs[d]);
+    }
+    free(xl->sizes);
+    free(xl->strides);
+    free(xl->n_runs);
+    free(xl->runs);
+    free(xl->sigs);
+    free(xl->from);
+    free(xl->bin_masks);
+    free(xl->removal);
+    free(xl->significant);
+    free(xl);
+}
+
+static void llg_cov_cache_group(llg_cov_group_t* group) {
+    if (group->layouts || group->xlayouts) return;
+    LLG_COV_PUSH(llg_cov_cached_groups, llg_cov_n_cached_groups, llg_cov_cached_capacity, group,
+                 "coverage layouts");
+}
+
+// A cross's layout for a ready instance: shared while every crossed
+// coverpoint uses the layout the shared one was built from.
+static const llg_cov_xlayout_t* llg_cov_xlayout_for(llg_cov_inst_t* inst, uint32_t index) {
+    llg_cov_group_t* group = inst->group;
+    const llg_cov_cross_t* cross = &group->crosses[index];
+    if (cross->dynamic) return llg_cov_build_xlayout(inst, index);
+    if (!group->xlayouts) {
+        llg_cov_cache_group(group);
+        group->xlayouts = (llg_cov_xlayout_t**)llg_checked_calloc(group->n_crosses, sizeof(void*),
+                                                                  "coverage layouts");
+    }
+    llg_cov_xlayout_t* shared = group->xlayouts[index];
+    if (shared) {
+        int same = 1;
+        for (uint32_t d = 0; d < cross->n_dims; ++d)
+            same &= shared->from[d] == inst->points[cross->dims[d]].layout;
+        if (same) return shared;
+        return llg_cov_build_xlayout(inst, index);
+    }
+    shared = llg_cov_build_xlayout(inst, index);
+    group->xlayouts[index] = shared;
+    return shared;
+}
+
+static void llg_cov_cross_ready(llg_cov_inst_t* inst, uint32_t index) {
+    llg_cov_point_state_t* state = &inst->points[inst->group->n_points + index];
+    if (!state->has_at_least) state->at_least = inst->at_least;
+    llg_cov_xstate_t* cross = (llg_cov_xstate_t*)llg_checked_calloc(1, sizeof(*cross), "coverage cross");
+    cross->layout = llg_cov_xlayout_for(inst, index);
+    size_t bins = inst->group->crosses[index].n_bins ? inst->group->crosses[index].n_bins : 1u;
+    cross->counts = (uint64_t*)llg_checked_calloc(bins, sizeof(uint64_t), "coverage cross");
+    cross->stamp = (uint64_t*)llg_checked_calloc(bins, sizeof(uint64_t), "coverage cross");
+    state->cross = cross;
+    if (cross->layout->product && cross->layout->product <= LLG_COV_DENSE_BINS)
+        state->dense = (uint64_t*)llg_checked_calloc((size_t)cross->layout->product,
+                                                     sizeof(uint64_t), "coverage cross");
+}
+
+void llg_cov_sample_begin(void* record) {
+    llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
+    if (inst) inst->serial++;
+}
+
+static const uint64_t* llg_cov_run_sig(const llg_cov_xlayout_t* xl, uint32_t d, uint64_t rank) {
+    uint32_t lo = 0, hi = xl->n_runs[d];
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        if (xl->runs[d][mid].hi < rank) lo = mid + 1u;
+        else hi = mid;
+    }
+    return xl->sigs[d] + (size_t)lo * xl->words;
+}
+
+void llg_cov_cross_hit(void* record, uint32_t index, const uint8_t* guards) {
+    llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
+    if (!inst || inst->stopped || index >= inst->group->n_crosses) return;
+    const llg_cov_cross_t* cross = &inst->group->crosses[index];
+    llg_cov_point_state_t* state = &inst->points[inst->group->n_points + index];
+    if (state->stopped || !state->cross) return;
+    const llg_cov_xlayout_t* xl = state->cross->layout;
+    if (!xl->product) return;
+    // A crossed coverpoint that counted nothing in this sample (disabled by
+    // its iff, stopped, or an X/Z value) leaves the cross unsampled
+    // (decision S45-D14).
+    for (uint32_t d = 0; d < cross->n_dims; ++d) {
+        const llg_cov_point_state_t* point = &inst->points[cross->dims[d]];
+        if (point->hit_serial != inst->serial || !point->n_hits) return;
+    }
+    uint32_t words = xl->words;
+    uint64_t acc_small[4];
+    uint64_t* acc = words <= 4u ? acc_small
+                                : (uint64_t*)llg_checked_calloc(words, sizeof(uint64_t),
+                                                                "coverage cross");
+    uint32_t pick[64];
+    uint32_t* picks = cross->n_dims <= 64u
+                          ? pick
+                          : (uint32_t*)llg_checked_calloc(cross->n_dims, sizeof(uint32_t),
+                                                          "coverage cross");
+    for (uint32_t d = 0; d < cross->n_dims; ++d) picks[d] = 0;
+    // A value in overlapping bins hits several coordinates: every product
+    // of them counts.
+    for (;;) {
+        uint64_t auto_index = 0;
+        for (uint32_t w = 0; w < words; ++w) acc[w] = ~UINT64_C(0);
+        for (uint32_t d = 0; d < cross->n_dims; ++d) {
+            uint64_t rank = inst->points[cross->dims[d]].hits[picks[d]];
+            auto_index += rank * xl->strides[d];
+            const uint64_t* sig = llg_cov_run_sig(xl, d, rank);
+            for (uint32_t w = 0; w < words; ++w) acc[w] &= sig[w];
+        }
+        int any = 0, removed = 0;
+        for (uint32_t w = 0; w < words; ++w) {
+            any |= acc[w] != 0;
+            removed |= (acc[w] & xl->removal[w]) != 0;
+        }
+        if (!any) {
+            llg_cov_count(state, auto_index);
+        } else {
+            for (uint32_t b = 0; b < cross->n_bins; ++b) {
+                const llg_cov_xbin_t* bin = &cross->bins[b];
+                int member = 0;
+                for (uint32_t w = 0; w < words; ++w)
+                    member |= (acc[w] & xl->bin_masks[(size_t)b * words + w]) != 0;
+                if (!member || (bin->guard >= 0 && guards && !guards[bin->guard])) continue;
+                // 19.6.2, 19.6.3: ignored and illegal products count in no
+                // bin; an illegal product is an error even when ignored.
+                if (removed && bin->kind == LLG_COV_BIN_BINS) continue;
+                if (bin->kind == LLG_COV_BIN_IGNORE) continue;
+                if (state->cross->stamp[b] == inst->serial) continue;
+                state->cross->stamp[b] = inst->serial;
+                if (bin->kind == LLG_COV_BIN_ILLEGAL) {
+                    fprintf(stderr,
+                            "llg: runtime error: covergroup `%s` cross `%s` sampled a product of "
+                            "illegal_bins `%s` at %s (IEEE 1800-2009 19.6.3)\n",
+                            inst->group->name, cross->name, bin->name, bin->site);
+                    llg_rt_mark_failed();
+                    continue;
+                }
+                if (state->cross->counts[b] != UINT64_MAX) state->cross->counts[b]++;
+            }
+        }
+        uint32_t d = 0;
+        while (d < cross->n_dims && ++picks[d] == inst->points[cross->dims[d]].n_hits)
+            picks[d++] = 0;
+        if (d == cross->n_dims) break;
+    }
+    if (acc != acc_small) free(acc);
+    if (picks != pick) free(picks);
+}
+
+// Covered and defined bins of one cross (19.11.2): automatic cross bins and
+// significant user bins.
+static void llg_cov_cross_bins(const llg_cov_inst_t* inst, uint32_t index, uint64_t* covered,
+                               uint64_t* defined) {
+    const llg_cov_point_state_t* state = &inst->points[inst->group->n_points + index];
+    const llg_cov_cross_t* cross = &inst->group->crosses[index];
+    *covered = 0;
+    *defined = 0;
+    if (!state->cross) return;
+    const llg_cov_xlayout_t* xl = state->cross->layout;
+    *defined = llg_cov_saturating_add(xl->n_auto, xl->n_user);
+    uint64_t at_least = state->at_least < 0 ? 0u : (uint64_t)state->at_least;
+    if (at_least == 0) {
+        *covered = *defined;
+        return;
+    }
+    for (uint32_t b = 0; b < cross->n_bins; ++b)
+        if (xl->significant[b] && state->cross->counts[b] >= at_least) (*covered)++;
+    if (state->dense) {
+        for (uint64_t i = 0; i < xl->product; ++i)
+            if (state->dense[i] >= at_least) (*covered)++;
+        return;
+    }
+    for (size_t slot = 0; slot < state->sparse.capacity; ++slot)
+        if (state->sparse.keys[slot] && state->sparse.counts[slot] >= at_least) (*covered)++;
+}
+
 // ── Instances ─────────────────────────────────────────────────────────────
 
 void* llg_cov_new(llg_cov_group_t* group) {
-    size_t points = group->n_points;
+    size_t points = (size_t)group->n_points + group->n_crosses;
     llg_cov_inst_t* inst = (llg_cov_inst_t*)llg_checked_calloc(
         1, sizeof(llg_cov_inst_t) + points * sizeof(llg_cov_point_state_t), "covergroup instance");
     inst->group = group;
@@ -724,7 +1335,7 @@ void llg_cov_option(void* record, int32_t point, uint32_t option, sv4_t value, c
         }
         return;
     }
-    if ((uint32_t)point >= inst->group->n_points) return;
+    if ((uint32_t)point >= inst->group->n_points + inst->group->n_crosses) return;
     llg_cov_point_state_t* state = &inst->points[point];
     switch (option) {
     case LLG_COV_OPTION_WEIGHT: state->weight = number; break;
@@ -775,6 +1386,7 @@ void llg_cov_ready(void* record) {
         const llg_cov_trans_t* trans = inst->group->points[i].trans;
         if (trans) state->history = llg_cov_history_new(trans);
     }
+    for (uint32_t k = 0; k < inst->group->n_crosses; ++k) llg_cov_cross_ready(inst, k);
 }
 
 static int llg_cov_guard(const llg_cov_point_t* point, uint32_t decl, const uint8_t* guards) {
@@ -1146,6 +1758,10 @@ void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value, const u
     const llg_cov_point_t* point = &inst->group->points[point_index];
     int known = !sv4_is_unknown(*value);
     uint64_t key = known ? llg_cov_key(point, sv4_to_u64(*value)) : 0u;
+    if (point->crossed) {
+        state->hit_serial = inst->serial;
+        state->n_hits = 0;
+    }
     if (state->history) llg_cov_transitions(inst, state->history, point, known, key, guards);
     // Bins only hold 2-state values (19.5.2, 19.5.3, 19.5.6).
     if (!known) return;
@@ -1172,14 +1788,14 @@ void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value, const u
                     uint64_t element = (entry->pos + (key - segment->lo)) / entry->div;
                     bin += element < entry->last ? element : entry->last;
                 }
-                llg_cov_count(state, bin);
+                llg_cov_count_point(state, point, bin);
             }
             return;
         }
     }
     switch (point->kind) {
     case LLG_COV_POINT_AUTO:
-        llg_cov_count(state, llg_cov_auto_bin(point, layout->n_auto, key));
+        llg_cov_count_point(state, point, llg_cov_auto_bin(point, layout->n_auto, key));
         return;
     case LLG_COV_POINT_ENUM: {
         uint32_t lo = 0, hi = point->n_keys;
@@ -1188,7 +1804,7 @@ void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value, const u
             if (point->keys[mid] < key) lo = mid + 1u;
             else hi = mid;
         }
-        if (lo < point->n_keys && point->keys[lo] == key) llg_cov_count(state, lo);
+        if (lo < point->n_keys && point->keys[lo] == key) llg_cov_count_point(state, point, lo);
         return;
     }
     default:
@@ -1212,7 +1828,7 @@ void llg_cov_control(void* record, int32_t point, int start) {
         if (!start)
             for (uint32_t i = 0; i < inst->group->n_points; ++i)
                 llg_cov_history_reset(inst->points[i].history);
-    } else if ((uint32_t)point < inst->group->n_points) {
+    } else if ((uint32_t)point < inst->group->n_points + inst->group->n_crosses) {
         inst->points[point].stopped = (uint8_t)!start;
         if (!start) llg_cov_history_reset(inst->points[point].history);
     }
@@ -1342,10 +1958,6 @@ static void llg_cov_value_bins(const llg_cov_inst_t* inst, uint32_t index, uint6
     }
 }
 
-static uint64_t llg_cov_saturating_add(uint64_t a, uint64_t b) {
-    return b > UINT64_MAX - a ? UINT64_MAX : a + b;
-}
-
 // Covered and defined transition bins of one coverpoint: scalar bins with a
 // surviving sequence, and the sequences of array bins.
 static void llg_cov_transition_bins(const llg_cov_inst_t* inst, uint32_t index,
@@ -1371,6 +1983,10 @@ static void llg_cov_transition_bins(const llg_cov_inst_t* inst, uint32_t index,
 
 static void llg_cov_point_bins(const llg_cov_inst_t* inst, uint32_t index, uint64_t* covered,
                                uint64_t* defined) {
+    if (index >= inst->group->n_points) {
+        llg_cov_cross_bins(inst, index - inst->group->n_points, covered, defined);
+        return;
+    }
     llg_cov_value_bins(inst, index, covered, defined);
     uint64_t more_covered, more_defined;
     llg_cov_transition_bins(inst, index, &more_covered, &more_defined);
@@ -1388,8 +2004,9 @@ static int llg_cov_inst_score(const llg_cov_inst_t* inst, int32_t point, double*
         *score = 100.0 * (double)covered / (double)defined;
         return 1;
     }
+    // Coverpoints and crosses, weighted by option.weight (19.11).
     double numerator = 0.0, denominator = 0.0;
-    for (uint32_t i = 0; i < inst->group->n_points; ++i) {
+    for (uint32_t i = 0; i < inst->group->n_points + inst->group->n_crosses; ++i) {
         uint64_t covered, defined;
         llg_cov_point_bins(inst, i, &covered, &defined);
         if (!defined || inst->points[i].weight <= 0) continue;
@@ -1416,7 +2033,8 @@ double llg_cov_inst_coverage(const void* record, int32_t point) {
 static int llg_cov_type_score(const llg_cov_type_t* type, int32_t point, double* score) {
     double numerator = 0.0, denominator = 0.0;
     for (const llg_cov_inst_t* inst = type->first; inst; inst = inst->next) {
-        if (point >= 0 && (uint32_t)point >= inst->group->n_points) continue;
+        if (point >= 0 && (uint32_t)point >= inst->group->n_points + inst->group->n_crosses)
+            continue;
         double value;
         if (!llg_cov_inst_score(inst, point, &value)) continue;
         int64_t weight = point < 0 ? inst->weight : inst->points[point].weight;
@@ -1465,6 +2083,18 @@ void llg_cov_release_all(void) {
                 free(inst->points[i].sparse.keys);
                 free(inst->points[i].sparse.counts);
                 llg_cov_history_free(inst->points[i].history);
+                free(inst->points[i].hits);
+            }
+            for (uint32_t k = 0; k < inst->group->n_crosses; ++k) {
+                llg_cov_point_state_t* state = &inst->points[inst->group->n_points + k];
+                free(state->dense);
+                free(state->sparse.keys);
+                free(state->sparse.counts);
+                if (state->cross) {
+                    free(state->cross->counts);
+                    free(state->cross->stamp);
+                    free(state->cross);
+                }
             }
             free(inst->slots);
             free(inst);
@@ -1488,6 +2118,13 @@ void llg_cov_release_all(void) {
     for (size_t i = 0; i < llg_cov_n_cached_groups; ++i) {
         free(llg_cov_cached_groups[i]->layouts);
         llg_cov_cached_groups[i]->layouts = NULL;
+        free(llg_cov_cached_groups[i]->xlayouts);
+        llg_cov_cached_groups[i]->xlayouts = NULL;
+    }
+    while (llg_cov_xlayouts_all) {
+        llg_cov_xlayout_t* xl = llg_cov_xlayouts_all;
+        llg_cov_xlayouts_all = xl->next_all;
+        llg_cov_xlayout_free(xl);
     }
     free(llg_cov_cached_groups);
     llg_cov_cached_groups = NULL;
@@ -1499,6 +2136,8 @@ void llg_cov_release_all(void) {
         free(layout->entries);
         free(layout->cover);
         free(layout->cover_rank);
+        free(layout->decl_base);
+        free(layout->decl_size);
         free(layout);
     }
 }

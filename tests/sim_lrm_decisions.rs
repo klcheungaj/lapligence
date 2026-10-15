@@ -2089,3 +2089,44 @@ fn s45_d11_length_zero_repetition() {
         "S45-D11_length_zero_repetition.sv:16:29: transition bins `t` of coverpoint `cp` in covergroup `g` specify a transition of length 0",
     );
 }
+
+#[test]
+fn s45_d12_cross_empty_bins() {
+    run_decision(
+        "S45-D12_cross_empty_bins",
+        include_str!("fixtures/sim/lrm_decisions/S45-D12_cross_empty_bins.out"),
+    );
+}
+
+#[test]
+fn s45_d13_binsof_outside_cross() {
+    sim_cli::reject_case(
+        SUITE,
+        "S45-D13_binsof_outside_cross",
+        "S45-D13_binsof_outside_cross.sv:17:35: binsof in bins `sel` of cross `ab` in covergroup `g` names coverpoint `cd`, which the cross does not cross",
+    );
+}
+
+#[test]
+fn s45_d14_cross_needs_every_point() {
+    run_decision(
+        "S45-D14_cross_needs_every_point",
+        include_str!("fixtures/sim/lrm_decisions/S45-D14_cross_needs_every_point.out"),
+    );
+}
+
+#[test]
+fn s45_d15_overlapping_cross_products() {
+    run_decision(
+        "S45-D15_overlapping_cross_products",
+        include_str!("fixtures/sim/lrm_decisions/S45-D15_overlapping_cross_products.out"),
+    );
+}
+
+#[test]
+fn s45_d16_negated_bin_condition() {
+    run_decision(
+        "S45-D16_negated_bin_condition",
+        include_str!("fixtures/sim/lrm_decisions/S45-D16_negated_bin_condition.out"),
+    );
+}

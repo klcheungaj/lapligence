@@ -22,6 +22,9 @@ pub struct IrCovergroup {
     pub(in crate::sim) name: String,
     pub(in crate::sim) coverage_type: usize,
     pub(in crate::sim) points: Vec<IrCoverpoint>,
+    /// Crosses (19.6); coverage items are numbered points first, then
+    /// crosses.
+    pub(in crate::sim) crosses: Vec<IrCoverCross>,
     /// Argument values bins read, filled by [`IrCoverageStmt::Slot`] at
     /// `new` (19.5).
     pub(in crate::sim) slots: u32,
@@ -50,6 +53,60 @@ pub struct IrCoverpoint {
     pub(in crate::sim) items: Vec<IrCoverItem>,
     /// Transition bins (19.5.1), when the coverpoint declares any.
     pub(in crate::sim) transitions: Option<IrCoverTransitions>,
+    /// A cross reads the bins each sample counts.
+    pub(in crate::sim) crossed: bool,
+}
+
+/// One cross (19.6). Its coordinates along each crossed coverpoint are that
+/// coverpoint's coverable bins, ranked; each bin's select expression is a
+/// union of boxes, a box an intersection of select conditions.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCoverCross {
+    pub(in crate::sim) name: String,
+    /// The crossed coverpoints, by index.
+    pub(in crate::sim) points: Vec<u32>,
+    /// `type_option.weight` of the cross (Table 19-3).
+    pub(in crate::sim) type_weight: i64,
+    pub(in crate::sim) selects: Vec<IrCoverSelect>,
+    pub(in crate::sim) bins: Vec<IrCoverCrossBin>,
+    /// `intersect` values, resolved against the crossed coverpoint's type.
+    pub(in crate::sim) items: Vec<IrCoverItem>,
+}
+
+/// `binsof(point[.bin]) [intersect { items }]`, possibly negated: a set of
+/// coordinates along dimension `dim`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCoverSelect {
+    pub(in crate::sim) dim: u32,
+    /// The value bins declaration of the coverpoint, by index.
+    pub(in crate::sim) decl: Option<u32>,
+    pub(in crate::sim) intersect: bool,
+    pub(in crate::sim) first_item: u32,
+    pub(in crate::sim) n_items: u32,
+    pub(in crate::sim) negate: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCoverCrossBin {
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) site: String,
+    /// `Bins`, `Ignore` or `Illegal`.
+    pub(in crate::sim) kind: IrCoverBinKind,
+    pub(in crate::sim) guard: Option<u32>,
+    /// The select expression in disjunctive form: select indices per box.
+    pub(in crate::sim) boxes: Vec<Vec<u32>>,
+}
+
+impl IrCoverCross {
+    /// Whether an `intersect` value reads a slot.
+    pub(in crate::sim) fn dynamic(&self) -> bool {
+        self.items.iter().any(|item| {
+            !matches!(
+                (item.lo, item.hi),
+                (IrCoverBound::Key(_), IrCoverBound::Key(_))
+            )
+        })
+    }
 }
 
 /// The transition bins of one coverpoint. Keys fall into classes: class `i`
@@ -262,6 +319,15 @@ pub struct IrCoverageSample {
     pub(in crate::sim) history: bool,
 }
 
+/// One cross sample, after every coverpoint of the group: counts the
+/// products of the bins the crossed coverpoints counted, unless `iff` is
+/// false.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCoverageCrossSample {
+    pub(in crate::sim) cross: u32,
+    pub(in crate::sim) iff: Option<IrExpr>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrCoverageStmt {
     /// Store a new runtime record of `group` into the chandle storage that
@@ -292,6 +358,7 @@ pub enum IrCoverageStmt {
         record: IrChandleExpr,
         guards: Vec<IrExpr>,
         points: Vec<IrCoverageSample>,
+        crosses: Vec<IrCoverageCrossSample>,
     },
     /// `start()` / `stop()`; `point` `None` is the whole instance.
     Control {
@@ -385,6 +452,12 @@ impl IrCovergroup {
             if !items_valid || !bins_valid {
                 return Err(format!("coverpoint `{}` bins are invalid", point.name));
             }
+            if point.crossed && point.transitions.is_some() {
+                return Err(format!(
+                    "coverpoint `{}` is crossed and has transition bins",
+                    point.name
+                ));
+            }
             if let Some(transitions) = &point.transitions {
                 if !transitions.valid(max, self.guards) {
                     return Err(format!(
@@ -392,6 +465,41 @@ impl IrCovergroup {
                         point.name
                     ));
                 }
+            }
+        }
+        for cross in &self.crosses {
+            let points_valid = cross.points.len() >= 2
+                && cross.points.iter().all(|point| {
+                    self.points
+                        .get(*point as usize)
+                        .is_some_and(|point| point.crossed)
+                });
+            let selects_valid = cross.selects.iter().all(|select| {
+                let point = cross
+                    .points
+                    .get(select.dim as usize)
+                    .and_then(|point| self.points.get(*point as usize));
+                point.is_some_and(|point| {
+                    select
+                        .decl
+                        .is_none_or(|decl| (decl as usize) < point.bins.len())
+                }) && (select.first_item as usize)
+                    .checked_add(select.n_items as usize)
+                    .is_some_and(|end| end <= cross.items.len())
+            });
+            let bins_valid = cross.bins.iter().all(|bin| {
+                matches!(
+                    bin.kind,
+                    IrCoverBinKind::Bins | IrCoverBinKind::Ignore | IrCoverBinKind::Illegal
+                ) && bin.guard.is_none_or(|guard| guard < self.guards)
+                    && bin
+                        .boxes
+                        .iter()
+                        .flatten()
+                        .all(|select| (*select as usize) < cross.selects.len())
+            });
+            if !points_valid || !selects_valid || !bins_valid {
+                return Err(format!("cross `{}` is invalid", cross.name));
             }
         }
         Ok(())
@@ -454,13 +562,19 @@ impl IrCoverageStmt {
     pub(in crate::sim) fn expressions(&self) -> Vec<&IrExpr> {
         match self {
             Self::Option { value, .. } | Self::Slot { value, .. } => vec![value],
-            Self::Sample { guards, points, .. } => guards
+            Self::Sample {
+                guards,
+                points,
+                crosses,
+                ..
+            } => guards
                 .iter()
                 .chain(
                     points
                         .iter()
                         .flat_map(|sample| sample.iff.iter().chain(std::iter::once(&sample.value))),
                 )
+                .chain(crosses.iter().filter_map(|cross| cross.iff.as_ref()))
                 .collect(),
             Self::Create { .. }
             | Self::Ready { .. }
@@ -475,7 +589,12 @@ impl IrCoverageStmt {
     pub(in crate::sim) fn expressions_mut(&mut self) -> Vec<&mut IrExpr> {
         match self {
             Self::Option { value, .. } | Self::Slot { value, .. } => vec![value],
-            Self::Sample { guards, points, .. } => guards
+            Self::Sample {
+                guards,
+                points,
+                crosses,
+                ..
+            } => guards
                 .iter_mut()
                 .chain(points.iter_mut().flat_map(|sample| {
                     sample
@@ -483,6 +602,7 @@ impl IrCoverageStmt {
                         .iter_mut()
                         .chain(std::iter::once(&mut sample.value))
                 }))
+                .chain(crosses.iter_mut().filter_map(|cross| cross.iff.as_mut()))
                 .collect(),
             Self::Create { .. }
             | Self::Ready { .. }

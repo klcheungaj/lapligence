@@ -15,15 +15,16 @@
 //! covergroup instances pays nothing.
 use super::*;
 use crate::core::db::{
-    CoverageBinKind, CoverageEvent, CoverageRepeat, CovergroupInfo, CoverpointInfo, EventSpec,
-    TypeId,
+    CoverageBinKind, CoverageEvent, CoverageRepeat, CoverageSelect, CoverageSelectKind,
+    CovergroupInfo, CoverpointInfo, EventSpec, TypeId,
 };
 use crate::sim::ir::{
     IrCapture, IrClass, IrClassField, IrClassFieldType, IrCoverAutomatic, IrCoverBin,
-    IrCoverBinKind, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverItem, IrCoverRepeat,
-    IrCoverageOption, IrCoverageQuery, IrCoverageSample, IrCoverageStmt, IrCoverageType,
-    IrCovergroup, IrCoverpoint, IrFormal, IrFunc, IrNativeAccessKind, IrObjectQuery, IrPreFn,
-    IrProcess, IrShape, IrUniquePriorityCheck,
+    IrCoverBinKind, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverCross, IrCoverCrossBin,
+    IrCoverItem, IrCoverRepeat, IrCoverSelect, IrCoverageCrossSample, IrCoverageOption,
+    IrCoverageQuery, IrCoverageSample, IrCoverageStmt, IrCoverageType, IrCovergroup, IrCoverpoint,
+    IrFormal, IrFunc, IrNativeAccessKind, IrObjectQuery, IrPreFn, IrProcess, IrShape,
+    IrUniquePriorityCheck,
 };
 
 /// Lowering state of one constructed covergroup declaration.
@@ -108,6 +109,10 @@ impl CoverageBound {
         }
     }
 }
+
+/// The most boxes (conjunctions of select conditions) one cross bin's
+/// select expression may expand to.
+const MAX_SELECT_BOXES: u64 = 1 << 10;
 
 /// The most key ranges one wildcard bins value may expand to (a power of
 /// two); a pattern with more open bits above its lowest fixed bit is
@@ -309,12 +314,6 @@ impl<'a> Codegen<'a> {
                 format!("covergroup `{name}` extends another covergroup, which IEEE 1800-2009 does not define"),
             ));
         }
-        if let Some(cross) = info.crosses.first() {
-            return Err(self.coverage_error(
-                *cross,
-                format!("cross coverage in covergroup `{name}` is not supported yet (SIM-045)"),
-            ));
-        }
         let embedded_owner = info
             .embedded
             .then(|| self.node(group).parent)
@@ -405,6 +404,12 @@ impl<'a> Codegen<'a> {
             points.push(self.coverpoint_table(&name, point, &metadata, &mut build)?);
             point_indices.insert(point, index as u32);
         }
+        let mut crosses = Vec::with_capacity(info.crosses.len());
+        for (index, cross) in info.crosses.iter().copied().enumerate() {
+            let table = self.cross_table(&name, cross, &info, &mut points, &mut build)?;
+            crosses.push(table);
+            point_indices.insert(cross, (info.coverpoints.len() + index) as u32);
+        }
         for setter in &info.options {
             self.check_group_option(&name, *setter)?;
         }
@@ -430,6 +435,7 @@ impl<'a> Codegen<'a> {
             name: name.clone(),
             coverage_type,
             points,
+            crosses,
             slots: build.slots.len() as u32,
             guards: build.guards.len() as u32,
             strobe: None,
@@ -780,6 +786,7 @@ impl<'a> Codegen<'a> {
             bins: Vec::with_capacity(info.bins.len()),
             items: Vec::new(),
             transitions: None,
+            crossed: false,
         };
         let mut transition_bins = Vec::new();
         let mut transition_nodes = Vec::new();
@@ -823,6 +830,293 @@ impl<'a> Codegen<'a> {
             coverpoint.transitions = Some(tables);
         }
         Ok(coverpoint)
+    }
+
+    /// One cross (19.6): its crossed coverpoints and its bins' select
+    /// expressions in disjunctive form.
+    fn cross_table(
+        &mut self,
+        group_name: &str,
+        cross: NodeId,
+        info: &CovergroupInfo,
+        points: &mut [IrCoverpoint],
+        build: &mut CoverageBuild,
+    ) -> Result<IrCoverCross, String> {
+        let metadata = self
+            .db
+            .coverage_cross(cross)
+            .cloned()
+            .ok_or_else(|| self.coverage_error(cross, "cross has no captured structure"))?;
+        let cross_name = self.node(cross).name.clone();
+        let describe = format!("cross `{cross_name}` in covergroup `{group_name}`");
+        if metadata.crosses_cross {
+            return Err(self.coverage_error(
+                cross,
+                format!(
+                    "{describe} crosses another cross, which IEEE 1800-2009 does not define (19.6)"
+                ),
+            ));
+        }
+        let mut dims = Vec::with_capacity(metadata.points.len());
+        for point in &metadata.points {
+            let index = info
+                .coverpoints
+                .iter()
+                .position(|candidate| candidate == point)
+                .ok_or_else(|| {
+                    self.coverage_error(
+                        cross,
+                        format!("{describe} crosses an item that is not a coverpoint of the covergroup (IEEE 1800-2009 19.6)"),
+                    )
+                })?;
+            if points[index].transitions.is_some() {
+                return Err(self.coverage_error(
+                    cross,
+                    format!(
+                        "{describe} crosses coverpoint `{}`, which has transition bins; llg crosses only value bins (llg limitation)",
+                        points[index].name
+                    ),
+                ));
+            }
+            dims.push(index as u32);
+        }
+        if dims.len() < 2 {
+            return Err(self.coverage_error(
+                cross,
+                format!("{describe} must cross at least two coverpoints (IEEE 1800-2009 19.6)"),
+            ));
+        }
+        let mut type_weight = 1;
+        for setter in &metadata.options {
+            let (scope, member, value) = self.coverage_option_parts(*setter).ok_or_else(|| {
+                self.coverage_error(*setter, "coverage option setter has no option member")
+            })?;
+            self.check_option(group_name, &scope, &member, value, *setter, false)?;
+            if scope == "type_option" && member == "weight" {
+                type_weight = self
+                    .eval_bound_i128(value)
+                    .ok()
+                    .and_then(|value| i64::try_from(value).ok())
+                    .unwrap_or(1);
+            }
+        }
+        let mut table = IrCoverCross {
+            name: cross_name,
+            points: dims.clone(),
+            type_weight,
+            selects: Vec::new(),
+            bins: Vec::with_capacity(metadata.bins.len()),
+            items: Vec::new(),
+        };
+        for bin in metadata.bins.iter().copied() {
+            let bin_info = self.db.coverage_bin(bin).cloned().ok_or_else(|| {
+                self.coverage_error(bin, "cross bins declaration has no structure")
+            })?;
+            let bin_name = self.node(bin).name.clone();
+            let kind = match bin_info.kind {
+                CoverageBinKind::Bins => IrCoverBinKind::Bins,
+                CoverageBinKind::Ignore => IrCoverBinKind::Ignore,
+                CoverageBinKind::Illegal => IrCoverBinKind::Illegal,
+            };
+            let select = bin_info
+                .select_expr
+                .as_ref()
+                .filter(|_| !(bin_info.with || bin_info.set || bin_info.array || bin_info.default));
+            let Some(select) = select else {
+                return Err(self.coverage_error(
+                    bin,
+                    format!(
+                        "bins `{bin_name}` of {describe} must be a select expression; set expressions, `with` clauses, bin arrays and `default` are not IEEE 1800-2009 cross bins (19.6)"
+                    ),
+                ));
+            };
+            let boxes = self.cross_select(
+                select,
+                false,
+                &metadata.points,
+                &dims,
+                points,
+                &mut table,
+                &describe,
+                &bin_name,
+                build,
+            )?;
+            let guard = bin_info.iff.map(|iff| {
+                build.guards.push(iff);
+                (build.guards.len() - 1) as u32
+            });
+            table.bins.push(IrCoverCrossBin {
+                name: bin_name,
+                site: Self::coverage_site(&build.path, self.node(bin)),
+                kind,
+                guard,
+                boxes,
+            });
+        }
+        for dim in &dims {
+            points[*dim as usize].crossed = true;
+        }
+        Ok(table)
+    }
+
+    /// A select expression (or its negation) as a union of boxes; negations
+    /// reach the conditions by De Morgan's laws.
+    #[allow(clippy::too_many_arguments)]
+    fn cross_select(
+        &mut self,
+        select: &CoverageSelect,
+        negate: bool,
+        cross_points: &[NodeId],
+        dims: &[u32],
+        points: &[IrCoverpoint],
+        table: &mut IrCoverCross,
+        describe: &str,
+        bin_name: &str,
+        build: &mut CoverageBuild,
+    ) -> Result<Vec<Vec<u32>>, String> {
+        let union = |mut a: Vec<Vec<u32>>, b: Vec<Vec<u32>>| {
+            a.extend(b);
+            a
+        };
+        let product = |a: Vec<Vec<u32>>, b: Vec<Vec<u32>>| {
+            let mut out = Vec::with_capacity(a.len() * b.len());
+            for left in &a {
+                for right in &b {
+                    let mut both = left.clone();
+                    both.extend(right);
+                    out.push(both);
+                }
+            }
+            out
+        };
+        let boxes = match &select.kind {
+            CoverageSelectKind::Condition { target, intersect } => {
+                let (point_node, decl) = if self.db.coverpoint(*target).is_some() {
+                    (*target, None)
+                } else if let Some(bin) = self.db.coverage_bin(*target).cloned() {
+                    (bin.point, Some(self.coverage_value_decl(bin.point, *target)))
+                } else {
+                    return Err(self.coverage_error(
+                        select.node,
+                        format!("binsof in bins `{bin_name}` of {describe} must name a coverpoint or a bin of one (IEEE 1800-2009 19.6)"),
+                    ));
+                };
+                let dim = cross_points
+                    .iter()
+                    .position(|point| *point == point_node)
+                    .ok_or_else(|| {
+                        self.coverage_error(
+                            select.node,
+                            format!(
+                                "binsof in bins `{bin_name}` of {describe} names coverpoint `{}`, which the cross does not cross (decision S45-D13)",
+                                self.coverpoint_name(point_node)
+                            ),
+                        )
+                    })?;
+                let decl = match decl {
+                    Some(Some(decl)) => Some(decl),
+                    // A transition bin cannot be crossed (checked above).
+                    Some(None) => {
+                        return Err(self.coverage_error(
+                            select.node,
+                            format!("binsof in bins `{bin_name}` of {describe} names a transition bin; llg crosses only value bins (llg limitation)"),
+                        ))
+                    }
+                    None => None,
+                };
+                let point = &points[dims[dim] as usize];
+                let mut scratch = IrCoverpoint {
+                    name: String::new(),
+                    width: point.width,
+                    signed: point.signed,
+                    type_weight: 0,
+                    automatic: IrCoverAutomatic::None,
+                    bins: Vec::new(),
+                    items: Vec::new(),
+                    transitions: None,
+                    crossed: false,
+                };
+                for item in intersect.iter().copied() {
+                    self.coverage_value_item(bin_name, item, false, &mut scratch, build)?;
+                }
+                let first_item = table.items.len() as u32;
+                let n_items = scratch.items.len() as u32;
+                table.items.extend(scratch.items);
+                table.selects.push(IrCoverSelect {
+                    dim: dim as u32,
+                    decl,
+                    intersect: !intersect.is_empty(),
+                    first_item,
+                    n_items,
+                    negate,
+                });
+                vec![vec![(table.selects.len() - 1) as u32]]
+            }
+            CoverageSelectKind::Not(inner) => self.cross_select(
+                inner,
+                !negate,
+                cross_points,
+                dims,
+                points,
+                table,
+                describe,
+                bin_name,
+                build,
+            )?,
+            CoverageSelectKind::And(left, right) | CoverageSelectKind::Or(left, right) => {
+                let left = self.cross_select(
+                    left, negate, cross_points, dims, points, table, describe, bin_name, build,
+                )?;
+                let right = self.cross_select(
+                    right, negate, cross_points, dims, points, table, describe, bin_name, build,
+                )?;
+                let and = matches!(select.kind, CoverageSelectKind::And(..)) != negate;
+                if and {
+                    if (left.len() as u64) * (right.len() as u64) > MAX_SELECT_BOXES {
+                        return Err(self.coverage_error(
+                            select.node,
+                            format!("the select expression of bins `{bin_name}` of {describe} expands to more than {MAX_SELECT_BOXES} terms (llg limitation)"),
+                        ));
+                    }
+                    product(left, right)
+                } else {
+                    union(left, right)
+                }
+            }
+            CoverageSelectKind::Other => {
+                return Err(self.coverage_error(
+                    select.node,
+                    format!("the select expression of bins `{bin_name}` of {describe} is not IEEE 1800-2009 syntax (19.6)"),
+                ))
+            }
+        };
+        if boxes.len() as u64 > MAX_SELECT_BOXES {
+            return Err(self.coverage_error(
+                select.node,
+                format!("the select expression of bins `{bin_name}` of {describe} expands to more than {MAX_SELECT_BOXES} terms (llg limitation)"),
+            ));
+        }
+        Ok(boxes)
+    }
+
+    /// The index of a bins declaration among its coverpoint's value bins
+    /// ([`IrCoverpoint::bins`]), or `None` for a transition bin.
+    fn coverage_value_decl(&self, point: NodeId, bin: NodeId) -> Option<u32> {
+        let info = self.db.coverpoint(point)?;
+        let mut index = 0u32;
+        for candidate in &info.bins {
+            let transition = self
+                .db
+                .coverage_bin(*candidate)
+                .is_some_and(|metadata| metadata.transition || metadata.default_sequence);
+            if *candidate == bin {
+                return (!transition).then_some(index);
+            }
+            if !transition {
+                index += 1;
+            }
+        }
+        None
     }
 
     /// One transition bins declaration (19.5.1): its sets as key ranges and
@@ -937,6 +1231,7 @@ impl<'a> Codegen<'a> {
                     bins: Vec::new(),
                     items: Vec::new(),
                     transitions: None,
+                    crossed: false,
                 };
                 let max_key = if width == 64 {
                     u64::MAX
@@ -1586,6 +1881,30 @@ impl<'a> Codegen<'a> {
                         history,
                     });
                 }
+                let mut crosses = Vec::with_capacity(info.crosses.len());
+                for (index, cross) in info.crosses.iter().copied().enumerate() {
+                    let iff = ctx
+                        .cg
+                        .db
+                        .coverage_cross(cross)
+                        .and_then(|metadata| metadata.iff);
+                    let iff = iff
+                        .map(|iff| ctx.cg.lower_boolean_expr(&path, iff))
+                        .transpose()
+                        .map_err(|error| {
+                            ctx.cg.coverage_error(
+                                iff.unwrap_or(cross),
+                                format!(
+                                    "cross `{}` cannot be sampled: {error}",
+                                    ctx.cg.node(cross).name
+                                ),
+                            )
+                        })?;
+                    crosses.push(IrCoverageCrossSample {
+                        cross: index as u32,
+                        iff,
+                    });
+                }
                 let mut guards = Vec::with_capacity(lowering.build.guards.len());
                 for guard in lowering.build.guards.iter().copied() {
                     let lowered = ctx.cg.lower_boolean_expr(&path, guard).map_err(|error| {
@@ -1598,6 +1917,7 @@ impl<'a> Codegen<'a> {
                     record: record.clone(),
                     guards,
                     points: samples,
+                    crosses,
                 })));
             }
             ctx.cg.coverage_ref_actuals.clear();
@@ -2004,6 +2324,9 @@ impl<'a> Codegen<'a> {
             let group = self.db.coverpoint(parent)?.group;
             return Some((group, Some(parent), method));
         }
+        if let Some(cross) = self.db.coverage_cross(parent) {
+            return Some((cross.group, Some(parent), method));
+        }
         let group = self.node(parent).parent?;
         self.db.covergroup(group)?;
         Some((group, None, method))
@@ -2132,16 +2455,21 @@ impl<'a> Codegen<'a> {
             ));
         }
         let point_index = match point {
-            Some(point) => Some(
-                self.coverage_point_index(group, Some(point)).unwrap_or(
-                    self.db
-                        .covergroup(group)
-                        .and_then(|info| info.coverpoints.iter().position(|id| *id == point))
-                        .ok_or_else(|| {
-                            self.coverage_error(node, "coverpoint is not in its covergroup")
-                        })? as u32,
-                ),
-            ),
+            Some(point) => Some(match self.coverage_point_index(group, Some(point)) {
+                Some(index) => index,
+                None => self
+                    .db
+                    .covergroup(group)
+                    .and_then(|info| {
+                        info.coverpoints
+                            .iter()
+                            .chain(&info.crosses)
+                            .position(|id| *id == point)
+                    })
+                    .ok_or_else(|| {
+                        self.coverage_error(node, "coverpoint is not in its covergroup")
+                    })? as u32,
+            }),
             None => None,
         };
         if method == CoverageMethod::GetCoverage {
@@ -2152,6 +2480,11 @@ impl<'a> Codegen<'a> {
                     .db
                     .coverpoint(point)
                     .map(|info| info.options.clone())
+                    .or_else(|| {
+                        self.db
+                            .coverage_cross(point)
+                            .map(|info| info.options.clone())
+                    })
                     .unwrap_or_default()
                     .into_iter()
                     .find_map(|setter| {
@@ -2477,8 +2810,8 @@ impl<'a> Codegen<'a> {
         }
         let options = (|| -> Result<Vec<IrStmt>, String> {
             let mut statements = Vec::new();
-            let scopes = std::iter::once((None, info.options.clone())).chain(
-                info.coverpoints.iter().enumerate().map(|(index, point)| {
+            let scopes = std::iter::once((None, info.options.clone()))
+                .chain(info.coverpoints.iter().enumerate().map(|(index, point)| {
                     (
                         Some(index as u32),
                         self.db
@@ -2486,8 +2819,16 @@ impl<'a> Codegen<'a> {
                             .map(|metadata| metadata.options.clone())
                             .unwrap_or_default(),
                     )
-                }),
-            );
+                }))
+                .chain(info.crosses.iter().enumerate().map(|(index, cross)| {
+                    (
+                        Some((info.coverpoints.len() + index) as u32),
+                        self.db
+                            .coverage_cross(*cross)
+                            .map(|metadata| metadata.options.clone())
+                            .unwrap_or_default(),
+                    )
+                }));
             for (point, setters) in scopes.collect::<Vec<_>>() {
                 for setter in setters {
                     let Some((scope, member, value)) = self.coverage_option_parts(setter) else {

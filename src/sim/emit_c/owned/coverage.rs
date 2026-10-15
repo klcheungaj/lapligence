@@ -3,8 +3,8 @@
 use super::native::NativeKind;
 use super::*;
 use crate::sim::ir::{
-    IrCoverAutomatic, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverTransitions,
-    IrCoverageQuery, IrCoverageStmt,
+    IrCoverAutomatic, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverCross,
+    IrCoverTransitions, IrCoverageQuery, IrCoverageStmt,
 };
 
 fn group_name(group: usize) -> String {
@@ -38,6 +38,99 @@ fn static_array(out: &mut String, element: &str, name: &str, rows: Vec<String>) 
         rows.join(",\n    ")
     ));
     name.to_owned()
+}
+
+fn item_rows(items: &[crate::sim::ir::IrCoverItem]) -> Vec<String> {
+    items
+        .iter()
+        .map(|item| {
+            let (lo_kind, lo) = bound(item.lo);
+            let (hi_kind, hi) = bound(item.hi);
+            format!(
+                "{{ UINT64_C({lo}), UINT64_C({hi}), {lo_kind}, {hi_kind}, {} }}",
+                optional_string(item.site.as_deref())
+            )
+        })
+        .collect()
+}
+
+/// The tables of one cross; returns the row of the group's cross array.
+fn cross_tables(out: &mut String, prefix: &str, cross: &IrCoverCross) -> String {
+    let dims = static_array(
+        out,
+        "uint32_t",
+        &format!("{prefix}_dims"),
+        cross
+            .points
+            .iter()
+            .map(|point| format!("{point}u"))
+            .collect(),
+    );
+    let items = static_array(
+        out,
+        "llg_cov_item_t",
+        &format!("{prefix}_items"),
+        item_rows(&cross.items),
+    );
+    let selects = static_array(
+        out,
+        "llg_cov_select_t",
+        &format!("{prefix}_selects"),
+        cross
+            .selects
+            .iter()
+            .map(|select| {
+                format!(
+                    "{{ .dim = {}u, .decl = {}, .intersect = {}u, .negate = {}u, .first_item = {}u, .n_items = {}u }}",
+                    select.dim,
+                    select.decl.map_or(-1, i64::from),
+                    u8::from(select.intersect),
+                    u8::from(select.negate),
+                    select.first_item,
+                    select.n_items
+                )
+            })
+            .collect(),
+    );
+    let mut boxes = Vec::new();
+    let mut box_selects = Vec::new();
+    let mut bins = Vec::with_capacity(cross.bins.len());
+    for bin in &cross.bins {
+        let first_box = boxes.len();
+        for conjunction in &bin.boxes {
+            boxes.push(format!(
+                "{{ .first_select = {}u, .n_selects = {}u }}",
+                box_selects.len(),
+                conjunction.len()
+            ));
+            box_selects.extend(conjunction.iter().map(|select| format!("{select}u")));
+        }
+        bins.push(format!(
+            "{{ .name = {}, .site = {}, .kind = {}u, .guard = {}, .first_box = {first_box}u, .n_boxes = {}u }}",
+            c_string_literal(&bin.name),
+            c_string_literal(&bin.site),
+            bin.kind.code(),
+            bin.guard.map_or(-1, i64::from),
+            bin.boxes.len()
+        ));
+    }
+    let n_boxes = boxes.len();
+    let boxes = static_array(out, "llg_cov_box_t", &format!("{prefix}_boxes"), boxes);
+    let box_selects = static_array(
+        out,
+        "uint32_t",
+        &format!("{prefix}_box_selects"),
+        box_selects,
+    );
+    let bins = static_array(out, "llg_cov_xbin_t", &format!("{prefix}_xbins"), bins);
+    format!(
+        "{{ .name = {}, .n_dims = {}u, .dims = {dims}, .n_selects = {}u, .selects = {selects}, .items = {items}, .n_boxes = {n_boxes}u, .boxes = {boxes}, .box_selects = {box_selects}, .n_bins = {}u, .bins = {bins}, .dynamic = {}u }}",
+        c_string_literal(&cross.name),
+        cross.points.len(),
+        cross.selects.len(),
+        cross.bins.len(),
+        u8::from(cross.dynamic())
+    )
 }
 
 /// The transition tables of one coverpoint; returns the table's name.
@@ -181,27 +274,12 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                 }
                 None => "NULL".to_owned(),
             };
-            let items_name = if point.items.is_empty() {
-                "NULL".to_owned()
-            } else {
-                let rows = point
-                    .items
-                    .iter()
-                    .map(|item| {
-                        let (lo_kind, lo) = bound(item.lo);
-                        let (hi_kind, hi) = bound(item.hi);
-                        format!(
-                            "{{ UINT64_C({lo}), UINT64_C({hi}), {lo_kind}, {hi_kind}, {} }}",
-                            optional_string(item.site.as_deref())
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                out.push_str(&format!(
-                    "static const llg_cov_item_t {point_prefix}_items[] = {{\n    {}\n}};\n",
-                    rows.join(",\n    ")
-                ));
-                format!("{point_prefix}_items")
-            };
+            let items_name = static_array(
+                out,
+                "llg_cov_item_t",
+                &format!("{point_prefix}_items"),
+                item_rows(&point.items),
+            );
             let bins_name = if point.bins.is_empty() {
                 "NULL".to_owned()
             } else {
@@ -241,15 +319,28 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                 |tables| transition_tables(out, &point_prefix, tables),
             );
             points.push(format!(
-                "{{ .name = {}, .width = {}u, .is_signed = {}u, .kind = {kind}, .dynamic = {}u, .n_keys = {}u, .keys = {keys_name}, .n_bins = {}u, .bins = {bins_name}, .items = {items_name}, .trans = {trans} }}",
+                "{{ .name = {}, .width = {}u, .is_signed = {}u, .kind = {kind}, .dynamic = {}u, .n_keys = {}u, .keys = {keys_name}, .n_bins = {}u, .bins = {bins_name}, .items = {items_name}, .trans = {trans}, .crossed = {}u }}",
                 c_string_literal(&point.name),
                 point.width,
                 u8::from(point.signed),
                 u8::from(point.dynamic()),
                 keys.map_or(0, Vec::len),
                 point.bins.len(),
+                u8::from(point.crossed),
             ));
         }
+        let crosses = group
+            .crosses
+            .iter()
+            .enumerate()
+            .map(|(index, cross)| cross_tables(out, &format!("{prefix}_x{index}"), cross))
+            .collect::<Vec<_>>();
+        let crosses_name = static_array(
+            out,
+            "llg_cov_cross_t",
+            &format!("{prefix}_crosses"),
+            crosses,
+        );
         let points_name = if points.is_empty() {
             "NULL".to_owned()
         } else {
@@ -273,9 +364,10 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
             }
         };
         out.push_str(&format!(
-            "// Unreferenced when every handle of the group stays null.\nstatic LLG_MAYBE_UNUSED llg_cov_group_t {prefix} = {{ .name = {}, .n_points = {}u, .points = {points_name}, .n_slots = {}u, .type = &{}, .strobe_sample = {strobe} }};\n",
+            "// Unreferenced when every handle of the group stays null.\nstatic LLG_MAYBE_UNUSED llg_cov_group_t {prefix} = {{ .name = {}, .n_points = {}u, .points = {points_name}, .n_crosses = {}u, .crosses = {crosses_name}, .n_slots = {}u, .type = &{}, .strobe_sample = {strobe} }};\n",
             c_string_literal(&group.name),
             group.points.len(),
+            group.crosses.len(),
             group.slots,
             type_name(group.coverage_type)
         ));
@@ -341,6 +433,7 @@ impl Frame<'_, '_> {
                 record,
                 guards,
                 points,
+                crosses,
             } => {
                 let record = self.chandle(record)?;
                 let record = self.scalar("void*", record);
@@ -356,6 +449,10 @@ impl Frame<'_, '_> {
                     }
                     array
                 };
+                if !crosses.is_empty() {
+                    // Crosses read the bins this sample's coverpoints count.
+                    self.line(format!("llg_cov_sample_begin({record});"));
+                }
                 for sample in points {
                     // The value is evaluated only when its guard holds.
                     let guarded = match &sample.iff {
@@ -382,6 +479,23 @@ impl Frame<'_, '_> {
                         self.line(format!("llg_cov_skip({record}, {}u);", sample.point));
                         self.line("}");
                     } else if guarded {
+                        self.line("}");
+                    }
+                }
+                for cross in crosses {
+                    let guarded = match &cross.iff {
+                        Some(iff) => {
+                            let condition = self.condition(iff)?;
+                            self.line(format!("if ({condition}) {{"));
+                            true
+                        }
+                        None => false,
+                    };
+                    self.line(format!(
+                        "llg_cov_cross_hit({record}, {}u, {guard_array});",
+                        cross.cross
+                    ));
+                    if guarded {
                         self.line("}");
                     }
                 }

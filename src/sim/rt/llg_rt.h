@@ -2609,6 +2609,11 @@ void llg_stream_cast_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, in
 #ifndef LLG_COV_DENSE_BINS
 #define LLG_COV_DENSE_BINS 4096u
 #endif
+/* The most classes of select-equivalent cross products a cross's bin
+ * counts may enumerate (19.11.2); more is reported as an llg limitation. */
+#ifndef LLG_COV_CROSS_CLASSES
+#define LLG_COV_CROSS_CLASSES (UINT64_C(1) << 20)
+#endif
 /* The automatic bins of a coverpoint without `bins` declarations (19.5.2);
  * EXPLICIT points have none. */
 enum { LLG_COV_POINT_AUTO = 0, LLG_COV_POINT_ENUM = 1, LLG_COV_POINT_EXPLICIT = 2 };
@@ -2715,7 +2720,44 @@ typedef struct {
     const llg_cov_bin_t* bins; /* declared value bins, in source order */
     const llg_cov_item_t* items;
     const llg_cov_trans_t* trans; /* transition bins, or NULL */
+    uint8_t crossed;              /* a cross reads the bins each sample counts */
 } llg_cov_point_t;
+/* Crosses (19.6). Along each dimension (a crossed coverpoint), the
+ * coordinates are the coverpoint's coverable bins in counter order. A select
+ * condition `binsof(point[.decl]) [intersect {items}]`, possibly negated, is
+ * a set of coordinates of its dimension; a box is a conjunction of
+ * conditions; a bin's select expression is a union of boxes. */
+typedef struct {
+    uint32_t dim;
+    int32_t decl; /* the coverpoint's value bins declaration, or -1 */
+    uint8_t intersect;
+    uint8_t negate;
+    uint32_t first_item, n_items; /* into the cross's items */
+} llg_cov_select_t;
+typedef struct {
+    uint32_t first_select, n_selects; /* into box_selects */
+} llg_cov_box_t;
+typedef struct {
+    const char* name;
+    const char* site;
+    uint8_t kind; /* LLG_COV_BIN_BINS, _IGNORE or _ILLEGAL */
+    int32_t guard;
+    uint32_t first_box, n_boxes;
+} llg_cov_xbin_t;
+typedef struct {
+    const char* name;
+    uint32_t n_dims;
+    const uint32_t* dims; /* coverpoint indices */
+    uint32_t n_selects;
+    const llg_cov_select_t* selects;
+    const llg_cov_item_t* items;
+    uint32_t n_boxes;
+    const llg_cov_box_t* boxes;
+    const uint32_t* box_selects;
+    uint32_t n_bins;
+    const llg_cov_xbin_t* bins;
+    uint8_t dynamic; /* an intersect value reads a slot */
+} llg_cov_cross_t;
 typedef struct llg_cov_inst llg_cov_inst_t;
 typedef struct llg_cov_layout llg_cov_layout_t;
 /* One covergroup declaration identity: every instance ever created, for
@@ -2735,6 +2777,10 @@ typedef struct llg_cov_group {
     const char* name;
     uint32_t n_points;
     const llg_cov_point_t* points;
+    /* Coverage items are numbered points first, then crosses, wherever an
+     * API takes a `point` index. */
+    uint32_t n_crosses;
+    const llg_cov_cross_t* crosses;
     uint32_t n_slots; /* argument values bins read (llg_cov_slot) */
     llg_cov_type_t* type;
     void** registry;
@@ -2747,8 +2793,10 @@ typedef struct llg_cov_group {
     void (*strobe_sample)(void* object);
     uint8_t strobe_pending; /* a registry pass is queued for this slot */
     /* Layouts shared by instances whose bins depend on nothing per
-     * instance, one per point; built by the first llg_cov_ready. */
+     * instance, one per point and then one per cross; built by the first
+     * llg_cov_ready. */
     llg_cov_layout_t** layouts;
+    struct llg_cov_xlayout** xlayouts;
 } llg_cov_group_t;
 /* Create the runtime record of one instance with Table 19-1 defaults; apply
  * llg_cov_option and llg_cov_slot, then llg_cov_ready before the first
@@ -2767,6 +2815,11 @@ void llg_cov_hit(void* inst, uint32_t point, const sv4_t* value, const uint8_t* 
 /* The coverpoint's `iff` was false at a sample: the transition sequences in
  * progress end (decision S45-D9). */
 void llg_cov_skip(void* inst, uint32_t point);
+/* Begin one sample of a group with crosses, before its llg_cov_hit calls. */
+void llg_cov_sample_begin(void* inst);
+/* Count the products of the bins the crossed coverpoints counted in this
+ * sample (19.6); call after every llg_cov_hit of the sample. */
+void llg_cov_cross_hit(void* inst, uint32_t cross, const uint8_t* guards);
 void llg_cov_control(void* inst, int32_t point, int start);
 /* Objects sampled by the group's coverage event, pinned for the run. */
 void llg_cov_register(llg_cov_group_t* group, void* object);

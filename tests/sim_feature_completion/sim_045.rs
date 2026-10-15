@@ -146,3 +146,45 @@ fn invalid_transition_forms_are_located_errors() {
         "neg_trans_argument.sv:6:39: transition bins `t` of coverpoint `cp` in covergroup `g` read a covergroup argument; llg supports only constant transition values (llg limitation)",
     );
 }
+
+#[test]
+fn crosses_follow_19_6_and_19_11_2() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/crosses.out");
+    sim_cli::run_case_checked_matrix(SUITE, "crosses", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert_eq!(llg_messages(output), Vec::<String>::new(), "{label}");
+    });
+}
+
+#[test]
+fn illegal_cross_products_are_run_time_errors() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/cross_illegal.out");
+    sim_cli::run_case_checked_matrix(SUITE, "cross_illegal", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(1), "{label}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+        assert_eq!(
+            llg_messages(output),
+            ["llg: runtime error: covergroup `zz` cross `xy` sampled a product of illegal_bins `illegal` at tb:14:20 (IEEE 1800-2009 19.6.3)"],
+            "{label}"
+        );
+    });
+}
+
+#[test]
+fn invalid_crosses_are_located_errors() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_cross_of_cross",
+        "neg_cross_of_cross.sv:9:5: cross `abc` in covergroup `g` crosses another cross, which IEEE 1800-2009 does not define (19.6)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_cross_transition",
+        "neg_cross_transition.sv:8:5: cross `ab` in covergroup `g` crosses coverpoint `ca`, which has transition bins; llg crosses only value bins (llg limitation)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_cross_set",
+        "neg_cross_set.sv:8:24 `covergroup bins with or matches clause` is not available in IEEE 2009",
+    );
+}

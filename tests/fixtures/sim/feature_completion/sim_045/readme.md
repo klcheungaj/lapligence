@@ -110,6 +110,34 @@ are the register decisions
   warning would not be issued then the range shall be treated as containing
   the intersection of the values in the range and the values expressible by
   type(e)."
+- 19.6, L32923-32925: "When a variable V is part of a cross coverage,
+  SystemVerilog implicitly creates a coverage point for the variable, as if it
+  had been created by the statement coverpoint V;."
+- 19.6, L32980-32983: "If at any sample point, the condition evaluates to
+  false, the cross coverage is ignored. The expression within the optional
+  iff construct at the end of a cross bin definition provides a per-bin guard
+  condition. If the expression is false, the cross bin is ignored."
+- 19.6, L33033-33034: "No cross coverage bins shall be created for
+  coverpoint bins that are specified as default, ignored, or illegal bins."
+- 19.6, L33059-33061: "Automatically-generated bins are retained for those
+  cross products which do not intersect cross products specified by any
+  user-defined cross bin."
+- 19.6.1, L33150-33191: the `cg`/`c` example: c1 "will cover only four
+  cross products", c2 "includes the following seven cross products", c3
+  "includes only one cross product", and "the cross retains those
+  automatically-generated bins that represent cross products not
+  intersecting any of the user-defined bins. There are 6 of these".
+- 19.6.2, L33208-33209: "All cross products that satisfy the select
+  expression are excluded from coverage. Ignored cross products are excluded
+  even if they are included in other cross coverage bins of the enclosing
+  cross."
+- 19.6.3, L33223-33225: "All cross products that satisfy the select
+  expression are excluded from coverage, and a run-time error is issued.
+  Illegal cross products take precedence over any other cross products".
+- 19.11.2, L33911-33921: "Bc = (Π Bj) − Bb", with Bu "the number of
+  significant user-defined cross bins—excluding ignore_bins and
+  illegal_bins" and Bb "the number of cross products that comprise all
+  user-defined cross bins".
 - 19.11.1, L33858-33860: "If there is no value or transition associated with
   a bin, the bin is ignored and shall not contribute to the coverage
   computation. That is, the bin is excluded from both the numerator and the
@@ -193,6 +221,41 @@ is empty. 5 starts `pair` but ends nothing and nothing was pending: the
 illegal default sequence reports it; 6 completes `pair`; each 9 ends nothing
 with nothing pending: two more reports. Coverage: `pair` only, 100.00.
 
+`crosses.sv` (A01, A03):
+
+- `ct` is the 19.6 example, samples (0,0) and (1,1): `x1` has 4 automatic
+  bins, 2 hit: 50.00; `x2` has `i_zero` (both `i[0]` products) and the 2
+  automatic `i[1]` products: `i_zero` and `<i[1],j[1]>` hit, 2/3 = 66.67.
+- `cg` is the 19.6.1 example: Bb = 10 (c1 the `a1` row, c2 the `a2` row and
+  the `b2` column, c3 inside c1), Bc = 16 − 10 = 6, Bu = 3: 9 bins. (10, 200)
+  is <a1,b4>, in c1 and c3; (200, 0) is the automatic <a4,b1>: 3/9 = 33.33.
+  (100, 50) is <a2,b2>, in c2: 4/9 = 44.44. Group: `a` and `b` have 3 of 4
+  bins each: (75 + 75 + 44.44) / 3 = 64.81.
+- `g_implicit` crosses variable `p` (an implicit coverpoint with 4 automatic
+  bins) with `cq` (2 bins): 8 products, 2 hit: 25.00. Group: `cq` 100, `p`
+  50, `px` 25: 58.33.
+- `g_ignore`: `ca` and `cb` have 4 automatic bins each. `plain` ignores the
+  `ca` = 0 row: Bc = 12; (0,1) is ignored, (1,1) counts: 0.00, then 8.33.
+  `both` adds `one` (the `cb` = 1 column): Bb = 4 + 3 = 7, Bc = 9, Bu = 1;
+  (0,1) is ignored although `one` holds it; (1,1) counts in `one`: 0.00,
+  then 1/10 = 10.00.
+- `g_guard`: `on` has 4 products and the cross `iff (q)`; `picked` has
+  `only` = (hi, *) with `iff (q)` and `arr` = (lo or hi, hi) (`cb.lo`
+  intersects {0}, so `!` leaves `hi`): Bb = 3, Bc = 1, Bu = 2. Sample 1 has
+  `en` = 0, so `cb` counts nothing and neither cross counts (S45-D14). Sample
+  2, (hi, hi) with `q` = 0: `on` is off, `only` is guarded off, `arr` counts:
+  0.00, 33.33. Sample 3, (lo, lo) with `q` = 1: `on` 1/4 = 25.00, `picked`
+  adds its automatic bin: 66.67.
+- `g_large` (A03): two 12-bit coverpoints with 4096 automatic bins each:
+  `all` has 2^24 = 16777216 products in sparse storage; 3 hit:
+  300 / 16777216 = 0.00001788. `half` ignores `ca` < 2048: Bc = 2048 x 4096
+  = 8388608, and (0,0) is ignored: 200 / 8388608 = 0.00002384.
+
+`cross_illegal.sv`: 16 products; `diag` = <1,1>, `skip` the `cx` = 3 row,
+`illegal` the `cy` = 2 column (the argument `bad`): Bb = 1 + 4 + 4 − 1 = 8,
+Bc = 8, Bu = 1. (3,2) is illegal although ignored: a run-time error, nothing
+counts. (1,1) counts `diag`: 1/9 = 11.11; (0,0) an automatic bin: 22.22.
+
 ## Negative cases
 
 | Fixture | Error |
@@ -206,3 +269,6 @@ with nothing pending: two more reports. Coverage: `pair` only, 100.00.
 | `neg_trans_array_goto` | `[]` transition bins with a goto repetition (19.5.1) |
 | `neg_trans_ignore_goto` | ignore_bins with a nonconsecutive repetition (19.5.4) |
 | `neg_trans_argument` | a transition value read from a covergroup argument (llg limitation) |
+| `neg_cross_of_cross` | a cross of a cross (not 1800-2009 syntax) |
+| `neg_cross_transition` | a cross of a coverpoint with transition bins (llg limitation) |
+| `neg_cross_set` | a cross bin `with` filter, 1800-2012 syntax |
