@@ -16,7 +16,7 @@ fn type_name(coverage_type: usize) -> String {
 pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
     for (index, coverage_type) in model.coverage_types.iter().enumerate() {
         out.push_str(&format!(
-            "static llg_cov_type_t {} = {{ {}, INT64_C({}), NULL, NULL, 0u, NULL, 0u }};\n",
+            "static LLG_MAYBE_UNUSED llg_cov_type_t {} = {{ {}, INT64_C({}), NULL, NULL, 0u, NULL, 0u }};\n",
             type_name(index),
             c_string_literal(&coverage_type.name),
             coverage_type.weight
@@ -124,7 +124,7 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
             format!("{prefix}_points")
         };
         out.push_str(&format!(
-            "static llg_cov_group_t {prefix} = {{ {}, {}u, {points_name}, &{}, NULL, 0u, 0u, NULL, 0u }};\n",
+            "// Unreferenced when every handle of the group stays null.\nstatic LLG_MAYBE_UNUSED llg_cov_group_t {prefix} = {{ {}, {}u, {points_name}, &{}, NULL, 0u, 0u, NULL, 0u }};\n",
             c_string_literal(&group.name),
             group.points.len(),
             type_name(group.coverage_type)

@@ -46,7 +46,8 @@ static llg_cov_group_t* llg_cov_groups_registered;
 
 static void* llg_cov_grow(void* data, size_t count, size_t size, const char* what) {
     if (size != 0 && count > SIZE_MAX / size) llg_fatal_allocation(what, count, size);
-    void* grown = realloc(data, count * size ? count * size : 1);
+    size_t bytes = count * size;
+    void* grown = realloc(data, bytes != 0 ? bytes : 1);
     if (!grown) llg_fatal_allocation(what, count, size);
     return grown;
 }
