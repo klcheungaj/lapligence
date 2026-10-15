@@ -1401,6 +1401,32 @@ outermost procedure scopes for the 16.4.4 flush.
 Reproduce with `int q[$]; task show(input int x[$]); ... endtask` and
 `assert #0 (0) else show(q);`.
 
+Subroutine calls attached to a sequence match (SV 16.11, SIM-039) use the
+same captured frame and share these limits, reported as "sequence match-item
+call" diagnostics; a match-item task with a timing control is also rejected.
+
+## Assertion locals in property operands and join operands
+
+**Status:** open (SIM-039 deferral).
+
+A property local variable (a local input formal or a declared local with a
+declaration assignment) is initialized when the property attempt begins
+(SV 16.10). llg does this for a property whose body is a sequence or an
+implication: the antecedent attempt initializes the locals and the
+consequent inherits them. A property operand of the property engine
+(`always`, `until`, `s_eventually`, `and`/`or` of properties, ...) starts its
+own sequence attempts later, so reading such a local there is rejected with
+"local variable `v` of the property declared at ... is initialized at the
+property attempt's start, which this property form does not support".
+Local-variable assignments inside `and`/`intersect`/`throughout`/`within`
+operands and local variables passed to sequence end points
+(`s(v).triggered`, `@(s(v))`) are also still rejected; the runtime keeps one
+local array per thread and a join keeps the locals of the operand that
+matched last.
+
+Reproduce with `property p; logic [7:0] v = d; always (a |-> d == v);
+endproperty`.
+
 ## Modport expression ports through virtual interfaces
 
 **Status:** open (RTL-102 deferral).

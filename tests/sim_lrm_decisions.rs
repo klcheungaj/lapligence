@@ -1357,3 +1357,75 @@ fn s27_d25_associative_row_dump_no_addresses() {
         include_str!("fixtures/sim/lrm_decisions/S27-D25_associative_row_dump_no_addresses.out"),
     );
 }
+
+#[test]
+fn s39_d1_action_controls() {
+    run_decision(
+        "S39-D1_action_controls",
+        include_str!("fixtures/sim/lrm_decisions/S39-D1_action_controls.out"),
+    );
+}
+
+#[test]
+fn s39_d2_deferred_controls_at_maturity() {
+    run_decision(
+        "S39-D2_deferred_controls_at_maturity",
+        include_str!("fixtures/sim/lrm_decisions/S39-D2_deferred_controls_at_maturity.out"),
+    );
+}
+
+#[test]
+fn s39_d3_immediate_assertion_controls() {
+    run_decision(
+        "S39-D3_immediate_assertion_controls",
+        include_str!("fixtures/sim/lrm_decisions/S39-D3_immediate_assertion_controls.out"),
+    );
+}
+
+#[test]
+fn s39_d4_expect_action_controls() {
+    run_decision(
+        "S39-D4_expect_action_controls",
+        include_str!("fixtures/sim/lrm_decisions/S39-D4_expect_action_controls.out"),
+    );
+}
+
+#[test]
+fn s39_d5_matched_coincident_tick() {
+    run_decision(
+        "S39-D5_matched_coincident_tick",
+        include_str!("fixtures/sim/lrm_decisions/S39-D5_matched_coincident_tick.out"),
+    );
+}
+
+#[test]
+fn s39_d6_endpoint_ignores_assertoff() {
+    run_decision(
+        "S39-D6_endpoint_ignores_assertoff",
+        include_str!("fixtures/sim/lrm_decisions/S39-D6_endpoint_ignores_assertoff.out"),
+    );
+}
+
+#[test]
+fn s39_d7_triggered_active_read() {
+    run_decision(
+        "S39-D7_triggered_active_read",
+        include_str!("fixtures/sim/lrm_decisions/S39-D7_triggered_active_read.out"),
+    );
+}
+
+#[test]
+fn s39_d8_match_call_reactive() {
+    run_decision(
+        "S39-D8_match_call_reactive",
+        include_str!("fixtures/sim/lrm_decisions/S39-D8_match_call_reactive.out"),
+    );
+}
+
+#[test]
+fn s39_d9_property_local_attempt_start() {
+    run_decision(
+        "S39-D9_property_local_attempt_start",
+        include_str!("fixtures/sim/lrm_decisions/S39-D9_property_local_attempt_start.out"),
+    );
+}

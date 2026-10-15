@@ -441,6 +441,23 @@ reports. Observed matures reports into a retained array run by one Reactive
 callback in issue order. OFF prevents new checks but does not cancel pending
 actions; KILL flushes only unmatured reports. Drain actions before cleanup and
 after each final procedure. These fields fit existing `llg_proc_t` padding.
+`llg_sequence_match_call` appends a sequence match-item call (SV 16.11) with
+its owned argument frame directly to the matured array (kind
+`LLG_DEFERRED_MATCH_CALL`): it runs in the Reactive region in queue order with
+no assertion result, counter or control.
+
+Assertion control rules (`assertion_control.c`) carry a field: checking, pass,
+vacuous pass or fail. The newest matching rule wins; the six SV 20.12 tasks
+set the action flags of matching concurrent assertions and add rules that
+immediate, deferred (read when the report executes) and `expect` actions
+consult through `llg_immediate_assertion_controls` and
+`llg_deferred_assertion_enabled`. `assertion_result` records every result and
+counter before it gates the action, so controls never change statistics; a
+suppressed default failure still counts (`llg_assertion_failure_quiet`).
+Sequence end points (`llg_assertion_endpoint`) are hidden covers skipped by
+controls and counters: a nonvacuous match triggers the end point's event in
+the Observed region (`.triggered`, `@(seq)`) and latches each `.matched` slot
+until the next tick of its destination clock (a coincident tick sees it).
 
 Sequence tokens own a transition, local snapshot and retained first-match scope
 chain. Each scope belongs to an invocation; completion cannot discard outer

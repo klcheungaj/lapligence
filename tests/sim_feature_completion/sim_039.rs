@@ -193,37 +193,44 @@ fn match_item_dpi_call_receives_owned_argument_copies() {
 
 #[test]
 fn local_formal_direction_type_and_actual_errors_are_located() {
-    for (fixture, diagnostic) in [
-        (
-            "neg_inout_actual",
-            "neg_inout_actual.sv:9:40 an argument bound to an 'inout' or 'output' local variable formal argument must itself be a reference to a local variable",
-        ),
-        (
-            "neg_formal_type",
-            "neg_formal_type.sv:5:32 expression of type 'event' is not valid in concurrent assertions",
-        ),
-        (
-            "neg_empty_inout",
-            "neg_empty_inout.sv:7:5 sequence 's' cannot have an 'inout' or 'output' local variable formal argument because it admits an empty match",
-        ),
-        (
-            "neg_property_output",
-            "neg_property_output.sv:7:21 local variable formal arguments in properties cannot have direction 'output' or 'inout'",
-        ),
-        (
-            "neg_match_call_output",
-            "neg_match_call_output.sv:11:16 cannot invoke a subroutine with 'output' or 'inout' arguments from a sequence match item",
-        ),
-        (
-            "neg_match_call_timing",
-            "sequence match-item call task `slow` cannot contain timing controls",
-        ),
-        ("neg_match_call_timing", "neg_match_call_timing.sv:11:16) (assertion at"),
-        (
-            "neg_property_local",
-            "neg_property_local.sv:7:17 is initialized at the property attempt's start, which this property form does not support",
-        ),
-    ] {
-        sim_cli::reject_case(SUITE, fixture, diagnostic);
-    }
+    sim_cli::reject_case(
+        SUITE,
+        "neg_inout_actual",
+        "neg_inout_actual.sv:9:40 an argument bound to an 'inout' or 'output' local variable formal argument must itself be a reference to a local variable",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_formal_type",
+        "neg_formal_type.sv:5:32 expression of type 'event' is not valid in concurrent assertions",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_empty_inout",
+        "neg_empty_inout.sv:7:5 sequence 's' cannot have an 'inout' or 'output' local variable formal argument because it admits an empty match",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_property_output",
+        "neg_property_output.sv:7:21 local variable formal arguments in properties cannot have direction 'output' or 'inout'",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_match_call_output",
+        "neg_match_call_output.sv:11:16 cannot invoke a subroutine with 'output' or 'inout' arguments from a sequence match item",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_match_call_timing",
+        "sequence match-item call task `slow` cannot contain timing controls",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_match_call_timing",
+        "neg_match_call_timing.sv:11:16) (assertion at",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_property_local",
+        "neg_property_local.sv:7:17 is initialized at the property attempt's start, which this property form does not support",
+    );
 }
