@@ -2643,6 +2643,9 @@ struct EmitCtx<'c, 'a> {
     /// being lowered (19.3): a `return` stores its value and jumps there,
     /// so leaving early still samples.
     coverage_end_exit: Option<String>,
+    /// A `return` jumped to [`EmitCtx::coverage_end_exit`], so its label is
+    /// emitted (an unused C label is a warning).
+    coverage_end_exit_used: bool,
 }
 
 /// Shape of an image-represented fixed array `with` operand.

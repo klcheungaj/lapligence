@@ -564,7 +564,10 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(StmtKind::Return { value }) => {
                 let statement = self.lower_return(*value)?;
                 match self.coverage_end_exit.clone() {
-                    Some(exit) => Ok(vec![self.return_to_coverage_exit(statement, &exit)?]),
+                    Some(exit) => {
+                        self.coverage_end_exit_used = true;
+                        Ok(vec![self.return_to_coverage_exit(statement, &exit)?])
+                    }
                     None => Ok(vec![statement]),
                 }
             }

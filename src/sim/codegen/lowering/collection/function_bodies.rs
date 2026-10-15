@@ -1091,10 +1091,13 @@ impl<'a> Codegen<'a> {
                 // (decision S44-D7).
                 let exit = ctx.cg.new_fn_name(path, "cov_end");
                 ctx.coverage_end_exit = Some(exit.clone());
+                ctx.coverage_end_exit_used = false;
                 let lowered = ctx.lower_stmt(body);
                 ctx.coverage_end_exit = None;
                 body_stmts.extend(lowered?);
-                body_stmts.push(IrStmt::Label(exit));
+                if ctx.coverage_end_exit_used {
+                    body_stmts.push(IrStmt::Label(exit));
+                }
                 body_stmts.extend(end_samples);
             }
             let pre_fns = std::mem::take(&mut ctx.pre_fns);

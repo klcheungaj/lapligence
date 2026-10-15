@@ -33,6 +33,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             call_owner: "deferred immediate assertion action",
             display_scope: None,
             coverage_end_exit: None,
+            coverage_end_exit_used: false,
         }
     }
 
