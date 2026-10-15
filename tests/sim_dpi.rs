@@ -285,6 +285,41 @@ fn dpi_missing_symbol_fails_during_model_link() {
     assert!(!stderr.contains("llg: $finish"), "simulation ran: {stderr}");
 }
 
+/// A model that ends by a signal makes `llg` exit 1 and name the signal on
+/// one stderr line; before, the run ended silently.
+#[test]
+fn model_ended_by_a_signal_is_named_on_stderr() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    #[cfg(not(unix))]
+    {
+        eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
+        return;
+    }
+
+    let directory = sim_harness::TempDir::new("dpi-crash").expect("temporary directory");
+    let Some(library) = compile_shared_library(directory.path(), &fixture("crash.c"), "dpi_crash")
+    else {
+        return;
+    };
+    for no_opt in [false, true] {
+        let output = run_llg(
+            directory.path(),
+            &fixture("crash.sv"),
+            Some(&library),
+            no_opt,
+        );
+        let stderr = crate::sim_harness::strip_lint_reports(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
+        assert_eq!(
+            stderr, "llg: the model was terminated by signal 6 (SIGABRT)\n",
+            "no_opt={no_opt}"
+        );
+    }
+}
+
 #[test]
 fn dpi_conflicting_aliases_fail_before_codegen() {
     let directory = sim_harness::TempDir::new("dpi-conflict").expect("temporary directory");

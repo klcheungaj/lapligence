@@ -14,9 +14,17 @@ Build Slang, owned DB/model/indexes in one `spawn_blocking` closure. Hold no bac
 lock across discovery, cleanup, admission or compilation. tower-lsp runs
 notifications concurrently, so rescans overlap: apply a discovery only when no
 later-started one was applied (`DiscoveryOrder`). Discard stale generations;
-triggers during a run arm one dirty-root follow-up. Always publish diagnostics.
+triggers during a run arm one dirty-root follow-up, and only the job holding the
+root's current generation releases its running slot. Always publish diagnostics.
 Valid analysis replaces `last_good`; compile/admission failures retain navigation.
 Snapshot replacement/clearing advances the process-wide epoch and invalidates caches.
+
+Diagnostics are sent after the state lock is released, by job tasks and handlers.
+Every payload takes a `ClientOrder` ticket under that lock, and `publish_ordered`
+sends under an async gate, skipping a URI whose later-ticketed payload already
+went out (commits, shared-file unions, config diagnostics, the didOpen replay).
+Watched-file registrations are serialized by a second gate and read the watcher
+set only after taking their turn, so the newest set is always the one registered.
 
 ## Admission
 

@@ -111,7 +111,10 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
   data open their files with `"rb"`/`"wb"` (IEEE 1800-2009 21.3.1).
 - Windows `abort()` ends a process with an NTSTATUS such as 0xC0000409, which an
   `ExitCode` byte would truncate (to 9); `llg` maps statuses outside 0-255, like
-  Unix signals, to 1.
+  Unix signals, to 1 and prints one line: `llg: the model exited with status
+  0xC0000409` (the 32-bit status in upper-case hex, `0x` and eight digits) on
+  Windows, `llg: the model was terminated by signal 6 (SIGABRT)` on Unix (the
+  name is omitted for a signal outside the table in `src/bin/llg/main.rs`).
 - MSVC `/W4` rejects shadowed locals, parameters and globals (C4456/C4457/C4459)
   under `/WX`; GCC/Clang only report them with `-Wshadow`, which the runtime
   storage probes enable.
@@ -226,8 +229,8 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
 - Apple ld64 does not check a dylib's undefined symbols when it links an
   executable against it; GNU ld does. A DPI library built with `-undefined
   dynamic_lookup` that calls a routine nobody defines therefore links, and the
-  model ends by a signal (status 1 from `llg`) with nothing on stderr when it
-  calls it. llg reads Mach-O libraries' symbol tables before the build
+  model ends by a signal (status 1 and a `terminated by signal` line from
+  `llg`) when it calls it. llg reads Mach-O libraries' symbol tables before the build
   (`build/dpi_link.rs`); `clang --target=arm64-apple-macos11 -c` produces Mach-O
   objects on Linux for checking such a reader.
 - In the Windows arm64 test job (4 CPUs, Defender on) model-building tests ran a

@@ -11,7 +11,7 @@ use crate::core::db::{Db, NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
     all_nodes, collect_driver_writes, collect_reads, connected_port_link_drivers,
     gate_terminal_drivers, gate_terminal_reads, is_signal, port_link_reads, signal_scope_path,
-    top_external_port_signals, unconnected_port_signals,
+    subroutine_body, top_external_port_signals, unconnected_port_signals,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -93,7 +93,7 @@ fn design_activity(db: &Db) -> (HashSet<NodeId>, HashSet<NodeId>) {
             NodeKind::FuncTask { .. } => {
                 // Function/task bodies are not process nodes, but their
                 // assignments still describe activity on captured signals.
-                if let Some(body) = function_body(db, id) {
+                if let Some(body) = subroutine_body(db, id) {
                     reads.extend(collect_reads(db, body));
                     drivers.extend(collect_driver_writes(db, body));
                 }
@@ -122,16 +122,6 @@ fn design_activity(db: &Db) -> (HashSet<NodeId>, HashSet<NodeId>) {
     }
 
     (reads, drivers)
-}
-
-/// The body statement is the last statement child of a function/task node.
-fn function_body(db: &Db, id: NodeId) -> Option<NodeId> {
-    db.node(id)
-        .children
-        .iter()
-        .rev()
-        .copied()
-        .find(|child| matches!(db.node_kind(*child), NodeKind::Stmt(_)))
 }
 
 /// Net declarations with an intrinsic pull/supply value are conservatively
@@ -296,5 +286,141 @@ mod tests {
             "cloned source declaration must produce one finding: {diags:?}"
         );
         assert!(diags[0].message.contains("`floating`"));
+    }
+
+    fn undriven_names(sv: &str, top: &str) -> Vec<String> {
+        let mut names: Vec<String> = run_rule(sv, top)
+            .iter()
+            .map(|d| d.message.split('`').nth(1).unwrap_or_default().to_string())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn dpi_import_output_and_inout_actuals_are_drivers() {
+        let names = undriven_names(
+            "module top;\n\
+               import \"DPI-C\" function int dpi_fn(input int i, output int o, inout int io);\n\
+               import \"DPI-C\" task dpi_task(output int o, inout int io);\n\
+               int in_value = 1;\n  int fn_out, fn_io, task_out, task_io, sink;\n\
+               initial begin\n    sink = dpi_fn(in_value, fn_out, fn_io);\n    dpi_task(task_out, task_io);\n\
+                 $display(fn_out, fn_io, task_out, task_io);\n  end\nendmodule\n",
+            "top",
+        );
+        assert!(
+            names.is_empty(),
+            "actuals are written by the call: {names:?}"
+        );
+    }
+
+    #[test]
+    fn dpi_import_input_actual_is_not_a_driver() {
+        let names = undriven_names(
+            "module top;\n  import \"DPI-C\" function void dpi_fn(input int i, output int o);\n\
+               int never_driven, out;\n\
+               initial begin\n    dpi_fn(never_driven, out);\n    $display(out);\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["never_driven"], "an input actual is only read");
+    }
+
+    #[test]
+    fn systemverilog_subroutine_output_inout_and_ref_actuals_are_drivers() {
+        let names = undriven_names(
+            "module top;\n\
+               task t(output int o, inout int io);\n    o = 1;\n    io = io + 1;\n  endtask\n\
+               function int f(output int o);\n    o = 2;\n    return 0;\n  endfunction\n\
+               task automatic r(ref int v);\n    v = 3;\n  endtask\n\
+               int a, b, c, d, sink;\n\
+               initial begin\n    t(a, b);\n    sink = f(c);\n    r(d);\n    $display(a, b, c, d);\n  end\nendmodule\n",
+            "top",
+        );
+        assert!(names.is_empty(), "{names:?}");
+    }
+
+    #[test]
+    fn selected_output_actual_drives_the_whole_object() {
+        let names = undriven_names(
+            "module top;\n  task t(output bit o);\n    o = 1'b1;\n  endtask\n\
+               logic [3:0] word;\n  int array [2];\n\
+               initial begin\n    t(word[1]);\n    t(array[0][0]);\n    $display(word, array[0]);\n  end\nendmodule\n",
+            "top",
+        );
+        assert!(names.is_empty(), "{names:?}");
+    }
+
+    #[test]
+    fn const_ref_and_input_actuals_stay_read_only() {
+        let names = undriven_names(
+            "module top;\n  task automatic t(const ref int v, input int i);\n    $display(v, i);\n  endtask\n\
+               int ro_ref, ro_in;\n  initial t(ro_ref, ro_in);\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["ro_in", "ro_ref"]);
+    }
+
+    #[test]
+    fn scan_and_read_system_task_destinations_are_drivers() {
+        let names = undriven_names(
+            "module top;\n  int fd = 0;\n  string text = \"7 8\";\n\
+               int a, b, c, rc;\n  string line;\n  int mem [4];\n  int plus;\n\
+               initial begin\n    rc = $sscanf(text, \"%d %d\", a, b);\n    rc = $fscanf(fd, \"%d\", c);\n\
+                 rc = $fgets(line, fd);\n    rc = $fread(mem, fd);\n    rc = $value$plusargs(\"X=%d\", plus);\n\
+                 $display(a, b, c, line, mem[0], plus, rc);\n  end\nendmodule\n",
+            "top",
+        );
+        assert!(names.is_empty(), "{names:?}");
+    }
+
+    #[test]
+    fn scan_source_and_format_arguments_are_not_drivers() {
+        let names = undriven_names(
+            "module top;\n  string source;\n  int fd_source;\n  int dest, rc;\n\
+               initial begin\n    rc = $sscanf(source, \"%d\", dest);\n    rc = $fscanf(fd_source, \"%d\", dest);\n\
+                 $display(dest, rc);\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["fd_source", "source"]);
+    }
+
+    #[test]
+    fn string_formatting_and_readmem_destinations_are_drivers() {
+        let names = undriven_names(
+            "module top;\n  string formatted, written;\n  logic [7:0] image [0:3];\n  int n = 3;\n\
+               initial begin\n    $sformat(formatted, \"%0d\", n);\n    $swrite(written, \"%0d\", n);\n\
+                 $readmemh(\"x.hex\", image);\n    $display(formatted, written, image[0]);\n  end\nendmodule\n",
+            "top",
+        );
+        assert!(names.is_empty(), "{names:?}");
+    }
+
+    #[test]
+    fn seed_arguments_are_driven_by_the_random_functions() {
+        let names = undriven_names(
+            "module top;\n  int seed1, seed2, r;\n\
+               initial begin\n    r = $random(seed1);\n    r = $dist_uniform(seed2, 0, 9);\n    $display(seed1, seed2, r);\n  end\nendmodule\n",
+            "top",
+        );
+        assert!(names.is_empty(), "{names:?}");
+    }
+
+    #[test]
+    fn std_randomize_arguments_are_drivers() {
+        let names = undriven_names(
+            "module top;\n  int a;\n  bit [3:0] b;\n  int ok;\n\
+               initial begin\n    ok = std::randomize(a, b);\n    $display(a, b, ok);\n  end\nendmodule\n",
+            "top",
+        );
+        assert!(names.is_empty(), "{names:?}");
+    }
+
+    #[test]
+    fn plain_system_function_arguments_stay_reads() {
+        let names = undriven_names(
+            "module top;\n  int value;\n  initial begin\n    $display($clog2(value));\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["value"]);
     }
 }

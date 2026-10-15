@@ -2,12 +2,49 @@
 
 use super::*;
 
+/// The client calls watcher registration makes; a trait so the ordering of
+/// the exchange can be tested without a connection.
+pub(super) trait WatcherClient {
+    async fn unregister(&self, unregistration: Unregistration) -> Result<()>;
+    async fn register(&self, registration: Registration) -> Result<()>;
+    async fn warn(&self, message: String);
+}
+
+impl WatcherClient for Client {
+    async fn unregister(&self, unregistration: Unregistration) -> Result<()> {
+        self.unregister_capability(vec![unregistration]).await
+    }
+
+    async fn register(&self, registration: Registration) -> Result<()> {
+        self.register_capability(vec![registration]).await
+    }
+
+    async fn warn(&self, message: String) {
+        self.log_message(MessageType::WARNING, message).await;
+    }
+}
+
 /// Free-standing watcher registration used by both the backend methods and
 /// spawned commit tasks (which cannot borrow `&Backend`).
 ///
-/// See [`Backend::register_watchers`] for the coalescing contract.
-pub(super) async fn register_watchers_with(client: &Client, state: &Arc<Mutex<BackendState>>) {
+/// See [`Backend::register_watchers`] for the coalescing contract. Calls are
+/// serialized and read the watcher set only once they hold their turn: the
+/// unregister/register exchange suspends on the client, so an overlapping
+/// call that had already read an older set could otherwise register it last
+/// and leave newly resolved include dependencies unwatched.
+pub(super) async fn register_watchers_with<C: WatcherClient>(
+    client: &C,
+    state: &Arc<Mutex<BackendState>>,
+) {
     let started = std::time::Instant::now();
+    let gate = Arc::clone(
+        &state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .client_order
+            .watcher_gate,
+    );
+    let _turn = gate.lock().await;
     let dynamic = {
         let state = state.lock().unwrap_or_else(|error| error.into_inner());
         state.dynamic_watched_files
@@ -48,16 +85,13 @@ pub(super) async fn register_watchers_with(client: &Client, state: &Arc<Mutex<Ba
             id: WATCH_REGISTRATION_ID.to_owned(),
             method: "workspace/didChangeWatchedFiles".to_owned(),
         };
-        if let Err(error) = client.unregister_capability(vec![unregistration]).await {
+        if let Err(error) = client.unregister(unregistration).await {
             crate::llg_debug!(
                 "event=watchers.unregistration.end outcome=error error={}",
                 error
             );
             client
-                .log_message(
-                    MessageType::WARNING,
-                    format!("watched-file unregistration failed: {error}"),
-                )
+                .warn(format!("watched-file unregistration failed: {error}"))
                 .await;
         } else {
             crate::llg_trace!("event=watchers.unregistration.end outcome=ok");
@@ -69,11 +103,11 @@ pub(super) async fn register_watchers_with(client: &Client, state: &Arc<Mutex<Ba
         state.registered_watchers_digest = Some(digest);
     }
     if let Err(error) = client
-        .register_capability(vec![Registration {
+        .register(Registration {
             id: WATCH_REGISTRATION_ID.to_owned(),
             method: "workspace/didChangeWatchedFiles".to_owned(),
             register_options: Some(options),
-        }])
+        })
         .await
     {
         {
@@ -81,10 +115,7 @@ pub(super) async fn register_watchers_with(client: &Client, state: &Arc<Mutex<Ba
             state.registered_watchers_digest = None;
         }
         client
-            .log_message(
-                MessageType::WARNING,
-                format!("watched-file registration failed: {error}"),
-            )
+            .warn(format!("watched-file registration failed: {error}"))
             .await;
         crate::llg_debug!(
             "event=watchers.registration.end outcome=error digest_bytes={} elapsed_us={} error={}",
@@ -192,7 +223,7 @@ pub(super) fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>
             );
             // Aborted mid-flight (stale/shutdown): still release the slot so
             // a dirty marker from this window is honored.
-            if Backend::finish_root_run(&state, &key) {
+            if Backend::finish_root_run(&state, &key, generation) {
                 spawn_debounced_run(client, state, key);
             }
             return;
@@ -222,39 +253,26 @@ pub(super) fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>
             result.include_deps.len(),
             job_started.elapsed().as_micros()
         );
-        let outcome = Backend::commit_job(&state, &key, generation, result);
+        let mut outcome = Backend::commit_job(&state, &key, generation, result);
+        let publication_count = outcome.publications.len();
         let ready = outcome.ready;
         crate::llg_debug!(
             "event=root_job.commit.end outcome=ok root={} generation={} publications={} ready={} valid_commit={} watchers_refresh={} module_explorer_changed={}",
             key.display(),
             generation,
-            outcome.publications.len(),
+            publication_count,
             ready,
             outcome.valid_commit,
             outcome.watchers_refresh,
             outcome.module_explorer_changed
         );
-        for (uri, diagnostics) in &outcome.publications {
-            let lint_count = diagnostics
-                .iter()
-                .filter(|diagnostic| diagnostic.source.as_deref() == Some("llg-lint"))
-                .count();
-            crate::llg_trace!(
-                "publishing diagnostics uri={} lint_rules={} total={}",
-                uri,
-                lint_count,
-                diagnostics.len()
-            );
-            client
-                .publish_diagnostics(uri.clone(), diagnostics.clone(), None)
-                .await;
-            crate::llg_trace!(
-                "event=publish_diagnostics.end outcome=ok uri={} lint_rules={} total={}",
-                uri,
-                lint_count,
-                diagnostics.len()
-            );
-        }
+        publish_ordered(
+            &client,
+            &state,
+            outcome.ticket,
+            std::mem::take(&mut outcome.publications),
+        )
+        .await;
         if outcome.module_explorer_changed {
             client
                 .send_notification::<LlgModuleExplorerChanged>(ModuleExplorerChangedParams {})
@@ -275,23 +293,23 @@ pub(super) fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>
         }
         // Latest-wins coalescing: at most ONE debounced follow-up run when
         // triggers landed while this job executed.
-        if Backend::finish_root_run(&state, &key) {
-            end_to_end_span.complete("ok-follow-up", outcome.publications.len());
+        if Backend::finish_root_run(&state, &key, generation) {
+            end_to_end_span.complete("ok-follow-up", publication_count);
             crate::llg_debug!(
                 "event=root_job.end outcome=ok-follow-up root={} generation={} publications={} elapsed_us={}",
                 key.display(),
                 generation,
-                outcome.publications.len(),
+                publication_count,
                 job_started.elapsed().as_micros()
             );
             spawn_debounced_run(client, state, key);
         } else {
-            end_to_end_span.complete("ok", outcome.publications.len());
+            end_to_end_span.complete("ok", publication_count);
             crate::llg_debug!(
                 "event=root_job.end outcome=ok root={} generation={} publications={} elapsed_us={}",
                 key.display(),
                 generation,
-                outcome.publications.len(),
+                publication_count,
                 job_started.elapsed().as_micros()
             );
         }
@@ -732,7 +750,16 @@ impl Backend {
     /// `true` when triggers arrived during the run and one debounced
     /// follow-up must be armed now.  A vanished or shutting-down root never
     /// owes a follow-up.
-    pub(super) fn finish_root_run(state: &Arc<Mutex<BackendState>>, key: &RootKey) -> bool {
+    ///
+    /// Only the job holding the root's current `generation` releases the slot.
+    /// A job that outlived its root (folder removed and added again while it
+    /// ran) shares the key with the new root; letting it finish would free the
+    /// new root's running slot and allow two concurrent jobs.
+    pub(super) fn finish_root_run(
+        state: &Arc<Mutex<BackendState>>,
+        key: &RootKey,
+        generation: u64,
+    ) -> bool {
         let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
         if guard.shutting_down {
             return false;
@@ -740,6 +767,7 @@ impl Backend {
         guard
             .roots
             .get_mut(key)
+            .filter(|root| root.generation == generation)
             .is_some_and(|root| root.scheduler.job_finished())
     }
 

@@ -1017,6 +1017,39 @@ impl Db {
         }
     }
 
+    /// Hierarchical name segments of the module instance or generate scope
+    /// `id`, root first, as SV 27.4 writes them: a loop generate block is named
+    /// once as written (`g[0]`), not as the loop array followed by the block,
+    /// and an unnamed block keeps the array's name. The top instance yields its
+    /// own name. This is the one naming rule behind `%m`, `svScope` names and
+    /// lint messages.
+    pub fn hierarchical_name_parts(&self, id: NodeId) -> Vec<&str> {
+        let mut parts: Vec<&str> = Vec::new();
+        let mut named_block = false;
+        let mut current = Some(id);
+        while let Some(nid) = current {
+            let node = &self.nodes[nid.index()];
+            match node.kind {
+                NodeKind::ModuleInst { .. } | NodeKind::GenScope => {
+                    named_block = matches!(node.kind, NodeKind::GenScope) && !node.name.is_empty();
+                    if !node.name.is_empty() {
+                        parts.push(&node.name);
+                    }
+                }
+                NodeKind::GenScopeArray => {
+                    if !named_block && !node.name.is_empty() {
+                        parts.push(&node.name);
+                    }
+                    named_block = false;
+                }
+                _ => {}
+            }
+            current = node.parent;
+        }
+        parts.reverse();
+        parts
+    }
+
     /// Return the owned packed-range projection captured by [`Self::from_slang`].
     pub fn elaborated_type_ranges(&self) -> &[ElaboratedTypeRanges] {
         &self.elaborated_type_ranges

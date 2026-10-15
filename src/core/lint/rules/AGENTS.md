@@ -9,7 +9,9 @@ them across rules. New rules need registry entries plus focused behavior and
 configuration tests. Rules consume owned data through `LintCtx`, with no live
 native traversal or I/O.
 
-- `unused.rs` — `unused-signal`: signals that are never read or used.
+- `unused.rs` — `unused-signal`: signals that are never read or used. Reads and
+  writes in every subroutine body (exported ones included) and in formal
+  defaults count, wherever the subroutine is declared.
 - `width.rs` — `width-mismatch`: assignments and port links with different known widths.
 - `latch.rs` — `incomplete-case`: exact cases without a default in combinational/latch logic.
 - `combloop.rs` — `combinational-loop`: combinational feedback paths. A
@@ -47,7 +49,11 @@ native traversal or I/O.
   also covers plain level-sensitive always and initial/final processes.
 - `undriven.rs` — `undriven-signal`: flags a declared signal that is read
   but has no active procedural/continuous driver, declaration initializer,
-  connected output/inout flow, or primitive output terminal. Top-level
+  connected output/inout flow, or primitive output terminal. Output, inout and
+  non-`const` `ref` actuals of any call are drivers: DPI imports, tasks,
+  `$sscanf`/`$fscanf`/`$fgets`/`$fread`/`$readmem*`/`$sformat` destinations and
+  `std::randomize` arguments (Slang wraps each written actual in an assignment
+  operation), plus the `$random` seed. Top-level
   external inputs/inouts, explicitly open child ports, implicit nets,
   and intrinsic pull/supply nets are skipped.
   Input/inout actual expressions are read through the owned port
@@ -87,4 +93,6 @@ native traversal or I/O.
 - `analysis.rs` — shared owned-db helpers: read/write collection,
   expression-width computation, scope/instance iteration, port-link
   bookkeeping (deterministic, deduped, first-encounter order),
-  and unconnected-port classification (`port_unconnected`).
+  and unconnected-port classification (`port_unconnected`). Scope names in
+  messages come from `Db::hierarchical_name_parts`, the same SV 27.4 naming
+  as `%m` (`tb.g[0].c`, not `tb.g.g[0].c`).

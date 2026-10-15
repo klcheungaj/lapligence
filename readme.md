@@ -263,6 +263,10 @@ runtime archives.
 
 Exit status is `0` on success, `1` on compile/lint/build errors, and `2` for
 invalid command-line usage. A completed simulator's exit status is propagated.
+A model ended by a signal, or by a status outside 0-255 (a Windows crash
+status), makes `llg` exit `1` after one stderr line such as
+`llg: the model was terminated by signal 6 (SIGABRT)` or
+`llg: the model exited with status 0xC0000005`.
 
 ### Simulation example
 

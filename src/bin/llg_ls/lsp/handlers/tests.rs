@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_paths::host_path as hp;
+use state::ClientOrder;
 use std::sync::atomic::AtomicUsize;
 
 /// The process-global shadow base is shared by every test in this binary.
@@ -75,6 +76,7 @@ fn empty_backend_state() -> BackendState {
         published_shared: BTreeMap::new(),
         next_generation: 0,
         discovery: Default::default(),
+        client_order: Default::default(),
     }
 }
 
@@ -708,6 +710,7 @@ fn oversized_compile_job_publishes_limit_and_retains_last_good_snapshot() {
         published_shared: BTreeMap::new(),
         next_generation: 0,
         discovery: Default::default(),
+        client_order: Default::default(),
     }));
     let job = RootJob {
         key: root.clone(),
@@ -776,6 +779,7 @@ fn open_token_freshness_barrier_rejects_stale_revision_before_admission() {
         published_shared: BTreeMap::new(),
         next_generation: 0,
         discovery: Default::default(),
+        client_order: Default::default(),
     }));
     let registry = Arc::new(OpenTokenFlightRegistry::new());
 
@@ -1133,6 +1137,7 @@ fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
         published_shared: BTreeMap::new(),
         next_generation: 0,
         discovery: Default::default(),
+        client_order: Default::default(),
     }));
     let mut analysis = features::empty_analysis();
     analysis.diagnostics.push(Diag {
@@ -1240,6 +1245,7 @@ fn commit_job_serves_features_from_partial_analyses() {
         published_shared: BTreeMap::new(),
         next_generation: 0,
         discovery: Default::default(),
+        client_order: Default::default(),
     }));
     let commit = |generation: u64, analysis: Option<Analysis>| {
         state
@@ -1399,6 +1405,7 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
         published_shared: BTreeMap::new(),
         next_generation: 0,
         discovery: Default::default(),
+        client_order: Default::default(),
     }));
 
     let files = vec![
@@ -2134,6 +2141,7 @@ fn watcher_options_cover_config_sources_and_include_deps() {
         published_shared: BTreeMap::new(),
         next_generation: 0,
         discovery: Default::default(),
+        client_order: Default::default(),
     };
     state.roots.insert(
         root.clone(),
@@ -2197,6 +2205,7 @@ fn reload_keeps_last_valid_config_on_malformed_reload() {
         published_shared: BTreeMap::new(),
         next_generation: 0,
         discovery: Default::default(),
+        client_order: Default::default(),
     };
     state.roots.insert(
         root.clone(),
@@ -2321,6 +2330,7 @@ fn dep_dependents_maps_every_dependent_root() {
         published_shared: BTreeMap::new(),
         next_generation: 0,
         discovery: Default::default(),
+        client_order: Default::default(),
     };
     state.roots.insert(
         root_a.clone(),
@@ -2526,6 +2536,7 @@ fn two_root_state_with_shared_file(
         published_shared: BTreeMap::new(),
         next_generation: 0,
         discovery: Default::default(),
+        client_order: Default::default(),
     };
     state.roots.insert(
         root_a.clone(),
@@ -2836,4 +2847,295 @@ fn an_older_discovery_never_replaces_a_newer_one() {
         Backend::apply_discovery(&mut state, stale, &BTreeMap::new(), &previous, walk(&[])),
         DiscoveryOutcome::Stale
     );
+}
+
+fn diagnostic_with(message: &str) -> Diagnostic {
+    Diagnostic {
+        message: message.to_owned(),
+        ..Default::default()
+    }
+}
+
+fn payload(uri: &Url, message: &str) -> (Url, Vec<Diagnostic>) {
+    (uri.clone(), vec![diagnostic_with(message)])
+}
+
+/// A recording stand-in for the client connection: the messages that were
+/// "sent", in order.
+type SentLog = Arc<Mutex<Vec<(Url, String)>>>;
+
+fn record(log: &SentLog, uri: Url, diagnostics: &[Diagnostic]) {
+    log.lock()
+        .expect("sent log")
+        .push((uri, diagnostics[0].message.clone()));
+}
+
+fn sent_messages(log: &SentLog) -> Vec<String> {
+    log.lock()
+        .expect("sent log")
+        .iter()
+        .map(|(_, message)| message.clone())
+        .collect()
+}
+
+fn file_uri(name: &str) -> Url {
+    Url::from_file_path(PathBuf::from(hp("/tmp/llg_publish_order")).join(name)).expect("file uri")
+}
+
+#[test]
+fn a_later_ticket_supersedes_an_earlier_payload_per_uri() {
+    let mut order = ClientOrder::default();
+    let (a, b) = (file_uri("a.sv"), file_uri("b.sv"));
+    let older = order.ticket();
+    let newer = order.ticket();
+    assert!(older < newer);
+    assert!(order.admit(&a, newer));
+    assert!(!order.admit(&a, older), "older payload for the same URI");
+    assert!(order.admit(&b, older), "another URI is unaffected");
+    assert!(order.admit(&a, newer), "a ticket may resend its own URI");
+    let latest = order.ticket();
+    assert!(order.admit(&a, latest));
+}
+
+/// Diagnostics are sent after the state lock is released, so the job task of
+/// one root, the config-diagnostics publisher and the didOpen replay can
+/// finish in a different order than they computed their payloads. The client
+/// must keep the newest payload per URI.
+#[tokio::test(flavor = "current_thread")]
+async fn an_older_publication_never_follows_a_newer_one() {
+    let state = Arc::new(Mutex::new(empty_backend_state()));
+    let (a, b) = (file_uri("a.sv"), file_uri("b.sv"));
+    let (older, newer) = {
+        let mut state = state.lock().expect("state");
+        (state.client_order.ticket(), state.client_order.ticket())
+    };
+    let log = SentLog::default();
+    let sender = |log: &SentLog| {
+        let log = Arc::clone(log);
+        move |uri: Url, diagnostics: Vec<Diagnostic>| {
+            record(&log, uri, &diagnostics);
+            std::future::ready(())
+        }
+    };
+    send_in_ticket_order(&state, newer, vec![payload(&a, "a-new")], sender(&log)).await;
+    send_in_ticket_order(
+        &state,
+        older,
+        vec![payload(&a, "a-old"), payload(&b, "b-old")],
+        sender(&log),
+    )
+    .await;
+    assert_eq!(sent_messages(&log), ["a-new", "b-old"]);
+}
+
+/// The check against the sent tickets and the send are one step: a payload
+/// that took its ticket earlier but is still being sent must finish before a
+/// newer payload for the same URI goes out.
+#[tokio::test(flavor = "current_thread")]
+async fn a_publication_in_flight_is_not_overtaken() {
+    let state = Arc::new(Mutex::new(empty_backend_state()));
+    let uri = file_uri("a.sv");
+    let (older, newer) = {
+        let mut state = state.lock().expect("state");
+        (state.client_order.ticket(), state.client_order.ticket())
+    };
+    let log = SentLog::default();
+    let in_send = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let slow = tokio::spawn({
+        let (state, log, in_send, release) = (
+            Arc::clone(&state),
+            Arc::clone(&log),
+            Arc::clone(&in_send),
+            Arc::clone(&release),
+        );
+        let publication = payload(&uri, "old");
+        async move {
+            send_in_ticket_order(&state, older, vec![publication], move |uri, diagnostics| {
+                let (log, in_send, release) =
+                    (Arc::clone(&log), Arc::clone(&in_send), Arc::clone(&release));
+                async move {
+                    in_send.notify_one();
+                    release.notified().await;
+                    record(&log, uri, &diagnostics);
+                }
+            })
+            .await;
+        }
+    });
+    in_send.notified().await;
+    let fast = tokio::spawn({
+        let (state, log) = (Arc::clone(&state), Arc::clone(&log));
+        let publication = payload(&uri, "new");
+        async move {
+            send_in_ticket_order(&state, newer, vec![publication], move |uri, diagnostics| {
+                record(&log, uri, &diagnostics);
+                std::future::ready(())
+            })
+            .await;
+        }
+    });
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        sent_messages(&log).is_empty(),
+        "the newer payload went out while the older one was still being sent"
+    );
+    release.notify_one();
+    slow.await.expect("slow sender");
+    fast.await.expect("fast sender");
+    assert_eq!(sent_messages(&log), ["old", "new"]);
+}
+
+#[test]
+fn every_commit_takes_a_later_ticket() {
+    let root = PathBuf::from(hp("/tmp/llg_commit_tickets"));
+    let state = Arc::new(Mutex::new(single_root_state(&root, Vec::new())));
+    let commit = || {
+        Backend::commit_job(
+            &state,
+            &root,
+            1,
+            CompileResult {
+                analysis: None,
+                files: Vec::new(),
+                include_deps: BTreeSet::new(),
+            },
+        )
+        .ticket
+    };
+    let first = commit();
+    let second = commit();
+    assert!(first > 0 && second > first);
+    let config_ticket = state.lock().expect("state").client_order.ticket();
+    assert!(config_ticket > second);
+}
+
+/// A client whose unregistrations complete when the test releases them, and
+/// that records every registration it receives.
+#[derive(Default)]
+struct ScriptedWatcherClient {
+    unregister_calls: AtomicUsize,
+    releases: [tokio::sync::Notify; 2],
+    registered: Mutex<Vec<String>>,
+}
+
+impl WatcherClient for ScriptedWatcherClient {
+    async fn unregister(&self, _: Unregistration) -> Result<()> {
+        let call = self.unregister_calls.fetch_add(1, Ordering::SeqCst);
+        self.releases[call].notified().await;
+        Ok(())
+    }
+
+    async fn register(&self, registration: Registration) -> Result<()> {
+        self.registered
+            .lock()
+            .expect("registrations")
+            .push(registration.register_options.expect("options").to_string());
+        Ok(())
+    }
+
+    async fn warn(&self, _: String) {}
+}
+
+/// Watcher registrations suspend on the client, and commit tasks of
+/// different roots and handlers call them concurrently. The call that read
+/// the older watcher set must not register it after the newer one: the
+/// include dependency that appeared in between would stay unwatched.
+#[tokio::test(flavor = "current_thread")]
+async fn overlapping_watcher_registrations_end_with_the_newest_set() {
+    let root = PathBuf::from(hp("/tmp/llg_watcher_order"));
+    let dependency = root.join("defs.inc");
+    let mut initial = single_root_state(&root, Vec::new());
+    initial.dynamic_watched_files = true;
+    initial.watchers_registered = true;
+    initial.registered_watchers_digest = Some("registered before".to_owned());
+    let state = Arc::new(Mutex::new(initial));
+    let client = Arc::new(ScriptedWatcherClient::default());
+    let registration = || {
+        let (client, state) = (Arc::clone(&client), Arc::clone(&state));
+        tokio::spawn(async move { register_watchers_with(&*client, &state).await })
+    };
+    let yield_a_while = || async {
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+    };
+
+    let first = registration();
+    yield_a_while().await;
+    assert_eq!(client.unregister_calls.load(Ordering::SeqCst), 1);
+    // The first call has read its watcher set; a commit then resolves a new
+    // include dependency and starts the second call.
+    state
+        .lock()
+        .expect("state")
+        .roots
+        .get_mut(&root)
+        .expect("root")
+        .include_deps
+        .insert(dependency);
+    let second = registration();
+    yield_a_while().await;
+    // The newer call finishes its unregistration before the older one.
+    client.releases[1].notify_one();
+    yield_a_while().await;
+    client.releases[0].notify_one();
+    first.await.expect("first registration");
+    second.await.expect("second registration");
+
+    let newest = {
+        let state = state.lock().expect("state");
+        watcher_options_from_state(&state).to_string()
+    };
+    let registered = client.registered.lock().expect("registrations");
+    assert_eq!(registered.last(), Some(&newest));
+    assert_eq!(
+        state
+            .lock()
+            .expect("state")
+            .registered_watchers_digest
+            .as_deref(),
+        Some(newest.as_str())
+    );
+}
+
+/// A job that outlived its root (workspace folder removed and added again
+/// while it compiled) shares the root key with the new root. Finishing it
+/// must not free the new root's running slot.
+#[test]
+fn a_job_of_a_replaced_root_does_not_release_the_new_roots_slot() {
+    let root = PathBuf::from(hp("/tmp/llg_replaced_root"));
+    let mut initial = single_root_state(&root, Vec::new());
+    let replacement_generation = 7;
+    {
+        let replacement = initial.roots.get_mut(&root).expect("root");
+        replacement.generation = replacement_generation;
+        assert_eq!(replacement.scheduler.trigger(), TriggerDecision::ArmTimer);
+        assert_eq!(replacement.scheduler.timer_fired(), FireDecision::StartJob);
+    }
+    let state = Arc::new(Mutex::new(initial));
+
+    let old_generation = 3;
+    assert!(!Backend::finish_root_run(&state, &root, old_generation));
+    assert_eq!(
+        state
+            .lock()
+            .expect("state")
+            .roots
+            .get_mut(&root)
+            .expect("root")
+            .scheduler
+            .trigger(),
+        TriggerDecision::Coalesce,
+        "the replacement's job is still running"
+    );
+    // The owner of the slot releases it and owes the follow-up its dirty mark
+    // asked for.
+    assert!(Backend::finish_root_run(
+        &state,
+        &root,
+        replacement_generation
+    ));
 }

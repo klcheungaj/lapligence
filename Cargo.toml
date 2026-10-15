@@ -87,7 +87,7 @@ mimalloc = { version = "0.1.51", default-features = false }
 
 # LSP framework (optional; enabled via the `lsp` feature)
 tower-lsp = { version = "0.20", optional = true }
-tokio = { version = "1", features = ["io-std", "rt-multi-thread", "macros", "time"], optional = true }
+tokio = { version = "1", features = ["io-std", "rt-multi-thread", "macros", "time", "sync"], optional = true }
 dashmap = { version = "6", optional = true }
 
 # Service trait for the `exit` interceptor (see src/bin/llg_ls/main.rs).
