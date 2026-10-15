@@ -353,7 +353,8 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
     for (uint32_t i = 0; i < w; ++i) out[i] = CR_FALSE;
     const llg_cr_node_t* na = nd->a < p->node_count ? &p->nodes[nd->a] : NULL;
     /* Error literal: operand errors by default; the cases below refine it. */
-    uint32_t err = nd->op == LLG_CR_VAR ? CR_FALSE : cr_operands_err(s, b, n);
+    uint32_t err =
+        nd->op == LLG_CR_VAR || nd->op == LLG_CR_ELEM ? CR_FALSE : cr_operands_err(s, b, n);
     switch (nd->op) {
     case LLG_CR_VAR: {
         const llg_cr_var_t* var = &p->vars[nd->a];
@@ -577,6 +578,43 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
         uint32_t pos = 0;
         for (uint32_t k = 0; k < nd->b; ++k)
             for (uint32_t bit = 0; bit < na->bit_width && pos < w; ++bit, ++pos) out[pos] = v[bit];
+        break;
+    }
+    case LLG_CR_ELEM: {
+        const llg_cr_table_t* t = &p->tables[nd->a];
+        const uint32_t* items = p->table_items + t->first;
+        const llg_cr_node_t* ni = &p->nodes[nd->b];
+        if (s->status[nd->b] == CR_K) {
+            /* Classification checked the known index and its entry. */
+            int64_t index = 0;
+            if (!bv_index(cr_node_val(s, nd->b), ni->bit_width, ni->sign_flag, &index) ||
+                index < 0 || (uint64_t)index >= t->count || items[index] == LLG_CR_NONE)
+                cr_fatal("element index escaped classification");
+            uint32_t e = items[index];
+            uint32_t* v = cr_operand_lits(s, b, e, w);
+            for (uint32_t bit = 0; bit < w; ++bit) out[bit] = v[bit];
+            free(v);
+            err = cr_node_err(b, e);
+            break;
+        }
+        /* Random index: a multiplexer over the entries; an index that
+         * selects no entry or a null one is an error (S30-D4, S30-D11). */
+        const uint32_t* idx = cr_node_lits(s, b, nd->b);
+        uint32_t cw = ni->bit_width + 1u;
+        while (cw < 66u && (uint64_t)t->count >> (cw - 1u)) ++cw;
+        uint32_t any = CR_FALSE;
+        err = cr_node_err(b, nd->b);
+        for (uint32_t j = 0; j < t->count && !g->overflow; ++j) {
+            uint32_t e = items[j];
+            if (e == LLG_CR_NONE) continue;
+            uint32_t eq = cr_blast_eq_const(g, idx, ni->bit_width, ni->sign_flag, j, cw);
+            any = cr_or(g, any, eq);
+            uint32_t* v = cr_operand_lits(s, b, e, w);
+            for (uint32_t bit = 0; bit < w; ++bit) out[bit] = cr_or(g, out[bit], cr_and(g, eq, v[bit]));
+            free(v);
+            err = cr_or(g, err, cr_and(g, eq, cr_node_err(b, e)));
+        }
+        err = cr_or(g, err, any ^ 1u);
         break;
     }
     case LLG_CR_DSLICE:

@@ -2,8 +2,8 @@
 
 The solver behind `randomize()` (IEEE 1800-2009 clause 18). The facade
 `../llg_constraint.c` includes `common.c`, `eval.c`, `aig.c`, `bdd.c`,
-`sample.c`, `cdcl.c` and `solve.c` in that order; `rt::constraint_sources` embeds the same order as one
-translation unit of the `llg_runtime` archive. The interface is
+`sample.c`, `cdcl.c`, `solve.c` and `expand.c` in that order;
+`rt::constraint_sources` embeds the same order as one translation unit of the `llg_runtime` archive. The interface is
 `../llg_constraint.h`; the scheduler glue (`../scheduler/randomize.c`) converts
 packed values, picks the random stream and reports outcomes.
 
@@ -26,6 +26,44 @@ expression, the guard of enclosing implications and `if`s, and per item a
 (`llg_cr_order_t`, per constraint block), `randc` variables (`cyclic`) with
 their cycle state passed in and out through `llg_cr_set_cyclic` /
 `llg_cr_cyclic`, the `**` operator and the `DIST` node.
+
+### Objects and arrays (`expand.c`)
+
+A problem with units (`llg_cr_unit_t`) is a template. Each unit is one class
+layout: it lists its variables, arrays (`llg_cr_array_t`: fixed, dynamic or
+queue, packed elements) and handle properties (`llg_cr_slot_t`, scalar or
+array), and owns a range of blocks and leaves. Variables, arrays and slots
+are problem-wide (one per property), so an inherited property has one index
+in every derived unit; variables listed by no unit are global (static
+properties). Template nodes `REF`, `HVAR`, `AELEM`, `ASIZE`, `ITER`,
+`FOREACH`, `REDUCE` and `ISNULL` name another object's variables, array
+elements and sizes, loop indices and loops; `VAR` and `STATE` name the
+expanding instance's own.
+
+Generated code registers the objects of one call as instances: instance 0 is
+the randomized object, and `llg_cr_link` registers each object a handle
+names (deduplicated by handle, so an object reached twice, or the root
+reached again, is one instance). `llg_cr_next_inst` walks the instances in
+registration order; `llg_cr_inst_pre` says when to call an instance's
+`pre_randomize`. An object reached only through non-random links is state;
+reached later through a random link it is returned again to be fed as
+random.
+
+Each solve expands the template over the instances into an ordinary
+problem: loops become conjunctions or operator chains (an empty reduction is
+the operation's identity, S30-D6), constant indices select an element
+variable directly, and other indices become `ELEM` nodes over a table of
+the array's elements, whose out-of-range or null selections are evaluation
+errors the engines exclude (S30-D11). A value read through a null handle is
+a null leaf, an error a guard can eliminate (18.5.12). Expansion
+hash-conses nodes and folds constants, so `a[i+1]` with a known `i` is a
+direct element. With random dynamic arrays or queues, a first expansion
+solves the sizes before every other variable and drops the conjuncts that
+need elements of arrays of unknown size; the second fixes those sizes
+(S30-D5). A size no kept conjunct of an enabled block names keeps its value.
+Expanded problems and their sessions are cached by structure (four per call
+site), so repeated randomization of the same graph reuses the exact-engine
+caches.
 
 ## Solving
 
@@ -98,7 +136,9 @@ Named tunables, read once from the environment: `LLG_RAND_BDD_NODES`
 steps at 32x), `LLG_RAND_BDD_BITS` (512 variable bits per exact component,
 which keeps the recursive BDD operations shallow on coroutine-hosted stacks),
 `LLG_RAND_REJECT_TRIES` (4096), `LLG_RAND_CONFLICTS` (100000 conflicts per
-component search; 0 disables the search) and `LLG_RAND_STATS=1` (one stderr
+component search; 0 disables the search), `LLG_RAND_ARRAY_ELEMENTS` (2^20
+random array elements per solve), `LLG_RAND_EXPAND_NODES` (2^22 nodes per
+expansion) and `LLG_RAND_STATS=1` (one stderr
 line per solve: engines, components, BDD nodes, rejection tries, conflicts).
 The AIG bound (8x `LLG_RAND_BDD_NODES`, at least 4096) also bounds the CDCL
 encoding. Changing a budget may change the values drawn.

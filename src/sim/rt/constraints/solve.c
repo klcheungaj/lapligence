@@ -1,5 +1,15 @@
 /* ---- sessions ------------------------------------------------------------ */
 
+/* Problems with units (expand.c, after this file). */
+static void cr_tpl_free(cr_tpl_t* t);
+static llg_cr_session_t* cr_tpl_session_new(const llg_cr_problem_t* p);
+static void cr_tpl_begin(llg_cr_session_t* s);
+static llg_cr_status_t cr_tpl_step(llg_cr_session_t* s, const llg_cr_rng_t* rng,
+                                   llg_cr_report_t* report);
+static const uint64_t* cr_tpl_value(const cr_tpl_t* t, uint32_t inst, uint32_t var);
+static llg_cr_session_t* cr_tpl_flat_session(const llg_cr_session_t* s);
+static uint64_t* cr_cyc_slot(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
+
 struct cr_cache_entry {
     cr_u64vec_t key;
     cr_exact_t exact;
@@ -57,6 +67,25 @@ static void cr_validate_problem(const llg_cr_problem_t* p) {
             }
             break;
         }
+        case LLG_CR_ELEM: {
+            if (nd->a >= p->table_count || nd->b >= n) cr_fatal("element operand out of range");
+            const llg_cr_table_t* t = &p->tables[nd->a];
+            if ((uint64_t)t->first + t->count > p->table_item_count) cr_fatal("table out of range");
+            for (uint32_t i = 0; i < t->count; ++i)
+                if (p->table_items[t->first + i] != LLG_CR_NONE && p->table_items[t->first + i] >= n)
+                    cr_fatal("table entry after its node");
+            break;
+        }
+        case LLG_CR_REF:
+        case LLG_CR_HVAR:
+        case LLG_CR_AELEM:
+        case LLG_CR_ASIZE:
+        case LLG_CR_ITER:
+        case LLG_CR_FOREACH:
+        case LLG_CR_REDUCE:
+        case LLG_CR_ISNULL:
+            cr_fatal("template operation in a problem without units");
+            break;
         case LLG_CR_REPL:
         case LLG_CR_SLICE:
         case LLG_CR_RESIZE:
@@ -94,8 +123,9 @@ static void cr_validate_problem(const llg_cr_problem_t* p) {
     }
 }
 
-llg_cr_session_t* llg_cr_session_get(const llg_cr_problem_t* p, llg_cr_session_t** slot) {
-    if (slot && *slot) return *slot;
+/* A session of a problem without units, not linked into the release list
+ * (expanded problems belong to their template's session). */
+static llg_cr_session_t* cr_session_new(const llg_cr_problem_t* p) {
     cr_validate_problem(p);
     llg_cr_session_t* s = (llg_cr_session_t*)cr_alloc(1u, sizeof(*s));
     s->p = p;
@@ -168,6 +198,12 @@ llg_cr_session_t* llg_cr_session_get(const llg_cr_problem_t* p, llg_cr_session_t
     }
     s->cyc = (uint64_t*)cr_alloc(words ? words : 1u, sizeof(uint64_t));
     s->node_hash = (uint64_t*)cr_alloc(nodes, sizeof(uint64_t));
+    return s;
+}
+
+llg_cr_session_t* llg_cr_session_get(const llg_cr_problem_t* p, llg_cr_session_t** slot) {
+    if (slot && *slot) return *slot;
+    llg_cr_session_t* s = p->unit_count ? cr_tpl_session_new(p) : cr_session_new(p);
     s->next_session = cr_all_sessions;
     cr_all_sessions = s;
     if (slot) *slot = s;
@@ -175,6 +211,13 @@ llg_cr_session_t* llg_cr_session_get(const llg_cr_problem_t* p, llg_cr_session_t
 }
 
 static void cr_session_free(llg_cr_session_t* s) {
+    if (s->tpl) {
+        cr_tpl_free(s->tpl);
+        free((void*)s->call_args);
+        free(s->tmp_a);
+        free(s);
+        return;
+    }
     for (uint32_t i = 0; i < CR_CACHE_ENTRIES; ++i) {
         cr_cache_entry_t* e = &s->cache[i];
         free(e->key.data);
@@ -208,6 +251,10 @@ void llg_cr_session_release_all(void) {
 
 void llg_cr_set_var(llg_cr_session_t* s, uint32_t var, const uint64_t* words,
                     int active, int input_state) {
+    if (s->tpl) {
+        llg_cr_iset_var(s, 0u, var, words, active, input_state);
+        return;
+    }
     if (var >= s->p->var_count) cr_fatal("variable out of range");
     uint32_t n = CR_WORDS(s->p->vars[var].bit_width);
     uint64_t* d = s->var_cur + s->var_off[var];
@@ -218,12 +265,20 @@ void llg_cr_set_var(llg_cr_session_t* s, uint32_t var, const uint64_t* words,
 }
 
 void llg_cr_set_block(llg_cr_session_t* s, uint32_t block, int enabled) {
+    if (s->tpl) {
+        llg_cr_iset_block(s, 0u, block, enabled);
+        return;
+    }
     if (block >= s->p->block_count) cr_fatal("block out of range");
     s->block_enabled[block] = (uint8_t)(enabled != 0);
 }
 
 void llg_cr_set_leaf(llg_cr_session_t* s, uint32_t leaf, const uint64_t* words,
                      int input_state) {
+    if (s->tpl) {
+        llg_cr_iset_leaf(s, 0u, leaf, words, input_state);
+        return;
+    }
     if (leaf >= s->p->leaf_count) cr_fatal("state leaf out of range");
     uint32_t n = CR_WORDS(s->p->leaves[leaf].bit_width);
     uint64_t* d = s->leaf_val + s->leaf_off[leaf];
@@ -233,6 +288,10 @@ void llg_cr_set_leaf(llg_cr_session_t* s, uint32_t leaf, const uint64_t* words,
 }
 
 void llg_cr_set_cyclic(llg_cr_session_t* s, uint32_t var, const uint64_t* words) {
+    if (s->tpl) {
+        llg_cr_iset_cyclic(s, 0u, var, words);
+        return;
+    }
     if (var >= s->p->var_count || !s->p->vars[var].cyclic) cr_fatal("not a randc variable");
     uint32_t n = LLG_CR_CYCLIC_WORDS(s->p->vars[var].bit_width);
     uint64_t* d = s->cyc + s->cyc_off[var];
@@ -240,10 +299,12 @@ void llg_cr_set_cyclic(llg_cr_session_t* s, uint32_t var, const uint64_t* words)
 }
 
 const uint64_t* llg_cr_cyclic(const llg_cr_session_t* s, uint32_t var) {
+    if (s->tpl) return cr_cyc_slot(s, 0u, var);
     return s->cyc + s->cyc_off[var];
 }
 
 const uint64_t* llg_cr_value(const llg_cr_session_t* s, uint32_t var) {
+    if (s->tpl) return cr_tpl_value(s->tpl, 0u, var);
     return s->sol + s->var_off[var];
 }
 
@@ -282,6 +343,13 @@ static void cr_push_operands(const llg_cr_problem_t* p, uint32_t n, cr_u32vec_t*
         }
         return;
     }
+    case LLG_CR_ELEM: {
+        const llg_cr_table_t* t = &p->tables[nd->a];
+        cr_u32_push(out, nd->b);
+        for (uint32_t i = 0; i < t->count; ++i)
+            if (p->table_items[t->first + i] != LLG_CR_NONE) cr_u32_push(out, p->table_items[t->first + i]);
+        return;
+    }
     case LLG_CR_REPL:
     case LLG_CR_SLICE:
     case LLG_CR_RESIZE:
@@ -306,6 +374,25 @@ static void cr_push_operands(const llg_cr_problem_t* p, uint32_t n, cr_u32vec_t*
         cr_u32_push(out, nd->b);
         return;
     }
+}
+
+/* Operands a classified node depends on: an element with a known index
+ * depends only on the index and the selected entry, so a known index does
+ * not join the other entries' variables into one component. */
+static void cr_push_live(llg_cr_session_t* s, uint32_t n, cr_u32vec_t* out) {
+    const llg_cr_problem_t* p = s->p;
+    const llg_cr_node_t* nd = &p->nodes[n];
+    if (nd->op == LLG_CR_ELEM && s->status[nd->b] == CR_K) {
+        const llg_cr_node_t* ni = &p->nodes[nd->b];
+        const llg_cr_table_t* t = &p->tables[nd->a];
+        int64_t index;
+        cr_u32_push(out, nd->b);
+        if (bv_index(cr_node_val(s, nd->b), ni->bit_width, ni->sign_flag, &index) && index >= 0 &&
+            (uint64_t)index < t->count && p->table_items[t->first + (uint32_t)index] != LLG_CR_NONE)
+            cr_u32_push(out, p->table_items[t->first + (uint32_t)index]);
+        return;
+    }
+    cr_push_operands(p, n, out);
 }
 
 static uint32_t cr_next_stamp(llg_cr_session_t* s) {
@@ -337,7 +424,7 @@ static void cr_support(llg_cr_session_t* s, uint32_t root, int through_calls,
             if (calls) cr_u32_push(calls, n);
             continue;
         }
-        cr_push_operands(p, n, stack);
+        cr_push_live(s, n, stack);
     }
 }
 
@@ -373,7 +460,7 @@ static void cr_mark_cone(llg_cr_session_t* s, const uint32_t* conj, uint32_t cou
         uint32_t n = stack->data[--stack->len];
         if (s->status[n] != CR_R || in_cone[n]) continue;
         in_cone[n] = 1;
-        cr_push_operands(s->p, n, stack);
+        cr_push_live(s, n, stack);
     }
 }
 
@@ -389,7 +476,7 @@ static void cr_cache_key(llg_cr_session_t* s, const uint32_t* conj, uint32_t nco
     for (uint32_t n = 0; n < s->p->node_count; ++n) {
         if (!in_cone[n]) continue;
         scratch->len = 0;
-        cr_push_operands(s->p, n, scratch);
+        cr_push_live(s, n, scratch);
         for (size_t i = 0; i < scratch->len; ++i) {
             uint32_t x = scratch->data[i];
             if (s->status[x] != CR_K) continue;
@@ -902,6 +989,7 @@ static uint64_t cr_node_hash(llg_cr_session_t* s, uint32_t n) {
     case LLG_CR_CALL: h = cr_mix(h ^ cr_hash_text(p->calls[nd->a].name)); break;
     case LLG_CR_SLICE:
     case LLG_CR_REPL: h = cr_mix(h ^ nd->b); break;
+    case LLG_CR_ELEM: h = cr_mix(h ^ p->tables[nd->a].count); break;
     default: break;
     }
     cr_u32vec_t ops = {0, 0, 0};
@@ -1345,6 +1433,10 @@ static llg_cr_status_t cr_order_heights(cr_solve_t* st) {
 }
 
 void llg_cr_begin(llg_cr_session_t* s) {
+    if (s->tpl) {
+        cr_tpl_begin(s);
+        return;
+    }
     for (uint32_t v = 0; v < s->p->var_count; ++v) s->var_fixed[v] = 0;
     for (uint32_t c = 0; c < s->p->call_count; ++c) s->call_state[c] = 0;
     s->engines = 0;
@@ -1352,6 +1444,7 @@ void llg_cr_begin(llg_cr_session_t* s) {
 
 llg_cr_status_t llg_cr_step(llg_cr_session_t* s, const llg_cr_rng_t* rng,
                             llg_cr_report_t* report) {
+    if (s->tpl) return cr_tpl_step(s, rng, report);
     llg_cr_report_t local;
     if (!report) report = &local;
     memset(report, 0, sizeof(*report));
@@ -1377,10 +1470,19 @@ llg_cr_status_t llg_cr_step(llg_cr_session_t* s, const llg_cr_rng_t* rng,
 }
 
 int llg_cr_call_ready(const llg_cr_session_t* s, uint32_t call) {
+    if (s->tpl) {
+        llg_cr_session_t* flat = cr_tpl_flat_session(s);
+        return flat ? llg_cr_call_ready(flat, call) : 0;
+    }
     return call < s->p->call_count && s->call_state[call] == 1u;
 }
 
 const uint64_t* llg_cr_call_arg(const llg_cr_session_t* s, uint32_t call, uint32_t arg) {
+    if (s->tpl) {
+        llg_cr_session_t* flat = cr_tpl_flat_session(s);
+        if (!flat) cr_fatal("no expanded problem");
+        return llg_cr_call_arg(flat, call, arg);
+    }
     const llg_cr_call_t* c = &s->p->calls[call];
     if (arg >= c->arg_count) cr_fatal("call argument out of range");
     return s->val + s->node_off[s->p->args[c->arg_first + arg]];
@@ -1388,6 +1490,12 @@ const uint64_t* llg_cr_call_arg(const llg_cr_session_t* s, uint32_t call, uint32
 
 void llg_cr_set_call_result(llg_cr_session_t* s, uint32_t call, const uint64_t* words,
                             int input_state) {
+    if (s->tpl) {
+        llg_cr_session_t* flat = cr_tpl_flat_session(s);
+        if (!flat) cr_fatal("no expanded problem");
+        llg_cr_set_call_result(flat, call, words, input_state);
+        return;
+    }
     const llg_cr_call_t* c = &s->p->calls[call];
     uint64_t* result = s->call_val + s->call_off[call];
     uint32_t n = CR_WORDS(c->bit_width);

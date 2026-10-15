@@ -12,6 +12,7 @@
 
 use crate::{c_compiler, sim_harness};
 
+mod expand;
 mod weighted;
 
 use std::collections::BTreeMap;
@@ -1160,7 +1161,7 @@ fn emit_problem(out: &mut String, index: usize, p: &Problem) {
     .unwrap();
     writeln!(
         out,
-        "static const llg_cr_problem_t {name} = {{\"{name}\", {name}_nodes, {}, {name}_all_args, {}, {name}_consts, {}, {name}_vars, {}, {name}_blocks, {}, {name}_leaves, {}, {name}_calls, {}, {name}_dists, {}, {name}_items, {}, {name}_orders, {}}};",
+        "static const llg_cr_problem_t {name} = {{\"{name}\", {name}_nodes, {}, {name}_all_args, {}, {name}_consts, {}, {name}_vars, {}, {name}_blocks, {}, {name}_leaves, {}, {name}_calls, {}, {name}_dists, {}, {name}_items, {}, {name}_orders, {}, NULL, 0, NULL, 0, NULL, 0, NULL, 0, NULL, 0, NULL, 0}};",
         p.nodes.len(),
         all_args.len(),
         p.consts.len(),
@@ -1269,15 +1270,6 @@ fn build_probe_main(
     name: &str,
     main: &str,
 ) -> Option<(sim_harness::TempDir, std::path::PathBuf)> {
-    let compiler = c_compiler::host_c_compiler();
-    if !c_compiler::c_compiler_available(&compiler) {
-        eprintln!("SKIP: C compiler `{compiler}` not available");
-        return None;
-    }
-    let dir = sim_harness::TempDir::new(name).expect("create constraint probe directory");
-    let (header, source) = constraint_sources();
-    std::fs::write(dir.path().join("llg_constraint.h"), header).unwrap();
-    std::fs::write(dir.path().join("llg_constraint.c"), source).unwrap();
     let mut probe = String::from(
         "#include \"llg_constraint.h\"\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n",
     );
@@ -1296,6 +1288,20 @@ fn build_probe_main(
     }
     writeln!(probe, "}};").unwrap();
     probe.push_str(main);
+    build_c_probe(name, &probe)
+}
+
+/// Compile `probe` (a complete C file) with the solver as strict C11.
+fn build_c_probe(name: &str, probe: &str) -> Option<(sim_harness::TempDir, std::path::PathBuf)> {
+    let compiler = c_compiler::host_c_compiler();
+    if !c_compiler::c_compiler_available(&compiler) {
+        eprintln!("SKIP: C compiler `{compiler}` not available");
+        return None;
+    }
+    let dir = sim_harness::TempDir::new(name).expect("create constraint probe directory");
+    let (header, source) = constraint_sources();
+    std::fs::write(dir.path().join("llg_constraint.h"), header).unwrap();
+    std::fs::write(dir.path().join("llg_constraint.c"), source).unwrap();
     std::fs::write(dir.path().join("probe.c"), probe).unwrap();
     let (mut command, executable) = c_compiler::strict_c11_executable(
         &compiler,
@@ -1317,11 +1323,18 @@ fn build_probe_main(
 fn run_probe(executable: &std::path::Path, samples: u32, env: &[(&str, &str)]) -> String {
     let mut command = Command::new(executable);
     command.arg(samples.to_string());
+    run_command_output(&mut command, env)
+}
+
+/// Run a probe with the solver tunables cleared, then `env` applied.
+fn run_command_output(command: &mut Command, env: &[(&str, &str)]) -> String {
     for name in [
         "LLG_RAND_BDD_NODES",
         "LLG_RAND_BDD_BITS",
         "LLG_RAND_REJECT_TRIES",
         "LLG_RAND_CONFLICTS",
+        "LLG_RAND_ARRAY_ELEMENTS",
+        "LLG_RAND_EXPAND_NODES",
         "LLG_RAND_STATS",
     ] {
         command.env_remove(name);
@@ -1329,7 +1342,7 @@ fn run_probe(executable: &std::path::Path, samples: u32, env: &[(&str, &str)]) -
     for (name, value) in env {
         command.env(name, value);
     }
-    let output = sim_harness::run_command(&mut command, Duration::from_secs(300))
+    let output = sim_harness::run_command(command, Duration::from_secs(300))
         .unwrap_or_else(|error| panic!("run constraint probe: {error}"));
     assert!(
         output.status.success(),

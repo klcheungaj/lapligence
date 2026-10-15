@@ -173,7 +173,7 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                 .collect(),
         );
         out.push_str(&format!(
-            "static const llg_cr_problem_t {name} = {{\n    {}, {nodes}, {}u, {arg_table}, {}u, {consts}, {}u,\n    {vars}, {}u, {blocks}, {}u, {leaves}, {}u, {calls}, {}u,\n    {dists}, {}u, {dist_items}, {item_count}u, {orders}, {}u\n}};\n",
+            "static const llg_cr_problem_t {name} = {{\n    {}, {nodes}, {}u, {arg_table}, {}u, {consts}, {}u,\n    {vars}, {}u, {blocks}, {}u, {leaves}, {}u, {calls}, {}u,\n    {dists}, {}u, {dist_items}, {item_count}u, {orders}, {}u,\n    NULL, 0u, NULL, 0u, NULL, 0u, NULL, 0u, NULL, 0u, NULL, 0u\n}};\n",
             c_string_literal(&problem.name),
             problem.nodes.len(),
             args.len(),

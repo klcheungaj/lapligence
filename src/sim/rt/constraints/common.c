@@ -1,6 +1,6 @@
 /* llg_constraint.c - constraint solver (IEEE 1800-2009 clause 18).
  *
- * Assembled from src/sim/rt/constraints/{common,eval,aig,bdd,cdcl,solve}.c in
+ * Assembled from src/sim/rt/constraints/{common,eval,aig,bdd,sample,cdcl,solve,expand}.c in
  * that order; the files share file-scope statics. See llg_constraint.h for
  * the interface contract and src/sim/rt/constraints/readme.md for the
  * engine portfolio.
@@ -96,6 +96,10 @@ const llg_cr_tunables_t* llg_cr_tunables(void) {
         cr_tunables_value.bdd_bits = cr_env_u64("LLG_RAND_BDD_BITS", 512u);
         cr_tunables_value.reject_tries = cr_env_u64("LLG_RAND_REJECT_TRIES", 4096u);
         cr_tunables_value.conflicts = cr_env_u64("LLG_RAND_CONFLICTS", 100000u);
+        /* Expansion bounds (SIM-030): about 1 Mi random array elements and
+         * 4 Mi expanded nodes (on the order of 100 MiB of solver tables). */
+        cr_tunables_value.array_elements = cr_env_u64("LLG_RAND_ARRAY_ELEMENTS", 1u << 20);
+        cr_tunables_value.expand_nodes = cr_env_u64("LLG_RAND_EXPAND_NODES", 1u << 22);
         cr_tunables_value.stats = cr_env_u64("LLG_RAND_STATS", 0u) != 0u;
         cr_tunables_ready = 1;
     }
@@ -107,10 +111,14 @@ const llg_cr_tunables_t* llg_cr_tunables(void) {
 enum { CR_K = 0, CR_R = 1, CR_E = 2, CR_SKIP = 3 };
 
 typedef struct cr_cache_entry cr_cache_entry_t;
+typedef struct cr_tpl cr_tpl_t;
 
 struct llg_cr_session {
     const llg_cr_problem_t* p;
     llg_cr_session_t* next_session;
+    /* Template problems (units, SIM-030): instances and expanded sessions;
+     * NULL for a problem without units. */
+    cr_tpl_t* tpl;
     /* Node layout. */
     uint32_t* node_off;         /* word offset of each node value */
     uint64_t* val;              /* node values (K: folded; R: scratch) */

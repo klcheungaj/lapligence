@@ -653,6 +653,52 @@ static void cr_classify_dist(llg_cr_session_t* s, uint32_t n) {
     }
 }
 
+/* An element of an expanded array or object table (SIM-030). A known index
+ * selects one entry: outside the table it is an index error, a null object's
+ * entry a null error (S30-D4, S30-D11). A random index stays R unless an
+ * entry is an error; the engines exclude the index values that select no
+ * entry or a null one. */
+static void cr_classify_elem(llg_cr_session_t* s, uint32_t n) {
+    const llg_cr_problem_t* p = s->p;
+    const llg_cr_node_t* nd = &p->nodes[n];
+    const llg_cr_table_t* t = &p->tables[nd->a];
+    const uint32_t* items = p->table_items + t->first;
+    uint32_t x = nd->b;
+    if (s->status[x] == CR_E) {
+        cr_inherit_error(s, n, x);
+        return;
+    }
+    if (s->status[x] == CR_K) {
+        const llg_cr_node_t* ni = &p->nodes[x];
+        int64_t index;
+        if (!bv_index(cr_node_val(s, x), ni->bit_width, ni->sign_flag, &index) || index < 0 ||
+            (uint64_t)index >= t->count) {
+            cr_set_error(s, n, LLG_CR_REASON_INDEX, n);
+            return;
+        }
+        uint32_t e = items[index];
+        if (e == LLG_CR_NONE) {
+            cr_set_error(s, n, LLG_CR_REASON_NULL, LLG_CR_NONE);
+        } else if (s->status[e] == CR_E) {
+            cr_inherit_error(s, n, e);
+        } else if (s->status[e] == CR_R) {
+            s->status[n] = CR_R;
+        } else {
+            s->status[n] = CR_K;
+            cr_copy_input(s, n, cr_node_val(s, e), p->nodes[e].bit_width, p->nodes[e].sign_flag);
+        }
+        return;
+    }
+    for (uint32_t i = 0; i < t->count; ++i) {
+        uint32_t e = items[i];
+        if (e != LLG_CR_NONE && s->status[e] == CR_E) {
+            cr_inherit_error(s, n, e);
+            return;
+        }
+    }
+    s->status[n] = CR_R;
+}
+
 static void cr_classify_node(llg_cr_session_t* s, uint32_t n);
 
 /* Classify every node not marked CR_SKIP, in post-order. */
@@ -734,6 +780,9 @@ static void cr_classify_node(llg_cr_session_t* s, uint32_t n) {
             return;
         case LLG_CR_DIST:
             cr_classify_dist(s, n);
+            return;
+        case LLG_CR_ELEM:
+            cr_classify_elem(s, n);
             return;
         default:
             break;

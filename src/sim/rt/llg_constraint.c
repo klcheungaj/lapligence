@@ -9,3 +9,4 @@
 #include "constraints/sample.c"
 #include "constraints/cdcl.c"
 #include "constraints/solve.c"
+#include "constraints/expand.c"
