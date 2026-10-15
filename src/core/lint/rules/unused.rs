@@ -247,6 +247,45 @@ mod tests {
     }
 
     #[test]
+    fn if_generate_block_signals_are_analysed() {
+        let paths = unused_paths(
+            "module top;\n  if (1) begin : h\n    logic dead;\n    logic written;\n    assign written = 1'b0;\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(
+            paths,
+            ["signal `dead` in `top.h` is never used"],
+            "a conditional generate block is a scope like a loop generate block"
+        );
+    }
+
+    #[test]
+    fn nested_if_and_loop_generate_scopes_are_analysed() {
+        let paths = unused_paths(
+            "module top;\n  genvar i;\n  for (i = 0; i < 2; i = i + 1) begin : g\n\
+               if (i == 0) begin : a\n      logic dead_a;\n    end else begin : b\n      logic dead_b;\n    end\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(
+            paths,
+            [
+                "signal `dead_a` in `top.g[0].a` is never used",
+                "signal `dead_b` in `top.g[1].b` is never used",
+            ]
+        );
+    }
+
+    #[test]
+    fn instance_in_if_generate_block_is_analysed() {
+        let paths = unused_paths(
+            "module child;\n  logic dead;\nendmodule\n\
+             module top;\n  if (1) begin : h\n    child c();\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(paths, ["signal `dead` in `top.h.c` is never used"]);
+    }
+
+    #[test]
     fn instance_in_loop_generate_block_is_named_once() {
         let paths = unused_paths(
             "module child;\n  logic dead;\nendmodule\n\
