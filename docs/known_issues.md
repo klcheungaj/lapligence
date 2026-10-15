@@ -1842,42 +1842,64 @@ pin collectable targets in the handle slot. Reproduce with
 [sim_042](../tests/fixtures/sim/feature_completion/sim_042/readme.md) and a
 plugin that asks for one of the objects above.
 
-## Functional coverage limits (SIM-044)
+## Functional coverage limits (SIM-044, SIM-045)
 
-**Status:** open. SIM-044 provides covergroup instances, value bins and
-sampling; these legal forms remain outside it.
+**Status:** open. SIM-044 and SIM-045 provide covergroup instances, the
+1800-2009 bins, transition and cross forms, and the declared options; these
+legal forms remain outside them.
 
 ### Symptom
 
 These covergroups reject with located diagnostics:
 
-- crosses, transition, wildcard, default, array, `illegal_bins`,
-  `ignore_bins` and `iff`-guarded bins, bins values that depend on covergroup
-  arguments, `type_option.merge_instances` and
-  `option.detect_overlap` (SIM-045);
 - options read or written through an instance or type
   (`c.option.weight = 2`) and `get_coverage(covered, total)` (SIM-046);
-- a coverpoint wider than 64 bits;
+- a coverpoint wider than 64 bits, or a bins value read from a covergroup
+  argument wider than 64 bits;
+- a `wildcard` bins value whose don't-care bits expand to more than 4096
+  ranges;
+- transition bins whose values read a covergroup argument, or whose
+  expansion exceeds the compile-time state or sequence budget;
+- a cross of a coverpoint that has transition bins, and a `binsof` that names
+  a transition bin;
+- a cross select expression that expands to more than 1024 terms;
 - a block event on an imported or extern subroutine, which has no body;
 - a `ref` argument whose actual is not a whole static variable or net.
 
-`set_inst_name`, `option.name`, `option.comment`, `option.per_instance` and
-`option.get_inst_coverage` are accepted with no effect: llg writes no
-coverage report or database.
+At run time:
+
+- a cross whose select expressions split its coverpoints into more than
+  2^20 value-class combinations reports an error and counts no bins;
+- with `type_option.merge_instances`, a cross whose instances have different
+  cross bins (bins depending on covergroup arguments) reports an error, and
+  its merged coverage is 0;
+- `option.detect_overlap` stops checking transition bins after a fixed
+  budget of explored sequence pairs, so a very large transition coverpoint
+  may miss a warning.
+
+`set_inst_name`, `option.name`, `option.comment`, `option.per_instance`,
+`option.cross_num_print_missing` and `type_option.goal` and `comment` are
+accepted with no effect: llg writes no coverage report or database.
 
 ### Cause
 
-`ref` arguments are bound statically per distinct actual tuple. Bin
-classification beyond value sets and the coverage database are later items.
+`ref` arguments are bound statically per distinct actual tuple. Bins values
+are 64-bit runtime keys. Transition bins are compiled to fixed automata, so
+their values must be constants. Crosses address coverpoint bins by value
+rank, so transition bins have no coordinate. Merged cross bins are matched
+by layout, not by the 19.11.3 `<binname1,...,binnameN>` names. The coverage
+database is a later item.
 Instances, and the per-instance event waiters that hold them, live until the
 end of simulation (S44-D3, S44-D5), so memory grows with every covergroup
 object created.
 
 ### Intended direction
 
-SIM-045 for the remaining bins forms, crosses and type options; SIM-046 for
-the query, control and database services.
+SIM-046 for the query, control and database services. The other limits
+have no owner yet.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_044/neg_*.sv`.
+`tests/fixtures/sim/feature_completion/sim_044/neg_*.sv`,
+`tests/fixtures/sim/feature_completion/sim_045/neg_*.sv` and
+`merge_cross.sv`.

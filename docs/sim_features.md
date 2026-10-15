@@ -2276,7 +2276,7 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
 - ⬜ **Checkers** — Checker execution and checker bind are not implemented;
   module/interface structural bind and ordinary assertion instances do not imply
   checker support. SV **[SV-2009]**.
-- 🟨 **Functional coverage** (SIM-044) — Covergroup declarations in modules,
+- 🟨 **Functional coverage** (SIM-044, SIM-045) — Covergroup declarations in modules,
   interfaces, packages and classes (embedded, constructed only by the class
   `new`), instances created by `new` with `input` (integral, real, string and
   class handle) and `ref` arguments, and sampling by explicit `sample()`, a
@@ -2289,22 +2289,30 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   `type_option.strobe` samples once per time slot in the Postponed region
   (not for block events, S44-D9). An `end` block event also samples after
   `return` (S44-D7), not after a disable or a jump out of a named block
-  (S44-D8). Coverpoints of at most
-  64 bits with automatic bins (enum cardinality, `auto_bin_max`, numeric order
-  for signed values, decision S44-D2), explicit single-value and range bins
-  resolved by 19.5.6 with its warnings, and `iff` guards. Instance options
-  `weight`, `goal`, `at_least` and `auto_bin_max` set in the declaration;
-  `type_option.weight`. `get_coverage()` (type, per source declaration,
-  S44-D1), `get_inst_coverage()`, `start()`, `stop()`, `set_inst_name()` (no
-  report) and `$get_coverage()` follow 19.11. Instances outlive their last
-  handle (S44-D3). Counters are dense up to 4096 bins and sparse beyond;
-  sampling is O(coverpoints) with no allocation after the first hit of a
-  sparse bin. Rejected with located diagnostics: crosses, transition,
-  wildcard, default, array, `illegal_bins`/`ignore_bins` and guarded bins,
-  bins values depending on arguments, `merge_instances`, `detect_overlap`
-  (SIM-045); options set through an instance and the two-argument queries
-  (SIM-046); coverpoints over 64 bits and block events on subroutines
-  without a body. Coverage databases are not written.
+  (S44-D8). Coverpoints of at most 64 bits with automatic bins (enum
+  cardinality, `auto_bin_max`, numeric order for signed values, S44-D2) and
+  the 1800-2009 bins forms (19.5): single, `[]` and `[N]` value bins,
+  `default`, `wildcard`, `ignore_bins` and `illegal_bins` (a run-time error
+  that does not stop the run), `iff`-guarded bins and bins values from
+  covergroup arguments; transition bins (19.5.1) with `[*]`, `[->]` and `[=]`
+  repetition, `[]` transition arrays and `default sequence`; crosses (19.6)
+  of coverpoints and variables with `binsof`/`intersect` select expressions
+  and cross `ignore_bins`/`illegal_bins`, counted with the 19.11.2
+  denominators (S45-D1 to S45-D16). Options at their 19.7 levels: `weight`,
+  `goal`, `at_least` and `auto_bin_max` (group values are item defaults),
+  `detect_overlap` warnings (S45-D17), `type_option.weight`, and
+  `type_option.merge_instances` with `option.get_inst_coverage` (19.11.3,
+  S45-D18). `get_coverage()` (type, per source declaration, S44-D1),
+  `get_inst_coverage()`, `start()`, `stop()`, `set_inst_name()` (no report)
+  and `$get_coverage()` follow 19.11. Instances outlive their last handle
+  (S44-D3). Value counters are dense up to 4096 bins and sparse beyond, and
+  crosses keep only the products hit, so a sample costs the bins it hits, not
+  the bins defined. Rejected with located diagnostics: options set through an
+  instance and the two-argument queries (SIM-046); coverpoints over 64 bits;
+  block events on subroutines without a body; 1800-2012 forms (`with`
+  filters, set expressions); and the limits in
+  [known issues](known_issues.md#functional-coverage-limits-sim-044-sim-045).
+  Coverage databases are not written.
   `cover` assertions and waveform/VPI observation are separate capabilities.
   SV 19 **[SV-2005]**.
 - 🟨 **Constrained randomization** — `rand` and `randc` packed integral and

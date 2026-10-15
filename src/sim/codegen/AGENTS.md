@@ -696,7 +696,14 @@ covergroup object and `coverage_ref_actuals` maps each `ref` formal to the
 variable bound by that variant; the owner is the method receiver, so owner
 properties lower as ordinary class fields. Bins are resolved here (19.5.6 on
 the operand of the frontend's conversion to the coverpoint type) into sorted
-disjoint key segments; signed keys flip the sign bit. A clocking event on static
+disjoint key segments; signed keys flip the sign bit. Transition bins become
+compile-time automata in `coverage/transitions.rs`, whose `Tables::consume`
+mirrors the runtime `llg_cov_consume`; it also sizes `[]` arrays, counts
+coverable sequences and finds `detect_overlap` pairs within fixed budgets
+(exceeding one is a located llg-limitation error). Cross select expressions
+become DNF boxes over value-bin ranks (`cross_select`), at most
+`MAX_SELECT_BOXES` per bin. Options are checked at their 19.7 levels
+(`check_option`); type options must be constants. A clocking event on static
 storage lowers to one sampler process spawned before user processes. An event
 reading an argument or owner property becomes a waiter per instance
 (`emit_covergroup_waiter`): a `CapturedBranch` helper of the sample method
