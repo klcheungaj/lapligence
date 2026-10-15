@@ -1,4 +1,14 @@
-//! Storage.
+//! Unused storage: a signal that no IR construct reads or writes gets
+//! `omit = true` and the emitter skips its declaration.
+//!
+//! Omitting storage that generated code still names breaks the model, so the
+//! walk must see every reference, including those that are not expression
+//! reads: wait sources, event-handle indices, call receivers, C-address
+//! actuals and runtime registrations. Every IR enum and the model and call
+//! records are matched without a wildcard arm or rest pattern, so a new
+//! statement, expression, wait source, call argument or table fails to
+//! compile here until it is classified. Nested payloads are walked through
+//! their IR-owned `expressions()` visitors.
 
 use super::*;
 
@@ -50,54 +60,103 @@ fn dependency_signal(
 
 pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess]>) {
     let mut rw = Rw::default();
-    for access in &model.native_accesses {
+    // Every table is named, without a rest pattern, so a new table fails to
+    // compile here until it is classified as signal-referencing or not.
+    let IrModel {
+        design_name: _,
+        precision_fs: _,
+        // Waveform models keep every HDL-visible signal (below).
+        waveform,
+        wave_start: _,
+        signals: _,
+        net_groups: _,
+        arrays,
+        containers,
+        objects,
+        classes: _,
+        native_accesses,
+        native_types: _,
+        native_values,
+        pattern_types: _,
+        pattern_classes: _,
+        class_allocations,
+        virtual_interfaces,
+        udp_tables: _,
+        events: _,
+        funcs,
+        assertions,
+        sampled_clocks,
+        sampled_domains,
+        processes,
+        init_steps,
+        spawns: _,
+        final_spawns: _,
+        vpi_objects,
+        vpi_compile_calls: _,
+        vpi_catalog: _,
+        random: _,
+        rand_problems: _,
+        dpi_scopes: _,
+        dpi_sites: _,
+    } = &*model;
+    for access in native_accesses {
         access
             .receiver
             .expressions(&mut |child| collect_expr_reads(child, model, &mut rw));
     }
-    for allocation in &model.class_allocations {
+    // A class-member container or native value is reached through its
+    // receiver handle expression.
+    for receiver in containers
+        .iter()
+        .filter_map(|container| container.receiver.as_ref())
+        .chain(
+            native_values
+                .iter()
+                .filter_map(|value| value.receiver.as_ref()),
+        )
+    {
+        receiver.expressions(&mut |child| collect_expr_reads(child, model, &mut rw));
+    }
+    // A net-array cell observes its canonical resolved net signal.
+    for (_, signal) in arrays.iter().flat_map(|array| &array.net_elements) {
+        rw.read(*signal);
+    }
+    for allocation in class_allocations {
         collect_stmts_rw(&allocation.body, model, &mut rw);
     }
-    for object in &model.objects {
+    for object in objects {
         if let Some(initial) = &object.initial {
             initial.expressions(&mut |child| collect_expr_reads(child, model, &mut rw));
         }
     }
-    // Sensitivity lists and link sources are reads (plain globals only;
-    // array-element addresses carry brackets and match nothing).
-    let mut sens: Vec<IrDependency> = Vec::new();
-    for p in &model.processes {
-        if let crate::sim::ir::IrShape::SensLoop { reads } = &p.shape {
-            sens.extend(reads.iter().cloned());
-        }
-        for x in &p.body {
-            sens_lists_of(x, &mut sens);
-        }
-        for pre in &p.pre_fns {
-            if let IrPreFn::Branch { body, .. } | IrPreFn::CapturedBranch { body, .. } = pre {
-                for x in body {
-                    sens_lists_of(x, &mut sens);
+    // Sensitivity loops and execution trigger plans are reads; waits inside
+    // statements are counted by the statement walk.
+    for process in processes {
+        match &process.shape {
+            crate::sim::ir::IrShape::SensLoop { reads } => {
+                for dependency in reads {
+                    mark_dependency_read(dependency, model, &mut rw);
                 }
             }
+            crate::sim::ir::IrShape::RunOnce | crate::sim::ir::IrShape::Loop => {}
         }
     }
     if let Some(processes) = execution {
         for process in processes {
             for block in &process.blocks {
-                for statement in &block.operations {
-                    sens_lists_of(statement, &mut sens);
-                }
                 if let crate::sim::execution::ExecutionTerminator::Suspend {
                     trigger: TriggerPlan::Signals(signals),
                     ..
                 } = &block.terminator
                 {
-                    sens.extend(signals.iter().cloned());
+                    for dependency in signals {
+                        mark_dependency_read(dependency, model, &mut rw);
+                    }
                 }
             }
         }
     }
-    for func in &model.funcs {
+    for func in funcs {
         // A lowered static result signal is read by the generated function
         // epilogue even when no IR expression directly names that return
         // value. Keep its storage alive through unused-storage pruning.
@@ -112,7 +171,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         collect_pre_fns_rw(&func.pre_fns, model, &mut rw);
         collect_stmts_rw(&func.body, model, &mut rw);
     }
-    for p in &model.processes {
+    for p in processes {
         collect_pre_fns_rw(&p.pre_fns, model, &mut rw);
         collect_stmts_rw(&p.body, model, &mut rw);
     }
@@ -123,7 +182,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
             }
         }
     }
-    for assertion in &model.assertions {
+    for assertion in assertions {
         rw.read(assertion.clock_signal);
         if let Some(disable) = assertion.disable_signal {
             rw.read(disable);
@@ -170,26 +229,24 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
             }
         }
     }
-    for clock in &model.sampled_clocks {
-        if let crate::sim::ir::IrSampledClockKind::Edge { signal, .. } = clock.kind {
-            rw.read(signal);
+    for clock in sampled_clocks {
+        match clock.kind {
+            crate::sim::ir::IrSampledClockKind::Edge { signal, .. } => rw.read(signal),
+            crate::sim::ir::IrSampledClockKind::Event => {}
         }
         if let Some(gate) = &clock.gate {
             collect_expr_reads(gate, model, &mut rw);
         }
     }
-    for domain in &model.sampled_domains {
+    for domain in sampled_domains {
         if domain.history_ticks != 0 {
             collect_expr_reads(&domain.sample, model, &mut rw);
         }
     }
-    for dependency in &sens {
-        mark_dependency_read(dependency, model, &mut rw);
-    }
     // A virtual-interface member is addressed through a runtime environment,
     // so its generated access has no textual signal dependency for this pass
     // to discover. Keep every descriptor member's concrete storage alive.
-    for interface in &model.virtual_interfaces {
+    for interface in virtual_interfaces {
         for instance in &interface.instances {
             for signal in instance.members.iter().flatten() {
                 rw.read(*signal);
@@ -197,7 +254,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         }
     }
     // Declaration initializers count as writes and their RHSs count as reads.
-    for step in &model.init_steps {
+    for step in init_steps {
         match step {
             crate::sim::ir::IrInitStep::SetScalar { sig, .. } => rw.write(*sig),
             crate::sim::ir::IrInitStep::Initialize(initialization) => {
@@ -211,14 +268,22 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
             crate::sim::ir::IrInitStep::Execute { body, .. } => {
                 collect_stmt_rw(body, model, &mut rw);
             }
-            _ => {}
+            // Sampled-value registration takes the signal's address.
+            crate::sim::ir::IrInitStep::RegisterSampled(sig)
+            | crate::sim::ir::IrInitStep::RegisterSampledHistory { sig, .. }
+            | crate::sim::ir::IrInitStep::RegisterSampledValue(sig) => rw.read(*sig),
+            // Arrays and net groups are not signal storage.
+            crate::sim::ir::IrInitStep::FillArrayX(_)
+            | crate::sim::ir::IrInitStep::FillArrayZ(_)
+            | crate::sim::ir::IrInitStep::SetArrayElem { .. }
+            | crate::sim::ir::IrInitStep::WriteNet { .. } => {}
         }
     }
-    let waveform = model.waveform;
+    let waveform = *waveform;
     // One pass over the catalog: every signal is VPI-visible in a model with
     // a full catalog, so a per-signal scan would be quadratic.
     let mut vpi_visible = vec![false; model.signals.len()];
-    for object in &model.vpi_objects {
+    for object in vpi_objects {
         if let Some(visible) = object.signal.and_then(|signal| vpi_visible.get_mut(signal)) {
             *visible = true;
         }
@@ -316,83 +381,6 @@ fn collect_pre_fns_rw(pre_fns: &[IrPreFn], model: &IrModel, rw: &mut Rw) {
                 collect_stmts_rw(body, model, rw);
             }
         }
-    }
-}
-
-/// Sensitivity lists nested inside statements (`wait (cond)`/event-control
-/// wait sources).  Every statement position is visited: blocks, if/else,
-/// loops, case items + default, and wait bodies.  Named-event entries are
-/// skipped here (they are not signal storage).
-fn sens_lists_of(s: &IrStmt, out: &mut Vec<IrDependency>) {
-    match s.unlocated() {
-        IrStmt::WaitCond { sens, body, .. } => {
-            out.extend(sens.iter().cloned());
-            for x in body {
-                sens_lists_of(x, out);
-            }
-        }
-        IrStmt::WaitEvents { specs, .. } | IrStmt::ClockingCycleWait { specs, .. } => {
-            for (src, _) in specs {
-                match src {
-                    IrWaitSrc::Sig(name) => out.push(IrDependency::scalar(name)),
-                    IrWaitSrc::Real(name) => out.push(IrDependency::real(name)),
-                    IrWaitSrc::Evaluated { reads, .. } | IrWaitSrc::EvaluatedReal { reads, .. } => {
-                        out.extend(reads.iter().cloned())
-                    }
-                    _ => {}
-                }
-            }
-        }
-        IrStmt::WaitAny { sens, .. } => out.extend(sens.iter().cloned()),
-        IrStmt::Block(b)
-        | IrStmt::ActivationScope { body: b, .. }
-        | IrStmt::While { body: b, .. }
-        | IrStmt::Repeat { body: b, .. }
-        | IrStmt::Forever { body: b } => {
-            for x in b {
-                sens_lists_of(x, out);
-            }
-        }
-        IrStmt::If { then_, els, .. } => {
-            for x in then_ {
-                sens_lists_of(x, out);
-            }
-            if let Some(els) = els {
-                for x in els {
-                    sens_lists_of(x, out);
-                }
-            }
-        }
-        IrStmt::ImmediateAssertion {
-            if_true, if_false, ..
-        } => {
-            if let Some(if_true) = if_true {
-                for x in if_true {
-                    sens_lists_of(x, out);
-                }
-            }
-            if let Some(if_false) = if_false {
-                for x in if_false {
-                    sens_lists_of(x, out);
-                }
-            }
-        }
-        IrStmt::DeferredImmediateAssertion { .. } => {}
-        IrStmt::For {
-            init, incr, body, ..
-        } => {
-            for x in init.iter().chain(incr.iter()).chain(body.iter()) {
-                sens_lists_of(x, out);
-            }
-        }
-        IrStmt::Case { items, .. } => {
-            for item in items {
-                for x in &item.body {
-                    sens_lists_of(x, out);
-                }
-            }
-        }
-        _ => {}
     }
 }
 
@@ -689,9 +677,23 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                 mark_dependency_read(dependency, model, rw);
             }
         }
-        IrStmt::Force { lhs, value, .. } => {
+        IrStmt::Force {
+            lhs,
+            value,
+            reads,
+            dependencies,
+            ..
+        } => {
             collect_lhs_rw(lhs, model, rw);
             collect_expr_reads(value, model, rw);
+            // The force binding re-evaluates on these sources; validation
+            // requires them to name emitted storage.
+            for read in reads {
+                rw.read(*read);
+            }
+            for dependency in dependencies {
+                mark_dependency_read(dependency, model, rw);
+            }
         }
         IrStmt::Release { lhs } => collect_lhs_rw(lhs, model, rw),
         IrStmt::Display { args, .. } => {
@@ -719,14 +721,23 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                 collect_expr_reads(arg, model, rw);
             }
         }
+        // The monitor evaluator (`IrPreFn::MonEval`) reads the arguments; the
+        // runtime watches the dependency addresses.
         IrStmt::MonitorSet {
-            descriptor: Some(descriptor),
-            ..
+            reads, descriptor, ..
+        } => {
+            for dependency in reads {
+                mark_dependency_read(dependency, model, rw);
+            }
+            if let Some(descriptor) = descriptor {
+                collect_expr_reads(descriptor, model, rw);
+            }
         }
-        | IrStmt::FileControl {
-            descriptor: Some(descriptor),
-            ..
-        } => collect_expr_reads(descriptor, model, rw),
+        IrStmt::FileControl { descriptor, .. } => {
+            if let Some(descriptor) = descriptor {
+                collect_expr_reads(descriptor, model, rw);
+            }
+        }
         IrStmt::TimeFormat {
             units,
             precision,
@@ -784,7 +795,49 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                 }
             }
         }
-        _ => {}
+        IrStmt::FixedArrayFill { value, .. } => collect_expr_reads(value, model, rw),
+        // Delays are read through `IrStmt::delay_expression` above.
+        IrStmt::Delay { .. } => {}
+        // Fixed arrays, native values, events, activations and labels are
+        // not signal storage; fork branches and spawned processes are
+        // visited as their own processes and functions.
+        IrStmt::Located { .. }
+        | IrStmt::System(None)
+        | IrStmt::FixedArrayCopy { .. }
+        | IrStmt::FixedArrayDeclare(_)
+        | IrStmt::NativeValueDeclare(_)
+        | IrStmt::NativeValueSharedDeclare(_)
+        | IrStmt::NativeValueCopy { .. }
+        | IrStmt::DeclLocal { init: None, .. }
+        | IrStmt::SharedLocal { init: None, .. }
+        | IrStmt::DeclString { init: None, .. }
+        | IrStmt::SharedString { init: None, .. }
+        | IrStmt::EventDeclare { .. }
+        | IrStmt::SampledClockTick { .. }
+        | IrStmt::Fork { .. }
+        | IrStmt::DisableTarget { .. }
+        | IrStmt::DeferredAssertionDisable { .. }
+        | IrStmt::WaitFork
+        | IrStmt::DisableFork
+        | IrStmt::Expect { .. }
+        | IrStmt::MonitorEnable(_)
+        | IrStmt::WaveFile(_)
+        | IrStmt::WaveOn
+        | IrStmt::WaveOff
+        | IrStmt::WaveDumpAll
+        | IrStmt::WaveFlush
+        | IrStmt::Finish
+        | IrStmt::FinishControl { .. }
+        | IrStmt::ProgramExit
+        | IrStmt::StopControl { .. }
+        | IrStmt::PrintTimescale { .. }
+        | IrStmt::Return { value: None }
+        | IrStmt::Label(_)
+        | IrStmt::Goto(_)
+        | IrStmt::Nop => {}
+        // `$dumpvars` names scopes; waveform models keep every HDL-visible
+        // signal (`model.waveform`).
+        IrStmt::WaveDumpVars(_) => {}
     }
 }
 
@@ -1079,17 +1132,15 @@ fn collect_lhs_read(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
                 collect_expr_reads(&step.selection.base, model, rw);
             }
         }
-        IrLhs::Whole(i) | IrLhs::Bit(i, ..) | IrLhs::Part(i, ..) | IrLhs::IdxPart(i, ..) => {
+        IrLhs::Whole(i) | IrLhs::Part(i, ..) => rw.read(*i),
+        IrLhs::Bit(i, index, _) => {
             rw.read(*i);
-            match l {
-                IrLhs::Bit(_, index, _) => collect_expr_reads(index, model, rw),
-                IrLhs::IdxPart(_, base, width, ..) => {
-                    collect_expr_reads(base, model, rw);
-                    collect_expr_reads(width, model, rw);
-                }
-                IrLhs::Whole(_) | IrLhs::Part(..) => {}
-                _ => unreachable!(),
-            }
+            collect_expr_reads(index, model, rw);
+        }
+        IrLhs::IdxPart(i, base, width, ..) => {
+            rw.read(*i);
+            collect_expr_reads(base, model, rw);
+            collect_expr_reads(width, model, rw);
         }
         IrLhs::ArrayElem {
             indices, elem_sel, ..
@@ -1116,17 +1167,23 @@ fn collect_lhs_read(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
 fn collect_expr_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
     match &e.kind {
         IrExprKind::SigRead(i) => rw.read(*i),
-        IrExprKind::LocalRead(_) | IrExprKind::FormalRead(_) => {}
-        IrExprKind::Verbatim { .. } => {}
-        _ => {
-            // Recurse structurally via a read-only walker.
-            collect_children_reads(e, model, rw);
+        // Activation locals and formals, constants, fixed-array storage and
+        // scheduler facts are not signal storage. `Verbatim` is rejected by
+        // the owned emitter.
+        IrExprKind::LocalRead(_)
+        | IrExprKind::FormalRead(_)
+        | IrExprKind::Const(_)
+        | IrExprKind::Fill(_)
+        | IrExprKind::FixedArrayCompare { .. }
+        | IrExprKind::RuntimeQuery(_)
+        | IrExprKind::Verbatim { .. } => {}
+        // A match-item call copies its by-value arguments into the call frame
+        // when the item is evaluated.
+        IrExprKind::MatchCall(action) => {
+            for capture in action.captures() {
+                collect_expr_reads(capture.initial(), model, rw);
+            }
         }
-    }
-}
-
-fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
-    match &e.kind {
         IrExprKind::FixedValueCompare { left, right, .. } => {
             left.expressions(&mut |child| collect_expr_reads(child, model, rw));
             right.expressions(&mut |child| collect_expr_reads(child, model, rw));
@@ -1405,11 +1462,14 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                             }
                         }
                     }
-                    crate::sim::ir::IrFileInput::Read { target, .. } => {
-                        if let crate::sim::ir::IrFileReadTarget::Packed { lhs, .. } = target {
-                            collect_lhs_rw(lhs, model, rw);
+                    crate::sim::ir::IrFileInput::Read { target, .. } => match target {
+                        crate::sim::ir::IrFileReadTarget::Packed { lhs, .. } => {
+                            collect_lhs_rw(lhs, model, rw)
                         }
-                    }
+                        crate::sim::ir::IrFileReadTarget::Element { .. }
+                        | crate::sim::ir::IrFileReadTarget::Array { .. }
+                        | crate::sim::ir::IrFileReadTarget::Container { .. } => {}
+                    },
                     crate::sim::ir::IrFileInput::Gets { target, .. } => match target {
                         crate::sim::ir::IrFileInputTarget::Packed { lhs, .. }
                         | crate::sim::ir::IrFileInputTarget::Real { lhs, .. } => {
@@ -1424,7 +1484,6 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             }
             IrSysFunc::Sampled(call) => collect_expr_reads(&call.argument, model, rw),
         },
-        _ => {}
     }
 }
 

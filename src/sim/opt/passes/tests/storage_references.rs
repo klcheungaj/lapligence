@@ -170,3 +170,59 @@ fn unused_storage_keeps_handle_argument_and_receiver_selectors() {
     run(&mut model, &storage_only());
     assert_only_first_omitted(&model);
 }
+
+#[test]
+fn unused_storage_keeps_registrations_fills_and_runtime_dependencies() {
+    // Sampled-value registration takes `&G_s<n>`; a record fill writes its
+    // value into every member-array cell; a force binding and a monitor
+    // watch their source addresses; a net-array cell observes its net.
+    let mut array = crate::sim::ir::IrArray::new(
+        "A_t_cells".to_string(),
+        "t.cells".to_string(),
+        8,
+        false,
+        vec![(0, 1)],
+    )
+    .unwrap();
+    array.net_elements.push((0, 7));
+    let body = vec![
+        IrStmt::FixedArrayFill {
+            array: 0,
+            value: read(4),
+            nba: false,
+        },
+        IrStmt::Force {
+            lhs: IrLhs::WholeRef {
+                addr: "o0".to_string(),
+                width: 8,
+                signed: false,
+                two_state: false,
+                shortreal: false,
+            },
+            value: Box::new(konst(0, 8)),
+            eval: "f_t_force_0".to_string(),
+            reads: vec![5],
+            dependencies: Vec::new(),
+        },
+        IrStmt::MonitorSet {
+            strobe: false,
+            fmt: "%d".to_string(),
+            eval: "m_t_monitor_0".to_string(),
+            n_args: 1,
+            reads: vec![IrDependency::scalar("G_s6")],
+            poll: false,
+            default_radix: crate::sim::ir::IrDisplayRadix::Decimal,
+            scope: "t".to_string(),
+            descriptor: None,
+        },
+    ];
+    let mut model = model_with(body, sigs(8));
+    model.arrays.push(array);
+    model.init_steps = vec![
+        crate::sim::ir::IrInitStep::RegisterSampled(1),
+        crate::sim::ir::IrInitStep::RegisterSampledHistory { sig: 2, ticks: 1 },
+        crate::sim::ir::IrInitStep::RegisterSampledValue(3),
+    ];
+    run(&mut model, &storage_only());
+    assert_only_first_omitted(&model);
+}
