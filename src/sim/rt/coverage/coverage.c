@@ -647,7 +647,7 @@ static const llg_cov_layout_t* llg_cov_layout_for(llg_cov_inst_t* inst, uint32_t
 
 // ── Counters ──────────────────────────────────────────────────────────────
 
-static void llg_cov_sparse_add(llg_cov_sparse_t* table, uint64_t bin) {
+LLG_NOINLINE static void llg_cov_sparse_add(llg_cov_sparse_t* table, uint64_t bin) {
     if ((table->used + 1u) * 2u > table->capacity) {
         size_t capacity = table->capacity ? table->capacity * 2u : 16u;
         uint64_t* keys = (uint64_t*)llg_checked_calloc(capacity, sizeof(uint64_t), "coverage bins");
@@ -686,12 +686,9 @@ static void llg_cov_count(llg_cov_point_state_t* state, uint64_t bin) {
 
 static int64_t llg_cov_cover_rank(const llg_cov_layout_t* layout, uint64_t bin);
 
-// Count a value bin; a crossed coverpoint also notes the bin's coordinate
-// for the crosses of this sample.
-static void llg_cov_count_point(llg_cov_point_state_t* state, const llg_cov_point_t* point,
-                                uint64_t bin) {
-    llg_cov_count(state, bin);
-    if (!point->crossed) return;
+// A crossed coverpoint notes the coverable rank of each bin it counts, for
+// the crosses of this sample.
+LLG_NOINLINE static void llg_cov_note_hit(llg_cov_point_state_t* state, uint64_t bin) {
     int64_t rank = llg_cov_cover_rank(state->layout, bin);
     if (rank < 0) return;
     if (state->n_hits == state->hit_capacity) {
@@ -700,6 +697,13 @@ static void llg_cov_count_point(llg_cov_point_state_t* state, const llg_cov_poin
                                    "coverage cross");
     }
     state->hits[state->n_hits++] = (uint64_t)rank;
+}
+
+// Count a value bin.
+static void llg_cov_count_point(llg_cov_point_state_t* state, const llg_cov_point_t* point,
+                                uint64_t bin) {
+    llg_cov_count(state, bin);
+    if (point->crossed) llg_cov_note_hit(state, bin);
 }
 
 // The rank of `bin` among the coverable bins, or -1 when it is not one.
@@ -1496,7 +1500,7 @@ static void llg_cov_format_key(const llg_cov_point_t* point, uint64_t key, char*
 // 19.5.5: an illegal value is a run-time error even when another bin also
 // holds it; the simulation continues and the value counts in no bin
 // (decision S45-D3).
-static void llg_cov_illegal(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
+LLG_NOINLINE static void llg_cov_illegal(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
                             uint32_t decl, uint64_t key) {
     const llg_cov_bin_t* bin = &point->bins[decl];
     char value[32];
@@ -1759,7 +1763,7 @@ static void llg_cov_illegal_transition(const llg_cov_inst_t* inst, const llg_cov
 // and each completed bin counts at most once per sample (19.5.1). A covered
 // sequence that contains a completed ignored or illegal sequence counts in
 // no bin (19.5.4, 19.5.5).
-static void llg_cov_transitions(const llg_cov_inst_t* inst, llg_cov_history_t* history,
+LLG_NOINLINE static void llg_cov_transitions(const llg_cov_inst_t* inst, llg_cov_history_t* history,
                                 const llg_cov_point_t* point, int known, uint64_t key,
                                 const uint8_t* guards) {
     const llg_cov_trans_t* trans = point->trans;
@@ -1843,6 +1847,51 @@ void llg_cov_skip(void* record, uint32_t point_index) {
     llg_cov_history_reset(inst->points[point_index].history);
 }
 
+// The bins of a declared-bins value's segment, or the illegal_bins error
+// when ignored or illegal values removed it. This and the other rare paths
+// of llg_cov_hit stay out of line so a sample of a plain coverpoint keeps a
+// small call frame.
+LLG_NOINLINE static void llg_cov_hit_segment(llg_cov_inst_t* inst, llg_cov_point_state_t* state,
+                                             const llg_cov_point_t* point,
+                                             const llg_cov_seg_t* segment, uint64_t key,
+                                             const uint8_t* guards) {
+    const llg_cov_layout_t* layout = state->layout;
+    if (segment->removed) {
+        for (uint32_t e = 0; e < segment->count; ++e) {
+            const llg_cov_entry_t* entry = &layout->entries[segment->first + e];
+            if (llg_cov_guard(point, entry->decl, guards)) {
+                llg_cov_illegal(inst, point, entry->decl, key);
+                break;
+            }
+        }
+        return;
+    }
+    // A value in several overlapping bins counts in each of them.
+    for (uint32_t e = 0; e < segment->count; ++e) {
+        const llg_cov_entry_t* entry = &layout->entries[segment->first + e];
+        if (!llg_cov_guard(point, entry->decl, guards)) continue;
+        uint64_t bin = entry->base;
+        if (entry->div) {
+            uint64_t element = (entry->pos + (key - segment->lo)) / entry->div;
+            bin += element < entry->last ? element : entry->last;
+        }
+        llg_cov_count_point(state, point, bin);
+    }
+}
+
+// The default bin catches values no other bin holds (19.5).
+LLG_NOINLINE static void llg_cov_hit_default(llg_cov_inst_t* inst, llg_cov_point_state_t* state,
+                                             const llg_cov_point_t* point, uint64_t key,
+                                             const uint8_t* guards) {
+    const llg_cov_layout_t* layout = state->layout;
+    if (layout->default_decl < 0 ||
+        !llg_cov_guard(point, (uint32_t)layout->default_decl, guards))
+        return;
+    if (layout->default_illegal)
+        llg_cov_illegal(inst, point, (uint32_t)layout->default_decl, key);
+    else llg_cov_count(state, (uint64_t)layout->default_bin);
+}
+
 void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value, const uint8_t* guards) {
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
     if (!inst || inst->stopped || point_index >= inst->group->n_points) return;
@@ -1861,28 +1910,8 @@ void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value, const u
     const llg_cov_layout_t* layout = state->layout;
     if (layout->n_segments) {
         const llg_cov_seg_t* segment = llg_cov_find(layout, key);
-        if (segment && segment->removed) {
-            for (uint32_t e = 0; e < segment->count; ++e) {
-                const llg_cov_entry_t* entry = &layout->entries[segment->first + e];
-                if (llg_cov_guard(point, entry->decl, guards)) {
-                    llg_cov_illegal(inst, point, entry->decl, key);
-                    break;
-                }
-            }
-            return;
-        }
         if (segment) {
-            // A value in several overlapping bins counts in each of them.
-            for (uint32_t e = 0; e < segment->count; ++e) {
-                const llg_cov_entry_t* entry = &layout->entries[segment->first + e];
-                if (!llg_cov_guard(point, entry->decl, guards)) continue;
-                uint64_t bin = entry->base;
-                if (entry->div) {
-                    uint64_t element = (entry->pos + (key - segment->lo)) / entry->div;
-                    bin += element < entry->last ? element : entry->last;
-                }
-                llg_cov_count_point(state, point, bin);
-            }
+            llg_cov_hit_segment(inst, state, point, segment, key, guards);
             return;
         }
     }
@@ -1901,13 +1930,7 @@ void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value, const u
         return;
     }
     default:
-        // The default bin catches values no other bin holds (19.5).
-        if (layout->default_decl < 0 ||
-            !llg_cov_guard(point, (uint32_t)layout->default_decl, guards))
-            return;
-        if (layout->default_illegal)
-            llg_cov_illegal(inst, point, (uint32_t)layout->default_decl, key);
-        else llg_cov_count(state, (uint64_t)layout->default_bin);
+        llg_cov_hit_default(inst, state, point, key, guards);
         return;
     }
 }

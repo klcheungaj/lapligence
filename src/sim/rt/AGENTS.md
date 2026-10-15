@@ -398,6 +398,10 @@ coverage is the union of instance bins by 19.11.3 name and a merged bin uses
 the largest `at_least` (S45-D18); merged crosses need equal layouts.
 `llg_cov_hit` reads its value through a `const sv4_t*` only during the call,
 so generated code passes a plain variable's storage without a copy.
+Its rare paths (transitions, segment walks, the default bin, illegal-value
+reports, cross ranks, sparse inserts) stay `LLG_NOINLINE` so a plain
+coverpoint's sample keeps a small call frame; inlining them made a sample of
+the SIM-044b bench 35% slower.
 
 A clocking event on instance storage runs one waiter per instance, started by
 `llg_spawn_owned_with_frame` (`scheduler/process_waits.c`): a runtime-owned
