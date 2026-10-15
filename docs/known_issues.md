@@ -1754,9 +1754,10 @@ these forms remain outside them.
   weights and solve-before orders (S30-D9). The run prints one warning per
   call site naming the site and the budget (`LLG_RAND_BDD_NODES` or
   `LLG_RAND_BDD_BITS`) to raise.
-- The search re-encodes the component on every call; a loop that keeps
-  needing the search pays the encoding each time (about 18 ms per call for a
-  16-bit factoring constraint on x86-64).
+- A loop that keeps needing the search pays the search on every call (about
+  18 ms per call for a 16-bit factoring constraint on x86-64, almost all of
+  it search: the encoding is reused while the state values repeat and is
+  about 1 to 20 percent of a call otherwise).
 - A component whose exact model exceeds `LLG_RAND_BDD_NODES` spends the whole
   node budget before falling back (about 0.4 to 0.9 s at the default budget
   for that constraint, depending on memory load). The overflow is remembered

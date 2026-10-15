@@ -9,6 +9,7 @@ static llg_cr_status_t cr_tpl_step(llg_cr_session_t* s, const llg_cr_rng_t* rng,
 static const uint64_t* cr_tpl_value(const cr_tpl_t* t, uint32_t inst, uint32_t var);
 static llg_cr_session_t* cr_tpl_flat_session(const llg_cr_session_t* s);
 static uint64_t* cr_cyc_slot(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
+static void cr_cnf_cache_free(llg_cr_session_t* s);
 
 struct cr_cache_entry {
     cr_u64vec_t key;
@@ -271,6 +272,7 @@ static void cr_session_free(llg_cr_session_t* s) {
     free(s->cache);
     cr_scratch_free(&s->scratch);
     cr_overflow_free(s);
+    cr_cnf_cache_free(s);
     free(s->cyc_off);
     free(s->cyc);
     free(s->node_hash);
@@ -509,6 +511,7 @@ typedef struct {
     uint64_t reject_tries;
     uint64_t conflicts;
     uint64_t foreseen;    /* exact builds skipped as proven overflows */
+    uint64_t reused;      /* searches through a cached encoding */
     uint32_t components;
     /* solve-before height of each variable (longest order path to a sink
      * over the whole problem), or NULL without orders (S30-D2). */
@@ -1457,6 +1460,128 @@ static void cr_warn_fallback_measure(const cr_solve_t* st, const cr_plan_t* plan
             p->name ? p->name : "randomize()", budget, budget);
 }
 
+/* ---- cached search encodings ------------------------------------------------
+ *
+ * A loop that keeps needing the search fallback with the same inputs (a
+ * component whose exact model overflows and whose state repeats) would
+ * bit-blast and Tseitin-encode the same cone on every call. The encoding is
+ * cached by the exact-cache key (conjuncts, variables and every known
+ * operand value of the cone), which fixes the AIG, and a run copies it, so
+ * a cached search is the search a fresh encoding would run. A state value
+ * that changes changes the key and the encoding (folded constants make a
+ * smaller instance than one with the state as parameters fixed by unit
+ * clauses, whose longer searches cost more than the encoding saves).
+ * Components with dist selectors are not cached. */
+
+struct cr_cnf_entry {
+    cr_u64vec_t key;
+    cr_cnf_t cnf;
+    uint32_t* level_var;
+    uint32_t* level_bit;
+    uint64_t used;        /* last use, for least-recently-used replacement */
+};
+
+/* Encodings kept per session, and the largest one kept (words of clauses
+ * and watches; about 16 MiB): a bigger encoding is used once and freed. */
+#define CR_CNF_ENTRIES 4u
+#define CR_CNF_KEEP_WORDS ((size_t)1u << 22)
+
+static void cr_cnf_entry_free(cr_cnf_entry_t* e) {
+    free(e->key.data);
+    cr_cnf_free(&e->cnf);
+    free(e->level_var);
+    free(e->level_bit);
+    memset(e, 0, sizeof(*e));
+}
+
+static void cr_cnf_cache_free(llg_cr_session_t* s) {
+    for (uint32_t i = 0; i < s->cnf_count; ++i) cr_cnf_entry_free(&s->cnf_cache[i]);
+    free(s->cnf_cache);
+    s->cnf_cache = NULL;
+    s->cnf_count = 0;
+}
+
+/* Search through the cached encoding of this cone, encoding and caching it
+ * when its key was searched recently (from `aig` when this call already
+ * built it). Returns 0 when the caller is to search a per-call encoding:
+ * the key is new, or the AIG exceeds its node bound (`aig` is then built
+ * for the caller to report). */
+static int cr_search_cached(cr_solve_t* st, cr_comp_aig_t* aig, const uint32_t* vars,
+                            uint32_t nvars, const uint32_t* conj, uint32_t ncon,
+                            const uint8_t* in_cone, const cr_plan_t* plan,
+                            llg_cr_status_t* result) {
+    llg_cr_session_t* s = st->s;
+    cr_u64vec_t* key = &s->scratch.key;
+    cr_cache_key(s, conj, ncon, vars, nvars, in_cone, key, &s->scratch.comp_stack);
+    cr_cnf_entry_t* e = NULL;
+    for (uint32_t i = 0; i < s->cnf_count && !e; ++i) {
+        cr_cnf_entry_t* c = &s->cnf_cache[i];
+        if (c->key.len == key->len && memcmp(c->key.data, key->data, key->len * sizeof(uint64_t)) == 0)
+            e = c;
+    }
+    cr_cnf_entry_t fresh;
+    memset(&fresh, 0, sizeof(fresh));
+    if (e) {
+        e->used = ++s->cnf_clock;
+        st->reused++;
+    } else {
+        uint64_t h = cr_mix(key->len);
+        for (size_t i = 0; i < key->len; ++i) h = cr_mix(h ^ key->data[i]);
+        if (!h) h = 1u;
+        int seen = 0;
+        for (uint32_t i = 0; i < CR_CNF_SEEN && !seen; ++i) seen = s->cnf_seen[i] == h;
+        if (!seen) {
+            s->cnf_seen[s->cnf_seen_next] = h;
+            s->cnf_seen_next = (s->cnf_seen_next + 1u) % CR_CNF_SEEN;
+            return 0;
+        }
+        if (!aig->built) cr_comp_aig_build(st, aig, vars, nvars, conj, ncon, in_cone, plan);
+        if (aig->overflow) return 0;
+        cr_cnf_build(&fresh.cnf, &aig->blast.aig, aig->out);
+        size_t levels = aig->levels ? aig->levels : 1u;
+        fresh.level_var = (uint32_t*)cr_alloc(levels, sizeof(uint32_t));
+        fresh.level_bit = (uint32_t*)cr_alloc(levels, sizeof(uint32_t));
+        memcpy(fresh.level_var, aig->level_var, aig->levels * sizeof(uint32_t));
+        memcpy(fresh.level_bit, aig->level_bit, aig->levels * sizeof(uint32_t));
+        if (cr_cnf_words(&fresh.cnf) <= CR_CNF_KEEP_WORDS) {
+            if (!s->cnf_cache)
+                s->cnf_cache = (cr_cnf_entry_t*)cr_alloc(CR_CNF_ENTRIES, sizeof(cr_cnf_entry_t));
+            if (s->cnf_count < CR_CNF_ENTRIES) {
+                e = &s->cnf_cache[s->cnf_count++];
+            } else {
+                e = &s->cnf_cache[0];
+                for (uint32_t i = 1; i < CR_CNF_ENTRIES; ++i)
+                    if (s->cnf_cache[i].used < e->used) e = &s->cnf_cache[i];
+                cr_cnf_entry_free(e);
+            }
+            *e = fresh;
+            e->key.data = (uint64_t*)cr_alloc(key->len ? key->len : 1u, sizeof(uint64_t));
+            memcpy(e->key.data, key->data, key->len * sizeof(uint64_t));
+            e->key.len = e->key.cap = key->len;
+            e->used = ++s->cnf_clock;
+        } else {
+            e = &fresh;
+        }
+    }
+    uint32_t levels = e->cnf.levels;
+    uint8_t* model = (uint8_t*)cr_alloc(levels ? levels : 1u, 1u);
+    uint64_t conflicts = 0;
+    llg_cr_status_t found = cr_cnf_run(&e->cnf, e == &fresh, st->rng, st->t->conflicts, model, &conflicts);
+    st->conflicts += conflicts;
+    st->report->engines |= LLG_CR_ENGINE_CDCL;
+    if (found == LLG_CR_OK) {
+        cr_assign_from_levels(s, model, levels, e->level_var, e->level_bit);
+        *result = LLG_CR_OK;
+    } else if (found == LLG_CR_UNSAT) {
+        *result = LLG_CR_UNSAT;
+    } else {
+        st->budget = "LLG_RAND_CONFLICTS";
+    }
+    free(model);
+    if (e == &fresh) cr_cnf_entry_free(&fresh);
+    return 1;
+}
+
 static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, uint32_t nvars,
                                           const uint32_t* conj, uint32_t ncon) {
     llg_cr_session_t* s = st->s;
@@ -1618,8 +1743,13 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
     if (!done) {
         /* Search fallback (not uniform, S29-D10): complete, so its budget is
          * the one to raise. It shares the AIG and its node bound. */
-        if (!aig.built) cr_comp_aig_build(st, &aig, vars, nvars, conj, ncon, in_cone, &plan);
-        if (aig.overflow) {
+        int searched = !plan.layered && st->t->conflicts && st->t->search_cache &&
+                       cr_search_cached(st, &aig, vars, nvars, conj, ncon, in_cone, &plan, &result);
+        if (!searched && !aig.built)
+            cr_comp_aig_build(st, &aig, vars, nvars, conj, ncon, in_cone, &plan);
+        if (searched) {
+            /* Searched through the cached encoding. */
+        } else if (aig.overflow) {
             st->budget = "LLG_RAND_BDD_NODES";
         } else if (st->t->conflicts == 0u) {
             st->budget = "LLG_RAND_CONFLICTS";
@@ -1723,7 +1853,8 @@ static void cr_print_stats(const cr_solve_t* st, llg_cr_status_t status) {
     const llg_cr_report_t* r = st->report;
     fprintf(stderr,
             "llg: randomize stats: problem=%s status=%s engines=%s%s%s%s%s%s components=%u "
-            "bdd_nodes=%llu bdd_foreseen=%llu reject_tries=%llu conflicts=%llu\n",
+            "bdd_nodes=%llu bdd_foreseen=%llu reject_tries=%llu conflicts=%llu "
+            "search_reused=%llu\n",
             st->s->p->name ? st->s->p->name : "?", names[status],
             r->engines ? "" : "none",
             (r->engines & LLG_CR_ENGINE_DIRECT) ? "direct," : "",
@@ -1732,7 +1863,8 @@ static void cr_print_stats(const cr_solve_t* st, llg_cr_status_t status) {
             (r->engines & LLG_CR_ENGINE_REJECT) ? "reject," : "",
             (r->engines & LLG_CR_ENGINE_CDCL) ? "cdcl," : "",
             st->components, (unsigned long long)st->bdd_nodes, (unsigned long long)st->foreseen,
-            (unsigned long long)st->reject_tries, (unsigned long long)st->conflicts);
+            (unsigned long long)st->reject_tries, (unsigned long long)st->conflicts,
+            (unsigned long long)st->reused);
 }
 
 static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach);

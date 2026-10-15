@@ -144,9 +144,10 @@ which keeps the recursive BDD operations shallow on coroutine-hosted stacks),
 component search; 0 disables the search), `LLG_RAND_ARRAY_ELEMENTS` (2^20
 random array elements per solve), `LLG_RAND_EXPAND_NODES` (2^22 nodes per
 expansion), `LLG_RAND_OVERFLOW_MEMO` (1; 0 turns off the foreseen overflows
-below, which never changes a drawn value) and `LLG_RAND_STATS=1` (one stderr
-line per solve: engines, components, BDD nodes, foreseen overflows,
-rejection tries, conflicts).
+below), `LLG_RAND_SEARCH_CACHE` (1; 0 re-encodes every search; neither switch
+changes a drawn value) and `LLG_RAND_STATS=1` (one stderr line per solve:
+engines, components, BDD nodes, foreseen overflows, rejection tries,
+conflicts, reused search encodings).
 The AIG bound (8x `LLG_RAND_BDD_NODES`, at least 4096) also bounds the CDCL
 encoding. Changing a budget may change the values drawn.
 
@@ -178,8 +179,17 @@ whenever it would have succeeded. An overflow that needs the state-dependent
 part is still rebuilt per new state; its proof is tried once per shape. Layered
 entries also key the variables' layers and keep the projections and weights.
 Components without dist, randc or solve-before skip the layer plan, so
-SIM-029 problems pay nothing for the layered engine. The CDCL
-search keeps nothing between calls: it re-encodes the component each time.
+SIM-029 problems pay nothing for the layered engine.
+
+The search keeps its encoding (the Tseitin clauses and watch lists of the
+AIG cone, `cr_cnf_t`) for the four most recently used keys of the exact
+cache, cached on a key's second search (the session remembers the hashes
+of the last eight uncached keys, so state that never repeats pays no copy).
+A run copies the cached encoding, so it searches exactly as a fresh one
+would; learned clauses are not kept. A changed state value is a new key:
+encoding the state as parameters fixed by unit clauses instead was measured
+and rejected, because the unfolded instance made long searches slower than
+the encoding it saved. Components with dist selectors are not cached.
 
 A solve's working memory (reachability and cone marks, conjunct and support
 lists, union-find and bucket arrays, the cache key, sampling temporaries)

@@ -112,6 +112,7 @@ const llg_cr_tunables_t* llg_cr_tunables(void) {
         cr_tunables_value.expand_nodes = cr_env_u64("LLG_RAND_EXPAND_NODES", 1u << 22);
         cr_tunables_value.stats = cr_env_u64("LLG_RAND_STATS", 0u) != 0u;
         cr_tunables_value.overflow_memo = cr_env_u64("LLG_RAND_OVERFLOW_MEMO", 1u) != 0u;
+        cr_tunables_value.search_cache = cr_env_u64("LLG_RAND_SEARCH_CACHE", 1u) != 0u;
         cr_tunables_ready = 1;
     }
     return &cr_tunables_value;
@@ -123,6 +124,12 @@ enum { CR_K = 0, CR_R = 1, CR_E = 2, CR_SKIP = 3 };
 
 typedef struct cr_cache_entry cr_cache_entry_t;
 typedef struct cr_overflow cr_overflow_t;
+typedef struct cr_cnf_entry cr_cnf_entry_t;
+
+/* Keys of recent uncached searches kept per session (solve.c): a search
+ * encoding is cached on its key's second search, so state that never
+ * repeats pays no copy into the cache. */
+#define CR_CNF_SEEN 8u
 typedef struct cr_tpl cr_tpl_t;
 
 /* Working memory of one solve, owned by the session and reused by every
@@ -204,6 +211,13 @@ struct llg_cr_session {
     cr_overflow_t* overflow;
     uint32_t overflow_count;
     uint64_t overflow_clock;
+    /* Search encodings by cone structure (cr_search_cached); allocated on
+     * the first search. */
+    cr_cnf_entry_t* cnf_cache;
+    uint32_t cnf_count;
+    uint64_t cnf_clock;
+    uint64_t cnf_seen[CR_CNF_SEEN]; /* recent uncached search keys (hashes) */
+    uint32_t cnf_seen_next;
 };
 
 static llg_cr_session_t* cr_all_sessions;

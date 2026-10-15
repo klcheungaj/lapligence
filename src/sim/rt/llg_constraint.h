@@ -439,6 +439,8 @@ typedef struct {
     int stats;               /* LLG_RAND_STATS */
     int overflow_memo;       /* LLG_RAND_OVERFLOW_MEMO: 0 rebuilds every
                               * overflowing exact model (never changes values) */
+    int search_cache;        /* LLG_RAND_SEARCH_CACHE: 0 re-encodes every
+                              * search (never changes values) */
 } llg_cr_tunables_t;
 
 const llg_cr_tunables_t* llg_cr_tunables(void);

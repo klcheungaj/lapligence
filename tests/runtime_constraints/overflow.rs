@@ -1,5 +1,5 @@
 //! Foreseen exact-engine overflows (`cr_overflow_foreseen` in
-//! `constraints/solve.c`).
+//! `constraints/solve.c`) and cached search encodings (`cr_search_cached`).
 //!
 //! A component whose exact model overflowed `LLG_RAND_BDD_NODES` is proven
 //! to overflow for every later state when the state-free part of its cone
@@ -8,9 +8,12 @@
 //! drawn value: a skipped build is one that would have overflowed and fallen
 //! back with the same draws, and a build that would succeed (here: the state
 //! selects the other branch of a `?:`, a variable is inactive, a block is
-//! disabled) still runs the exact engine. The probe randomizes one site under
-//! a scripted sequence of states with the shortcut on and off
-//! (`LLG_RAND_OVERFLOW_MEMO=0`) and requires identical output.
+//! disabled) still runs the exact engine. The search fallback reuses an
+//! encoding only for the same cone and known values; a repeated state reuses
+//! it, a changed state, `rand_mode` or `constraint_mode` does not. The probe
+//! randomizes one site under a scripted sequence of states with both
+//! shortcuts on and off (`LLG_RAND_OVERFLOW_MEMO=0`, `LLG_RAND_SEARCH_CACHE=0`)
+//! and requires identical output.
 
 use super::*;
 
@@ -97,7 +100,7 @@ int main(void) {
     llg_cr_rng_t rng = {rng_next, &seed};
     static const char* names[] = {"ok", "unsat", "resource", "error", "calls"};
     uint64_t xv = 3, yv = 5;
-    for (uint32_t i = 0; i < 40u; ++i) {
+    for (uint32_t i = 0; i < 48u; ++i) {
         uint64_t gv = 1, tv, x_active = 1, block_on = 1;
         if (i < 8u) {
             tv = (uint64_t)primes[i % 4u] * primes[i % 4u + 1u];      /* repeats */
@@ -108,8 +111,12 @@ int main(void) {
             x_active = 0; xv = 7; tv = 7u * (uint64_t)primes[i];      /* rand_mode(0) */
         } else if (i < 30u) {
             block_on = 0; tv = 0;                                     /* constraint_mode(0) */
-        } else {
+        } else if (i < 40u) {
             tv = (uint64_t)primes[i + 10u] * primes[i + 11u];        /* new */
+        } else if (i % 2u) {
+            x_active = 0; xv = 7; tv = 7u * (uint64_t)primes[24];     /* repeats */
+        } else {
+            tv = (uint64_t)primes[i % 4u] * primes[i % 4u + 1u];      /* repeats */
         }
         llg_cr_begin(s);
         llg_cr_set_var(s, 0, &xv, (int)x_active, LLG_CR_INPUT_KNOWN);
@@ -169,9 +176,9 @@ fn parse_calls(output: &str) -> Vec<Call> {
         .collect()
 }
 
-/// Run the probe; returns stdout and the number of stats lines that report
-/// a foreseen (skipped) exact build.
-fn run_overflow_probe(exe: &std::path::Path, memo: &str) -> (String, usize) {
+/// Run the probe; returns stdout and the numbers of stats lines that report
+/// a foreseen (skipped) exact build and a reused search encoding.
+fn run_overflow_probe(exe: &std::path::Path, memo: &str, cache: &str) -> (String, usize, usize) {
     let mut command = Command::new(exe);
     for name in [
         "LLG_RAND_BDD_BITS",
@@ -187,18 +194,22 @@ fn run_overflow_probe(exe: &std::path::Path, memo: &str) -> (String, usize) {
     command
         .env("LLG_RAND_BDD_NODES", "2000")
         .env("LLG_RAND_STATS", "1")
-        .env("LLG_RAND_OVERFLOW_MEMO", memo);
+        .env("LLG_RAND_OVERFLOW_MEMO", memo)
+        .env("LLG_RAND_SEARCH_CACHE", cache);
     let output = sim_harness::run_command(&mut command, Duration::from_secs(300))
         .unwrap_or_else(|error| panic!("run overflow probe: {error}"));
     assert!(output.status.success(), "overflow probe failed: {output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let foreseen = stderr
-        .lines()
-        .filter(|line| line.contains("randomize stats:") && !line.contains("bdd_foreseen=0 "))
-        .count();
+    let stats = |zero: &str| {
+        stderr
+            .lines()
+            .filter(|line| line.contains("randomize stats:") && !line.contains(zero))
+            .count()
+    };
     (
         String::from_utf8_lossy(&output.stdout).into_owned(),
-        foreseen,
+        stats("bdd_foreseen=0 "),
+        stats("search_reused=0"),
     )
 }
 
@@ -210,16 +221,27 @@ fn foreseen_overflows_skip_only_builds_that_would_overflow() {
     let Some((_dir, exe)) = build_c_probe("constraint_overflow", OVERFLOW_MAIN) else {
         return;
     };
-    let (with_memo, foreseen) = run_overflow_probe(&exe, "1");
-    let (without_memo, foreseen_off) = run_overflow_probe(&exe, "0");
-    // The shortcut changes no value, status or engine.
+    let (with_both, foreseen, reused) = run_overflow_probe(&exe, "1", "1");
+    let (without, foreseen_off, reused_off) = run_overflow_probe(&exe, "0", "0");
+    // Neither shortcut changes a value, status or engine.
     assert_eq!(
-        with_memo, without_memo,
-        "the overflow memo changed the draws"
+        with_both, without,
+        "the overflow memo or search cache changed the draws"
     );
+    for (memo, cache) in [("1", "0"), ("0", "1")] {
+        let (output, _, _) = run_overflow_probe(&exe, memo, cache);
+        assert_eq!(
+            output, without,
+            "memo={memo} cache={cache} changed the draws"
+        );
+    }
     assert_eq!(
         foreseen_off, 0,
         "LLG_RAND_OVERFLOW_MEMO=0 still skipped builds"
+    );
+    assert_eq!(
+        reused_off, 0,
+        "LLG_RAND_SEARCH_CACHE=0 still reused encodings"
     );
     // Calls 1 (proof), 2 and 3 (repeating shape, new keys) and the new-key
     // calls after the exact, inactive and disabled interludes are skipped.
@@ -227,9 +249,14 @@ fn foreseen_overflows_skip_only_builds_that_would_overflow() {
         foreseen >= 12,
         "the overflow memo was not exercised: {foreseen} skips"
     );
+    // Keys searched a third time (calls 40 to 46) reuse their encoding.
+    assert!(
+        reused >= 2,
+        "the search cache was not exercised: {reused} reuses"
+    );
 
-    let calls = parse_calls(&with_memo);
-    assert_eq!(calls.len(), 40);
+    let calls = parse_calls(&with_both);
+    assert_eq!(calls.len(), 48);
     for (i, call) in calls.iter().enumerate() {
         assert_eq!(call.status, "ok", "call {i}: {}", call.status);
         if !call.block {

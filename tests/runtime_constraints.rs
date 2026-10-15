@@ -1338,6 +1338,7 @@ fn run_command_output(command: &mut Command, env: &[(&str, &str)]) -> String {
         "LLG_RAND_EXPAND_NODES",
         "LLG_RAND_STATS",
         "LLG_RAND_OVERFLOW_MEMO",
+        "LLG_RAND_SEARCH_CACHE",
     ] {
         command.env_remove(name);
     }
