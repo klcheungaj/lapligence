@@ -298,6 +298,7 @@ impl Db {
         let mut enum_types = HashMap::new();
         let mut packed_dimensions = HashMap::new();
         let mut clocking_blocks = HashMap::new();
+        let mut coverage = CoverageImport::default();
         let mut clocking_vars = HashMap::new();
         let mut default_clockings = HashMap::new();
         let dpi_imports = snapshot
@@ -481,6 +482,9 @@ impl Db {
                 .is_some_and(|projection| projection.two_state)
             {
                 two_state_types.insert(id);
+            }
+            if semantic.kind == SemanticKind::Coverage {
+                coverage.import(snapshot, &ids, id, semantic, edges, &type_info)?;
             }
             if semantic.kind == SemanticKind::Net && semantic.is_implicit() {
                 implicit_nets.insert(id);
@@ -1208,6 +1212,7 @@ impl Db {
             .first()
             .map(|id| nodes[id.index()].name.clone())
             .unwrap_or_else(|| "design".to_owned());
+        let coverage = coverage.finish(&nodes)?;
         let db = Self {
             nodes,
             edition: snapshot.edition(),
@@ -1255,6 +1260,7 @@ impl Db {
             assertion_local_initializers,
             source_identities,
             clocking_blocks,
+            coverage,
             clocking_vars,
             default_clockings,
             modport_directions,

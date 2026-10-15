@@ -259,6 +259,9 @@ pub(super) fn node_kind_from_slang(
         },
         SemanticKind::Scope => NodeKind::Stmt(StmtKind::Begin),
         SemanticKind::TimingControl => NodeKind::Other,
+        // Coverage declarations keep their typed facts in the Db's coverage
+        // side tables; the node itself is a declaration.
+        SemanticKind::Coverage => NodeKind::Other,
         // Assertion-control hierarchy arguments are exported by vendored
         // Slang as an `ArbitrarySymbol` expression even though that node is
         // not assigned the ordinary expression semantic kind. Preserve its

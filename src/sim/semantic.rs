@@ -948,7 +948,10 @@ fn classify_simulation_node(
             Some(CapturedSemanticKind::Primitive)
             | Some(CapturedSemanticKind::Definition)
             | Some(CapturedSemanticKind::Package)
-            | Some(CapturedSemanticKind::Class) => SimulationNodeClass::DeclarationOnly,
+            | Some(CapturedSemanticKind::Class)
+            // Covergroup declarations run only through their lowered
+            // construction and sampling (IEEE 1800-2009 19).
+            | Some(CapturedSemanticKind::Coverage) => SimulationNodeClass::DeclarationOnly,
             Some(CapturedSemanticKind::Unsupported)
                 if is_declaration_only_unknown(db.semantic_detail(id)) =>
             {
@@ -1191,8 +1194,6 @@ fn is_declaration_only_unknown(detail: Option<&str>) -> bool {
             "NetType"
                 | "CompilationUnit"
                 | "Checker"
-                | "Covergroup"
-                | "CovergroupType"
                 | "Property"
                 | "Sequence"
                 | "AssertionPort"

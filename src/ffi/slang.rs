@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 22;
+const ABI_VERSION: u32 = 23;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -555,6 +555,8 @@ pub enum TypeKind {
     DpiOpenUnpacked,
     /// The sole unsized packed dimension of a DPI import formal.
     DpiOpenPacked,
+    /// A covergroup type (IEEE 1800-2009 19.3).
+    Covergroup,
     Other,
 }
 
@@ -676,11 +678,39 @@ pub enum SemanticKind {
     ConstraintBlock,
     /// One constraint item; the subkind is a `SEMANTIC_CONSTRAINT_*` code.
     Constraint,
+    /// A functional-coverage declaration; the subkind is a
+    /// `SEMANTIC_COVERAGE_*` code (IEEE 1800-2009 19).
+    Coverage,
     Unsupported,
 }
 
 const ARGUMENT_CONST_REF: u64 = 1 << 0;
 const ARGUMENT_REF_STATIC: u64 = 1 << 1;
+/// A `with function sample` formal of a covergroup (IEEE 1800-2009 19.8.1).
+pub(crate) const ARGUMENT_COVERAGE_SAMPLE: u64 = 1 << 2;
+/// Functional-coverage subkinds (IEEE 1800-2009 19).
+pub(crate) const SEMANTIC_COVERAGE_GROUP: u32 = 1;
+pub(crate) const SEMANTIC_COVERAGE_POINT: u32 = 2;
+pub(crate) const SEMANTIC_COVERAGE_BIN: u32 = 3;
+pub(crate) const SEMANTIC_COVERAGE_CROSS: u32 = 4;
+pub(crate) const SEMANTIC_COVERAGE_BODY: u32 = 5;
+/// Covergroup qualifiers.
+pub(crate) const COVERGROUP_EMBEDDED: u64 = 1 << 0;
+pub(crate) const COVERGROUP_WITH_SAMPLE: u64 = 1 << 1;
+pub(crate) const COVERGROUP_BLOCK_EVENT: u64 = 1 << 2;
+pub(crate) const COVERGROUP_EXTENDS: u64 = 1 << 3;
+/// Coverage bin kind (low two bits) and shape bits.
+pub(crate) const COVERAGE_BIN_KIND_MASK: u64 = 3;
+pub(crate) const COVERAGE_BIN_ARRAY: u64 = 1 << 2;
+pub(crate) const COVERAGE_BIN_WILDCARD: u64 = 1 << 3;
+pub(crate) const COVERAGE_BIN_DEFAULT: u64 = 1 << 4;
+pub(crate) const COVERAGE_BIN_DEFAULT_SEQUENCE: u64 = 1 << 5;
+pub(crate) const COVERAGE_BIN_TRANSITION: u64 = 1 << 6;
+pub(crate) const COVERAGE_BIN_WITH: u64 = 1 << 7;
+pub(crate) const COVERAGE_BIN_SET: u64 = 1 << 8;
+pub(crate) const COVERAGE_BIN_SELECT: u64 = 1 << 9;
+/// `@@(...)` block event list timing control (IEEE 1800-2009 19.3).
+pub(crate) const SEMANTIC_TIMING_BLOCK_EVENT_LIST: u32 = 119;
 /// Low byte of a variable's `auxiliary`: its resolved lifetime code.
 pub(crate) const VARIABLE_LIFETIME_MASK: u64 = 0xff;
 /// A variable or class property declared `const` (SV 6.20.6).

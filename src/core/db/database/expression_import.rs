@@ -185,6 +185,19 @@ pub(super) fn expression_from_slang(
             constructor: first(SemanticEdgeRole::Initializer)?,
             is_super_class: node.auxiliary & crate::ffi::slang::NEW_CLASS_SUPER != 0,
         },
+        88 => ExprKind::NewCovergroup {
+            group_type: node.type_id().map(TypeId),
+            args: {
+                let mut args = edges
+                    .iter()
+                    .filter(|edge| edge.role == SemanticEdgeRole::Argument)
+                    .collect::<Vec<_>>();
+                args.sort_by_key(|edge| edge.index);
+                args.into_iter()
+                    .map(|edge| semantic_id(ids, edge.target_id))
+                    .collect::<Result<Vec<_>, _>>()?
+            },
+        },
         90 => {
             let target = node
                 .target_id()

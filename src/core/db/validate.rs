@@ -263,6 +263,65 @@ impl Validator<'_> {
             self.node(*init, &format!("vars_init[{}]", variable.0))?;
         }
 
+        for (group, info) in self.db.covergroups() {
+            let path = format!("covergroups[{}]", group.0);
+            self.node(*group, &path)?;
+            let mut refs = Vec::new();
+            refs.extend(info.formals.iter().copied());
+            refs.extend(info.sample_formals.iter().copied());
+            refs.extend(info.options.iter().copied());
+            refs.extend(info.body);
+            refs.extend(info.coverpoints.iter().copied());
+            refs.extend(info.crosses.iter().copied());
+            match &info.event {
+                Some(super::CoverageEvent::Clocking { timing, specs, .. }) => {
+                    refs.push(*timing);
+                    for spec in specs {
+                        spec.referenced_nodes(&mut refs);
+                    }
+                }
+                Some(super::CoverageEvent::Block { timing, events }) => {
+                    refs.push(*timing);
+                    refs.extend(events.iter().map(|event| event.target));
+                }
+                None => {}
+            }
+            for (index, reference) in refs.into_iter().enumerate() {
+                self.node(reference, &format!("{path}.refs[{index}]"))?;
+            }
+            for point in &info.coverpoints {
+                let Some(metadata) = self.db.coverpoint(*point) else {
+                    return self.fail(path, "coverpoint has no metadata");
+                };
+                if metadata.group != *group {
+                    return self.fail(path, "coverpoint names another covergroup");
+                }
+                let point_path = format!("coverpoints[{}]", point.0);
+                self.node(metadata.expr, &format!("{point_path}.expr"))?;
+                for reference in metadata
+                    .iff
+                    .iter()
+                    .chain(&metadata.options)
+                    .chain(&metadata.bins)
+                {
+                    self.node(*reference, &point_path)?;
+                }
+                for bin in &metadata.bins {
+                    let Some(bin_info) = self.db.coverage_bin(*bin) else {
+                        return self.fail(point_path, "bin has no metadata");
+                    };
+                    for reference in bin_info
+                        .values
+                        .iter()
+                        .chain(&bin_info.count)
+                        .chain(&bin_info.iff)
+                    {
+                        self.node(*reference, &format!("coverage_bins[{}]", bin.0))?;
+                    }
+                }
+            }
+        }
+
         for (block, metadata) in self.db.clocking_blocks() {
             let path = format!("clocking_blocks[{}]", block.0);
             let node = self.node(*block, &path)?;
@@ -866,6 +925,7 @@ fn expression_refs(expression: &ExprKind, refs: &mut Vec<NodeId>) {
             refs.extend(*initializer);
         }
         ExprKind::NewClass { constructor, .. } => refs.extend(*constructor),
+        ExprKind::NewCovergroup { args, .. } => refs.extend(args.iter().copied()),
         ExprKind::CopyClass { source, .. } => refs.push(*source),
         ExprKind::Dist { left, items, .. } => {
             refs.push(*left);

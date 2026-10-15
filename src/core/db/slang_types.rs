@@ -238,6 +238,7 @@ impl<'a> SlangTypeProjector<'a> {
             TypeKind::Void => "void".to_owned(),
             TypeKind::VirtualInterface => "virtual_interface".to_owned(),
             TypeKind::DpiOpenUnpacked | TypeKind::DpiOpenPacked => "dpi_open".to_owned(),
+            TypeKind::Covergroup => "covergroup".to_owned(),
             TypeKind::Other => "other".to_owned(),
         };
         let width = if ty.is_fixed_size {
@@ -514,6 +515,7 @@ impl<'a> SlangTypeProjector<'a> {
             | TypeKind::VirtualInterface
             | TypeKind::DpiOpenUnpacked
             | TypeKind::DpiOpenPacked
+            | TypeKind::Covergroup
             | TypeKind::Aggregate
             | TypeKind::Other => TypeShape::Opaque {
                 kind: format!("{:?}", ty.kind),

@@ -446,6 +446,7 @@ fn semantic_kind(kind: SemanticKind) -> &'static str {
         SemanticKind::AssertionExpr => "assertion expression",
         SemanticKind::ConstraintBlock => "constraint block",
         SemanticKind::Constraint => "constraint",
+        SemanticKind::Coverage => "coverage",
         SemanticKind::Primitive => "primitive",
         SemanticKind::Subroutine => "subroutine",
         SemanticKind::Argument => "argument",

@@ -285,6 +285,7 @@ fn decode_semantic_kind(raw: u32) -> Result<SemanticKind, SlangError> {
         28 => SemanticKind::AssertionExpr,
         29 => SemanticKind::ConstraintBlock,
         30 => SemanticKind::Constraint,
+        31 => SemanticKind::Coverage,
         255 => SemanticKind::Unsupported,
         _ => return Err(invalid_native("semantic node has an unknown kind")),
     })
@@ -304,7 +305,11 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
             subkind,
             0 | 194 | SEMANTIC_SCOPE_CLOCKING_BLOCK | SEMANTIC_SCOPE_ANONYMOUS_PROGRAM
         ),
-        26 => matches!(subkind, 0 | 112..=118),
+        26 => matches!(subkind, 0 | 112..=119),
+        31 => matches!(
+            subkind,
+            super::SEMANTIC_COVERAGE_GROUP..=super::SEMANTIC_COVERAGE_BODY
+        ),
         28 => matches!(subkind, 0..=13),
         30 => matches!(
             subkind,
@@ -398,8 +403,35 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
                 && (node.auxiliary & (SUBROUTINE_DPI_CONTEXT | SUBROUTINE_DPI_PURE) == 0
                     || node.auxiliary & SUBROUTINE_DPI_IMPORT != 0)
         }
-        // Argument qualifiers carry const-ref and ref-static bits.
-        (17, _, _) => node.auxiliary <= 3,
+        // Argument qualifiers carry const-ref, ref-static and
+        // coverage-sample bits.
+        (17, _, _) => {
+            let allowed = super::ARGUMENT_CONST_REF
+                | super::ARGUMENT_REF_STATIC
+                | super::ARGUMENT_COVERAGE_SAMPLE;
+            node.auxiliary & !allowed == 0
+        }
+        (31, super::SEMANTIC_COVERAGE_GROUP, _) => {
+            let allowed = super::COVERGROUP_EMBEDDED
+                | super::COVERGROUP_WITH_SAMPLE
+                | super::COVERGROUP_BLOCK_EVENT
+                | super::COVERGROUP_EXTENDS;
+            node.auxiliary & !allowed == 0
+        }
+        (31, super::SEMANTIC_COVERAGE_BIN, _) => {
+            let allowed = super::COVERAGE_BIN_KIND_MASK
+                | super::COVERAGE_BIN_ARRAY
+                | super::COVERAGE_BIN_WILDCARD
+                | super::COVERAGE_BIN_DEFAULT
+                | super::COVERAGE_BIN_DEFAULT_SEQUENCE
+                | super::COVERAGE_BIN_TRANSITION
+                | super::COVERAGE_BIN_WITH
+                | super::COVERAGE_BIN_SET
+                | super::COVERAGE_BIN_SELECT;
+            node.auxiliary & !allowed == 0 && node.auxiliary & super::COVERAGE_BIN_KIND_MASK != 3
+        }
+        // Bit i marks block event i as a `begin` event.
+        (26, super::SEMANTIC_TIMING_BLOCK_EVENT_LIST, _) => true,
         // Statement subkind 42 covers both `wait` and `wait_order`; the
         // auxiliary marker distinguishes the ordered form. Conditional and
         // case statements use the same scalar for their qualifier.

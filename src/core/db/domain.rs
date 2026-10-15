@@ -55,6 +55,7 @@ pub enum CapturedSemanticKind {
     AssertionExpr,
     ConstraintBlock,
     Constraint,
+    Coverage,
     Unsupported,
 }
 
@@ -91,6 +92,7 @@ impl From<crate::ffi::slang::SemanticKind> for CapturedSemanticKind {
             crate::ffi::slang::SemanticKind::AssertionExpr => Self::AssertionExpr,
             crate::ffi::slang::SemanticKind::ConstraintBlock => Self::ConstraintBlock,
             crate::ffi::slang::SemanticKind::Constraint => Self::Constraint,
+            crate::ffi::slang::SemanticKind::Coverage => Self::Coverage,
             crate::ffi::slang::SemanticKind::Unsupported => Self::Unsupported,
         }
     }
