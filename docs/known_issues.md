@@ -1790,7 +1790,22 @@ of a handle or value:
   casts;
 - `vpi_handle(vpiUse, iterator)` and the relations not listed in
   `docs/sim_features.md`;
-- callbacks other than `cbStartOfSimulation` and `cbEndOfSimulation` (SIM-043).
+- callback reasons other than `cbValueChange`, the seven time reasons,
+  `cbEndOfCompile`, `cbStartOfSimulation` and `cbEndOfSimulation`: `cbStmt`,
+  `cbForce`/`cbRelease`, `cbAssign`/`cbDeassign`, `cbDisable`, the class,
+  frame and thread reasons, `cbError`/`cbPLIError`/`cbTchkViolation`/
+  `cbSignal` and the save, restart, reset and interactive features;
+- `cbValueChange` on a whole unpacked array (register it on the elements), on
+  named events, or with `vpiStrengthVal` to see strength-only changes (it
+  runs on value changes only);
+- `vpi_control(vpiReset)` and `vpiSetInteractiveScope`;
+- user VPI system functions in read-only evaluators other than
+  `$strobe`/`$monitor` arguments (evaluated event controls, force
+  re-evaluation, functions called from those evaluators).
+
+A model built without `--vpi`, `--dpi-lib` or a user system task call site
+has no object catalog: an application loaded with `LLG_VPI_PLUGIN` gets
+callbacks but finds no objects, and the model warns on stderr.
 
 Elements of a net array are read-only through VPI (they are published from
 their nets). A `vpiReleaseFlag` put on a variable that a continuous assignment

@@ -34,6 +34,9 @@ Keep reusable processing in the library. Bins import `llg::config`, `llg::core`,
 - Repeated `--dpi-lib <path>` validates explicit DPI-C libraries before CMake and
   retains them in source-only output. A library naming `veriusertfs` or a PLI 1.0
   `tf_*`/`acc_*` routine is refused (unsupported by design).
+- `--vpi` (CLI only) keeps the VPI object catalog for an application loaded at
+  run time with `LLG_VPI_PLUGIN`; any `--dpi-lib` implies it, and a user system
+  task call site keeps the catalog regardless (`CodegenOptions::vpi`).
 - A codegen failure that is a list of `unsupported: <construct> (<family>) is not
   supported by llg` rejections (`CodegenError::is_legacy_unsupported`) prints one
   `error: <file>:<line>:<col>: ...` line each, not `llg: codegen error:`.

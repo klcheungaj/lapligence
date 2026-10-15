@@ -630,6 +630,22 @@ force table (`llg_force_value_parts`, `llg_force_real_value`, release through
 `llg_release_parts`/`llg_release_real`). Tear down VPI/runtime queues before
 model storage.
 
+VPI callbacks (SIM-043) are records owned by the registry from registration
+until removal or, for time and action reasons, retirement after they run.
+Time reasons are one-shot region callbacks in their Table 4-1 PLI region
+(`cbNextSimTime` through `llg_time_slot_hook` at each Pre-Active pass).
+`cbValueChange` uses `llg_value_watch_add`: a waiter-less subscription on the
+address's wait row that `sig_publish_changed`/`real_write` already look up,
+whose hook runs after every runtime consumer; never add a separate per-store
+lookup. Dispatch collects records in registration order before running any
+and frees removed ones only when the outermost dispatch ends, so callbacks may
+register/remove any callback. Watches end with the runtime lifetime
+(`free_value_watches`), so VPI removal after cleanup is a no-op.
+`vpi_put_value` fails in read-only regions without touching the runtime's
+fatal region check; zero-delay time callbacks are refused there before
+scheduling. `vpi_control` stop/finish use `llg_rt_control_stop/finish`;
+`cbEndOfSimulation` runs once, from advance or close.
+
 Waveforms use one simulation-thread producer and one POSIX/Win32 writer owning the
 file. Ring events own values; release/acquire publication, condition-variable
 backpressure, acknowledged FIFO dumpflush and in-band close followed by join are

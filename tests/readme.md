@@ -296,6 +296,17 @@ the runtime probe is `runtime_value_storage`'s `vpi_ownership` and the unit
 checks are `sim::build::vpi_static::tests` and
 `sim::codegen::lowering::collection::vpi::tests`.
 
+SIM-043's callback fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_043::)'`. `regions`, `reentry`,
+`readonly` and `control` load their C application with `LLG_VPI_PLUGIN` and
+run in both optimizer modes on every backend; `regions` also links it as a
+static archive, `control` also runs with `--stop-policy exit`, and `catalog`
+runs with and without `--vpi`. Decisions S43-D1-D9 are in
+`sim_lrm_decisions`; the CLI check is
+`settings::tests::vpi_catalog_follows_vpi_and_linked_libraries`. Under ASan
+run the set with `LLG_CC=gcc LLG_CFLAGS='-fsanitize=address,undefined
+-DLLG_CO_DEBUG'`.
+
 SIM-037's sequence-composition fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_037::)'`. `exhaustive` compares
 36 sequences on all 1024 two-signal traces of length 5 with the test-side

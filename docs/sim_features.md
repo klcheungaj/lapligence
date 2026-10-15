@@ -735,8 +735,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   produced by reactive code are evaluated in a further Observed pass of the same
   slot. Internal region callbacks are cancellable with lifetime-stamped
   identities ([SIM-001](../tests/sim_feature_completion/sim_001.rs)). Clocking,
-  program and assertion consumers are bounded by §12; the full PLI/VPI region API
-  is not implemented. SV §§4.4–4.5 **[SV-2005]**.
+  program and assertion consumers are bounded by §12. VPI time callbacks use the
+  PLI regions of Table 4-1 (SIM-043, §12 PLI/VPI bridge). SV §§4.4–4.5
+  **[SV-2005]**.
 
 ## 5. Procedural statements
 
@@ -2253,10 +2254,23 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   `vpi_chk_error` level, never a use-after-free. Applications load from
   `LLG_VPI_PLUGIN` or link as a static archive with `--dpi-lib` (the Windows
   route). Decisions S42-D1..D13 in `docs/lrm_decisions.md`; limits in
-  `docs/known_issues.md` ("VPI object model limits"). Callbacks beyond start
-  and end of simulation are SIM-043. Registered packed/real system-function
-  calls have direct expression-evaluation paths; foreign calls nested in proven
-  read-only HDL helpers remain unsupported. SV ch.36-38, V ch.20–27
+  `docs/known_issues.md` ("VPI object model limits"). Callbacks (SIM-043):
+  `cbValueChange` on variables, nets, ports, array elements and bit/part
+  selects (value, time and index per `s_cb_data`, at every changing write);
+  the time reasons in their Table 4-1 PLI regions (`cbAtStartOfSimTime`,
+  `cbAfterDelay`, `cbNextSimTime` Pre-Active; `cbNBASynch` Pre-NBA;
+  `cbReadWriteSynch` Post-NBA; `cbAtEndOfSimTime` Pre-Postponed;
+  `cbReadOnlySynch` Postponed) with relative delays; `cbEndOfCompile`,
+  `cbStartOfSimulation` and `cbEndOfSimulation` (once); `vpi_remove_cb` and
+  `vpi_get_cb_info`, including registration and removal inside running
+  callbacks. Read-only regions reject `vpi_put_value` and zero-delay time
+  callbacks; `vpi_control(vpiStop/vpiFinish, level)` goes through the
+  `$stop`/`$finish` lifecycle. Decisions S43-D1..D9. The object catalog is
+  emitted only with `--vpi`, `--dpi-lib` or a user system task call site.
+  Registered packed/real system-function calls have direct
+  expression-evaluation paths and may be `$strobe`/`$monitor` arguments (their
+  design writes are rejected there); other read-only evaluators (event
+  controls, force re-evaluation) still reject them. SV ch.36-38, V ch.20–27
   **[1995/2001]**.
 - ⬜ **Checkers** — Checker execution and checker bind are not implemented;
   module/interface structural bind and ordinary assertion instances do not imply
