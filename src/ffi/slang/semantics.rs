@@ -299,7 +299,7 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
         14 => matches!(subkind, 0 | 228),
         15 => matches!(subkind, 0 | 160..=164 | 200..=227),
         18 => matches!(subkind, 0 | 32..=69 | SEMANTIC_STMT_PATTERN_CASE),
-        19 => matches!(subkind, 0 | 64..=78 | 80..=94),
+        19 => matches!(subkind, 0 | 64..=78 | 80..=95),
         25 => matches!(
             subkind,
             0 | 194 | SEMANTIC_SCOPE_CLOCKING_BLOCK | SEMANTIC_SCOPE_ANONYMOUS_PROGRAM
@@ -434,6 +434,10 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         // Class qualifiers and `new super` are repository-owned flags.
         (3, _, _) => node.auxiliary & !(CLASS_ABSTRACT | CLASS_FINAL | CLASS_INTERFACE) == 0,
         (19, 87, _) => node.auxiliary & !NEW_CLASS_SUPER == 0,
+        (19, super::SEMANTIC_EXPR_DIST, _) => node.auxiliary & !super::DIST_DEFAULT == 0,
+        // A foreach constraint counts its loop-variable slots like the
+        // statement form.
+        (30, super::SEMANTIC_CONSTRAINT_FOREACH, _) => node.auxiliary <= 4096,
         // A call qualified with `super` must bind directly to its declaring
         // base implementation instead of participating in virtual dispatch.
         // Randomize calls also record whether they are the class method or

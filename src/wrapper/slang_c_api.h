@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 21u
+#define LLG_SLANG_ABI_VERSION 22u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -543,9 +543,16 @@ enum {
   LLG_SLANG_CONSTRAINT_FOREACH = 8
 };
 
-/* Constraint item qualifiers carried in auxiliary. */
+/* Constraint item qualifiers carried in auxiliary. A FOREACH item instead
+ * carries its loop-variable slot count there and names each declared loop
+ * variable with a DECLARATION[slot] edge (omitted slots have none). */
 enum {
   LLG_SLANG_CONSTRAINT_SOFT = 1ull << 0
+};
+
+/* Distribution qualifiers carried in auxiliary. */
+enum {
+  LLG_SLANG_DIST_DEFAULT = 1ull << 0
 };
 
 /* Constraint block qualifiers carried in auxiliary. INITIAL, EXTENDS and
@@ -684,6 +691,12 @@ enum {
   /* A shallow class copy `new h` (IEEE 1800-2009 8.11); its operand edge is
    * the source handle expression. */
   LLG_SLANG_EXPR_COPY_CLASS = 94,
+  /* A distribution `expr dist { items }` (IEEE 1800-2009 18.5.4): LHS is the
+   * expression, OPERAND[i] item i's value or value range, INDEX[i] its `:=`
+   * weight and RIGHT[i] its `:/` weight (at most one, none for the default
+   * weight 1). A later-edition `default` weight sets LLG_SLANG_DIST_DEFAULT
+   * in auxiliary and is the DEFAULT_VALUE edge. */
+  LLG_SLANG_EXPR_DIST = 95,
   LLG_SLANG_TIMING_DELAY = 112,
   LLG_SLANG_TIMING_SIGNAL_EVENT = 113,
   LLG_SLANG_TIMING_EVENT_LIST = 114,

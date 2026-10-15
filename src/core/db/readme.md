@@ -41,8 +41,9 @@ its `T`, resolved in the specializing scope, keyed by the class type identity.
 Constrained randomization (IEEE 1800-2009 clause 18) is captured as typed
 data: `NodeKind::ConstraintBlock` (qualifiers and the root constraint) and
 `NodeKind::Constraint` (list, expression, implication, if-else, solve-before,
-foreach and the later-edition unique/disable-soft/soft forms the 2009 profile
-rejects). `Db::rand_qualifier` gives a class property's `rand`/`randc`, and
+foreach with its loop-variable slots, and the later-edition
+unique/disable-soft/soft forms the 2009 profile rejects); `ExprKind::Dist` keeps a
+`dist` expression's items and `:=`/`:/` weights. `Db::rand_qualifier` gives a class property's `rand`/`randc`, and
 `Db::randomize_call` identifies a class or scope `randomize` call and its inline
 `with` constraints (`constraints.rs`).
 Modport expression ports `.p(expr)` keep their port expression in a side

@@ -51,8 +51,13 @@ pub enum ConstraintKind {
         solve: Vec<NodeId>,
         before: Vec<NodeId>,
     },
-    /// `foreach (array [loop_variables]) constraint_set` (18.5.7.1).
-    Foreach { array: NodeId, body: NodeId },
+    /// `foreach (array [loop_variables]) constraint_set` (18.5.7.1). `vars`
+    /// holds one slot per listed dimension; `None` is an omitted variable.
+    Foreach {
+        array: NodeId,
+        vars: Vec<Option<NodeId>>,
+        body: NodeId,
+    },
 }
 
 impl ConstraintKind {
@@ -76,7 +81,10 @@ impl ConstraintKind {
                 refs.extend(solve.iter().copied());
                 refs.extend(before.iter().copied());
             }
-            ConstraintKind::Foreach { array, body } => refs.extend([*array, *body]),
+            ConstraintKind::Foreach { array, vars, body } => {
+                refs.extend([*array, *body]);
+                refs.extend(vars.iter().flatten());
+            }
         }
     }
 }
@@ -188,10 +196,41 @@ pub(super) fn constraint_from_slang(
             solve: ordered_targets(ids, edges, SemanticEdgeRole::Left, "solve list")?,
             before: ordered_targets(ids, edges, SemanticEdgeRole::Right, "before list")?,
         },
-        SEMANTIC_CONSTRAINT_FOREACH => ConstraintKind::Foreach {
-            array: required(SemanticEdgeRole::Base, "array")?,
-            body: required(SemanticEdgeRole::Body, "body")?,
-        },
+        SEMANTIC_CONSTRAINT_FOREACH => {
+            // The slot count is bounded by the declarations it must hold, so
+            // an implausible count cannot drive a large allocation.
+            let declarations = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Declaration)
+                .count();
+            let count = usize::try_from(node.auxiliary)
+                .ok()
+                .filter(|count| *count <= declarations.max(1) + 64)
+                .ok_or_else(|| {
+                    DbError::InvalidSnapshot("foreach constraint slot count is invalid".into())
+                })?;
+            let mut vars = vec![None; count];
+            for edge in edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Declaration)
+            {
+                let slot = vars.get_mut(edge.index as usize).ok_or_else(|| {
+                    DbError::InvalidSnapshot(
+                        "foreach constraint loop variable exceeds its slot count".into(),
+                    )
+                })?;
+                if slot.replace(semantic_id(ids, edge.target_id)?).is_some() {
+                    return Err(DbError::InvalidSnapshot(
+                        "foreach constraint has a duplicate loop variable slot".into(),
+                    ));
+                }
+            }
+            ConstraintKind::Foreach {
+                array: required(SemanticEdgeRole::Base, "array")?,
+                vars,
+                body: required(SemanticEdgeRole::Body, "body")?,
+            }
+        }
         _ => {
             return Err(DbError::InvalidSnapshot(
                 "constraint has an unknown subkind".into(),

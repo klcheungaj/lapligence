@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 21;
+const ABI_VERSION: u32 = 22;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -805,6 +805,12 @@ pub const SEMANTIC_EXPR_UPDATE_CURRENT: u32 = 93;
 /// Expression tag for a shallow class copy `new h`; its operand edge is the
 /// source handle.
 pub const SEMANTIC_EXPR_COPY_CLASS: u32 = 94;
+/// Expression tag for `expr dist { items }` (IEEE 1800-2009 18.5.4): LHS is
+/// the expression, OPERAND[i] item i, INDEX[i] its `:=` weight and RIGHT[i]
+/// its `:/` weight.
+pub const SEMANTIC_EXPR_DIST: u32 = 95;
+/// A later-edition `default` dist weight (auxiliary of a dist expression).
+pub(crate) const DIST_DEFAULT: u64 = 1 << 0;
 
 /// Immediate assertion metadata carried in [`SemanticNode::auxiliary`].
 pub const SEMANTIC_ASSERTION_DEFERRED: u64 = 1 << 0;

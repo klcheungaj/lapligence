@@ -867,6 +867,13 @@ fn expression_refs(expression: &ExprKind, refs: &mut Vec<NodeId>) {
         }
         ExprKind::NewClass { constructor, .. } => refs.extend(*constructor),
         ExprKind::CopyClass { source, .. } => refs.push(*source),
+        ExprKind::Dist { left, items, .. } => {
+            refs.push(*left);
+            for item in items {
+                refs.push(item.value);
+                refs.extend(item.weight);
+            }
+        }
         ExprKind::AssertionInstance {
             target,
             body,

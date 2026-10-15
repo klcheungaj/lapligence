@@ -19,7 +19,8 @@ actuals; array instances retain HDL indices. Pattern operands preserve position
 and declaration order even when expression IDs repeat.
 Class constraint blocks and their constraint trees are captured as semantic
 kinds 29/30 with ordered roles; `randomize` calls carry a class/scope tag and
-a BODY edge to their inline constraints.
+a BODY edge to their inline constraints. `dist` expressions keep their items and
+`:=`/`:/` weights as ordered roles; foreach constraints name their loop variables.
 Loop-generate entries retain their parent array's external name and their
 elaborated source index for owned hierarchical paths.
 
