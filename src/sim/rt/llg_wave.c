@@ -147,6 +147,12 @@ typedef struct {
     // order; capacity reg_count, allocated with the frozen map.
     uint32_t* dirty;
     uint32_t dirty_count;
+    // A report raised on the writer thread, printed by the simulation thread
+    // (0 none, 1 waiting, 2 printed). Simulation output such as the $finish
+    // line is written in several stdio calls, so a report printed from the
+    // writer thread could land inside one of its lines.
+    llg_atomic_int_t deferred_report;
+    char deferred_text[2048];
     // One-time warnings for ignored controls.
     int warned_dumpvars;
     int warned_dumpfile;
@@ -168,39 +174,63 @@ static char* wave_strdup(const char* s) {
     return copy;
 }
 
-// One stdio call per report: the writer thread reports while the simulation
-// thread may print, and separate calls could interleave within a line.
-static void wave_report(const char* prefix, const char* fmt, va_list ap) {
-    char line[2048];
-    int used = snprintf(line, sizeof(line), "%s", prefix);
-    if (used < 0) return;
-    if ((size_t)used < sizeof(line) - 2u) {
-        int written = vsnprintf(line + used, sizeof(line) - 1u - (size_t)used, fmt, ap);
+// One stdio call per report, so a report never splits around other output.
+static void wave_format(char* line, size_t size, const char* prefix, const char* fmt,
+                        va_list ap) {
+    int used = snprintf(line, size, "%s", prefix);
+    if (used < 0) used = 0;
+    if ((size_t)used < size - 2u) {
+        int written = vsnprintf(line + used, size - 1u - (size_t)used, fmt, ap);
         if (written > 0) used += written;
-        if ((size_t)used > sizeof(line) - 2u) used = (int)(sizeof(line) - 2u);
     }
+    if ((size_t)used > size - 2u) used = (int)(size - 2u);
     line[used] = '\n';
     line[used + 1] = 0;
-    fputs(line, stderr);
+}
+
+// Only the simulation thread prints; the writer thread leaves its report for
+// llg_wave_slot_end or llg_wave_close. Before llg_wave_model_init no writer
+// exists and the caller is the simulation thread.
+static int on_simulation_thread(void) {
+    return !g_wave.initialized || llg_thread_equal(g_wave.producer, llg_thread_self());
+}
+
+static void print_deferred_report(void) {
+    if (llg_atomic_int_load(&g_wave.deferred_report) != 1) return;
+    fputs(g_wave.deferred_text, stderr);
+    llg_atomic_int_store(&g_wave.deferred_report, 2);
 }
 
 static void wave_error(const char* fmt, ...) {
     if (!llg_atomic_int_cas(&g_wave.error, 0, 1)) return;
     va_list ap;
     va_start(ap, fmt);
-    wave_report("llg: waveform: ", fmt, ap);
+    if (on_simulation_thread()) {
+        char line[2048];
+        wave_format(line, sizeof(line), "llg: waveform: ", fmt, ap);
+        fputs(line, stderr);
+    } else {
+        // The error CAS admits one report, so the text has a single writer;
+        // the release store publishes it to the acquire load above.
+        wave_format(g_wave.deferred_text, sizeof(g_wave.deferred_text),
+                    "llg: waveform: ", fmt, ap);
+        llg_atomic_int_store(&g_wave.deferred_report, 1);
+    }
     va_end(ap);
 }
 
 // Ignored controls warn once per kind and leave the dump running. Times are
-// written like VCD timestamps, in design precision ticks.
+// written like VCD timestamps, in design precision ticks. Warnings come only
+// from the simulation thread.
 static void wave_warning(int* once, const char* fmt, ...) {
     if (*once) return;
     *once = 1;
+    char line[2048];
     va_list ap;
     va_start(ap, fmt);
-    wave_report("llg: waveform: warning: ", fmt, ap);
+    wave_format(line, sizeof(line), "llg: waveform: warning: ", fmt, ap);
     va_end(ap);
+    fputs(line, stderr);
 }
 
 static int require_producer(const char* operation) {
@@ -1387,6 +1417,7 @@ void llg_wave_limit(uint64_t bytes, uint64_t now) {
 }
 
 void llg_wave_slot_end(uint64_t now) {
+    print_deferred_report();
     if (g_wave.dump_state == DUMP_PENDING) start_dump(now);
     else if (g_wave.dirty_count) flush_dirty(now);
 }
@@ -1415,6 +1446,7 @@ int llg_wave_close(uint64_t now) {
         enqueue_simple(EV_CLOSE, now, 0);
         join_worker();
     }
+    print_deferred_report();
     int result = llg_atomic_int_load(&g_wave.error) ? -1 : 0;
     free_state();
     return result;

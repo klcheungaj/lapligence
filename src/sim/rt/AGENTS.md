@@ -691,6 +691,10 @@ backpressure, acknowledged FIFO dumpflush and in-band close followed by join are
 required. Each ring-index or waiting-flag store is followed by a sequentially
 consistent fence before reading the peer's flag or index; release/acquire alone
 loses wakeups and deadlocks close/dumpflush. A second producer needs a separate ring or changed concurrency design.
+Only the simulation thread prints waveform reports, each in one stdio call: the
+writer stores its single error report and `llg_wave_slot_end`/close print it,
+because simulation output such as the `$finish` line takes several calls and a
+writer-thread print could split it (S47-D11).
 Separate hierarchy components with ASCII 0x1f and reversibly encode punctuation to
 avoid escaped-name collisions. Keep libfst internal parallel mode disabled;
 waveform builds require `Threads::Threads`, not C11 threads as the Windows
