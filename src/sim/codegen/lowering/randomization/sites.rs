@@ -135,10 +135,7 @@ impl Codegen<'_> {
                 return Err(self.rand_error(node, path, "`super.randomize()` is not supported"));
             }
         }
-        let caller_receiver = self
-            .func
-            .as_ref()
-            .and_then(|function| function.class_receiver.clone());
+        let caller_receiver = self.method_receiver();
         let (handle, static_class) = match receiver {
             Some(receiver) => (
                 self.lower_chandle(path, receiver)?,
@@ -1054,11 +1051,7 @@ impl Codegen<'_> {
         }
         let mut blocks = Vec::new();
         if let Some(inline) = inline {
-            let receiver = self
-                .func
-                .as_ref()
-                .and_then(|function| function.class_receiver.clone())
-                .unwrap_or(IrChandleExpr::Null);
+            let receiver = self.method_receiver().unwrap_or(IrChandleExpr::Null);
             let saved =
                 self.rand_lowering
                     .replace(RandLowering::new(HashSet::new(), None, placeholders));

@@ -596,7 +596,7 @@ static void fixed_array_apply(llg_fixed_array_t* destination, const llg_fixed_ar
      * A private Postponed evaluation stores helper-owned cells unpublished. */
     for (size_t i = 0; i < prepared->count && !g.private_evaluation; ++i) {
         struct fixed_publication* entry = &prepared->cells[i];
-        if (!sv4_same(entry->old, entry->value)) sig_publish_changed(entry->target, entry->old, entry->value, entry->value);
+        if (!sv4_same(entry->old, entry->value)) sig_publish_changed(entry->target, entry->old, entry->value);
     }
     if (default_changed) llg_dependency_changed(dst->contents);
     llg_value_scope_end(scope);

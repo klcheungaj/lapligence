@@ -22,9 +22,12 @@ typedef struct {
 // terminates the load. Neither ends the simulation or changes its status.
 static void llg_memory_report(const char* category, const char* path,
                               const char* format, va_list args) {
-    fprintf(stderr, "llg: %s: memory file `%s`: ", category, path ? path : "");
-    vfprintf(stderr, format, args);
-    fputc('\n', stderr);
+    llg_report_t report;
+    llg_report_init(&report);
+    llg_report_printf(&report, "llg: %s: memory file `%s`: ", category, path ? path : "");
+    llg_report_vprintf(&report, format, args);
+    llg_report_bytes(&report, "\n", 1);
+    llg_report_emit(&report, stderr);
 }
 
 static void llg_memory_warning(const char* path, const char* format, ...) {
@@ -533,24 +536,12 @@ static void llg_memory_image_end(llg_memory_storage_t* storage) {
     }
     sv4_t* target = storage->image;
     llg_value_scope_t* target_pin = value_target_pin(target);
-    llg_value_scope_t* snapshots = llg_value_scope_begin(
-#ifdef LLG_WAVEFORM
-        3
-#else
-        2
-#endif
-    );
+    llg_value_scope_t* snapshots = llg_value_scope_begin(2);
     sv4_t* edges = llg_value_scope_values(snapshots);
     sv4_replace(&edges[0], storage->image_old_lsb);
     storage->image_old_lsb = (sv4_t)SV4_EMPTY;
     sv4_replace(&edges[1], sv4_bit_select(*target, 0));
-#ifdef LLG_WAVEFORM
-    sv4_copy(&edges[2], target);
-    sv4_t published = edges[2];
-#else
-    sv4_t published = SV4_EMPTY;
-#endif
-    sig_publish_changed(target, edges[0], edges[1], published);
+    sig_publish_changed(target, edges[0], edges[1]);
     llg_value_scope_end(snapshots);
     if (target_pin) llg_value_scope_end(target_pin);
 }

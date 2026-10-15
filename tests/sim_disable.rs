@@ -638,3 +638,49 @@ endmodule
     assert_eq!(on, "sum=19 i=8\nsum=31 k=6\n");
     assert_eq!(off, on, "opt-on and opt-off runs diverged");
 }
+
+/// A named block enters one activation per execution: its scope symbol
+/// (and the scopes of named blocks nested in it) only declares and is not
+/// lowered as a second, empty activation. `disable` of either level keeps its
+/// meaning.
+///
+/// Hand-simulation (n starts at 0):
+///   i=0: +1, +10, +100 -> 111
+///   i=1: +1, `disable inner` skips +10, +100 -> 212
+///   i=2: +1, `disable outer` ends this iteration's body -> 213
+///   i=3: +1, +10, +100 -> 324
+#[test]
+fn named_blocks_enter_one_activation_and_keep_disable_semantics() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    let sv = r#"module tb;
+    integer i;
+    integer n;
+
+    initial begin
+        n = 0;
+        for (i = 0; i < 4; i = i + 1) begin : outer
+            begin : inner
+                n = n + 1;
+                if (i == 1) disable inner;
+                if (i == 2) disable outer;
+                n = n + 10;
+            end
+            n = n + 100;
+        end
+        $display("n=%0d", n);
+        $finish;
+    end
+endmodule
+"#;
+    let run = sim_harness::run_generated_sim(sv, "tb", "onescope").expect("simulation should run");
+    assert_eq!(run.stdout, "n=324\n");
+    assert_eq!(
+        run.model_c.matches("llg_activation_enter(").count(),
+        2,
+        "one activation per named block"
+    );
+}

@@ -1955,6 +1955,24 @@ void addTimeScale(LlgSlangSemanticNode& node,
       static_cast<uint32_t>(timeScale->precision.magnitude);
 }
 
+// Whether the compilation unit `unit` declares its time unit or precision
+// (`timeunit`/`timeprecision` outside all other declarations). Slang otherwise
+// reports the compilation default for it, which consumers must be able to tell
+// apart: 3.14.2.3 sets the scale of `$unit` only through these declarations,
+// never through a `timescale directive. The unit's syntax is borrowed from the
+// live compilation.
+bool compilationUnitDeclaresTimeScale(const CompilationUnitSymbol& unit) {
+  const syntax::SyntaxNode* node = unit.getSyntax();
+  if (!node || node->kind != syntax::SyntaxKind::CompilationUnit)
+    return false;
+  for (const syntax::MemberSyntax* member :
+       node->as<syntax::CompilationUnitSyntax>().members) {
+    if (member->kind == syntax::SyntaxKind::TimeUnitsDeclaration)
+      return true;
+  }
+  return false;
+}
+
 uint32_t semanticDriveStrength(const std::optional<DriveStrength>& strength) {
   if (!strength)
     return LLG_SLANG_STRENGTH_UNSPECIFIED;
@@ -2264,8 +2282,12 @@ public:
     }
     if constexpr (std::same_as<T, PackageSymbol>)
       addTimeScale(result, symbol.timeScale);
-    if constexpr (std::same_as<T, CompilationUnitSymbol>)
-      addTimeScale(result, symbol.timeScale);
+    // An undeclared `$unit` scale is left unset rather than reporting the
+    // compilation default as if it were declared.
+    if constexpr (std::same_as<T, CompilationUnitSymbol>) {
+      if (compilationUnitDeclaresTimeScale(symbol))
+        addTimeScale(result, symbol.timeScale);
+    }
     if constexpr (std::same_as<T, NetSymbol>) {
       result.subkind = semanticNetKind(symbol.netType.netKind);
       if (symbol.isImplicit)

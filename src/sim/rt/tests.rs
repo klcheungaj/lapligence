@@ -86,3 +86,22 @@ fn compact_embedding_contains_every_private_include() {
         }
     }
 }
+
+/// Every runtime diagnostic reaches stderr in one stdio call (assembled with
+/// `llg_report_t`), so reports from different threads never interleave. A
+/// message that ends with a separate newline write, or streams its body with
+/// `vfprintf`, would be split.
+#[test]
+fn runtime_reports_write_stderr_in_one_call() {
+    let (_, scheduler) = runtime_sources();
+    for split in [
+        "fputc('\\n', stderr)",
+        "vfprintf(stderr",
+        "fputs(\"\\n\", stderr)",
+    ] {
+        assert!(
+            !scheduler.contains(split),
+            "runtime writes a stderr message in pieces: `{split}`"
+        );
+    }
+}

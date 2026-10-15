@@ -6,6 +6,8 @@ mod c_compiler;
 mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
+#[path = "support/vcd.rs"]
+mod vcd;
 
 #[path = "sim_feature_completion/adv_032.rs"]
 mod adv_032;
@@ -240,6 +242,8 @@ mod sim_044;
 
 #[path = "sim_feature_completion/sim_045.rs"]
 mod sim_045;
+#[path = "sim_feature_completion/sim_047.rs"]
+mod sim_047;
 
 #[test]
 fn component_fixture_integrity() {

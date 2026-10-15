@@ -1011,6 +1011,17 @@ impl<'a> Codegen<'a> {
         Ok(id)
     }
 
+    /// The implicit `this` of the code being lowered: the enclosing method's
+    /// receiver, or, outside any subroutine context, the one a detached fork
+    /// branch of a method captured. A subroutine body never inherits a
+    /// branch's receiver.
+    pub(in super::super) fn method_receiver(&self) -> Option<IrChandleExpr> {
+        match &self.func {
+            Some(function) => function.class_receiver.clone(),
+            None => self.fork_branch_receiver.clone(),
+        }
+    }
+
     pub(in super::super) fn capture_binding(&self, node: NodeId) -> Option<&CaptureBinding> {
         self.capture_locals.get(&node)
     }
@@ -1035,9 +1046,13 @@ impl<'a> Codegen<'a> {
             let mut pending = self.node(program).children.clone();
             while let Some(child) = pending.pop() {
                 let member = match self.kind(child) {
+                    // A concurrent assertion item is a legal program member
+                    // (A.1.7 `non_port_program_item`); Slang projects it onto
+                    // a synthetic `always` whose body holds only assertions.
+                    // Slang itself rejects a user-written `always` here.
                     NodeKind::Process {
                         kind: ProcessKind::Always { .. },
-                    } => Some("an always process"),
+                    } if !self.is_assertion_only_process(child) => Some("an always process"),
                     NodeKind::Gate { .. } => Some("a primitive or gate instance"),
                     NodeKind::ModuleInst { .. } | NodeKind::InstanceArray => {
                         Some("a nested module/interface/program instance")
@@ -1736,6 +1751,30 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
+    /// Whether `process` is a procedure whose body holds only concurrent
+    /// assertions (other than `expect`) and declarations, with at least one
+    /// assertion; `emit_process` lowers such a body as owned assertions.
+    fn is_assertion_only_process(&self, process: NodeId) -> bool {
+        let Some(stmt) = self.node(process).children.first().copied() else {
+            return false;
+        };
+        let mut assertions = Vec::new();
+        self.assertion_only_body(stmt, &mut assertions) && !assertions.is_empty()
+    }
+
+    /// Whether the procedure body `stmt` holds only concurrent assertions
+    /// (other than `expect`) and declarations; collect them in source order.
+    fn assertion_only_body(&self, stmt: NodeId, assertions: &mut Vec<NodeId>) -> bool {
+        match self.kind(stmt) {
+            NodeKind::Stmt(StmtKind::Begin) => self
+                .node(stmt)
+                .children
+                .iter()
+                .all(|child| self.collect_assertion_only_member(*child, assertions)),
+            _ => self.collect_assertion_only_member(stmt, assertions),
+        }
+    }
+
     /// Whether `node`, a member of a procedure body, holds only concurrent
     /// assertions (other than `expect`) and declarations; push the assertions
     /// onto `assertions` in source order.
@@ -1825,12 +1864,8 @@ impl<'a> Codegen<'a> {
         // way, labeled or not and however its blocks nest, so that an
         // `initial` one starts a single attempt below.
         let mut concurrent_assertions = Vec::new();
-        let assertion_only_body = match self.kind(stmt) {
-            NodeKind::Stmt(StmtKind::Begin) => self.node(stmt).children.iter().all(|child| {
-                self.collect_assertion_only_member(*child, &mut concurrent_assertions)
-            }),
-            _ => self.collect_assertion_only_member(stmt, &mut concurrent_assertions),
-        } && !concurrent_assertions.is_empty();
+        let assertion_only_body = self.assertion_only_body(stmt, &mut concurrent_assertions)
+            && !concurrent_assertions.is_empty();
         if assertion_only_body {
             let first = self.model.assertions.len();
             for assertion in concurrent_assertions {

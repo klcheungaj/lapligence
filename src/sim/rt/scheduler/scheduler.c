@@ -481,6 +481,10 @@ void llg_rt_run(void) {
             }
         } else {
             clocking_advance_time();
+#ifdef LLG_WAVEFORM
+            // The time step is complete: record its final values.
+            llg_wave_slot_end(g.now);
+#endif
             g.now = t;
             g.region_passes = 0;
         }

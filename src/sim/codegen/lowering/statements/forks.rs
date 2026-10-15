@@ -90,14 +90,12 @@ impl EmitCtx<'_, '_> {
             .map(|branch| self.cg.fork_capture_targets(*branch))
             .collect::<Vec<_>>();
         // A class method's branches read `this`; the receiver cannot be
-        // reassigned, so each branch copies the handle.
-        let this_receiver =
-            self.func
-                .as_ref()
-                .and_then(|function| match &function.class_receiver {
-                    Some(IrChandleExpr::LocalRead(name)) => Some(name.clone()),
-                    _ => None,
-                });
+        // reassigned, so each branch copies the handle. This includes the
+        // branches of a fork nested in a detached method branch.
+        let this_receiver = match self.cg.method_receiver() {
+            Some(IrChandleExpr::LocalRead(name)) => Some(name),
+            _ => None,
+        };
         let has_captures =
             this_receiver.is_some() || capture_targets.iter().any(|targets| !targets.is_empty());
         let enclosing_func = self.func.clone();
@@ -246,6 +244,12 @@ impl EmitCtx<'_, '_> {
 
             let saved_cg_func = self.cg.func.clone();
             let saved_cg_depth = self.cg.depth_arg.clone();
+            // A detached branch has no subroutine context; it names the
+            // receiver it captured above (bound to the same local name).
+            let saved_branch_receiver = std::mem::replace(
+                &mut self.cg.fork_branch_receiver,
+                this_receiver.clone().map(IrChandleExpr::LocalRead),
+            );
             let (body_result, mut nested_pre_fns) = {
                 let mut bctx = EmitCtx::new(
                     self.cg,
@@ -263,6 +267,7 @@ impl EmitCtx<'_, '_> {
             };
             self.cg.func = saved_cg_func;
             self.cg.depth_arg = saved_cg_depth;
+            self.cg.fork_branch_receiver = saved_branch_receiver;
             self.cg.capture_locals = previous_captures;
             let body = body_result?;
             self.pre_fns.append(&mut nested_pre_fns);

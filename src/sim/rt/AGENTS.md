@@ -691,12 +691,29 @@ fatal region check; zero-delay time callbacks are refused there before
 scheduling. `vpi_control` stop/finish use `llg_rt_control_stop/finish`;
 `cbEndOfSimulation` runs once, from advance or close.
 
+Waveforms record end-of-step values (SIM-047, S47-D1/D2): a publication only
+marks its registration dirty (`llg_wave_changed_*`, no value copy), and the
+scheduler calls `llg_wave_slot_end` before advancing time (close calls it for
+the last step and final procedures), which copies each dirty address once.
+`$dumpvars` makes the dump pending; it starts at that end of step, opening the
+last `$dumpfile` name. The producer-side dump state (idle, pending, on, off)
+decides which controls act (S47-D3..D8); selection is fixed when the dump
+starts, so the writer reads registrations without races. Registrations name
+static model storage only (signals, record members, fixed arrays); nothing
+collectable is registered, so no handle outlives its storage.
 Waveforms use one simulation-thread producer and one POSIX/Win32 writer owning the
 file. Ring events own values; release/acquire publication, condition-variable
 backpressure, acknowledged FIFO dumpflush and in-band close followed by join are
 required. Each ring-index or waiting-flag store is followed by a sequentially
 consistent fence before reading the peer's flag or index; release/acquire alone
 loses wakeups and deadlocks close/dumpflush. A second producer needs a separate ring or changed concurrency design.
+Only the simulation thread prints waveform reports, each in one stdio call: the
+writer stores its single error report and `llg_wave_slot_end`/close print it
+(S47-D11). Every other runtime diagnostic is also one stdio call: multi-part
+messages (severity tasks, assertion failures, `$finish`/`$stop`, memory-file
+diagnostics, the coroutine backtrace) are assembled in an `llg_report_t`
+(`llg_rt_prelude.c`; inline buffer, heap growth, truncation instead of abort)
+and written with one `fwrite`. Error paths only; `$display` output is untouched.
 Separate hierarchy components with ASCII 0x1f and reversibly encode punctuation to
 avoid escaped-name collisions. Keep libfst internal parallel mode disabled;
 waveform builds require `Threads::Threads`, not C11 threads as the Windows

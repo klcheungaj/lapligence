@@ -1,0 +1,7 @@
+10 fail k=7
+12 pc a=1
+15 pa a=1
+20 fail k=7
+25 pa a=1
+30 fail k=7
+33 prog done

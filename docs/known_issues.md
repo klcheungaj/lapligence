@@ -707,6 +707,39 @@ initial begin
 end
 ```
 
+## Waveform dump coverage limits (SIM-047)
+
+**Status:** open; SIM-047 qualified the dumped catalog and rejects the
+unsupported targets explicitly (decision S47-D9).
+
+### Symptom
+
+`$dumpvars` leaves out static variables declared in named blocks, tasks and
+functions, and named events, although 1364/1800 VCD can describe them (scope
+types `begin`/`task`/`function`, var type `event`); naming one of these
+variables in `$dumpvars` stops compilation with "has no VCD/FST
+representation". `$dumpfile` takes only a literal name, not a string
+variable. An FST file flushed by `$dumpflush` cannot be opened by GTKWave's
+reader until the run closes it.
+
+### Cause
+
+Waveform registrations come only from model signals with an HDL name, record
+member signals and fixed arrays; subroutine and block statics are lowered
+without a waveform name, and events have no registered storage. libfst writes
+the hierarchy and block index at close.
+
+### Intended direction
+
+Give block and subroutine statics a waveform name with their scope type,
+register events as `event` variables written on trigger, and accept a string
+expression in `$dumpfile`. The FST behaviour follows the format.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_047/reject_block_variable.sv`, and
+`flush_read.sv` with `FILE="trace.fst"` (`sim_047::a_flushed_dump_is_readable_while_the_simulation_runs`).
+
 ## Random stream limits
 
 **Status:** open (SIM-028); static processes, static class-object

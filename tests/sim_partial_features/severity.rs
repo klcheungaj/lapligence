@@ -93,3 +93,16 @@ fn fatal_finish_number_must_be_a_known_constant_in_range() {
     reject_case("severity_invalid_argument", "$fatal finish number at");
     reject_case("severity_runtime_argument", "$fatal finish number at");
 }
+
+#[test]
+fn long_runtime_reports_keep_every_byte_on_one_line() {
+    // Longer than the runtime reporter's inline buffer, so the message
+    // grows on the heap before its single write.
+    let digits = "0123456789".repeat(100);
+    let stderr = format!(
+        "llg: severity warning: tb:12:9: {digits}|{digits}\n\
+         llg: assertion assert failed: tb:13:9 (long_label_for_the_failing_immediate_assertion)\n\
+         llg: $finish at time 0 at tb:14:9\n"
+    );
+    run_case_with_stderr("severity_long_messages", "", &stderr);
+}

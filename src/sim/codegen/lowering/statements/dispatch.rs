@@ -242,6 +242,13 @@ impl EmitCtx<'_, '_> {
                     if crate::sim::semantic::is_declaration_only_member(self.cg.db, *s) {
                         continue;
                     }
+                    // A named block's scope symbol (and those of named blocks
+                    // nested in it) only declares; the block's own statement
+                    // owns the activation that `disable` targets. Lowering it
+                    // would enter and leave an empty activation on every run.
+                    if self.cg.db.semantic_detail(*s) == Some("StatementBlock") {
+                        continue;
+                    }
                     body.extend(self.lower_stmt(*s)?);
                 }
                 // The `end` samples follow its last statement; a disable or

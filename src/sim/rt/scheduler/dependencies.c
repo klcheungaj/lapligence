@@ -672,11 +672,7 @@ static void deferred_trigger_event(llg_event_object_t* ev) {
     }
 }
 
-static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
-                                sv4_t published) {
-#ifndef LLG_WAVEFORM
-    (void)published;
-#endif
+static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
     clocking_record_edge(target, old, value);
     clocking_drive_signal_match(target, old, value);
     sampled_record_write(target);
@@ -695,7 +691,7 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value,
     assertion_clock_signal_changed(target, old, value);
     if (g.monitors) llg_monitor_target_changed(target, LLG_FMT_PACKED);
 #ifdef LLG_WAVEFORM
-    llg_wave_changed_sv4(target, &published, g.now);
+    llg_wave_changed_sv4(target);
 #endif
     llg_wait_source_t* source = wait_source_find(target);
     int watched = source && source->watchers;
@@ -798,7 +794,7 @@ static void sig_write(sv4_t* target, sv4_t value) {
     value = owned[0]; /* Borrows the registered snapshot until scope end. */
     sv4_t old = owned[1];
     sv4_copy(target, &value);
-    sig_publish_changed(target, old, value, value);
+    sig_publish_changed(target, old, value);
     llg_value_scope_end(snapshots);
     if (target_pin) llg_value_scope_end(target_pin);
 }
@@ -843,13 +839,7 @@ static int sig_write_ranges(sv4_t* target,
         return 0;
     }
     llg_value_scope_t* target_pin = value_target_pin(target);
-    llg_value_scope_t* snapshots = llg_value_scope_begin(
-#ifdef LLG_WAVEFORM
-        3
-#else
-        2
-#endif
-    );
+    llg_value_scope_t* snapshots = llg_value_scope_begin(2);
     sv4_t* edges = llg_value_scope_values(snapshots);
     // Every directional packed edge rule consumes only the LSB. Publication
     // has already established that some bit changed, so these stable one-bit
@@ -858,13 +848,7 @@ static int sig_write_ranges(sv4_t* target,
     if (first_changed) sig_range_copy(target, first_offset, &first);
     if (second_changed) sig_range_copy(target, second_offset, &second);
     sv4_replace(&edges[1], sv4_bit_select(*target, 0));
-#ifdef LLG_WAVEFORM
-    sv4_copy(&edges[2], target);
-    sv4_t published = edges[2];
-#else
-    sv4_t published = SV4_EMPTY;
-#endif
-    sig_publish_changed(target, edges[0], edges[1], published);
+    sig_publish_changed(target, edges[0], edges[1]);
     llg_value_scope_end(snapshots);
     if (target_pin) llg_value_scope_end(target_pin);
     return 1;
@@ -889,7 +873,7 @@ static void real_write(double* target, double value) {
     *target = value;
     if (g.monitors) llg_monitor_target_changed(target, LLG_FMT_REAL);
 #ifdef LLG_WAVEFORM
-    llg_wave_changed_real(target, value, g.now);
+    llg_wave_changed_real(target);
 #endif
     llg_wait_source_t* source = wait_source_find(target);
     int watched = source && source->watchers;

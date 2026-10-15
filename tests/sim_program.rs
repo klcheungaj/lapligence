@@ -66,3 +66,16 @@ fn exit_outside_program_is_ignored() {
         &[],
     );
 }
+
+#[test]
+fn concurrent_assertions_are_program_members_with_module_scheduling() {
+    // Slang projects each program-level assertion onto a synthetic `always`;
+    // llg formerly rejected it as a prohibited program process.
+    sim_cli::run_case(
+        "program_blocks",
+        "program_assertions",
+        include_str!("fixtures/sim/program_blocks/program_assertions.out"),
+        "",
+        &[],
+    );
+}

@@ -12,6 +12,8 @@ mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 mod support;
+#[path = "support/vcd.rs"]
+mod vcd;
 
 mod sim_net_decl;
 mod sim_net_defaults;

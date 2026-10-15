@@ -258,3 +258,59 @@ fn timescale_sub_unit_delay_jumps() {
     .expect("simulation should run");
     assert_eq!(stdout, "big t=30000\ntiny t=30000\ntb t=40000\n");
 }
+
+/// (d) `$unit` time scale (SV 3.14.2.3, decision F2-D2): a `timescale
+/// directive does not set it. Without `timeunit`/`timeprecision` it has the
+/// default unit 1ns and the finest declared precision, never coarser than
+/// 1ns; a declared one counts like any other.
+///
+/// Undeclared, under `timescale 10ns/10ns: `$unit` is 1ns/1ns, so the tick is
+/// 1ns. The class's `#1.4` rounds to 1 ns ($realtime 1.0 in ns); tb's `#1`
+/// adds 10 ns: `%t` = 11 ticks, tb's $realtime = 1.1 (10ns units).
+///
+/// Declared `timeunit 1ns; timeprecision 1ps;`: the tick is 1 ps. `#1.4` is
+/// 1.4 ns; tb's `#1` adds 10 ns: `%t` = 11400 ticks, $realtime = 1.14.
+#[test]
+fn unit_scope_takes_only_declared_time_units() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    let design = |unit_decl: &str| {
+        format!(
+            "{unit_decl}`timescale 10ns/10ns\n\
+             class C;\n\
+                 task automatic run();\n\
+                     #1.4;\n\
+                     $display(\"class t=%0.1f\", $realtime);\n\
+                 endtask\n\
+             endclass\n\
+             module tb;\n\
+                 C c;\n\
+                 initial begin\n\
+                     $printtimescale($unit);\n\
+                     c = new;\n\
+                     c.run();\n\
+                     #1 $display(\"tb t=%0t r=%0.2f\", $realtime, $realtime);\n\
+                     $finish;\n\
+                 end\n\
+             endmodule\n"
+        )
+    };
+    let undeclared =
+        run_design("unit_undeclared", &[("tb.sv", &design(""))]).expect("simulation should run");
+    assert_eq!(
+        undeclared,
+        "Time scale of ($unit) is 1ns / 1ns\nclass t=1.0\ntb t=11 r=1.10\n"
+    );
+    let declared = run_design(
+        "unit_declared",
+        &[("tb.sv", &design("timeunit 1ns;\ntimeprecision 1ps;\n"))],
+    )
+    .expect("simulation should run");
+    assert_eq!(
+        declared,
+        "Time scale of ($unit) is 1ns / 1ps\nclass t=1.4\ntb t=11400 r=1.14\n"
+    );
+}

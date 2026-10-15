@@ -2271,16 +2271,14 @@ impl<'a> Codegen<'a> {
     }
 
     /// The named block statement a block event names. The reference names
-    /// the block's label scope: an empty named block that the statement
-    /// with the same name lists among its children.
+    /// the block's label scope: a named block that the statement with the
+    /// same name lists among its children. The scope holds only
+    /// declarations, which include the scopes of named blocks nested in it.
     fn named_block_statement(&self, target: NodeId) -> Option<NodeId> {
         let is_begin = |node: NodeId| matches!(self.kind(node), NodeKind::Stmt(StmtKind::Begin));
         let name = &self.node(target).name;
         if !is_begin(target) || name.is_empty() {
             return None;
-        }
-        if !self.node(target).children.is_empty() {
-            return Some(target);
         }
         self.db.node_ids().find(|statement| {
             *statement != target
@@ -2696,11 +2694,10 @@ impl<'a> Codegen<'a> {
                         }
                     ) && self.node(method).parent == owner_class
                 });
-            let receiver = self.class_init_receiver.clone().or_else(|| {
-                self.func
-                    .as_ref()
-                    .and_then(|function| function.class_receiver.clone())
-            });
+            let receiver = self
+                .class_init_receiver
+                .clone()
+                .or_else(|| self.method_receiver());
             match (in_constructor, receiver) {
                 (true, Some(receiver)) => Some((owner_field, receiver)),
                 _ => {

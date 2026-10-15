@@ -371,12 +371,9 @@ impl Codegen<'_> {
                 self.class_node_for_type_expr(receiver),
             ),
             None => (
-                self.func
-                    .as_ref()
-                    .and_then(|function| function.class_receiver.clone())
-                    .ok_or_else(|| {
-                        self.rand_error(node, path, &format!("`{name}` has no object"))
-                    })?,
+                self.method_receiver().ok_or_else(|| {
+                    self.rand_error(node, path, &format!("`{name}` has no object"))
+                })?,
                 self.class_method_owner(node),
             ),
         };

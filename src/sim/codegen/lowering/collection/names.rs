@@ -428,6 +428,14 @@ impl<'a> Codegen<'a> {
         let mut current = self.node(id).parent;
         while let Some(scope_id) = current {
             let scope = self.node(scope_id);
+            if !named_blocks && matches!(scope.kind, NodeKind::GenScopeArray) {
+                // A loop generate block's instances are scopes `g[0]`,
+                // `g[1]` of the enclosing scope (IEEE 1800-2009 27.4), as
+                // `%m` prints them; the loop construct itself adds no level
+                // to waveform names (S47-D10).
+                current = scope.parent;
+                continue;
+            }
             if matches!(
                 scope.kind,
                 NodeKind::ModuleInst { .. } | NodeKind::GenScopeArray | NodeKind::GenScope
@@ -556,6 +564,38 @@ impl<'a> Codegen<'a> {
                 "`$dumpvars` argument `{}` is not a scope or dumpable storage reference",
                 self.node(node).name
             )),
+        }
+    }
+
+    /// The dotted source path of a `$dumpvars` argument that names a variable,
+    /// net or array element rather than a scope; its waveform name must then
+    /// match waveform storage (S47-D9). Named blocks are kept in this path,
+    /// unlike waveform names, so a diagnostic shows the declaration.
+    pub(in super::super) fn waveform_selection_variable(&self, node: NodeId) -> Option<String> {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::ScopeRef { target }) => {
+                self.waveform_selection_variable(*target)
+            }
+            NodeKind::Expr(ExprKind::Ref { target }) => {
+                target.and_then(|target| self.waveform_selection_variable(target))
+            }
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
+                .iter()
+                .rev()
+                .flatten()
+                .next()
+                .and_then(|target| self.waveform_selection_variable(*target)),
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => {
+                self.waveform_selection_variable(*operand)
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, .. }) => self
+                .waveform_selection_variable(*base)
+                .map(|base| format!("{base}[...]")),
+            NodeKind::Port { .. }
+            | NodeKind::Net { .. }
+            | NodeKind::Var { .. }
+            | NodeKind::Array { .. } => Some(self.assertion_selector_name(node)),
+            _ => None,
         }
     }
 

@@ -341,6 +341,32 @@ fn invoke_with_env_and_files(
     })
 }
 
+/// Run one fixture like [`invoke_with_env`] and keep the child's working
+/// directory, so the caller can read the files the model wrote (waveforms,
+/// copies).
+pub(crate) fn run_case_keeping_dir(
+    suite: &str,
+    fixture: &str,
+    optimized: bool,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> (sim_harness::TempDir, Output) {
+    let source = fixture_path(suite, fixture);
+    let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
+    let label = format!("{suite}/{fixture}, optimized={optimized}");
+    let output = run_fixture_command(&source, &label, |lint_args| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+        command.current_dir(directory.path()).args(["--top", "tb"]);
+        if !optimized {
+            command.arg("--no-opt");
+        }
+        command.args(args).args(lint_args).arg(&source);
+        command.envs(envs.iter().copied());
+        command
+    });
+    (directory, output)
+}
+
 fn invoke(suite: &str, fixture: &str, optimized: bool) -> Output {
     invoke_with_args(suite, fixture, optimized, &[])
 }
