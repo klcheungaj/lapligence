@@ -143,8 +143,10 @@ which keeps the recursive BDD operations shallow on coroutine-hosted stacks),
 `LLG_RAND_REJECT_TRIES` (4096), `LLG_RAND_CONFLICTS` (100000 conflicts per
 component search; 0 disables the search), `LLG_RAND_ARRAY_ELEMENTS` (2^20
 random array elements per solve), `LLG_RAND_EXPAND_NODES` (2^22 nodes per
-expansion) and `LLG_RAND_STATS=1` (one stderr
-line per solve: engines, components, BDD nodes, rejection tries, conflicts).
+expansion), `LLG_RAND_OVERFLOW_MEMO` (1; 0 turns off the foreseen overflows
+below, which never changes a drawn value) and `LLG_RAND_STATS=1` (one stderr
+line per solve: engines, components, BDD nodes, foreseen overflows,
+rejection tries, conflicts).
 The AIG bound (8x `LLG_RAND_BDD_NODES`, at least 4096) also bounds the CDCL
 encoding. Changing a budget may change the values drawn.
 
@@ -154,7 +156,26 @@ component per independent element or object, so the cache must hold all of
 one call's components or each call would rebuild the evicted ones), keyed exactly by the conjuncts,
 the variables and every known operand value, so a loop that randomizes with
 unchanged state samples without rebuilding. Budget overflows are cached the
-same way so a repeated overflow goes straight to the fallbacks. Layered
+same way so a repeated overflow goes straight to the fallbacks.
+
+State that changes on every call never repeats a key, so a component whose
+exact model overflows would rebuild until the overflow each time (about
+0.4 to 0.9 s for a 16-bit product at the default budget). A session remembers
+the shapes (conjuncts and variables) whose build overflowed, eight per
+session. The second build of such a shape first tries a proof
+(`cr_overflow_foreseen`): it converts only the cones of the *state-free*
+bits the root needs, the bits of nodes whose cone holds only constants,
+operators and the component's random variables. The manager never frees
+nodes and an apply step creates only nodes of its result, so a build ends
+with exactly the union of the BDDs of the functions it computes and exceeds
+the node bound exactly when that union does; a state-free cone computes the
+same functions under every state. When the proof alone exceeds the node
+bound, every later build of the shape whose root still needs those bits
+would overflow too, and is skipped (it fails as the build would, with the
+same draws). A state that drops those bits (a guard, a `?:` select, an
+inactive variable) still gets the exact engine, so the exact engine runs
+whenever it would have succeeded. An overflow that needs the state-dependent
+part is still rebuilt per new state; its proof is tried once per shape. Layered
 entries also key the variables' layers and keep the projections and weights.
 Components without dist, randc or solve-before skip the layer plan, so
 SIM-029 problems pay nothing for the layered engine. The CDCL

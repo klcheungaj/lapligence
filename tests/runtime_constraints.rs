@@ -13,6 +13,7 @@
 use crate::{c_compiler, sim_harness};
 
 mod expand;
+mod overflow;
 mod weighted;
 
 use std::collections::BTreeMap;
@@ -1336,6 +1337,7 @@ fn run_command_output(command: &mut Command, env: &[(&str, &str)]) -> String {
         "LLG_RAND_ARRAY_ELEMENTS",
         "LLG_RAND_EXPAND_NODES",
         "LLG_RAND_STATS",
+        "LLG_RAND_OVERFLOW_MEMO",
     ] {
         command.env_remove(name);
     }

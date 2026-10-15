@@ -437,6 +437,8 @@ typedef struct {
     uint64_t array_elements; /* LLG_RAND_ARRAY_ELEMENTS: elements per solve */
     uint64_t expand_nodes;   /* LLG_RAND_EXPAND_NODES: expanded nodes */
     int stats;               /* LLG_RAND_STATS */
+    int overflow_memo;       /* LLG_RAND_OVERFLOW_MEMO: 0 rebuilds every
+                              * overflowing exact model (never changes values) */
 } llg_cr_tunables_t;
 
 const llg_cr_tunables_t* llg_cr_tunables(void);

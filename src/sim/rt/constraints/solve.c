@@ -26,6 +26,30 @@ struct cr_cache_entry {
  * solves, or each call would rebuild (or re-overflow) the evicted ones. */
 #define CR_CACHE_ENTRIES 32u
 
+/* A component shape (conjuncts and variables) whose exact model overflowed
+ * the node budget, and once proven, the witness that it always will. */
+struct cr_overflow {
+    cr_u32vec_t shape;    /* ncon, conjuncts, nvars, variables */
+    cr_u32vec_t witness;  /* (node, bit) pairs; empty until proven */
+    uint64_t used;        /* last use, for least-recently-used replacement */
+    int tried;            /* a proof was attempted */
+};
+
+/* Shapes remembered per session. A shape is one component's conjuncts and
+ * variables, so a few cover a call site; more distinct overflowing shapes
+ * than this only cost rebuilds. */
+#define CR_OVERFLOW_ENTRIES 8u
+
+static void cr_overflow_free(llg_cr_session_t* s) {
+    for (uint32_t i = 0; i < s->overflow_count; ++i) {
+        free(s->overflow[i].shape.data);
+        free(s->overflow[i].witness.data);
+    }
+    free(s->overflow);
+    s->overflow = NULL;
+    s->overflow_count = 0;
+}
+
 static void cr_validate_problem(const llg_cr_problem_t* p) {
     for (uint32_t n = 0; n < p->node_count; ++n) {
         const llg_cr_node_t* nd = &p->nodes[n];
@@ -205,12 +229,13 @@ static llg_cr_session_t* cr_session_new(const llg_cr_problem_t* p) {
     s->scratch.reach = (uint8_t*)cr_alloc(nodes, 1u);
     s->scratch.in_cone = (uint8_t*)cr_alloc(nodes, 1u);
     s->scratch.var_flags = (uint8_t*)cr_alloc(3u * (size_t)vars, 1u);
+    s->scratch.node_marks = (uint8_t*)cr_alloc(nodes, 1u);
     s->scratch.var_words = (uint32_t*)cr_alloc(4u * ((size_t)vars + 1u), sizeof(uint32_t));
     return s;
 }
 
 static void cr_scratch_free(cr_scratch_t* x) {
-    free(x->reach); free(x->in_cone); free(x->var_flags); free(x->var_words);
+    free(x->reach); free(x->in_cone); free(x->var_flags); free(x->var_words); free(x->node_marks);
     free(x->conj.data); free(x->stack.data); free(x->support.data); free(x->calls.data);
     free(x->layer_conj.data); free(x->comp_vars.data); free(x->comp_conj.data);
     free(x->conj_rep.data); free(x->comp_stack.data); free(x->key.data);
@@ -245,6 +270,7 @@ static void cr_session_free(llg_cr_session_t* s) {
     }
     free(s->cache);
     cr_scratch_free(&s->scratch);
+    cr_overflow_free(s);
     free(s->cyc_off);
     free(s->cyc);
     free(s->node_hash);
@@ -482,6 +508,7 @@ typedef struct {
     uint64_t bdd_nodes;   /* statistics */
     uint64_t reject_tries;
     uint64_t conflicts;
+    uint64_t foreseen;    /* exact builds skipped as proven overflows */
     uint32_t components;
     /* solve-before height of each variable (longest order path to a sink
      * over the whole problem), or NULL without orders (S30-D2). */
@@ -1034,6 +1061,232 @@ static void cr_comp_aig_free(cr_comp_aig_t* c) {
     memset(c, 0, sizeof(*c));
 }
 
+/* ---- foreseen overflows ----------------------------------------------------
+ *
+ * A component whose exact model overflowed LLG_RAND_BDD_NODES goes straight
+ * to the fallbacks when its inputs repeat (the exact cache keys them). With
+ * state that changes on every call the key never repeats, so each call
+ * would rebuild until the overflow again. A shape that overflowed before
+ * gets one proof instead, valid for every later state:
+ *
+ * - The BDD manager never frees nodes, and an apply step only creates nodes
+ *   of its own result's BDD (the recursion computes the result's cofactors).
+ *   So a build ends with exactly the union of the BDDs of the functions it
+ *   computed (every needed AIG node, and the negation of each complemented
+ *   operand), and it exceeds the node bound if and only if that union does.
+ * - A node is state-free when its whole operand cone holds only constants,
+ *   operators and random variables of the component (no state leaf, call,
+ *   inactive variable, element table or dist). Bit-blasting is a pure
+ *   function of the operand literals and the structural hashing is
+ *   canonical, so a state-free node's AIG cone computes the same functions
+ *   under every state, with the same variable levels (the component's
+ *   variable list fixes them).
+ * - The proof converts only the cones of the state-free bits the root needs
+ *   at the boundary to the rest (the witness). If that alone exceeds the
+ *   node bound, then every later build whose root needs the same witness
+ *   bits of the same state-free nodes computes a superset of those functions
+ *   and must exceed it too: it would fail and fall back with the same draws,
+ *   so skipping it changes no value. A build that would succeed never needs
+ *   a witness that overflows, so the exact engine still runs whenever it
+ *   would have succeeded.
+ *
+ * A proof that does not overflow (the overflow comes from the state-
+ * dependent part) is not retried for that shape. LLG_RAND_OVERFLOW_MEMO=0
+ * turns all of this off. */
+
+static void cr_shape_key(const uint32_t* conj, uint32_t ncon, const uint32_t* vars, uint32_t nvars,
+                         cr_u32vec_t* out) {
+    out->len = 0;
+    cr_u32_push(out, ncon);
+    for (uint32_t i = 0; i < ncon; ++i) cr_u32_push(out, conj[i]);
+    cr_u32_push(out, nvars);
+    for (uint32_t i = 0; i < nvars; ++i) cr_u32_push(out, vars[i]);
+}
+
+static cr_overflow_t* cr_overflow_find(llg_cr_session_t* s, const cr_u32vec_t* shape) {
+    for (uint32_t i = 0; i < s->overflow_count; ++i) {
+        cr_overflow_t* e = &s->overflow[i];
+        if (e->shape.len == shape->len &&
+            memcmp(e->shape.data, shape->data, shape->len * sizeof(uint32_t)) == 0) {
+            e->used = ++s->overflow_clock;
+            return e;
+        }
+    }
+    return NULL;
+}
+
+/* Remember that a shape overflowed (the least recently used entry makes
+ * room). */
+static void cr_overflow_note(cr_solve_t* st, const uint32_t* conj, uint32_t ncon,
+                             const uint32_t* vars, uint32_t nvars) {
+    llg_cr_session_t* s = st->s;
+    if (!st->t->overflow_memo) return;
+    cr_u32vec_t shape = {0, 0, 0};
+    cr_shape_key(conj, ncon, vars, nvars, &shape);
+    if (cr_overflow_find(s, &shape)) {
+        free(shape.data);
+        return;
+    }
+    if (!s->overflow)
+        s->overflow = (cr_overflow_t*)cr_alloc(CR_OVERFLOW_ENTRIES, sizeof(cr_overflow_t));
+    cr_overflow_t* e;
+    if (s->overflow_count < CR_OVERFLOW_ENTRIES) {
+        e = &s->overflow[s->overflow_count++];
+    } else {
+        e = &s->overflow[0];
+        for (uint32_t i = 1; i < CR_OVERFLOW_ENTRIES; ++i)
+            if (s->overflow[i].used < e->used) e = &s->overflow[i];
+        free(e->shape.data);
+        free(e->witness.data);
+        memset(e, 0, sizeof(*e));
+    }
+    e->shape = shape;
+    e->used = ++s->overflow_clock;
+}
+
+/* Mark the state-free nodes (marks[n] = 1); nodes are in post-order. */
+static void cr_state_free_marks(llg_cr_session_t* s, uint8_t* marks, cr_u32vec_t* ops) {
+    const llg_cr_problem_t* p = s->p;
+    for (uint32_t n = 0; n < p->node_count; ++n) {
+        uint8_t status = s->status[n];
+        marks[n] = 0;
+        if (status != CR_K && status != CR_R) continue;
+        switch (p->nodes[n].op) {
+        case LLG_CR_CONST:
+            marks[n] = 1;
+            continue;
+        case LLG_CR_VAR:
+            marks[n] = status == CR_R;
+            continue;
+        case LLG_CR_STATE:
+        case LLG_CR_CALL:
+        case LLG_CR_ELEM:
+        case LLG_CR_DIST:
+            continue;
+        default:
+            break;
+        }
+        ops->len = 0;
+        cr_push_operands(p, n, ops);
+        int free_of_state = 1;
+        for (size_t i = 0; i < ops->len && free_of_state; ++i) free_of_state = marks[ops->data[i]];
+        marks[n] = (uint8_t)free_of_state;
+    }
+}
+
+/* AIG nodes the root needs (cr_bdd_from_aig converts exactly these). */
+static uint8_t* cr_root_need(const cr_comp_aig_t* c) {
+    const cr_aig_t* g = &c->blast.aig;
+    uint8_t* need = (uint8_t*)cr_alloc(g->count, 1u);
+    need[c->out >> 1] = 1;
+    cr_aig_need(g, need);
+    return need;
+}
+
+/* Whether the witness of `e` holds for this build: each witness bit is a
+ * bit of a state-free random node in the cone and a needed, non-constant
+ * AIG literal. */
+static int cr_witness_holds(cr_solve_t* st, const cr_comp_aig_t* c, const uint8_t* in_cone,
+                            const cr_overflow_t* e) {
+    llg_cr_session_t* s = st->s;
+    uint8_t* marks = s->scratch.node_marks;
+    cr_state_free_marks(s, marks, &s->scratch.comp_stack);
+    uint8_t* need = cr_root_need(c);
+    int holds = 1;
+    for (size_t i = 0; i + 1u < e->witness.len && holds; i += 2u) {
+        uint32_t n = e->witness.data[i], bit = e->witness.data[i + 1u];
+        holds = n < s->p->node_count && in_cone[n] && marks[n] && s->status[n] == CR_R &&
+                c->blast.lit_off[n] != UINT32_MAX && bit < s->p->nodes[n].bit_width;
+        if (!holds) break;
+        uint32_t lit = c->blast.lits.data[c->blast.lit_off[n] + bit];
+        holds = (lit >> 1) != 0u && need[lit >> 1];
+    }
+    free(need);
+    return holds;
+}
+
+/* Try to prove that every build of this shape overflows: convert the cones
+ * of the needed state-free bits at the boundary (state-free random nodes
+ * that are conjuncts or operands of other cone nodes) and store them as
+ * the witness when that alone exceeds the node bound. */
+static int cr_witness_prove(cr_solve_t* st, const cr_comp_aig_t* c, const uint32_t* conj,
+                            uint32_t ncon, const uint8_t* in_cone, cr_overflow_t* e) {
+    llg_cr_session_t* s = st->s;
+    const llg_cr_problem_t* p = s->p;
+    const cr_aig_t* g = &c->blast.aig;
+    uint8_t* marks = s->scratch.node_marks;
+    cr_u32vec_t* ops = &s->scratch.comp_stack;
+    cr_state_free_marks(s, marks, ops);
+    /* Bit 0: a state-free random node of the cone; bit 1: on the boundary. */
+    for (uint32_t n = 0; n < p->node_count; ++n)
+        marks[n] = (uint8_t)(in_cone[n] && marks[n] && s->status[n] == CR_R &&
+                             p->nodes[n].op != LLG_CR_VAR);
+    for (uint32_t i = 0; i < ncon; ++i)
+        if (marks[conj[i]]) marks[conj[i]] |= 2u;
+    for (uint32_t n = 0; n < p->node_count; ++n) {
+        if (!in_cone[n] || (marks[n] & 1u)) continue;
+        ops->len = 0;
+        cr_push_live(s, n, ops);
+        for (size_t i = 0; i < ops->len; ++i)
+            if (marks[ops->data[i]] & 1u) marks[ops->data[i]] |= 2u;
+    }
+    uint8_t* need = cr_root_need(c);
+    cr_u32vec_t witness = {0, 0, 0};
+    uint8_t* cone = (uint8_t*)cr_alloc(g->count, 1u);
+    for (uint32_t n = 0; n < p->node_count; ++n) {
+        if (!(marks[n] & 2u) || c->blast.lit_off[n] == UINT32_MAX) continue;
+        for (uint32_t bit = 0; bit < p->nodes[n].bit_width; ++bit) {
+            uint32_t lit = c->blast.lits.data[c->blast.lit_off[n] + bit];
+            if (!(lit >> 1) || !need[lit >> 1]) continue;
+            cr_u32_push(&witness, n);
+            cr_u32_push(&witness, bit);
+            cone[lit >> 1] = 1;
+        }
+    }
+    free(need);
+    int proven = 0;
+    if (witness.len) {
+        cr_aig_need(g, cone);
+        cr_bdd_t m;
+        cr_bdd_init(&m, c->levels, st->t->bdd_nodes);
+        uint32_t* bdd = (uint32_t*)cr_alloc(g->count, sizeof(uint32_t));
+        cr_bdd_convert(&m, g, cone, bdd);
+        proven = m.overflow == CR_BDD_OVER_NODES;
+        st->bdd_nodes += m.count;
+        free(bdd);
+        cr_bdd_free(&m);
+    }
+    free(cone);
+    if (proven) {
+        e->witness = witness;
+    } else {
+        free(witness.data);
+    }
+    return proven;
+}
+
+/* Whether this build is known to overflow the node bound (see above). */
+static int cr_overflow_foreseen(cr_solve_t* st, const cr_comp_aig_t* c, const uint32_t* conj,
+                                uint32_t ncon, const uint32_t* vars, uint32_t nvars,
+                                const uint8_t* in_cone) {
+    llg_cr_session_t* s = st->s;
+    if (!s->overflow_count || !st->t->overflow_memo) return 0;
+    cr_u32vec_t shape = {0, 0, 0};
+    cr_shape_key(conj, ncon, vars, nvars, &shape);
+    cr_overflow_t* e = cr_overflow_find(s, &shape);
+    free(shape.data);
+    if (!e) return 0;
+    int foreseen = 0;
+    if (e->witness.len) {
+        foreseen = cr_witness_holds(st, c, in_cone, e);
+    } else if (!e->tried) {
+        e->tried = 1;
+        foreseen = cr_witness_prove(st, c, conj, ncon, in_cone, e);
+    }
+    if (foreseen) st->foreseen++;
+    return foreseen;
+}
+
 /* Structural hash of node n (operators, widths, constants, variable, state
  * and call names; never state values), memoised per session. */
 static uint64_t cr_node_hash(llg_cr_session_t* s, uint32_t n) {
@@ -1266,6 +1519,11 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
             } else if (aig.out == CR_FALSE) {
                 result = LLG_CR_UNSAT;
                 done = 1;
+            } else if (cr_overflow_foreseen(st, &aig, conj, ncon, vars, nvars, in_cone)) {
+                /* The build would overflow the node bound (proven for this
+                 * shape): fail exactly as it would. */
+                cr_remember_failure(s, key);
+                if (!st->budget) st->budget = "LLG_RAND_BDD_NODES";
             } else {
                 cr_bdd_t m;
                 cr_bdd_init(&m, aig.levels, st->t->bdd_nodes);
@@ -1320,6 +1578,7 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
                 } else {
                     cr_remember_failure(s, key);
                     if (!st->budget) st->budget = "LLG_RAND_BDD_NODES";
+                    cr_overflow_note(st, conj, ncon, vars, nvars);
                 }
                 free(roots);
                 cr_bdd_free(&m);
@@ -1464,7 +1723,7 @@ static void cr_print_stats(const cr_solve_t* st, llg_cr_status_t status) {
     const llg_cr_report_t* r = st->report;
     fprintf(stderr,
             "llg: randomize stats: problem=%s status=%s engines=%s%s%s%s%s%s components=%u "
-            "bdd_nodes=%llu reject_tries=%llu conflicts=%llu\n",
+            "bdd_nodes=%llu bdd_foreseen=%llu reject_tries=%llu conflicts=%llu\n",
             st->s->p->name ? st->s->p->name : "?", names[status],
             r->engines ? "" : "none",
             (r->engines & LLG_CR_ENGINE_DIRECT) ? "direct," : "",
@@ -1472,7 +1731,7 @@ static void cr_print_stats(const cr_solve_t* st, llg_cr_status_t status) {
             (r->engines & LLG_CR_ENGINE_CACHE) ? "cache," : "",
             (r->engines & LLG_CR_ENGINE_REJECT) ? "reject," : "",
             (r->engines & LLG_CR_ENGINE_CDCL) ? "cdcl," : "",
-            st->components, (unsigned long long)st->bdd_nodes,
+            st->components, (unsigned long long)st->bdd_nodes, (unsigned long long)st->foreseen,
             (unsigned long long)st->reject_tries, (unsigned long long)st->conflicts);
 }
 

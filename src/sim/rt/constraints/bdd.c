@@ -24,8 +24,15 @@ typedef struct {
     uint32_t levels;
     uint64_t limit;
     uint64_t steps;      /* recursive apply steps, bounded by 32 * limit */
-    int overflow;
+    int overflow;        /* 0, or the first bound exceeded (CR_BDD_OVER_*) */
 } cr_bdd_t;
+
+/* Which bound a build exceeded first: the node bound depends only on the
+ * functions the build computes (nodes are never freed, and an apply step
+ * creates only nodes of its result), the step bound also on computed-table
+ * hits. */
+#define CR_BDD_OVER_STEPS 1
+#define CR_BDD_OVER_NODES 2
 
 /* Initial table sizes. The computed table only ever grows with the unique
  * table, so these also fix every build's hit pattern and step count. */
@@ -172,7 +179,7 @@ static uint32_t cr_bdd_mk(cr_bdd_t* m, uint32_t l, uint32_t lo, uint32_t hi) {
         slot = (slot + 1u) & (m->table_cap - 1u);
     }
     if ((uint64_t)m->count >= m->limit || m->count >= (size_t)(UINT32_MAX >> 2)) {
-        m->overflow = 1;
+        m->overflow = CR_BDD_OVER_NODES;
         return 0;
     }
     size_t c1 = m->cap, c2 = m->cap;
@@ -211,7 +218,7 @@ static void cr_bdd_store(cr_bdd_t* m, uint64_t key, uint32_t value) {
  * computed table cannot hold the working set. Both report the same
  * tunable. */
 static int cr_bdd_step(cr_bdd_t* m) {
-    if (++m->steps > m->limit * 32u) m->overflow = 1;
+    if (++m->steps > m->limit * 32u && !m->overflow) m->overflow = CR_BDD_OVER_STEPS;
     return !m->overflow;
 }
 
@@ -270,16 +277,19 @@ static uint32_t cr_bdd_exists(cr_bdd_t* m, uint32_t f, const uint8_t* quant, uin
 }
 
 /* Convert the AIG cone of `out` (inputs 1..levels map to levels 0..levels-1). */
-static uint32_t cr_bdd_from_aig(cr_bdd_t* m, const cr_aig_t* g, uint32_t out) {
-    uint32_t root = out >> 1;
-    uint32_t* bdd = (uint32_t*)cr_alloc(g->count, sizeof(uint32_t));
-    uint8_t* need = (uint8_t*)cr_alloc(g->count, 1u);
-    need[root] = 1;
+/* Close `need` (AIG nodes marked as roots) under the AND operands. */
+static void cr_aig_need(const cr_aig_t* g, uint8_t* need) {
     for (size_t n = g->count; n-- > (size_t)g->inputs + 1u;) {
         if (!need[n]) continue;
         need[g->left[n] >> 1] = 1;
         need[g->right[n] >> 1] = 1;
     }
+}
+
+/* The BDD of every needed AIG node, in node order (operands first): an
+ * input is its level's variable, an AND the conjunction of its operands,
+ * each complemented operand first negated. Stops at an overflow. */
+static void cr_bdd_convert(cr_bdd_t* m, const cr_aig_t* g, const uint8_t* need, uint32_t* bdd) {
     bdd[0] = 0;
     for (uint32_t i = 1; i <= g->inputs; ++i)
         if (need[i]) bdd[i] = cr_bdd_mk(m, i - 1u, 0u, 1u);
@@ -290,6 +300,15 @@ static uint32_t cr_bdd_from_aig(cr_bdd_t* m, const cr_aig_t* g, uint32_t out) {
         if (g->right[n] & 1u) b = cr_bdd_not(m, b);
         bdd[n] = cr_bdd_and(m, a, b);
     }
+}
+
+static uint32_t cr_bdd_from_aig(cr_bdd_t* m, const cr_aig_t* g, uint32_t out) {
+    uint32_t root = out >> 1;
+    uint32_t* bdd = (uint32_t*)cr_alloc(g->count, sizeof(uint32_t));
+    uint8_t* need = (uint8_t*)cr_alloc(g->count, 1u);
+    need[root] = 1;
+    cr_aig_need(g, need);
+    cr_bdd_convert(m, g, need, bdd);
     uint32_t result = bdd[root];
     if (out & 1u) result = cr_bdd_not(m, result);
     free(bdd);
