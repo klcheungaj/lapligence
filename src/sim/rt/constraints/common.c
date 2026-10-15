@@ -111,6 +111,8 @@ const llg_cr_tunables_t* llg_cr_tunables(void) {
         cr_tunables_value.array_elements = cr_env_u64("LLG_RAND_ARRAY_ELEMENTS", 1u << 20);
         cr_tunables_value.expand_nodes = cr_env_u64("LLG_RAND_EXPAND_NODES", 1u << 22);
         cr_tunables_value.stats = cr_env_u64("LLG_RAND_STATS", 0u) != 0u;
+        cr_tunables_value.overflow_memo = cr_env_u64("LLG_RAND_OVERFLOW_MEMO", 1u) != 0u;
+        cr_tunables_value.search_cache = cr_env_u64("LLG_RAND_SEARCH_CACHE", 1u) != 0u;
         cr_tunables_ready = 1;
     }
     return &cr_tunables_value;
@@ -121,7 +123,33 @@ const llg_cr_tunables_t* llg_cr_tunables(void) {
 enum { CR_K = 0, CR_R = 1, CR_E = 2, CR_SKIP = 3 };
 
 typedef struct cr_cache_entry cr_cache_entry_t;
+typedef struct cr_overflow cr_overflow_t;
+typedef struct cr_cnf_entry cr_cnf_entry_t;
+
+/* Keys of recent uncached searches kept per session (solve.c): a search
+ * encoding is cached on its key's second search, so state that never
+ * repeats pays no copy into the cache. */
+#define CR_CNF_SEEN 8u
 typedef struct cr_tpl cr_tpl_t;
+
+/* Working memory of one solve, owned by the session and reused by every
+ * call, so a solve that hits the exact cache allocates nothing. Nothing in
+ * it outlives one llg_cr_step. */
+typedef struct {
+    uint8_t* reach;             /* per node: reachable from an enabled root */
+    uint8_t* in_cone;           /* per node: in the current component's cone;
+                                 * all zero between components */
+    uint8_t* var_flags;         /* 3 x vars: has_pred, in_p, in_layer */
+    uint8_t* node_marks;        /* per node: overflow-proof marks */
+    uint32_t* var_words;        /* 4 x (vars + 1): uf, bucket, conj_bucket, fill */
+    cr_u32vec_t conj, stack, support, calls, layer_conj, comp_vars, comp_conj, conj_rep;
+    cr_u32vec_t comp_stack;     /* cr_solve_component's traversal stack */
+    cr_u64vec_t key;            /* exact-cache key of the current component */
+    uint8_t* level_bits;        /* sampled level values */
+    size_t level_bits_cap;
+    uint64_t* limbs;            /* sampling big-integer temporaries */
+    size_t limbs_cap;
+} cr_scratch_t;
 
 struct llg_cr_session {
     const llg_cr_problem_t* p;
@@ -177,6 +205,19 @@ struct llg_cr_session {
     cr_cache_entry_t* cache;
     uint32_t cache_count;       /* slots used so far (they fill in order) */
     uint64_t cache_clock;       /* LRU stamp source */
+    cr_scratch_t scratch;
+    /* Component shapes whose exact model overflowed, with their proofs
+     * (cr_overflow_foreseen); allocated on the first overflow. */
+    cr_overflow_t* overflow;
+    uint32_t overflow_count;
+    uint64_t overflow_clock;
+    /* Search encodings by cone structure (cr_search_cached); allocated on
+     * the first search. */
+    cr_cnf_entry_t* cnf_cache;
+    uint32_t cnf_count;
+    uint64_t cnf_clock;
+    uint64_t cnf_seen[CR_CNF_SEEN]; /* recent uncached search keys (hashes) */
+    uint32_t cnf_seen_next;
 };
 
 static llg_cr_session_t* cr_all_sessions;

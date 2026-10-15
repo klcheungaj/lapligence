@@ -1754,19 +1754,25 @@ these forms remain outside them.
   weights and solve-before orders (S30-D9). The run prints one warning per
   call site naming the site and the budget (`LLG_RAND_BDD_NODES` or
   `LLG_RAND_BDD_BITS`) to raise.
-- The search re-encodes the component on every call; a loop that keeps
-  needing the search pays the encoding each time (about 18 ms per call for a
-  16-bit factoring constraint on x86-64).
+- A loop that keeps needing the search pays the search on every call (about
+  18 ms per call for a 16-bit factoring constraint on x86-64, almost all of
+  it search: the encoding is reused while the state values repeat and is
+  about 1 to 20 percent of a call otherwise).
 - A component whose exact model exceeds `LLG_RAND_BDD_NODES` spends the whole
-  node budget before falling back (about 0.9 s at the default budget for that
-  constraint). The overflow is remembered per state, so repeated calls with
-  the same state values skip it, but a constraint whose state changes on every
-  call pays it each time; lowering `LLG_RAND_BDD_NODES` trades exact uniform
-  sampling of larger components for speed.
+  node budget before falling back (about 0.4 to 0.9 s at the default budget
+  for that constraint, depending on memory load). The overflow is remembered
+  per state, so repeated calls with the same state values skip it. When the
+  state changes, the second overflow of the component proves whether its
+  state-free part alone exceeds the budget (a product of random variables
+  compared with state does); if so, later calls skip the build without
+  changing any drawn value. An overflow that needs the state-dependent part
+  (a product with a state operand) is still paid once per new state value;
+  lowering `LLG_RAND_BDD_NODES` trades exact uniform sampling of larger
+  components for speed.
 - A problem with arrays or objects is expanded per call shape (instances,
   array sizes); a new shape costs one expansion, bounded by
   `LLG_RAND_ARRAY_ELEMENTS` and `LLG_RAND_EXPAND_NODES` (a resource error
-  when exceeded). Each call site keeps the last four shapes.
+  when exceeded). Each call site keeps the sixteen most recently used shapes.
 
 ### Cause
 

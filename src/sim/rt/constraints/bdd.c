@@ -15,15 +15,63 @@ typedef struct {
     uint32_t* hi;
     size_t count, cap;
     uint32_t* table;
-    size_t table_cap;
+    size_t table_cap;    /* slots in use (the hash range) */
+    size_t table_room;   /* slots allocated */
     uint64_t* cache_key;
     uint32_t* cache_val;
-    size_t cache_cap;
+    size_t cache_cap;    /* entries in use (the hash range) */
+    size_t cache_room;   /* entries allocated */
     uint32_t levels;
     uint64_t limit;
     uint64_t steps;      /* recursive apply steps, bounded by 32 * limit */
-    int overflow;
+    int overflow;        /* 0, or the first bound exceeded (CR_BDD_OVER_*) */
 } cr_bdd_t;
+
+/* Which bound a build exceeded first: the node bound depends only on the
+ * functions the build computes (nodes are never freed, and an apply step
+ * creates only nodes of its result), the step bound also on computed-table
+ * hits. */
+#define CR_BDD_OVER_STEPS 1
+#define CR_BDD_OVER_NODES 2
+
+/* Initial table sizes. The computed table only ever grows with the unique
+ * table, so these also fix every build's hit pattern and step count. */
+#define CR_BDD_TABLE_INIT 2048u
+#define CR_BDD_CACHE_INIT 16384u
+
+/* The buffers of the last finished build, reused by the next one: an exact
+ * rebuild on every call (state that changes per call) would otherwise
+ * allocate and free about 200 KiB each time, which the C library may hand
+ * back to the system and fault in again. Builds never overlap (the runtime
+ * is single-threaded and no user code runs inside one), so one set serves
+ * every session. Buffers above CR_BDD_POOL_KEEP_BYTES in total are freed
+ * instead, so a large build (a budget overflow reaches tens of MiB) does not
+ * pin its tables for the rest of the run. */
+#define CR_BDD_POOL_KEEP_BYTES ((size_t)2u << 20)
+
+typedef struct {
+    uint32_t* level;
+    uint32_t* lo;
+    uint32_t* hi;
+    size_t cap;
+    uint32_t* table;
+    size_t table_room;
+    uint64_t* cache_key;
+    uint32_t* cache_val;
+    size_t cache_room;
+} cr_bdd_pool_t;
+
+static cr_bdd_pool_t cr_bdd_pool;
+
+static void cr_bdd_pool_release(void) {
+    free(cr_bdd_pool.level);
+    free(cr_bdd_pool.lo);
+    free(cr_bdd_pool.hi);
+    free(cr_bdd_pool.table);
+    free(cr_bdd_pool.cache_key);
+    free(cr_bdd_pool.cache_val);
+    memset(&cr_bdd_pool, 0, sizeof(cr_bdd_pool));
+}
 
 static uint32_t cr_bdd_hash(uint32_t l, uint32_t lo, uint32_t hi) {
     uint64_t h = ((uint64_t)lo << 32) ^ hi ^ ((uint64_t)l * UINT64_C(0x9e3779b97f4a7c15));
@@ -31,30 +79,76 @@ static uint32_t cr_bdd_hash(uint32_t l, uint32_t lo, uint32_t hi) {
     return (uint32_t)(h >> 32);
 }
 
+/* An empty computed table of `entries` (a key of 0 is no operation). */
+static void cr_bdd_cache_reset(cr_bdd_t* m, size_t entries) {
+    if (m->cache_room < entries) {
+        free(m->cache_key);
+        free(m->cache_val);
+        m->cache_key = (uint64_t*)cr_alloc(entries, sizeof(uint64_t));
+        m->cache_val = (uint32_t*)cr_alloc(entries, sizeof(uint32_t));
+        m->cache_room = entries;
+    } else {
+        memset(m->cache_key, 0, entries * sizeof(uint64_t));
+    }
+    m->cache_cap = entries;
+}
+
 static void cr_bdd_init(cr_bdd_t* m, uint32_t levels, uint64_t limit) {
     memset(m, 0, sizeof(*m));
     m->levels = levels;
     m->limit = limit < 2u ? 2u : limit;
-    size_t c1 = 0, c2 = 0;
-    m->level = (uint32_t*)cr_grow(NULL, &m->cap, 1024u, sizeof(uint32_t));
-    m->lo = (uint32_t*)cr_grow(NULL, &c1, m->cap, sizeof(uint32_t));
-    m->hi = (uint32_t*)cr_grow(NULL, &c2, m->cap, sizeof(uint32_t));
+    /* Take the pooled buffers; contents beyond what is reset are never
+     * read (nodes at or above `count`, cache values without their key). */
+    m->level = cr_bdd_pool.level;
+    m->lo = cr_bdd_pool.lo;
+    m->hi = cr_bdd_pool.hi;
+    m->cap = cr_bdd_pool.cap;
+    m->table = cr_bdd_pool.table;
+    m->table_room = cr_bdd_pool.table_room;
+    m->cache_key = cr_bdd_pool.cache_key;
+    m->cache_val = cr_bdd_pool.cache_val;
+    m->cache_room = cr_bdd_pool.cache_room;
+    memset(&cr_bdd_pool, 0, sizeof(cr_bdd_pool));
+    size_t c1 = m->cap, c2 = m->cap;
+    m->level = (uint32_t*)cr_grow(m->level, &m->cap, 1024u, sizeof(uint32_t));
+    m->lo = (uint32_t*)cr_grow(m->lo, &c1, m->cap, sizeof(uint32_t));
+    m->hi = (uint32_t*)cr_grow(m->hi, &c2, m->cap, sizeof(uint32_t));
     m->level[0] = m->level[1] = levels;
     m->count = 2u;
-    m->table_cap = 2048u;
-    m->table = (uint32_t*)cr_alloc(m->table_cap, sizeof(uint32_t));
-    m->cache_cap = 16384u;
-    m->cache_key = (uint64_t*)cr_alloc(m->cache_cap, sizeof(uint64_t));
-    m->cache_val = (uint32_t*)cr_alloc(m->cache_cap, sizeof(uint32_t));
+    m->table_cap = CR_BDD_TABLE_INIT;
+    if (m->table_room < m->table_cap) {
+        free(m->table);
+        m->table = (uint32_t*)cr_alloc(m->table_cap, sizeof(uint32_t));
+        m->table_room = m->table_cap;
+    } else {
+        memset(m->table, 0, m->table_cap * sizeof(uint32_t));
+    }
+    cr_bdd_cache_reset(m, CR_BDD_CACHE_INIT);
 }
 
+/* Return the buffers to the pool, or free them when they are large. */
 static void cr_bdd_free(cr_bdd_t* m) {
-    free(m->level);
-    free(m->lo);
-    free(m->hi);
-    free(m->table);
-    free(m->cache_key);
-    free(m->cache_val);
+    size_t bytes = m->cap * 3u * sizeof(uint32_t) + m->table_room * sizeof(uint32_t) +
+                   m->cache_room * (sizeof(uint64_t) + sizeof(uint32_t));
+    if (bytes <= CR_BDD_POOL_KEEP_BYTES) {
+        cr_bdd_pool_release();
+        cr_bdd_pool.level = m->level;
+        cr_bdd_pool.lo = m->lo;
+        cr_bdd_pool.hi = m->hi;
+        cr_bdd_pool.cap = m->cap;
+        cr_bdd_pool.table = m->table;
+        cr_bdd_pool.table_room = m->table_room;
+        cr_bdd_pool.cache_key = m->cache_key;
+        cr_bdd_pool.cache_val = m->cache_val;
+        cr_bdd_pool.cache_room = m->cache_room;
+    } else {
+        free(m->level);
+        free(m->lo);
+        free(m->hi);
+        free(m->table);
+        free(m->cache_key);
+        free(m->cache_val);
+    }
     memset(m, 0, sizeof(*m));
 }
 
@@ -69,14 +163,10 @@ static void cr_bdd_rehash(cr_bdd_t* m) {
     free(m->table);
     m->table = table;
     m->table_cap = cap;
-    /* Keep the computed table proportional to the node count. */
-    if (m->cache_cap < m->table_cap * 2u) {
-        free(m->cache_key);
-        free(m->cache_val);
-        m->cache_cap = m->table_cap * 2u;
-        m->cache_key = (uint64_t*)cr_alloc(m->cache_cap, sizeof(uint64_t));
-        m->cache_val = (uint32_t*)cr_alloc(m->cache_cap, sizeof(uint32_t));
-    }
+    m->table_room = cap;
+    /* Keep the computed table proportional to the node count; growing it
+     * empties it. */
+    if (m->cache_cap < m->table_cap * 2u) cr_bdd_cache_reset(m, m->table_cap * 2u);
 }
 
 static uint32_t cr_bdd_mk(cr_bdd_t* m, uint32_t l, uint32_t lo, uint32_t hi) {
@@ -89,7 +179,7 @@ static uint32_t cr_bdd_mk(cr_bdd_t* m, uint32_t l, uint32_t lo, uint32_t hi) {
         slot = (slot + 1u) & (m->table_cap - 1u);
     }
     if ((uint64_t)m->count >= m->limit || m->count >= (size_t)(UINT32_MAX >> 2)) {
-        m->overflow = 1;
+        m->overflow = CR_BDD_OVER_NODES;
         return 0;
     }
     size_t c1 = m->cap, c2 = m->cap;
@@ -128,7 +218,7 @@ static void cr_bdd_store(cr_bdd_t* m, uint64_t key, uint32_t value) {
  * computed table cannot hold the working set. Both report the same
  * tunable. */
 static int cr_bdd_step(cr_bdd_t* m) {
-    if (++m->steps > m->limit * 32u) m->overflow = 1;
+    if (++m->steps > m->limit * 32u && !m->overflow) m->overflow = CR_BDD_OVER_STEPS;
     return !m->overflow;
 }
 
@@ -187,16 +277,19 @@ static uint32_t cr_bdd_exists(cr_bdd_t* m, uint32_t f, const uint8_t* quant, uin
 }
 
 /* Convert the AIG cone of `out` (inputs 1..levels map to levels 0..levels-1). */
-static uint32_t cr_bdd_from_aig(cr_bdd_t* m, const cr_aig_t* g, uint32_t out) {
-    uint32_t root = out >> 1;
-    uint32_t* bdd = (uint32_t*)cr_alloc(g->count, sizeof(uint32_t));
-    uint8_t* need = (uint8_t*)cr_alloc(g->count, 1u);
-    need[root] = 1;
+/* Close `need` (AIG nodes marked as roots) under the AND operands. */
+static void cr_aig_need(const cr_aig_t* g, uint8_t* need) {
     for (size_t n = g->count; n-- > (size_t)g->inputs + 1u;) {
         if (!need[n]) continue;
         need[g->left[n] >> 1] = 1;
         need[g->right[n] >> 1] = 1;
     }
+}
+
+/* The BDD of every needed AIG node, in node order (operands first): an
+ * input is its level's variable, an AND the conjunction of its operands,
+ * each complemented operand first negated. Stops at an overflow. */
+static void cr_bdd_convert(cr_bdd_t* m, const cr_aig_t* g, const uint8_t* need, uint32_t* bdd) {
     bdd[0] = 0;
     for (uint32_t i = 1; i <= g->inputs; ++i)
         if (need[i]) bdd[i] = cr_bdd_mk(m, i - 1u, 0u, 1u);
@@ -207,6 +300,15 @@ static uint32_t cr_bdd_from_aig(cr_bdd_t* m, const cr_aig_t* g, uint32_t out) {
         if (g->right[n] & 1u) b = cr_bdd_not(m, b);
         bdd[n] = cr_bdd_and(m, a, b);
     }
+}
+
+static uint32_t cr_bdd_from_aig(cr_bdd_t* m, const cr_aig_t* g, uint32_t out) {
+    uint32_t root = out >> 1;
+    uint32_t* bdd = (uint32_t*)cr_alloc(g->count, sizeof(uint32_t));
+    uint8_t* need = (uint8_t*)cr_alloc(g->count, 1u);
+    need[root] = 1;
+    cr_aig_need(g, need);
+    cr_bdd_convert(m, g, need, bdd);
     uint32_t result = bdd[root];
     if (out & 1u) result = cr_bdd_not(m, result);
     free(bdd);
@@ -387,12 +489,14 @@ static void cr_exact_build(cr_exact_t* e, const cr_bdd_t* m, const uint32_t* roo
     free(map);
 }
 
-/* Draw one model uniformly; bits[level] receives each level's value. */
-static void cr_exact_sample(const cr_exact_t* e, const llg_cr_rng_t* rng, uint8_t* bits) {
+/* Draw one model uniformly; bits[level] receives each level's value. `tmp`
+ * holds 3 * e->limbs words of scratch. */
+static void cr_exact_sample(const cr_exact_t* e, const llg_cr_rng_t* rng, uint8_t* bits,
+                            uint64_t* tmp) {
     uint32_t limbs = e->limbs;
-    uint64_t* total = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
-    uint64_t* r = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
-    uint64_t* w = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
+    uint64_t* total = tmp;
+    uint64_t* r = tmp + limbs;
+    uint64_t* w = tmp + 2u * (size_t)limbs;
     bn_shl(total, e->count + (size_t)e->root * limbs, e->level[e->root], limbs);
     bn_uniform(rng, r, total, limbs);
     /* Levels skipped above a node take their values from the low bits of r;
@@ -417,7 +521,4 @@ static void cr_exact_sample(const cr_exact_t* e, const llg_cr_rng_t* rng, uint8_
         }
     }
     if (n != 1u) cr_fatal("exact sampling reached the false terminal");
-    free(total);
-    free(r);
-    free(w);
 }

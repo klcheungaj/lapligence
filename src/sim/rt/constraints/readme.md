@@ -143,8 +143,11 @@ which keeps the recursive BDD operations shallow on coroutine-hosted stacks),
 `LLG_RAND_REJECT_TRIES` (4096), `LLG_RAND_CONFLICTS` (100000 conflicts per
 component search; 0 disables the search), `LLG_RAND_ARRAY_ELEMENTS` (2^20
 random array elements per solve), `LLG_RAND_EXPAND_NODES` (2^22 nodes per
-expansion) and `LLG_RAND_STATS=1` (one stderr
-line per solve: engines, components, BDD nodes, rejection tries, conflicts).
+expansion), `LLG_RAND_OVERFLOW_MEMO` (1; 0 turns off the foreseen overflows
+below), `LLG_RAND_SEARCH_CACHE` (1; 0 re-encodes every search; neither switch
+changes a drawn value) and `LLG_RAND_STATS=1` (one stderr line per solve:
+engines, components, BDD nodes, foreseen overflows, rejection tries,
+conflicts, reused search encodings).
 The AIG bound (8x `LLG_RAND_BDD_NODES`, at least 4096) also bounds the CDCL
 encoding. Changing a budget may change the values drawn.
 
@@ -154,11 +157,50 @@ component per independent element or object, so the cache must hold all of
 one call's components or each call would rebuild the evicted ones), keyed exactly by the conjuncts,
 the variables and every known operand value, so a loop that randomizes with
 unchanged state samples without rebuilding. Budget overflows are cached the
-same way so a repeated overflow goes straight to the fallbacks. Layered
+same way so a repeated overflow goes straight to the fallbacks.
+
+State that changes on every call never repeats a key, so a component whose
+exact model overflows would rebuild until the overflow each time (about
+0.4 to 0.9 s for a 16-bit product at the default budget). A session remembers
+the shapes (conjuncts and variables) whose build overflowed, eight per
+session. The second build of such a shape first tries a proof
+(`cr_overflow_foreseen`): it converts only the cones of the *state-free*
+bits the root needs, the bits of nodes whose cone holds only constants,
+operators and the component's random variables. The manager never frees
+nodes and an apply step creates only nodes of its result, so a build ends
+with exactly the union of the BDDs of the functions it computes and exceeds
+the node bound exactly when that union does; a state-free cone computes the
+same functions under every state. When the proof alone exceeds the node
+bound, every later build of the shape whose root still needs those bits
+would overflow too, and is skipped (it fails as the build would, with the
+same draws). A state that drops those bits (a guard, a `?:` select, an
+inactive variable) still gets the exact engine, so the exact engine runs
+whenever it would have succeeded. An overflow that needs the state-dependent
+part is still rebuilt per new state; its proof is tried once per shape. Layered
 entries also key the variables' layers and keep the projections and weights.
 Components without dist, randc or solve-before skip the layer plan, so
-SIM-029 problems pay nothing for the layered engine. The CDCL
-search keeps nothing between calls: it re-encodes the component each time.
+SIM-029 problems pay nothing for the layered engine.
+
+The search keeps its encoding (the Tseitin clauses and watch lists of the
+AIG cone, `cr_cnf_t`) for the four most recently used keys of the exact
+cache, cached on a key's second search (the session remembers the hashes
+of the last eight uncached keys, so state that never repeats pays no copy).
+A run copies the cached encoding, so it searches exactly as a fresh one
+would; learned clauses are not kept. A changed state value is a new key:
+encoding the state as parameters fixed by unit clauses instead was measured
+and rejected, because the unfolded instance made long searches slower than
+the encoding it saved. Components with dist selectors are not cached.
+
+A solve's working memory (reachability and cone marks, conjunct and support
+lists, union-find and bucket arrays, the cache key, sampling temporaries)
+lives in the session and is reused by every call, so a call that hits the
+exact cache allocates nothing. Without calls to constraint functions the
+18.5.11 pass is skipped and each conjunct's support is computed once. The
+BDD manager's buffers (`bdd.c`) are pooled across builds, up to
+`CR_BDD_POOL_KEEP_BYTES` (2 MiB); larger ones are freed. A rebuild on every
+call (state that changes per call) would otherwise allocate and free about
+200 KiB each time, which the C library may return to the system and fault in
+again. None of this changes which values are drawn.
 
 ## Determinism
 
