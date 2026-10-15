@@ -189,11 +189,45 @@ loads each with `+load=bad.db`:
 | first 30 bytes | the file is not an llg coverage database | unchanged 1/16 |
 | one bit flipped | the checksum does not match | unchanged |
 | foreign magic | the file is not an llg coverage database | unchanged |
+| version 2 | the database version is not supported | unchanged |
+| section bit 2 set | the database has unknown sections | unchanged |
+| last checksum byte missing | the file length does not match its header | unchanged |
+| functional frame one byte longer than the payload | the database sections are malformed | unchanged |
+| one extra byte inside the functional frame | the functional section has trailing data | unchanged |
 | `other1`, then a record counting bin 16 of 16 | a counter is outside its bins | unchanged: the valid first record is not published either |
 | good.db read by the W = 3 model | it was saved by a model with different covergroups | 1/8 = 12.5 of the narrower model |
 | missing.db, and saving to `nodir/x.db` | was not loaded / was not saved | no database and no temporary file left |
 
 Every failed load or save is a run-time error: the run exits with status 1.
+
+## db_cross.sv
+
+Three runs in one directory. `g` has `pa` (lo = 0..1, hi = 2..3), `pb`
+(z = 0, nz = 1..3) and `x: cross pa, pb` with `<hi,z>` ignored, so x has
+three automatic bins: `<lo,z>`, `<lo,nz>`, `<hi,nz>`. Every instance has
+7 bins (2 + 2 + 3); instance coverage is the mean of the three items
+(weights 1). `one` and `two` keep their default names `tb.g#1` and `tb.g#2`
+in every run (S46-D1), so loaded records join them (S46-D2).
+
+- `+first`: one samples (0,0) and (2,1): pa 2/2, pb 2/2, x `<lo,z>` and
+  `<hi,nz>` 2/3: 6 of 7, (100 + 100 + 66.666667) / 3 = 88.888889. two
+  samples (1,3): pa lo, pb nz, x `<lo,nz>`: 3 of 7, (50 + 50 + 33.333333) / 3
+  = 44.444444. g (merge_instances 0): 9 of 14, (88.888889 + 44.444444) / 2 =
+  66.666667; `g::x`: 2 + 1 = 3 of 6, (66.666667 + 33.333333) / 2 = 50.
+  Saved to x.db.
+- `+second` after loading x.db: type numbers equal the first run's; the
+  live instances are unsampled: one, one.x and two 0. two then samples
+  (3,2): pa hi, pb nz, x `<hi,nz>`. two's member (live with its record): pa
+  2/2, pb 1/2, x 2/3: 5 of 7, (100 + 50 + 66.666667) / 3 = 72.222222. g: 6 +
+  5 = 11 of 14, (88.888889 + 72.222222) / 2 = 80.555556; `g::x` 2 + 2 = 4
+  of 6, 66.666667. Live two alone: 3 of 7, 44.444444. Saved to y.db: each
+  member as one record.
+- `+third` loads y.db: type numbers equal the second run's; live instances
+  0. After `g::type_option.merge_instances = 1` every record joins one
+  19.11.3 union: pa lo, hi; pb z, nz; x `<lo,z>`, `<lo,nz>`, `<hi,nz>`: 7 of
+  7, 100. With merge_instances set and option.get_inst_coverage 0,
+  `get_inst_coverage` equals `get_coverage` (19.7 Table 19-1 L33291-33295),
+  so one, one.x and two also report the merged numbers (one.x: 3 of 3).
 
 ## assertions.sv
 

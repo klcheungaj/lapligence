@@ -4,6 +4,7 @@
 //! positive cases run in both optimizer modes on the legacy,
 //! compact/portable and compact/GMP value backends.
 use super::sim_cli;
+use std::path::Path;
 use std::process::Output;
 
 const SUITE: &str = "feature_completion/sim_046";
@@ -35,24 +36,33 @@ fn options_names_and_two_argument_queries_follow_19_7_and_19_8() {
     });
 }
 
-#[test]
-fn saved_runs_load_and_merge_into_type_coverage() {
-    let expected = include_str!("../fixtures/sim/feature_completion/sim_046/database.out");
+/// The coverage databases left in a run directory, sorted.
+fn database_files(directory: &Path) -> Vec<String> {
+    let mut files = std::fs::read_dir(directory)
+        .expect("run directory")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.contains(".db"))
+        .collect::<Vec<_>>();
+    files.sort();
+    files
+}
+
+/// Runs of one model in one directory, in both optimizer modes on every
+/// value backend: `run(optimized, envs)` returns the databases left and the
+/// outputs. Every run must succeed silently; the concatenated standard
+/// output must equal `expected` and the directory must hold exactly `files`.
+type SavedRuns<'a> = &'a dyn Fn(bool, &[(&str, &str)]) -> (Vec<String>, Vec<Output>);
+
+fn check_saved_runs(case: &str, expected: &str, files: &[&str], run: SavedRuns) {
     for optimized in [false, true] {
         for (backend, controls) in sim_cli::backend_matrix() {
             let envs = controls
                 .iter()
                 .map(|(name, value)| (*name, value.as_str()))
                 .collect::<Vec<_>>();
-            let (directory, outputs) = sim_cli::run_case_sequence(
-                SUITE,
-                "database",
-                optimized,
-                &envs,
-                &[],
-                &[(&[], &["+first"]), (&[], &["+second"]), (&[], &["+third"])],
-            );
-            let label = format!("{SUITE}/database, {backend}, optimized={optimized}");
+            let (left, outputs) = run(optimized, &envs);
+            let label = format!("{SUITE}/{case}, {backend}, optimized={optimized}");
             let mut stdout = String::new();
             for output in &outputs {
                 assert!(
@@ -64,18 +74,51 @@ fn saved_runs_load_and_merge_into_type_coverage() {
                 stdout.push_str(&String::from_utf8_lossy(&output.stdout));
             }
             assert_eq!(stdout, expected, "{label}");
-            // The third run sets no database name, so it saves nothing; the
-            // first two left exactly their files.
-            let mut files = std::fs::read_dir(directory.path())
-                .expect("run directory")
-                .filter_map(|entry| entry.ok())
-                .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                .filter(|name| name.contains(".db"))
-                .collect::<Vec<_>>();
-            files.sort();
-            assert_eq!(files, ["cov.db", "cov2.db"], "{label}");
+            assert_eq!(left, files, "{label}");
         }
     }
+}
+
+#[test]
+fn saved_runs_load_and_merge_into_type_coverage() {
+    // The third run sets no database name, so it saves nothing; the first
+    // two leave exactly their files.
+    check_saved_runs(
+        "database",
+        include_str!("../fixtures/sim/feature_completion/sim_046/database.out"),
+        &["cov.db", "cov2.db"],
+        &|optimized, envs| {
+            let (directory, outputs) = sim_cli::run_case_sequence(
+                SUITE,
+                "database",
+                optimized,
+                envs,
+                &[],
+                &[(&[], &["+first"]), (&[], &["+second"]), (&[], &["+third"])],
+            );
+            (database_files(directory.path()), outputs)
+        },
+    );
+}
+
+#[test]
+fn saved_crosses_and_instances_merge_across_runs() {
+    check_saved_runs(
+        "db_cross",
+        include_str!("../fixtures/sim/feature_completion/sim_046/db_cross.out"),
+        &["x.db", "y.db"],
+        &|optimized, envs| {
+            let (directory, outputs) = sim_cli::run_case_sequence(
+                SUITE,
+                "db_cross",
+                optimized,
+                envs,
+                &[],
+                &[(&[], &["+first"]), (&[], &["+second"]), (&[], &["+third"])],
+            );
+            (database_files(directory.path()), outputs)
+        },
+    );
 }
 
 /// FNV-1a 64, the checksum of the database format (readme.md).
@@ -180,6 +223,17 @@ fn corrupt_and_foreign_databases_change_nothing() {
         let valid = database_with_payload(&good, &functional_payload(&[&record, &other]));
         let mut flipped = good.clone();
         flipped[58] ^= 1;
+        let mut future = good.clone();
+        future[8..12].copy_from_slice(&2u32.to_le_bytes());
+        let mut unknown_section = good.clone();
+        unknown_section[12] |= 4;
+        let mut overlong = functional_payload(&[&record]);
+        let frame = u64_at(&overlong, 0) + 1;
+        overlong[..8].copy_from_slice(&frame.to_le_bytes());
+        let mut trailing = functional_payload(&[&record]);
+        trailing.push(0);
+        let frame = u64_at(&trailing, 0) + 1;
+        trailing[..8].copy_from_slice(&frame.to_le_bytes());
         let cases: Vec<(&str, Vec<u8>, String)> = vec![
             ("two valid records", valid, String::new()),
             (
@@ -191,6 +245,31 @@ fn corrupt_and_foreign_databases_change_nothing() {
                 "flipped bit",
                 flipped,
                 error("the checksum does not match (the file is corrupt)"),
+            ),
+            (
+                "future version",
+                future,
+                error("the database version is not supported"),
+            ),
+            (
+                "unknown section",
+                unknown_section,
+                error("the database has unknown sections"),
+            ),
+            (
+                "missing checksum byte",
+                good[..good.len() - 1].to_vec(),
+                error("the file length does not match its header"),
+            ),
+            (
+                "section longer than the payload",
+                database_with_payload(&good, &overlong),
+                error("the database sections are malformed"),
+            ),
+            (
+                "trailing section data",
+                database_with_payload(&good, &trailing),
+                error("the functional section has trailing data"),
             ),
             (
                 "foreign magic",
