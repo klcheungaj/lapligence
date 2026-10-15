@@ -1029,6 +1029,10 @@ void llg_cr_set_leaf_sv4(llg_cr_session_t* s, uint32_t leaf, sv4_t value, uint32
 // The solved value of an active variable as an independent owner.
 sv4_t llg_cr_value_sv4(const llg_cr_session_t* s, uint32_t var, uint32_t width,
                        int8_t is_signed);
+// A randc variable's cycle state (rand_cyclic_state_width bits, 2-state)
+// in, and its updated state out after a successful solve (S30-D3).
+void llg_cr_set_cyclic_sv4(llg_cr_session_t* s, uint32_t var, sv4_t state, uint32_t width);
+sv4_t llg_cr_cyclic_sv4(const llg_cr_session_t* s, uint32_t var, uint32_t width);
 // A constraint function's result for the solver (X/Z marks the input).
 void llg_cr_set_call_result_sv4(llg_cr_session_t* s, uint32_t call, sv4_t value,
                                 uint32_t width);

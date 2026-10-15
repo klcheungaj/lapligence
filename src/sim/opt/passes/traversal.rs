@@ -329,7 +329,9 @@ pub(in crate::sim) fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrEx
                     stream.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
                 }
             }
-            IrSysFunc::RandCallReady { .. } | IrSysFunc::RandValue { .. } => {}
+            IrSysFunc::RandCallReady { .. }
+            | IrSysFunc::RandValue { .. }
+            | IrSysFunc::RandCyclic { .. } => {}
             IrSysFunc::Math { args, .. } => {
                 for arg in args {
                     walk_expr_mut(arg, f);

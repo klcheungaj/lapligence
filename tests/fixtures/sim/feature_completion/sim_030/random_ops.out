@@ -1,0 +1,3 @@
+operators: bad=0
+negative exponent: bad=0
+guarded divisor: bad=0 zero=1

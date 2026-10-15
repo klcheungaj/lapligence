@@ -22,11 +22,12 @@ themselves, so the expected output is independent of the solver's choices.
 | `search_fallback` | products whose BDD exceeds the node budget and whose solutions rejection cannot find in its budget: the CDCL fallback finds members of the solution set and proves a prime product infeasible, leaving the variables unchanged; its distribution is not uniform (S29-D10) | 18.6.1 L30399-30400; 18.6.3 L30471-30472 "If randomize() fails, the constraints are infeasible, and the random variables retain their previous values" |
 
 Negative fixtures (`neg_*`) are located compile errors for constructs outside
-SIM-029: `randc`, `dist`, `solve...before`, `foreach`, random arrays, random
-object members, structures whose members need a value domain, a random
-divisor, a random select index (S29-D7), `**` on a random variable, and a
-value-form `randomize()` where it could run a different number of times than
-the source evaluates it (a short-circuit operand, a loop condition).
+SIM-029: `foreach`, random arrays, random object members, structures whose
+members need a value domain, and a value-form `randomize()` where it could run
+a different number of times than the source evaluates it (a short-circuit
+operand, a loop condition). SIM-030 implements `randc`, `dist`,
+`solve...before`, random divisors, random select indices (superseding S29-D7)
+and `**` on random variables; their cases are in `../sim_030/`.
 
 Run-time error fixtures (`rt_*`) exit with status 1:
 

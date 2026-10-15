@@ -1,0 +1,5 @@
+ordered: bad=0 s=1
+order disabled: s=0
+inline order: s=1
+scope order: bad=0 s=1
+chain: bad=0 a3=1 b0|a0=1 b2c3=1

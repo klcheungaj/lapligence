@@ -1842,9 +1842,9 @@ fn collect_expression_effects(
                 }
             }
             // Reads of the solver session written by the statements above.
-            IrSysFunc::RandCallReady { .. } | IrSysFunc::RandValue { .. } => {
-                effects.push(ExecutionEffect::RuntimeService)
-            }
+            IrSysFunc::RandCallReady { .. }
+            | IrSysFunc::RandValue { .. }
+            | IrSysFunc::RandCyclic { .. } => effects.push(ExecutionEffect::RuntimeService),
             IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
             IrSysFunc::Math { args, .. } => {
                 for arg in args {

@@ -1,0 +1,3 @@
+hidden: derived=9 base=3
+inline: bad=0 caller x=1
+inherited randc: bad=0 seen=1110

@@ -44,7 +44,8 @@ their cycle state passed in and out through `llg_cr_set_cyclic` /
 2. **Function order** (18.5.11). Variables used as arguments of a function
    whose arguments are still random are solved first, in layers; their
    values then become state and the function is called through the generated
-   thunk. A cycle is `LLG_CR_ERROR` (reason `ORDER`).
+   thunk. A cycle is `LLG_CR_ERROR` (reason `ORDER`); a circular
+   `solve...before` among enabled blocks is reason `SOLVE_BEFORE`.
 3. **Components.** Each layer splits into independent components (union-find
    over conjunct supports), solved in order of their smallest variable.
    Variables in no constraint are drawn directly.
@@ -62,10 +63,14 @@ their cycle state passed in and out through `llg_cr_set_cyclic` /
      the last set (S30-D2). Layer i is drawn from Q_i = exists(later
      layers).F with the earlier layers fixed, so its values are weighted by
      their own layer only. Each `dist` adds one-hot selector levels below the
-     variable bits whose 1-literals carry integer weights (w times the
-     product of the `:/` range sizes, divided by the item's own size for
-     `:/`); a draw counts weighted models per node and walks down with fresh
-     uniform integers, so it is exact (S30-D1). A `randc` layer draws until
+     variable bits: one for "the guard fails" and one per nonzero-weight
+     item. Their 1-literals carry integer weights proportional to 1 and to
+     |S| * w(v) / W respectively (the density of the weights relative to
+     uniform over the support S of the items; w is the item's per-value
+     weight, W the total), so a combination where the guard holds weighs its
+     density and scaling all weights changes nothing; a draw counts weighted
+     models per node and walks down with fresh uniform integers, so it is
+     exact (S30-D1). A `randc` layer draws until
      it hits an unused value (64 tries), then enumerates the unused feasible
      values; with none left a new cycle starts (S30-D3).
    - *Rejection*: uniform draws of every component variable, accepted only

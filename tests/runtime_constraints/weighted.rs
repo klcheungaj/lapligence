@@ -4,7 +4,9 @@
 //! A01: generated small problems with weighted items, guards, disabled
 //! blocks and orders are enumerated by an independent evaluator that
 //! computes each solution's probability under the layered weighted measure
-//! (decisions S30-D1 and S30-D2): the solver's samples must stay inside the
+//! (decisions S30-D1 and S30-D2; a dist whose guard holds weighs a legal
+//! combination by its weights' density relative to uniform over its
+//! support, |S| * w(v) / W): the solver's samples must stay inside the
 //! solutions and pass a chi-square bound fixed before the run. Larger
 //! seeded problems check the LRM examples against predeclared tolerances.
 //!
@@ -267,6 +269,58 @@ fn layers(p: &Problem) -> Vec<usize> {
         .collect()
 }
 
+/// S30-D1 weight of a dist whose guard holds: the density of its weights
+/// relative to uniform over its support, |S| * w(v) / W.
+fn dist_density(p: &Problem, d: &Dist, val_of: &dyn Fn(u32, u32) -> u128) -> f64 {
+    let width = p.nodes[d.expr as usize].width;
+    let mut intervals = Vec::new();
+    let mut mass = 0.0;
+    for item in &d.items {
+        let weight = item
+            .weight
+            .map_or(1, |w| val_of(w, p.nodes[w as usize].width)) as f64;
+        if weight == 0.0 {
+            continue;
+        }
+        let bound = |n: u32| {
+            let v = val_of(n, width);
+            if item.signed {
+                signed_value(v, width)
+            } else {
+                v as i128
+            }
+        };
+        let (lo, hi) = (bound(item.lo), bound(item.hi));
+        if hi < lo {
+            continue;
+        }
+        mass += if item.per_range {
+            weight
+        } else {
+            weight * (hi - lo + 1) as f64
+        };
+        intervals.push((lo, hi));
+    }
+    intervals.sort_unstable();
+    let mut support = 0i128;
+    let mut current: Option<(i128, i128)> = None;
+    for (lo, hi) in intervals {
+        current = match current {
+            Some((cl, ch)) if lo <= ch => Some((cl, ch.max(hi))),
+            Some((cl, ch)) => {
+                support += ch - cl + 1;
+                Some((lo, hi))
+            }
+            None => Some((lo, hi)),
+        };
+    }
+    if let Some((cl, ch)) = current {
+        support += ch - cl + 1;
+    }
+    let matched: f64 = dist_matches(p, d, val_of).iter().sum();
+    support as f64 * matched / mass
+}
+
 /// Probability of every solution under the layered weighted measure, or
 /// None when the problem is not satisfiable.
 fn weighted_expectation(p: &Problem) -> Option<BTreeMap<Vec<u128>, f64>> {
@@ -312,7 +366,7 @@ fn weighted_expectation(p: &Problem) -> Option<BTreeMap<Vec<u128>, f64>> {
             if dist.guard.is_some_and(|g| st[g as usize] == St::K(0)) {
                 continue;
             }
-            w *= dist_matches(p, dist, &val_of).iter().sum::<f64>();
+            w *= dist_density(p, dist, &val_of);
         }
         w
     };
@@ -508,7 +562,31 @@ fn constraint_solver_matches_lrm_dist_and_solve_before_examples_on_wide_variable
         }
         g.p
     };
-    let problems = vec![dist_problem, solve_problem(true), solve_problem(false)];
+    // S30-D1: `if (g) y dist { 0 := 5, [1:15] :/ 5 }` reweights y only where
+    // g holds: g stays uniform (the dist covers y's whole range, like
+    // `inside`) and y == 0 half the time under g.
+    let mut rng = Rng(5);
+    let mut g = Gen {
+        rng: &mut rng,
+        p: Problem::default(),
+        allow_calls: false,
+        wide: false,
+        extended: false,
+    };
+    g.p.vars.push(new_var(1, false));
+    g.p.vars.push(new_var(4, false));
+    let guard = var_node(&mut g, 0);
+    let y = var_node(&mut g, 1);
+    let zero = dist_item(&mut g, y, 0, 0, Some(5), false);
+    let rest = dist_item(&mut g, y, 1, 15, Some(5), true);
+    add_dist(&mut g, y, Some(guard), vec![zero, rest], true);
+    let guarded = g.p;
+    let problems = vec![
+        dist_problem,
+        solve_problem(true),
+        solve_problem(false),
+        guarded,
+    ];
     let Some((_dir, executable)) = build_probe(&problems, "runtime-constraints-lrm-weights") else {
         return;
     };
@@ -541,6 +619,20 @@ fn constraint_solver_matches_lrm_dist_and_solve_before_examples_on_wide_variable
     assert!(
         s_true(&outcomes[2]) <= 3,
         "unordered s is 1 for one solution of 65537"
+    );
+    let guarded = &outcomes[3].samples;
+    let g_true = guarded.iter().filter(|s| s[0] == 1).count() as u64;
+    let zero_under_g = guarded.iter().filter(|s| s[0] == 1 && s[1] == 0).count() as u64;
+    let zero_otherwise = guarded.iter().filter(|s| s[0] == 0 && s[1] == 0).count() as u64;
+    assert!(within_tolerance(g_true, n, 0.5), "g={g_true}");
+    assert!(
+        within_tolerance(zero_under_g, g_true, 0.5),
+        "{zero_under_g}/{g_true}"
+    );
+    assert!(
+        within_tolerance(zero_otherwise, n - g_true, 1.0 / 16.0),
+        "{zero_otherwise}/{}",
+        n - g_true
     );
 }
 
@@ -589,10 +681,10 @@ fn constraint_solver_reports_circular_orders_and_negative_weights() {
         return;
     };
     let outcomes = parse(&run_probe(&executable, 8, &[]), problems.len());
-    // LLG_CR_ERROR with LLG_CR_REASON_ORDER (7) and LLG_CR_REASON_WEIGHT (8).
+    // LLG_CR_ERROR with LLG_CR_REASON_SOLVE_BEFORE (9) and LLG_CR_REASON_WEIGHT (8).
     assert_eq!(outcomes[0].statuses, vec![3]);
     assert!(
-        outcomes[0].detail.starts_with("r7 "),
+        outcomes[0].detail.starts_with("r9 "),
         "{}",
         outcomes[0].detail
     );

@@ -1,7 +1,9 @@
 //! Randomize call sites: `obj.randomize()` (18.6.1) with inline constraints
 //! (18.7), variable lists and `null` (18.11), and `std::randomize` (18.12).
 
-use super::problems::{has_placeholder, placeholders_in, ProblemBuilder, PLACEHOLDER_PREFIX};
+use super::problems::{
+    has_placeholder, placeholders_in, DistSpec, ProblemBuilder, PLACEHOLDER_PREFIX,
+};
 use super::*;
 use crate::sim::ir::{IrRandOp, IrSysFunc, RAND_STEP_NEED_CALLS};
 
@@ -27,6 +29,14 @@ struct VarPlan {
     /// Storage key a constraint must not read directly (see
     /// `check_direct_reads`).
     direct: DirectRead,
+    /// The cycle state of a `randc` variable (18.4.2, S30-D3).
+    cyclic: Option<CyclicPlan>,
+}
+
+/// Where a `randc` variable's cycle state lives (a hidden field or signal).
+struct CyclicPlan {
+    read: IrExpr,
+    target: IrLhs,
 }
 
 #[derive(PartialEq)]
@@ -321,11 +331,18 @@ impl Codegen<'_> {
                     RandSelection::Checker => false,
                 };
                 let name = self.node(child).name.clone();
-                if qualifier == RandQualifier::RandC && randomized {
+                if qualifier == RandQualifier::RandC
+                    && randomized
+                    && !self.randc_states.contains_key(&child)
+                {
                     return Err(self.rand_error(
                         node,
                         path,
-                        &format!("`randc` property `{name}` of class `{}` is not supported (planned for SIM-030)", self.node(member).name),
+                        &format!(
+                            "`randc` property `{name}` of class `{}` must be a packed integral value of at most {} bits (18.4.2 permits a limit; S30-D3)",
+                            self.node(member).name,
+                            crate::sim::ir::RAND_CYCLIC_MAX_WIDTH
+                        ),
                     ));
                 }
                 let Some(plan) =
@@ -340,6 +357,9 @@ impl Codegen<'_> {
                     }
                     continue;
                 };
+                if plan.0.cyclic.is_some() {
+                    builder.set_cyclic(plan.0.index);
+                }
                 placeholders.insert(child, plan.1);
                 vars.push(plan.0);
             }
@@ -480,6 +500,16 @@ impl Codegen<'_> {
             RandSelection::List(_) => packed_const(u64::from(in_list), 1, false),
             RandSelection::Checker => packed_const(0, 1, false),
         };
+        let cyclic = match self.randc_states.get(&child).cloned() {
+            Some((state, state_width)) => {
+                let receiver = Some(object.clone());
+                Some(CyclicPlan {
+                    read: self.hidden_state_read(&state, state_width, receiver.clone())?,
+                    target: self.hidden_state_target(&state, state_width, receiver)?,
+                })
+            }
+            None => None,
+        };
         let name = self.node(child).name.clone();
         let (index, placeholder) = builder.add_var(name, width, signed);
         if let Some(metadata) = self.enum_metadata_for_expr(child).cloned() {
@@ -503,6 +533,7 @@ impl Codegen<'_> {
                 lhs,
                 active,
                 direct,
+                cyclic,
             },
             local_read(&placeholder, width, signed),
         )))
@@ -523,7 +554,7 @@ impl Codegen<'_> {
                 continue;
             }
             let root = match info.body {
-                Some(body) => self.constraint_item(path, builder, vars, object, body)?,
+                Some(body) => self.constraint_item(path, builder, vars, object, body, None)?,
                 // A prototype without a body is an empty constraint (18.5.1).
                 None => builder.constant_u64(1, 1, false),
             };
@@ -536,7 +567,7 @@ impl Codegen<'_> {
             blocks.push(enabled);
         }
         if let Some(inline) = inline {
-            let root = self.constraint_item(path, builder, vars, object, inline)?;
+            let root = self.constraint_item(path, builder, vars, object, inline, None)?;
             let root = builder.truth(root);
             builder.add_block("with".to_owned(), root);
             blocks.push(packed_const(1, 1, false));
@@ -544,7 +575,10 @@ impl Codegen<'_> {
         Ok(blocks)
     }
 
-    /// One constraint item (18.5) as a solver node.
+    /// One constraint item (18.5) as a solver node. `guard` is the
+    /// conjunction of the enclosing implication and `if` conditions, which
+    /// scopes the weights of a `dist` (S30-D1).
+    #[allow(clippy::too_many_arguments)]
     fn constraint_item(
         &mut self,
         path: &str,
@@ -552,16 +586,21 @@ impl Codegen<'_> {
         vars: &[VarPlan],
         object: &IrChandleExpr,
         item: NodeId,
+        guard: Option<u32>,
     ) -> Result<u32, String> {
         let kind = match self.kind(item) {
             NodeKind::Constraint(kind) => kind.clone(),
             _ => return Err(self.rand_error(item, path, "unsupported constraint item")),
         };
+        let within = |builder: &mut ProblemBuilder, condition: u32| match guard {
+            Some(guard) => builder.logical(IrRandOp::LogAnd, guard, condition),
+            None => builder.truth(condition),
+        };
         match kind {
             ConstraintKind::List { items } => {
                 let mut nodes = Vec::with_capacity(items.len());
                 for item in items {
-                    let node = self.constraint_item(path, builder, vars, object, item)?;
+                    let node = self.constraint_item(path, builder, vars, object, item, guard)?;
                     nodes.push(builder.truth(node));
                 }
                 Ok(builder.all(&nodes))
@@ -574,11 +613,15 @@ impl Codegen<'_> {
                         "`soft` constraints are not part of IEEE 1800-2009",
                     ));
                 }
+                if let NodeKind::Expr(ExprKind::Dist { .. }) = self.kind(expr) {
+                    return self.constraint_dist(path, builder, vars, object, expr, guard);
+                }
                 self.constraint_expr(path, builder, vars, object, expr)
             }
             ConstraintKind::Implication { predicate, body } => {
                 let predicate = self.constraint_expr(path, builder, vars, object, predicate)?;
-                let body = self.constraint_item(path, builder, vars, object, body)?;
+                let inner = within(builder, predicate);
+                let body = self.constraint_item(path, builder, vars, object, body, Some(inner))?;
                 Ok(builder.logical(IrRandOp::Implies, predicate, body))
             }
             ConstraintKind::Conditional {
@@ -587,24 +630,39 @@ impl Codegen<'_> {
                 else_body,
             } => {
                 let predicate = self.constraint_expr(path, builder, vars, object, predicate)?;
-                let then_body = self.constraint_item(path, builder, vars, object, then_body)?;
+                let inner = within(builder, predicate);
+                let then_body =
+                    self.constraint_item(path, builder, vars, object, then_body, Some(inner))?;
                 let then_node = builder.logical(IrRandOp::Implies, predicate, then_body);
                 match else_body {
                     None => Ok(then_node),
                     Some(else_body) => {
-                        let else_body =
-                            self.constraint_item(path, builder, vars, object, else_body)?;
                         let negated = builder.not(predicate);
+                        let inner = within(builder, negated);
+                        let else_body = self.constraint_item(
+                            path,
+                            builder,
+                            vars,
+                            object,
+                            else_body,
+                            Some(inner),
+                        )?;
                         let else_node = builder.logical(IrRandOp::Implies, negated, else_body);
                         Ok(builder.logical(IrRandOp::LogAnd, then_node, else_node))
                     }
                 }
             }
-            ConstraintKind::SolveBefore { .. } => Err(self.rand_error(
-                item,
-                path,
-                "`solve ... before` is not supported (planned for SIM-030)",
-            )),
+            ConstraintKind::SolveBefore { solve, before } => {
+                let solve = self.solve_before_vars(path, builder, &solve)?;
+                let after = self.solve_before_vars(path, builder, &before)?;
+                for first in &solve {
+                    for second in &after {
+                        builder.add_order(*first, *second);
+                    }
+                }
+                // An ordering is not a value constraint (18.5.9).
+                Ok(builder.constant_u64(1, 1, false))
+            }
             ConstraintKind::Foreach { .. } => Err(self.rand_error(
                 item,
                 path,
@@ -616,6 +674,117 @@ impl Codegen<'_> {
         }
     }
 
+    /// The random variables a `solve...before` list names (18.5.9: rand
+    /// variables only, never randc).
+    fn solve_before_vars(
+        &mut self,
+        path: &str,
+        builder: &ProblemBuilder,
+        primaries: &[NodeId],
+    ) -> Result<Vec<u32>, String> {
+        let mut vars = Vec::with_capacity(primaries.len());
+        for primary in primaries {
+            let lowered = self
+                .lower_expr(path, *primary)
+                .map_err(|error| self.rand_error(*primary, path, &error))?;
+            let Some(var) = builder.placeholder_var(&lowered) else {
+                return Err(self.rand_error(
+                    *primary,
+                    path,
+                    "a `solve...before` list may name only random variables (18.5.9)",
+                ));
+            };
+            if builder.is_cyclic(var) {
+                return Err(self.rand_error(
+                    *primary,
+                    path,
+                    "`randc` variables are not allowed in `solve...before` (18.5.9)",
+                ));
+            }
+            vars.push(var);
+        }
+        Ok(vars)
+    }
+
+    /// `expression dist { ... }` (18.5.4).
+    fn constraint_dist(
+        &mut self,
+        path: &str,
+        builder: &mut ProblemBuilder,
+        vars: &[VarPlan],
+        object: &IrChandleExpr,
+        expr: NodeId,
+        guard: Option<u32>,
+    ) -> Result<u32, String> {
+        let (left, items, default_weight) = match self.kind(expr) {
+            NodeKind::Expr(ExprKind::Dist {
+                left,
+                items,
+                default_weight,
+            }) => (*left, items.clone(), *default_weight),
+            _ => return Err(self.rand_error(expr, path, "not a dist expression")),
+        };
+        if default_weight {
+            return Err(self.rand_error(
+                expr,
+                path,
+                "a `default` dist item is not part of IEEE 1800-2009",
+            ));
+        }
+        let value = self
+            .lower_expr(path, left)
+            .map_err(|error| self.rand_error(left, path, &format!("in a constraint: {error}")))?;
+        self.check_direct_reads(path, left, &value, vars, object)?;
+        let names = placeholders_in(&value);
+        if names.is_empty() {
+            return Err(self.rand_error(
+                left,
+                path,
+                "a dist expression must contain a random variable (18.5.4)",
+            ));
+        }
+        if names.iter().any(|name| {
+            builder
+                .placeholder_var(&local_read(name, 1, false))
+                .is_some_and(|var| builder.is_cyclic(var))
+        }) {
+            return Err(self.rand_error(
+                left,
+                path,
+                "a dist shall not be applied to `randc` variables (18.5.4)",
+            ));
+        }
+        let mut specs = Vec::with_capacity(items.len());
+        for item in &items {
+            let mut lowered = self
+                .lower_inside_items(path, std::slice::from_ref(&item.value))
+                .map_err(|error| self.rand_error(item.value, path, &error))?;
+            if lowered.len() != 1 {
+                return Err(self.rand_error(
+                    item.value,
+                    path,
+                    "a dist item must be a value or a range (18.5.4)",
+                ));
+            }
+            let weight = item
+                .weight
+                .map(|weight| {
+                    self.lower_expr(path, weight)
+                        .map_err(|error| self.rand_error(weight, path, &error))
+                })
+                .transpose()?;
+            specs.push(DistSpec {
+                item: lowered.remove(0),
+                weight,
+                per_range: item.per_range,
+            });
+        }
+        builder.item = self.source_site("in the constraint", path, expr);
+        builder
+            .dist(&value, &specs, guard)
+            .map_err(|error| self.rand_error(expr, path, &error))
+    }
+
     fn constraint_expr(
         &mut self,
         path: &str,
@@ -624,15 +793,18 @@ impl Codegen<'_> {
         object: &IrChandleExpr,
         expr: NodeId,
     ) -> Result<u32, String> {
-        if matches!(
-            self.kind(expr),
-            NodeKind::Expr(ExprKind::Other | ExprKind::Dist { .. })
-        ) {
-            return Err(self.rand_error(
-                expr,
-                path,
-                "unsupported constraint expression (`dist` is planned for SIM-030)",
-            ));
+        match self.kind(expr) {
+            NodeKind::Expr(ExprKind::Other) => {
+                return Err(self.rand_error(expr, path, "unsupported constraint expression"))
+            }
+            NodeKind::Expr(ExprKind::Dist { .. }) => {
+                return Err(self.rand_error(
+                    expr,
+                    path,
+                    "a dist expression may appear only as a constraint (18.5.4)",
+                ))
+            }
+            _ => {}
         }
         let lowered = self
             .lower_expr(path, expr)
@@ -791,6 +963,7 @@ impl Codegen<'_> {
                 lhs,
                 active: packed_const(1, 1, false),
                 direct,
+                cyclic: None,
             });
         }
         let mut blocks = Vec::new();
@@ -806,7 +979,7 @@ impl Codegen<'_> {
                 placeholders,
             });
             let lowered = self
-                .constraint_item(path, &mut builder, &vars, &receiver, inline)
+                .constraint_item(path, &mut builder, &vars, &receiver, inline, None)
                 .map(|root| builder.truth(root));
             self.rand_lowering = saved;
             let root = lowered?;
@@ -858,6 +1031,13 @@ impl Codegen<'_> {
                 value: var.current.clone(),
                 active: local_read(&active, 1, false),
             }));
+            if let Some(cyclic) = &var.cyclic {
+                statements.push(rand(IrRandStmt::SetCyclic {
+                    problem,
+                    var: var.index,
+                    state: cyclic.read.clone(),
+                }));
+            }
         }
         for (index, enabled) in blocks.into_iter().enumerate() {
             statements.push(rand(IrRandStmt::SetBlock {
@@ -998,13 +1178,32 @@ impl Codegen<'_> {
             } else {
                 value
             };
+            let mut then_ = vec![IrStmt::Assign {
+                lhs: var.lhs.clone(),
+                rhs: value,
+                nba: false,
+            }];
+            if let Some(cyclic) = &var.cyclic {
+                // The cycle advances only with a committed solution, so a
+                // failed randomize leaves it unchanged (S30-D3).
+                let width = crate::sim::ir::rand_cyclic_state_width(var.width);
+                then_.push(IrStmt::Assign {
+                    lhs: cyclic.target.clone(),
+                    rhs: IrExpr::new(
+                        IrExprKind::SysFunc(Box::new(IrSysFunc::RandCyclic {
+                            problem,
+                            var: var.index,
+                        })),
+                        width,
+                        false,
+                        None,
+                    ),
+                    nba: false,
+                });
+            }
             commit.push(IrStmt::If {
                 cond: local_read(&format!("{tag}_a{}", var.index), 1, false),
-                then_: vec![IrStmt::Assign {
-                    lhs: var.lhs.clone(),
-                    rhs: value,
-                    nba: false,
-                }],
+                then_,
                 els: None,
                 check: IrUniquePriorityCheck::None,
             });

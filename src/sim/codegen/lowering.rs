@@ -1722,6 +1722,9 @@ struct Codegen<'a> {
     /// Hidden `rand_mode` off bit of each `rand`/`randc` class property
     /// (IEEE 1800-2009 18.8), by declaration.
     rand_mode_bits: HashMap<NodeId, randomization::ModeBit>,
+    /// Hidden cycle state of each packed `randc` class property of at most
+    /// 16 bits (18.4.2, S30-D3), with its width, by declaration.
+    randc_states: HashMap<NodeId, (randomization::ModeBit, u32)>,
     /// Hidden `constraint_mode` off bit of each constraint block (18.9), by
     /// declaration; an override shares the bit of the root declaration.
     constraint_mode_bits: HashMap<NodeId, randomization::ModeBit>,
@@ -1940,6 +1943,7 @@ impl<'a> Codegen<'a> {
             virtual_interface_views: HashMap::new(),
             virtual_interface_view_methods: HashMap::new(),
             rand_mode_bits: HashMap::new(),
+            randc_states: HashMap::new(),
             constraint_mode_bits: HashMap::new(),
             rand_lowering: None,
             rand_prelude: None,

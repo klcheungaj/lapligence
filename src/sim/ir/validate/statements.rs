@@ -1654,6 +1654,10 @@ impl Validator<'_> {
             IrRandStmt::SetBlock { block, .. } => (*block as usize) < problem.blocks.len(),
             IrRandStmt::SetLeaf { leaf, .. } => (*leaf as usize) < problem.leaves.len(),
             IrRandStmt::SetCallResult { call, .. } => (*call as usize) < problem.calls.len(),
+            IrRandStmt::SetCyclic { var, .. } => problem
+                .vars
+                .get(*var as usize)
+                .is_some_and(|variable| variable.cyclic),
         };
         if !in_range {
             return self.fail(path, "randomize statement index is out of range");

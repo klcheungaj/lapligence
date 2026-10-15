@@ -64,6 +64,18 @@ sv4_t llg_cr_value_sv4(const llg_cr_session_t* s, uint32_t var, uint32_t width,
     return sv4_from_limbs(llg_cr_value(s, var), NULL, NULL, width, is_signed);
 }
 
+void llg_cr_set_cyclic_sv4(llg_cr_session_t* s, uint32_t var, sv4_t state, uint32_t width) {
+    sv4_t sized = sv4_resize(state, width, 0);
+    uint64_t* words = randomize_scratch(width);
+    randomize_words(sized, words, width);
+    llg_cr_set_cyclic(s, var, words);
+    sv4_destroy(&sized);
+}
+
+sv4_t llg_cr_cyclic_sv4(const llg_cr_session_t* s, uint32_t var, uint32_t width) {
+    return sv4_from_limbs(llg_cr_cyclic(s, var), NULL, NULL, width, 0);
+}
+
 static const char* randomize_reason_text(int reason) {
     switch (reason) {
     case LLG_CR_REASON_NULL: return "null object handle in a constraint";
@@ -73,6 +85,8 @@ static const char* randomize_reason_text(int reason) {
     case LLG_CR_REASON_DIVZERO: return "division by zero in a constraint";
     case LLG_CR_REASON_INDEX: return "select index out of range in a constraint";
     case LLG_CR_REASON_ORDER: return "circular function-argument order";
+    case LLG_CR_REASON_SOLVE_BEFORE: return "circular solve-before order";
+    case LLG_CR_REASON_WEIGHT: return "negative or unevaluated dist weight";
     default: return "evaluation error";
     }
 }
@@ -107,6 +121,7 @@ static int randomize_report(const llg_cr_problem_t* problem, llg_cr_status_t sta
             break;
         case LLG_CR_REASON_XZ_VAR:
         case LLG_CR_REASON_ORDER:
+        case LLG_CR_REASON_SOLVE_BEFORE:
             if (report->item < problem->var_count) name = problem->vars[report->item].name;
             break;
         case LLG_CR_REASON_XZ_CALL:

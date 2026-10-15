@@ -271,7 +271,9 @@ fn ident_children(e: &mut IrExpr) {
                     stream.expressions_mut(&mut |expression| ident_expr(expression));
                 }
             }
-            IrSysFunc::RandCallReady { .. } | IrSysFunc::RandValue { .. } => {}
+            IrSysFunc::RandCallReady { .. }
+            | IrSysFunc::RandValue { .. }
+            | IrSysFunc::RandCyclic { .. } => {}
             IrSysFunc::Math { args, .. } => {
                 for arg in args {
                     ident_expr(arg);

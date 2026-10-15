@@ -1321,6 +1321,20 @@ impl Validator<'_> {
                         return self.fail(path, "randomize value changes the variable type");
                     }
                 }
+                IrSysFunc::RandCyclic { problem, var } => {
+                    let Some(variable) = self
+                        .model
+                        .rand_problems
+                        .get(*problem)
+                        .and_then(|p| p.vars.get(*var as usize))
+                    else {
+                        return self.fail(path, "randc state names no variable");
+                    };
+                    let width = crate::sim::ir::rand_cyclic_state_width(variable.width);
+                    if !variable.cyclic || (expr.width, expr.signed) != (width, false) {
+                        return self.fail(path, "randc state of a variable that is not randc");
+                    }
+                }
                 IrSysFunc::Math { kind, args } => {
                     if args.len() != kind.arity() || !expr.is_real() {
                         return self.fail(

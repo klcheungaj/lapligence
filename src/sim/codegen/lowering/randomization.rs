@@ -372,13 +372,17 @@ impl Codegen<'_> {
     /// Display entries of the hidden off bits: they are not class
     /// properties, so `%p` skips them.
     pub(super) fn hidden_pattern_fields(
-        &self,
+        &mut self,
         class_index: usize,
-        ty: usize,
     ) -> Vec<(usize, crate::sim::ir::IrPatternField)> {
         self.hidden_mode_fields(class_index)
             .into_iter()
-            .map(|field| {
+            .map(|(field, width)| {
+                let ty = self.intern_pattern_type(crate::sim::ir::IrPatternType::Packed {
+                    width,
+                    signed: false,
+                    enum_members: Vec::new(),
+                });
                 (
                     field,
                     crate::sim::ir::IrPatternField {

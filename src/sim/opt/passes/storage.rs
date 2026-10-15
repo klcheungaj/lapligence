@@ -1257,7 +1257,9 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                     stream.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
                 }
             }
-            IrSysFunc::RandCallReady { .. } | IrSysFunc::RandValue { .. } => {}
+            IrSysFunc::RandCallReady { .. }
+            | IrSysFunc::RandValue { .. }
+            | IrSysFunc::RandCyclic { .. } => {}
             IrSysFunc::Math { args, .. } => {
                 for arg in args {
                     collect_expr_reads(arg, model, rw);

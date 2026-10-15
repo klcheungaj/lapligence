@@ -11,8 +11,8 @@
 //! re-derives an expression type.
 
 use crate::sim::ir::{
-    IrBinOp, IrConst, IrExpr, IrExprKind, IrInsideItem, IrRandCall, IrRandLeaf, IrRandNode,
-    IrRandOp, IrRandProblem, IrRandVar, IrUnOp,
+    IrBinOp, IrConst, IrExpr, IrExprKind, IrInsideItem, IrRandCall, IrRandDist, IrRandDistItem,
+    IrRandLeaf, IrRandNode, IrRandOp, IrRandOrder, IrRandProblem, IrRandVar, IrUnOp,
 };
 use std::collections::HashMap;
 
@@ -40,6 +40,16 @@ pub(super) struct ProblemBuilder {
     var_nodes: Vec<Option<u32>>,
     /// Description of the constraint item being translated (leaf names).
     pub(super) item: String,
+    /// `solve...before` pairs of the block being translated; `add_block`
+    /// assigns them to it.
+    pending_orders: Vec<(u32, u32)>,
+}
+
+/// One lowered `dist` item (18.5.4).
+pub(super) struct DistSpec {
+    pub(super) item: IrInsideItem,
+    pub(super) weight: Option<IrExpr>,
+    pub(super) per_range: bool,
 }
 
 type Typed = (u32, u32, bool);
@@ -87,6 +97,7 @@ impl ProblemBuilder {
             placeholders: HashMap::new(),
             var_nodes: Vec::new(),
             item: String::new(),
+            pending_orders: Vec::new(),
         }
     }
 
@@ -135,7 +146,159 @@ impl ProblemBuilder {
         self.problem
             .blocks
             .push(crate::sim::ir::IrRandBlock { name, root });
+        for (before, after) in std::mem::take(&mut self.pending_orders) {
+            self.problem.orders.push(IrRandOrder {
+                block: index,
+                before,
+                after,
+            });
+        }
         index
+    }
+
+    /// Mark variable `var` `randc` (18.4.2).
+    pub(super) fn set_cyclic(&mut self, var: u32) {
+        self.problem.vars[var as usize].cyclic = true;
+    }
+
+    /// The variable a lowered expression names when it is exactly one
+    /// placeholder read.
+    pub(super) fn placeholder_var(&self, expr: &IrExpr) -> Option<u32> {
+        match &expr.kind {
+            IrExprKind::LocalRead(name) => self.placeholders.get(name).copied(),
+            _ => None,
+        }
+    }
+
+    pub(super) fn is_cyclic(&self, var: u32) -> bool {
+        self.problem.vars[var as usize].cyclic
+    }
+
+    /// Record `solve before before after` for the block being translated.
+    pub(super) fn add_order(&mut self, before: u32, after: u32) {
+        self.pending_orders.push((before, after));
+    }
+
+    /// `value dist { items }` under `guard` (18.5.4): a 1-bit node that holds
+    /// when the value matches an item of nonzero weight, with the weights
+    /// recorded for the sampler (S30-D1). Item values, bounds and weights
+    /// must not read random variables.
+    pub(super) fn dist(
+        &mut self,
+        value: &IrExpr,
+        specs: &[DistSpec],
+        guard: Option<u32>,
+    ) -> Result<u32, String> {
+        let value = self.expr(value)?;
+        let mut bounds = Vec::with_capacity(specs.len());
+        for spec in specs {
+            let random = match &spec.item {
+                IrInsideItem::Value(item) => has_placeholder(item),
+                IrInsideItem::Range { low, high } => has_placeholder(low) || has_placeholder(high),
+                IrInsideItem::OpenRange { low, high } => {
+                    low.as_ref().is_some_and(has_placeholder)
+                        || high.as_ref().is_some_and(has_placeholder)
+                }
+                _ => return Err("a dist item must be a value or a range (18.5.4)".into()),
+            } || spec.weight.as_ref().is_some_and(has_placeholder);
+            if random {
+                return Err(
+                    "a dist item value, range bound or weight that reads a random variable is not supported (S30-D10)"
+                        .into(),
+                );
+            }
+            bounds.push(match &spec.item {
+                IrInsideItem::Value(item) => {
+                    if let IrExprKind::Const(constant) = &item.kind {
+                        if has_x_or_z(constant) {
+                            return Err(
+                                "a dist item value with X or Z bits is not supported".into()
+                            );
+                        }
+                    }
+                    let node = self.expr(item)?;
+                    (Some(node), Some(node), true)
+                }
+                IrInsideItem::Range { low, high } => {
+                    (Some(self.expr(low)?), Some(self.expr(high)?), false)
+                }
+                IrInsideItem::OpenRange { low, high } => (
+                    low.as_ref().map(|low| self.expr(low)).transpose()?,
+                    high.as_ref().map(|high| self.expr(high)).transpose()?,
+                    false,
+                ),
+                _ => unreachable!("checked above"),
+            });
+        }
+        // The value and every bound compare in one type (11.4.13), which
+        // also orders all items in one domain for the support size.
+        let (_, mut width, mut signed) = self.ty(value);
+        for (low, high, _) in &bounds {
+            for node in [*low, *high].into_iter().flatten() {
+                let (_, w, s) = self.ty(node);
+                width = width.max(w);
+                signed &= s;
+            }
+        }
+        let words = width.div_ceil(64).max(1) as usize;
+        let target = self.coerce(value, width, signed);
+        let mut items = Vec::with_capacity(specs.len());
+        for (spec, (low, high, single)) in specs.iter().zip(bounds) {
+            let low = match low {
+                Some(node) => self.coerce(node, width, signed),
+                None => {
+                    // `$` as a lower bound: the type's minimum.
+                    let mut min = vec![0u64; words];
+                    if signed {
+                        min[((width - 1) / 64) as usize] |= 1u64 << ((width - 1) % 64);
+                    }
+                    self.constant_words(&min, width, signed)
+                }
+            };
+            let high = match high {
+                Some(node) if !single => self.coerce(node, width, signed),
+                Some(_) => low,
+                None => {
+                    let mut max = vec![u64::MAX; words];
+                    if signed {
+                        max[((width - 1) / 64) as usize] &= !(1u64 << ((width - 1) % 64));
+                    }
+                    self.constant_words(&max, width, signed)
+                }
+            };
+            let matches = if single {
+                self.push(IrRandOp::Eq, false, 1, target, low, 0)
+            } else {
+                let ge = self.push(IrRandOp::Ge, false, 1, target, low, 0);
+                let le = self.push(IrRandOp::Le, false, 1, target, high, 0);
+                self.push(IrRandOp::LogAnd, false, 1, ge, le, 0)
+            };
+            let weight = spec
+                .weight
+                .as_ref()
+                .map(|weight| {
+                    if weight.is_real() {
+                        return Err("a dist weight must be integral (18.5.4)".to_owned());
+                    }
+                    self.expr(weight)
+                })
+                .transpose()?;
+            items.push(IrRandDistItem {
+                matches,
+                lo: low,
+                hi: high,
+                weight,
+                per_range: spec.per_range,
+                signed,
+            });
+        }
+        let index = self.problem.dists.len() as u32;
+        self.problem.dists.push(IrRandDist {
+            expr: value,
+            guard,
+            items,
+        });
+        Ok(self.push(IrRandOp::Dist, false, 1, index, 0, 0))
     }
 
     fn push(&mut self, op: IrRandOp, signed: bool, width: u32, a: u32, b: u32, c: u32) -> u32 {
@@ -318,6 +481,19 @@ impl ProblemBuilder {
                     .ok_or_else(|| "unknown random variable placeholder".to_owned())?;
                 Ok(self.var_node(var))
             }
+            IrExprKind::Bin {
+                op: IrBinOp::Pow,
+                a,
+                b,
+            } => {
+                // `a ** b`: the result takes a's context type; b is
+                // self-determined (11.4.3, Table 11-4). A zero base with a
+                // negative exponent is an evaluation error (S30-D4).
+                let base = self.expr(a)?;
+                let base = self.coerce(base, expr.width, expr.signed);
+                let exponent = self.expr(b)?;
+                Ok(self.push(IrRandOp::Pow, expr.signed, expr.width, base, exponent, 0))
+            }
             IrExprKind::Bin { op, a, b } => self.binary(*op, a, b),
             IrExprKind::Un { op, a } => {
                 let a = self.expr(a)?;
@@ -360,9 +536,6 @@ impl ProblemBuilder {
                 Ok(self.push(IrRandOp::Repl, false, width, inner, count, 0))
             }
             IrExprKind::BitSel { base, idx } => {
-                if has_placeholder(idx) {
-                    return Err(random_index());
-                }
                 let base = self.expr(base)?;
                 self.select(base, idx, 1, false)
             }
@@ -372,9 +545,6 @@ impl ProblemBuilder {
                 neg,
                 ..
             } => {
-                if has_placeholder(base_idx) {
-                    return Err(random_index());
-                }
                 let base = self.expr(base)?;
                 self.select(base, base_idx, expr.width, *neg)
             }
@@ -441,15 +611,7 @@ impl ProblemBuilder {
                 let (a, b) = (self.expr(a)?, self.expr(b)?);
                 return Ok(self.logical(IrRandOp::Equiv, a, b));
             }
-            IrBinOp::Pow => {
-                return Err("`**` is not supported on random variables in constraints".into())
-            }
-            IrBinOp::Div | IrBinOp::Mod if has_placeholder(b) => {
-                return Err(
-                    "a random divisor in `/` or `%` is not supported (S29: planned for SIM-030)"
-                        .into(),
-                )
-            }
+            IrBinOp::Pow => unreachable!("`**` is translated with its result type"),
             _ => {}
         }
         let left = self.expr(a)?;
@@ -596,8 +758,9 @@ impl ProblemBuilder {
         })
     }
 
-    /// `base[index +: width]` (or `-:`) with a state index; a bit outside the
-    /// base is an evaluation error, as its X value would be (S29-D1).
+    /// `base[index +: width]` (or `-:`); a bit outside the base is an
+    /// evaluation error, as its X value would be (S29-D1). A random index
+    /// excludes the assignments that select outside the base (S30-D4).
     fn select(&mut self, base: u32, index: &IrExpr, width: u32, neg: bool) -> Result<u32, String> {
         let (base, base_width, _) = self.ty(base);
         if let IrExprKind::Const(constant) = &index.kind {
@@ -709,8 +872,4 @@ impl ProblemBuilder {
         });
         Ok(self.push(IrRandOp::Call, expr.signed, expr.width, index, 0, 0))
     }
-}
-
-fn random_index() -> String {
-    "a select whose index is a random variable is not supported (S29-D7)".to_owned()
 }

@@ -426,6 +426,7 @@ impl<'a> Codegen<'a> {
                     .rand_mode_bits
                     .values_mut()
                     .chain(self.constraint_mode_bits.values_mut())
+                    .chain(self.randc_states.values_mut().map(|(bit, _)| bit))
                 {
                     if let super::super::randomization::ModeBit::Field(owner, index) = bit {
                         if *owner == class_index {

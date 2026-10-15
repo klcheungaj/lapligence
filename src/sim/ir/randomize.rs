@@ -346,6 +346,12 @@ pub enum IrRandStmt {
         leaf: u32,
         value: Option<IrExpr>,
     },
+    /// The cycle state of `randc` variable `var` (S30-D3).
+    SetCyclic {
+        problem: usize,
+        var: u32,
+        state: IrExpr,
+    },
     /// The result of a ready constraint function call.
     SetCallResult {
         problem: usize,
@@ -361,6 +367,7 @@ impl IrRandStmt {
             | Self::SetVar { problem, .. }
             | Self::SetBlock { problem, .. }
             | Self::SetLeaf { problem, .. }
+            | Self::SetCyclic { problem, .. }
             | Self::SetCallResult { problem, .. } => *problem,
         }
     }
@@ -372,6 +379,7 @@ impl IrRandStmt {
             Self::SetVar { value, active, .. } => vec![value, active],
             Self::SetBlock { enabled, .. } => vec![enabled],
             Self::SetLeaf { value, .. } => value.iter().collect(),
+            Self::SetCyclic { state, .. } => vec![state],
             Self::SetCallResult { value, .. } => vec![value],
         }
     }
@@ -382,6 +390,7 @@ impl IrRandStmt {
             Self::SetVar { value, active, .. } => vec![value, active],
             Self::SetBlock { enabled, .. } => vec![enabled],
             Self::SetLeaf { value, .. } => value.iter_mut().collect(),
+            Self::SetCyclic { state, .. } => vec![state],
             Self::SetCallResult { value, .. } => vec![value],
         }
     }

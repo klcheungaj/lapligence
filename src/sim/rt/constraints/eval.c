@@ -623,6 +623,15 @@ static void cr_classify_dist(llg_cr_session_t* s, uint32_t n) {
             }
             if (cr_dist_item_zero(s, item)) continue;
         }
+        /* The bounds size a `:/` weight: they must be evaluated. */
+        if (s->status[item->lo] == CR_E || s->status[item->hi] == CR_E) {
+            cr_inherit_error(s, n, s->status[item->lo] == CR_E ? item->lo : item->hi);
+            return;
+        }
+        if (s->status[item->lo] != CR_K || s->status[item->hi] != CR_K) {
+            cr_set_error(s, n, LLG_CR_REASON_WEIGHT, n);
+            return;
+        }
         uint32_t m = item->match;
         if (s->status[m] == CR_K) {
             if (cr_truth(s, m)) dominant = 1;

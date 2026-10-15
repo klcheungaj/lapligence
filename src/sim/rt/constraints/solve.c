@@ -503,6 +503,84 @@ static void cr_item_size(llg_cr_session_t* s, const llg_cr_dist_item_t* item, ui
     free(d);
 }
 
+/* Number of distinct values in the nonzero-weight items of `dist` as a
+ * natural in `out` (limbs words). Lowering gives every item of a dist one
+ * comparison type, so the items are intervals of one ordered domain. */
+static void cr_dist_support(llg_cr_session_t* s, const llg_cr_dist_t* dist, uint64_t* out,
+                            uint32_t limbs) {
+    const llg_cr_problem_t* p = s->p;
+    for (uint32_t i = 0; i < limbs; ++i) out[i] = 0;
+    if (!dist->item_count) return;
+    uint32_t w = p->nodes[p->dist_items[dist->item_first].lo].bit_width;
+    uint32_t words = CR_WORDS(w + 1u);
+    uint32_t n = 0;
+    uint64_t* lo = (uint64_t*)cr_alloc((size_t)dist->item_count * words, sizeof(uint64_t));
+    uint64_t* hi = (uint64_t*)cr_alloc((size_t)dist->item_count * words, sizeof(uint64_t));
+    for (uint32_t i = 0; i < dist->item_count; ++i) {
+        const llg_cr_dist_item_t* item = &p->dist_items[dist->item_first + i];
+        if (cr_dist_item_zero(s, item)) continue;
+        uint64_t* l = lo + (size_t)n * words;
+        uint64_t* h = hi + (size_t)n * words;
+        bv_extend(l, w, cr_node_val(s, item->lo), p->nodes[item->lo].bit_width, item->lo_signed);
+        bv_extend(h, w, cr_node_val(s, item->hi), p->nodes[item->hi].bit_width, item->lo_signed);
+        /* Signed bounds order like unsigned ones with the sign bit flipped. */
+        if (item->lo_signed) {
+            bv_set_bit(l, w - 1u, !bv_bit(l, w - 1u));
+            bv_set_bit(h, w - 1u, !bv_bit(h, w - 1u));
+        }
+        if (bv_ucmp(h, l, w) < 0) continue;
+        /* Insertion by lower bound. */
+        uint32_t k = n;
+        while (k > 0 && bv_ucmp(lo + (size_t)(k - 1u) * words, l, w) > 0) --k;
+        if (k != n) {
+            uint64_t* tl = (uint64_t*)cr_alloc(words, sizeof(uint64_t));
+            uint64_t* th = (uint64_t*)cr_alloc(words, sizeof(uint64_t));
+            memcpy(tl, l, words * sizeof(uint64_t));
+            memcpy(th, h, words * sizeof(uint64_t));
+            memmove(lo + (size_t)(k + 1u) * words, lo + (size_t)k * words,
+                    (size_t)(n - k) * words * sizeof(uint64_t));
+            memmove(hi + (size_t)(k + 1u) * words, hi + (size_t)k * words,
+                    (size_t)(n - k) * words * sizeof(uint64_t));
+            memcpy(lo + (size_t)k * words, tl, words * sizeof(uint64_t));
+            memcpy(hi + (size_t)k * words, th, words * sizeof(uint64_t));
+            free(tl);
+            free(th);
+        }
+        ++n;
+    }
+    /* Merge overlapping intervals and add their sizes (w + 1 bits). */
+    uint64_t* cl = (uint64_t*)cr_alloc(words, sizeof(uint64_t));
+    uint64_t* ch = (uint64_t*)cr_alloc(words, sizeof(uint64_t));
+    uint64_t* d = (uint64_t*)cr_alloc(words, sizeof(uint64_t));
+    uint64_t one[1] = {1};
+    for (uint32_t i = 0; i <= n; ++i) {
+        const uint64_t* l = lo + (size_t)i * words;
+        const uint64_t* h = hi + (size_t)i * words;
+        if (i > 0 && i < n && bv_ucmp(l, ch, w) <= 0) {
+            if (bv_ucmp(h, ch, w) > 0) memcpy(ch, h, words * sizeof(uint64_t));
+            continue;
+        }
+        if (i > 0) {
+            for (uint32_t k = 0; k < words; ++k) d[k] = 0;
+            bv_sub(d, ch, cl, w + 1u);
+            for (uint32_t k = 0; k < words && k < limbs; ++k) {
+                uint64_t add[1] = {d[k]};
+                bn_add(out + k, add, 1u);
+            }
+            bn_add(out, one, 1u);
+        }
+        if (i < n) {
+            memcpy(cl, l, words * sizeof(uint64_t));
+            memcpy(ch, h, words * sizeof(uint64_t));
+        }
+    }
+    free(cl);
+    free(ch);
+    free(d);
+    free(lo);
+    free(hi);
+}
+
 /* Assign layers: randc variables first (one layer each), then the
  * solve-before DAG as late as possible (18.5.9 L30075-30080). Returns
  * LLG_CR_ERROR for a circular order. */
@@ -662,7 +740,10 @@ static void cr_comp_aig_build(cr_solve_t* st, cr_comp_aig_t* c, const uint32_t* 
                 weight_bits += p->nodes[item->lo].bit_width + 2u;
                 if (item->weight != LLG_CR_NONE) weight_bits += p->nodes[item->weight].bit_width;
             }
-            weight_bits += 2u;
+            /* The support size and the sum over the items. */
+            if (dist->item_count)
+                weight_bits += p->nodes[p->dist_items[dist->item_first].lo].bit_width + 1u;
+            weight_bits += 34u;
         }
         uint32_t limbs = (var_levels + 2u * weight_bits) / 64u + 3u;
         lay->limbs = limbs;
@@ -692,22 +773,20 @@ static void cr_comp_aig_build(cr_solve_t* st, cr_comp_aig_t* c, const uint32_t* 
                 bn_mul(t, scale, size, limbs);
                 memcpy(scale, t, limbs * sizeof(uint64_t));
             }
-            uint32_t guard = cr_guard_lit(s, &c->blast, dist->guard);
-            uint32_t first = level;
-            /* Selector 0: the guard does not hold; weight = scale. */
-            uint32_t s0 = (level + 1u) << 1;
-            lay->selector[level] = 1;
-            lay->layer[level] = (uint8_t)plan->dist_layer[d];
-            memcpy(lay->weight + (size_t)level * limbs, scale, limbs * sizeof(uint64_t));
-            out = cr_and(g, out, cr_or(g, s0 ^ 1u, guard ^ 1u));
-            ++level;
+            /* Density relative to uniform over the support S (S30-D1): a
+             * value v where the guard holds weighs |S| * w(v) / W, where w(v)
+             * sums the matching items' per-value weights (w for `:=`, w / n
+             * for `:/`) and W = sum over v of w(v); where the guard fails it
+             * weighs 1. Everything is multiplied by W * scale to stay
+             * integral. */
+            uint64_t* support = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
+            uint64_t* mass = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
+            cr_dist_support(s, dist, support, limbs);
+            uint32_t sel_first = level + 1u;
             for (uint32_t i = 0; i < dist->item_count; ++i) {
                 const llg_cr_dist_item_t* item = &p->dist_items[dist->item_first + i];
                 if (cr_dist_item_zero(s, item)) continue;
-                uint32_t sel = (level + 1u) << 1;
-                lay->selector[level] = 1;
-                lay->layer[level] = (uint8_t)plan->dist_layer[d];
-                uint64_t* w = lay->weight + (size_t)level * limbs;
+                uint64_t* w = lay->weight + (size_t)(sel_first++) * limbs;
                 for (uint32_t k = 0; k < limbs; ++k) w[k] = 0;
                 if (item->weight == LLG_CR_NONE) {
                     w[0] = 1;
@@ -716,14 +795,26 @@ static void cr_comp_aig_build(cr_solve_t* st, cr_comp_aig_t* c, const uint32_t* 
                     for (uint32_t k = 0; k < CR_WORDS(p->nodes[item->weight].bit_width) && k < limbs; ++k)
                         w[k] = wv[k];
                 }
-                /* w * scale, divided by this item's range size for :/ :
-                 * the product of the other :/ sizes. */
+                /* The item's mass times scale: w * n * scale for `:=`,
+                 * w * scale for `:/`. */
+                for (uint32_t k = 0; k < limbs; ++k) t[k] = 0;
+                bn_mul(t, w, scale, limbs);
+                if (!item->per_range) {
+                    cr_item_size(s, item, size, limbs);
+                    uint64_t* prod = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
+                    bn_mul(prod, t, size, limbs);
+                    memcpy(t, prod, limbs * sizeof(uint64_t));
+                    free(prod);
+                }
+                bn_add(mass, t, limbs);
+                /* Per-value weight times scale: w * scale, divided by this
+                 * item's size for `:/` (the product of the other sizes). */
                 for (uint32_t k = 0; k < limbs; ++k) t[k] = 0;
                 t[0] = 1;
                 for (uint32_t j = 0; j < dist->item_count; ++j) {
                     const llg_cr_dist_item_t* other = &p->dist_items[dist->item_first + j];
                     if (!other->per_range || cr_dist_item_zero(s, other)) continue;
-                    if (j == i && item->per_range) continue;
+                    if (j == i) continue;
                     cr_item_size(s, other, size, limbs);
                     if (!bn_bits(size, limbs)) continue;
                     uint64_t* prod = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
@@ -737,12 +828,32 @@ static void cr_comp_aig_build(cr_solve_t* st, cr_comp_aig_t* c, const uint32_t* 
                 }
                 uint64_t* prod = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
                 bn_mul(prod, w, t, limbs);
-                memcpy(w, prod, limbs * sizeof(uint64_t));
+                bn_mul(w, prod, support, limbs);
                 free(prod);
+            }
+            uint32_t guard = cr_guard_lit(s, &c->blast, dist->guard);
+            uint32_t first = level;
+            /* Selector 0: the guard does not hold; weight W * scale (1 when
+             * every weight is zero: then no item can hold). */
+            uint32_t s0 = (level + 1u) << 1;
+            lay->selector[level] = 1;
+            lay->layer[level] = (uint8_t)plan->dist_layer[d];
+            if (!bn_bits(mass, limbs)) mass[0] = 1;
+            memcpy(lay->weight + (size_t)level * limbs, mass, limbs * sizeof(uint64_t));
+            out = cr_and(g, out, cr_or(g, s0 ^ 1u, guard ^ 1u));
+            ++level;
+            for (uint32_t i = 0; i < dist->item_count; ++i) {
+                const llg_cr_dist_item_t* item = &p->dist_items[dist->item_first + i];
+                if (cr_dist_item_zero(s, item)) continue;
+                uint32_t sel = (level + 1u) << 1;
+                lay->selector[level] = 1;
+                lay->layer[level] = (uint8_t)plan->dist_layer[d];
                 out = cr_and(g, out, cr_or(g, sel ^ 1u,
                                           cr_and(g, guard, cr_conjunct_lit(s, &c->blast, item->match))));
                 ++level;
             }
+            free(support);
+            free(mass);
             /* Exactly one selector of this dist. */
             uint32_t any = CR_FALSE;
             for (uint32_t a = first; a < level; ++a) {
@@ -1221,7 +1332,7 @@ static llg_cr_status_t cr_order_heights(cr_solve_t* st) {
                 if (round > p->var_count) {
                     /* Still growing after more rounds than variables: a
                      * circular order (18.5.9 L30071-30072). */
-                    st->report->reason = LLG_CR_REASON_ORDER;
+                    st->report->reason = LLG_CR_REASON_SOLVE_BEFORE;
                     st->report->item = ord->before;
                     return LLG_CR_ERROR;
                 }

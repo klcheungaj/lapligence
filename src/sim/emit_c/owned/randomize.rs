@@ -229,6 +229,17 @@ impl Frame<'_, '_> {
                     )),
                 }
             }
+            IrRandStmt::SetCyclic { var, state, .. } => {
+                let width = crate::sim::ir::rand_cyclic_state_width(
+                    self.ctx.model.rand_problems[problem].vars[*var as usize].width,
+                );
+                let state = self.expression(state)?;
+                self.line(format!(
+                    "llg_cr_set_cyclic_sv4({s}, {var}u, {}, {width}u);",
+                    state.code
+                ));
+                self.discard(state);
+            }
             IrRandStmt::SetCallResult { call, value, .. } => {
                 let width = self.ctx.model.rand_problems[problem].calls[*call as usize].width;
                 let value = self.expression(value)?;
@@ -288,6 +299,15 @@ impl Frame<'_, '_> {
                 ),
                 expr.width,
                 expr.signed,
+            )),
+            IrSysFunc::RandCyclic { problem, var } => Ok(self.value(
+                format!(
+                    "llg_cr_cyclic_sv4({}, {var}u, {}u)",
+                    session(*problem),
+                    expr.width
+                ),
+                expr.width,
+                false,
             )),
             _ => Err("not a randomize primitive".to_owned()),
         }

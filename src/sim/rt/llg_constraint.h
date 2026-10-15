@@ -205,9 +205,10 @@ enum {
     LLG_CR_REASON_XZ_CALL,   /* call: result holds X/Z */
     LLG_CR_REASON_DIVZERO,   /* node: division or modulo by zero */
     LLG_CR_REASON_INDEX,     /* node: select index out of range */
-    LLG_CR_REASON_ORDER,     /* var: circular function-argument or
-                                solve...before order */
-    LLG_CR_REASON_WEIGHT     /* node: negative dist weight (S30-D8) */
+    LLG_CR_REASON_ORDER,     /* var: circular function-argument order */
+    LLG_CR_REASON_WEIGHT,    /* node: negative or unevaluated dist weight
+                                or bound (S30-D8) */
+    LLG_CR_REASON_SOLVE_BEFORE /* var: circular solve...before order */
 };
 
 /* Engines, as bits of llg_cr_report_t.engines. */
