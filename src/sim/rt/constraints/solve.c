@@ -132,6 +132,7 @@ static llg_cr_session_t* cr_session_new(const llg_cr_problem_t* p) {
     cr_validate_problem(p);
     llg_cr_session_t* s = (llg_cr_session_t*)cr_alloc(1u, sizeof(*s));
     s->p = p;
+    s->site = s;
     uint32_t nodes = p->node_count ? p->node_count : 1u;
     s->node_off = (uint32_t*)cr_alloc((size_t)nodes + 1u, sizeof(uint32_t));
     uint64_t words = 0;
@@ -444,6 +445,10 @@ static void cr_support(llg_cr_session_t* s, uint32_t root, int through_calls,
         cr_push_live(s, n, stack);
     }
 }
+
+/* Name of the synthetic block that orders array sizes before the other
+ * variables (S30-D5); compared by address to tell it from user orders. */
+static const char cr_sizes_block_name[] = "array sizes";
 
 static void cr_draw_bits(const llg_cr_rng_t* rng, uint64_t* d, uint32_t w) {
     uint32_t n = CR_WORDS(w);
@@ -1149,6 +1154,34 @@ static int cr_layer_roots(cr_bdd_t* m, uint32_t root, const cr_layout_t* lay, ui
     return !m->overflow;
 }
 
+static int cr_order_live(const llg_cr_session_t* s, const llg_cr_order_t* o);
+
+/* The fallback engines keep the constraints but not the distribution
+ * measure (S30-D9). Say so once per call site when a component with a
+ * `dist` weight or a `solve...before` order reaches them, naming the budget
+ * that sent it there. */
+static void cr_warn_fallback_measure(const cr_solve_t* st, const cr_plan_t* plan,
+                                     const uint32_t* vars, uint32_t nvars) {
+    llg_cr_session_t* s = st->s;
+    const llg_cr_problem_t* p = s->p;
+    int measured = plan->dists.len > 0;
+    for (uint32_t o = 0; o < p->order_count && !measured; ++o) {
+        const llg_cr_order_t* ord = &p->orders[o];
+        if (!cr_order_live(s, ord) || p->blocks[ord->block].name == cr_sizes_block_name) continue;
+        for (uint32_t i = 0; i < nvars; ++i)
+            measured |= vars[i] == ord->before || vars[i] == ord->after;
+    }
+    if (!measured || s->site->fallback_warned) return;
+    s->site->fallback_warned = 1;
+    const char* budget = st->budget ? st->budget : "LLG_RAND_BDD_NODES";
+    fprintf(stderr,
+            "llg: warning: %s: a constraint component exceeds the exact solver budget "
+            "(%s), so the fallback solvers ignore its dist weights and solve...before "
+            "orders (IEEE 1800-2009 18.5.4, 18.5.9); the constraints still hold. Raise %s "
+            "to keep them.\n",
+            p->name ? p->name : "randomize()", budget, budget);
+}
+
 static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, uint32_t nvars,
                                           const uint32_t* conj, uint32_t ncon) {
     llg_cr_session_t* s = st->s;
@@ -1284,6 +1317,8 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
         done = 1;
         result = LLG_CR_RESOURCE;
     }
+
+    if (!done) cr_warn_fallback_measure(st, &plan, vars, nvars);
 
     if (!done) {
         /* Uniform rejection: every accepted draw is uniform over the

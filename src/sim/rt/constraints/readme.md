@@ -122,7 +122,11 @@ per size combination, which is why this cache is larger than one.
      distributed one (S29-D10); exhausting the search proves UNSAT.
    - The fallbacks ignore `dist` weights and orders; a component with a
      `randc` variable that does not fit the exact engine is
-     `LLG_CR_RESOURCE` (S30-D9).
+     `LLG_CR_RESOURCE` (S30-D9). A component with a `dist` or a user
+     `solve...before` order that reaches them prints one stderr warning per
+     call site (`cr_warn_fallback_measure`: the site's session owns the flag,
+     an expanded problem's session shares its template's), naming the budget
+     that sent it there as the variable to raise.
    - Otherwise `LLG_CR_RESOURCE` names the budget to raise: the conflict
      budget when the search ran out (or is 0), the node budget when the AIG
      did not fit.

@@ -37,6 +37,15 @@ and object forms outside SIM-030: a random array read whole, an array of
 class handles, a `foreach` over two dimensions and a constraint function
 argument that reads an array element.
 
+`dist_fallback_warning` (S30-D9) runs with `LLG_RAND_BDD_NODES=1` and
+`LLG_RAND_BDD_BITS=1`, which send every component to the fallback solvers: a
+class with `dist` and `solve...before`, one with only a plain constraint and
+one with a `foreach` dist over a dynamic array. Both weighted call sites print
+one warning naming the call site and the budget however often they run, the
+plain one prints none, and the constraints still hold (`bad=0`). With the
+default budgets the fixture prints no warning. The register keeps S30-D9 as an
+implementation limit without a portable case.
+
 Run-time error fixtures (`rt_*`) exit with status 1:
 
 | Fixture | Clause |
