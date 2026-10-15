@@ -1564,6 +1564,12 @@ fn collect_expression_effects(
                 collect_expression_effects(ir, value, effects, visited_calls);
             }
         }
+        IrExprKind::MatchCall(action) => {
+            effects.push(ExecutionEffect::RuntimeService);
+            for capture in action.captures() {
+                collect_expression_effects(ir, capture.initial(), effects, visited_calls);
+            }
+        }
         IrExprKind::Sequence(sequence) => {
             collect_effects(ir, &sequence.statements, effects, visited_calls);
             collect_expression_effects(ir, &sequence.value, effects, visited_calls);

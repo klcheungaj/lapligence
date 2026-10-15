@@ -157,6 +157,13 @@ pub enum IrExprKind {
     /// A read-only scheduler fact consulted by process-evaluated event
     /// controls and force sources (see [`IrRuntimeQuery`]).
     RuntimeQuery(IrRuntimeQuery),
+    /// A subroutine call attached to a sequence match (IEEE 1800-2009 16.11),
+    /// evaluated as a match item: the by-value arguments are copied into the
+    /// call's owned frame now, and the runtime runs the callback with that
+    /// frame in the Reactive region. The callback body is an
+    /// [`IrPreFn::DeferredAssertion`] of a synthetic process that is never
+    /// spawned. The value is a 1-bit zero; match items discard it.
+    MatchCall(Box<super::IrDeferredAction>),
     /// A blocking assignment-like expression. The target descriptor is
     /// evaluated once by the emitter, `value` computes the value to commit
     /// (using `_llg_mut_current` for compound/inc-dec forms), and the result

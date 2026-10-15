@@ -1712,6 +1712,16 @@ struct Codegen<'a> {
     /// formal initializer cannot silently be evaluated at graph creation when
     /// the invocation actually starts after a temporal prefix.
     assertion_local_capture_at_attempt_entry: bool,
+    /// Local formals of the instance being lowered through its inlined form;
+    /// their initialization is a match item, not an attempt-entry capture.
+    assertion_inlined_formals: HashSet<NodeId>,
+    /// Initialized locals of the enclosing property-level instances.
+    assertion_property_locals: Vec<NodeId>,
+    /// How the graph being lowered may initialize `assertion_property_locals`.
+    assertion_property_local_init: assertion_context::PropertyLocalInit,
+    /// Property-level locals the antecedent graph being lowered initializes
+    /// whether or not it reads them, so its consequent inherits them.
+    assertion_forced_locals: Vec<NodeId>,
     /// Canonical virtual-interface type identity → execution descriptor.
     virtual_interface_types: HashMap<String, usize>,
     /// Concrete interface instance → `(descriptor, instance)` binding.
@@ -1930,6 +1940,10 @@ impl<'a> Codegen<'a> {
             lowering_assertion_match_item: false,
             assertion_instance_depth: 0,
             assertion_local_capture_at_attempt_entry: false,
+            assertion_inlined_formals: HashSet::new(),
+            assertion_property_locals: Vec::new(),
+            assertion_property_local_init: assertion_context::PropertyLocalInit::Unsupported,
+            assertion_forced_locals: Vec::new(),
             virtual_interface_types: HashMap::new(),
             virtual_interface_instances: HashMap::new(),
             virtual_interface_members: HashMap::new(),
@@ -2696,6 +2710,9 @@ struct EmitCtx<'c, 'a> {
     /// `true` while lowering a `final begin … end` body (SV 1800-2005
     /// §10.7): timing controls (`#`/`@`/`wait`/fork suspension) are rejected.
     in_final: bool,
+    /// What a call lowered with a captured argument frame belongs to, for
+    /// diagnostics: a deferred assertion action or a sequence match item.
+    call_owner: &'static str,
 }
 
 /// Shape of an image-represented fixed array `with` operand.

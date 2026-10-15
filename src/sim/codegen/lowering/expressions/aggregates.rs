@@ -19,12 +19,8 @@ impl<'a> Codegen<'a> {
             let binding = self
                 .assertion_local_binding(target)?
                 .ok_or_else(|| "local assertion variable is outside a sequence graph".to_owned())?;
-            if let Some(direction) = self.db.assertion_formal_direction(target) {
-                return Err(format!(
-                    "assertion formal `{}` cannot be assigned through {direction:?} direction in `{path}`",
-                    self.node(target).name
-                ));
-            }
+            // A local formal of any direction is assignable like any other
+            // local variable (16.8.2); its initialization is separate.
             return Ok(IrLhs::WholeRef {
                 addr: format!("llg_sequence_local_addr(data, {}u)", binding.slot),
                 width: binding.width,
@@ -32,6 +28,9 @@ impl<'a> Codegen<'a> {
                 two_state: binding.two_state,
                 shortreal: false,
             });
+        }
+        if let Some(lhs) = self.assertion_local_select_lhs(path, lhs)? {
+            return Ok(lhs);
         }
         let mut clocking_targets = Vec::new();
         let all_clocking = self.clocking_lhs_targets(lhs, &mut clocking_targets);

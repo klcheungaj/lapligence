@@ -17,6 +17,20 @@ const ASSERTION_CONTROL_TASKS: [&str; 10] = [
     "$assertvacuousoff",
 ];
 
+/// Where the property-level locals of the instance being lowered (its
+/// initialized formals and declared locals, 16.10) are initialized: at the
+/// start of each property attempt, which is the start of the antecedent's
+/// attempt or, without an antecedent, of the consequent's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PropertyLocalInit {
+    /// The graph being lowered starts with the property attempt.
+    Here,
+    /// The graph is an implication consequent that inherits the antecedent's.
+    Inherited,
+    /// The graph starts later, e.g. a property operand.
+    Unsupported,
+}
+
 impl<'a> Codegen<'a> {
     /// Whether the design calls any assertion control task. Without one,
     /// control state never leaves its defaults, so immediate assertions need
@@ -90,34 +104,59 @@ impl<'a> Codegen<'a> {
         Ok(Some(existing))
     }
 
-    /// Capture a local input formal's actual value once per sequence attempt.
-    /// Output, inout, and ref assertion formals need copy-out/aliasing rules
-    /// that are not represented by the bounded sequence callback ABI, so they
-    /// remain explicit lowering boundaries.
+    /// Initialize a local variable once per attempt, at attempt entry: a
+    /// local input formal from its actual, a declared local from its
+    /// declaration assignment (16.8.2, 16.10). Locals of an instance below the
+    /// attempt's first tick are initialized by its inlined form instead
+    /// (`lower_instance_with_locals`); output and inout formals always are.
     pub(super) fn ensure_assertion_local_initializer(
         &mut self,
         path: &str,
         target: NodeId,
         binding: AssertionLocalBinding,
     ) -> Result<(), String> {
-        let Some(actual) = self.assertion_formal_actual(target) else {
+        if self.assertion_inlined_formals.contains(&target) {
             return Ok(());
+        }
+        let formal_actual = self.assertion_formal_actual(target);
+        let declared = if formal_actual.is_none() {
+            self.db.assertion_local_initializer(target)
+        } else {
+            None
         };
+        if formal_actual.is_none() && declared.is_none() {
+            return Ok(());
+        }
+        let name = self.node(target).name.clone();
+        let location = self.source_location(target);
+        if self.assertion_property_locals.contains(&target) {
+            match self.assertion_property_local_init {
+                PropertyLocalInit::Here => {}
+                // The antecedent attempt initialized it; the consequent
+                // inherits its value at the antecedent's match.
+                PropertyLocalInit::Inherited => return Ok(()),
+                PropertyLocalInit::Unsupported => {
+                    return Err(format!(
+                        "local variable `{name}` of the property declared at {location} is initialized at the property attempt's start, which this property form does not support"
+                    ));
+                }
+            }
+        }
         if self.assertion_instance_depth != 1 || !self.assertion_local_capture_at_attempt_entry {
             return Err(format!(
-                "local input formal `{}` is only supported at sequence-attempt entry in `{path}`",
-                self.node(target).name
+                "local variable `{name}` declared at {location} is initialized by an instance that is not supported here (`{path}`)"
             ));
         }
-        match self.db.assertion_formal_direction(target) {
-            Some(DbDirection::Input) => {}
-            Some(direction) => {
-                return Err(format!(
-                    "assertion formal `{}` uses unsupported {direction:?} direction in `{path}`",
-                    self.node(target).name
-                ));
+        if formal_actual.is_some() {
+            match self.db.assertion_formal_direction(target) {
+                Some(DbDirection::Input) => {}
+                Some(direction) => {
+                    return Err(format!(
+                        "assertion formal `{name}` declared at {location} uses unsupported {direction:?} direction in `{path}`"
+                    ));
+                }
+                None => return Ok(()),
             }
-            None => return Ok(()),
         }
         if self
             .assertion_local_initializers
@@ -126,34 +165,14 @@ impl<'a> Codegen<'a> {
         {
             return Ok(());
         }
-        let actual = self.lower_expr(path, actual)?;
-        if actual.is_real() || !assertions::sampled_compatible(&actual) {
+        let source = formal_actual.or(declared).expect("one initializer source");
+        let value = self.lower_expr(path, source)?;
+        if value.is_real() || !assertions::sampled_compatible(&value) {
             return Err(format!(
-                "assertion local input formal `{}` requires one packed sampled actual in `{path}`",
-                self.node(target).name
+                "local variable `{name}` declared at {location} needs one packed sampled initial value"
             ));
         }
-        let value = IrExpr::resize_to(actual, binding.width, binding.signed);
-        let lhs = IrLhs::WholeRef {
-            addr: format!("llg_sequence_local_addr(data, {}u)", binding.slot),
-            width: binding.width,
-            signed: binding.signed,
-            two_state: binding.two_state,
-            shortreal: false,
-        };
-        let initializer = IrExpr::new(
-            IrExprKind::Mutation(Box::new(crate::sim::ir::IrMutationExpr {
-                lhs,
-                value: Box::new(value),
-                current_width: binding.width,
-                current_signed: binding.signed,
-                reads_current: false,
-                post: false,
-            })),
-            binding.width,
-            binding.signed,
-            None,
-        );
+        let initializer = assertions::local_assignment(binding, value);
         self.assertion_local_initializers
             .as_mut()
             .ok_or_else(|| "assertion local initializer is outside a sequence graph".to_owned())?

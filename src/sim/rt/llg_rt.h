@@ -1213,6 +1213,11 @@ void llg_deferred_assertion_scoped(int kind, int passed, uint64_t identity,
 // of a procedure's outermost scope flushes the executing processes' report
 // queues (SV 16.4.4). Emitted before the matching llg_disable_target.
 void llg_deferred_assertion_cancel(uint64_t identity);
+// Queue a subroutine call attached to a sequence match (IEEE 1800-2009
+// 16.11). Its by-value arguments were copied into `frame` when the match
+// was evaluated; `call` runs with it in the Reactive region, in match order.
+// Takes ownership of `frame`.
+void llg_sequence_match_call(llg_deferred_assertion_fn call, llg_frame_t* frame);
 void llg_deferred_assertion_flush_scope(uint32_t declaration, uint32_t instance);
 void llg_deferred_assertion(int kind, int passed, uint64_t identity,
                             const char* label, const char* location,

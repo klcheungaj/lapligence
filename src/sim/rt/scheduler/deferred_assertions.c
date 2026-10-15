@@ -7,6 +7,9 @@
 // order. Records live in two retained arrays (pending and matured), so a
 // steady stream of reports performs no per-report allocation.
 
+// Report kind of a sequence match-item call; assertion kinds are 0..3.
+#define LLG_DEFERRED_MATCH_CALL 0xFFu
+
 // Defined with the control rules in assertion_control.c.
 static int deferred_action_enabled(int kind, int passed, const char* label,
                                    const char* scope);
@@ -186,6 +189,15 @@ static void deferred_report_execute(llg_deferred_assertion_report_t* report) {
     llg_frame_t* frame = report->frame;
     report->frame = NULL;
     int saved = g.in_deferred_action;
+    if (report->kind == LLG_DEFERRED_MATCH_CALL) {
+        // A sequence match-item call: no assertion result, counter or
+        // action control applies to it.
+        g.in_deferred_action = 1;
+        report->action(frame);
+        g.in_deferred_action = saved;
+        llg_frame_release(frame);
+        return;
+    }
     if (report->passed && report->kind == LLG_ASSERTION_COVER)
         llg_assertion_cover(report->identity, report->label, report->location);
     // Action controls are read when the report executes (SV 20.12).
@@ -244,6 +256,28 @@ static void deferred_matured_callback(void* data) {
     deferred_run_matured(1);
     if (g.deferred_matured_next < g.deferred_matured.count &&
         !deferred_schedule_matured()) {
+        deferred_queue_release(&g.deferred_matured, g.deferred_matured_next);
+        g.deferred_matured_next = 0;
+    }
+}
+
+// Sequence match-item calls (SV 16.11) join the matured reports: they are
+// never flushed and run in the Reactive region in the order queued.
+void llg_sequence_match_call(llg_deferred_assertion_fn call, llg_frame_t* frame) {
+    if (!call) {
+        llg_frame_release(frame);
+        return;
+    }
+    if (g.deferred_matured_next == g.deferred_matured.count) {
+        g.deferred_matured.count = 0;
+        g.deferred_matured_next = 0;
+    }
+    llg_deferred_assertion_report_t* report = deferred_queue_push(&g.deferred_matured);
+    report->kind = LLG_DEFERRED_MATCH_CALL;
+    report->passed = 1;
+    report->action = call;
+    report->frame = frame;
+    if (!deferred_schedule_matured()) {
         deferred_queue_release(&g.deferred_matured, g.deferred_matured_next);
         g.deferred_matured_next = 0;
     }
