@@ -783,6 +783,10 @@ impl<'a> Codegen<'a> {
         if let Some(key) = self.inline_key_read(h) {
             return Ok(key);
         }
+        // Covergroup queries and `ref` covergroup arguments (SIM-044).
+        if let Some(value) = self.lower_coverage_expr(scope_path, h)? {
+            return Ok(value);
+        }
         if let Some(value) = self.overload_current_read(scope_path, h) {
             return value;
         }

@@ -45,6 +45,7 @@ pub struct TypeInfo {
     /// Base type kind: `"logic"`, `"bit"`, `"int"`, `"integer"`, `"longint"`,
     /// `"byte"`, `"shortint"`, `"time"`, `"real"`, `"shortreal"`, `"enum"`, `"struct"`,
     /// `"union"`, `"array"`, `"string"`, `"chandle"`, `"class"`, `"other"`.
+    /// Covergroup handles are `"class"` (`Db::covergroup_for_type` names them).
     pub kind: String,
     /// Bit width; `None` when unknown or unsized (e.g. `string`).
     pub width: Option<u32>,

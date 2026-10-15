@@ -300,6 +300,10 @@ impl Codegen<'_> {
                 *is_super_class,
             );
         }
+        if let NodeKind::Expr(ExprKind::NewCovergroup { group_type, args }) = self.kind(node) {
+            let args = args.clone();
+            return self.lower_new_covergroup(path, node, *group_type, &args);
+        }
         if let NodeKind::Expr(ExprKind::CopyClass { source, class_type }) = self.kind(node) {
             return self.lower_class_copy(path, node, *source, *class_type);
         }

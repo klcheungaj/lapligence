@@ -27,9 +27,7 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
         let mut points = Vec::with_capacity(group.points.len());
         for (point_index, point) in group.points.iter().enumerate() {
             let point_prefix = format!("{prefix}_{point_index}");
-            let (kind, n_bins, keys, segments, segment_bins, valued, n_valued) = match &point
-                .bins
-            {
+            let (kind, n_bins, keys, segments, segment_bins, valued, n_valued) = match &point.bins {
                 IrCoverBins::Auto => (
                     "LLG_COV_POINT_AUTO",
                     0,
@@ -143,7 +141,10 @@ impl Frame<'_, '_> {
         match operation {
             IrCoverageStmt::Create { group, target } => {
                 let address = self.native_lookup(target, NativeKind::Chandle)?.address;
-                self.line(format!("*({address}) = llg_cov_new(&{});", group_name(*group)));
+                self.line(format!(
+                    "*({address}) = llg_cov_new(&{});",
+                    group_name(*group)
+                ));
             }
             IrCoverageStmt::Option {
                 record,
@@ -253,6 +254,6 @@ impl Frame<'_, '_> {
             ),
             IrCoverageQuery::Total => "llg_cov_total_coverage()".to_owned(),
         };
-        Ok(self.value(code, 0, false))
+        Ok(self.value(code, 0, true))
     }
 }

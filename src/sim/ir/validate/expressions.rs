@@ -101,7 +101,9 @@ impl Validator<'_> {
                     IrObjectQuery::SemaphoreTryGet(..) => Some((32, true)),
                     IrObjectQuery::ProcessEq(..) => Some((1, false)),
                     IrObjectQuery::StringGetc(..) => Some((8, true)),
-                    IrObjectQuery::StringAtoreal(..) => Some((0, true)),
+                    IrObjectQuery::StringAtoreal(..) | IrObjectQuery::Coverage(..) => {
+                        Some((0, true))
+                    }
                     IrObjectQuery::StringInside { .. } => Some((1, false)),
                     IrObjectQuery::StringPacked(..) => None,
                     IrObjectQuery::ProcessStatus(..) => Some((32, true)),
@@ -116,7 +118,11 @@ impl Validator<'_> {
                 if expected.is_some_and(|ty| ty != (expr.width, expr.signed)) {
                     return self.fail(path, "object query result type mismatch");
                 }
-                if (expr.width == 0 && !matches!(query.as_ref(), IrObjectQuery::StringAtoreal(_)))
+                if (expr.width == 0
+                    && !matches!(
+                        query.as_ref(),
+                        IrObjectQuery::StringAtoreal(_) | IrObjectQuery::Coverage(_)
+                    ))
                     || expr.fill.is_some()
                 {
                     return self.fail(path, "object query has an invalid result shape");

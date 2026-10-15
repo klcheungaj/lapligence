@@ -233,6 +233,10 @@ impl Codegen<'_> {
         if let Some(receiver) = self.explicit_class_receiver(path, node, field)? {
             return Ok(receiver);
         }
+        // A covergroup argument inside its covergroup body or option.
+        if let Some(receiver) = self.coverage_receiver_for(field) {
+            return Ok(receiver);
+        }
         // A property of the randomized object inside its constraints.
         if let Some(receiver) =
             self.rand_receiver_for(self.class_fields.get(&field).map(|(class, _)| *class))
