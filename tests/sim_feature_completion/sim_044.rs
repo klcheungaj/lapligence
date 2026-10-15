@@ -168,11 +168,6 @@ fn unsupported_coverage_forms_are_located_errors() {
     );
     sim_cli::reject_case(
         SUITE,
-        "neg_illegal_bins",
-        "neg_illegal_bins.sv:8:20: illegal_bins (`bad` of coverpoint `a` in covergroup `g`) are not supported yet (SIM-045)",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "neg_transition_bins",
         "neg_transition_bins.sv:7:12: transition bins (`rise` of coverpoint `a` in covergroup `g`) are not supported yet (SIM-045)",
     );
@@ -195,11 +190,6 @@ fn unsupported_coverage_forms_are_located_errors() {
         SUITE,
         "neg_merge_instances",
         "neg_merge_instances.sv:6:5: type_option.merge_instances in covergroup `g` (merged type coverage) is not supported yet (SIM-045)",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_argument_bins",
-        "neg_argument_bins.sv:6:35: bins `chosen` of covergroup `g` needs constant values",
     );
     sim_cli::reject_case(
         SUITE,

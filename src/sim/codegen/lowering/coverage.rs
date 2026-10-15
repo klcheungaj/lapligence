@@ -18,10 +18,11 @@ use crate::core::db::{
     CoverageBinKind, CoverageEvent, CovergroupInfo, CoverpointInfo, EventSpec, TypeId,
 };
 use crate::sim::ir::{
-    IrCapture, IrClass, IrClassField, IrClassFieldType, IrCoverBins, IrCoverSegment,
-    IrCoverageOption, IrCoverageQuery, IrCoverageSample, IrCoverageStmt, IrCoverageType,
-    IrCovergroup, IrCoverpoint, IrFormal, IrFunc, IrNativeAccessKind, IrObjectQuery, IrPreFn,
-    IrProcess, IrShape, IrUniquePriorityCheck,
+    IrCapture, IrClass, IrClassField, IrClassFieldType, IrCoverAutomatic, IrCoverBin,
+    IrCoverBinKind, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverItem, IrCoverageOption,
+    IrCoverageQuery, IrCoverageSample, IrCoverageStmt, IrCoverageType, IrCovergroup, IrCoverpoint,
+    IrFormal, IrFunc, IrNativeAccessKind, IrObjectQuery, IrPreFn, IrProcess, IrShape,
+    IrUniquePriorityCheck,
 };
 
 /// Lowering state of one constructed covergroup declaration.
@@ -43,6 +44,8 @@ pub(super) struct CovergroupLowering {
     variant_of_new: HashMap<NodeId, u32>,
     /// Coverpoint declaration -> coverpoint index.
     points: HashMap<NodeId, u32>,
+    /// Bin guards and argument slots of the bins.
+    build: CoverageBuild,
     /// Instances are sampled through the group registry: a block event, or
     /// a clocking event on static storage.
     registered: bool,
@@ -56,6 +59,59 @@ pub(super) struct CovergroupLowering {
     /// clocking event, started by every `new`.
     waiter: Option<String>,
 }
+
+/// The bin guards and argument slots of one covergroup's bins, collected
+/// while its coverpoint tables are built.
+#[derive(Clone, Debug, Default)]
+pub(super) struct CoverageBuild {
+    /// The scope path run-time messages name bins by.
+    path: String,
+    /// Bin `iff` expressions, evaluated by every sample.
+    guards: Vec<NodeId>,
+    /// Bins values read from covergroup arguments, evaluated by `new`.
+    slots: Vec<NodeId>,
+}
+
+impl CoverageBuild {
+    fn slot(&mut self, node: NodeId) -> u32 {
+        let index = self
+            .slots
+            .iter()
+            .position(|slot| *slot == node)
+            .unwrap_or_else(|| {
+                self.slots.push(node);
+                self.slots.len() - 1
+            });
+        index as u32
+    }
+}
+
+/// One constant bins bound, or why it is not one.
+#[derive(Clone, Copy, Debug)]
+enum CoverageBound {
+    Number(i128),
+    /// `$`.
+    Dollar,
+    /// A constant with X or Z bits.
+    Unknown,
+    /// A value only an instance knows (a covergroup argument).
+    Instance,
+}
+
+impl CoverageBound {
+    fn number(self, dollar: i128) -> Option<i128> {
+        match self {
+            Self::Number(number) => Some(number),
+            Self::Dollar => Some(dollar),
+            Self::Unknown | Self::Instance => None,
+        }
+    }
+}
+
+/// The most key ranges one wildcard bins value may expand to (a power of
+/// two); a pattern with more open bits above its lowest fixed bit is
+/// rejected.
+const WILDCARD_RANGE_LIMIT: u64 = 1 << 12;
 
 /// Declaration identity of a covergroup type: every elaboration of one
 /// source declaration shares its type coverage (decision S44-D1).
@@ -335,11 +391,15 @@ impl<'a> Codegen<'a> {
         // Coverpoint tables.
         let mut points = Vec::with_capacity(info.coverpoints.len());
         let mut point_indices = HashMap::new();
+        let mut build = CoverageBuild {
+            path: self.source_path(&self.covergroup_path(group)),
+            ..CoverageBuild::default()
+        };
         for (index, point) in info.coverpoints.iter().copied().enumerate() {
             let metadata = self.db.coverpoint(point).cloned().ok_or_else(|| {
                 self.coverage_error(point, "coverpoint has no captured structure")
             })?;
-            points.push(self.coverpoint_table(&name, point, &metadata)?);
+            points.push(self.coverpoint_table(&name, point, &metadata, &mut build)?);
             point_indices.insert(point, index as u32);
         }
         for setter in &info.options {
@@ -367,6 +427,8 @@ impl<'a> Codegen<'a> {
             name: name.clone(),
             coverage_type,
             points,
+            slots: build.slots.len() as u32,
+            guards: build.guards.len() as u32,
             strobe: None,
         });
         // The `sample` prototype: a method of the instance class whose formals
@@ -428,6 +490,7 @@ impl<'a> Codegen<'a> {
                 variants,
                 variant_of_new,
                 points: point_indices,
+                build,
                 registered,
                 instance_event,
                 strobe,
@@ -648,6 +711,7 @@ impl<'a> Codegen<'a> {
         group_name: &str,
         point: NodeId,
         info: &CoverpointInfo,
+        build: &mut CoverageBuild,
     ) -> Result<IrCoverpoint, String> {
         let point_name = self.coverpoint_name(point);
         let integral = !is_real_kind(&info.ty.kind)
@@ -689,25 +753,420 @@ impl<'a> Codegen<'a> {
                     .unwrap_or(1);
             }
         }
-        let bins = if info.bins.is_empty() {
-            match self.enum_coverpoint_keys(point, info, width, signed)? {
-                Some(keys) => IrCoverBins::Enum(keys),
-                None => IrCoverBins::Auto,
-            }
+        // 19.5.2: automatic bins only for a coverpoint without `bins`
+        // declarations; ignore_bins and illegal_bins alone keep them.
+        let declares_bins = info.bins.iter().any(|bin| {
+            self.db
+                .coverage_bin(*bin)
+                .is_some_and(|bin| bin.kind == CoverageBinKind::Bins)
+        });
+        let automatic = if declares_bins {
+            IrCoverAutomatic::None
         } else {
-            self.explicit_bins(group_name, point, info, width, signed)?
+            match self.enum_coverpoint_keys(point, info, width, signed)? {
+                Some(keys) => IrCoverAutomatic::Enum(keys),
+                None => IrCoverAutomatic::Auto,
+            }
         };
-        Ok(IrCoverpoint {
+        let mut coverpoint = IrCoverpoint {
             name: point_name,
             width,
             signed,
             type_weight,
-            bins,
-        })
+            automatic,
+            bins: Vec::with_capacity(info.bins.len()),
+            items: Vec::new(),
+        };
+        for bin in info.bins.iter().copied() {
+            self.coverage_value_bin(group_name, point, bin, &mut coverpoint, build)?;
+        }
+        Ok(coverpoint)
     }
 
-    /// A coverpoint's label, or its position for an unlabeled coverpoint
-    /// whose expression is not a plain variable.
+    /// One bins declaration of a coverpoint (19.5, 19.5.3-19.5.6).
+    fn coverage_value_bin(
+        &mut self,
+        group_name: &str,
+        point: NodeId,
+        bin: NodeId,
+        coverpoint: &mut IrCoverpoint,
+        build: &mut CoverageBuild,
+    ) -> Result<(), String> {
+        let metadata = self
+            .db
+            .coverage_bin(bin)
+            .cloned()
+            .ok_or_else(|| self.coverage_error(bin, "bins declaration has no structure"))?;
+        let bin_name = self.node(bin).name.clone();
+        let describe = |cg: &Codegen<'_>| {
+            format!(
+                "`{bin_name}` of coverpoint `{}` in covergroup `{group_name}`",
+                cg.coverpoint_name(point)
+            )
+        };
+        if metadata.with || metadata.set || metadata.select {
+            return Err(self.coverage_error(
+                bin,
+                format!(
+                    "bins {} use a `with` clause, a set expression or a select expression, which IEEE 1800-2009 does not define for coverpoint bins",
+                    describe(self)
+                ),
+            ));
+        }
+        if metadata.transition || metadata.default_sequence {
+            return Err(self.coverage_error(
+                bin,
+                format!(
+                    "transition bins ({}) are not supported yet (SIM-045)",
+                    describe(self)
+                ),
+            ));
+        }
+        let kind = match (metadata.kind, metadata.default) {
+            (CoverageBinKind::Bins, false) => IrCoverBinKind::Bins,
+            (CoverageBinKind::Ignore, false) => IrCoverBinKind::Ignore,
+            (CoverageBinKind::Illegal, false) => IrCoverBinKind::Illegal,
+            (CoverageBinKind::Bins, true) => IrCoverBinKind::Default,
+            (CoverageBinKind::Illegal, true) => IrCoverBinKind::IllegalDefault,
+            (CoverageBinKind::Ignore, true) => {
+                return Err(self.coverage_error(
+                    bin,
+                    format!(
+                        "ignore_bins {} cannot specify `default` (IEEE 1800-2009 19.5)",
+                        describe(self)
+                    ),
+                ))
+            }
+        };
+        let shape = if !metadata.array || metadata.default || kind != IrCoverBinKind::Bins {
+            IrCoverBinShape::Scalar
+        } else {
+            match metadata.count {
+                None => IrCoverBinShape::PerValue,
+                Some(count) => IrCoverBinShape::Count(self.coverage_bin_count(
+                    count,
+                    &describe(self),
+                    build,
+                )?),
+            }
+        };
+        let guard = metadata.iff.map(|iff| {
+            build.guards.push(iff);
+            (build.guards.len() - 1) as u32
+        });
+        let first_item = coverpoint.items.len() as u32;
+        for item in metadata.values.iter().copied() {
+            self.coverage_value_item(&bin_name, item, metadata.wildcard, coverpoint, build)?;
+        }
+        let n_items = coverpoint.items.len() as u32 - first_item;
+        coverpoint.bins.push(IrCoverBin {
+            name: bin_name,
+            site: Self::coverage_site(&build.path, self.node(bin)),
+            kind,
+            shape,
+            guard,
+            first_item,
+            n_items,
+        });
+        Ok(())
+    }
+
+    /// `path:line:col` of a declaration, for run-time messages.
+    fn coverage_site(path: &str, node: &crate::core::db::Node) -> String {
+        if node.line == 0 {
+            path.to_owned()
+        } else {
+            format!("{path}:{}:{}", node.line, node.col)
+        }
+    }
+
+    /// The `[N]` count of a bins array: a positive constant, or an argument
+    /// value checked when the instance is ready.
+    fn coverage_bin_count(
+        &mut self,
+        count: NodeId,
+        describe: &str,
+        build: &mut CoverageBuild,
+    ) -> Result<IrCoverCount, String> {
+        match self.eval_bits(count) {
+            Ok(value) => {
+                let number = if value.signed {
+                    value.to_i128()
+                } else {
+                    value.to_u128().and_then(|value| i128::try_from(value).ok())
+                };
+                match number.and_then(|number| u64::try_from(number).ok()) {
+                    Some(number) if number > 0 => Ok(IrCoverCount::Const(number)),
+                    _ => Err(self.coverage_error(
+                        count,
+                        format!("the number of bins of {describe} must be a positive value"),
+                    )),
+                }
+            }
+            Err(_) => Ok(IrCoverCount::Slot(build.slot(count))),
+        }
+    }
+
+    /// One open-range-list item of a value bin: constant items resolve here
+    /// by 19.5.6 with its warnings; items that read covergroup arguments
+    /// become slots resolved when each instance is ready.
+    fn coverage_value_item(
+        &mut self,
+        bin_name: &str,
+        item: NodeId,
+        wildcard: bool,
+        coverpoint: &mut IrCoverpoint,
+        build: &mut CoverageBuild,
+    ) -> Result<(), String> {
+        let (width, signed) = (coverpoint.width, coverpoint.signed);
+        let (low_node, high_node) = match self.kind(item) {
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::List,
+                operands,
+                ..
+            }) if operands.len() == 2 => (operands[0], operands[1]),
+            _ => (item, item),
+        };
+        let range = low_node != high_node;
+        // 19.5.3: a wildcard singleton is the set of values its X, Z and ?
+        // bits leave open.
+        if wildcard && !range {
+            let node = self.coverage_bin_operand(item, width, signed);
+            let value = self.eval_bits(node).map_err(|_| {
+                self.coverage_error(
+                    item,
+                    format!("wildcard bins `{bin_name}` need constant values"),
+                )
+            })?;
+            for (lo, hi) in self.wildcard_ranges(bin_name, item, &value, width, signed)? {
+                coverpoint.items.push(IrCoverItem {
+                    lo: IrCoverBound::Key(lo),
+                    hi: IrCoverBound::Key(hi),
+                    site: None,
+                });
+            }
+            return Ok(());
+        }
+        let (min, max) = if signed {
+            (-(1i128 << (width - 1)), (1i128 << (width - 1)) - 1)
+        } else {
+            (0, (1i128 << width) - 1)
+        };
+        let low = self.coverage_bound(low_node, width, signed, wildcard, false);
+        let high = self.coverage_bound(high_node, width, signed, wildcard, true);
+        if matches!(low, CoverageBound::Unknown) || matches!(high, CoverageBound::Unknown) {
+            self.coverage_warning(
+                item,
+                format!("bins `{bin_name}` value has X or Z bits and is ignored (IEEE 1800-2009 19.5.6)"),
+            );
+            return Ok(());
+        }
+        if let (Some(low), Some(high)) = (low.number(min), high.number(max)) {
+            let (low_in, high_in) = (low.max(min), high.min(max));
+            if low > high || low_in > high_in {
+                self.coverage_warning(
+                    item,
+                    format!("bins `{bin_name}` value is outside the coverpoint type and is ignored (IEEE 1800-2009 19.5.6)"),
+                );
+                return Ok(());
+            }
+            if low_in != low || high_in != high {
+                self.coverage_warning(
+                    item,
+                    format!("bins `{bin_name}` range is limited to the values of the coverpoint type (IEEE 1800-2009 19.5.6)"),
+                );
+            }
+            coverpoint.items.push(IrCoverItem {
+                lo: IrCoverBound::Key(Self::coverage_key(low_in, width, signed)),
+                hi: IrCoverBound::Key(Self::coverage_key(high_in, width, signed)),
+                site: None,
+            });
+            return Ok(());
+        }
+        if wildcard {
+            return Err(self.coverage_error(
+                item,
+                format!("wildcard bins `{bin_name}` need constant values"),
+            ));
+        }
+        // 19.5: bins values may be non-ref arguments of the covergroup.
+        let mut bound =
+            |cg: &mut Codegen<'_>, node: NodeId, value: CoverageBound, upper: bool| match value {
+                CoverageBound::Dollar if upper => IrCoverBound::Max,
+                CoverageBound::Dollar => IrCoverBound::Min,
+                _ => IrCoverBound::Slot(build.slot(cg.coverage_bin_operand(node, width, signed))),
+            };
+        let lo = bound(self, low_node, low, false);
+        let hi = if range {
+            bound(self, high_node, high, true)
+        } else {
+            lo
+        };
+        coverpoint.items.push(IrCoverItem {
+            lo,
+            hi,
+            site: Some(Self::coverage_site(&build.path, self.node(item))),
+        });
+        Ok(())
+    }
+
+    /// The bins value before the frontend's conversion to the coverpoint
+    /// type: 19.5.6 resolves the unconverted value against that type.
+    fn coverage_bin_operand(&self, node: NodeId, width: u32, signed: bool) -> NodeId {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Cast { operand, ty, .. })
+                if ty.width == Some(width) && ty.signed == signed =>
+            {
+                *operand
+            }
+            _ => node,
+        }
+    }
+
+    /// One bins bound as a constant, `$`, or a value read at `new`. A
+    /// wildcard range bound stands for the smallest (low) or largest
+    /// (high) value its open bits allow.
+    fn coverage_bound(
+        &self,
+        node: NodeId,
+        width: u32,
+        signed: bool,
+        wildcard: bool,
+        upper: bool,
+    ) -> CoverageBound {
+        let node = self.coverage_bin_operand(node, width, signed);
+        if matches!(self.kind(node), NodeKind::Expr(ExprKind::Unbounded)) {
+            return CoverageBound::Dollar;
+        }
+        let Ok(mut value) = self.eval_bits(node) else {
+            return CoverageBound::Instance;
+        };
+        if wildcard {
+            let fill = if upper {
+                crate::core::elab::Bit::One
+            } else {
+                crate::core::elab::Bit::Zero
+            };
+            for bit in &mut value.bits {
+                if matches!(bit, crate::core::elab::Bit::X | crate::core::elab::Bit::Z) {
+                    *bit = fill;
+                }
+            }
+        }
+        if value.is_unknown() {
+            return CoverageBound::Unknown;
+        }
+        let number = if value.signed {
+            value.to_i128()
+        } else {
+            value.to_u128().and_then(|value| i128::try_from(value).ok())
+        };
+        match number {
+            Some(number) => CoverageBound::Number(number),
+            // Wider than any coverpoint value: outside the type.
+            None if value.signed && value.bits.first() == Some(&crate::core::elab::Bit::One) => {
+                CoverageBound::Number(i128::MIN)
+            }
+            None => CoverageBound::Number(i128::MAX),
+        }
+    }
+
+    /// The key ranges of a wildcard value (19.5.3, 19.5.6): bits that are X,
+    /// Z or ? match 0 and 1. A pattern whose open bits above its lowest
+    /// fixed bit need more than [`WILDCARD_RANGE_LIMIT`] ranges is rejected.
+    fn wildcard_ranges(
+        &mut self,
+        bin_name: &str,
+        item: NodeId,
+        value: &crate::core::elab::Value,
+        width: u32,
+        signed: bool,
+    ) -> Result<Vec<(u64, u64)>, String> {
+        use crate::core::elab::Bit;
+        let mask = if width == 64 {
+            u64::MAX
+        } else {
+            (1u64 << width) - 1
+        };
+        let source = value.width();
+        let extension = if value.signed && source > 0 {
+            value.bit_lsb(source - 1)
+        } else {
+            Bit::Zero
+        };
+        let (mut fixed, mut care) = (0u64, 0u64);
+        let mut limited = false;
+        for index in 0..source.max(width as usize) {
+            let bit = if index < source {
+                value.bit_lsb(index)
+            } else {
+                extension
+            };
+            if index >= width as usize {
+                // A value bit beyond the coverpoint: a fixed 1 (0 for a
+                // negative signed value) leaves the type; an open bit
+                // narrows the pattern to the representable values.
+                match bit {
+                    Bit::One => {
+                        self.coverage_warning(
+                            item,
+                            format!("bins `{bin_name}` value is outside the coverpoint type and is ignored (IEEE 1800-2009 19.5.6)"),
+                        );
+                        return Ok(Vec::new());
+                    }
+                    Bit::X | Bit::Z => limited = true,
+                    Bit::Zero => {}
+                }
+                continue;
+            }
+            match bit {
+                Bit::One => {
+                    fixed |= 1 << index;
+                    care |= 1 << index;
+                }
+                Bit::Zero => care |= 1 << index,
+                Bit::X | Bit::Z => {}
+            }
+        }
+        if limited {
+            self.coverage_warning(
+                item,
+                format!("bins `{bin_name}` range is limited to the values of the coverpoint type (IEEE 1800-2009 19.5.6)"),
+            );
+        }
+        let open = !care & mask;
+        if open == mask {
+            return Ok(vec![(0, mask)]);
+        }
+        // The open bits below the lowest fixed bit form one aligned block.
+        let low_block = (1u64 << care.trailing_zeros()) - 1;
+        let high_open = open & !low_block;
+        if high_open.count_ones() > WILDCARD_RANGE_LIMIT.trailing_zeros() {
+            return Err(self.coverage_error(
+                item,
+                format!(
+                    "wildcard bins `{bin_name}` value matches more than {WILDCARD_RANGE_LIMIT} separate value ranges, which llg does not support"
+                ),
+            ));
+        }
+        // Flipping the sign bit, which lies above the block, keeps each
+        // block contiguous in key order.
+        let sign = if signed { 1u64 << (width - 1) } else { 0 };
+        let mut ranges = Vec::new();
+        // Every assignment of the open bits above the lowest fixed bit.
+        let mut subset = 0u64;
+        loop {
+            let base = fixed | subset;
+            ranges.push((base ^ sign, (base | low_block) ^ sign));
+            subset = subset.wrapping_sub(high_open) & high_open;
+            if subset == 0 {
+                break;
+            }
+        }
+        ranges.sort_unstable();
+        Ok(ranges)
+    }
+
     fn coverpoint_name(&self, point: NodeId) -> String {
         let name = &self.node(point).name;
         if !name.is_empty() {
@@ -772,184 +1231,9 @@ impl<'a> Codegen<'a> {
         Ok(Some(keys))
     }
 
-    /// Explicit value bins: each bins item resolved against the coverpoint
-    /// type (19.5.6), then split into disjoint key segments.
-    fn explicit_bins(
-        &mut self,
-        group_name: &str,
-        point: NodeId,
-        info: &CoverpointInfo,
-        width: u32,
-        signed: bool,
-    ) -> Result<IrCoverBins, String> {
-        let (min, max) = if signed {
-            (-(1i128 << (width - 1)), (1i128 << (width - 1)) - 1)
-        } else {
-            (0, (1i128 << width) - 1)
-        };
-        let mut intervals: Vec<(u64, u64, u32)> = Vec::new();
-        let mut valued = Vec::with_capacity(info.bins.len());
-        for (index, bin) in info.bins.iter().copied().enumerate() {
-            let metadata = self
-                .db
-                .coverage_bin(bin)
-                .cloned()
-                .ok_or_else(|| self.coverage_error(bin, "bins declaration has no structure"))?;
-            let bin_name = self.node(bin).name.clone();
-            let shape = if metadata.kind == CoverageBinKind::Illegal {
-                Some("illegal_bins")
-            } else if metadata.kind == CoverageBinKind::Ignore {
-                Some("ignore_bins")
-            } else if metadata.array {
-                Some("bin arrays")
-            } else if metadata.wildcard {
-                Some("wildcard bins")
-            } else if metadata.default || metadata.default_sequence {
-                Some("default bins")
-            } else if metadata.transition {
-                Some("transition bins")
-            } else if metadata.with || metadata.set || metadata.select {
-                Some("bins with, set or select expressions")
-            } else if metadata.iff.is_some() {
-                Some("bins iff guards")
-            } else {
-                None
-            };
-            if let Some(shape) = shape {
-                return Err(self.coverage_error(
-                    bin,
-                    format!(
-                        "{shape} (`{bin_name}` of coverpoint `{}` in covergroup `{group_name}`) are not supported yet (SIM-045)",
-                        self.coverpoint_name(point)
-                    ),
-                ));
-            }
-            let mut has_value = false;
-            for item in metadata.values.iter().copied() {
-                let (low, high) = match self.kind(item) {
-                    NodeKind::Expr(ExprKind::Operation {
-                        op: Operation::List,
-                        operands,
-                        ..
-                    }) if operands.len() == 2 => (
-                        self.bin_bound(group_name, bin, operands[0], min, width, signed)?,
-                        self.bin_bound(group_name, bin, operands[1], max, width, signed)?,
-                    ),
-                    _ => {
-                        let value = self.bin_bound(group_name, bin, item, min, width, signed)?;
-                        (value, value)
-                    }
-                };
-                let (Some(low), Some(high)) = (low, high) else {
-                    self.coverage_warning(item, format!("bins `{bin_name}` value has X or Z bits and is ignored (IEEE 1800-2009 19.5.6)"));
-                    continue;
-                };
-                let (low_in, high_in) = (low.max(min), high.min(max));
-                if low > high || low_in > high_in {
-                    self.coverage_warning(
-                        item,
-                        format!("bins `{bin_name}` value is outside the coverpoint type and is ignored (IEEE 1800-2009 19.5.6)"),
-                    );
-                    continue;
-                }
-                if low_in != low || high_in != high {
-                    self.coverage_warning(
-                        item,
-                        format!("bins `{bin_name}` range is limited to the values of the coverpoint type (IEEE 1800-2009 19.5.6)"),
-                    );
-                }
-                has_value = true;
-                intervals.push((
-                    Self::coverage_key(low_in, width, signed),
-                    Self::coverage_key(high_in, width, signed),
-                    index as u32,
-                ));
-            }
-            valued.push(has_value);
-        }
-        // Sweep the interval boundaries into maximal disjoint segments.
-        let mut bounds = intervals
-            .iter()
-            .flat_map(|(low, high, _)| [u128::from(*low), u128::from(*high) + 1])
-            .collect::<Vec<_>>();
-        bounds.sort_unstable();
-        bounds.dedup();
-        let mut segments: Vec<IrCoverSegment> = Vec::new();
-        for pair in bounds.windows(2) {
-            let (low, high) = (pair[0], pair[1] - 1);
-            let mut bins = intervals
-                .iter()
-                .filter(|(start, end, _)| u128::from(*start) <= low && high <= u128::from(*end))
-                .map(|(_, _, bin)| *bin)
-                .collect::<Vec<_>>();
-            if bins.is_empty() {
-                continue;
-            }
-            bins.sort_unstable();
-            bins.dedup();
-            let (low, high) = (low as u64, high as u64);
-            match segments.last_mut() {
-                Some(last) if last.bins == bins && u128::from(last.hi) + 1 == u128::from(low) => {
-                    last.hi = high;
-                }
-                _ => segments.push(IrCoverSegment {
-                    lo: low,
-                    hi: high,
-                    bins,
-                }),
-            }
-        }
-        Ok(IrCoverBins::Explicit { segments, valued })
-    }
-
     fn coverage_warning(&mut self, node: NodeId, message: String) {
         let warning = self.coverage_error(node, message);
         self.warnings.push(warning);
-    }
-
-    /// One bins bound as a number; `$` is `unbounded`, X/Z is `None`.
-    fn bin_bound(
-        &self,
-        group_name: &str,
-        bin: NodeId,
-        node: NodeId,
-        unbounded: i128,
-        width: u32,
-        signed: bool,
-    ) -> Result<Option<i128>, String> {
-        // The frontend converts each value to the coverpoint type; 19.5.6
-        // resolves the unconverted value against that type instead.
-        let node = match self.kind(node) {
-            NodeKind::Expr(ExprKind::Cast { operand, ty, .. })
-                if ty.width == Some(width) && ty.signed == signed =>
-            {
-                *operand
-            }
-            _ => node,
-        };
-        if matches!(self.kind(node), NodeKind::Expr(ExprKind::Unbounded)) {
-            return Ok(Some(unbounded));
-        }
-        let value = self.eval_bits(node).map_err(|_| {
-            self.coverage_error(
-                node,
-                format!(
-                    "bins `{}` of covergroup `{group_name}` needs constant values; values that depend on covergroup arguments are not supported yet (SIM-045)",
-                    self.node(bin).name
-                ),
-            )
-        })?;
-        if value.is_unknown() {
-            return Ok(None);
-        }
-        let number = if value.signed {
-            value.to_i128()
-        } else {
-            value.to_u128().and_then(|value| i128::try_from(value).ok())
-        };
-        number
-            .map(Some)
-            .ok_or_else(|| self.coverage_error(node, "bins value does not fit in 128 bits"))
     }
 
     /// Lower every constructed covergroup's `sample` body and its sampling
@@ -1067,8 +1351,17 @@ impl<'a> Codegen<'a> {
                         value,
                     });
                 }
+                let mut guards = Vec::with_capacity(lowering.build.guards.len());
+                for guard in lowering.build.guards.iter().copied() {
+                    let lowered = ctx.cg.lower_boolean_expr(&path, guard).map_err(|error| {
+                        ctx.cg
+                            .coverage_error(guard, format!("bins guard cannot be sampled: {error}"))
+                    })?;
+                    guards.push(lowered);
+                }
                 variants.push(IrStmt::Coverage(Box::new(IrCoverageStmt::Sample {
                     record: record.clone(),
+                    guards,
                     points: samples,
                 })));
             }
@@ -1989,6 +2282,24 @@ impl<'a> Codegen<'a> {
                         site: self.source_site(&format!("option.{member}"), path, setter),
                     })));
                 }
+            }
+            // Bins values that read arguments, in the declaration's scope
+            // like the options (19.5).
+            for (slot, node) in lowering.build.slots.iter().copied().enumerate() {
+                let value = self
+                    .lower_expr(path, node)
+                    .map_err(|error| self.coverage_error(node, error))?;
+                if value.is_real() || value.width == 0 || value.width > 64 {
+                    return Err(self.coverage_error(
+                        node,
+                        "bins values that read covergroup arguments must be integral values of at most 64 bits",
+                    ));
+                }
+                statements.push(IrStmt::Coverage(Box::new(IrCoverageStmt::Slot {
+                    record: record.clone(),
+                    slot: slot as u32,
+                    value,
+                })));
             }
             Ok(statements)
         })();

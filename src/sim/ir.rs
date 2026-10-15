@@ -88,8 +88,9 @@ pub(in crate::sim) use calls::call_argument_name;
 pub use calls::{IrCall, IrCallArg, IrCallExpr, IrDepth, IrVirtualCall};
 mod coverage;
 pub use coverage::{
-    IrCoverBins, IrCoverSegment, IrCoverageOption, IrCoverageQuery, IrCoverageSample,
-    IrCoverageStmt, IrCoverageType, IrCovergroup, IrCoverpoint,
+    IrCoverAutomatic, IrCoverBin, IrCoverBinKind, IrCoverBinShape, IrCoverBound, IrCoverCount,
+    IrCoverItem, IrCoverageOption, IrCoverageQuery, IrCoverageSample, IrCoverageStmt,
+    IrCoverageType, IrCovergroup, IrCoverpoint,
 };
 mod randomize;
 pub use randomize::{

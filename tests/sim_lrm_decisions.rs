@@ -1946,3 +1946,82 @@ fn s44_d9_strobe_block_event() {
         include_str!("fixtures/sim/lrm_decisions/S44-D9_strobe_block_event.out"),
     );
 }
+
+#[test]
+fn s45_d1_fixed_bins_more_than_values() {
+    run_decision(
+        "S45-D1_fixed_bins_more_than_values",
+        include_str!("fixtures/sim/lrm_decisions/S45-D1_fixed_bins_more_than_values.out"),
+    );
+}
+
+#[test]
+fn s45_d2_default_only_coverpoint() {
+    run_decision(
+        "S45-D2_default_only_coverpoint",
+        include_str!("fixtures/sim/lrm_decisions/S45-D2_default_only_coverpoint.out"),
+    );
+}
+
+/// The illegal sample is a run-time error: exact stdout, exit status 1.
+#[test]
+fn s45_d3_illegal_bin_continues() {
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S45-D3_illegal_bin_continues",
+        &[],
+        &|label, output| {
+            assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                include_str!("fixtures/sim/lrm_decisions/S45-D3_illegal_bin_continues.out"),
+                "{label}"
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .contains("llg: runtime error: covergroup `g` coverpoint `cp` sampled 7"),
+                "{label}: {output:?}"
+            );
+        },
+    );
+}
+
+#[test]
+fn s45_d4_wildcard_range_bounds() {
+    run_decision(
+        "S45-D4_wildcard_range_bounds",
+        include_str!("fixtures/sim/lrm_decisions/S45-D4_wildcard_range_bounds.out"),
+    );
+}
+
+/// A non-positive bins array size from an argument is a run-time error.
+#[test]
+fn s45_d5_bins_count_not_positive() {
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S45-D5_bins_count_not_positive",
+        &[],
+        &|label, output| {
+            assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                include_str!("fixtures/sim/lrm_decisions/S45-D5_bins_count_not_positive.out"),
+                "{label}"
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains(
+                    "llg: runtime error: bins `b` at tb:18:12: the number of bins is not a positive value"
+                ),
+                "{label}: {output:?}"
+            );
+        },
+    );
+}
+
+#[test]
+fn s45_d6_value_listed_twice() {
+    run_decision(
+        "S45-D6_value_listed_twice",
+        include_str!("fixtures/sim/lrm_decisions/S45-D6_value_listed_twice.out"),
+    );
+}

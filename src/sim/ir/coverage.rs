@@ -22,6 +22,11 @@ pub struct IrCovergroup {
     pub(in crate::sim) name: String,
     pub(in crate::sim) coverage_type: usize,
     pub(in crate::sim) points: Vec<IrCoverpoint>,
+    /// Argument values bins read, filled by [`IrCoverageStmt::Slot`] at
+    /// `new` (19.5).
+    pub(in crate::sim) slots: u32,
+    /// Bin `iff` guards every sample evaluates ([`IrCoverageStmt::Sample`]).
+    pub(in crate::sim) guards: u32,
     /// `type_option.strobe` (19.7.1): the sample method (no formals) that a
     /// Postponed-region flush calls for each instance its clocking event
     /// requested in the time slot.
@@ -36,30 +41,110 @@ pub struct IrCoverpoint {
     pub(in crate::sim) signed: bool,
     /// `type_option.weight` of the coverpoint (Table 19-3).
     pub(in crate::sim) type_weight: i64,
-    pub(in crate::sim) bins: IrCoverBins,
+    /// The automatic bins of a coverpoint that declares no `bins` (19.5.2).
+    pub(in crate::sim) automatic: IrCoverAutomatic,
+    /// Declared bins in source order, `ignore_bins` and `illegal_bins`
+    /// included.
+    pub(in crate::sim) bins: Vec<IrCoverBin>,
+    /// Value items the bins name by range.
+    pub(in crate::sim) items: Vec<IrCoverItem>,
 }
 
-/// Bin layout of one coverpoint. Keys order values numerically: the value
-/// masked to the coverpoint width, with the sign bit flipped when signed.
+/// Keys order values numerically: the value masked to the coverpoint width,
+/// with the sign bit flipped when signed.
 #[derive(Clone, Debug, PartialEq)]
-pub enum IrCoverBins {
-    /// `min(2^M, auto_bin_max)` automatic bins (19.5.2).
+pub enum IrCoverAutomatic {
+    None,
+    /// `min(2^M, auto_bin_max)` automatic bins.
     Auto,
     /// One bin per enum member, in ascending key order.
     Enum(Vec<u64>),
-    /// Explicit value bins: maximal disjoint key ranges in ascending order,
-    /// each naming every bin that contains it, and which bins have a value.
-    Explicit {
-        segments: Vec<IrCoverSegment>,
-        valued: Vec<bool>,
-    },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IrCoverSegment {
-    pub(in crate::sim) lo: u64,
-    pub(in crate::sim) hi: u64,
-    pub(in crate::sim) bins: Vec<u32>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrCoverBinKind {
+    Bins,
+    Ignore,
+    Illegal,
+    /// `bins b = default`.
+    Default,
+    /// `illegal_bins b = default`.
+    IllegalDefault,
+}
+
+impl IrCoverBinKind {
+    pub(in crate::sim) fn code(self) -> u32 {
+        match self {
+            Self::Bins => 0,
+            Self::Ignore => 1,
+            Self::Illegal => 2,
+            Self::Default => 3,
+            Self::IllegalDefault => 4,
+        }
+    }
+}
+
+/// `bins b`, `bins b[]` and `bins b[N]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrCoverBinShape {
+    Scalar,
+    PerValue,
+    Count(IrCoverCount),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrCoverCount {
+    Const(u64),
+    Slot(u32),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCoverBin {
+    pub(in crate::sim) name: String,
+    /// Declaration location for run-time messages.
+    pub(in crate::sim) site: String,
+    pub(in crate::sim) kind: IrCoverBinKind,
+    pub(in crate::sim) shape: IrCoverBinShape,
+    /// Index of the bin's `iff` guard among the group's guards.
+    pub(in crate::sim) guard: Option<u32>,
+    pub(in crate::sim) first_item: u32,
+    pub(in crate::sim) n_items: u32,
+}
+
+/// One bound of a value item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrCoverBound {
+    /// A key resolved at compile time.
+    Key(u64),
+    /// An argument value resolved by 19.5.6 when the instance is ready.
+    Slot(u32),
+    /// `$` as a lower bound.
+    Min,
+    /// `$` as an upper bound.
+    Max,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCoverItem {
+    pub(in crate::sim) lo: IrCoverBound,
+    pub(in crate::sim) hi: IrCoverBound,
+    /// Location of an item that reads a slot, for run-time warnings.
+    pub(in crate::sim) site: Option<String>,
+}
+
+impl IrCoverpoint {
+    /// Whether a bin reads a slot, so its layout is built per instance.
+    pub(in crate::sim) fn dynamic(&self) -> bool {
+        self.items.iter().any(|item| {
+            !matches!(
+                (item.lo, item.hi),
+                (IrCoverBound::Key(_), IrCoverBound::Key(_))
+            )
+        }) || self
+            .bins
+            .iter()
+            .any(|bin| matches!(bin.shape, IrCoverBinShape::Count(IrCoverCount::Slot(_))))
+    }
 }
 
 /// Instance-specific options a covergroup body may set (Table 19-1). Only
@@ -104,13 +189,22 @@ pub enum IrCoverageStmt {
         value: IrExpr,
         site: String,
     },
-    /// Options are final: resolve defaults and size the counters.
+    /// Store argument value `slot` that bins of the record read.
+    Slot {
+        record: IrChandleExpr,
+        slot: u32,
+        value: IrExpr,
+    },
+    /// Options and slots are final: resolve defaults, build the bin layouts
+    /// and size the counters.
     Ready { record: IrChandleExpr },
     /// Add `object` to the objects the group's coverage event samples.
     Register { group: usize, object: IrChandleExpr },
-    /// Count the coverpoint values of one sample of the record.
+    /// Count the coverpoint values of one sample of the record. `guards`
+    /// are the group's bin `iff` guards, evaluated first.
     Sample {
         record: IrChandleExpr,
+        guards: Vec<IrExpr>,
         points: Vec<IrCoverageSample>,
     },
     /// `start()` / `stop()`; `point` `None` is the whole instance.
@@ -170,34 +264,40 @@ impl IrCovergroup {
             } else {
                 (1u64 << point.width) - 1
             };
-            match &point.bins {
-                IrCoverBins::Auto => {}
-                IrCoverBins::Enum(keys) => {
-                    if keys.is_empty()
-                        || keys.windows(2).any(|pair| pair[0] >= pair[1])
-                        || keys.iter().any(|key| *key > max)
-                    {
-                        return Err(format!("enum coverpoint `{}` keys are invalid", point.name));
-                    }
+            if let IrCoverAutomatic::Enum(keys) = &point.automatic {
+                if keys.is_empty()
+                    || keys.windows(2).any(|pair| pair[0] >= pair[1])
+                    || keys.iter().any(|key| *key > max)
+                {
+                    return Err(format!("enum coverpoint `{}` keys are invalid", point.name));
                 }
-                IrCoverBins::Explicit { segments, valued } => {
-                    let ordered = segments.windows(2).all(|pair| pair[0].hi < pair[1].lo);
-                    let bounded = segments.iter().all(|segment| {
-                        segment.lo <= segment.hi
-                            && segment.hi <= max
-                            && !segment.bins.is_empty()
-                            && segment
-                                .bins
-                                .iter()
-                                .all(|bin| (*bin as usize) < valued.len())
-                    });
-                    if valued.is_empty() || !ordered || !bounded {
-                        return Err(format!(
-                            "explicit coverpoint `{}` segments are invalid",
-                            point.name
-                        ));
+            }
+            let bound_valid = |bound: IrCoverBound| match bound {
+                IrCoverBound::Key(key) => key <= max,
+                IrCoverBound::Slot(slot) => slot < self.slots,
+                IrCoverBound::Min | IrCoverBound::Max => true,
+            };
+            let items_valid = point.items.iter().all(|item| {
+                bound_valid(item.lo)
+                    && bound_valid(item.hi)
+                    && match (item.lo, item.hi) {
+                        (IrCoverBound::Key(lo), IrCoverBound::Key(hi)) => lo <= hi,
+                        _ => item.site.is_some(),
                     }
-                }
+            });
+            let bins_valid = point.bins.iter().all(|bin| {
+                (bin.first_item as usize)
+                    .checked_add(bin.n_items as usize)
+                    .is_some_and(|end| end <= point.items.len())
+                    && bin.guard.is_none_or(|guard| guard < self.guards)
+                    && match bin.shape {
+                        IrCoverBinShape::Count(IrCoverCount::Const(count)) => count > 0,
+                        IrCoverBinShape::Count(IrCoverCount::Slot(slot)) => slot < self.slots,
+                        _ => true,
+                    }
+            });
+            if !items_valid || !bins_valid {
+                return Err(format!("coverpoint `{}` bins are invalid", point.name));
             }
         }
         Ok(())
@@ -207,10 +307,14 @@ impl IrCovergroup {
 impl IrCoverageStmt {
     pub(in crate::sim) fn expressions(&self) -> Vec<&IrExpr> {
         match self {
-            Self::Option { value, .. } => vec![value],
-            Self::Sample { points, .. } => points
+            Self::Option { value, .. } | Self::Slot { value, .. } => vec![value],
+            Self::Sample { guards, points, .. } => guards
                 .iter()
-                .flat_map(|sample| sample.iff.iter().chain(std::iter::once(&sample.value)))
+                .chain(
+                    points
+                        .iter()
+                        .flat_map(|sample| sample.iff.iter().chain(std::iter::once(&sample.value))),
+                )
                 .collect(),
             Self::Create { .. }
             | Self::Ready { .. }
@@ -224,15 +328,15 @@ impl IrCoverageStmt {
 
     pub(in crate::sim) fn expressions_mut(&mut self) -> Vec<&mut IrExpr> {
         match self {
-            Self::Option { value, .. } => vec![value],
-            Self::Sample { points, .. } => points
+            Self::Option { value, .. } | Self::Slot { value, .. } => vec![value],
+            Self::Sample { guards, points, .. } => guards
                 .iter_mut()
-                .flat_map(|sample| {
+                .chain(points.iter_mut().flat_map(|sample| {
                     sample
                         .iff
                         .iter_mut()
                         .chain(std::iter::once(&mut sample.value))
-                })
+                }))
                 .collect(),
             Self::Create { .. }
             | Self::Ready { .. }
@@ -247,6 +351,7 @@ impl IrCoverageStmt {
     pub(in crate::sim) fn chandles(&self) -> Vec<&IrChandleExpr> {
         match self {
             Self::Option { record, .. }
+            | Self::Slot { record, .. }
             | Self::Ready { record }
             | Self::Sample { record, .. }
             | Self::Control { record, .. } => vec![record],
@@ -259,6 +364,7 @@ impl IrCoverageStmt {
     pub(in crate::sim) fn chandles_mut(&mut self) -> Vec<&mut IrChandleExpr> {
         match self {
             Self::Option { record, .. }
+            | Self::Slot { record, .. }
             | Self::Ready { record }
             | Self::Sample { record, .. }
             | Self::Control { record, .. } => vec![record],

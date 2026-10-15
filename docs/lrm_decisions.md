@@ -395,6 +395,17 @@ case.
 | S44-D8 | **A jump out of a named block skips its `end` event**: the `end` event of a named block samples only when the block runs to the end of its last statement; `break` or `continue` out of it does not sample (nor does a disable). The `begin` event samples before the first statement of every execution. | 19.3 L32113-32119 | `S44-D8_named_block_jump_out` | llg choice (the text is silent on jumps out of a block) |
 | S44-D9 | **`type_option.strobe` does not apply to block events**: a `@@(end f)` sample is taken when `f` finishes, not in the Postponed region. | 19.3 L32105-32109, L32111; 19.7.1 L33423-33424 | `S44-D9_strobe_block_event` | llg reading (the text limits strobe to clocking events and procedural `sample()`; block events are not named) |
 
+## Coverpoint bins, transitions, crosses and options (SIM-045)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S45-D1 | **A bins array `b[N]` with fewer values than bins** gives each value its own bin, in the order listed, from the first bin on; the remaining bins are empty and excluded from coverage. | 19.5 L32422-32426, L32430-32431; 19.11.1 L33858-33860 | `S45-D1_fixed_bins_more_than_values` | llg reading (the text does not say which bins are empty) |
+| S45-D2 | **A `default`-only coverpoint has no automatic bins**: `bins d = default` is an explicit bins definition, so the coverpoint has no bin that counts, does not contribute to its covergroup and returns 0.0 itself. | 19.5 L32409-32411, L32436-32438; 19.11.1 L33862-33866 | `S45-D2_default_only_coverpoint` | llg reading ("not explicitly defined" is not defined for a default bin) |
+| S45-D3 | **An illegal value is a run-time error and the run continues**: the value counts in no bin, also not in another bin that lists it; the error is reported like `$error` and the run exits with a failure status. | 19.5.5 L32835-32841 | `S45-D3_illegal_bin_continues` | llg choice (the text does not say whether the error stops the simulation) |
+| S45-D4 | **A wildcard range with X, Z or ? bits in its bounds** covers the union over every expansion of its bounds: from the smallest value of the low bound to the largest value of the high bound. | 19.5.6 L32862-32863; 19.5.3 L32769-32770 | `S45-D4_wildcard_range_bounds` | llg reading (the text only shows singleton patterns) |
+| S45-D5 | **A bins array size that is not positive gives no bins**: a constant size is a compile-time error; a size read from a covergroup argument is a run-time error when the instance is constructed, the declaration has no bins and the run continues (exit status 1). | 19.5 L32415-32418 (silent) | `S45-D5_bins_count_not_positive` | llg choice (the text is silent on a size that is not positive) |
+| S45-D6 | **`b[]` has one bin per distinct value**: a value listed twice in the range list gets one bin. | 19.5 L32413-32415 | `S45-D6_value_listed_twice` | llg reading ("each value"; a bin is named by its value) |
+
 ## Memory files (SIM-027)
 
 The settled Q02 cases are conformance tests in

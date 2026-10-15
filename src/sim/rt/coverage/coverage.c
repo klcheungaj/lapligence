@@ -1,11 +1,18 @@
 // ── Functional coverage (IEEE 1800-2009 19) ─────────────────────────────────
 //
 // Generated code emits one static `llg_cov_group_t` per covergroup
-// declaration site (its coverpoint metadata) and one `llg_cov_type_t` per
-// declaration identity; type coverage merges every instance ever created for
-// that identity (19.11.3). Instance records are runtime-owned and live until
-// llg_rt_cleanup, so counters survive the collection of the covergroup
+// declaration site (its coverpoint specifications) and one `llg_cov_type_t`
+// per declaration identity; type coverage merges every instance ever created
+// for that identity (19.11.3). Instance records are runtime-owned and live
+// until llg_rt_cleanup, so counters survive the collection of the covergroup
 // object. A model without covergroups never reaches this file's state.
+//
+// llg_cov_ready turns each coverpoint specification into a layout: the bins
+// as counter indices and the key segments a sampled value is looked up in.
+// A layout that depends on nothing per instance is built once per group and
+// shared; one that reads argument slots, or follows an auto_bin_max other
+// than the shared one's, belongs to its instance. Layouts live until
+// llg_rt_cleanup.
 
 typedef struct {
     uint64_t* keys;   // bin index + 1; zero marks an empty slot
@@ -13,6 +20,51 @@ typedef struct {
     size_t capacity;  // a power of two, or zero before the first hit
     size_t used;
 } llg_cov_sparse_t;
+
+// An inclusive key or bin-index interval.
+typedef struct {
+    uint64_t lo, hi;
+} llg_cov_span_t;
+
+// The bins one value of a segment falls into for one declared bin: the
+// element `base` (div == 0), or element base + min(last, (pos + key - lo) /
+// div) of an array, where `pos` is the position of the segment's first value
+// in the declaration's value list (19.5).
+typedef struct {
+    uint64_t base;
+    uint64_t pos;
+    uint64_t div;
+    uint64_t last;
+    uint32_t decl;
+} llg_cov_entry_t;
+
+// A maximal key range hit by the same entries. Ignored and illegal values are
+// removed from every bin (19.5.4, 19.5.5): a removed segment counts nothing,
+// and its entries are the illegal_bins declarations that cover it.
+typedef struct {
+    uint64_t lo, hi;
+    uint32_t first, count;
+    uint8_t removed;
+} llg_cov_seg_t;
+
+struct llg_cov_layout {
+    struct llg_cov_layout* next_all;
+    uint64_t n_bins;        // counters: the automatic bins, then declared elements
+    uint64_t n_auto;
+    int64_t auto_bin_max;   // the option value the automatic bins follow
+    int64_t default_bin;    // the `default` bin's counter, or -1
+    int64_t default_decl;   // the `default` (or illegal default) declaration, or -1
+    uint8_t default_illegal;
+    uint32_t n_segments;
+    llg_cov_seg_t* segments;
+    llg_cov_entry_t* entries;
+    // Coverable bins (19.11.1): automatic bins and `bins` elements that keep
+    // a value after removal, as sorted disjoint spans with their ranks.
+    uint32_t n_cover;
+    llg_cov_span_t* cover;
+    uint64_t* cover_rank;
+    uint64_t n_coverable;
+};
 
 typedef struct {
     int64_t weight;
@@ -22,10 +74,17 @@ typedef struct {
     uint8_t has_at_least;
     uint8_t has_auto_bin_max;
     uint8_t stopped;
-    uint32_t n_bins;  // resolved by llg_cov_ready
+    const llg_cov_layout_t* layout;  // set by llg_cov_ready
     uint64_t* dense;  // n_bins counters when n_bins <= LLG_COV_DENSE_BINS
     llg_cov_sparse_t sparse;
 } llg_cov_point_state_t;
+
+// One argument value a bins declaration reads (19.5), as given to `new`.
+typedef struct {
+    uint64_t raw;  // the low 64 bits, sign-extended for a signed value
+    uint8_t signed_value;
+    uint8_t unknown;  // any X or Z bit
+} llg_cov_slot_value_t;
 
 struct llg_cov_inst {
     llg_cov_group_t* group;
@@ -37,6 +96,7 @@ struct llg_cov_inst {
     uint8_t stopped;
     uint8_t ready;
     uint8_t strobe_pending;  // a Postponed sample is queued for this slot
+    llg_cov_slot_value_t* slots;
     llg_cov_point_state_t points[];
 };
 
@@ -44,6 +104,11 @@ struct llg_cov_inst {
 static llg_cov_type_t* llg_cov_types_used;
 // Groups whose registry holds sampled objects, for cleanup.
 static llg_cov_group_t* llg_cov_groups_registered;
+// Every layout, and the groups that cache shared layouts, for cleanup.
+static llg_cov_layout_t* llg_cov_layouts_all;
+static llg_cov_group_t** llg_cov_cached_groups;
+static size_t llg_cov_n_cached_groups;
+static size_t llg_cov_cached_capacity;
 
 static void* llg_cov_grow(void* data, size_t count, size_t size, const char* what) {
     if (size != 0 && count > SIZE_MAX / size) llg_fatal_allocation(what, count, size);
@@ -53,36 +118,444 @@ static void* llg_cov_grow(void* data, size_t count, size_t size, const char* wha
     return grown;
 }
 
+// Append `value` to the growable array `data` of `len` elements and `cap`
+// capacity.
+#define LLG_COV_PUSH(data, len, cap, value, what)                                 \
+    do {                                                                          \
+        if ((len) == (cap)) {                                                     \
+            (cap) = (cap) ? (cap) * 2u : 8u;                                      \
+            (data) = llg_cov_grow((data), (cap), sizeof(*(data)), (what));        \
+        }                                                                         \
+        (data)[(len)++] = (value);                                                \
+    } while (0)
+
+static uint64_t llg_cov_mask(const llg_cov_point_t* point) {
+    return point->width >= 64 ? UINT64_MAX : ((UINT64_C(1) << point->width) - 1u);
+}
+
 // Signed coverpoints order bins by numeric value: flipping the sign bit maps
 // the two's-complement range onto ascending unsigned keys.
 static uint64_t llg_cov_key(const llg_cov_point_t* point, uint64_t raw) {
-    uint64_t mask = point->width >= 64 ? UINT64_MAX : ((UINT64_C(1) << point->width) - 1u);
-    uint64_t key = raw & mask;
+    uint64_t key = raw & llg_cov_mask(point);
     if (point->is_signed) key ^= UINT64_C(1) << (point->width - 1u);
     return key;
 }
 
-static uint32_t llg_cov_auto_bins(const llg_cov_point_t* point, int64_t auto_bin_max) {
+static uint64_t llg_cov_auto_bins(const llg_cov_point_t* point, int64_t auto_bin_max) {
     uint64_t limit = auto_bin_max < 1 ? 1u : (uint64_t)auto_bin_max;
-    if (limit > UINT32_MAX) limit = UINT32_MAX;
-    if (point->width < 32u && (UINT64_C(1) << point->width) <= limit)
-        return (uint32_t)(UINT64_C(1) << point->width);
-    return (uint32_t)limit;
+    if (point->width < 64u && (UINT64_C(1) << point->width) <= limit)
+        return UINT64_C(1) << point->width;
+    return limit;
 }
 
 // 19.5.2: 2^M values spread uniformly over N bins; the last bin also takes
 // the remainder.
-static uint32_t llg_cov_auto_bin(const llg_cov_point_t* point, uint32_t n_bins, uint64_t key) {
+static uint64_t llg_cov_auto_bin(const llg_cov_point_t* point, uint64_t n_bins, uint64_t key) {
     uint64_t span;
     if (point->width >= 64u) {
         span = UINT64_MAX / n_bins;
-        if (UINT64_MAX % n_bins == (uint64_t)n_bins - 1u) span++;
+        if (UINT64_MAX % n_bins == n_bins - 1u) span++;
     } else {
         span = (UINT64_C(1) << point->width) / n_bins;
     }
     uint64_t bin = key / span;
-    return bin >= n_bins ? n_bins - 1u : (uint32_t)bin;
+    return bin >= n_bins ? n_bins - 1u : bin;
 }
+
+// ── Value resolution (19.5.6) ─────────────────────────────────────────────
+
+// A value of a signed or unsigned operand of at most 64 bits.
+typedef struct {
+    uint8_t neg;
+    uint64_t mag;
+} llg_cov_num_t;
+
+static int llg_cov_num_cmp(llg_cov_num_t a, llg_cov_num_t b) {
+    if (a.neg != b.neg) return a.neg ? -1 : 1;
+    if (a.mag == b.mag) return 0;
+    return (a.mag < b.mag) == !a.neg ? -1 : 1;
+}
+
+static llg_cov_num_t llg_cov_type_min(const llg_cov_point_t* point) {
+    llg_cov_num_t min = {0, 0};
+    if (point->is_signed) {
+        min.neg = 1;
+        min.mag = UINT64_C(1) << (point->width - 1u);
+    }
+    return min;
+}
+
+static llg_cov_num_t llg_cov_type_max(const llg_cov_point_t* point) {
+    llg_cov_num_t max = {0, point->is_signed ? (llg_cov_mask(point) >> 1) : llg_cov_mask(point)};
+    return max;
+}
+
+// The key of a value inside the coverpoint type.
+static uint64_t llg_cov_num_key(const llg_cov_point_t* point, llg_cov_num_t value) {
+    uint64_t raw = value.neg ? ~value.mag + 1u : value.mag;
+    return llg_cov_key(point, raw);
+}
+
+static llg_cov_num_t llg_cov_slot_num(const llg_cov_slot_value_t* slot) {
+    llg_cov_num_t value = {0, slot->raw};
+    if (slot->signed_value && (slot->raw >> 63)) {
+        value.neg = 1;
+        value.mag = ~slot->raw + 1u;
+    }
+    return value;
+}
+
+static void llg_cov_value_warning(const llg_cov_item_t* item, const llg_cov_bin_t* bin,
+                                  const char* what) {
+    fprintf(stderr, "llg: warning: %s: bins `%s` %s (IEEE 1800-2009 19.5.6)\n",
+            item->site ? item->site : bin->site, bin->name, what);
+}
+
+// The key range of one item, resolved by 19.5.6 against the coverpoint
+// type; zero when the item does not participate in the bin's values.
+static int llg_cov_item_keys(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
+                             const llg_cov_bin_t* bin, const llg_cov_item_t* item,
+                             llg_cov_span_t* keys) {
+    if (item->lo_kind == LLG_COV_BOUND_KEY && item->hi_kind == LLG_COV_BOUND_KEY) {
+        keys->lo = item->lo;
+        keys->hi = item->hi;
+        return 1;
+    }
+    llg_cov_num_t bounds[2];
+    const uint64_t refs[2] = {item->lo, item->hi};
+    const uint8_t kinds[2] = {item->lo_kind, item->hi_kind};
+    for (int i = 0; i < 2; ++i) {
+        if (kinds[i] == LLG_COV_BOUND_MIN) {
+            bounds[i] = llg_cov_type_min(point);
+        } else if (kinds[i] == LLG_COV_BOUND_MAX) {
+            bounds[i] = llg_cov_type_max(point);
+        } else {
+            const llg_cov_slot_value_t* slot = &inst->slots[refs[i]];
+            if (slot->unknown) {
+                llg_cov_value_warning(item, bin, "value has X or Z bits and is ignored");
+                return 0;
+            }
+            bounds[i] = llg_cov_slot_num(slot);
+        }
+    }
+    llg_cov_num_t min = llg_cov_type_min(point), max = llg_cov_type_max(point);
+    llg_cov_num_t lo = llg_cov_num_cmp(bounds[0], min) < 0 ? min : bounds[0];
+    llg_cov_num_t hi = llg_cov_num_cmp(bounds[1], max) > 0 ? max : bounds[1];
+    if (llg_cov_num_cmp(bounds[0], bounds[1]) > 0 || llg_cov_num_cmp(lo, hi) > 0) {
+        llg_cov_value_warning(item, bin, "value is outside the coverpoint type and is ignored");
+        return 0;
+    }
+    if (llg_cov_num_cmp(lo, bounds[0]) != 0 || llg_cov_num_cmp(hi, bounds[1]) != 0)
+        llg_cov_value_warning(item, bin,
+                              "range is limited to the values of the coverpoint type");
+    keys->lo = llg_cov_num_key(point, lo);
+    keys->hi = llg_cov_num_key(point, hi);
+    return 1;
+}
+
+// ── Layouts ───────────────────────────────────────────────────────────────
+
+static int llg_cov_span_order(const void* a, const void* b) {
+    const llg_cov_span_t* x = (const llg_cov_span_t*)a;
+    const llg_cov_span_t* y = (const llg_cov_span_t*)b;
+    if (x->lo != y->lo) return x->lo < y->lo ? -1 : 1;
+    return x->hi < y->hi ? -1 : x->hi > y->hi;
+}
+
+// Sort and merge overlapping or adjacent spans in place; returns the count.
+static size_t llg_cov_spans_merge(llg_cov_span_t* spans, size_t n) {
+    if (n == 0) return 0;
+    qsort(spans, n, sizeof(*spans), llg_cov_span_order);
+    size_t out = 0;
+    for (size_t i = 1; i < n; ++i) {
+        if (spans[out].hi == UINT64_MAX || spans[i].lo <= spans[out].hi + 1u) {
+            if (spans[i].hi > spans[out].hi) spans[out].hi = spans[i].hi;
+        } else {
+            spans[++out] = spans[i];
+        }
+    }
+    return out + 1u;
+}
+
+// The number of values of a span; zero stands for the full 64-bit range.
+static uint64_t llg_cov_span_size(llg_cov_span_t span) {
+    return span.hi - span.lo + 1u;
+}
+
+// One declared item's keys with the bins they map to, before the segments
+// are cut.
+typedef struct {
+    uint64_t lo, hi;
+    llg_cov_entry_t entry;
+    uint8_t role;  // LLG_COV_BIN_BINS, _IGNORE or _ILLEGAL
+} llg_cov_piece_t;
+
+static int llg_cov_piece_order(const void* a, const void* b) {
+    const llg_cov_piece_t* x = (const llg_cov_piece_t*)a;
+    const llg_cov_piece_t* y = (const llg_cov_piece_t*)b;
+    return x->lo < y->lo ? -1 : x->lo > y->lo;
+}
+
+static int llg_cov_u64_order(const void* a, const void* b) {
+    uint64_t x = *(const uint64_t*)a, y = *(const uint64_t*)b;
+    return x < y ? -1 : x > y;
+}
+
+// Bin counts beyond 2^64 - 1 cannot be indexed.
+static uint64_t llg_cov_add_bins(uint64_t total, uint64_t more) {
+    if (more == 0 || more > UINT64_MAX - total) llg_fatal_allocation("coverage bins", 2, SIZE_MAX);
+    return total + more;
+}
+
+// The element range one entry covers over the keys lo..hi of a segment.
+static llg_cov_span_t llg_cov_entry_bins(const llg_cov_entry_t* entry, uint64_t lo, uint64_t hi) {
+    llg_cov_span_t bins = {entry->base, entry->base};
+    if (entry->div) {
+        uint64_t first = entry->pos / entry->div, last = (entry->pos + (hi - lo)) / entry->div;
+        bins.lo = entry->base + (first < entry->last ? first : entry->last);
+        bins.hi = entry->base + (last < entry->last ? last : entry->last);
+    }
+    return bins;
+}
+
+// The `[N]` count of a bins array; zero when it is not a positive value.
+static uint64_t llg_cov_bin_count(const llg_cov_inst_t* inst, const llg_cov_bin_t* bin) {
+    if (!bin->count_is_slot) return bin->count;
+    const llg_cov_slot_value_t* slot = &inst->slots[bin->count];
+    llg_cov_num_t value = llg_cov_slot_num(slot);
+    if (slot->unknown || value.neg || value.mag == 0) {
+        fprintf(stderr,
+                "llg: runtime error: bins `%s` at %s: the number of bins is not a positive "
+                "value, so the declaration has no bins\n",
+                bin->name, bin->site);
+        llg_rt_mark_failed();
+        return 0;
+    }
+    return value.mag;
+}
+
+// Coverable spans of the automatic bins whose keys lo..hi are not removed.
+static size_t llg_cov_auto_spans(const llg_cov_point_t* point, const llg_cov_layout_t* layout,
+                                 uint64_t lo, uint64_t hi, llg_cov_span_t** spans, size_t n,
+                                 size_t* cap) {
+    if (point->kind == LLG_COV_POINT_AUTO) {
+        llg_cov_span_t bins = {llg_cov_auto_bin(point, layout->n_auto, lo),
+                               llg_cov_auto_bin(point, layout->n_auto, hi)};
+        LLG_COV_PUSH(*spans, n, *cap, bins, "coverage bins");
+        return n;
+    }
+    uint32_t first = 0, end = point->n_keys;
+    while (first < end) {
+        uint32_t mid = first + (end - first) / 2u;
+        if (point->keys[mid] < lo) first = mid + 1u;
+        else end = mid;
+    }
+    uint32_t last = first;
+    while (last < point->n_keys && point->keys[last] <= hi) last++;
+    if (last > first) {
+        llg_cov_span_t bins = {first, last - 1u};
+        LLG_COV_PUSH(*spans, n, *cap, bins, "coverage bins");
+    }
+    return n;
+}
+
+static llg_cov_layout_t* llg_cov_build_layout(const llg_cov_inst_t* inst, uint32_t index,
+                                              int64_t auto_bin_max) {
+    const llg_cov_point_t* point = &inst->group->points[index];
+    llg_cov_layout_t* layout =
+        (llg_cov_layout_t*)llg_checked_calloc(1, sizeof(*layout), "coverage layout");
+    layout->default_bin = -1;
+    layout->default_decl = -1;
+    layout->auto_bin_max = auto_bin_max;
+    if (point->kind == LLG_COV_POINT_AUTO) layout->n_auto = llg_cov_auto_bins(point, auto_bin_max);
+    else if (point->kind == LLG_COV_POINT_ENUM) layout->n_auto = point->n_keys;
+    uint64_t n_bins = layout->n_auto;
+
+    llg_cov_piece_t* pieces = NULL;
+    size_t n_pieces = 0, pieces_cap = 0;
+    llg_cov_span_t* spans = NULL;
+    size_t spans_cap = 0;
+    for (uint32_t d = 0; d < point->n_bins; ++d) {
+        const llg_cov_bin_t* bin = &point->bins[d];
+        if (bin->kind == LLG_COV_BIN_DEFAULT || bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT) {
+            layout->default_decl = d;
+            layout->default_illegal = bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT;
+            if (bin->kind == LLG_COV_BIN_DEFAULT) {
+                layout->default_bin = (int64_t)n_bins;
+                n_bins = llg_cov_add_bins(n_bins, 1);
+            }
+            continue;
+        }
+        size_t n_spans = 0;
+        for (uint32_t i = 0; i < bin->n_items; ++i) {
+            llg_cov_span_t keys;
+            if (llg_cov_item_keys(inst, point, bin, &point->items[bin->first_item + i], &keys))
+                LLG_COV_PUSH(spans, n_spans, spans_cap, keys, "coverage bin values");
+        }
+        llg_cov_entry_t entry = {n_bins, 0, 0, 0, d};
+        if (bin->kind == LLG_COV_BIN_BINS && bin->shape == LLG_COV_SHAPE_COUNT) {
+            // 19.5: the values, in order and with duplicates, are dealt to
+            // the N bins n at a time; the last bin takes the remainder. With
+            // fewer values than bins, each value gets its own bin and the
+            // remaining bins stay empty (decision S45-D1).
+            uint64_t count = llg_cov_bin_count(inst, bin);
+            if (!count) continue;
+            uint64_t values = 0;
+            for (size_t i = 0; i < n_spans; ++i) {
+                uint64_t size = llg_cov_span_size(spans[i]);
+                if (size == 0 || size > UINT64_MAX - values)
+                    llg_fatal_allocation("coverage bin values", 2, SIZE_MAX);
+                values += size;
+            }
+            entry.div = values >= count ? values / count : 1u;
+            entry.last = count - 1u;
+            for (size_t i = 0; i < n_spans; ++i) {
+                llg_cov_piece_t piece = {spans[i].lo, spans[i].hi, entry, LLG_COV_BIN_BINS};
+                LLG_COV_PUSH(pieces, n_pieces, pieces_cap, piece, "coverage bin values");
+                entry.pos += llg_cov_span_size(spans[i]);
+            }
+            n_bins = llg_cov_add_bins(n_bins, count);
+            continue;
+        }
+        // A value listed twice is still one value of the bin.
+        n_spans = llg_cov_spans_merge(spans, n_spans);
+        if (bin->kind == LLG_COV_BIN_BINS && bin->shape == LLG_COV_SHAPE_PER_VALUE) {
+            entry.div = 1;
+            entry.last = UINT64_MAX;
+            for (size_t i = 0; i < n_spans; ++i) {
+                llg_cov_piece_t piece = {spans[i].lo, spans[i].hi, entry, LLG_COV_BIN_BINS};
+                LLG_COV_PUSH(pieces, n_pieces, pieces_cap, piece, "coverage bin values");
+                uint64_t size = llg_cov_span_size(spans[i]);
+                if (size == 0 || size > UINT64_MAX - entry.pos)
+                    llg_fatal_allocation("coverage bins", 2, SIZE_MAX);
+                entry.pos += size;
+            }
+            if (entry.pos) n_bins = llg_cov_add_bins(n_bins, entry.pos);
+            continue;
+        }
+        for (size_t i = 0; i < n_spans; ++i) {
+            llg_cov_piece_t piece = {spans[i].lo, spans[i].hi, entry, bin->kind};
+            LLG_COV_PUSH(pieces, n_pieces, pieces_cap, piece, "coverage bin values");
+        }
+        if (bin->kind == LLG_COV_BIN_BINS) n_bins = llg_cov_add_bins(n_bins, 1);
+    }
+    layout->n_bins = n_bins;
+
+    // Cut the pieces into maximal segments with one set of entries.
+    if (n_pieces) {
+        qsort(pieces, n_pieces, sizeof(*pieces), llg_cov_piece_order);
+        uint64_t* bounds = (uint64_t*)llg_checked_malloc(n_pieces * 2u, sizeof(uint64_t),
+                                                         "coverage segments");
+        size_t n_bounds = 0;
+        for (size_t i = 0; i < n_pieces; ++i) {
+            bounds[n_bounds++] = pieces[i].lo;
+            if (pieces[i].hi != UINT64_MAX) bounds[n_bounds++] = pieces[i].hi + 1u;
+        }
+        qsort(bounds, n_bounds, sizeof(uint64_t), llg_cov_u64_order);
+        size_t unique = 0;
+        for (size_t i = 0; i < n_bounds; ++i)
+            if (!unique || bounds[unique - 1u] != bounds[i]) bounds[unique++] = bounds[i];
+        size_t* active = (size_t*)llg_checked_malloc(n_pieces, sizeof(size_t), "coverage segments");
+        size_t n_active = 0, next = 0;
+        size_t n_segments = 0, segments_cap = 0, n_entries = 0, entries_cap = 0;
+        for (size_t k = 0; k < unique; ++k) {
+            uint64_t lo = bounds[k];
+            size_t kept = 0;
+            for (size_t i = 0; i < n_active; ++i)
+                if (pieces[active[i]].hi >= lo) active[kept++] = active[i];
+            n_active = kept;
+            while (next < n_pieces && pieces[next].lo == lo) active[n_active++] = next++;
+            if (!n_active) continue;
+            uint64_t hi = k + 1u < unique ? bounds[k + 1u] - 1u : UINT64_MAX;
+            llg_cov_seg_t segment = {lo, hi, (uint32_t)n_entries, 0, 0};
+            for (size_t i = 0; i < n_active; ++i)
+                if (pieces[active[i]].role != LLG_COV_BIN_BINS) segment.removed = 1;
+            for (size_t i = 0; i < n_active; ++i) {
+                const llg_cov_piece_t* piece = &pieces[active[i]];
+                if (segment.removed ? piece->role != LLG_COV_BIN_ILLEGAL
+                                    : piece->role != LLG_COV_BIN_BINS)
+                    continue;
+                llg_cov_entry_t entry = piece->entry;
+                entry.pos += lo - piece->lo;
+                if (n_entries >= UINT32_MAX) llg_fatal_allocation("coverage segments", 2, SIZE_MAX);
+                LLG_COV_PUSH(layout->entries, n_entries, entries_cap, entry, "coverage segments");
+                segment.count++;
+            }
+            if (n_segments >= UINT32_MAX) llg_fatal_allocation("coverage segments", 2, SIZE_MAX);
+            LLG_COV_PUSH(layout->segments, n_segments, segments_cap, segment, "coverage segments");
+        }
+        layout->n_segments = (uint32_t)n_segments;
+        free(active);
+        free(bounds);
+    }
+
+    // Coverable bins: declared elements with a value left after removal, and
+    // automatic bins with a value outside every removed segment (19.11.1).
+    size_t n_cover = 0;
+    for (uint32_t s = 0; s < layout->n_segments; ++s) {
+        const llg_cov_seg_t* segment = &layout->segments[s];
+        if (segment->removed) continue;
+        for (uint32_t e = 0; e < segment->count; ++e) {
+            llg_cov_span_t bins =
+                llg_cov_entry_bins(&layout->entries[segment->first + e], segment->lo, segment->hi);
+            LLG_COV_PUSH(spans, n_cover, spans_cap, bins, "coverage bins");
+        }
+    }
+    if (point->kind != LLG_COV_POINT_EXPLICIT) {
+        uint64_t key = 0, max = llg_cov_mask(point);
+        int exhausted = 0;
+        for (uint32_t s = 0; s < layout->n_segments && !exhausted; ++s) {
+            const llg_cov_seg_t* segment = &layout->segments[s];
+            if (!segment->removed) continue;
+            if (segment->lo > key)
+                n_cover = llg_cov_auto_spans(point, layout, key, segment->lo - 1u, &spans, n_cover,
+                                             &spans_cap);
+            if (segment->hi >= max) exhausted = 1;
+            else key = segment->hi + 1u;
+        }
+        if (!exhausted)
+            n_cover = llg_cov_auto_spans(point, layout, key, max, &spans, n_cover, &spans_cap);
+    }
+    n_cover = llg_cov_spans_merge(spans, n_cover);
+    if (n_cover > UINT32_MAX) llg_fatal_allocation("coverage bins", n_cover, sizeof(*spans));
+    layout->n_cover = (uint32_t)n_cover;
+    layout->cover = (llg_cov_span_t*)llg_checked_malloc(n_cover, sizeof(*spans), "coverage bins");
+    layout->cover_rank =
+        (uint64_t*)llg_checked_malloc(n_cover, sizeof(uint64_t), "coverage bins");
+    for (size_t i = 0; i < n_cover; ++i) {
+        layout->cover[i] = spans[i];
+        layout->cover_rank[i] = layout->n_coverable;
+        layout->n_coverable += spans[i].hi - spans[i].lo + 1u;
+    }
+    free(spans);
+    free(pieces);
+    layout->next_all = llg_cov_layouts_all;
+    llg_cov_layouts_all = layout;
+    return layout;
+}
+
+// The layout of one point of a new instance: the group's shared layout when
+// the bins depend on nothing per instance.
+static const llg_cov_layout_t* llg_cov_layout_for(llg_cov_inst_t* inst, uint32_t index) {
+    llg_cov_group_t* group = inst->group;
+    const llg_cov_point_t* point = &group->points[index];
+    int64_t auto_bin_max = inst->points[index].auto_bin_max;
+    if (point->dynamic) return llg_cov_build_layout(inst, index, auto_bin_max);
+    if (!group->layouts) {
+        group->layouts = (llg_cov_layout_t**)llg_checked_calloc(group->n_points, sizeof(void*),
+                                                                "coverage layouts");
+        LLG_COV_PUSH(llg_cov_cached_groups, llg_cov_n_cached_groups, llg_cov_cached_capacity,
+                     group, "coverage layouts");
+    }
+    llg_cov_layout_t* shared = group->layouts[index];
+    if (shared && (point->kind != LLG_COV_POINT_AUTO || shared->auto_bin_max == auto_bin_max))
+        return shared;
+    llg_cov_layout_t* layout = llg_cov_build_layout(inst, index, auto_bin_max);
+    if (!shared) group->layouts[index] = layout;
+    return layout;
+}
+
+// ── Counters ──────────────────────────────────────────────────────────────
 
 static void llg_cov_sparse_add(llg_cov_sparse_t* table, uint64_t bin) {
     if ((table->used + 1u) * 2u > table->capacity) {
@@ -113,13 +586,27 @@ static void llg_cov_sparse_add(llg_cov_sparse_t* table, uint64_t bin) {
     if (table->counts[slot] != UINT64_MAX) table->counts[slot]++;
 }
 
-static void llg_cov_count(llg_cov_point_state_t* state, uint32_t bin) {
+static void llg_cov_count(llg_cov_point_state_t* state, uint64_t bin) {
     if (state->dense) {
         if (state->dense[bin] != UINT64_MAX) state->dense[bin]++;
     } else {
         llg_cov_sparse_add(&state->sparse, bin);
     }
 }
+
+// The rank of `bin` among the coverable bins, or -1 when it is not one.
+static int64_t llg_cov_cover_rank(const llg_cov_layout_t* layout, uint64_t bin) {
+    uint32_t lo = 0, hi = layout->n_cover;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        if (layout->cover[mid].hi < bin) lo = mid + 1u;
+        else hi = mid;
+    }
+    if (lo == layout->n_cover || layout->cover[lo].lo > bin) return -1;
+    return (int64_t)(layout->cover_rank[lo] + (bin - layout->cover[lo].lo));
+}
+
+// ── Instances ─────────────────────────────────────────────────────────────
 
 void* llg_cov_new(llg_cov_group_t* group) {
     size_t points = group->n_points;
@@ -135,6 +622,9 @@ void* llg_cov_new(llg_cov_group_t* group) {
         inst->points[i].weight = 1;
         inst->points[i].goal = 100;
     }
+    if (group->n_slots)
+        inst->slots = (llg_cov_slot_value_t*)llg_checked_calloc(
+            group->n_slots, sizeof(llg_cov_slot_value_t), "covergroup arguments");
     llg_cov_type_t* type = group->type;
     if (!type->used) {
         type->used = 1;
@@ -203,63 +693,139 @@ void llg_cov_option(void* record, int32_t point, uint32_t option, sv4_t value, c
     }
 }
 
+void llg_cov_slot(void* record, uint32_t slot, sv4_t value) {
+    llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
+    if (!inst || slot >= inst->group->n_slots) return;
+    llg_cov_slot_value_t* target = &inst->slots[slot];
+    uint32_t width = llg_sv4_width(value);
+    uint64_t bits = sv4_to_u64(value);
+    target->signed_value = (uint8_t)(llg_sv4_signed(value) != 0);
+    target->unknown = (uint8_t)(sv4_is_unknown(value) != 0);
+    // Generated code passes at most 64 bits; the value keeps its own
+    // signedness for 19.5.6.
+    if (width > 0u && width < 64u) {
+        bits &= (UINT64_C(1) << width) - 1u;
+        if (target->signed_value && ((bits >> (width - 1u)) & 1u))
+            bits |= ~((UINT64_C(1) << width) - 1u);
+    }
+    target->raw = bits;
+}
+
 // Group-level at_least and auto_bin_max are coverpoint defaults (19.7); bin
-// storage is sized once the options are final.
+// layouts and counters are built once the options and arguments are final.
 void llg_cov_ready(void* record) {
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
     if (!inst || inst->ready) return;
     inst->ready = 1;
     for (uint32_t i = 0; i < inst->group->n_points; ++i) {
-        const llg_cov_point_t* point = &inst->group->points[i];
         llg_cov_point_state_t* state = &inst->points[i];
         if (!state->has_at_least) state->at_least = inst->at_least;
         if (!state->has_auto_bin_max) state->auto_bin_max = inst->auto_bin_max;
-        state->n_bins = point->kind == LLG_COV_POINT_AUTO
-            ? llg_cov_auto_bins(point, state->auto_bin_max)
-            : point->n_bins;
-        if (state->n_bins <= LLG_COV_DENSE_BINS)
-            state->dense = (uint64_t*)llg_checked_calloc(state->n_bins, sizeof(uint64_t),
-                                                         "coverage bins");
+        state->layout = llg_cov_layout_for(inst, i);
+        if (state->layout->n_bins <= LLG_COV_DENSE_BINS)
+            state->dense = (uint64_t*)llg_checked_calloc((size_t)state->layout->n_bins,
+                                                         sizeof(uint64_t), "coverage bins");
     }
 }
 
-void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value) {
+static int llg_cov_guard(const llg_cov_point_t* point, uint32_t decl, const uint8_t* guards) {
+    int32_t guard = point->bins[decl].guard;
+    return guard < 0 || !guards || guards[guard];
+}
+
+// 19.5.5: an illegal value is a run-time error even when another bin also
+// holds it; the simulation continues and the value counts in no bin
+// (decision S45-D3).
+static void llg_cov_illegal(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
+                            uint32_t decl, uint64_t key) {
+    const llg_cov_bin_t* bin = &point->bins[decl];
+    uint64_t raw = key;
+    if (point->is_signed) raw ^= UINT64_C(1) << (point->width - 1u);
+    char value[32];
+    if (point->is_signed && ((raw >> (point->width - 1u)) & 1u)) {
+        uint64_t magnitude = (~raw & llg_cov_mask(point)) + 1u;
+        snprintf(value, sizeof value, "-%llu", (unsigned long long)magnitude);
+    } else {
+        snprintf(value, sizeof value, "%llu", (unsigned long long)raw);
+    }
+    fprintf(stderr,
+            "llg: runtime error: covergroup `%s` coverpoint `%s` sampled %s, a value of "
+            "illegal_bins `%s` at %s (IEEE 1800-2009 19.5.5)\n",
+            inst->group->name, point->name, value, bin->name, bin->site);
+    llg_rt_mark_failed();
+}
+
+static const llg_cov_seg_t* llg_cov_find(const llg_cov_layout_t* layout, uint64_t key) {
+    uint32_t lo = 0, hi = layout->n_segments;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        if (layout->segments[mid].hi < key) lo = mid + 1u;
+        else hi = mid;
+    }
+    if (lo == layout->n_segments || layout->segments[lo].lo > key) return NULL;
+    return &layout->segments[lo];
+}
+
+void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value, const uint8_t* guards) {
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
     if (!inst || inst->stopped || point_index >= inst->group->n_points) return;
     llg_cov_point_state_t* state = &inst->points[point_index];
-    if (state->stopped || !state->n_bins) return;
-    // Bins only hold 2-state values (19.5.2, 19.5.6).
+    if (state->stopped || !state->layout) return;
+    // Bins only hold 2-state values (19.5.2, 19.5.3, 19.5.6).
     if (sv4_is_unknown(*value)) return;
     const llg_cov_point_t* point = &inst->group->points[point_index];
+    const llg_cov_layout_t* layout = state->layout;
     uint64_t key = llg_cov_key(point, sv4_to_u64(*value));
+    if (layout->n_segments) {
+        const llg_cov_seg_t* segment = llg_cov_find(layout, key);
+        if (segment && segment->removed) {
+            for (uint32_t e = 0; e < segment->count; ++e) {
+                const llg_cov_entry_t* entry = &layout->entries[segment->first + e];
+                if (llg_cov_guard(point, entry->decl, guards)) {
+                    llg_cov_illegal(inst, point, entry->decl, key);
+                    break;
+                }
+            }
+            return;
+        }
+        if (segment) {
+            // A value in several overlapping bins counts in each of them.
+            for (uint32_t e = 0; e < segment->count; ++e) {
+                const llg_cov_entry_t* entry = &layout->entries[segment->first + e];
+                if (!llg_cov_guard(point, entry->decl, guards)) continue;
+                uint64_t bin = entry->base;
+                if (entry->div) {
+                    uint64_t element = (entry->pos + (key - segment->lo)) / entry->div;
+                    bin += element < entry->last ? element : entry->last;
+                }
+                llg_cov_count(state, bin);
+            }
+            return;
+        }
+    }
     switch (point->kind) {
     case LLG_COV_POINT_AUTO:
-        llg_cov_count(state, llg_cov_auto_bin(point, state->n_bins, key));
+        llg_cov_count(state, llg_cov_auto_bin(point, layout->n_auto, key));
         return;
     case LLG_COV_POINT_ENUM: {
-        uint32_t lo = 0, hi = point->n_bins;
+        uint32_t lo = 0, hi = point->n_keys;
         while (lo < hi) {
             uint32_t mid = lo + (hi - lo) / 2u;
             if (point->keys[mid] < key) lo = mid + 1u;
             else hi = mid;
         }
-        if (lo < point->n_bins && point->keys[lo] == key) llg_cov_count(state, lo);
+        if (lo < point->n_keys && point->keys[lo] == key) llg_cov_count(state, lo);
         return;
     }
-    default: {
-        uint32_t lo = 0, hi = point->n_segments;
-        while (lo < hi) {
-            uint32_t mid = lo + (hi - lo) / 2u;
-            if (point->segments[mid].hi < key) lo = mid + 1u;
-            else hi = mid;
-        }
-        if (lo == point->n_segments || point->segments[lo].lo > key) return;
-        const llg_cov_segment_t* segment = &point->segments[lo];
-        // A value in several overlapping bins counts in each of them.
-        for (uint32_t i = 0; i < segment->count; ++i)
-            llg_cov_count(state, point->segment_bins[segment->first + i]);
+    default:
+        // The default bin catches values no other bin holds (19.5).
+        if (layout->default_decl < 0 ||
+            !llg_cov_guard(point, (uint32_t)layout->default_decl, guards))
+            return;
+        if (layout->default_illegal)
+            llg_cov_illegal(inst, point, (uint32_t)layout->default_decl, key);
+        else llg_cov_count(state, (uint64_t)layout->default_bin);
         return;
-    }
     }
 }
 
@@ -363,34 +929,34 @@ void llg_cov_strobe_registered(llg_cov_group_t* group) {
     llg_cov_strobe_queue(group, NULL, NULL);
 }
 
-// Covered and defined bins of one coverpoint (19.11.1). A defined bin with no
-// value never counts (only explicit bins can lack values).
+// ── Coverage computation (19.11) ──────────────────────────────────────────
+
+// Covered and defined bins of one coverpoint (19.11.1): only coverable bins
+// count; empty, ignored, illegal and default bins do not.
 static void llg_cov_point_bins(const llg_cov_inst_t* inst, uint32_t index, uint64_t* covered,
                                uint64_t* defined) {
-    const llg_cov_point_t* point = &inst->group->points[index];
     const llg_cov_point_state_t* state = &inst->points[index];
     uint64_t at_least = state->at_least < 0 ? 0u : (uint64_t)state->at_least;
-    *defined = point->kind == LLG_COV_POINT_EXPLICIT ? point->n_valued : state->n_bins;
     *covered = 0;
-    if (!inst->ready) return;
-    if (state->dense) {
-        for (uint32_t bin = 0; bin < state->n_bins; ++bin) {
-            if (point->kind == LLG_COV_POINT_EXPLICIT && !point->valued[bin]) continue;
-            if (state->dense[bin] >= at_least) (*covered)++;
-        }
-        return;
-    }
-    // Sparse storage lists hit bins only; unhit bins are covered only when
-    // at_least is zero.
+    *defined = 0;
+    const llg_cov_layout_t* layout = state->layout;
+    if (!layout) return;
+    *defined = layout->n_coverable;
     if (at_least == 0) {
         *covered = *defined;
         return;
     }
+    if (state->dense) {
+        for (uint32_t c = 0; c < layout->n_cover; ++c)
+            for (uint64_t bin = layout->cover[c].lo; bin <= layout->cover[c].hi; ++bin)
+                if (state->dense[bin] >= at_least) (*covered)++;
+        return;
+    }
+    // Sparse storage lists hit bins only.
     for (size_t slot = 0; slot < state->sparse.capacity; ++slot) {
         uint64_t key = state->sparse.keys[slot];
-        if (!key) continue;
-        if (point->kind == LLG_COV_POINT_EXPLICIT && !point->valued[key - 1u]) continue;
-        if (state->sparse.counts[slot] >= at_least) (*covered)++;
+        if (!key || state->sparse.counts[slot] < at_least) continue;
+        if (llg_cov_cover_rank(layout, key - 1u) >= 0) (*covered)++;
     }
 }
 
@@ -481,6 +1047,7 @@ void llg_cov_release_all(void) {
                 free(inst->points[i].sparse.keys);
                 free(inst->points[i].sparse.counts);
             }
+            free(inst->slots);
             free(inst);
             inst = next;
         }
@@ -498,5 +1065,21 @@ void llg_cov_release_all(void) {
         group->registered = 0;
         group->strobe_pending = 0;
         group->next_registered = NULL;
+    }
+    for (size_t i = 0; i < llg_cov_n_cached_groups; ++i) {
+        free(llg_cov_cached_groups[i]->layouts);
+        llg_cov_cached_groups[i]->layouts = NULL;
+    }
+    free(llg_cov_cached_groups);
+    llg_cov_cached_groups = NULL;
+    llg_cov_n_cached_groups = llg_cov_cached_capacity = 0;
+    while (llg_cov_layouts_all) {
+        llg_cov_layout_t* layout = llg_cov_layouts_all;
+        llg_cov_layouts_all = layout->next_all;
+        free(layout->segments);
+        free(layout->entries);
+        free(layout->cover);
+        free(layout->cover_rank);
+        free(layout);
     }
 }

@@ -443,11 +443,11 @@ impl CoverageImport {
     }
 }
 
-fn coverage_node<'a>(
-    snapshot: &'a SlangSnapshot,
+fn coverage_node(
+    snapshot: &SlangSnapshot,
     node: NodeId,
     subkind: u32,
-) -> Result<(&'a SemanticNode, &'a [crate::ffi::slang::SemanticEdge]), DbError> {
+) -> Result<(&SemanticNode, &[crate::ffi::slang::SemanticEdge]), DbError> {
     let semantic = snapshot
         .semantic_nodes
         .get(node.index())

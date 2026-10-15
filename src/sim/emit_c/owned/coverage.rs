@@ -2,7 +2,9 @@
 //! the statements and queries that drive `coverage/coverage.c`.
 use super::native::NativeKind;
 use super::*;
-use crate::sim::ir::{IrCoverBins, IrCoverageQuery, IrCoverageStmt};
+use crate::sim::ir::{
+    IrCoverAutomatic, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverageQuery, IrCoverageStmt,
+};
 
 fn group_name(group: usize) -> String {
     format!("llg_cov_group_{group}")
@@ -12,11 +14,24 @@ fn type_name(coverage_type: usize) -> String {
     format!("llg_cov_type_{coverage_type}")
 }
 
+fn bound(bound: IrCoverBound) -> (&'static str, u64) {
+    match bound {
+        IrCoverBound::Key(key) => ("LLG_COV_BOUND_KEY", key),
+        IrCoverBound::Slot(slot) => ("LLG_COV_BOUND_SLOT", u64::from(slot)),
+        IrCoverBound::Min => ("LLG_COV_BOUND_MIN", 0),
+        IrCoverBound::Max => ("LLG_COV_BOUND_MAX", 0),
+    }
+}
+
+fn optional_string(value: Option<&str>) -> String {
+    value.map_or_else(|| "NULL".to_owned(), c_string_literal)
+}
+
 /// Static metadata of every covergroup; nothing for a model without one.
 pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
     for (index, coverage_type) in model.coverage_types.iter().enumerate() {
         out.push_str(&format!(
-            "static LLG_MAYBE_UNUSED llg_cov_type_t {} = {{ {}, INT64_C({}), NULL, NULL, 0u, NULL, 0u }};\n",
+            "static LLG_MAYBE_UNUSED llg_cov_type_t {} = {{ .name = {}, .weight = INT64_C({}) }};\n",
             type_name(index),
             c_string_literal(&coverage_type.name),
             coverage_type.weight
@@ -27,17 +42,13 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
         let mut points = Vec::with_capacity(group.points.len());
         for (point_index, point) in group.points.iter().enumerate() {
             let point_prefix = format!("{prefix}_{point_index}");
-            let (kind, n_bins, keys, segments, segment_bins, valued, n_valued) = match &point.bins {
-                IrCoverBins::Auto => (
-                    "LLG_COV_POINT_AUTO",
-                    0,
-                    "NULL".to_owned(),
-                    (0, "NULL".to_owned()),
-                    "NULL".to_owned(),
-                    "NULL".to_owned(),
-                    0,
-                ),
-                IrCoverBins::Enum(keys) => {
+            let (kind, keys) = match &point.automatic {
+                IrCoverAutomatic::Auto => ("LLG_COV_POINT_AUTO", None),
+                IrCoverAutomatic::Enum(keys) => ("LLG_COV_POINT_ENUM", Some(keys)),
+                IrCoverAutomatic::None => ("LLG_COV_POINT_EXPLICIT", None),
+            };
+            let keys_name = match keys {
+                Some(keys) => {
                     out.push_str(&format!(
                         "static const uint64_t {point_prefix}_keys[] = {{ {} }};\n",
                         keys.iter()
@@ -45,73 +56,73 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                             .collect::<Vec<_>>()
                             .join(", ")
                     ));
-                    (
-                        "LLG_COV_POINT_ENUM",
-                        keys.len(),
-                        format!("{point_prefix}_keys"),
-                        (0, "NULL".to_owned()),
-                        "NULL".to_owned(),
-                        "NULL".to_owned(),
-                        0,
-                    )
+                    format!("{point_prefix}_keys")
                 }
-                IrCoverBins::Explicit { segments, valued } => {
-                    let mut bins = Vec::new();
-                    let mut rows = Vec::with_capacity(segments.len());
-                    for segment in segments {
-                        rows.push(format!(
-                            "{{ UINT64_C({}), UINT64_C({}), {}u, {}u }}",
-                            segment.lo,
-                            segment.hi,
-                            bins.len(),
-                            segment.bins.len()
-                        ));
-                        bins.extend(segment.bins.iter().map(|bin| format!("{bin}u")));
-                    }
-                    let segments_name = if rows.is_empty() {
-                        "NULL".to_owned()
-                    } else {
-                        out.push_str(&format!(
-                            "static const llg_cov_segment_t {point_prefix}_segments[] = {{ {} }};\n",
-                            rows.join(", ")
-                        ));
-                        format!("{point_prefix}_segments")
-                    };
-                    let bins_name = if bins.is_empty() {
-                        "NULL".to_owned()
-                    } else {
-                        out.push_str(&format!(
-                            "static const uint32_t {point_prefix}_bins[] = {{ {} }};\n",
-                            bins.join(", ")
-                        ));
-                        format!("{point_prefix}_bins")
-                    };
-                    out.push_str(&format!(
-                        "static const uint8_t {point_prefix}_valued[] = {{ {} }};\n",
-                        valued
-                            .iter()
-                            .map(|valued| if *valued { "1u" } else { "0u" })
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
-                    (
-                        "LLG_COV_POINT_EXPLICIT",
-                        valued.len(),
-                        "NULL".to_owned(),
-                        (rows.len(), segments_name),
-                        bins_name,
-                        format!("{point_prefix}_valued"),
-                        valued.iter().filter(|valued| **valued).count(),
-                    )
-                }
+                None => "NULL".to_owned(),
+            };
+            let items_name = if point.items.is_empty() {
+                "NULL".to_owned()
+            } else {
+                let rows = point
+                    .items
+                    .iter()
+                    .map(|item| {
+                        let (lo_kind, lo) = bound(item.lo);
+                        let (hi_kind, hi) = bound(item.hi);
+                        format!(
+                            "{{ UINT64_C({lo}), UINT64_C({hi}), {lo_kind}, {hi_kind}, {} }}",
+                            optional_string(item.site.as_deref())
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                out.push_str(&format!(
+                    "static const llg_cov_item_t {point_prefix}_items[] = {{\n    {}\n}};\n",
+                    rows.join(",\n    ")
+                ));
+                format!("{point_prefix}_items")
+            };
+            let bins_name = if point.bins.is_empty() {
+                "NULL".to_owned()
+            } else {
+                let rows = point
+                    .bins
+                    .iter()
+                    .map(|bin| {
+                        let (shape, count_is_slot, count) = match bin.shape {
+                            IrCoverBinShape::Scalar => ("LLG_COV_SHAPE_SCALAR", 0, 0),
+                            IrCoverBinShape::PerValue => ("LLG_COV_SHAPE_PER_VALUE", 0, 0),
+                            IrCoverBinShape::Count(IrCoverCount::Const(count)) => {
+                                ("LLG_COV_SHAPE_COUNT", 0, count)
+                            }
+                            IrCoverBinShape::Count(IrCoverCount::Slot(slot)) => {
+                                ("LLG_COV_SHAPE_COUNT", 1, u64::from(slot))
+                            }
+                        };
+                        format!(
+                            "{{ .name = {}, .site = {}, .kind = {}u, .shape = {shape}, .count_is_slot = {count_is_slot}u, .guard = {}, .count = UINT64_C({count}), .first_item = {}u, .n_items = {}u }}",
+                            c_string_literal(&bin.name),
+                            c_string_literal(&bin.site),
+                            bin.kind.code(),
+                            bin.guard.map_or(-1, i64::from),
+                            bin.first_item,
+                            bin.n_items
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                out.push_str(&format!(
+                    "static const llg_cov_bin_t {point_prefix}_bins[] = {{\n    {}\n}};\n",
+                    rows.join(",\n    ")
+                ));
+                format!("{point_prefix}_bins")
             };
             points.push(format!(
-                "{{ {}, {}u, {}u, {kind}, {n_bins}u, {keys}, {}u, {}, {segment_bins}, {valued}, {n_valued}u }}",
+                "{{ .name = {}, .width = {}u, .is_signed = {}u, .kind = {kind}, .dynamic = {}u, .n_keys = {}u, .keys = {keys_name}, .n_bins = {}u, .bins = {bins_name}, .items = {items_name} }}",
                 c_string_literal(&point.name),
                 point.width,
                 u8::from(point.signed),
-                segments.0,
-                segments.1
+                u8::from(point.dynamic()),
+                keys.map_or(0, Vec::len),
+                point.bins.len(),
             ));
         }
         let points_name = if points.is_empty() {
@@ -137,9 +148,10 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
             }
         };
         out.push_str(&format!(
-            "// Unreferenced when every handle of the group stays null.\nstatic LLG_MAYBE_UNUSED llg_cov_group_t {prefix} = {{ {}, {}u, {points_name}, &{}, NULL, 0u, 0u, NULL, 0u, {strobe}, 0u }};\n",
+            "// Unreferenced when every handle of the group stays null.\nstatic LLG_MAYBE_UNUSED llg_cov_group_t {prefix} = {{ .name = {}, .n_points = {}u, .points = {points_name}, .n_slots = {}u, .type = &{}, .strobe_sample = {strobe} }};\n",
             c_string_literal(&group.name),
             group.points.len(),
+            group.slots,
             type_name(group.coverage_type)
         ));
     }
@@ -178,6 +190,17 @@ impl Frame<'_, '_> {
                 ));
                 self.discard(value);
             }
+            IrCoverageStmt::Slot {
+                record,
+                slot,
+                value,
+            } => {
+                let record = self.chandle(record)?;
+                let record = self.scalar("void*", record);
+                let value = self.expression(value)?;
+                self.line(format!("llg_cov_slot({record}, {slot}u, {});", value.code));
+                self.discard(value);
+            }
             IrCoverageStmt::Ready { record } => {
                 let record = self.chandle(record)?;
                 self.line(format!("llg_cov_ready({record});"));
@@ -189,9 +212,25 @@ impl Frame<'_, '_> {
                     group_name(*group)
                 ));
             }
-            IrCoverageStmt::Sample { record, points } => {
+            IrCoverageStmt::Sample {
+                record,
+                guards,
+                points,
+            } => {
                 let record = self.chandle(record)?;
                 let record = self.scalar("void*", record);
+                // Bin guards are evaluated once per sample, before any value
+                // is counted (19.5).
+                let guard_array = if guards.is_empty() {
+                    "NULL".to_owned()
+                } else {
+                    let array = self.declare_array("uint8_t", "cov_guards", guards.len());
+                    for (index, guard) in guards.iter().enumerate() {
+                        let condition = self.condition(guard)?;
+                        self.line(format!("{array}[{index}] = (uint8_t)({condition});"));
+                    }
+                    array
+                };
                 for sample in points {
                     // The value is evaluated only when its guard holds.
                     let guarded = match &sample.iff {
@@ -206,7 +245,7 @@ impl Frame<'_, '_> {
                     // the borrow ends with the call.
                     let value = self.operand(&sample.value)?;
                     self.line(format!(
-                        "llg_cov_hit({record}, {}u, {});",
+                        "llg_cov_hit({record}, {}u, {}, {guard_array});",
                         sample.point,
                         value.address()
                     ));

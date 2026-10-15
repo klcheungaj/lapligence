@@ -2609,6 +2609,8 @@ void llg_stream_cast_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, in
 #ifndef LLG_COV_DENSE_BINS
 #define LLG_COV_DENSE_BINS 4096u
 #endif
+/* The automatic bins of a coverpoint without `bins` declarations (19.5.2);
+ * EXPLICIT points have none. */
 enum { LLG_COV_POINT_AUTO = 0, LLG_COV_POINT_ENUM = 1, LLG_COV_POINT_EXPLICIT = 2 };
 enum {
     LLG_COV_OPTION_WEIGHT = 0,
@@ -2616,28 +2618,56 @@ enum {
     LLG_COV_OPTION_AT_LEAST = 2,
     LLG_COV_OPTION_AUTO_BIN_MAX = 3
 };
+/* The keyword of a declared bin (19.5); DEFAULT is `bins b = default`. */
+enum {
+    LLG_COV_BIN_BINS = 0,
+    LLG_COV_BIN_IGNORE = 1,
+    LLG_COV_BIN_ILLEGAL = 2,
+    LLG_COV_BIN_DEFAULT = 3,
+    LLG_COV_BIN_ILLEGAL_DEFAULT = 4
+};
+/* `bins b`, `bins b[]` (one bin per value) and `bins b[N]` (19.5). */
+enum { LLG_COV_SHAPE_SCALAR = 0, LLG_COV_SHAPE_PER_VALUE = 1, LLG_COV_SHAPE_COUNT = 2 };
+/* One bound of a value item: a key resolved at compile time, a slot value
+ * (a covergroup argument, 19.5) resolved by 19.5.6 when the instance is
+ * ready, or `$`. A static item has two KEY bounds. */
+enum {
+    LLG_COV_BOUND_KEY = 0,
+    LLG_COV_BOUND_SLOT = 1,
+    LLG_COV_BOUND_MIN = 2,
+    LLG_COV_BOUND_MAX = 3
+};
 /* Keys order a coverpoint's values numerically: the value masked to the
- * coverpoint width, with the sign bit flipped for a signed coverpoint. One
- * segment is a maximal key range hit by the same explicit bins, listed in
- * segment_bins[first .. first + count). */
+ * coverpoint width, with the sign bit flipped for a signed coverpoint. */
 typedef struct {
-    uint64_t lo, hi;
-    uint32_t first, count;
-} llg_cov_segment_t;
+    uint64_t lo, hi; /* keys, or slot indices */
+    uint8_t lo_kind, hi_kind;
+    const char* site; /* a slot item's location, for 19.5.6 warnings */
+} llg_cov_item_t;
+typedef struct {
+    const char* name;
+    const char* site;      /* declaration location, for run-time messages */
+    uint8_t kind;          /* LLG_COV_BIN_* */
+    uint8_t shape;         /* LLG_COV_SHAPE_* */
+    uint8_t count_is_slot; /* COUNT: `count` names a slot */
+    int32_t guard;         /* index of the bin's `iff` guard, or -1 */
+    uint64_t count;        /* COUNT: N, or its slot */
+    uint32_t first_item, n_items;
+} llg_cov_bin_t;
 typedef struct {
     const char* name;
     uint32_t width;  /* 1..64 */
     uint8_t is_signed;
     uint8_t kind;    /* LLG_COV_POINT_* */
-    uint32_t n_bins; /* ENUM: members; EXPLICIT: declared bins */
+    uint8_t dynamic; /* a bin reads a slot: the layout is built per instance */
+    uint32_t n_keys;
     const uint64_t* keys; /* ENUM: ascending member keys, one bin each */
-    uint32_t n_segments;
-    const llg_cov_segment_t* segments; /* EXPLICIT: ascending, disjoint */
-    const uint32_t* segment_bins;
-    const uint8_t* valued; /* EXPLICIT: bin has at least one value */
-    uint32_t n_valued;
+    uint32_t n_bins;
+    const llg_cov_bin_t* bins; /* declared bins, in source order */
+    const llg_cov_item_t* items;
 } llg_cov_point_t;
 typedef struct llg_cov_inst llg_cov_inst_t;
+typedef struct llg_cov_layout llg_cov_layout_t;
 /* One covergroup declaration identity: every instance ever created, for
  * type coverage (19.11.3). Mutable model storage owned by the runtime. */
 typedef struct llg_cov_type {
@@ -2655,6 +2685,7 @@ typedef struct llg_cov_group {
     const char* name;
     uint32_t n_points;
     const llg_cov_point_t* points;
+    uint32_t n_slots; /* argument values bins read (llg_cov_slot) */
     llg_cov_type_t* type;
     void** registry;
     size_t n_registered;
@@ -2665,17 +2696,24 @@ typedef struct llg_cov_group {
      * object; NULL when the group samples at the event (19.7.1). */
     void (*strobe_sample)(void* object);
     uint8_t strobe_pending; /* a registry pass is queued for this slot */
+    /* Layouts shared by instances whose bins depend on nothing per
+     * instance, one per point; built by the first llg_cov_ready. */
+    llg_cov_layout_t** layouts;
 } llg_cov_group_t;
 /* Create the runtime record of one instance with Table 19-1 defaults; apply
- * llg_cov_option, then llg_cov_ready before the first sample or query. */
+ * llg_cov_option and llg_cov_slot, then llg_cov_ready before the first
+ * sample or query. */
 void* llg_cov_new(llg_cov_group_t* group);
 /* `point` < 0 selects the group scope. Invalid values report at `site`. */
 void llg_cov_option(void* inst, int32_t point, uint32_t option, sv4_t value, const char* site);
+/* The value of argument slot `slot` that bins of this instance read. */
+void llg_cov_slot(void* inst, uint32_t slot, sv4_t value);
 void llg_cov_ready(void* inst);
 /* Count one sampled value; X/Z values and stopped scopes count nothing.
  * `value` is only read during the call, so generated code passes the address
- * of the sampled variable itself when the coverpoint is a plain read. */
-void llg_cov_hit(void* inst, uint32_t point, const sv4_t* value);
+ * of the sampled variable itself when the coverpoint is a plain read.
+ * `guards` holds the group's bin `iff` results, or is NULL without any. */
+void llg_cov_hit(void* inst, uint32_t point, const sv4_t* value, const uint8_t* guards);
 void llg_cov_control(void* inst, int32_t point, int start);
 /* Objects sampled by the group's coverage event, pinned for the run. */
 void llg_cov_register(llg_cov_group_t* group, void* object);

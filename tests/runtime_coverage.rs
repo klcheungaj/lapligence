@@ -31,7 +31,7 @@ static int failed;
 
 static void hit(void* inst, uint32_t point, int64_t value, uint32_t width) {
     sv4_t v = sv4_from_i64(value, width);
-    llg_cov_hit(inst, point, &v);
+    llg_cov_hit(inst, point, &v, NULL);
     sv4_destroy(&v);
 }
 
@@ -45,28 +45,55 @@ static void option(void* inst, int32_t point, uint32_t which, int64_t value) {
  * enum {0, 1, 5}, explicit {b0 = [0:3], b1 = [2:5], b2 = <no value>}, and a
  * 16-bit auto coverpoint for sparse storage. */
 static const uint64_t enum_keys[] = {0u, 1u, 5u};
-static const llg_cov_segment_t segments[] = {
-    {0u, 1u, 0u, 1u}, {2u, 3u, 1u, 2u}, {4u, 5u, 3u, 1u}
+static const llg_cov_item_t items[] = {
+    {.lo = 0u, .hi = 3u, .lo_kind = LLG_COV_BOUND_KEY, .hi_kind = LLG_COV_BOUND_KEY},
+    {.lo = 2u, .hi = 5u, .lo_kind = LLG_COV_BOUND_KEY, .hi_kind = LLG_COV_BOUND_KEY},
 };
-static const uint32_t segment_bins[] = {0u, 0u, 1u, 1u};
-static const uint8_t valued[] = {1u, 1u, 0u};
+static const llg_cov_bin_t bins[] = {
+    {.name = "b0", .site = "probe", .guard = -1, .first_item = 0u, .n_items = 1u},
+    {.name = "b1", .site = "probe", .guard = -1, .first_item = 1u, .n_items = 1u},
+    {.name = "b2", .site = "probe", .guard = -1, .first_item = 2u, .n_items = 0u},
+};
 static const llg_cov_point_t points[] = {
-    {"u2", 2u, 0u, LLG_COV_POINT_AUTO, 0u, NULL, 0u, NULL, NULL, NULL, 0u},
-    {"s3", 3u, 1u, LLG_COV_POINT_AUTO, 0u, NULL, 0u, NULL, NULL, NULL, 0u},
-    {"u3", 3u, 0u, LLG_COV_POINT_AUTO, 0u, NULL, 0u, NULL, NULL, NULL, 0u},
-    {"e", 3u, 0u, LLG_COV_POINT_ENUM, 3u, enum_keys, 0u, NULL, NULL, NULL, 0u},
-    {"x", 4u, 0u, LLG_COV_POINT_EXPLICIT, 3u, NULL, 3u, segments, segment_bins, valued, 2u},
-    {"wide", 16u, 0u, LLG_COV_POINT_AUTO, 0u, NULL, 0u, NULL, NULL, NULL, 0u},
+    {.name = "u2", .width = 2u, .kind = LLG_COV_POINT_AUTO},
+    {.name = "s3", .width = 3u, .is_signed = 1u, .kind = LLG_COV_POINT_AUTO},
+    {.name = "u3", .width = 3u, .kind = LLG_COV_POINT_AUTO},
+    {.name = "e", .width = 3u, .kind = LLG_COV_POINT_ENUM, .n_keys = 3u, .keys = enum_keys},
+    {.name = "x", .width = 4u, .kind = LLG_COV_POINT_EXPLICIT, .n_bins = 3u, .bins = bins,
+     .items = items},
+    {.name = "wide", .width = 16u, .kind = LLG_COV_POINT_AUTO},
 };
-static llg_cov_type_t type_a = {"a", 1, NULL, NULL, 0u, NULL, 0u};
-static llg_cov_group_t group_a = {"a", 6u, points, &type_a, NULL, 0u, 0u, NULL, 0u};
-static llg_cov_type_t type_b = {"b", 3, NULL, NULL, 0u, NULL, 0u};
-static llg_cov_group_t group_b = {"b", 1u, points, &type_b, NULL, 0u, 0u, NULL, 0u};
+static llg_cov_type_t type_a = {.name = "a", .weight = 1};
+static llg_cov_group_t group_a = {.name = "a", .n_points = 6u, .points = points, .type = &type_a};
+static llg_cov_type_t type_b = {.name = "b", .weight = 3};
+static llg_cov_group_t group_b = {.name = "b", .n_points = 1u, .points = points, .type = &type_b};
 static const llg_cov_point_t empty_points[] = {
-    {"none", 4u, 0u, LLG_COV_POINT_EXPLICIT, 1u, NULL, 0u, NULL, NULL, valued + 2, 0u},
+    {.name = "none", .width = 4u, .kind = LLG_COV_POINT_EXPLICIT, .n_bins = 1u, .bins = bins + 2,
+     .items = items},
 };
-static llg_cov_type_t type_empty = {"empty", 1, NULL, NULL, 0u, NULL, 0u};
-static llg_cov_group_t group_empty = {"empty", 1u, empty_points, &type_empty, NULL, 0u, 0u, NULL, 0u};
+static llg_cov_type_t type_empty = {.name = "empty", .weight = 1};
+static llg_cov_group_t group_empty = {.name = "empty", .n_points = 1u, .points = empty_points,
+                                      .type = &type_empty};
+
+/* Bins that read argument slot 0, resolved per instance by 19.5.6:
+ * `bins lim = {[0:arg]}; bins high = {[arg:$]};`. */
+static const llg_cov_item_t slot_items[] = {
+    {.lo = 0u, .hi = 0u, .lo_kind = LLG_COV_BOUND_KEY, .hi_kind = LLG_COV_BOUND_SLOT,
+     .site = "probe:1:1"},
+    {.lo = 0u, .hi = 0u, .lo_kind = LLG_COV_BOUND_SLOT, .hi_kind = LLG_COV_BOUND_MAX,
+     .site = "probe:2:1"},
+};
+static const llg_cov_bin_t slot_bins[] = {
+    {.name = "lim", .site = "probe", .guard = -1, .first_item = 0u, .n_items = 1u},
+    {.name = "high", .site = "probe", .guard = -1, .first_item = 1u, .n_items = 1u},
+};
+static const llg_cov_point_t slot_points[] = {
+    {.name = "s", .width = 4u, .kind = LLG_COV_POINT_EXPLICIT, .dynamic = 1u, .n_bins = 2u,
+     .bins = slot_bins, .items = slot_items},
+};
+static llg_cov_type_t type_slot = {.name = "slot", .weight = 0};
+static llg_cov_group_t group_slot = {.name = "slot", .n_points = 1u, .points = slot_points,
+                                     .n_slots = 1u, .type = &type_slot};
 
 static void object_trace(void* object, llg_gc_tracer_t* tracer) {
     (void)object;
@@ -107,7 +134,7 @@ int main(void) {
     hit(a, 4, 2, 4);
     NEAR(llg_cov_inst_coverage(a, 4), 100.0);
     sv4_t unknown = sv4_from_masks(2u, 1u, 0u, 2u, 0);
-    llg_cov_hit(a, 0, &unknown);
+    llg_cov_hit(a, 0, &unknown, NULL);
     sv4_destroy(&unknown);
     NEAR(llg_cov_inst_coverage(a, 0), 50.0);
     hit(a, 5, 3, 16);
@@ -169,6 +196,23 @@ int main(void) {
     /* A negative weight is an error that keeps the previous value. */
     option(b2, -1, LLG_COV_OPTION_WEIGHT, -1);
     NEAR(llg_cov_type_coverage(&type_b, -1, 3), (1.0 * 25.0 + 3.0 * 50.0) / 4.0);
+
+    /* Per-instance layouts: slot 0 is 3 in one instance and 12 in another;
+     * `high` starts at the slot value, so 3 is in both bins of the first. */
+    void* s3 = llg_cov_new(&group_slot);
+    sv4_t three = sv4_from_u64(3u, 4u, 0);
+    llg_cov_slot(s3, 0u, three);
+    sv4_destroy(&three);
+    llg_cov_ready(s3);
+    void* s12 = llg_cov_new(&group_slot);
+    sv4_t twelve = sv4_from_u64(12u, 4u, 0);
+    llg_cov_slot(s12, 0u, twelve);
+    sv4_destroy(&twelve);
+    llg_cov_ready(s12);
+    hit(s3, 0, 3, 4);
+    hit(s12, 0, 13, 4);
+    NEAR(llg_cov_inst_coverage(s3, 0), 100.0);
+    NEAR(llg_cov_inst_coverage(s12, 0), 50.0);
 
     void* object = llg_gc_alloc(sizeof(llg_gc_header_t), &object_type);
     llg_cov_register(&group_a, object);

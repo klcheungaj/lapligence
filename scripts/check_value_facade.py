@@ -38,6 +38,8 @@ METADATA = {
     'emit_c/model/vpi.rs': ('',),
     'emit_c/model/storage.rs': ('',),
     'emit_c/model.rs': ('',),
+    # Designated initializers of coverpoint tables (the bin key's shape).
+    'emit_c/owned/coverage.rs': ('',),
     'emit_c/owned/events.rs': ('',),
     'emit_c/owned/input.rs': ('',),
     'emit_c/owned/model/initialization.rs': ('net',),
