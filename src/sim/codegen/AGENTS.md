@@ -46,6 +46,21 @@ diagnostic labels remain separate from C symbols. The
   suspension, `return`, `disable`, `break` and `continue` need no randcase
   code; sets `IrRandomUse::threads`. Return-flow analysis treats it as able to
   fall through.
+- `randsequence` (SV 18.17, `statements/randsequence.rs`) expands small
+  productions in place as structured statements. Recursive productions, those
+  reaching them, and shared ones above `RANDSEQUENCE_INLINE_ELEMENT_LIMIT`
+  elements (unless a `rand join` interleaves them) become states of one
+  dispatch loop (`Forever` over a `Case` on a state local) with a return state
+  per multi-site production. Recursive generations push their formals,
+  implicit variables, return state and repeat counters onto activation queues
+  (packed, real through its bits, and strings in a string queue) and check
+  `RANDSEQUENCE_DEPTH_LIMIT`. Two or more rules select with
+  `IrSysFunc::Randcase { strict: true }`; one rule evaluates no weight.
+  `rand join` binds every item, chooses its rule, then steps with
+  `IrSysFunc::RandJoinPick`. `break` exits through `CtrlScope::RandSequence`;
+  `return` jumps to the current production's exit. Unsupported forms (non-input
+  formals, recursive or overlapping joins, unsaveable recursive values) are
+  located errors. Decisions S16-D1 to S16-D9.
 - Get selectors, for-loop relationships, extents and delays from owned typed
   fields, not source names or frontend numeric codes. Widen signed/X/Z-aware
   coordinate arithmetic before subtraction/multiplication; unsigned high bits

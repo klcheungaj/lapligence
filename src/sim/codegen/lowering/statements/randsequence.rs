@@ -21,7 +21,10 @@
 
 use super::*;
 use crate::core::db::{CaseItem, ProductionDecl, ProductionItem, ProductionKind, ProductionRule};
-use crate::sim::ir::{IrContainer, IrContainerExpr, IrContainerKind, IrContainerStmt};
+use crate::sim::ir::{
+    IrContainer, IrContainerElement, IrContainerExpr, IrContainerKind, IrContainerStmt,
+    IrStringExpr,
+};
 
 /// A production generated from more than one place is expanded at each
 /// place while its expansion has at most this many production-list elements;
@@ -79,6 +82,15 @@ struct Frame {
     container: usize,
     width: u32,
     entries: Vec<FrameEntry>,
+    /// Native string storage, saved in a string queue of its own because a
+    /// string has no packed form.
+    strings: Option<StringFrame>,
+}
+
+struct StringFrame {
+    container: usize,
+    /// The string references, in push order.
+    references: Vec<NodeId>,
 }
 
 struct FrameEntry {
@@ -751,9 +763,22 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 return Err("randsequence binding is malformed".to_owned());
             };
             let (lhs, rhs) = (operands[0], operands[1]);
+            let name = self.new_label("rsa");
+            if self.cg.is_string_expr(&self.path, lhs) {
+                statements.push(IrStmt::DeclString {
+                    name: name.clone(),
+                    init: Some(self.cg.lower_string(&self.path, rhs)?),
+                });
+                stores.push(
+                    self.lower_string_format_target(lhs, IrStringExpr::LocalRead(name))?,
+                );
+                continue;
+            }
+            if !self.frame_storable(lhs) {
+                return Err(self.unsaveable(production, lhs));
+            }
             let value = self.cg.lower_expr(&self.path, rhs)?;
             let target = self.cg.lower_lhs(&self.path, lhs)?;
-            let name = self.new_label("rsa");
             let (width, signed) = (value.width, value.signed);
             statements.push(IrStmt::DeclLocal {
                 name: name.clone(),
@@ -768,7 +793,35 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             ));
         }
         statements.extend(stores);
-        Ok(statements)
+        // The temporaries end with the bindings.
+        Ok(vec![IrStmt::Block(statements)])
+    }
+
+    /// Whether the variable `reference` reads is packed or real, so a
+    /// recursive generation can save it in its packed frame.
+    fn frame_storable(&self, reference: NodeId) -> bool {
+        match self.cg.kind(reference) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => match self.cg.kind(*target) {
+                NodeKind::Var { ty } | NodeKind::Array { ty } => {
+                    is_real_kind(&ty.kind) || self.cg.fixed_value_width(*target).is_some()
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// The error for a value of recursive `production` that no frame can save.
+    fn unsaveable(&self, production: NodeId, reference: NodeId) -> String {
+        format!(
+            "recursive randsequence production `{}` at {}: `{}` has a type llg cannot save \
+             across a recursive generation (packed, real and string values are supported)",
+            self.production_name(production),
+            self.production_location(production),
+            self.cg.node(reference).name
+        )
     }
 
     /// Generate the inline production `item` names, in place.
@@ -1052,13 +1105,14 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 if value.is_real() {
                     value
                 } else {
+                    // Real expressions are signed, as the folded constant is.
                     IrExpr::new(
                         IrExprKind::CastToReal {
                             a: Box::new(value),
                             shortreal: false,
                         },
                         0,
-                        false,
+                        true,
                         None,
                     )
                 }
@@ -1695,25 +1749,14 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             }
         }
         let mut entries = Vec::new();
+        let mut strings = Vec::new();
         for reference in references {
-            let unsupported = format!(
-                "recursive randsequence production `{name}` at {location}: `{}` has a type llg \
-                 cannot save across a recursive generation (packed and real values are \
-                 supported)",
-                self.cg.node(reference).name
-            );
-            let packed_or_real = match self.cg.kind(reference) {
-                NodeKind::Expr(ExprKind::Ref {
-                    target: Some(target),
-                }) => match self.cg.kind(*target) {
-                    NodeKind::Var { ty } | NodeKind::Array { ty } => {
-                        is_real_kind(&ty.kind) || self.cg.fixed_value_width(*target).is_some()
-                    }
-                    _ => false,
-                },
-                _ => false,
-            };
-            if !packed_or_real {
+            if self.cg.is_string_expr(&self.path, reference) {
+                strings.push(reference);
+                continue;
+            }
+            let unsupported = self.unsaveable(production, reference);
+            if !self.frame_storable(reference) {
                 return Err(unsupported);
             }
             let read = self
@@ -1802,12 +1845,38 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             .push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
                 container,
             ))));
+        let strings = if strings.is_empty() {
+            None
+        } else {
+            let container = self.cg.model.containers.len();
+            self.cg.model.containers.push(IrContainer {
+                c_name: format!("S_llg_container_{container}"),
+                element: IrContainerElement::String,
+                kind: IrContainerKind::Queue {
+                    maximum_elements: None,
+                },
+                initial_size: None,
+                activation: true,
+                class_field: None,
+                receiver: None,
+            });
+            self.randseq()
+                .locals
+                .push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                    container,
+                ))));
+            Some(StringFrame {
+                container,
+                references: strings,
+            })
+        };
         self.randseq().frames.insert(
             production,
             Frame {
                 container,
                 width: width.max(1),
                 entries,
+                strings,
             },
         );
         Ok(())
@@ -1845,6 +1914,10 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             });
         }
         let (container, width) = (frame.container, frame.width);
+        let strings = frame
+            .strings
+            .as_ref()
+            .map(|strings| (strings.container, strings.references.clone()));
         let value = if parts.is_empty() {
             int_expr(0, 1, false)?
         } else {
@@ -1863,7 +1936,20 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             fatal_finish_number: Some(0),
             runtime_failure: true,
         };
-        Ok(vec![
+        let mut saves = vec![IrStmt::Container(Box::new(
+            IrContainerStmt::QueuePushBack { container, value },
+        ))];
+        if let Some((strings, references)) = strings {
+            for reference in references {
+                saves.push(IrStmt::Container(Box::new(
+                    IrContainerStmt::QueuePushBackString {
+                        container: strings,
+                        value: self.cg.lower_string(&self.path, reference)?,
+                    },
+                )));
+            }
+        }
+        let mut statements = vec![
             assign(
                 local_lhs(&depth, 32, true),
                 bin_expr(
@@ -1881,11 +1967,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 vec![fatal],
                 None,
             ),
-            IrStmt::Container(Box::new(IrContainerStmt::QueuePushBack {
-                container,
-                value,
-            })),
-        ])
+        ];
+        statements.extend(saves);
+        Ok(statements)
     }
 
     /// Restore `production`'s values saved by the matching `push_frame`.
@@ -1894,6 +1978,10 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         let depth = self.depth_local()?;
         let saved = self.new_label("rsf");
         let frame = &self.randseq.last().expect("randsequence state").frames[&production];
+        let strings = frame
+            .strings
+            .as_ref()
+            .map(|strings| (strings.container, strings.references.clone()));
         let mut statements = vec![IrStmt::DeclLocal {
             name: saved.clone(),
             width: frame.width,
@@ -1923,13 +2011,24 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 IrExpr::new(
                     IrExprKind::SysFunc(Box::new(IrSysFunc::BitsToReal(Box::new(bits)))),
                     0,
-                    false,
+                    true,
                     None,
                 )
             } else {
                 bits
             };
             statements.push(assign(entry.write.clone(), value));
+        }
+        if let Some((strings, references)) = strings {
+            for reference in references.into_iter().rev() {
+                statements.push(self.lower_string_format_target(
+                    reference,
+                    IrStringExpr::QueuePop {
+                        container: strings,
+                        back: true,
+                    },
+                )?);
+            }
         }
         statements.push(assign(
             local_lhs(&depth, 32, true),
