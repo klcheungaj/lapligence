@@ -72,6 +72,40 @@ enum {
     LLG_CR_DSLICE,      /* a[idx +: width], idx = node b (state only);
                            a bit outside a is an evaluation error */
     LLG_CR_ALL,         /* conjunction of args[b .. b+c), Figure 18-3 */
+    LLG_CR_POW,         /* a ** b (11.4.3, Table 11-4); b self-determined;
+                           0 ** negative is an evaluation error */
+    LLG_CR_DIST,        /* a = dists index; 1 when the expression matches an
+                           item of nonzero weight (18.5.4) */
+    LLG_CR_ELEM,        /* tables[a] entry selected by node b (0-based);
+                           an index outside the table or a null entry is an
+                           evaluation error. Expanded problems only. */
+    /* Template operations (problems with units, SIM-030). The solver
+     * expands them per object instance and loop iteration before solving.
+     * In a template, VAR names the variable of the instance whose
+     * constraint is expanded (or a global variable) and STATE that
+     * instance's leaf. A "ref" operand is a REF node or LLG_CR_NONE (the
+     * instance itself). */
+    LLG_CR_REF,         /* object: handle slot a of the object ref b names;
+                           c = element index node of a handle array slot
+                           (constants and loop indices only), else
+                           LLG_CR_NONE. No value of its own. */
+    LLG_CR_HVAR,        /* variable b of the object ref a names */
+    LLG_CR_AELEM,       /* element at 0-based position (node b) of array a
+                           of the object ref c names */
+    LLG_CR_ASIZE,       /* 32-bit signed size of array a (LLG_CR_SLOT_ARRAY
+                           | slot: of a handle array) of the object ref c
+                           names */
+    LLG_CR_ITER,        /* 32-bit signed index of loop a's current element
+                           (the declared index for fixed arrays) */
+    LLG_CR_FOREACH,     /* args[b .. b+4) = {array, body, ref, loop}: the
+                           conjunction of body over the elements (array as
+                           for ASIZE) */
+    LLG_CR_REDUCE,      /* args[b .. b+5) = {array, body, ref, loop, op}:
+                           body over the elements, each converted to the
+                           node's width, folded with op (ADD, MUL, AND, OR,
+                           XOR, LAND, LOR); an empty array gives the
+                           operation's identity (S30-D6) */
+    LLG_CR_ISNULL,      /* 1-bit: the object ref a names is null */
     LLG_CR_OP_LIMIT
 };
 
@@ -90,12 +124,104 @@ typedef struct {
     /* Domain constraint applied only while the variable is active (an enum
      * variable takes its named values, decision S29-D2), or LLG_CR_NONE. */
     uint32_t domain_node;
+    /* randc (18.4.2): solved first, cycling through its values; its state
+     * is set with llg_cr_set_cyclic. Width at most LLG_CR_CYCLIC_MAX_WIDTH. */
+    uint8_t cyclic;
 } llg_cr_var_t;
+
+/* Widest randc variable: its cycle state holds one bit per value. */
+#define LLG_CR_CYCLIC_MAX_WIDTH 16u
+
+/* Words of a randc variable's cycle state: one "returned in this cycle" bit
+ * per value, then a 64-bit signature of the constraints of the cycle. */
+#define LLG_CR_CYCLIC_WORDS(width) \
+    ((width) >= 6u ? (1u << ((width) - 6u)) + 1u : 2u)
+
+/* One `dist` constraint (18.5.4). `expr` is the distributed expression,
+ * `guard` the conjunction of the enclosing implication and if conditions
+ * (LLG_CR_NONE when unconditional): the weight applies to solutions where
+ * the guard holds (decision S30-D1). */
+typedef struct {
+    uint32_t expr;
+    uint32_t guard;
+    uint32_t item_first;  /* in problem dist_items */
+    uint32_t item_count;
+} llg_cr_dist_t;
+
+/* One dist item. `match` is the 1-bit node "expr is in the item"; `lo` and
+ * `hi` are the range bounds in the comparison type (equal for a single
+ * value), used to count the values a `:/` weight is shared by. `weight` is
+ * a node (LLG_CR_NONE for the default weight 1). */
+typedef struct {
+    uint32_t match;
+    uint32_t lo;
+    uint32_t hi;
+    uint32_t weight;
+    uint8_t per_range;    /* `:/` */
+    uint8_t lo_signed;    /* the bounds compare as signed values */
+} llg_cr_dist_item_t;
+
+/* `solve before before after` from constraint block `block` (18.5.9). */
+typedef struct {
+    uint32_t block;
+    uint32_t before;
+    uint32_t after;
+} llg_cr_order_t;
 
 typedef struct {
     const char* name;
     uint32_t root;      /* 1-bit node that must hold while enabled */
 } llg_cr_block_t;
+
+/* Expanded problems: a table of entries for LLG_CR_ELEM (node indices, or
+ * LLG_CR_NONE for a null object's entry). */
+typedef struct {
+    uint32_t first;     /* in problem table_items */
+    uint32_t count;
+} llg_cr_table_t;
+
+/* Array kinds. A fixed array's position i has the declared index
+ * left + i (left <= right) or left - i (left > right). */
+enum { LLG_CR_ARRAY_FIXED = 0, LLG_CR_ARRAY_DYNAMIC = 1, LLG_CR_ARRAY_QUEUE = 2 };
+
+/* Bit marking a handle-array slot in LLG_CR_ASIZE / LLG_CR_FOREACH. */
+#define LLG_CR_SLOT_ARRAY 0x80000000u
+
+/* A random (or state) unpacked array of packed elements of one unit. */
+typedef struct {
+    const char* name;
+    uint32_t elem_width;
+    uint8_t elem_signed;
+    uint8_t kind;        /* LLG_CR_ARRAY_* */
+    int32_t left;        /* fixed arrays: declared bounds */
+    int32_t right;
+} llg_cr_array_t;
+
+/* An object handle (or handle array) property reached by constraints. */
+typedef struct {
+    const char* name;
+    uint8_t kind;        /* LLG_CR_ARRAY_*; scalar handles use FIXED, 0, 0 */
+    uint8_t is_array;
+    int32_t left;        /* fixed handle arrays: declared bounds */
+    int32_t right;
+} llg_cr_slot_t;
+
+/* One class layout of a problem with objects or arrays (SIM-030).
+ * Variables, arrays and slots are problem-wide (one per property), so a
+ * base-class property has the same index in every derived class's unit;
+ * unit_items[item_first ..] lists the unit's variables, then its arrays,
+ * then its slots. Variables listed by no unit are global (static
+ * properties, std::randomize arguments). Blocks and leaves are ranges.
+ * Unit 0 is the randomized object (or the scope of std::randomize) and is
+ * expanded once; only its constraints may call functions, and not with
+ * loop indices in the arguments. */
+typedef struct {
+    const char* name;
+    uint32_t item_first;
+    uint32_t var_count, array_count, slot_count;
+    uint32_t block_first, block_count;
+    uint32_t leaf_first, leaf_count;
+} llg_cr_unit_t;
 
 typedef struct {
     const char* name;   /* source text for diagnostics */
@@ -127,6 +253,24 @@ typedef struct {
     uint32_t leaf_count;
     const llg_cr_call_t* calls;
     uint32_t call_count;
+    const llg_cr_dist_t* dists;
+    uint32_t dist_count;
+    const llg_cr_dist_item_t* dist_items;
+    uint32_t dist_item_count;
+    const llg_cr_order_t* orders;
+    uint32_t order_count;
+    const llg_cr_table_t* tables;     /* expanded problems */
+    uint32_t table_count;
+    const uint32_t* table_items;
+    uint32_t table_item_count;
+    const llg_cr_unit_t* units;       /* template problems (SIM-030) */
+    uint32_t unit_count;
+    const uint32_t* unit_items;
+    uint32_t unit_item_count;
+    const llg_cr_array_t* arrays;
+    uint32_t array_count;
+    const llg_cr_slot_t* slots;
+    uint32_t slot_count;
 } llg_cr_problem_t;
 
 typedef enum {
@@ -153,7 +297,10 @@ enum {
     LLG_CR_REASON_XZ_CALL,   /* call: result holds X/Z */
     LLG_CR_REASON_DIVZERO,   /* node: division or modulo by zero */
     LLG_CR_REASON_INDEX,     /* node: select index out of range */
-    LLG_CR_REASON_ORDER      /* var: circular function-argument order */
+    LLG_CR_REASON_ORDER,     /* var: circular function-argument order */
+    LLG_CR_REASON_WEIGHT,    /* node: negative or unevaluated dist weight
+                                or bound (S30-D8) */
+    LLG_CR_REASON_SOLVE_BEFORE /* var: circular solve...before order */
 };
 
 /* Engines, as bits of llg_cr_report_t.engines. */
@@ -201,6 +348,11 @@ void llg_cr_set_var(llg_cr_session_t* s, uint32_t var, const uint64_t* words,
 void llg_cr_set_block(llg_cr_session_t* s, uint32_t block, int enabled);
 void llg_cr_set_leaf(llg_cr_session_t* s, uint32_t leaf, const uint64_t* words,
                      int input_state);
+/* Cycle state of a randc variable (LLG_CR_CYCLIC_WORDS(width) words; NULL
+ * starts a new cycle). After LLG_CR_OK, llg_cr_cyclic returns the updated
+ * state to store back. */
+void llg_cr_set_cyclic(llg_cr_session_t* s, uint32_t var, const uint64_t* words);
+const uint64_t* llg_cr_cyclic(const llg_cr_session_t* s, uint32_t var);
 
 /* Step-wise solving for generated code: llg_cr_begin, then llg_cr_step
  * until it returns something other than LLG_CR_NEED_CALLS. On NEED_CALLS,
@@ -224,12 +376,66 @@ llg_cr_status_t llg_cr_solve(llg_cr_session_t* s, const llg_cr_rng_t* rng,
 const uint64_t* llg_cr_value(const llg_cr_session_t* s, uint32_t var);
 uint32_t llg_cr_var_words(const llg_cr_session_t* s, uint32_t var);
 
+/* ---- objects and arrays (problems with units, SIM-030) -------------------
+ *
+ * llg_cr_begin registers instance 0: unit 0, random, its pre_randomize
+ * already called by the caller. llg_cr_inst_root gives it its handle (NULL
+ * for std::randomize). The caller then feeds every instance llg_cr_next_inst
+ * returns: its variables, blocks, leaves, cyclic states and arrays, and its
+ * handle properties through llg_cr_link, which registers a new object
+ * (identified by its handle) or returns the existing instance; an object
+ * first reached through a non-random link and later through a random one is
+ * returned again to be fed as random. llg_cr_inst_pre is 1 the first time an
+ * instance is fed as random: the caller then calls its pre_randomize.
+ * llg_cr_set_var and the other instance-0 forms set instance 0's variables
+ * and the global ones. After LLG_CR_OK, commit with llg_cr_ivalue,
+ * llg_cr_icyclic, llg_cr_array_size and llg_cr_elem_value. */
+void llg_cr_inst_root(llg_cr_session_t* s, void* handle);
+uint32_t llg_cr_next_inst(llg_cr_session_t* s);
+int llg_cr_inst_pre(llg_cr_session_t* s, uint32_t inst);
+uint32_t llg_cr_inst_count(const llg_cr_session_t* s);
+void* llg_cr_inst_handle(const llg_cr_session_t* s, uint32_t inst);
+uint32_t llg_cr_inst_unit(const llg_cr_session_t* s, uint32_t inst);
+int llg_cr_inst_random(const llg_cr_session_t* s, uint32_t inst);
+/* Link element `index` (0 for a scalar slot) of handle slot `slot` of
+ * instance `inst` to `child` (NULL: a null handle) of class unit `unit`;
+ * `random` says whether the child's variables and constraints take part
+ * (the slot is `rand` and enabled). Returns the child's instance, or
+ * LLG_CR_NONE for NULL. A handle array's element count is set first. */
+uint32_t llg_cr_link(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t index,
+                     void* child, uint32_t unit, int random);
+void llg_cr_set_slot_size(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t count);
+void llg_cr_iset_var(llg_cr_session_t* s, uint32_t inst, uint32_t var, const uint64_t* words,
+                     int active, int input_state);
+void llg_cr_iset_block(llg_cr_session_t* s, uint32_t inst, uint32_t block, int enabled);
+void llg_cr_iset_leaf(llg_cr_session_t* s, uint32_t inst, uint32_t leaf,
+                      const uint64_t* words, int input_state);
+void llg_cr_iset_cyclic(llg_cr_session_t* s, uint32_t inst, uint32_t var,
+                        const uint64_t* words);
+/* Array `array` of instance `inst`: its current size and whether its
+ * elements (and, for dynamic arrays and queues, its size) are random; then
+ * each current element. */
+void llg_cr_set_array(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t size,
+                      int active);
+void llg_cr_set_elem(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
+                     const uint64_t* words, int input_state);
+const uint64_t* llg_cr_ivalue(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
+/* Whether variable `var` (array `array`) of `inst` took part as random. */
+int llg_cr_iactive(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
+int llg_cr_array_active(const llg_cr_session_t* s, uint32_t inst, uint32_t array);
+const uint64_t* llg_cr_icyclic(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
+uint32_t llg_cr_array_size(const llg_cr_session_t* s, uint32_t inst, uint32_t array);
+const uint64_t* llg_cr_elem_value(const llg_cr_session_t* s, uint32_t inst, uint32_t array,
+                                  uint32_t index);
+
 /* Budgets (named tunables, environment overrides read once). */
 typedef struct {
     uint64_t bdd_nodes;      /* LLG_RAND_BDD_NODES */
     uint64_t bdd_bits;       /* LLG_RAND_BDD_BITS */
     uint64_t reject_tries;   /* LLG_RAND_REJECT_TRIES */
     uint64_t conflicts;      /* LLG_RAND_CONFLICTS */
+    uint64_t array_elements; /* LLG_RAND_ARRAY_ELEMENTS: elements per solve */
+    uint64_t expand_nodes;   /* LLG_RAND_EXPAND_NODES: expanded nodes */
     int stats;               /* LLG_RAND_STATS */
 } llg_cr_tunables_t;
 

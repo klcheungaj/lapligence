@@ -1074,6 +1074,24 @@ void llg_cr_set_leaf_sv4(llg_cr_session_t* s, uint32_t leaf, sv4_t value, uint32
 // The solved value of an active variable as an independent owner.
 sv4_t llg_cr_value_sv4(const llg_cr_session_t* s, uint32_t var, uint32_t width,
                        int8_t is_signed);
+// A randc variable's cycle state (rand_cyclic_state_width bits, 2-state)
+// in, and its updated state out after a successful solve (S30-D3).
+void llg_cr_set_cyclic_sv4(llg_cr_session_t* s, uint32_t var, sv4_t state, uint32_t width);
+sv4_t llg_cr_cyclic_sv4(const llg_cr_session_t* s, uint32_t var, uint32_t width);
+/* Problems with units (SIM-030): the instance forms of the above. */
+void llg_cr_iset_var_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t var, sv4_t value,
+                         uint32_t width, int active);
+void llg_cr_iset_leaf_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t leaf, sv4_t value,
+                          uint32_t width, int null_dereference);
+void llg_cr_iset_cyclic_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t var, sv4_t state,
+                            uint32_t width);
+void llg_cr_set_elem_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
+                         sv4_t value, uint32_t width);
+sv4_t llg_cr_ivalue_sv4(const llg_cr_session_t* s, uint32_t inst, uint32_t var, uint32_t width,
+                        int8_t is_signed);
+sv4_t llg_cr_icyclic_sv4(const llg_cr_session_t* s, uint32_t inst, uint32_t var, uint32_t width);
+sv4_t llg_cr_elem_value_sv4(const llg_cr_session_t* s, uint32_t inst, uint32_t array,
+                            uint32_t index, uint32_t width, int8_t is_signed);
 // A constraint function's result for the solver (X/Z marks the input).
 void llg_cr_set_call_result_sv4(llg_cr_session_t* s, uint32_t call, sv4_t value,
                                 uint32_t width);

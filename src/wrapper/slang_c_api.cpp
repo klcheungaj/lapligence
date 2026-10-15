@@ -1670,6 +1670,7 @@ uint32_t semanticExpressionKind(ExpressionKind kind) {
     case ExpressionKind::NewArray: return LLG_SLANG_EXPR_NEW_ARRAY;
     case ExpressionKind::NewClass: return LLG_SLANG_EXPR_NEW_CLASS;
     case ExpressionKind::CopyClass: return LLG_SLANG_EXPR_COPY_CLASS;
+    case ExpressionKind::Dist: return LLG_SLANG_EXPR_DIST;
     case ExpressionKind::NewCovergroup: return LLG_SLANG_EXPR_NEW_COVERGROUP;
     case ExpressionKind::MinTypMax: return LLG_SLANG_EXPR_MIN_TYP_MAX;
     case ExpressionKind::ValueRange: return LLG_SLANG_EXPR_VALUE_RANGE;
@@ -3147,6 +3148,8 @@ public:
         if (node.isSoft)
           result.auxiliary |= LLG_SLANG_CONSTRAINT_SOFT;
       }
+      if constexpr (std::same_as<T, ForeachConstraint>)
+        result.auxiliary = node.loopDims.size();
     }
     else {
       result.kind = LLG_SLANG_SEMANTIC_UNSUPPORTED;
@@ -3181,6 +3184,14 @@ public:
     if constexpr (requires { node.sourceRange; })
       result.range = capture.span(node.sourceRange);
     parents.push_back(id);
+    // Loop variables are declarations of the foreach item; capturing them
+    // can grow the node vector, so `result` is not used after this point.
+    if constexpr (std::same_as<T, ForeachConstraint>) {
+      for (const auto& dimension : node.loopDims) {
+        if (dimension.loopVar)
+          handle(*dimension.loopVar);
+      }
+    }
     visitDefault(node);
     parents.pop_back();
     if constexpr (std::derived_from<T, Constraint>)
@@ -3388,6 +3399,13 @@ private:
     }
     else if constexpr (std::same_as<T, ForeachConstraint>) {
       capture.semanticRole(id, &node.arrayRef, LLG_SLANG_EDGE_BASE);
+      uint32_t index = 0;
+      for (const auto& dimension : node.loopDims) {
+        if (dimension.loopVar)
+          capture.semanticRole(id, dimension.loopVar, LLG_SLANG_EDGE_DECLARATION,
+                               index);
+        index++;
+      }
       capture.semanticRole(id, &node.body, LLG_SLANG_EDGE_BODY);
     }
   }
@@ -3900,6 +3918,26 @@ private:
     else if constexpr (std::same_as<T, ValueRangeExpression>) {
       capture.semanticRole(id, &expression.left(), LLG_SLANG_EDGE_LEFT);
       capture.semanticRole(id, &expression.right(), LLG_SLANG_EDGE_RIGHT);
+    }
+    else if constexpr (std::same_as<T, DistExpression>) {
+      capture.semanticRole(id, &expression.left(), LLG_SLANG_EDGE_LHS);
+      uint32_t index = 0;
+      for (const auto& item : expression.items()) {
+        capture.semanticRole(id, &item.value, LLG_SLANG_EDGE_OPERAND, index);
+        if (item.weight && item.weight->expr)
+          capture.semanticRole(id, item.weight->expr,
+                               item.weight->kind == DistExpression::DistWeight::PerRange
+                                   ? LLG_SLANG_EDGE_RIGHT
+                                   : LLG_SLANG_EDGE_INDEX,
+                               index);
+        index++;
+      }
+      if (const auto* weight = expression.defaultWeight()) {
+        capture.output.semantic_nodes[static_cast<size_t>(id)].auxiliary |=
+            LLG_SLANG_DIST_DEFAULT;
+        if (weight->expr)
+          capture.semanticRole(id, weight->expr, LLG_SLANG_EDGE_DEFAULT_VALUE);
+      }
     }
     else if constexpr (std::same_as<T, CallExpression>) {
       const bool systemMethod = isSystemMethodCall(expression);

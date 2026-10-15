@@ -388,6 +388,12 @@ pub enum IrChandleExpr {
     /// storage such as a mailbox array element. Construction allocates a
     /// runtime mailbox; reads share the existing one.
     Mailbox(Box<IrMailboxExpr>),
+    /// The object registered as instance `inst` of randomize problem
+    /// `problem` (a problem with units, SIM-030).
+    RandInstance {
+        problem: usize,
+        inst: Box<IrExpr>,
+    },
     /// A class handle used as a method-call receiver or to select a
     /// property (SV 8.4): null is a run-time error reported at `site`.
     Required {
@@ -2061,6 +2067,20 @@ impl IrChandleExpr {
                 otherwise.validate(model, formals, chandle_return)
             }
             Self::Null => Ok(()),
+            Self::RandInstance { problem, inst } => {
+                if model
+                    .rand_problems
+                    .get(*problem)
+                    .is_none_or(|problem| problem.units.is_empty())
+                    || inst.is_real()
+                {
+                    return Err(super::IrValidationError::new(
+                        "randomize instance",
+                        "needs a problem with units and an integral instance",
+                    ));
+                }
+                Ok(())
+            }
             Self::Required { handle, .. } => handle.validate(model, formals, chandle_return),
             Self::CopyClass { class, source } => {
                 if *class >= model.classes.len() {
@@ -2322,7 +2342,9 @@ impl IrChandleExpr {
                 otherwise.expressions(visit);
             }
             Self::AssociativeGet { key, .. } => key.expressions(visit),
-            Self::SemaphoreNew(index) | Self::ContainerGet { index, .. } => visit(index),
+            Self::SemaphoreNew(index)
+            | Self::ContainerGet { index, .. }
+            | Self::RandInstance { inst: index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter().for_each(visit),
             Self::Call { args, receiver, .. } => {
                 if let Some(receiver) = receiver {
@@ -2360,7 +2382,9 @@ impl IrChandleExpr {
                 otherwise.expressions_mut(visit);
             }
             Self::AssociativeGet { key, .. } => key.expressions_mut(visit),
-            Self::SemaphoreNew(index) | Self::ContainerGet { index, .. } => visit(index),
+            Self::SemaphoreNew(index)
+            | Self::ContainerGet { index, .. }
+            | Self::RandInstance { inst: index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter_mut().for_each(visit),
             Self::Call { args, receiver, .. } => {
                 if let Some(receiver) = receiver {

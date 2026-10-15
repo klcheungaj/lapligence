@@ -869,6 +869,18 @@ pub enum IrSysFunc {
     RandCallReady { problem: usize, call: u32 },
     /// The solved value of active variable `var`, typed like the variable.
     RandValue { problem: usize, var: u32 },
+    /// The updated cycle state of `randc` variable `var` after a successful
+    /// solve (`rand_cyclic_state_width` bits, unsigned, S30-D3).
+    RandCyclic { problem: usize, var: u32 },
+    /// An instance query of a problem with units (SIM-030): `inst` is the
+    /// instance (absent for `NextInst`/`Count`), `index` the element of an
+    /// `Elem` query.
+    RandInst {
+        problem: usize,
+        query: super::IrRandQuery,
+        inst: Option<Box<IrExpr>>,
+        index: Option<Box<IrExpr>>,
+    },
     /// Real math functions defined by IEEE 1800-2009 table 20-4.
     Math { kind: IrMathFunc, args: Vec<IrExpr> },
     /// Fractional time in the calling module's time unit.

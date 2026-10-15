@@ -1,0 +1,6 @@
+mixed: bad=0 100=1 200=1 range=1 11=1
+zero weight: bad=0 200=0 100=1 range=1
+with constraint: bad=0 100=0 200=1
+guard: g=1 y0|g=1 y0|!g=1
+overlap: 3=0 0=1 1=1 2=1
+signed: negative=1

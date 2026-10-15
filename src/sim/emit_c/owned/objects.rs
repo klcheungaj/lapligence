@@ -53,6 +53,10 @@ impl Frame<'_, '_> {
                 let source = self.chandle(source)?;
                 return Ok(self.scalar("void*", format!("llg_class_copy_{class}({source})")));
             }
+            IrChandleExpr::RandInstance { problem, inst } => {
+                let handle = self.rand_instance(*problem, inst)?;
+                return Ok(self.scalar("void*", handle));
+            }
             IrChandleExpr::Required { handle, site } => {
                 let handle = self.chandle(handle)?;
                 if self.quiet_receivers {

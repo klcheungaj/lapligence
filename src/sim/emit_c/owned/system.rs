@@ -27,7 +27,9 @@ impl Frame<'_, '_> {
         let result = match function {
             IrSysFunc::RandStep { .. }
             | IrSysFunc::RandCallReady { .. }
-            | IrSysFunc::RandValue { .. } => self.rand_function(function, expr)?,
+            | IrSysFunc::RandValue { .. }
+            | IrSysFunc::RandCyclic { .. }
+            | IrSysFunc::RandInst { .. } => self.rand_function(function, expr)?,
             IrSysFunc::VpiCall { site, name, args } => self
                 .vpi_call(*site, name, args, Some((expr.width, expr.signed)))?
                 .ok_or_else(|| "VPI function returned no value".to_owned())?,

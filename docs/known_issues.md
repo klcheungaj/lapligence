@@ -1678,20 +1678,29 @@ loaded DLL if shared Windows companions are needed.
 `tests/fixtures/sim/feature_completion/sim_041/neg_timed_export_task.sv`;
 `tests/fixtures/sim/lrm_decisions/S41-D1_context_scope_chain.sv`.
 
-## Constrained randomization limits (SIM-029)
+## Constrained randomization limits (SIM-029, SIM-030)
 
-**Status:** open. SIM-029 solves packed integral and enum class properties and
-`std::randomize` arguments; these forms remain outside it.
+**Status:** open. SIM-029 and SIM-030 solve packed integral and enum
+variables, `randc`, `dist`, `solve...before`, one-dimensional random arrays
+of packed elements, array methods and `foreach`, and random object members;
+these forms remain outside them.
 
 ### Symptom
 
-- Rejected with a located `randomization:` error (planned for SIM-030):
-  `randc`, `dist`, `solve...before`, `foreach`, random arrays and queues,
-  random object (handle) members, packed structures with enum or tagged
-  members, a select whose index is a random variable (S29-D7), a random
-  divisor in `/` or `%`, and `**` on a random variable. `super.randomize()`
-  and an inline `local::` name that also names an object property are
-  rejected too.
+- Rejected with a located `randomization:` error: arrays of class handles,
+  multidimensional and associative arrays, random bounded queues, static
+  random arrays and static random properties of objects reached through a
+  `rand` handle, `randc` arrays and `randc` variables wider than 16 bits,
+  elements of an enum or tagged-union type in a random array, a random array
+  read other than through element selects, `size()`, the reductions,
+  `inside` and `foreach` (for example compared whole), `std::randomize` of a
+  fixed-size array of a module or subroutine (dynamic arrays and queues
+  work), a constraint function argument that reads an array element, a loop
+  index or another object's variable, a function call in a constraint of an
+  object reached through a `rand` handle, a `solve...before` primary that is
+  an array element or size, packed structures with enum or tagged members,
+  `super.randomize()`, and an inline `local::` name that also names an
+  object property.
 - A `randomize()` call used as a value is supported in assignments, `if`
   conditions, `return`, declarations, system-task arguments and immediate
   assertions. Inside a short-circuit or conditional operand, or in a loop
@@ -1699,7 +1708,8 @@ loaded DLL if shared Windows companions are needed.
   that depends on the other operands.
 - When the exact model and rejection sampling both exceed their budgets, the
   CDCL search returns a legal solution that is not uniformly distributed
-  (S29-D10), against 18.5.9 L30013-30014.
+  (S29-D10), against 18.5.9 L30013-30014; the fallbacks also ignore dist
+  weights and solve-before orders (S30-D9).
 - The search re-encodes the component on every call; a loop that keeps
   needing the search pays the encoding each time (about 18 ms per call for a
   16-bit factoring constraint on x86-64).
@@ -1709,24 +1719,28 @@ loaded DLL if shared Windows companions are needed.
   the same state values skip it, but a constraint whose state changes on every
   call pays it each time; lowering `LLG_RAND_BDD_NODES` trades exact uniform
   sampling of larger components for speed.
+- A problem with arrays or objects is expanded per call shape (instances,
+  array sizes); a new shape costs one expansion, bounded by
+  `LLG_RAND_ARRAY_ELEMENTS` and `LLG_RAND_EXPAND_NODES` (a resource error
+  when exceeded). Each call site keeps the last four shapes.
 
 ### Cause
 
-The solver problem has scalar variables only: arrays and `foreach` need
-per-element variables, `dist` and `randc` need weighted and cyclic
-sampling, and `solve...before` needs ordered layers. The exact engine counts
-models over the whole component, which a product of wide variables can
-exceed; the CDCL fallback finds one solution without counting.
+The exact engine counts models over the whole component, which a product of
+wide variables can exceed; the CDCL fallback finds one solution without
+counting. Arrays of handles need per-element object links in the lowering
+(the solver already has them); the other rejected forms need storage or
+expansion paths the lowering does not have.
 
 ### Intended direction
 
-SIM-030: array and handle random variables, `dist`, `randc`,
-`solve...before` and `foreach`. Near-uniform sampling for the
-search fallback (hashing-based) if a workload needs it.
+Arrays of `rand` handles and multidimensional arrays if a workload needs
+them; near-uniform sampling for the search fallback (hashing-based).
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_029/neg_*.sv` and
+`tests/fixtures/sim/feature_completion/sim_029/neg_*.sv`,
+`tests/fixtures/sim/feature_completion/sim_030/neg_*.sv` and
 `search_fallback.sv`; `tests/fixtures/sim/lrm_decisions/S29-D10_search_not_uniform.sv`.
 
 ## Legacy constructs unsupported by design

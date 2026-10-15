@@ -68,8 +68,10 @@ pub fn constraint_sources() -> (&'static str, &'static str) {
             include_str!("constraints/eval.c"),
             include_str!("constraints/aig.c"),
             include_str!("constraints/bdd.c"),
+            include_str!("constraints/sample.c"),
             include_str!("constraints/cdcl.c"),
             include_str!("constraints/solve.c"),
+            include_str!("constraints/expand.c"),
         ),
     )
 }

@@ -166,6 +166,26 @@ static uint32_t cr_bdd_and(cr_bdd_t* m, uint32_t f, uint32_t g) {
     return r;
 }
 
+static uint32_t cr_bdd_or(cr_bdd_t* m, uint32_t f, uint32_t g) {
+    return cr_bdd_not(m, cr_bdd_and(m, cr_bdd_not(m, f), cr_bdd_not(m, g)));
+}
+
+/* Existential quantification of the levels marked in `quant`; `tag`
+ * identifies that set in the computed table (one tag per layer). */
+static uint32_t cr_bdd_exists(cr_bdd_t* m, uint32_t f, const uint8_t* quant, uint32_t tag) {
+    if (f < 2u) return f;
+    if (!cr_bdd_step(m)) return 0;
+    uint64_t key = cr_bdd_key(3u, f, tag);
+    uint32_t r;
+    if (cr_bdd_lookup(m, key, &r)) return r;
+    uint32_t l = m->level[f], lo = m->lo[f], hi = m->hi[f];
+    uint32_t rlo = cr_bdd_exists(m, lo, quant, tag);
+    uint32_t rhi = cr_bdd_exists(m, hi, quant, tag);
+    r = quant[l] ? cr_bdd_or(m, rlo, rhi) : cr_bdd_mk(m, l, rlo, rhi);
+    if (!m->overflow) cr_bdd_store(m, key, r);
+    return r;
+}
+
 /* Convert the AIG cone of `out` (inputs 1..levels map to levels 0..levels-1). */
 static uint32_t cr_bdd_from_aig(cr_bdd_t* m, const cr_aig_t* g, uint32_t out) {
     uint32_t root = out >> 1;
@@ -286,10 +306,12 @@ typedef struct {
     uint32_t* level;
     uint32_t* lo;
     uint32_t* hi;
-    uint64_t* count;      /* nodes * limbs */
+    uint64_t* count;      /* nodes * limbs (uniform counts of roots[0]) */
     uint32_t limbs;
     uint32_t root;
     uint32_t levels;
+    uint32_t* roots;      /* every root kept (layer projections) */
+    uint32_t root_count;
 } cr_exact_t;
 
 static void cr_exact_free(cr_exact_t* e) {
@@ -297,13 +319,18 @@ static void cr_exact_free(cr_exact_t* e) {
     free(e->lo);
     free(e->hi);
     free(e->count);
+    free(e->roots);
     memset(e, 0, sizeof(*e));
 }
 
-static void cr_exact_build(cr_exact_t* e, const cr_bdd_t* m, uint32_t root) {
+/* Compact the nodes reachable from `roots` (roots[0] is the model; the
+ * others are its layer projections) and count roots[0]'s models. */
+static void cr_exact_build(cr_exact_t* e, const cr_bdd_t* m, const uint32_t* roots,
+                           uint32_t root_count) {
     memset(e, 0, sizeof(*e));
     e->levels = m->levels;
     e->limbs = m->levels / 64u + 2u;
+    uint32_t root = roots[0];
     /* Reachable nodes in post-order (children first). */
     uint32_t* map = (uint32_t*)cr_alloc(m->count, sizeof(uint32_t));
     for (size_t i = 0; i < m->count; ++i) map[i] = UINT32_MAX;
@@ -311,7 +338,8 @@ static void cr_exact_build(cr_exact_t* e, const cr_bdd_t* m, uint32_t root) {
     map[1] = 1;
     cr_u32vec_t order = {0, 0, 0};
     cr_u32vec_t stack = {0, 0, 0};
-    if (root >= 2u) cr_u32_push(&stack, root);
+    for (uint32_t i = root_count; i-- > 0;)
+        if (roots[i] >= 2u) cr_u32_push(&stack, roots[i]);
     uint8_t* expanded = (uint8_t*)cr_alloc(m->count, 1u);
     while (stack.len) {
         uint32_t n = stack.data[stack.len - 1u];
@@ -351,6 +379,9 @@ static void cr_exact_build(cr_exact_t* e, const cr_bdd_t* m, uint32_t root) {
         }
     }
     e->root = map[root];
+    e->root_count = root_count;
+    e->roots = (uint32_t*)cr_alloc(root_count, sizeof(uint32_t));
+    for (uint32_t i = 0; i < root_count; ++i) e->roots[i] = map[roots[i]];
     free(tmp);
     free(order.data);
     free(map);

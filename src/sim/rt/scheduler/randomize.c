@@ -64,6 +64,72 @@ sv4_t llg_cr_value_sv4(const llg_cr_session_t* s, uint32_t var, uint32_t width,
     return sv4_from_limbs(llg_cr_value(s, var), NULL, NULL, width, is_signed);
 }
 
+void llg_cr_set_cyclic_sv4(llg_cr_session_t* s, uint32_t var, sv4_t state, uint32_t width) {
+    sv4_t sized = sv4_resize(state, width, 0);
+    uint64_t* words = randomize_scratch(width);
+    randomize_words(sized, words, width);
+    llg_cr_set_cyclic(s, var, words);
+    sv4_destroy(&sized);
+}
+
+sv4_t llg_cr_cyclic_sv4(const llg_cr_session_t* s, uint32_t var, uint32_t width) {
+    return sv4_from_limbs(llg_cr_cyclic(s, var), NULL, NULL, width, 0);
+}
+
+void llg_cr_iset_var_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t var, sv4_t value,
+                         uint32_t width, int active) {
+    sv4_t sized = sv4_resize(value, width, 0);
+    uint64_t* words = randomize_scratch(width);
+    int input = randomize_words(sized, words, width);
+    llg_cr_iset_var(s, inst, var, words, active, input);
+    sv4_destroy(&sized);
+}
+
+void llg_cr_iset_leaf_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t leaf, sv4_t value,
+                          uint32_t width, int null_dereference) {
+    if (null_dereference) {
+        llg_cr_iset_leaf(s, inst, leaf, NULL, LLG_CR_INPUT_NULL);
+        return;
+    }
+    sv4_t sized = sv4_resize(value, width, 0);
+    uint64_t* words = randomize_scratch(width);
+    int input = randomize_words(sized, words, width);
+    llg_cr_iset_leaf(s, inst, leaf, words, input);
+    sv4_destroy(&sized);
+}
+
+void llg_cr_iset_cyclic_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t var, sv4_t state,
+                            uint32_t width) {
+    sv4_t sized = sv4_resize(state, width, 0);
+    uint64_t* words = randomize_scratch(width);
+    randomize_words(sized, words, width);
+    llg_cr_iset_cyclic(s, inst, var, words);
+    sv4_destroy(&sized);
+}
+
+void llg_cr_set_elem_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
+                         sv4_t value, uint32_t width) {
+    sv4_t sized = sv4_resize(value, width, 0);
+    uint64_t* words = randomize_scratch(width);
+    int input = randomize_words(sized, words, width);
+    llg_cr_set_elem(s, inst, array, index, words, input);
+    sv4_destroy(&sized);
+}
+
+sv4_t llg_cr_ivalue_sv4(const llg_cr_session_t* s, uint32_t inst, uint32_t var, uint32_t width,
+                        int8_t is_signed) {
+    return sv4_from_limbs(llg_cr_ivalue(s, inst, var), NULL, NULL, width, is_signed);
+}
+
+sv4_t llg_cr_icyclic_sv4(const llg_cr_session_t* s, uint32_t inst, uint32_t var, uint32_t width) {
+    return sv4_from_limbs(llg_cr_icyclic(s, inst, var), NULL, NULL, width, 0);
+}
+
+sv4_t llg_cr_elem_value_sv4(const llg_cr_session_t* s, uint32_t inst, uint32_t array,
+                            uint32_t index, uint32_t width, int8_t is_signed) {
+    return sv4_from_limbs(llg_cr_elem_value(s, inst, array, index), NULL, NULL, width, is_signed);
+}
+
 static const char* randomize_reason_text(int reason) {
     switch (reason) {
     case LLG_CR_REASON_NULL: return "null object handle in a constraint";
@@ -73,6 +139,8 @@ static const char* randomize_reason_text(int reason) {
     case LLG_CR_REASON_DIVZERO: return "division by zero in a constraint";
     case LLG_CR_REASON_INDEX: return "select index out of range in a constraint";
     case LLG_CR_REASON_ORDER: return "circular function-argument order";
+    case LLG_CR_REASON_SOLVE_BEFORE: return "circular solve-before order";
+    case LLG_CR_REASON_WEIGHT: return "negative or unevaluated dist weight";
     default: return "evaluation error";
     }
 }
@@ -107,6 +175,7 @@ static int randomize_report(const llg_cr_problem_t* problem, llg_cr_status_t sta
             break;
         case LLG_CR_REASON_XZ_VAR:
         case LLG_CR_REASON_ORDER:
+        case LLG_CR_REASON_SOLVE_BEFORE:
             if (report->item < problem->var_count) name = problem->vars[report->item].name;
             break;
         case LLG_CR_REASON_XZ_CALL:

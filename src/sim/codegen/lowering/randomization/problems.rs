@@ -10,15 +10,22 @@
 //! 11.6, 11.8), and operands are converted explicitly, so the solver never
 //! re-derives an expression type.
 
+use crate::core::db::NodeId;
 use crate::sim::ir::{
-    IrBinOp, IrConst, IrExpr, IrExprKind, IrInsideItem, IrRandCall, IrRandLeaf, IrRandNode,
-    IrRandOp, IrRandProblem, IrRandVar, IrUnOp,
+    IrBinOp, IrConst, IrExpr, IrExprKind, IrInsideItem, IrRandArrayKind, IrRandCall, IrRandDist,
+    IrRandDistItem, IrRandLeaf, IrRandNode, IrRandOp, IrRandOrder, IrRandProblem, IrRandVar,
+    IrUnOp,
 };
 use std::collections::HashMap;
 
 /// Prefix of the placeholder locals that stand for random variables while a
 /// constraint is lowered. They never reach emission.
 pub(super) const PLACEHOLDER_PREFIX: &str = "_llg_randvar_";
+
+/// Prefix of the placeholders that stand for template nodes (array
+/// elements, sizes, reductions, loop indices, object members) of a problem
+/// with units; they share [`PLACEHOLDER_PREFIX`] so they are never leaves.
+pub(super) const TEMPLATE_PREFIX: &str = "_llg_randvar_t";
 
 /// A state value evaluated before solving, with its source description.
 pub(super) struct LeafPlan {
@@ -40,6 +47,29 @@ pub(super) struct ProblemBuilder {
     var_nodes: Vec<Option<u32>>,
     /// Description of the constraint item being translated (leaf names).
     pub(super) item: String,
+    /// `solve...before` pairs of the block being translated; `add_block`
+    /// assigns them to it.
+    pending_orders: Vec<(u32, u32)>,
+    /// Template placeholder name -> template node (problems with units).
+    templates: HashMap<String, u32>,
+    /// Property declaration -> its problem-wide variable (problems with
+    /// units share one variable per property among all units).
+    pub(super) decl_vars: HashMap<NodeId, u32>,
+    /// The unit whose constraints are being translated, and its first leaf
+    /// (leaves are unit ranges, so they are shared only within a unit).
+    pub(super) unit: u32,
+    leaf_first: usize,
+    loops: u32,
+    /// Objects, arrays and loops (`templates.rs`); `None` for a problem
+    /// without units.
+    pub(super) units: Option<Box<super::templates::UnitState>>,
+}
+
+/// One lowered `dist` item (18.5.4).
+pub(super) struct DistSpec {
+    pub(super) item: IrInsideItem,
+    pub(super) weight: Option<IrExpr>,
+    pub(super) per_range: bool,
 }
 
 type Typed = (u32, u32, bool);
@@ -87,7 +117,96 @@ impl ProblemBuilder {
             placeholders: HashMap::new(),
             var_nodes: Vec::new(),
             item: String::new(),
+            pending_orders: Vec::new(),
+            templates: HashMap::new(),
+            decl_vars: HashMap::new(),
+            unit: 0,
+            leaf_first: 0,
+            loops: 0,
+            units: None,
         }
+    }
+
+    /// Start translating the constraints of unit `unit`.
+    pub(super) fn begin_unit(&mut self, unit: u32) {
+        self.unit = unit;
+        self.leaf_first = self.leaves.len();
+    }
+
+    /// A template node and the placeholder that stands for it.
+    pub(super) fn template(
+        &mut self,
+        op: IrRandOp,
+        signed: bool,
+        width: u32,
+        operands: [u32; 3],
+    ) -> u32 {
+        let [a, b, c] = operands;
+        self.push(op, signed, width, a, b, c)
+    }
+
+    /// The placeholder read standing for template node `node`.
+    pub(super) fn template_placeholder(&mut self, node: u32) -> IrExpr {
+        let name = format!("{TEMPLATE_PREFIX}{}", self.templates.len());
+        self.templates.insert(name.clone(), node);
+        let (_, width, signed) = self.ty(node);
+        IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
+    }
+
+    /// Whether `expr` reads a template placeholder.
+    pub(super) fn has_template(&self, expr: &IrExpr) -> bool {
+        placeholders_in(expr)
+            .iter()
+            .any(|name| self.templates.contains_key(name))
+    }
+
+    /// Append operand list `items` to the problem's args; returns its first.
+    pub(super) fn push_args(&mut self, items: &[u32]) -> u32 {
+        let first = self.problem.args.len() as u32;
+        self.problem.args.extend_from_slice(items);
+        first
+    }
+
+    pub(super) fn new_loop(&mut self) -> u32 {
+        self.loops += 1;
+        self.loops - 1
+    }
+
+    /// Width and signedness of node `node`.
+    pub(super) fn node_type(&self, node: u32) -> (u32, bool) {
+        let n = &self.problem.nodes[node as usize];
+        (n.width, n.signed)
+    }
+
+    /// The 0-based position of declared index `index` of an array whose
+    /// declared bounds are `left`/`right` (a fixed array) or none (dynamic
+    /// arrays and queues are indexed by position), as a 64-bit signed node.
+    pub(super) fn position(
+        &mut self,
+        kind: IrRandArrayKind,
+        left: i32,
+        right: i32,
+        index: u32,
+    ) -> Result<u32, String> {
+        let (index, w, s) = self.ty(index);
+        if kind != IrRandArrayKind::Fixed || (left <= right && left == 0) {
+            return Ok(index);
+        }
+        if w > 64 {
+            return Err("an array index wider than 64 bits is not supported in constraints".into());
+        }
+        let wide = self.coerce_own(index, w, s, 64);
+        let base = self.constant_u64(i64::from(left) as u64, 64, true);
+        Ok(if left <= right {
+            self.push(IrRandOp::Sub, true, 64, wide, base, 0)
+        } else {
+            self.push(IrRandOp::Sub, true, 64, base, wide, 0)
+        })
+    }
+
+    /// `left == right` in their common type (for `inside` an array).
+    pub(super) fn equal(&mut self, left: u32, right: u32) -> u32 {
+        self.compare(IrRandOp::Eq, left, right)
     }
 
     /// Add a candidate variable; returns its index and placeholder name.
@@ -99,6 +218,7 @@ impl ProblemBuilder {
             width,
             signed,
             domain: None,
+            cyclic: false,
         });
         self.placeholders.insert(placeholder.clone(), index);
         self.var_nodes.push(None);
@@ -134,7 +254,159 @@ impl ProblemBuilder {
         self.problem
             .blocks
             .push(crate::sim::ir::IrRandBlock { name, root });
+        for (before, after) in std::mem::take(&mut self.pending_orders) {
+            self.problem.orders.push(IrRandOrder {
+                block: index,
+                before,
+                after,
+            });
+        }
         index
+    }
+
+    /// Mark variable `var` `randc` (18.4.2).
+    pub(super) fn set_cyclic(&mut self, var: u32) {
+        self.problem.vars[var as usize].cyclic = true;
+    }
+
+    /// The variable a lowered expression names when it is exactly one
+    /// placeholder read.
+    pub(super) fn placeholder_var(&self, expr: &IrExpr) -> Option<u32> {
+        match &expr.kind {
+            IrExprKind::LocalRead(name) => self.placeholders.get(name).copied(),
+            _ => None,
+        }
+    }
+
+    pub(super) fn is_cyclic(&self, var: u32) -> bool {
+        self.problem.vars[var as usize].cyclic
+    }
+
+    /// Record `solve before before after` for the block being translated.
+    pub(super) fn add_order(&mut self, before: u32, after: u32) {
+        self.pending_orders.push((before, after));
+    }
+
+    /// `value dist { items }` under `guard` (18.5.4): a 1-bit node that holds
+    /// when the value matches an item of nonzero weight, with the weights
+    /// recorded for the sampler (S30-D1). Item values, bounds and weights
+    /// must not read random variables.
+    pub(super) fn dist(
+        &mut self,
+        value: &IrExpr,
+        specs: &[DistSpec],
+        guard: Option<u32>,
+    ) -> Result<u32, String> {
+        let value = self.expr(value)?;
+        let mut bounds = Vec::with_capacity(specs.len());
+        for spec in specs {
+            let random = match &spec.item {
+                IrInsideItem::Value(item) => has_placeholder(item),
+                IrInsideItem::Range { low, high } => has_placeholder(low) || has_placeholder(high),
+                IrInsideItem::OpenRange { low, high } => {
+                    low.as_ref().is_some_and(has_placeholder)
+                        || high.as_ref().is_some_and(has_placeholder)
+                }
+                _ => return Err("a dist item must be a value or a range (18.5.4)".into()),
+            } || spec.weight.as_ref().is_some_and(has_placeholder);
+            if random {
+                return Err(
+                    "a dist item value, range bound or weight that reads a random variable is not supported (S30-D10)"
+                        .into(),
+                );
+            }
+            bounds.push(match &spec.item {
+                IrInsideItem::Value(item) => {
+                    if let IrExprKind::Const(constant) = &item.kind {
+                        if has_x_or_z(constant) {
+                            return Err(
+                                "a dist item value with X or Z bits is not supported".into()
+                            );
+                        }
+                    }
+                    let node = self.expr(item)?;
+                    (Some(node), Some(node), true)
+                }
+                IrInsideItem::Range { low, high } => {
+                    (Some(self.expr(low)?), Some(self.expr(high)?), false)
+                }
+                IrInsideItem::OpenRange { low, high } => (
+                    low.as_ref().map(|low| self.expr(low)).transpose()?,
+                    high.as_ref().map(|high| self.expr(high)).transpose()?,
+                    false,
+                ),
+                _ => unreachable!("checked above"),
+            });
+        }
+        // The value and every bound compare in one type (11.4.13), which
+        // also orders all items in one domain for the support size.
+        let (_, mut width, mut signed) = self.ty(value);
+        for (low, high, _) in &bounds {
+            for node in [*low, *high].into_iter().flatten() {
+                let (_, w, s) = self.ty(node);
+                width = width.max(w);
+                signed &= s;
+            }
+        }
+        let words = width.div_ceil(64).max(1) as usize;
+        let target = self.coerce(value, width, signed);
+        let mut items = Vec::with_capacity(specs.len());
+        for (spec, (low, high, single)) in specs.iter().zip(bounds) {
+            let low = match low {
+                Some(node) => self.coerce(node, width, signed),
+                None => {
+                    // `$` as a lower bound: the type's minimum.
+                    let mut min = vec![0u64; words];
+                    if signed {
+                        min[((width - 1) / 64) as usize] |= 1u64 << ((width - 1) % 64);
+                    }
+                    self.constant_words(&min, width, signed)
+                }
+            };
+            let high = match high {
+                Some(node) if !single => self.coerce(node, width, signed),
+                Some(_) => low,
+                None => {
+                    let mut max = vec![u64::MAX; words];
+                    if signed {
+                        max[((width - 1) / 64) as usize] &= !(1u64 << ((width - 1) % 64));
+                    }
+                    self.constant_words(&max, width, signed)
+                }
+            };
+            let matches = if single {
+                self.push(IrRandOp::Eq, false, 1, target, low, 0)
+            } else {
+                let ge = self.push(IrRandOp::Ge, false, 1, target, low, 0);
+                let le = self.push(IrRandOp::Le, false, 1, target, high, 0);
+                self.push(IrRandOp::LogAnd, false, 1, ge, le, 0)
+            };
+            let weight = spec
+                .weight
+                .as_ref()
+                .map(|weight| {
+                    if weight.is_real() {
+                        return Err("a dist weight must be integral (18.5.4)".to_owned());
+                    }
+                    self.expr(weight)
+                })
+                .transpose()?;
+            items.push(IrRandDistItem {
+                matches,
+                lo: low,
+                hi: high,
+                weight,
+                per_range: spec.per_range,
+                signed,
+            });
+        }
+        let index = self.problem.dists.len() as u32;
+        self.problem.dists.push(IrRandDist {
+            expr: value,
+            guard,
+            items,
+        });
+        Ok(self.push(IrRandOp::Dist, false, 1, index, 0, 0))
     }
 
     fn push(&mut self, op: IrRandOp, signed: bool, width: u32, a: u32, b: u32, c: u32) -> u32 {
@@ -266,8 +538,12 @@ impl ProblemBuilder {
                 return Ok(self.coerce(node, expr.width, expr.signed));
             }
         }
-        let index = match self.leaves.iter().position(|leaf| leaf.template == *expr) {
-            Some(index) => index,
+        let first = self.leaf_first;
+        let index = match self.leaves[first..]
+            .iter()
+            .position(|leaf| leaf.template == *expr)
+        {
+            Some(index) => first + index,
             None => {
                 self.leaves.push(LeafPlan {
                     template: expr.clone(),
@@ -311,11 +587,27 @@ impl ProblemBuilder {
         }
         match &expr.kind {
             IrExprKind::LocalRead(name) => {
+                if let Some(node) = self.templates.get(name) {
+                    return Ok(*node);
+                }
                 let var = *self
                     .placeholders
                     .get(name)
                     .ok_or_else(|| "unknown random variable placeholder".to_owned())?;
                 Ok(self.var_node(var))
+            }
+            IrExprKind::Bin {
+                op: IrBinOp::Pow,
+                a,
+                b,
+            } => {
+                // `a ** b`: the result takes a's context type; b is
+                // self-determined (11.4.3, Table 11-4). A zero base with a
+                // negative exponent is an evaluation error (S30-D4).
+                let base = self.expr(a)?;
+                let base = self.coerce(base, expr.width, expr.signed);
+                let exponent = self.expr(b)?;
+                Ok(self.push(IrRandOp::Pow, expr.signed, expr.width, base, exponent, 0))
             }
             IrExprKind::Bin { op, a, b } => self.binary(*op, a, b),
             IrExprKind::Un { op, a } => {
@@ -359,9 +651,6 @@ impl ProblemBuilder {
                 Ok(self.push(IrRandOp::Repl, false, width, inner, count, 0))
             }
             IrExprKind::BitSel { base, idx } => {
-                if has_placeholder(idx) {
-                    return Err(random_index());
-                }
                 let base = self.expr(base)?;
                 self.select(base, idx, 1, false)
             }
@@ -371,9 +660,6 @@ impl ProblemBuilder {
                 neg,
                 ..
             } => {
-                if has_placeholder(base_idx) {
-                    return Err(random_index());
-                }
                 let base = self.expr(base)?;
                 self.select(base, base_idx, expr.width, *neg)
             }
@@ -440,15 +726,7 @@ impl ProblemBuilder {
                 let (a, b) = (self.expr(a)?, self.expr(b)?);
                 return Ok(self.logical(IrRandOp::Equiv, a, b));
             }
-            IrBinOp::Pow => {
-                return Err("`**` is not supported on random variables in constraints".into())
-            }
-            IrBinOp::Div | IrBinOp::Mod if has_placeholder(b) => {
-                return Err(
-                    "a random divisor in `/` or `%` is not supported (S29: planned for SIM-030)"
-                        .into(),
-                )
-            }
+            IrBinOp::Pow => unreachable!("`**` is translated with its result type"),
             _ => {}
         }
         let left = self.expr(a)?;
@@ -553,6 +831,15 @@ impl ProblemBuilder {
 
     fn inside(&mut self, value: &IrExpr, items: &[IrInsideItem]) -> Result<u32, String> {
         let value = self.expr(value)?;
+        self.inside_node(value, items)
+    }
+
+    /// `value inside { items }` for a translated value; no items is false.
+    pub(super) fn inside_node(
+        &mut self,
+        value: u32,
+        items: &[IrInsideItem],
+    ) -> Result<u32, String> {
         let mut any = None;
         for item in items {
             let matched =
@@ -595,8 +882,9 @@ impl ProblemBuilder {
         })
     }
 
-    /// `base[index +: width]` (or `-:`) with a state index; a bit outside the
-    /// base is an evaluation error, as its X value would be (S29-D1).
+    /// `base[index +: width]` (or `-:`); a bit outside the base is an
+    /// evaluation error, as its X value would be (S29-D1). A random index
+    /// excludes the assignments that select outside the base (S30-D4).
     fn select(&mut self, base: u32, index: &IrExpr, width: u32, neg: bool) -> Result<u32, String> {
         let (base, base_width, _) = self.ty(base);
         if let IrExprKind::Const(constant) = &index.kind {
@@ -688,6 +976,18 @@ impl ProblemBuilder {
         if expr.width == 0 {
             return Err("a real-valued function is not supported in constraints".into());
         }
+        if self.unit != 0 {
+            return Err(
+                "a function call in a constraint of an object reached through a `rand` handle is not supported"
+                    .into(),
+            );
+        }
+        if self.has_template(expr) {
+            return Err(
+                "a function call argument that reads an array element, array size, loop index or another object's variable is not supported in constraints"
+                    .into(),
+            );
+        }
         let mut args = Vec::new();
         for name in placeholders_in(expr) {
             let var = *self
@@ -708,8 +1008,4 @@ impl ProblemBuilder {
         });
         Ok(self.push(IrRandOp::Call, expr.signed, expr.width, index, 0, 0))
     }
-}
-
-fn random_index() -> String {
-    "a select whose index is a random variable is not supported (S29-D7)".to_owned()
 }

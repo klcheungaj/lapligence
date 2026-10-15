@@ -1,0 +1,5 @@
+plain: ok=1 w=3 s=5 x=2 y=1 d=7 a='{0, 1, 2}
+list: ok=1 x=2
+null: ok=1
+restricted: ok=1 x=2
+scope: ok=1 v=6

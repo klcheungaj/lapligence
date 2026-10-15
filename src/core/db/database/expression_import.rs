@@ -275,6 +275,47 @@ pub(super) fn expression_from_slang(
                 value: first(SemanticEdgeRole::Body)?,
             }
         }
+        SEMANTIC_EXPR_DIST => {
+            let left = required(SemanticEdgeRole::Lhs, "dist expression")?;
+            let mut items: Vec<DistItem> = Vec::new();
+            let mut ordered = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Operand)
+                .map(|edge| Ok((edge.index, semantic_id(ids, edge.target_id)?)))
+                .collect::<Result<Vec<_>, DbError>>()?;
+            ordered.sort_by_key(|(index, _)| *index);
+            for (position, (index, value)) in ordered.into_iter().enumerate() {
+                if index as usize != position {
+                    return Err(DbError::InvalidSnapshot(
+                        "dist item indices must be dense and unique".into(),
+                    ));
+                }
+                let mut weight = None;
+                let mut per_range = false;
+                for edge in edges.iter().filter(|edge| edge.index == index) {
+                    let range = match edge.role {
+                        SemanticEdgeRole::Index => false,
+                        SemanticEdgeRole::Right => true,
+                        _ => continue,
+                    };
+                    if weight.is_some() {
+                        return Err(DbError::InvalidSnapshot("dist item has two weights".into()));
+                    }
+                    weight = Some(semantic_id(ids, edge.target_id)?);
+                    per_range = range;
+                }
+                items.push(DistItem {
+                    value,
+                    weight,
+                    per_range,
+                });
+            }
+            ExprKind::Dist {
+                left,
+                items,
+                default_weight: node.auxiliary & crate::ffi::slang::DIST_DEFAULT != 0,
+            }
+        }
         SEMANTIC_EXPR_COPY_CLASS => ExprKind::CopyClass {
             source: required(SemanticEdgeRole::Operand, "class copy source")?,
             class_type: node.type_id().map(TypeId),

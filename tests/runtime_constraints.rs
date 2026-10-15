@@ -7,9 +7,13 @@
 //! (satisfiable, unsatisfiable or evaluation error), every sample must be a
 //! solution, and exact-engine samples must pass a chi-square bound. Forced
 //! budgets drive the rejection and search fallbacks and the resource status
-//! (A03).
+//! (A03). SIM-030 adds random divisors, indices and `**` here and the
+//! weighted, ordered and randc probes in `runtime_constraints/weighted.rs`.
 
 use crate::{c_compiler, sim_harness};
+
+mod expand;
+mod weighted;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -59,6 +63,8 @@ const REPL: u16 = 39;
 const SLICE: u16 = 40;
 const DSLICE: u16 = 41;
 const ALL: u16 = 42;
+const POW: u16 = 43;
+const DIST: u16 = 44;
 
 const INPUT_KNOWN: u8 = 0;
 const INPUT_NULL: u8 = 1;
@@ -82,6 +88,8 @@ struct Var {
     active: bool,
     input: u8,
     current: u128,
+    /// `randc` (18.4.2).
+    cyclic: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -112,6 +120,27 @@ struct Problem {
     /// the outcome differ from the flat enumeration, so only membership of
     /// successful samples is checked.
     random_call: bool,
+    dists: Vec<Dist>,
+    /// (block, before, after) solve-before orders (18.5.9).
+    orders: Vec<(u32, u32, u32)>,
+}
+
+/// One `dist` constraint (`llg_cr_dist_t`).
+#[derive(Clone, Debug)]
+struct Dist {
+    expr: u32,
+    guard: Option<u32>,
+    items: Vec<DistItem>,
+}
+
+#[derive(Clone, Debug)]
+struct DistItem {
+    matches: u32,
+    lo: u32,
+    hi: u32,
+    weight: Option<u32>,
+    per_range: bool,
+    signed: bool,
 }
 
 struct Rng(u64);
@@ -164,6 +193,8 @@ struct Gen<'a> {
     p: Problem,
     allow_calls: bool,
     wide: bool,
+    /// Random divisors, select indices and `**` (SIM-030, S30-D4).
+    extended: bool,
 }
 
 impl Gen<'_> {
@@ -267,6 +298,16 @@ impl Gen<'_> {
             }
             return self.known(1);
         }
+        if self.extended && self.rng.chance(1, 8) {
+            let a = self.expr(depth - 1);
+            let b = if self.rng.chance(1, 2) {
+                self.expr(depth - 1)
+            } else {
+                self.known(1)
+            };
+            let na = self.node(a);
+            return self.push(POW, na.signed, na.width, a, b, 0);
+        }
         let op = self.rng.below(38);
         match op {
             0 => {
@@ -303,7 +344,11 @@ impl Gen<'_> {
             }
             17 | 18 => {
                 let a = self.expr(depth - 1);
-                let b = self.known(1);
+                let b = if self.extended && self.rng.chance(1, 2) {
+                    self.expr(depth - 1)
+                } else {
+                    self.known(1)
+                };
                 let na = self.node(a);
                 let nb = self.node(b);
                 let w = na.width.max(nb.width);
@@ -414,7 +459,11 @@ impl Gen<'_> {
                 let a = self.expr(depth - 1);
                 let aw = self.node(a).width;
                 let width = 1 + self.rng.below(aw as u64) as u32;
-                let index = self.known(1);
+                let index = if self.extended && self.rng.chance(1, 2) {
+                    self.expr(depth - 1)
+                } else {
+                    self.known(1)
+                };
                 self.push(DSLICE, false, width, a, index, 0)
             }
             _ => {
@@ -432,6 +481,10 @@ impl Gen<'_> {
 }
 
 fn generate(seed: u64, allow_calls: bool, wide: bool) -> Problem {
+    generate_with(seed, allow_calls, wide, false)
+}
+
+fn generate_with(seed: u64, allow_calls: bool, wide: bool, extended: bool) -> Problem {
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     for _ in 0..4 {
         rng.next();
@@ -458,6 +511,7 @@ fn generate(seed: u64, allow_calls: bool, wide: bool) -> Problem {
             active,
             input,
             current: (((rng.next() as u128) << 64) | rng.next() as u128) & mask(width),
+            cyclic: false,
         });
     }
     if p.vars.is_empty() {
@@ -468,6 +522,7 @@ fn generate(seed: u64, allow_calls: bool, wide: bool) -> Problem {
             active: true,
             input: INPUT_KNOWN,
             current: 0,
+            cyclic: false,
         });
     }
     for _ in 0..rng.below(3) {
@@ -489,6 +544,7 @@ fn generate(seed: u64, allow_calls: bool, wide: bool) -> Problem {
         p,
         allow_calls,
         wide,
+        extended,
     };
     // An enum-like domain on the first variable sometimes.
     if g.rng.chance(1, 5) {
@@ -608,6 +664,16 @@ fn classify(p: &Problem, assignment: &[Option<u128>]) -> Vec<St> {
                     }
                 }
             }
+            DIST => {
+                // Membership in an item of nonzero weight (18.5.4), from the
+                // bounds and weights directly rather than the match nodes.
+                let d = &p.dists[n.a as usize];
+                match get(d.expr) {
+                    St::E => St::E,
+                    St::R => St::R,
+                    St::K(_) => St::K(dist_member(p, d, &val_of) as u128),
+                }
+            }
             LAND | LOR | IMPL | ALL => {
                 let (ops, invert): (Vec<u32>, Vec<bool>) = match n.op {
                     ALL => (
@@ -674,7 +740,8 @@ fn classify(p: &Problem, assignment: &[Option<u128>]) -> Vec<St> {
                                     St::R
                                 }
                             }
-                            _ => St::E,
+                            // A random index is checked per assignment (S30-D4).
+                            _ => St::R,
                         }
                     } else {
                         s
@@ -688,6 +755,43 @@ fn classify(p: &Problem, assignment: &[Option<u128>]) -> Vec<St> {
         st.push(s);
     }
     st
+}
+
+/// Items of `d` holding its expression's current value, with their
+/// per-value weights (w for `:=`, w / range size for `:/`).
+fn dist_matches(p: &Problem, d: &Dist, val_of: &dyn Fn(u32, u32) -> u128) -> Vec<f64> {
+    let ne = p.nodes[d.expr as usize];
+    let value = val_of(d.expr, ne.width);
+    let mut weights = Vec::new();
+    for item in &d.items {
+        let lo = val_of(item.lo, ne.width);
+        let hi = val_of(item.hi, ne.width);
+        let (v, lo, hi) = if item.signed {
+            (
+                signed_value(value, ne.width),
+                signed_value(lo, ne.width),
+                signed_value(hi, ne.width),
+            )
+        } else {
+            (value as i128, lo as i128, hi as i128)
+        };
+        let weight = item
+            .weight
+            .map_or(1, |w| val_of(w, p.nodes[w as usize].width)) as f64;
+        if weight == 0.0 || v < lo || v > hi {
+            continue;
+        }
+        weights.push(if item.per_range {
+            weight / (hi - lo + 1) as f64
+        } else {
+            weight
+        });
+    }
+    weights
+}
+
+fn dist_member(p: &Problem, d: &Dist, val_of: &dyn Fn(u32, u32) -> u128) -> bool {
+    !dist_matches(p, d, val_of).is_empty()
 }
 
 fn eval_op(p: &Problem, n: &Node, val_of: &dyn Fn(u32, u32) -> u128) -> St {
@@ -794,6 +898,40 @@ fn eval_op(p: &Problem, n: &Node, val_of: &dyn Fn(u32, u32) -> u128) -> St {
             St::K(v & m)
         }
         SLICE => St::K((own(n.a) >> n.b) & m),
+        POW => {
+            // Table 11-4 on the node's width; the exponent is self-determined.
+            let nb = p.nodes[n.b as usize];
+            let a = val_of(n.a, w);
+            let b = own(n.b);
+            let b_negative = nb.signed && (b >> (nb.width - 1)) & 1 == 1;
+            let a_value = if n.signed {
+                signed_value(a, w)
+            } else {
+                a as i128
+            };
+            if b == 0 {
+                St::K(1 & m)
+            } else if b_negative {
+                match a_value {
+                    0 => St::E,
+                    1 => St::K(1),
+                    -1 => St::K(if b & 1 == 1 { m } else { 1 }),
+                    _ => St::K(0),
+                }
+            } else {
+                // Repeated multiplication modulo 2^w: independent of the
+                // solver's square-and-multiply.
+                assert!(
+                    b < 1 << 20,
+                    "exponent {b} too large for the probe evaluator"
+                );
+                let mut acc: u128 = 1 & m;
+                for _ in 0..b {
+                    acc = acc.wrapping_mul(a) & m;
+                }
+                St::K(acc & m)
+            }
+        }
         DSLICE => {
             let nb = p.nodes[n.b as usize];
             let idx = if nb.signed {
@@ -909,11 +1047,12 @@ fn emit_problem(out: &mut String, index: usize, p: &Problem) {
     for (i, v) in p.vars.iter().enumerate() {
         writeln!(
             out,
-            "    {{\"v{i}\", {}, {}, {}}},",
+            "    {{\"v{i}\", {}, {}, {}, {}}},",
             v.width,
             v.signed as u8,
             v.domain
-                .map_or("LLG_CR_NONE".to_owned(), |d| format!("{d}u"))
+                .map_or("LLG_CR_NONE".to_owned(), |d| format!("{d}u")),
+            v.cyclic as u8
         )
         .unwrap();
     }
@@ -977,16 +1116,62 @@ fn emit_problem(out: &mut String, index: usize, p: &Problem) {
         }
     )
     .unwrap();
+    let optional = |n: Option<u32>| n.map_or("LLG_CR_NONE".to_owned(), |n| format!("{n}u"));
+    let mut dists = Vec::new();
+    let mut items = Vec::new();
+    for d in &p.dists {
+        dists.push(format!(
+            "{{{}u, {}, {}u, {}u}}",
+            d.expr,
+            optional(d.guard),
+            items.len(),
+            d.items.len()
+        ));
+        for item in &d.items {
+            items.push(format!(
+                "{{{}u, {}u, {}u, {}, {}, {}}}",
+                item.matches,
+                item.lo,
+                item.hi,
+                optional(item.weight),
+                item.per_range as u8,
+                item.signed as u8
+            ));
+        }
+    }
+    let orders: Vec<String> = p
+        .orders
+        .iter()
+        .map(|(block, before, after)| format!("{{{block}u, {before}u, {after}u}}"))
+        .collect();
+    let table = |v: &[String], empty: &str| {
+        if v.is_empty() {
+            empty.to_owned()
+        } else {
+            v.join(", ")
+        }
+    };
     writeln!(
         out,
-        "static const llg_cr_problem_t {name} = {{\"{name}\", {name}_nodes, {}, {name}_all_args, {}, {name}_consts, {}, {name}_vars, {}, {name}_blocks, {}, {name}_leaves, {}, {name}_calls, {}}};",
+        "static const llg_cr_dist_t {name}_dists[] = {{{}}};\nstatic const llg_cr_dist_item_t {name}_items[] = {{{}}};\nstatic const llg_cr_order_t {name}_orders[] = {{{}}};",
+        table(&dists, "{0, 0, 0, 0}"),
+        table(&items, "{0, 0, 0, 0, 0, 0}"),
+        table(&orders, "{0, 0, 0}")
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "static const llg_cr_problem_t {name} = {{\"{name}\", {name}_nodes, {}, {name}_all_args, {}, {name}_consts, {}, {name}_vars, {}, {name}_blocks, {}, {name}_leaves, {}, {name}_calls, {}, {name}_dists, {}, {name}_items, {}, {name}_orders, {}, NULL, 0, NULL, 0, NULL, 0, NULL, 0, NULL, 0, NULL, 0}};",
         p.nodes.len(),
         all_args.len(),
         p.consts.len(),
         p.vars.len(),
         p.blocks.len(),
         p.leaves.len(),
-        p.calls.len()
+        p.calls.len(),
+        dists.len(),
+        items.len(),
+        orders.len()
     )
     .unwrap();
     writeln!(out, "static void {name}_inputs(llg_cr_session_t* s) {{").unwrap();
@@ -1077,15 +1262,14 @@ fn build_probe(
     problems: &[Problem],
     name: &str,
 ) -> Option<(sim_harness::TempDir, std::path::PathBuf)> {
-    let compiler = c_compiler::host_c_compiler();
-    if !c_compiler::c_compiler_available(&compiler) {
-        eprintln!("SKIP: C compiler `{compiler}` not available");
-        return None;
-    }
-    let dir = sim_harness::TempDir::new(name).expect("create constraint probe directory");
-    let (header, source) = constraint_sources();
-    std::fs::write(dir.path().join("llg_constraint.h"), header).unwrap();
-    std::fs::write(dir.path().join("llg_constraint.c"), source).unwrap();
+    build_probe_main(problems, name, PROBE_MAIN)
+}
+
+fn build_probe_main(
+    problems: &[Problem],
+    name: &str,
+    main: &str,
+) -> Option<(sim_harness::TempDir, std::path::PathBuf)> {
     let mut probe = String::from(
         "#include \"llg_constraint.h\"\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n",
     );
@@ -1103,7 +1287,21 @@ fn build_probe(
         writeln!(probe, "    p{i}_inputs,").unwrap();
     }
     writeln!(probe, "}};").unwrap();
-    probe.push_str(PROBE_MAIN);
+    probe.push_str(main);
+    build_c_probe(name, &probe)
+}
+
+/// Compile `probe` (a complete C file) with the solver as strict C11.
+fn build_c_probe(name: &str, probe: &str) -> Option<(sim_harness::TempDir, std::path::PathBuf)> {
+    let compiler = c_compiler::host_c_compiler();
+    if !c_compiler::c_compiler_available(&compiler) {
+        eprintln!("SKIP: C compiler `{compiler}` not available");
+        return None;
+    }
+    let dir = sim_harness::TempDir::new(name).expect("create constraint probe directory");
+    let (header, source) = constraint_sources();
+    std::fs::write(dir.path().join("llg_constraint.h"), header).unwrap();
+    std::fs::write(dir.path().join("llg_constraint.c"), source).unwrap();
     std::fs::write(dir.path().join("probe.c"), probe).unwrap();
     let (mut command, executable) = c_compiler::strict_c11_executable(
         &compiler,
@@ -1125,11 +1323,18 @@ fn build_probe(
 fn run_probe(executable: &std::path::Path, samples: u32, env: &[(&str, &str)]) -> String {
     let mut command = Command::new(executable);
     command.arg(samples.to_string());
+    run_command_output(&mut command, env)
+}
+
+/// Run a probe with the solver tunables cleared, then `env` applied.
+fn run_command_output(command: &mut Command, env: &[(&str, &str)]) -> String {
     for name in [
         "LLG_RAND_BDD_NODES",
         "LLG_RAND_BDD_BITS",
         "LLG_RAND_REJECT_TRIES",
         "LLG_RAND_CONFLICTS",
+        "LLG_RAND_ARRAY_ELEMENTS",
+        "LLG_RAND_EXPAND_NODES",
         "LLG_RAND_STATS",
     ] {
         command.env_remove(name);
@@ -1137,7 +1342,7 @@ fn run_probe(executable: &std::path::Path, samples: u32, env: &[(&str, &str)]) -
     for (name, value) in env {
         command.env(name, value);
     }
-    let output = sim_harness::run_command(&mut command, Duration::from_secs(300))
+    let output = sim_harness::run_command(command, Duration::from_secs(300))
         .unwrap_or_else(|error| panic!("run constraint probe: {error}"));
     assert!(
         output.status.success(),
@@ -1265,6 +1470,40 @@ fn check(problems: &[Problem], outcomes: &[Outcome], mode: Mode) -> (usize, usiz
         }
     }
     (sat, unsat, error)
+}
+
+/// SIM-030 (S30-D4): random divisors, random select indices and `**` are
+/// random operations whose evaluation errors exclude only the assignments
+/// that raise them, with Figure 18-3 absorption by a dominating operand.
+#[test]
+fn constraint_solver_handles_random_divisors_indices_and_power() {
+    let problems: Vec<Problem> = (0..400u64)
+        .map(|seed| generate_with(seed + 20_000, false, false, true))
+        .collect();
+    let Some((_dir, executable)) = build_probe(&problems, "runtime-constraints-extended") else {
+        return;
+    };
+    let output = run_probe(&executable, 400, &[]);
+    let outcomes = parse(&output, problems.len());
+    let (sat, unsat, error) = check(&problems, &outcomes, Mode::Exact);
+    eprintln!("extended exhaustive: sat={sat} unsat={unsat} error={error}");
+    assert!(
+        sat > 100 && unsat > 10,
+        "sat={sat} unsat={unsat} error={error}"
+    );
+    let pow = problems
+        .iter()
+        .filter(|p| p.nodes.iter().any(|n| n.op == POW))
+        .count();
+    assert!(pow > 40, "only {pow} problems use **");
+
+    let output = run_probe(&executable, 40, &[("LLG_RAND_BDD_NODES", "1")]);
+    let outcomes = parse(&output, problems.len());
+    check(&problems, &outcomes, Mode::Fallback);
+    let search_only = [("LLG_RAND_BDD_BITS", "0"), ("LLG_RAND_REJECT_TRIES", "0")];
+    let output = run_probe(&executable, 40, &search_only);
+    let outcomes = parse(&output, problems.len());
+    check(&problems, &outcomes, Mode::Search);
 }
 
 #[test]

@@ -818,6 +818,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             for expression in operation.expressions() {
                 collect_expr_reads(expression, model, rw);
             }
+            for handle in operation.chandles() {
+                handle.expressions(&mut |child| collect_expr_reads(child, model, rw));
+            }
         }
         IrStmt::RandomStateSet { state } => {
             state.expressions(&mut |child| collect_expr_reads(child, model, rw))
@@ -1450,7 +1453,14 @@ fn collect_expr_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                     stream.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
                 }
             }
-            IrSysFunc::RandCallReady { .. } | IrSysFunc::RandValue { .. } => {}
+            IrSysFunc::RandCallReady { .. }
+            | IrSysFunc::RandValue { .. }
+            | IrSysFunc::RandCyclic { .. } => {}
+            IrSysFunc::RandInst { inst, index, .. } => {
+                for operand in inst.iter().chain(index.iter()) {
+                    collect_expr_reads(operand, model, rw);
+                }
+            }
             IrSysFunc::Math { args, .. } => {
                 for arg in args {
                     collect_expr_reads(arg, model, rw);

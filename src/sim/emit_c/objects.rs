@@ -270,6 +270,7 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
         | IrChandleExpr::Process(_)
         | IrChandleExpr::PinnedProcess(_)
         | IrChandleExpr::ContainerElement { .. }
+        | IrChandleExpr::RandInstance { .. }
         | IrChandleExpr::Required { .. }
         | IrChandleExpr::InterfaceInstance { .. } => {
             return Err("typed native operations require whole-model ownership emission".to_owned())

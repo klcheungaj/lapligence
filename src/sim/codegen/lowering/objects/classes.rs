@@ -357,7 +357,11 @@ impl Codegen<'_> {
     }
 
     /// A receiver-qualified alias of class container property `container`.
-    fn class_container_alias(&mut self, container: usize, receiver: IrChandleExpr) -> usize {
+    pub(in super::super) fn class_container_alias(
+        &mut self,
+        container: usize,
+        receiver: IrChandleExpr,
+    ) -> usize {
         let alias = self.model.containers.len();
         let mut storage = self.model.containers[container].clone();
         storage.c_name = format!("{}_via_{alias}", storage.c_name);

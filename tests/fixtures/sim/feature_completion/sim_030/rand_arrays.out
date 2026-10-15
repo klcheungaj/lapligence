@@ -1,0 +1,6 @@
+sorted: bad=0 size1=1
+len: bad=0
+fixed: ok=1 up='{2, 3, 4, 5} down='{10, 8, 6, 4}
+queue: ok=1 q='{1, 2, 3} l=2 nz=1
+keep: ok=1 size=3 same=1
+state: ok=0 d1=7

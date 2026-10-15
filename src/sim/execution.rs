@@ -1059,6 +1059,9 @@ fn collect_statement_expression_effects(
             for expression in operation.expressions() {
                 collect_expression_effects(ir, expression, effects, visited_calls);
             }
+            for handle in operation.chandles() {
+                collect_chandle_effects(ir, handle, effects, visited_calls);
+            }
         }
         IrStmt::RandomStateSet { state } => {
             collect_string_effects(ir, state, effects, visited_calls);
@@ -1848,8 +1851,14 @@ fn collect_expression_effects(
                 }
             }
             // Reads of the solver session written by the statements above.
-            IrSysFunc::RandCallReady { .. } | IrSysFunc::RandValue { .. } => {
-                effects.push(ExecutionEffect::RuntimeService)
+            IrSysFunc::RandCallReady { .. }
+            | IrSysFunc::RandValue { .. }
+            | IrSysFunc::RandCyclic { .. } => effects.push(ExecutionEffect::RuntimeService),
+            IrSysFunc::RandInst { inst, index, .. } => {
+                effects.push(ExecutionEffect::RuntimeService);
+                for operand in inst.iter().chain(index.iter()) {
+                    collect_expression_effects(ir, operand, effects, visited_calls);
+                }
             }
             IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
             IrSysFunc::Math { args, .. } => {

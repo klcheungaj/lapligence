@@ -1,0 +1,7 @@
+per object: dup=0 a=00011111 b=00011111
+next cycle: 00011111 dup=0
+constraints changed: 11011111 dup=0
+inactive and failed: 11011111 dup=0 ok=1
+derived: q=1111 dup=0
+static: s=1111 dup=0
+wide: all=1 dup=0

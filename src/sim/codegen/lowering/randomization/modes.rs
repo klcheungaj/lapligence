@@ -18,11 +18,24 @@ impl Codegen<'_> {
         is_static: bool,
         fields: &mut Vec<IrClassField>,
     ) -> ModeBit {
+        self.new_hidden_state(class_index, name, is_static, 1, fields)
+    }
+
+    /// A hidden two-state value of `width` bits per object, or one shared
+    /// static signal for a static member; zero in a new object.
+    fn new_hidden_state(
+        &mut self,
+        class_index: usize,
+        name: &str,
+        is_static: bool,
+        width: u32,
+        fields: &mut Vec<IrClassField>,
+    ) -> ModeBit {
         if is_static {
             let ir = self.model.signals.len();
             let info = SignalInfo {
                 global: format!("G_class_{class_index}_{name}"),
-                width: 1,
+                width,
                 signed: false,
                 two_state: true,
                 real: false,
@@ -35,7 +48,7 @@ impl Codegen<'_> {
                 c_name: info.global.clone(),
                 hdl_name: None,
                 ty: IrType::Packed {
-                    width: 1,
+                    width,
                     signed: false,
                     two_state: true,
                 },
@@ -51,7 +64,7 @@ impl Codegen<'_> {
         fields.push(IrClassField {
             c_name: format!("f_{class_index}_{field_index}_{name}"),
             ty: IrClassFieldType::Packed {
-                width: 1,
+                width,
                 signed: false,
                 two_state: true,
             },
@@ -95,6 +108,36 @@ impl Codegen<'_> {
                     let is_static = self.db.variable_lifetime(child) == VariableLifetime::Static;
                     let bit = self.new_mode_bit(class_index, &name, is_static, fields);
                     self.rand_mode_bits.insert(child, bit);
+                    if self.db.rand_qualifier(child) == RandQualifier::RandC {
+                        // The cycle state of a packed randc property of at
+                        // most RAND_CYCLIC_MAX_WIDTH bits; other randc
+                        // properties are rejected where they are randomized.
+                        let width = self
+                            .class_static_signals
+                            .get(&child)
+                            .map(|info| (info.width, info.real))
+                            .or_else(|| {
+                                let (_, field) = *self.class_fields.get(&child)?;
+                                match fields.get(field)?.ty {
+                                    IrClassFieldType::Packed { width, .. } => Some((width, false)),
+                                    _ => None,
+                                }
+                            });
+                        if let Some((width, false)) = width {
+                            if width <= crate::sim::ir::RAND_CYCLIC_MAX_WIDTH {
+                                let name = format!("_llg_randc_{}", ident(&self.node(child).name));
+                                let state_width = crate::sim::ir::rand_cyclic_state_width(width);
+                                let state = self.new_hidden_state(
+                                    class_index,
+                                    &name,
+                                    is_static,
+                                    state_width,
+                                    fields,
+                                );
+                                self.randc_states.insert(child, (state, state_width));
+                            }
+                        }
+                    }
                 }
                 NodeKind::ConstraintBlock(info) => {
                     let is_static = info.is_static;
@@ -133,14 +176,17 @@ impl Codegen<'_> {
         }
     }
 
-    /// Hidden off-bit fields of class layout `class_index`, by field index.
-    pub(in super::super) fn hidden_mode_fields(&self, class_index: usize) -> Vec<usize> {
+    /// Hidden off-bit and randc-state fields of class layout `class_index`,
+    /// by field index, with their widths.
+    pub(in super::super) fn hidden_mode_fields(&self, class_index: usize) -> Vec<(usize, u32)> {
         let mut fields = self
             .rand_mode_bits
             .values()
             .chain(self.constraint_mode_bits.values())
-            .filter_map(|bit| match bit {
-                ModeBit::Field(class, field) if *class == class_index => Some(*field),
+            .map(|bit| (bit, 1))
+            .chain(self.randc_states.values().map(|(bit, width)| (bit, *width)))
+            .filter_map(|(bit, width)| match bit {
+                ModeBit::Field(class, field) if *class == class_index => Some((*field, width)),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -170,6 +216,42 @@ impl Codegen<'_> {
                 Ok(IrExpr::new(IrExprKind::LocalRead(name), 1, false, None))
             }
         }
+    }
+
+    /// Read of a hidden state of `width` bits (a randc cycle state).
+    pub(super) fn hidden_state_read(
+        &mut self,
+        bit: &ModeBit,
+        width: u32,
+        receiver: Option<IrChandleExpr>,
+    ) -> Result<IrExpr, String> {
+        let mut read = self.mode_read(bit, receiver)?;
+        read.width = width;
+        Ok(read)
+    }
+
+    pub(super) fn hidden_state_target(
+        &mut self,
+        bit: &ModeBit,
+        width: u32,
+        receiver: Option<IrChandleExpr>,
+    ) -> Result<IrLhs, String> {
+        Ok(match self.mode_target(bit, receiver)? {
+            IrLhs::WholeRef {
+                addr,
+                signed,
+                two_state,
+                shortreal,
+                ..
+            } => IrLhs::WholeRef {
+                addr,
+                width,
+                signed,
+                two_state,
+                shortreal,
+            },
+            other => other,
+        })
     }
 
     pub(super) fn mode_target(

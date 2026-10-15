@@ -44,6 +44,10 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   9-10 (`RAND`/`RANDC`, mutually exclusive) and call bits 1-2
   (`LLG_SLANG_CALL_CLASS_RANDOMIZE`/`SCOPE_RANDOMIZE`, at most one) with a
   BODY edge to inline `with` constraints. Invalid constraints stay unsupported.
+- ABI v22 adds expression subkind 95 (`LLG_SLANG_EXPR_DIST`: LHS, OPERAND[i]
+  items, INDEX[i] `:=` / RIGHT[i] `:/` weights, `LLG_SLANG_DIST_DEFAULT` with a
+  DEFAULT_VALUE edge for the later-edition default weight) and foreach
+  constraint loop variables (auxiliary slot count, DECLARATION[slot] edges).
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;

@@ -157,7 +157,24 @@ pub enum ExprKind {
     ClockingEvent {
         specs: Vec<super::EventSpec>,
     },
+    /// `expr dist { items }` (IEEE 1800-2009 18.5.4), only inside
+    /// constraints. `default_weight` marks the later-edition `default` item.
+    Dist {
+        left: NodeId,
+        items: Vec<DistItem>,
+        default_weight: bool,
+    },
     Other,
+}
+
+/// One `dist` item: a value or value range with an optional weight; a
+/// missing weight is `:= 1`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DistItem {
+    pub value: NodeId,
+    pub weight: Option<NodeId>,
+    /// `:/` (the weight is shared by the range) rather than `:=`.
+    pub per_range: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

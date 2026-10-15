@@ -1422,14 +1422,12 @@ fn s29_d6_failed_call_consumes_draws() {
     );
 }
 
+/// Superseded by S30-D4: a random select index is solved.
 #[test]
 fn s29_d7_random_index_select() {
-    // Negative case: the expected stdout is empty because compilation fails.
-    assert!(include_str!("fixtures/sim/lrm_decisions/S29-D7_random_index_select.out").is_empty());
-    sim_cli::reject_case(
-        SUITE,
+    run_decision(
         "S29-D7_random_index_select",
-        "a select whose index is a random variable is not supported",
+        include_str!("fixtures/sim/lrm_decisions/S29-D7_random_index_select.out"),
     );
 }
 
@@ -1459,6 +1457,109 @@ fn s29_d10_search_not_uniform() {
     run_decision(
         "S29-D10_search_not_uniform",
         include_str!("fixtures/sim/lrm_decisions/S29-D10_search_not_uniform.out"),
+    );
+}
+
+#[test]
+fn s30_d1_dist_density() {
+    run_decision(
+        "S30-D1_dist_density",
+        include_str!("fixtures/sim/lrm_decisions/S30-D1_dist_density.out"),
+    );
+}
+
+#[test]
+fn s30_d2_solve_before_layers() {
+    run_decision(
+        "S30-D2_solve_before_layers",
+        include_str!("fixtures/sim/lrm_decisions/S30-D2_solve_before_layers.out"),
+    );
+}
+
+#[test]
+fn s30_d3_randc_cycles() {
+    run_decision(
+        "S30-D3_randc_cycles",
+        include_str!("fixtures/sim/lrm_decisions/S30-D3_randc_cycles.out"),
+    );
+}
+
+#[test]
+fn s30_d4_random_divisor_excluded() {
+    run_decision(
+        "S30-D4_random_divisor_excluded",
+        include_str!("fixtures/sim/lrm_decisions/S30-D4_random_divisor_excluded.out"),
+    );
+}
+
+#[test]
+fn s30_d5_sizes_first() {
+    run_decision(
+        "S30-D5_sizes_first",
+        include_str!("fixtures/sim/lrm_decisions/S30-D5_sizes_first.out"),
+    );
+}
+
+#[test]
+fn s30_d6_empty_reductions() {
+    run_decision(
+        "S30-D6_empty_reductions",
+        include_str!("fixtures/sim/lrm_decisions/S30-D6_empty_reductions.out"),
+    );
+}
+
+#[test]
+fn s30_d7_hook_order() {
+    run_decision(
+        "S30-D7_hook_order",
+        include_str!("fixtures/sim/lrm_decisions/S30-D7_hook_order.out"),
+    );
+}
+
+#[test]
+fn s30_d8_negative_weight_error() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S30-D8_negative_weight_error.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S30-D8_negative_weight_error",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "negative or unevaluated dist weight",
+            );
+        },
+    );
+}
+
+#[test]
+fn s30_d11_array_index_outside() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S30-D11_array_index_outside.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S30-D11_array_index_outside",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "select index out of range in a constraint",
+            );
+        },
+    );
+}
+
+#[test]
+fn s30_d10_dist_random_weight() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!("fixtures/sim/lrm_decisions/S30-D10_dist_random_weight.out").is_empty());
+    sim_cli::reject_case(
+        SUITE,
+        "S30-D10_dist_random_weight",
+        "a dist item value, range bound or weight that reads a random variable is not supported",
     );
 }
 

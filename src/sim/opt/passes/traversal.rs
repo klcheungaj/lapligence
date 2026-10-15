@@ -334,7 +334,17 @@ pub(in crate::sim) fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrEx
                     stream.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
                 }
             }
-            IrSysFunc::RandCallReady { .. } | IrSysFunc::RandValue { .. } => {}
+            IrSysFunc::RandCallReady { .. }
+            | IrSysFunc::RandValue { .. }
+            | IrSysFunc::RandCyclic { .. } => {}
+            IrSysFunc::RandInst { inst, index, .. } => {
+                if let Some(inst) = inst {
+                    walk_expr_mut(inst, f);
+                }
+                if let Some(index) = index {
+                    walk_expr_mut(index, f);
+                }
+            }
             IrSysFunc::Math { args, .. } => {
                 for arg in args {
                     walk_expr_mut(arg, f);
@@ -454,6 +464,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::Randomize(operation) => {
             for expression in operation.expressions_mut() {
                 walk_expr_mut(expression, f);
+            }
+            for handle in operation.chandles_mut() {
+                handle.expressions_mut(&mut |child| walk_expr_mut(child, f));
             }
         }
         IrStmt::RandomStateSet { state } => {

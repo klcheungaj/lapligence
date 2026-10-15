@@ -1518,4 +1518,53 @@ mod tests {
                 && matches!(db.node_kind(*id), NodeKind::SysCall { .. })
         }));
     }
+
+    #[test]
+    fn dist_items_and_foreach_constraint_loop_variables_are_typed() {
+        let source = "module top; class C; rand bit [7:0] x; rand byte a[4]; int w; \
+            constraint d { x dist { 0 := 5, [1:9] :/ w, 10 }; } \
+            constraint f { foreach (a[i]) a[i] < i; } endclass endmodule";
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "dist.sv", source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let dist = db
+            .node_ids()
+            .find_map(|id| match db.node_kind(id) {
+                NodeKind::Expr(ExprKind::Dist {
+                    left,
+                    items,
+                    default_weight,
+                }) => Some((*left, items.clone(), *default_weight)),
+                _ => None,
+            })
+            .expect("dist expression");
+        let (left, items, default_weight) = dist;
+        assert!(!default_weight);
+        assert!(matches!(db.node_kind(left), NodeKind::Expr(_)));
+        assert_eq!(items.len(), 3);
+        assert!(items[0].weight.is_some() && !items[0].per_range);
+        assert!(items[1].weight.is_some() && items[1].per_range);
+        assert!(items[2].weight.is_none());
+        let (vars, body) = db
+            .node_ids()
+            .find_map(|id| match db.node_kind(id) {
+                NodeKind::Constraint(ConstraintKind::Foreach { vars, body, .. }) => {
+                    Some((vars.clone(), *body))
+                }
+                _ => None,
+            })
+            .expect("foreach constraint");
+        assert_eq!(vars.len(), 1);
+        let loop_var = vars[0].expect("loop variable");
+        assert_eq!(db.node(loop_var).name, "i");
+        assert!(matches!(db.node_kind(body), NodeKind::Constraint(_)));
+    }
 }

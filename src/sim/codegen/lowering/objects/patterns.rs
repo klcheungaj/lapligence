@@ -484,7 +484,7 @@ impl Codegen<'_> {
             .collect()
     }
 
-    fn intern_pattern_type(&mut self, ty: IrPatternType) -> usize {
+    pub(in super::super) fn intern_pattern_type(&mut self, ty: IrPatternType) -> usize {
         if let Some(index) = self
             .model
             .pattern_types
@@ -551,19 +551,14 @@ impl Codegen<'_> {
                 ));
             }
         }
-        // Hidden randomization mode bits (18.8, 18.9) are not properties.
-        let hidden = if self.rand_mode_bits.is_empty() && self.constraint_mode_bits.is_empty() {
-            None
-        } else {
-            Some(self.intern_pattern_type(IrPatternType::Packed {
-                width: 1,
-                signed: false,
-                enum_members: Vec::new(),
-            }))
-        };
-        if let Some(ty) = hidden {
+        // Hidden randomization mode bits (18.8, 18.9) and randc cycle
+        // states (18.4.2) are not properties.
+        if !(self.rand_mode_bits.is_empty()
+            && self.constraint_mode_bits.is_empty()
+            && self.randc_states.is_empty())
+        {
             for (class_index, entries) in own.iter_mut().enumerate() {
-                entries.extend(self.hidden_pattern_fields(class_index, ty));
+                entries.extend(self.hidden_pattern_fields(class_index));
             }
         }
         for index in 0..classes.len() {

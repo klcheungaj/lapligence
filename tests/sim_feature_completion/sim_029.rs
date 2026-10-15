@@ -108,75 +108,13 @@ fn names_source_position(fixture: &str) {
 }
 
 #[test]
-fn sim_030_constructs_are_located_errors() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_randc",
-        "`randc` property `r` of class `c_c` is not supported (planned for SIM-030) at ",
-    );
-    names_source_position("neg_randc");
-    sim_cli::reject_case(
-        SUITE,
-        "neg_dist",
-        "unsupported constraint expression (`dist` is planned for SIM-030) at ",
-    );
-    names_source_position("neg_dist");
-    sim_cli::reject_case(
-        SUITE,
-        "neg_solve_before",
-        "`solve ... before` is not supported (planned for SIM-030) at ",
-    );
-    names_source_position("neg_solve_before");
-    sim_cli::reject_case(
-        SUITE,
-        "neg_foreach",
-        "`foreach` constraints are not supported (planned for SIM-030) at ",
-    );
-    names_source_position("neg_foreach");
-}
-
-#[test]
 fn unsupported_random_variables_are_located_errors() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_rand_array",
-        "random property `v` of class `c_c` is not a packed integral value",
-    );
-    names_source_position("neg_rand_array");
-    sim_cli::reject_case(
-        SUITE,
-        "neg_rand_handle",
-        "random property `l` of class `c_c` is not a packed integral value",
-    );
-    names_source_position("neg_rand_handle");
     sim_cli::reject_case(
         SUITE,
         "neg_enum_struct",
         "random property `s` of class `c_c` is not a packed integral value",
     );
     names_source_position("neg_enum_struct");
-}
-
-#[test]
-fn unsupported_constraint_operators_are_located_errors() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_random_divisor",
-        "a random divisor in `/` or `%` is not supported",
-    );
-    names_source_position("neg_random_divisor");
-    sim_cli::reject_case(
-        SUITE,
-        "neg_random_index",
-        "a select whose index is a random variable is not supported (S29-D7)",
-    );
-    names_source_position("neg_random_index");
-    sim_cli::reject_case(
-        SUITE,
-        "neg_pow",
-        "`**` is not supported on random variables in constraints",
-    );
-    names_source_position("neg_pow");
 }
 
 #[test]
