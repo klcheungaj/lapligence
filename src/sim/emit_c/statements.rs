@@ -295,6 +295,9 @@ fn render_stmt_scoped(
         IrStmt::Randomize(_) => {
             return Err("randomize requires the ownership-aware emitter".to_owned())
         }
+        IrStmt::Coverage(_) => {
+            return Err("functional coverage requires the ownership-aware emitter".to_owned())
+        }
         IrStmt::Memory {
             write,
             path,

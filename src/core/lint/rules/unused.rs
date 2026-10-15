@@ -65,6 +65,11 @@ impl LintRule for UnusedSignalRule {
                 }
             }
         }
+        // A covergroup reads its sampling event, coverpoint expressions and
+        // guards, bins values and options whenever it samples (19.3).
+        for group in db.covergroups().keys() {
+            reads.extend(collect_reads(db, *group));
+        }
         let mut out = Vec::new();
         for inst_id in instances {
             for sig in &db.node(inst_id).children {
@@ -77,6 +82,14 @@ impl LintRule for UnusedSignalRule {
                 // A continuous assignment is a driver; treat driven outputs as
                 // used even when nothing reads them back.
                 if cont_writes.contains(sig) {
+                    continue;
+                }
+                // A covergroup instance samples through its own event even
+                // when no statement names the variable again.
+                if db
+                    .type_descriptor(*sig)
+                    .is_some_and(|ty| db.covergroup_for_type(ty.id).is_some())
+                {
                     continue;
                 }
                 let is_read = reads.contains(sig);
@@ -331,6 +344,17 @@ mod tests {
             ["signal `dead` in `top` is never used"],
             "only the untouched variable remains"
         );
+    }
+
+    #[test]
+    fn covergroup_reads_count_as_uses() {
+        let paths = unused_paths(
+            "module top;\n  logic clk;\n  logic [1:0] point;\n  logic guard;\n  int dead;\n\
+               covergroup cg @(posedge clk);\n    coverpoint point iff (guard);\n  endgroup\n\
+               cg c = new;\nendmodule\n",
+            "top",
+        );
+        assert_eq!(paths, ["signal `dead` in `top` is never used"]);
     }
 
     #[test]

@@ -22,6 +22,7 @@ impl<'a> Codegen<'a> {
     /// paths.  Returns the top module nodes.
     pub(in super::super) fn collect_design(&mut self) -> Result<Vec<NodeId>, String> {
         self.collect_classes()?;
+        self.collect_covergroups()?;
         for node in self.design_nodes() {
             let net_type = match self.kind(node) {
                 NodeKind::Net { net_type, .. } => Some(*net_type),

@@ -381,6 +381,15 @@ case.
 | S43-D8 | **`vpi_control(vpiFinish)`** in a callback acts as `$finish` when it returns: no later region of the slot runs (a pending `$strobe` does not print), final procedures run, `cbEndOfSimulation` runs once. Levels must be 0-2; `vpiStop` before the run and `vpiReset` return 0 with an error. | 38.4 L61983-61995; 38.36.3 L65009-65010 | `S43-D8_control_finish_after_callback` (`.sv` and `.c`) | LRM text for the action; return values and errors are llg choices |
 | S43-D9 | **User VPI functions in `$strobe`/`$monitor`** run in the read-only Postponed region: they read and return values; their design writes fail with `vpiError` and change nothing (writing their own result is allowed). | 4.4.2.9 L3212-3214; 38.34 (silent on reporting) | `S43-D9_postponed_systf_read_only` (`.sv` and `.c`) | LRM text for the restriction; the error report is an llg choice |
 
+## Covergroups, instances and sampling (SIM-044)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S44-D1 | **One covergroup type per source declaration.** A covergroup declared in a module is one type for every instance of that module, so `get_coverage()` averages the instances of all module instances. | 19.8 L33569-33571; 19.11.3 L33937-33938 | `S44-D1_covergroup_type_per_declaration` | llg reading (the text does not say whether elaborations of one declaration are one type) |
+| S44-D2 | **Signed automatic bins in numeric order.** The `2^M` values of a signed coverpoint are split from the most negative value up: a 3-bit signed coverpoint with three bins has `<-4:-3>`, `<-2:-1>` and `<0:3>`. | 19.5.2 L32751-32754 | `S44-D2_signed_auto_bin_order` | llg reading (the example is unsigned) |
+| S44-D3 | **Dropped instances keep counting.** An instance outlives the last handle to it and to its embedding object: an event-sampled instance keeps sampling and every instance contributes to type coverage until the end of simulation. | 19.3 L32103-32104; 19.11 L33759-33760 | `S44-D3_dropped_instance_keeps_counting` | llg choice (the text is silent on lifetime) |
+| S44-D4 | **A type without instances** returns 0.0 from `get_coverage()` (weight 1) and does not contribute to `$get_coverage()`, which is 100.0 when no type has an instance. | 19.11 L33808-33811, L33817-33818 | `S44-D4_type_without_instances` | llg reading of the zero-denominator rule for an empty instance sum |
+
 ## Memory files (SIM-027)
 
 The settled Q02 cases are conformance tests in

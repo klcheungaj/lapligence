@@ -47,3 +47,4 @@
 #include "scheduler/scheduler.c"
 #include "scheduler/output.c"
 #include "scheduler/destinations.c"
+#include "coverage/coverage.c"

@@ -152,6 +152,9 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         vpi_catalog: _,
         random: _,
         rand_problems: _,
+        // Coverage metadata names no storage; samples read through statements.
+        covergroups: _,
+        coverage_types: _,
         dpi_scopes: _,
         dpi_sites: _,
     } = &*model;
@@ -815,6 +818,15 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         }
         IrStmt::RandomSeed { seed } => collect_expr_reads(seed, model, rw),
         IrStmt::Randomize(operation) => {
+            for expression in operation.expressions() {
+                collect_expr_reads(expression, model, rw);
+            }
+            for handle in operation.chandles() {
+                handle.expressions(&mut |child| collect_expr_reads(child, model, rw));
+            }
+        }
+        // Coverpoint and guard values and option expressions are reads.
+        IrStmt::Coverage(operation) => {
             for expression in operation.expressions() {
                 collect_expr_reads(expression, model, rw);
             }

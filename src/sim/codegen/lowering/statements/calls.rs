@@ -18,6 +18,10 @@ impl EmitCtx<'_, '_> {
         if let Some(statement) = self.cg.lower_object_random_statement(&self.path, h)? {
             return Ok(statement);
         }
+        // Covergroup `sample`, `start`, `stop` and `set_inst_name` (SIM-044).
+        if let Some(statement) = self.cg.lower_coverage_statement(&self.path, h)? {
+            return Ok(statement);
+        }
         if let Some(f) = &self.func {
             if is_task && !f.is_task
                 // A constructor invocation is a task-shaped call in Slang's

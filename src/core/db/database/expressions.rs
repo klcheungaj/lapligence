@@ -146,6 +146,13 @@ pub enum ExprKind {
         /// implementation without allocating another object.
         is_super_class: bool,
     },
+    /// `new(...)` of a covergroup (IEEE 1800-2009 19.3): `group_type` is the
+    /// covergroup type and `args` the actuals bound to its construct formals,
+    /// with defaults already filled in.
+    NewCovergroup {
+        group_type: Option<TypeId>,
+        args: Vec<NodeId>,
+    },
     AssertionInstance {
         target: NodeId,
         body: NodeId,

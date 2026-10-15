@@ -238,6 +238,11 @@ impl<'a> SlangTypeProjector<'a> {
             TypeKind::Void => "void".to_owned(),
             TypeKind::VirtualInterface => "virtual_interface".to_owned(),
             TypeKind::DpiOpenUnpacked | TypeKind::DpiOpenPacked => "dpi_open".to_owned(),
+            // Covergroup instances are created with `new` and referenced
+            // through handles like class objects (IEEE 1800-2009 19.3); the
+            // descriptor keeps the covergroup kind and
+            // `Db::covergroup_for_type` names the declaration.
+            TypeKind::Covergroup => "class".to_owned(),
             TypeKind::Other => "other".to_owned(),
         };
         let width = if ty.is_fixed_size {
@@ -514,6 +519,7 @@ impl<'a> SlangTypeProjector<'a> {
             | TypeKind::VirtualInterface
             | TypeKind::DpiOpenUnpacked
             | TypeKind::DpiOpenPacked
+            | TypeKind::Covergroup
             | TypeKind::Aggregate
             | TypeKind::Other => TypeShape::Opaque {
                 kind: format!("{:?}", ty.kind),

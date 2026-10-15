@@ -233,6 +233,10 @@ impl Codegen<'_> {
         if let Some(receiver) = self.explicit_class_receiver(path, node, field)? {
             return Ok(receiver);
         }
+        // A covergroup argument inside its covergroup body or option.
+        if let Some(receiver) = self.coverage_receiver_for(field) {
+            return Ok(receiver);
+        }
         // A property of the randomized object inside its constraints.
         if let Some(receiver) =
             self.rand_receiver_for(self.class_fields.get(&field).map(|(class, _)| *class))
@@ -399,7 +403,12 @@ impl Codegen<'_> {
                 && refs[end - 1].is_some_and(|previous| {
                     (self.class_fields.contains_key(&previous)
                         || self.class_static_objects.contains_key(&previous))
-                        && matches!(self.kind(previous), NodeKind::Var { ty } if is_handle_kind(&ty.kind))
+                        && matches!(
+                            self.kind(previous),
+                            // Covergroup handle arguments are fields too.
+                            NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. }
+                                if is_handle_kind(&ty.kind)
+                        )
                 })
             {
                 // The frontend nests each member access in the next: descend
@@ -427,7 +436,12 @@ impl Codegen<'_> {
                     ));
                 };
                 let handle = self.lower_chandle(path, base)?;
-                return Ok(Some(self.required_handle(handle, "property access", path, node)));
+                return Ok(Some(self.required_handle(
+                    handle,
+                    "property access",
+                    path,
+                    node,
+                )));
             }
             if let Some(base) = refs[..end].iter().flatten().find(|base| {
                 self.object_of(path, **base).is_some()
@@ -765,7 +779,12 @@ impl Codegen<'_> {
         let Some(field) = self.class_field_target(node) else {
             return self.native_object_leaf(path, node, false);
         };
-        if !matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind)) {
+        // Covergroup arguments (`FuncArg`) are fields of the covergroup
+        // object (SIM-044).
+        if !matches!(
+            self.kind(field),
+            NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind)
+        ) {
             return Ok(None);
         }
         let Some((class, index, _)) = self.class_field_layout(field) else {
@@ -789,7 +808,10 @@ impl Codegen<'_> {
         let Some(field) = self.class_field_target(node) else {
             return self.native_object_leaf(path, node, true);
         };
-        if !matches!(self.kind(field), NodeKind::Var { ty } if ty.kind == "string") {
+        if !matches!(
+            self.kind(field),
+            NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. } if ty.kind == "string"
+        ) {
             return Ok(None);
         }
         // A static string property is one model object shared by every

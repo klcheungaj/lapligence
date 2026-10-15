@@ -21,6 +21,7 @@ mod captures;
 mod clocking;
 pub(super) mod containers;
 mod control;
+pub(super) mod coverage;
 mod event_waits;
 mod events;
 mod expressions;

@@ -170,6 +170,8 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
         pattern_types: Vec::new(),
         pattern_classes: Vec::new(),
         rand_problems: Vec::new(),
+        covergroups: Vec::new(),
+        coverage_types: Vec::new(),
         class_allocations: Vec::new(),
         containers: Vec::new(),
         udp_tables: Vec::new(),

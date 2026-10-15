@@ -111,6 +111,12 @@ use expression_import::{
 };
 
 mod capture;
+mod coverage;
+use coverage::CoverageImport;
+pub use coverage::{
+    CoverageBinInfo, CoverageBinKind, CoverageBlockEvent, CoverageEvent, CoverageTables,
+    CovergroupInfo, CoverpointInfo,
+};
 mod shared;
 use shared::{DenseShared, DenseSharedBuilder};
 
@@ -299,6 +305,8 @@ pub struct Db {
     source_identities: HashMap<NodeId, NodeId>,
     /// Clocking block declarations and their resolved clock events/skews.
     clocking_blocks: HashMap<NodeId, ClockingBlockInfo>,
+    /// Functional-coverage declarations (IEEE 1800-2009 19).
+    coverage: CoverageTables,
     /// Clocking block variables and the source signal each samples.
     clocking_vars: HashMap<NodeId, ClockingVarInfo>,
     /// Default clocking block in effect for each elaborated instance, as the
@@ -383,6 +391,7 @@ impl Db {
             assertion_local_initializers: HashMap::new(),
             source_identities: HashMap::new(),
             clocking_blocks: HashMap::new(),
+            coverage: CoverageTables::default(),
             clocking_vars: HashMap::new(),
             default_clockings: HashMap::new(),
             modport_directions: HashMap::new(),
@@ -459,6 +468,7 @@ impl Db {
             assertion_local_initializers: HashMap::new(),
             source_identities: HashMap::new(),
             clocking_blocks: HashMap::new(),
+            coverage: CoverageTables::default(),
             clocking_vars: HashMap::new(),
             default_clockings: HashMap::new(),
             modport_directions: HashMap::new(),
@@ -702,6 +712,33 @@ impl Db {
     /// All owned clocking-block metadata keyed by declaration identity.
     pub fn clocking_blocks(&self) -> &HashMap<NodeId, ClockingBlockInfo> {
         &self.clocking_blocks
+    }
+
+    /// Covergroup type declarations (IEEE 1800-2009 19.3), keyed by node.
+    pub fn covergroups(&self) -> &HashMap<NodeId, CovergroupInfo> {
+        &self.coverage.groups
+    }
+
+    pub fn covergroup(&self, id: NodeId) -> Option<&CovergroupInfo> {
+        self.coverage.groups.get(&id)
+    }
+
+    /// The covergroup declaration whose type is `type_id`.
+    pub fn covergroup_for_type(&self, type_id: TypeId) -> Option<NodeId> {
+        self.coverage.group_types.get(&type_id).copied()
+    }
+
+    pub fn coverpoint(&self, id: NodeId) -> Option<&CoverpointInfo> {
+        self.coverage.points.get(&id)
+    }
+
+    pub fn coverage_bin(&self, id: NodeId) -> Option<&CoverageBinInfo> {
+        self.coverage.bins.get(&id)
+    }
+
+    /// The covergroup that declares cross `id`.
+    pub fn coverage_cross_group(&self, id: NodeId) -> Option<NodeId> {
+        self.coverage.crosses.get(&id).copied()
     }
 
     /// All owned clocking-variable metadata keyed by declaration identity.

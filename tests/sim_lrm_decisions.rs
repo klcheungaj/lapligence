@@ -1874,3 +1874,35 @@ fn s43_d9_postponed_systf_read_only() {
         include_str!("fixtures/sim/lrm_decisions/S43-D9_postponed_systf_read_only.out"),
     );
 }
+
+#[test]
+fn s44_d1_covergroup_type_per_declaration() {
+    run_decision(
+        "S44-D1_covergroup_type_per_declaration",
+        include_str!("fixtures/sim/lrm_decisions/S44-D1_covergroup_type_per_declaration.out"),
+    );
+}
+
+#[test]
+fn s44_d2_signed_auto_bin_order() {
+    run_decision(
+        "S44-D2_signed_auto_bin_order",
+        include_str!("fixtures/sim/lrm_decisions/S44-D2_signed_auto_bin_order.out"),
+    );
+}
+
+#[test]
+fn s44_d3_dropped_instance_keeps_counting() {
+    run_decision(
+        "S44-D3_dropped_instance_keeps_counting",
+        include_str!("fixtures/sim/lrm_decisions/S44-D3_dropped_instance_keeps_counting.out"),
+    );
+}
+
+#[test]
+fn s44_d4_type_without_instances() {
+    run_decision(
+        "S44-D4_type_without_instances",
+        include_str!("fixtures/sim/lrm_decisions/S44-D4_type_without_instances.out"),
+    );
+}

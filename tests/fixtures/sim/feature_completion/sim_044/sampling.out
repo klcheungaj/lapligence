@@ -1,0 +1,6 @@
+event=50.00 d=2
+with-sample=25.00
+with-sample=50.00
+begin=50.00 end=20.00
+after disable end=20.00 calls=9
+end=40.00 calls=5

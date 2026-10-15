@@ -786,6 +786,7 @@ struct Capture {
         kind = LLG_SLANG_TYPE_UNPACKED_UNION;
         break;
       case SymbolKind::ClassType: kind = LLG_SLANG_TYPE_CLASS; break;
+      case SymbolKind::CovergroupType: kind = LLG_SLANG_TYPE_COVERGROUP; break;
       case SymbolKind::CHandleType: kind = LLG_SLANG_TYPE_CHANDLE; break;
       case SymbolKind::EventType: kind = LLG_SLANG_TYPE_EVENT; break;
       case SymbolKind::VoidType: kind = LLG_SLANG_TYPE_VOID; break;
@@ -1486,6 +1487,11 @@ uint32_t semanticSymbolKind(SymbolKind kind) {
     case SymbolKind::ClockingBlock: return LLG_SLANG_SEMANTIC_SCOPE;
     case SymbolKind::ClockVar: return LLG_SLANG_SEMANTIC_VARIABLE;
     case SymbolKind::ConstraintBlock: return LLG_SLANG_SEMANTIC_CONSTRAINT_BLOCK;
+    case SymbolKind::CovergroupType:
+    case SymbolKind::CovergroupBody:
+    case SymbolKind::Coverpoint:
+    case SymbolKind::CoverageBin:
+    case SymbolKind::CoverCross: return LLG_SLANG_SEMANTIC_COVERAGE;
     default: return LLG_SLANG_SEMANTIC_UNSUPPORTED;
   }
 }
@@ -1862,8 +1868,8 @@ uint32_t semanticTimingKind(TimingControlKind kind) {
     case TimingControlKind::Delay3: return LLG_SLANG_TIMING_DELAY;
     case TimingControlKind::OneStepDelay: return LLG_SLANG_TIMING_ONE_STEP_DELAY;
     case TimingControlKind::SignalEvent: return LLG_SLANG_TIMING_SIGNAL_EVENT;
-    case TimingControlKind::EventList:
-    case TimingControlKind::BlockEventList: return LLG_SLANG_TIMING_EVENT_LIST;
+    case TimingControlKind::EventList: return LLG_SLANG_TIMING_EVENT_LIST;
+    case TimingControlKind::BlockEventList: return LLG_SLANG_TIMING_BLOCK_EVENT_LIST;
     case TimingControlKind::ImplicitEvent: return LLG_SLANG_TIMING_IMPLICIT_EVENT;
     case TimingControlKind::RepeatedEvent: return LLG_SLANG_TIMING_REPEATED_EVENT;
     case TimingControlKind::CycleDelay: return LLG_SLANG_TIMING_CYCLE_DELAY;
@@ -2307,6 +2313,8 @@ public:
         result.auxiliary |= LLG_SLANG_ARGUMENT_CONST_REF;
       if (symbol.flags.has(VariableFlags::RefStatic))
         result.auxiliary |= LLG_SLANG_ARGUMENT_REF_STATIC;
+      if (symbol.flags.has(VariableFlags::CoverageSampleFormal))
+        result.auxiliary |= LLG_SLANG_ARGUMENT_COVERAGE_SAMPLE;
     }
     if constexpr (std::same_as<T, AssertionPortSymbol>) {
       if (const auto* declared = symbol.getDeclaredType())
@@ -2474,6 +2482,12 @@ public:
       }
     }
 
+    if constexpr (std::same_as<T, CovergroupType> ||
+                  std::same_as<T, CovergroupBodySymbol> ||
+                  std::same_as<T, CoverpointSymbol> ||
+                  std::same_as<T, CoverageBinSymbol> ||
+                  std::same_as<T, CoverCrossSymbol>)
+      captureCoverageSymbol(id, symbol);
     parents.push_back(id);
     if constexpr (std::same_as<T, InstanceBodySymbol> ||
                   std::same_as<T, GenerateBlockSymbol>)
@@ -2569,6 +2583,10 @@ public:
         capture.semanticRole(id, expression, LLG_SLANG_EDGE_ALIAS_NET, index++);
     }
     visitDefault(symbol);
+    if constexpr (std::same_as<T, CovergroupType> ||
+                  std::same_as<T, CoverpointSymbol> ||
+                  std::same_as<T, CoverageBinSymbol>)
+      captureCoverageRoles(id, symbol);
     // A prototype without an out-of-block body, and a pure constraint, bind
     // to an invalid constraint: such a block has no BODY (18.5.1, 18.5.2).
     if constexpr (std::same_as<T, ConstraintBlockSymbol>) {
@@ -3077,6 +3095,17 @@ public:
     if constexpr (std::derived_from<T, TimingControl>) {
       result.kind = LLG_SLANG_SEMANTIC_TIMING_CONTROL;
       result.subkind = semanticTimingKind(node.kind);
+      if constexpr (std::same_as<T, BlockEventListControl>) {
+        if (node.events.size() > 64)
+          throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                              "block event list has more than 64 events");
+        uint64_t begins = 0;
+        for (size_t index = 0; index < node.events.size(); ++index) {
+          if (node.events[index].isBegin)
+            begins |= uint64_t(1) << index;
+        }
+        result.auxiliary = begins;
+      }
       if constexpr (std::same_as<T, SignalEventControl>) {
         switch (node.edge) {
           case EdgeKind::PosEdge: result.flags |= LLG_SLANG_SEMANTIC_POSEDGE; break;
@@ -3196,6 +3225,19 @@ public:
     parents.pop_back();
     if constexpr (std::derived_from<T, Constraint>)
       addConstraintRoles(id, node);
+    // Block event targets are blocks or subroutines (19.3): export the
+    // declarations themselves.
+    if constexpr (std::same_as<T, BlockEventListControl>) {
+      for (size_t index = 0; index < node.events.size(); ++index) {
+        const Expression* target = node.events[index].target;
+        const Symbol* symbol = target ? target->getSymbolReference() : nullptr;
+        if (!symbol)
+          continue;
+        const uint64_t targetId = captureReferenceTarget(*symbol);
+        capture.semanticEdge(id, LLG_SLANG_EDGE_REFERENCE, targetId,
+                             static_cast<uint32_t>(index));
+      }
+    }
     if constexpr (std::same_as<T, StructurePattern>) {
       // A structure pattern's field identities and nested patterns are
       // resolved by Slang. Replace generic child edges with paired roles so
@@ -3504,6 +3546,121 @@ private:
       case DefinitionKind::Module: node.flags |= LLG_SLANG_SEMANTIC_MODULE; break;
       case DefinitionKind::Interface: node.flags |= LLG_SLANG_SEMANTIC_INTERFACE; break;
       case DefinitionKind::Program: node.flags |= LLG_SLANG_SEMANTIC_PROGRAM; break;
+    }
+  }
+
+  // Functional-coverage metadata (IEEE 1800-2009 19). Only typed flags are
+  // set here; edges that need captured targets are added by
+  // captureCoverageRoles once the members and expressions were visited.
+  template<typename T>
+  void captureCoverageSymbol(uint64_t id, const T& symbol) {
+    uint32_t subkind = 0;
+    uint64_t auxiliary = 0;
+    uint64_t typeId = LLG_SLANG_INVALID_ID;
+    if constexpr (std::same_as<T, CovergroupType>) {
+      subkind = LLG_SLANG_COVERAGE_GROUP;
+      typeId = capture.type(symbol);
+      const Scope* parent = symbol.getParentScope();
+      if (parent && parent->asSymbol().kind == SymbolKind::ClassType)
+        auxiliary |= LLG_SLANG_COVERGROUP_EMBEDDED;
+      if (const auto* syntaxNode = symbol.getSyntax()) {
+        const auto& declaration =
+            syntaxNode->template as<syntax::CovergroupDeclarationSyntax>();
+        if (declaration.extends)
+          auxiliary |= LLG_SLANG_COVERGROUP_EXTENDS;
+        if (declaration.event) {
+          if (declaration.event->kind == syntax::SyntaxKind::WithFunctionSample)
+            auxiliary |= LLG_SLANG_COVERGROUP_WITH_SAMPLE;
+          else if (declaration.event->kind == syntax::SyntaxKind::BlockCoverageEvent)
+            auxiliary |= LLG_SLANG_COVERGROUP_BLOCK_EVENT;
+        }
+      }
+    }
+    if constexpr (std::same_as<T, CovergroupBodySymbol>)
+      subkind = LLG_SLANG_COVERAGE_BODY;
+    if constexpr (std::same_as<T, CoverpointSymbol>) {
+      subkind = LLG_SLANG_COVERAGE_POINT;
+      typeId = capture.type(symbol.getType());
+    }
+    if constexpr (std::same_as<T, CoverageBinSymbol>) {
+      subkind = LLG_SLANG_COVERAGE_BIN;
+      switch (symbol.binsKind) {
+        case CoverageBinSymbol::Bins: auxiliary = LLG_SLANG_COVERAGE_BIN_BINS; break;
+        case CoverageBinSymbol::IllegalBins:
+          auxiliary = LLG_SLANG_COVERAGE_BIN_ILLEGAL;
+          break;
+        case CoverageBinSymbol::IgnoreBins:
+          auxiliary = LLG_SLANG_COVERAGE_BIN_IGNORE;
+          break;
+      }
+      if (symbol.isArray)
+        auxiliary |= LLG_SLANG_COVERAGE_BIN_ARRAY;
+      if (symbol.isWildcard)
+        auxiliary |= LLG_SLANG_COVERAGE_BIN_WILDCARD;
+      if (symbol.isDefault)
+        auxiliary |= LLG_SLANG_COVERAGE_BIN_DEFAULT;
+      if (symbol.isDefaultSequence)
+        auxiliary |= LLG_SLANG_COVERAGE_BIN_DEFAULT_SEQUENCE;
+      if (!symbol.getTransList().empty())
+        auxiliary |= LLG_SLANG_COVERAGE_BIN_TRANSITION;
+      if (symbol.getWithExpr())
+        auxiliary |= LLG_SLANG_COVERAGE_BIN_WITH;
+      if (symbol.getSetCoverageExpr())
+        auxiliary |= LLG_SLANG_COVERAGE_BIN_SET;
+      if (symbol.getCrossSelectExpr())
+        auxiliary |= LLG_SLANG_COVERAGE_BIN_SELECT;
+    }
+    if constexpr (std::same_as<T, CoverCrossSymbol>)
+      subkind = LLG_SLANG_COVERAGE_CROSS;
+    auto& node = capture.output.semantic_nodes[static_cast<size_t>(id)];
+    node.subkind = subkind;
+    node.auxiliary = auxiliary;
+    if (typeId != LLG_SLANG_INVALID_ID)
+      node.type_id = typeId;
+  }
+
+  template<typename T>
+  void captureCoverageRoles(uint64_t id, const T& symbol) {
+    if (capture.declarationOnly)
+      return;
+    if constexpr (std::same_as<T, CovergroupType>) {
+      uint32_t index = 0;
+      for (const FormalArgumentSymbol* argument : symbol.getArguments())
+        capture.semanticRole(id, argument, LLG_SLANG_EDGE_ARGUMENT, index++);
+      index = 0;
+      for (const Symbol& member : symbol.members()) {
+        if (member.kind == SymbolKind::FormalArgument &&
+            member.template as<FormalArgumentSymbol>().flags.has(
+                VariableFlags::CoverageSampleFormal))
+          capture.semanticRole(id, &member, LLG_SLANG_EDGE_DECLARATION, index++);
+      }
+      if (const TimingControl* event = symbol.getCoverageEvent())
+        capture.semanticRole(id, event, LLG_SLANG_EDGE_EVENT);
+      const CovergroupBodySymbol& body = symbol.getBody();
+      index = 0;
+      for (const CoverageOptionSetter& option : body.options) {
+        const Expression& expression = option.getExpression();
+        expression.visit(*this);
+        capture.semanticRole(id, &expression, LLG_SLANG_EDGE_OPERAND, index++);
+      }
+      capture.semanticRole(id, &body, LLG_SLANG_EDGE_BODY);
+    }
+    if constexpr (std::same_as<T, CoverpointSymbol>) {
+      capture.semanticRole(id, &symbol.getCoverageExpr(), LLG_SLANG_EDGE_INITIALIZER);
+      if (const Expression* iff = symbol.getIffExpr())
+        capture.semanticRole(id, iff, LLG_SLANG_EDGE_CONDITION);
+      uint32_t index = 0;
+      for (const CoverageOptionSetter& option : symbol.options)
+        capture.semanticRole(id, &option.getExpression(), LLG_SLANG_EDGE_OPERAND, index++);
+    }
+    if constexpr (std::same_as<T, CoverageBinSymbol>) {
+      uint32_t index = 0;
+      for (const Expression* value : symbol.getValues())
+        capture.semanticRole(id, value, LLG_SLANG_EDGE_OPERAND, index++);
+      if (const Expression* count = symbol.getNumberOfBinsExpr())
+        capture.semanticRole(id, count, LLG_SLANG_EDGE_WIDTH);
+      if (const Expression* iff = symbol.getIffExpr())
+        capture.semanticRole(id, iff, LLG_SLANG_EDGE_CONDITION);
     }
   }
 
@@ -3906,6 +4063,11 @@ private:
             LLG_SLANG_NEW_CLASS_SUPER;
       if (const Expression* constructor = expression.constructorCall())
         capture.semanticRole(id, constructor, LLG_SLANG_EDGE_INITIALIZER);
+    }
+    else if constexpr (std::same_as<T, NewCovergroupExpression>) {
+      uint32_t index = 0;
+      for (const Expression* argument : expression.arguments)
+        capture.semanticRole(id, argument, LLG_SLANG_EDGE_ARGUMENT, index++);
     }
     else if constexpr (std::same_as<T, CopyClassExpression>) {
       capture.semanticRole(id, &expression.sourceExpr(), LLG_SLANG_EDGE_OPERAND);

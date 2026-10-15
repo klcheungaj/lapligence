@@ -2592,6 +2592,85 @@ void llg_fixed_image_stream_source_to(sv4_t* dst, const sv4_t* image, int64_t de
 void llg_stream_to_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed);
 void llg_stream_cast_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed);
 
+/* ── Functional coverage (IEEE 1800-2009 19, coverage/coverage.c) ─────────────
+ * A coverpoint with more bins than this keeps its counters in a sparse table
+ * sized by the bins actually hit, so a large auto_bin_max costs memory only
+ * for sampled values. */
+#ifndef LLG_COV_DENSE_BINS
+#define LLG_COV_DENSE_BINS 4096u
+#endif
+enum { LLG_COV_POINT_AUTO = 0, LLG_COV_POINT_ENUM = 1, LLG_COV_POINT_EXPLICIT = 2 };
+enum {
+    LLG_COV_OPTION_WEIGHT = 0,
+    LLG_COV_OPTION_GOAL = 1,
+    LLG_COV_OPTION_AT_LEAST = 2,
+    LLG_COV_OPTION_AUTO_BIN_MAX = 3
+};
+/* Keys order a coverpoint's values numerically: the value masked to the
+ * coverpoint width, with the sign bit flipped for a signed coverpoint. One
+ * segment is a maximal key range hit by the same explicit bins, listed in
+ * segment_bins[first .. first + count). */
+typedef struct {
+    uint64_t lo, hi;
+    uint32_t first, count;
+} llg_cov_segment_t;
+typedef struct {
+    const char* name;
+    uint32_t width;  /* 1..64 */
+    uint8_t is_signed;
+    uint8_t kind;    /* LLG_COV_POINT_* */
+    uint32_t n_bins; /* ENUM: members; EXPLICIT: declared bins */
+    const uint64_t* keys; /* ENUM: ascending member keys, one bin each */
+    uint32_t n_segments;
+    const llg_cov_segment_t* segments; /* EXPLICIT: ascending, disjoint */
+    const uint32_t* segment_bins;
+    const uint8_t* valued; /* EXPLICIT: bin has at least one value */
+    uint32_t n_valued;
+} llg_cov_point_t;
+typedef struct llg_cov_inst llg_cov_inst_t;
+/* One covergroup declaration identity: every instance ever created, for
+ * type coverage (19.11.3). Mutable model storage owned by the runtime. */
+typedef struct llg_cov_type {
+    const char* name;
+    int64_t weight; /* type_option.weight */
+    llg_cov_inst_t* first;
+    llg_cov_inst_t* last;
+    uint64_t n_instances;
+    struct llg_cov_type* next_used;
+    uint8_t used;
+} llg_cov_type_t;
+/* One elaborated covergroup declaration: its coverpoints and the objects its
+ * coverage event samples. */
+typedef struct llg_cov_group {
+    const char* name;
+    uint32_t n_points;
+    const llg_cov_point_t* points;
+    llg_cov_type_t* type;
+    void** registry;
+    size_t n_registered;
+    size_t registry_capacity;
+    struct llg_cov_group* next_registered;
+    uint8_t registered;
+} llg_cov_group_t;
+/* Create the runtime record of one instance with Table 19-1 defaults; apply
+ * llg_cov_option, then llg_cov_ready before the first sample or query. */
+void* llg_cov_new(llg_cov_group_t* group);
+/* `point` < 0 selects the group scope. Invalid values report at `site`. */
+void llg_cov_option(void* inst, int32_t point, uint32_t option, sv4_t value, const char* site);
+void llg_cov_ready(void* inst);
+/* Count one sampled value; X/Z values and stopped scopes count nothing. */
+void llg_cov_hit(void* inst, uint32_t point, sv4_t value);
+void llg_cov_control(void* inst, int32_t point, int start);
+/* Objects sampled by the group's coverage event, pinned for the run. */
+void llg_cov_register(llg_cov_group_t* group, void* object);
+size_t llg_cov_registered(const llg_cov_group_t* group);
+void* llg_cov_registered_at(const llg_cov_group_t* group, size_t index);
+/* Coverage percentages (19.11); `point` < 0 selects the whole group. */
+double llg_cov_inst_coverage(const void* inst, int32_t point);
+double llg_cov_type_coverage(const llg_cov_type_t* type, int32_t point, int64_t type_weight);
+double llg_cov_total_coverage(void);
+void llg_cov_release_all(void);
+
 #ifdef __cplusplus
 }
 #endif

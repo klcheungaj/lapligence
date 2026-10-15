@@ -461,6 +461,14 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
                 handle.expressions_mut(&mut |child| walk_expr_mut(child, f));
             }
         }
+        IrStmt::Coverage(operation) => {
+            for expression in operation.expressions_mut() {
+                walk_expr_mut(expression, f);
+            }
+            for handle in operation.chandles_mut() {
+                handle.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            }
+        }
         IrStmt::RandomStateSet { state } => {
             state.expressions_mut(&mut |child| walk_expr_mut(child, f));
         }

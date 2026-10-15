@@ -327,6 +327,7 @@ impl Frame<'_, '_> {
                 let right = self.chandle(right)?;
                 self.value(format!("sv4_from_u64({left} == {right}, 1, 0)"), 1, false)
             }
+            Coverage(query) => self.coverage_query(query)?,
             VirtualInterfaceInstance {
                 handle,
                 interface,

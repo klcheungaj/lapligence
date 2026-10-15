@@ -578,6 +578,8 @@ pub enum IrObjectQuery {
         interface: usize,
         site: String,
     },
+    /// A real coverage percentage (IEEE 1800-2009 19.8, 19.9).
+    Coverage(Box<super::IrCoverageQuery>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1486,6 +1488,20 @@ impl IrObjectQuery {
                 }
                 handle.validate(model, formals, chandle_return)
             }
+            Self::Coverage(query) => {
+                if let super::IrCoverageQuery::Type { coverage_type, .. } = query.as_ref() {
+                    if *coverage_type >= model.coverage_types.len() {
+                        return Err(super::IrValidationError::new(
+                            "coverage",
+                            "type coverage query names an unknown covergroup type",
+                        ));
+                    }
+                }
+                match query.chandle() {
+                    Some(record) => record.validate(model, formals, chandle_return),
+                    None => Ok(()),
+                }
+            }
         }
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
@@ -1547,6 +1563,11 @@ impl IrObjectQuery {
             Self::ProcessStatus(value) => value.expressions(visit),
             Self::ArrayQuery(query) => query.expressions(visit),
             Self::VirtualInterfaceInstance { handle, .. } => handle.expressions(visit),
+            Self::Coverage(query) => {
+                if let Some(record) = query.chandle() {
+                    record.expressions(visit);
+                }
+            }
         }
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
@@ -1608,6 +1629,11 @@ impl IrObjectQuery {
             Self::ProcessStatus(value) => value.expressions_mut(visit),
             Self::ArrayQuery(query) => query.expressions_mut(visit),
             Self::VirtualInterfaceInstance { handle, .. } => handle.expressions_mut(visit),
+            Self::Coverage(query) => {
+                if let Some(record) = query.chandle_mut() {
+                    record.expressions_mut(visit);
+                }
+            }
         }
     }
 }

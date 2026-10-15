@@ -290,6 +290,7 @@ mod selections;
 mod assertions;
 mod collection;
 mod containers;
+mod coverage;
 mod expressions;
 mod objects;
 use objects::NativeNbaValue;
@@ -544,6 +545,9 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
     // subroutine prototypes. Build them before any body is lowered so all
     // call sites share one rebinding table.
     cg.collect_virtual_interfaces()?;
+    // Covergroup sample bodies and sampling events, before any body that
+    // constructs or samples an instance.
+    cg.emit_covergroups()?;
     cg.emit_class_func_bodies()?;
     for top in &tops {
         cg.emit_func_bodies(*top)?;
@@ -572,6 +576,7 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
         cg.emit_pass(*top, Pass::Procs)?;
     }
     cg.emit_clocking_processes()?;
+    cg.check_coverage_block_events()?;
     // Every process call site that requests a task specialization has been
     // lowered; their bodies may register initializers flushed below, and an
     // initializer may call a subroutine bound to a record (SIM-008), so drain
@@ -1215,6 +1220,19 @@ struct Codegen<'a> {
     /// Receiver used while lowering a class property's default expression or
     /// constructor body during a fresh allocation.
     class_init_receiver: Option<IrChandleExpr>,
+    /// Constructed covergroup declaration → its lowering (SIM-044).
+    covergroups: HashMap<NodeId, coverage::CovergroupLowering>,
+    /// Covergroup declaration identity → `model.coverage_types` index.
+    coverage_types: HashMap<coverage::CoverageTypeKey, usize>,
+    /// Subroutine → covergroups its block event samples `(group, begin)`.
+    coverage_block_events: HashMap<NodeId, Vec<(NodeId, bool)>>,
+    /// Subroutines whose bodies received their block-event samplers.
+    coverage_block_events_applied: HashSet<NodeId>,
+    /// While a covergroup body or option lowers: its instance class and
+    /// object, which covergroup arguments are read through.
+    coverage_scope: Option<(usize, IrChandleExpr)>,
+    /// While a covergroup body lowers: `ref` formal → bound actual.
+    coverage_ref_actuals: HashMap<NodeId, NodeId>,
     /// Top-level unpacked aggregate variables lowered to member storage.
     unpacked_aggregates: HashMap<NodeId, UnpackedAggregateInfo>,
     /// Synthetic owned string objects for recursive aggregate leaves. The
@@ -1713,6 +1731,12 @@ impl<'a> Codegen<'a> {
             initializer_random_scopes: HashMap::new(),
             mailbox_object_initializers: Vec::new(),
             class_init_receiver: None,
+            covergroups: HashMap::new(),
+            coverage_types: HashMap::new(),
+            coverage_block_events: HashMap::new(),
+            coverage_block_events_applied: HashSet::new(),
+            coverage_scope: None,
+            coverage_ref_actuals: HashMap::new(),
             unpacked_aggregates: HashMap::new(),
             aggregate_objects: HashMap::new(),
             record_columns: false,

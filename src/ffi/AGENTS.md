@@ -48,6 +48,14 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   items, INDEX[i] `:=` / RIGHT[i] `:/` weights, `LLG_SLANG_DIST_DEFAULT` with a
   DEFAULT_VALUE edge for the later-edition default weight) and foreach
   constraint loop variables (auxiliary slot count, DECLARATION[slot] edges).
+- ABI v23 adds semantic kind 31 (`LLG_SLANG_SEMANTIC_COVERAGE`, subkinds
+  GROUP/POINT/BIN/CROSS/BODY with the edge roles documented in the header and
+  validated auxiliary covergroup/bin bits), type kind 22
+  (`LLG_SLANG_TYPE_COVERGROUP`), ARGUMENT edges on covergroup `new`
+  (expression 88), timing subkind 119 (`@@` block event list: REFERENCE[i]
+  targets, auxiliary bit i = `begin`) and argument bit 2
+  (`LLG_SLANG_ARGUMENT_COVERAGE_SAMPLE`). Declaration-only captures omit the
+  coverage edges.
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;

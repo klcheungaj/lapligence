@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 22u
+#define LLG_SLANG_ABI_VERSION 23u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -260,6 +260,8 @@ enum {
      names the declared element. */
   LLG_SLANG_TYPE_DPI_OPEN_UNPACKED = 20,
   LLG_SLANG_TYPE_DPI_OPEN_PACKED = 21,
+  /* A covergroup type (IEEE 1800-2009 19.3); its handles name instances. */
+  LLG_SLANG_TYPE_COVERGROUP = 22,
   LLG_SLANG_TYPE_OTHER = 255
 };
 
@@ -420,6 +422,9 @@ enum {
   LLG_SLANG_SEMANTIC_CONSTRAINT_BLOCK = 29,
   /* One constraint item (18.5); subkind is LLG_SLANG_CONSTRAINT_*. */
   LLG_SLANG_SEMANTIC_CONSTRAINT = 30,
+  /* A functional-coverage declaration (IEEE 1800-2009 19); subkind is
+   * LLG_SLANG_COVERAGE_*. */
+  LLG_SLANG_SEMANTIC_COVERAGE = 31,
   LLG_SLANG_SEMANTIC_UNSUPPORTED = 255
 };
 
@@ -470,10 +475,54 @@ enum {
   LLG_SLANG_SEMANTIC_METHOD_WITH_CLAUSE = 1u << 31
 };
 
-/* Argument-only qualifiers carried in LlgSlangSemanticNode::auxiliary. */
+/* Argument-only qualifiers carried in LlgSlangSemanticNode::auxiliary.
+ * COVERAGE_SAMPLE marks a `with function sample` formal (19.8.1). */
 enum {
   LLG_SLANG_ARGUMENT_CONST_REF = 1ull << 0,
-  LLG_SLANG_ARGUMENT_REF_STATIC = 1ull << 1
+  LLG_SLANG_ARGUMENT_REF_STATIC = 1ull << 1,
+  LLG_SLANG_ARGUMENT_COVERAGE_SAMPLE = 1ull << 2
+};
+
+/* Functional-coverage subkinds (IEEE 1800-2009 19).
+ * GROUP (a covergroup type): type_id is the group's own type; ARGUMENT[i]
+ *   names construct formal i, DECLARATION[i] `with function sample` formal i,
+ *   EVENT the coverage event (a clocking event or block event list),
+ *   OPERAND[i] group-level option setter i (an assignment expression) and
+ *   BODY the body scope. Auxiliary: LLG_SLANG_COVERGROUP_* bits.
+ * POINT: type_id is the coverpoint type; INITIALIZER is the coverage
+ *   expression, CONDITION the `iff` guard and OPERAND[i] option setter i.
+ * BIN: OPERAND[i] is open-range-list item i, WIDTH the `[N]` count and
+ *   CONDITION the `iff` guard. Auxiliary: the kind in the low two bits
+ *   (LLG_SLANG_COVERAGE_BIN_*), shape bits above them.
+ * CROSS and BODY carry no edges. */
+enum {
+  LLG_SLANG_COVERAGE_GROUP = 1,
+  LLG_SLANG_COVERAGE_POINT = 2,
+  LLG_SLANG_COVERAGE_BIN = 3,
+  LLG_SLANG_COVERAGE_CROSS = 4,
+  LLG_SLANG_COVERAGE_BODY = 5
+};
+
+enum {
+  LLG_SLANG_COVERGROUP_EMBEDDED = 1ull << 0,
+  LLG_SLANG_COVERGROUP_WITH_SAMPLE = 1ull << 1,
+  LLG_SLANG_COVERGROUP_BLOCK_EVENT = 1ull << 2,
+  LLG_SLANG_COVERGROUP_EXTENDS = 1ull << 3
+};
+
+enum {
+  LLG_SLANG_COVERAGE_BIN_BINS = 0,
+  LLG_SLANG_COVERAGE_BIN_ILLEGAL = 1,
+  LLG_SLANG_COVERAGE_BIN_IGNORE = 2,
+  LLG_SLANG_COVERAGE_BIN_KIND_MASK = 3,
+  LLG_SLANG_COVERAGE_BIN_ARRAY = 1ull << 2,
+  LLG_SLANG_COVERAGE_BIN_WILDCARD = 1ull << 3,
+  LLG_SLANG_COVERAGE_BIN_DEFAULT = 1ull << 4,
+  LLG_SLANG_COVERAGE_BIN_DEFAULT_SEQUENCE = 1ull << 5,
+  LLG_SLANG_COVERAGE_BIN_TRANSITION = 1ull << 6,
+  LLG_SLANG_COVERAGE_BIN_WITH = 1ull << 7,
+  LLG_SLANG_COVERAGE_BIN_SET = 1ull << 8,
+  LLG_SLANG_COVERAGE_BIN_SELECT = 1ull << 9
 };
 
 /* Subroutine qualifiers carried in LlgSlangSemanticNode::auxiliary. */
@@ -678,6 +727,8 @@ enum {
   LLG_SLANG_EXPR_TIME_LITERAL = 85,
   LLG_SLANG_EXPR_NEW_ARRAY = 86,
   LLG_SLANG_EXPR_NEW_CLASS = 87,
+  /* Covergroup construction: ARGUMENT[i] is the actual bound to construct
+   * formal i (defaults filled in); type_id is the covergroup type. */
   LLG_SLANG_EXPR_NEW_COVERGROUP = 88,
   LLG_SLANG_EXPR_VALUE_RANGE = 89,
   LLG_SLANG_EXPR_ASSERTION_INSTANCE = 90,
@@ -704,6 +755,9 @@ enum {
   LLG_SLANG_TIMING_REPEATED_EVENT = 116,
   LLG_SLANG_TIMING_CYCLE_DELAY = 117,
   LLG_SLANG_TIMING_ONE_STEP_DELAY = 118,
+  /* `@@(begin f or end g)` (19.3): REFERENCE[i] names event i's block,
+   * task, function or method; auxiliary bit i is set for a `begin` event. */
+  LLG_SLANG_TIMING_BLOCK_EVENT_LIST = 119,
   LLG_SLANG_NET_WIRE = 128,
   LLG_SLANG_NET_WAND = 129,
   LLG_SLANG_NET_WOR = 130,

@@ -256,6 +256,7 @@ impl Frame<'_, '_> {
                 self.discard(seed);
             }
             IrStmt::Randomize(operation) => self.rand_statement(operation)?,
+            IrStmt::Coverage(operation) => self.coverage_statement(operation)?,
             IrStmt::RandomStateSet { state } => {
                 let state = self.string(state)?;
                 self.line(format!(

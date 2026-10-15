@@ -879,6 +879,16 @@ fn collect_effects(
                 effects.push(ExecutionEffect::RuntimeService)
             }
             IrStmt::Randomize(_) => effects.push(ExecutionEffect::RuntimeService),
+            IrStmt::Coverage(operation) => {
+                effects.push(ExecutionEffect::RuntimeService);
+                if operation.written_access().is_some() {
+                    effects.push(ExecutionEffect::ImmediateStore);
+                }
+                if let Some(function) = operation.called_function() {
+                    visited_calls.record(CallTarget::of_call(function, false, None));
+                    collect_callee_effects(ir, function, false, effects, visited_calls);
+                }
+            }
             IrStmt::Display { .. }
             | IrStmt::DisplayTyped { .. }
             | IrStmt::ImmediateAssertion { .. }
@@ -1056,6 +1066,14 @@ fn collect_statement_expression_effects(
             collect_expression_effects(ir, seed, effects, visited_calls);
         }
         IrStmt::Randomize(operation) => {
+            for expression in operation.expressions() {
+                collect_expression_effects(ir, expression, effects, visited_calls);
+            }
+            for handle in operation.chandles() {
+                collect_chandle_effects(ir, handle, effects, visited_calls);
+            }
+        }
+        IrStmt::Coverage(operation) => {
             for expression in operation.expressions() {
                 collect_expression_effects(ir, expression, effects, visited_calls);
             }
@@ -2192,6 +2210,11 @@ fn collect_object_query_effects(
         }
         IrObjectQuery::VirtualInterfaceInstance { handle, .. } => {
             collect_chandle_effects(ir, handle, effects, visited_calls);
+        }
+        IrObjectQuery::Coverage(query) => {
+            if let Some(record) = query.chandle() {
+                collect_chandle_effects(ir, record, effects, visited_calls);
+            }
         }
         IrObjectQuery::SemaphoreTryGet(receiver, keys) => {
             collect_chandle_effects(ir, receiver, effects, visited_calls);

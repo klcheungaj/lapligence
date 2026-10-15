@@ -12,6 +12,14 @@ validation covers each variant and its cross-table constraints.
 row arity, scalar inputs and the unsigned one-bit result. Optimizer and execution
 walkers retain every input; row evaluation stays out of expression trees.
 
+`coverage.rs` holds functional coverage (SIM-044): `covergroups` and
+`coverage_types` are static coverpoint bin tables (validated for width, key
+order and segment shape), `IrStmt::Coverage` creates, configures, samples and
+controls one instance's runtime record, `SampleRegistered` calls a covergroup's
+`sample` method for every registered instance, and `IrObjectQuery::Coverage`
+returns a real percentage. Sample expressions are ordinary IR operands, so the
+optimizer and storage audit see every coverpoint read.
+
 ## Ownership and source organization
 
 `ExecutionModel::lower` moves staging process bodies into executable blocks.

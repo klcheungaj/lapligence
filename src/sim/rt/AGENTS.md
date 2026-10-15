@@ -348,8 +348,8 @@ class handle across a safe point must be enumerated: add it to
 `gc_scheduler_roots` (queued NBAs, wait subscription keys, value scopes and
 handle cells tagged by `llg_gc_handle_cell_drop`, captured frames, native
 roots, mailboxes, suspended coroutine frames through registered frame maps) or
-register a root producer/payload tracer (`llg_gc_register_*`, also the hook
-for future coverage objects). Addresses that may point into object storage
+register a root producer/payload tracer (`llg_gc_register_*`). Covergroup
+objects sampled by a coverage event are pinned by `llg_cov_register`. Addresses that may point into object storage
 are reported with `llg_gc_visit_interior`.
 
 Finalizers release fields only and never follow handles, so cycles and order
@@ -364,6 +364,21 @@ objects allocated but condemned so an access through a missed root is a
 located fatal error; use `LLG_GC_STRESS=1 LLG_GC_VERIFY=1` when adding a root
 source. Mailboxes, semaphores, events and pinned process handles stay
 model-lifetime ([known issue](../../../docs/known_issues.md#collected-objects-keep-some-runtime-objects-and-defer-collection)).
+
+## Functional coverage (SIM-044)
+
+`coverage/coverage.c` is the coverage store (IEEE 1800-2009 19). Generated
+code owns the static metadata (`llg_cov_point_t`, one `llg_cov_group_t` per
+elaborated declaration, one mutable `llg_cov_type_t` per declaration
+identity); the runtime owns instance records (`llg_cov_new`), which outlive the
+covergroup object and are freed only by `llg_cov_release_all` in
+`llg_rt_cleanup`. Options apply between `llg_cov_new` and `llg_cov_ready`,
+which resolves group defaults and sizes counters: dense `uint64_t` arrays up to
+`LLG_COV_DENSE_BINS`, otherwise an open-addressed table of hit bins. A sample
+(`llg_cov_hit`) is O(1) for automatic bins, O(log n) for enum and explicit
+bins, and allocates only when a sparse table grows. Coverage percentages are
+computed on demand (19.11; type coverage with `merge_instances = 0`). Keep the
+store free of scheduler state so a model without covergroups never touches it.
 
 ## Stop, synchronization and assertions
 

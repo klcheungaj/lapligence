@@ -684,6 +684,26 @@ registers (`pre_randomize`, variables, blocks, leaves, arrays, links), then
 commits arrays and member objects and runs `post_randomize` in registration
 order (S30-D7). Problems without these forms keep the flat SIM-029 shape.
 
+## Functional coverage
+
+`coverage.rs` lowers only covergroups that a `new` or an instance method call
+names; a model without one gets no tables, processes or calls. Each lowered
+group is a synthetic class (`class_nodes[group]`): field 0 is the runtime
+record chandle, then the embedded owner, the `ref`-binding variant and one
+field per input argument (`class_fields[formal]`). While a sample body or an
+option lowers, `coverage_scope` makes argument reads go through the
+covergroup object and `coverage_ref_actuals` maps each `ref` formal to the
+variable bound by that variant; the owner is the method receiver, so owner
+properties lower as ordinary class fields. Bins are resolved here (19.5.6 on
+the operand of the frontend's conversion to the coverpoint type) into sorted
+disjoint key segments; signed keys flip the sign bit. A clocking event lowers
+to one sampler process spawned before user processes; an event reading an
+argument or owner property is rejected. Block events are injected into the
+named subroutine body in `collection/function_bodies.rs`;
+`check_coverage_block_events` rejects any target that never reached it.
+Diagnostics must stay located (`coverage_error`), and every coverpoint read
+must stay an IR operand so `opt/passes/storage.rs` sees it.
+
 ## Time, output and native services
 
 Use the owned units/precision of the nearest module instance, package, `$unit` or

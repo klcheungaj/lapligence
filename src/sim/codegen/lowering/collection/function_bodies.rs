@@ -1080,7 +1080,11 @@ impl<'a> Codegen<'a> {
                     IrChandleExpr::LocalRead("_this".to_owned()),
                 )?);
             }
+            // Covergroup block events (19.3): `begin` samples before the
+            // first statement, `end` after the last one; a disable skips it.
+            body_stmts.extend(ctx.cg.coverage_block_samples(ft, body, true)?);
             body_stmts.extend(ctx.lower_stmt(body)?);
+            body_stmts.extend(ctx.cg.coverage_block_samples(ft, body, false)?);
             let pre_fns = std::mem::take(&mut ctx.pre_fns);
             (body_stmts, pre_fns)
         };
