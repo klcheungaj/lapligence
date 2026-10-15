@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::core::db::Operation;
 use crate::core::db::{
-    AlwaysKind, Db, Direction, ExprKind, IntraControl, NodeId, NodeKind, StmtKind,
+    AlwaysKind, Db, Direction, ExprKind, IntraControl, NodeId, NodeKind, ProductionKind, StmtKind,
 };
 use crate::core::value::ValueData;
 
@@ -469,6 +469,22 @@ fn walk_driver_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &m
         NodeKind::FuncCall { .. } | NodeKind::SysCall { .. } | NodeKind::MethodCall { .. } => {
             for actual in call_written_actuals(db, node) {
                 add_driver_lhs_write(db, actual, seen, out);
+            }
+        }
+        // A randsequence production's formals and result, and a rule's
+        // implicit result variables, are written by each generation of the
+        // production (IEEE 1800-2009 18.17.6, 18.17.7).
+        NodeKind::Production(ProductionKind::Declaration(decl)) => {
+            for formal in &decl.formals {
+                add_driver_lhs_write(db, *formal, seen, out);
+            }
+            if let Some(result) = decl.result {
+                add_driver_lhs_write(db, result.variable, seen, out);
+            }
+        }
+        NodeKind::Production(ProductionKind::Rule(rule)) => {
+            for variable in &rule.variables {
+                add_driver_lhs_write(db, *variable, seen, out);
             }
         }
         _ => {}

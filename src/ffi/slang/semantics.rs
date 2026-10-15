@@ -61,6 +61,8 @@ pub(super) fn decode_semantic_edge(
         37 => SemanticEdgeRole::BaseConstructor,
         38 => SemanticEdgeRole::ConditionPattern,
         39 => SemanticEdgeRole::DefaultDisable,
+        40 => SemanticEdgeRole::Weight,
+        41 => SemanticEdgeRole::RandJoin,
         _ => return Err(invalid_native("semantic edge has an unknown role")),
     };
     Ok(SemanticEdge {
@@ -286,6 +288,7 @@ fn decode_semantic_kind(raw: u32) -> Result<SemanticKind, SlangError> {
         29 => SemanticKind::ConstraintBlock,
         30 => SemanticKind::Constraint,
         31 => SemanticKind::Coverage,
+        32 => SemanticKind::Production,
         255 => SemanticKind::Unsupported,
         _ => return Err(invalid_native("semantic node has an unknown kind")),
     })
@@ -299,7 +302,7 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
         13 => matches!(subkind, 0..=6),
         14 => matches!(subkind, 0 | 228),
         15 => matches!(subkind, 0 | 160..=164 | 200..=227),
-        18 => matches!(subkind, 0 | 32..=69 | SEMANTIC_STMT_PATTERN_CASE),
+        18 => matches!(subkind, 0 | 32..=70 | SEMANTIC_STMT_PATTERN_CASE),
         19 => matches!(subkind, 0 | 64..=78 | 80..=95),
         25 => matches!(
             subkind,
@@ -309,6 +312,10 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
         31 => matches!(
             subkind,
             super::SEMANTIC_COVERAGE_GROUP..=super::SEMANTIC_COVERAGE_SELECT
+        ),
+        32 => matches!(
+            subkind,
+            super::SEMANTIC_PRODUCTION_DECLARATION..=super::SEMANTIC_PRODUCTION_CASE
         ),
         28 => matches!(subkind, 0..=13),
         30 => matches!(
@@ -430,6 +437,12 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
                 | super::COVERAGE_BIN_SELECT;
             node.auxiliary & !allowed == 0 && node.auxiliary & super::COVERAGE_BIN_KIND_MASK != 3
         }
+        // A production marks its non-input formals; a rule its rand join.
+        (32, super::SEMANTIC_PRODUCTION_DECLARATION, _) => true,
+        (32, super::SEMANTIC_PRODUCTION_RULE, _) => {
+            node.auxiliary & !super::PRODUCTION_RULE_RAND_JOIN == 0
+        }
+        (32, _, _) => node.auxiliary == 0,
         (31, super::SEMANTIC_COVERAGE_CROSS, _) => {
             node.auxiliary & !super::COVER_CROSS_OF_CROSS == 0
         }

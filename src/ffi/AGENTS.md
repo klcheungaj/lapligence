@@ -62,6 +62,13 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   auxiliary `LLG_SLANG_COVER_SELECT_*`), a bin BODY edge to its select
   expression, and cross ARGUMENT[i] (crossed coverpoints), CONDITION and
   OPERAND[i] option edges with the `LLG_SLANG_COVER_CROSS_OF_CROSS` bit.
+- ABI v25 adds semantic kind 32 (`LLG_SLANG_SEMANTIC_PRODUCTION`: a
+  randsequence production symbol plus synthetic RULE, ITEM, CODE_BLOCK, IF,
+  REPEAT and CASE nodes with the edge roles documented in the header),
+  statement subkind 70 (`LLG_SLANG_STMT_RANDSEQUENCE`) and edge roles 40-41
+  (WEIGHT, RAND_JOIN). Production formals are exported as automatic
+  variables; only a DECLARATION (non-input formal bits) and a RULE
+  (`LLG_SLANG_PRODUCTION_RULE_RAND_JOIN`) carry auxiliary bits.
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;

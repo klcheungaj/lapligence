@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 24;
+const ABI_VERSION: u32 = 25;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -681,6 +681,10 @@ pub enum SemanticKind {
     /// A functional-coverage declaration; the subkind is a
     /// `SEMANTIC_COVERAGE_*` code (IEEE 1800-2009 19).
     Coverage,
+    /// A randsequence production or one of its rule and production-list
+    /// nodes; the subkind is a `SEMANTIC_PRODUCTION_*` code (IEEE 1800-2009
+    /// 18.17).
+    Production,
     Unsupported,
 }
 
@@ -699,6 +703,17 @@ pub(crate) const SEMANTIC_COVERAGE_TRANS_SET: u32 = 6;
 pub(crate) const SEMANTIC_COVERAGE_TRANS_RANGE: u32 = 7;
 /// One operator of a cross bin select expression (19.6).
 pub(crate) const SEMANTIC_COVERAGE_SELECT: u32 = 8;
+/// Randsequence subkinds (IEEE 1800-2009 18.17); see the C header for the
+/// edges each one carries.
+pub(crate) const SEMANTIC_PRODUCTION_DECLARATION: u32 = 1;
+pub(crate) const SEMANTIC_PRODUCTION_RULE: u32 = 2;
+pub(crate) const SEMANTIC_PRODUCTION_ITEM: u32 = 3;
+pub(crate) const SEMANTIC_PRODUCTION_CODE_BLOCK: u32 = 4;
+pub(crate) const SEMANTIC_PRODUCTION_IF: u32 = 5;
+pub(crate) const SEMANTIC_PRODUCTION_REPEAT: u32 = 6;
+pub(crate) const SEMANTIC_PRODUCTION_CASE: u32 = 7;
+/// A rule whose production list is a `rand join` (18.17.5).
+pub(crate) const PRODUCTION_RULE_RAND_JOIN: u64 = 1 << 0;
 /// A cross item names another cross (not 1800-2009 syntax).
 pub(crate) const COVER_CROSS_OF_CROSS: u64 = 1 << 0;
 /// Transition range-list repetition (`auxiliary` of a TRANS_RANGE node).
@@ -804,6 +819,8 @@ pub const SEMANTIC_STMT_CONCURRENT_EXPECT: u32 = 67;
 pub const SEMANTIC_STMT_CONCURRENT_COVER_SEQUENCE: u32 = 68;
 /// `randcase` (IEEE 1800-2009 18.16).
 pub const SEMANTIC_STMT_RANDCASE: u32 = 69;
+/// `randsequence` (IEEE 1800-2009 18.17).
+pub const SEMANTIC_STMT_RANDSEQUENCE: u32 = 70;
 /// Pattern-matching case statements are tagged apart from ordinary case so
 /// lowering rejects them with their source location instead of treating a
 /// surviving pattern as an empty case.
@@ -1037,6 +1054,10 @@ pub enum SemanticEdgeRole {
     /// statement (IEEE 1800-2009 16.16); one expression node may be named by
     /// every assertion it covers.
     DefaultDisable,
+    /// A randsequence rule's `:=` weight (IEEE 1800-2009 18.17.1).
+    Weight,
+    /// A randsequence rule's `rand join` expression (18.17.5).
+    RandJoin,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

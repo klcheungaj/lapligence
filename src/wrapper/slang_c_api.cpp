@@ -1492,6 +1492,7 @@ uint32_t semanticSymbolKind(SymbolKind kind) {
     case SymbolKind::Coverpoint:
     case SymbolKind::CoverageBin:
     case SymbolKind::CoverCross: return LLG_SLANG_SEMANTIC_COVERAGE;
+    case SymbolKind::RandSeqProduction: return LLG_SLANG_SEMANTIC_PRODUCTION;
     default: return LLG_SLANG_SEMANTIC_UNSUPPORTED;
   }
 }
@@ -1539,6 +1540,7 @@ uint32_t semanticStatementKind(StatementKind kind) {
     case StatementKind::Case: return LLG_SLANG_STMT_CASE;
     case StatementKind::PatternCase: return LLG_SLANG_STMT_PATTERN_CASE;
     case StatementKind::RandCase: return LLG_SLANG_STMT_RANDCASE;
+    case StatementKind::RandSequence: return LLG_SLANG_STMT_RANDSEQUENCE;
     case StatementKind::ForLoop: return LLG_SLANG_STMT_FOR;
     case StatementKind::ForeachLoop: return LLG_SLANG_STMT_FOREACH;
     case StatementKind::RepeatLoop: return LLG_SLANG_STMT_REPEAT;
@@ -2131,6 +2133,12 @@ public:
       capture.sourceIdentity(symbol.getSyntax(), id);
     auto& result = capture.output.semantic_nodes[static_cast<size_t>(id)];
     result.kind = semanticSymbolKind(symbol.kind);
+    // A production formal is an automatic variable of each generation of its
+    // production (IEEE 1800-2009 18.17.7), bound by an ITEM's assignments.
+    if constexpr (std::same_as<T, FormalArgumentSymbol>) {
+      if (isProductionFormal(symbol))
+        result.kind = LLG_SLANG_SEMANTIC_VARIABLE;
+    }
     result.name = storeString(capture.output, symbol.name);
     result.detail = storeString(capture.output, toString(symbol.kind));
     result.range = symbol.location.valid()
@@ -2330,7 +2338,8 @@ public:
     if constexpr (std::same_as<T, ModportPortSymbol>)
       addDirection(result, symbol.direction);
     if constexpr (std::same_as<T, FormalArgumentSymbol>) {
-      addDirection(result, symbol.direction);
+      if (!isProductionFormal(symbol))
+        addDirection(result, symbol.direction);
       if (symbol.flags.has(VariableFlags::Const))
         result.auxiliary |= LLG_SLANG_ARGUMENT_CONST_REF;
       if (symbol.flags.has(VariableFlags::RefStatic))
@@ -2357,6 +2366,10 @@ public:
     }
     if constexpr (std::same_as<T, AnonymousProgramSymbol>)
       result.subkind = LLG_SLANG_SCOPE_ANONYMOUS_PROGRAM;
+    if constexpr (std::same_as<T, RandSeqProductionSymbol>) {
+      result.subkind = LLG_SLANG_PRODUCTION_DECLARATION;
+      result.type_id = capture.type(symbol.getReturnType());
+    }
     if constexpr (std::same_as<T, ClockingBlockSymbol>) {
       result.subkind = LLG_SLANG_SCOPE_CLOCKING_BLOCK;
       if (symbol.isDefault)
@@ -2604,7 +2617,15 @@ public:
       for (const Expression* expression : symbol.getNetReferences())
         capture.semanticRole(id, expression, LLG_SLANG_EDGE_ALIAS_NET, index++);
     }
-    visitDefault(symbol);
+    if constexpr (std::same_as<T, RandSeqProductionSymbol>) {
+      if (capture.declarationOnly)
+        visitDefault(symbol);
+      else
+        captureProduction(id, symbol);
+    }
+    else {
+      visitDefault(symbol);
+    }
     if constexpr (std::same_as<T, CovergroupType> ||
                   std::same_as<T, CoverpointSymbol> ||
                   std::same_as<T, CoverageBinSymbol> ||
@@ -3084,6 +3105,8 @@ public:
       if (const Expression* disable = defaultDisable(statement))
         disable->visit(*this);
     }
+    if constexpr (std::same_as<T, RandSequenceStatement>)
+      captureRandSequence(id, statement);
     parents.pop_back();
     addStatementRoles(statement, id);
   }
@@ -3392,6 +3415,338 @@ private:
         captureNames(*syntaxNode, context);
     }
   }
+
+  // Randsequence capture (IEEE 1800-2009 18.17). Rules and production-list
+  // elements have no symbol identity, so each becomes a synthetic
+  // LLG_SLANG_SEMANTIC_PRODUCTION node owned by its production or rule. The
+  // assignments that bind formals and copy results are synthesized as Slang
+  // expressions in the compilation, so their capture is the ordinary
+  // assignment capture; see LLG_SLANG_PRODUCTION_* in the header.
+
+  static bool isProductionFormal(const FormalArgumentSymbol& formal) {
+    const Scope* parent = formal.getParentScope();
+    return parent && parent->asSymbol().kind == SymbolKind::RandSeqProduction;
+  }
+
+  // The automatic variable that holds a non-void production's `return`
+  // value until the generating rule copies it to its implicit variable.
+  // Created on first use: a rule may reference a production captured later.
+  const VariableSymbol* productionResult(const RandSeqProductionSymbol& production) {
+    const Type& type = production.getReturnType();
+    if (type.isVoid() || type.isError())
+      return nullptr;
+    auto [it, inserted] = productionResults.try_emplace(&production, nullptr);
+    if (inserted) {
+      auto& compilation = production.getCompilation();
+      auto* variable = compilation.emplace<VariableSymbol>(
+          production.name, production.location, VariableLifetime::Automatic);
+      variable->setType(type);
+      it->second = variable;
+    }
+    return it->second;
+  }
+
+  uint64_t productionNode(uint64_t owner, uint32_t subkind, uint64_t auxiliary,
+                          SourceRange range, std::string_view detail) {
+    const uint64_t id = capture.newSyntheticSemantic();
+    auto& node = capture.output.semantic_nodes[static_cast<size_t>(id)];
+    node.parent_id = owner;
+    node.kind = LLG_SLANG_SEMANTIC_PRODUCTION;
+    node.subkind = subkind;
+    node.auxiliary = auxiliary;
+    node.range = capture.span(range);
+    node.detail = storeString(capture.output, detail);
+    return id;
+  }
+
+  // Visit `expression` under `owner` and give it `role`.
+  void productionOperand(uint64_t owner, const Expression& expression,
+                         uint32_t role, uint32_t index = 0) {
+    parents.push_back(owner);
+    expression.visit(*this);
+    parents.pop_back();
+    capture.semanticRole(owner, &expression, role, index);
+  }
+
+  void captureProduction(uint64_t id, const RandSeqProductionSymbol& production) {
+    auto& compilation = production.getCompilation();
+    const SourceRange range = production.getSyntax()
+                                  ? production.getSyntax()->sourceRange()
+                                  : SourceRange(production.location, production.location);
+    uint64_t nonInput = 0;
+    uint32_t index = 0;
+    for (const FormalArgumentSymbol* formal : production.arguments) {
+      parents.push_back(id);
+      handle(*formal);
+      parents.pop_back();
+      capture.semanticRole(id, formal, LLG_SLANG_EDGE_ARGUMENT, index);
+      if (formal->direction != ArgumentDirection::In)
+        nonInput |= 1ull << std::min<uint32_t>(index, 63);
+      auto& reference = *compilation.emplace<NamedValueExpression>(
+          *formal, SourceRange(formal->location, formal->location));
+      productionOperand(id, reference, LLG_SLANG_EDGE_OPERAND, index);
+      index++;
+    }
+    capture.output.semantic_nodes[static_cast<size_t>(id)].auxiliary = nonInput;
+    if (const VariableSymbol* result = productionResult(production)) {
+      parents.push_back(id);
+      handle(*result);
+      parents.pop_back();
+      capture.semanticRole(id, result, LLG_SLANG_EDGE_DECLARATION);
+      auto& target = *compilation.emplace<NamedValueExpression>(*result, range);
+      productionOperand(id, target, LLG_SLANG_EDGE_LHS);
+    }
+    index = 0;
+    for (const auto& rule : production.getRules()) {
+      const auto* syntaxNode = rule.ruleBlock->getSyntax();
+      if (!syntaxNode || syntaxNode->kind != syntax::SyntaxKind::RsRule)
+        throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                            "randsequence rule has no rule syntax");
+      const auto& ruleSyntax = syntaxNode->as<syntax::RsRuleSyntax>();
+      const uint64_t ruleId = productionNode(
+          id, LLG_SLANG_PRODUCTION_RULE,
+          rule.isRandJoin ? LLG_SLANG_PRODUCTION_RULE_RAND_JOIN : 0,
+          ruleSyntax.sourceRange(), "RandSeqRule");
+      capture.semanticEdge(id, LLG_SLANG_EDGE_BRANCH, ruleId, index++);
+      captureRule(ruleId, rule, ruleSyntax);
+    }
+  }
+
+  void captureRule(uint64_t id, const RandSeqProductionSymbol::Rule& rule,
+                   const syntax::RsRuleSyntax& ruleSyntax) {
+    // Implicit result variables of the productions this rule generates.
+    std::unordered_map<std::string_view, const VariableSymbol*> variables;
+    uint32_t index = 0;
+    for (const Symbol& member : rule.ruleBlock->members()) {
+      if (member.kind != SymbolKind::Variable)
+        continue;
+      const auto& variable = member.as<VariableSymbol>();
+      if (!variable.flags.has(VariableFlags::CompilerGenerated))
+        continue;
+      parents.push_back(id);
+      handle(variable);
+      parents.pop_back();
+      capture.semanticRole(id, &variable, LLG_SLANG_EDGE_DECLARATION, index++);
+      variables.emplace(variable.name, &variable);
+    }
+    if (rule.weightExpr)
+      productionOperand(id, *rule.weightExpr, LLG_SLANG_EDGE_WEIGHT);
+    if (rule.randJoinExpr)
+      productionOperand(id, *rule.randJoinExpr, LLG_SLANG_EDGE_RAND_JOIN);
+    // Occurrences number the elements of an implicit array from 1 in
+    // syntactic order, counting if/else, repeat and case items (18.17.7).
+    std::unordered_map<const RandSeqProductionSymbol*, int32_t> occurrences;
+    RuleContext context{*rule.ruleBlock, variables, occurrences};
+    if (rule.prods.size() != ruleSyntax.prods.size())
+      throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                          "randsequence rule elements disagree with their syntax");
+    for (size_t element = 0; element < rule.prods.size(); element++) {
+      const uint64_t elementId =
+          captureElement(id, *rule.prods[element], *ruleSyntax.prods[element], context);
+      capture.semanticEdge(id, LLG_SLANG_EDGE_OPERAND, elementId,
+                           static_cast<uint32_t>(element));
+    }
+    if (ruleSyntax.weightClause && ruleSyntax.weightClause->codeBlock) {
+      const uint64_t codeId = captureCodeBlock(
+          id, *rule.ruleBlock, *ruleSyntax.weightClause->codeBlock);
+      capture.semanticEdge(id, LLG_SLANG_EDGE_BODY, codeId);
+    }
+  }
+
+  struct RuleContext {
+    const StatementBlockSymbol& block;
+    const std::unordered_map<std::string_view, const VariableSymbol*>& variables;
+    std::unordered_map<const RandSeqProductionSymbol*, int32_t>& occurrences;
+  };
+
+  uint64_t captureElement(uint64_t rule, const RandSeqProductionSymbol::ProdBase& prod,
+                          const syntax::RsProdSyntax& prodSyntax, RuleContext& context) {
+    using ProdKind = RandSeqProductionSymbol::ProdKind;
+    switch (prod.kind) {
+      case ProdKind::Item:
+        return captureItem(rule, prod.as<RandSeqProductionSymbol::ProdItem>(),
+                           prodSyntax.as<syntax::RsProdItemSyntax>(), &context);
+      case ProdKind::CodeBlock:
+        return captureCodeBlock(rule, context.block, prodSyntax);
+      case ProdKind::IfElse: {
+        const auto& ifElse = prod.as<RandSeqProductionSymbol::IfElseProd>();
+        const auto& ifSyntax = prodSyntax.as<syntax::RsIfElseSyntax>();
+        const uint64_t id = productionNode(rule, LLG_SLANG_PRODUCTION_IF, 0,
+                                           ifSyntax.sourceRange(), "RandSeqIf");
+        productionOperand(id, *ifElse.expr, LLG_SLANG_EDGE_CONDITION);
+        capture.semanticEdge(id, LLG_SLANG_EDGE_THEN,
+                             captureItem(id, ifElse.ifItem, *ifSyntax.ifItem, &context));
+        if (ifElse.elseItem && ifSyntax.elseClause)
+          capture.semanticEdge(
+              id, LLG_SLANG_EDGE_ELSE,
+              captureItem(id, *ifElse.elseItem, *ifSyntax.elseClause->item, &context));
+        return id;
+      }
+      case ProdKind::Repeat: {
+        const auto& repeat = prod.as<RandSeqProductionSymbol::RepeatProd>();
+        const auto& repeatSyntax = prodSyntax.as<syntax::RsRepeatSyntax>();
+        const uint64_t id = productionNode(rule, LLG_SLANG_PRODUCTION_REPEAT, 0,
+                                           repeatSyntax.sourceRange(), "RandSeqRepeat");
+        productionOperand(id, *repeat.expr, LLG_SLANG_EDGE_CONDITION);
+        capture.semanticEdge(id, LLG_SLANG_EDGE_BODY,
+                             captureItem(id, repeat.item, *repeatSyntax.item, &context));
+        return id;
+      }
+      case ProdKind::Case: {
+        const auto& caseProd = prod.as<RandSeqProductionSymbol::CaseProd>();
+        const auto& caseSyntax = prodSyntax.as<syntax::RsCaseSyntax>();
+        const uint64_t id = productionNode(rule, LLG_SLANG_PRODUCTION_CASE, 0,
+                                           caseSyntax.sourceRange(), "RandSeqCase");
+        productionOperand(id, *caseProd.expr, LLG_SLANG_EDGE_CASE_EXPRESSION);
+        // Items keep syntactic order, so a default item numbers its implicit
+        // element where it appears among the standard items.
+        uint32_t item = 0;
+        bool defaultCaptured = false;
+        for (const auto* itemSyntax : caseSyntax.items) {
+          if (itemSyntax->kind == syntax::SyntaxKind::DefaultRsCaseItem) {
+            // Slang keeps the first of duplicate defaults (an error).
+            if (caseProd.defaultItem && !std::exchange(defaultCaptured, true))
+              capture.semanticEdge(
+                  id, LLG_SLANG_EDGE_ELSE,
+                  captureItem(id, *caseProd.defaultItem,
+                              *itemSyntax->as<syntax::DefaultRsCaseItemSyntax>().item,
+                              &context));
+            continue;
+          }
+          if (item >= caseProd.items.size())
+            throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                                "randsequence case items disagree with their syntax");
+          const auto& caseItem = caseProd.items[item];
+          uint32_t expression = 0;
+          for (const Expression* value : caseItem.expressions)
+            productionOperand(id, *value, LLG_SLANG_EDGE_CASE_ITEM,
+                              (item << 16) | expression++);
+          capture.semanticEdge(
+              id, LLG_SLANG_EDGE_BRANCH,
+              captureItem(id, caseItem.item,
+                          *itemSyntax->as<syntax::StandardRsCaseItemSyntax>().item,
+                          &context),
+              item);
+          item++;
+        }
+        return id;
+      }
+    }
+    throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                        "unknown randsequence production element");
+  }
+
+  // A code block's statement scope. Slang (v11) can attach a rule's weight
+  // clause code block to the wrong element when the rule also has a code
+  // block among its elements, so the block is found by its own syntax.
+  uint64_t captureCodeBlock(uint64_t owner, const StatementBlockSymbol& ruleBlock,
+                            const syntax::SyntaxNode& codeSyntax) {
+    const StatementBlockSymbol* block = nullptr;
+    for (const auto& candidate : ruleBlock.membersOfType<StatementBlockSymbol>()) {
+      if (candidate.getSyntax() == &codeSyntax) {
+        block = &candidate;
+        break;
+      }
+    }
+    const Statement* statement = block ? block->tryGetStatement() : nullptr;
+    if (!statement)
+      throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                          "randsequence code block has no bound statement");
+    const uint64_t id = productionNode(owner, LLG_SLANG_PRODUCTION_CODE_BLOCK, 0,
+                                       codeSyntax.sourceRange(), "RandSeqCodeBlock");
+    parents.push_back(id);
+    statement->visit(*this);
+    block->visit(*this);
+    parents.pop_back();
+    capture.semanticRole(id, statement, LLG_SLANG_EDGE_BODY);
+    return id;
+  }
+
+  // One generation of `item.target`: input formal bindings in formal order,
+  // then (for a non-void production in a rule) the copy of its result.
+  uint64_t captureItem(uint64_t owner, const RandSeqProductionSymbol::ProdItem& item,
+                       const syntax::RsProdItemSyntax& itemSyntax, RuleContext* context) {
+    const SourceRange range = itemSyntax.sourceRange();
+    const uint64_t id =
+        productionNode(owner, LLG_SLANG_PRODUCTION_ITEM, 0, range, "RandSeqItem");
+    if (!item.target)
+      return id;
+    const auto& target = *item.target;
+    capture.semanticEdge(id, LLG_SLANG_EDGE_CALLEE, capture.ensureSemantic(&target));
+    captureBindings(id, target, item.args, range);
+    const VariableSymbol* result = productionResult(target);
+    if (!context || !result)
+      return id;
+    const auto found = context->variables.find(target.name);
+    if (found == context->variables.end())
+      throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                          "randsequence rule has no implicit variable for a production");
+    const VariableSymbol& variable = *found->second;
+    const int32_t occurrence = ++context->occurrences[&target];
+    auto& compilation = target.getCompilation();
+    Expression* destination = compilation.emplace<NamedValueExpression>(variable, range);
+    const Type& variableType = variable.getType();
+    if (variableType.isUnpackedArray()) {
+      const auto* element = variableType.getArrayElementType();
+      if (!element)
+        throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                            "randsequence implicit array has no element type");
+      // The literal has no source text of its own, so it carries no location
+      // (its spelling would otherwise be the production name).
+      const Type& indexType = compilation.getIntType();
+      auto* selector = compilation.emplace<IntegerLiteral>(
+          compilation, indexType, SVInt(32, uint64_t(occurrence), true), false,
+          SourceRange::NoLocation);
+      destination = compilation.emplace<ElementSelectExpression>(*element, *destination,
+                                                                 *selector, range);
+    }
+    auto& source = *compilation.emplace<NamedValueExpression>(*result, range);
+    auto& copy = *compilation.emplace<AssignmentExpression>(
+        std::nullopt, false, *destination->type, *destination, source, nullptr, range);
+    productionOperand(id, copy, LLG_SLANG_EDGE_RHS);
+    return id;
+  }
+
+  void captureBindings(uint64_t id, const RandSeqProductionSymbol& target,
+                       std::span<const Expression* const> actuals, SourceRange range) {
+    auto& compilation = target.getCompilation();
+    for (size_t index = 0; index < target.arguments.size(); index++) {
+      const FormalArgumentSymbol& formal = *target.arguments[index];
+      if (formal.direction != ArgumentDirection::In || index >= actuals.size() ||
+          !actuals[index])
+        continue;
+      auto& destination = *compilation.emplace<NamedValueExpression>(formal, range);
+      auto& binding = *compilation.emplace<AssignmentExpression>(
+          std::nullopt, false, formal.getType(), destination,
+          const_cast<Expression&>(*actuals[index]), nullptr, range);
+      productionOperand(id, binding, LLG_SLANG_EDGE_ARGUMENT, static_cast<uint32_t>(index));
+    }
+  }
+
+  void captureRandSequence(uint64_t id, const RandSequenceStatement& statement) {
+    uint32_t index = 0;
+    for (const RandSeqProductionSymbol* production : statement.productions) {
+      production->visit(*this);
+      capture.semanticRole(id, production, LLG_SLANG_EDGE_DECLARATION, index++);
+    }
+    if (!statement.firstProduction)
+      return;
+    // The top production is generated without arguments, so every formal
+    // takes its default (Slang already required one).
+    const auto& top = *statement.firstProduction;
+    const uint64_t item = productionNode(id, LLG_SLANG_PRODUCTION_ITEM, 0,
+                                         statement.sourceRange, "RandSeqItem");
+    capture.semanticEdge(item, LLG_SLANG_EDGE_CALLEE, capture.ensureSemantic(&top));
+    SmallVector<const Expression*> defaults;
+    for (const FormalArgumentSymbol* formal : top.arguments)
+      defaults.push_back(formal->getDefaultValue());
+    captureBindings(item, top,
+                    std::span<const Expression* const>(defaults.data(), defaults.size()),
+                    statement.sourceRange);
+    capture.semanticEdge(id, LLG_SLANG_EDGE_BODY, item);
+  }
+
+  std::unordered_map<const RandSeqProductionSymbol*, const VariableSymbol*> productionResults;
 
   Capture& capture;
   std::vector<uint64_t> parents;

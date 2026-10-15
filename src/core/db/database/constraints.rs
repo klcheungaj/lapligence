@@ -130,7 +130,7 @@ pub(super) fn constraint_block_from_slang(
 }
 
 /// Ordered targets of one role, requiring dense, unique indices.
-fn ordered_targets(
+pub(super) fn ordered_targets(
     ids: &SemanticIds,
     edges: &[crate::ffi::slang::SemanticEdge],
     role: SemanticEdgeRole,

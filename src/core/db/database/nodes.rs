@@ -223,6 +223,9 @@ pub enum NodeKind {
     ConstraintBlock(super::ConstraintBlockInfo),
     /// One constraint item of a constraint block or inline constraint set.
     Constraint(super::ConstraintKind),
+    /// A randsequence production, rule or production-list element
+    /// (IEEE 1800-2009 18.17).
+    Production(super::ProductionKind),
     /// Anything the walk does not model explicitly (never fails the build).
     Other,
 }

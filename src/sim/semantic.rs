@@ -1075,6 +1075,7 @@ fn classify_simulation_node(
         | NodeKind::Stmt(_)
         | NodeKind::AssertionExpr(_)
         | NodeKind::Constraint(_)
+        | NodeKind::Production(_)
         | NodeKind::Expr(_)
         | NodeKind::SysCall { .. }
         | NodeKind::MethodCall { .. }
