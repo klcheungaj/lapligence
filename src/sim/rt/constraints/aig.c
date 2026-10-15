@@ -304,6 +304,15 @@ static uint32_t cr_operands_err(llg_cr_session_t* s, cr_blast_t* b, uint32_t n) 
     return err;
 }
 
+/* Width of an equality between an index of `index_width` bits (plus a sign
+ * bit) and the positions 0..limit: wide enough that `limit` is a
+ * non-negative value. The shift stays below 64 bits. */
+static uint32_t cr_index_compare_width(uint32_t index_width, uint64_t limit) {
+    uint32_t cw = index_width + 1u;
+    while (cw - 1u < 64u && (limit >> (cw - 1u)) != 0u) ++cw;
+    return cw;
+}
+
 /* Literal of "a == k" for the constant k (a extended by `sgn` to `w` bits). */
 static uint32_t cr_blast_eq_const(cr_aig_t* g, const uint32_t* a, uint32_t aw, int sgn,
                                   uint64_t k, uint32_t w) {
@@ -600,8 +609,7 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
         /* Random index: a multiplexer over the entries; an index that
          * selects no entry or a null one is an error (S30-D4, S30-D11). */
         const uint32_t* idx = cr_node_lits(s, b, nd->b);
-        uint32_t cw = ni->bit_width + 1u;
-        while (cw < 66u && (uint64_t)t->count >> (cw - 1u)) ++cw;
+        uint32_t cw = cr_index_compare_width(ni->bit_width, t->count);
         uint32_t any = CR_FALSE;
         err = cr_node_err(b, nd->b);
         for (uint32_t j = 0; j < t->count && !g->overflow; ++j) {
@@ -624,8 +632,7 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
             const llg_cr_node_t* ni = &p->nodes[nd->b];
             const uint32_t* v = cr_node_lits(s, b, nd->a);
             const uint32_t* idx = cr_node_lits(s, b, nd->b);
-            uint32_t cw = ni->bit_width + 1u;
-            while (cw < 66u && na->bit_width >> (cw - 1u)) ++cw;
+            uint32_t cw = cr_index_compare_width(ni->bit_width, na->bit_width);
             uint32_t any = CR_FALSE;
             for (uint32_t pos = 0; w <= na->bit_width && pos + w <= na->bit_width && !g->overflow; ++pos) {
                 uint32_t eq = cr_blast_eq_const(g, idx, ni->bit_width, ni->sign_flag, pos, cw);

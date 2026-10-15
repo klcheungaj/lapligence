@@ -109,6 +109,19 @@ fn std_randomize_solves_scope_arrays() {
     );
 }
 
+/// Storage of randomize-only targets and constraint-only state survives the
+/// optimizer's unused-storage pass.
+#[test]
+fn randomize_only_targets_keep_storage() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "randomize_only_targets",
+        include_str!("../fixtures/sim/feature_completion/sim_030/randomize_only_targets.out"),
+        &[],
+        &[],
+    );
+}
+
 /// A03: every 2009 constraint production executes.
 #[test]
 fn every_2009_constraint_production_has_a_witness() {
