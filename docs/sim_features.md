@@ -2280,8 +2280,16 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   interfaces, packages and classes (embedded, constructed only by the class
   `new`), instances created by `new` with `input` (integral, real, string and
   class handle) and `ref` arguments, and sampling by explicit `sample()`, a
-  clocking event on module-level storage, `with function sample(...)` and
-  `@@(begin/end f)` on a delay-free task or function. Coverpoints of at most
+  clocking event, `with function sample(...)` and `@@(begin/end x)` on a
+  task, function or named block. A clocking event on module-level storage
+  samples every instance from one sampler process; one that reads a
+  covergroup argument or a property of the embedding object (`@(posedge
+  vif.clk)` in a class) gets a waiter process per instance, owned by the
+  instance rather than by the constructing process (S44-D5, S44-D6).
+  `type_option.strobe` samples once per time slot in the Postponed region
+  (not for block events, S44-D9). An `end` block event also samples after
+  `return` (S44-D7), not after a disable or a jump out of a named block
+  (S44-D8). Coverpoints of at most
   64 bits with automatic bins (enum cardinality, `auto_bin_max`, numeric order
   for signed values, decision S44-D2), explicit single-value and range bins
   resolved by 19.5.6 with its warnings, and `iff` guards. Instance options
@@ -2293,11 +2301,10 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   sampling is O(coverpoints) with no allocation after the first hit of a
   sparse bin. Rejected with located diagnostics: crosses, transition,
   wildcard, default, array, `illegal_bins`/`ignore_bins` and guarded bins,
-  bins values depending on arguments, `strobe`, `merge_instances`,
-  `detect_overlap` (SIM-045); options set through an instance and the
-  two-argument queries (SIM-046); sampling events reading a covergroup
-  argument or owner property, coverpoints over 64 bits and `@@(end f)` on a
-  subroutine that can `return` early. Coverage databases are not written.
+  bins values depending on arguments, `merge_instances`, `detect_overlap`
+  (SIM-045); options set through an instance and the two-argument queries
+  (SIM-046); coverpoints over 64 bits and block events on subroutines
+  without a body. Coverage databases are not written.
   `cover` assertions and waveform/VPI observation are separate capabilities.
   SV 19 **[SV-2005]**.
 - 🟨 **Constrained randomization** — `rand` and `randc` packed integral and

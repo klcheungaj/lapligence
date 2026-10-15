@@ -10,7 +10,7 @@ semantic nodes into typed IR. C generation belongs to `emit_c`, not these module
 | `expressions/` | Typed values/conversions, conditionals, ordered predicates, patterns, `inside` and fixed reductions. |
 | `containers/`, `objects/` | Admitted container/object operations and typed native boundaries. |
 | `randomization/` | `randomize()`/`std::randomize()` sites, constraint problems for the C11 solver and `rand_mode`/`constraint_mode` state. |
-| `coverage.rs` | Constructed covergroups (SIM-044): synthetic instance class layouts, coverpoint bin tables (19.5.2/19.5.6), `sample` methods, sampler processes and block-event samplers, `new`, method calls and coverage queries. Declarations never constructed or called produce nothing. |
+| `coverage.rs` | Constructed covergroups (SIM-044): synthetic instance class layouts, coverpoint bin tables (19.5.2/19.5.6), `sample` methods, sampler processes, per-instance event waiters and block-event samplers, `new`, method calls and coverage queries. Declarations never constructed or called produce nothing. |
 | Assertion, clocking and event helpers | Sampling/evaluator contexts, sequence plans, qualifiers, captures and regions. |
 
 Fixed-value collection preserves immediate rows/members, declaration order and

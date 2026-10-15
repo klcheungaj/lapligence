@@ -628,7 +628,7 @@ impl<'a> Codegen<'a> {
             }
             ("type_option", "goal" | "comment") => Ok(()),
             ("type_option", "strobe") if !group_level => {
-                unsupported("can only be set for a covergroup (IEEE 1800-2009 Table 19-3)")
+                unsupported("can only be set for a covergroup (IEEE 1800-2009 Table 19-4)")
             }
             ("type_option", "strobe") if self.eval_bound_i128(value).is_err() => {
                 unsupported("must be a constant expression (IEEE 1800-2009 19.7.1)")

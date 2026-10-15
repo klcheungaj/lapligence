@@ -16,7 +16,10 @@ walkers retain every input; row evaluation stays out of expression trees.
 `coverage_types` are static coverpoint bin tables (validated for width, key
 order and segment shape), `IrStmt::Coverage` creates, configures, samples and
 controls one instance's runtime record, `SampleRegistered` calls a covergroup's
-`sample` method for every registered instance, and `IrObjectQuery::Coverage`
+`sample` method for every registered instance, `Watch` starts the
+per-instance event waiter (a captured helper of the sample method) and
+`SampleInstance` samples one instance from it; with `strobe` both sampling
+statements request a Postponed sample instead (`IrCovergroup::strobe`); and `IrObjectQuery::Coverage`
 returns a real percentage. Sample expressions are ordinary IR operands, so the
 optimizer and storage audit see every coverpoint read.
 
