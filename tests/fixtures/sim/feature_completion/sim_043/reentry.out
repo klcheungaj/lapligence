@@ -1,0 +1,20 @@
+info: reason=1 user=second value format=6
+release kept handle -> 1
+cbStmt -> null LLG_VPI_CALLBACK
+cbForce -> null LLG_VPI_CALLBACK
+whole array -> null LLG_VPI_CALLBACK
+parameter -> null LLG_VPI_CALLBACK
+null object -> null LLG_VPI_HANDLE
+suppressed time -> null LLG_VPI_TIME
+[1] kept-1: runs although its handle was released
+[1] first v=1
+[1] second v=1
+[2] kept: runs although its handle was released
+[2] first v=2
+  remove second -> 1, again -> 0 LLG_VPI_HANDLE
+[3] canceller: remove pending time callback -> 1
+  info of a fired one-shot -> LLG_VPI_HANDLE
+[3] first v=3
+[3] third v=3
+[13] hdl: v=3 m0=0 P=3
+[13] end: first=3 second=1 third=1
