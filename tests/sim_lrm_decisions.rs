@@ -2066,6 +2066,224 @@ fn s44_d9_strobe_block_event() {
 }
 
 #[test]
+fn s45_d1_fixed_bins_more_than_values() {
+    run_decision(
+        "S45-D1_fixed_bins_more_than_values",
+        include_str!("fixtures/sim/lrm_decisions/S45-D1_fixed_bins_more_than_values.out"),
+    );
+}
+
+#[test]
+fn s45_d2_default_only_coverpoint() {
+    run_decision(
+        "S45-D2_default_only_coverpoint",
+        include_str!("fixtures/sim/lrm_decisions/S45-D2_default_only_coverpoint.out"),
+    );
+}
+
+/// The illegal sample is a run-time error: exact stdout, exit status 1.
+#[test]
+fn s45_d3_illegal_bin_continues() {
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S45-D3_illegal_bin_continues",
+        &[],
+        &|label, output| {
+            assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                include_str!("fixtures/sim/lrm_decisions/S45-D3_illegal_bin_continues.out"),
+                "{label}"
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .contains("llg: runtime error: covergroup `g` coverpoint `cp` sampled 7"),
+                "{label}: {output:?}"
+            );
+        },
+    );
+}
+
+#[test]
+fn s45_d4_wildcard_range_bounds() {
+    run_decision(
+        "S45-D4_wildcard_range_bounds",
+        include_str!("fixtures/sim/lrm_decisions/S45-D4_wildcard_range_bounds.out"),
+    );
+}
+
+/// A non-positive bins array size from an argument is a run-time error.
+#[test]
+fn s45_d5_bins_count_not_positive() {
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S45-D5_bins_count_not_positive",
+        &[],
+        &|label, output| {
+            assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                include_str!("fixtures/sim/lrm_decisions/S45-D5_bins_count_not_positive.out"),
+                "{label}"
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains(
+                    "llg: runtime error: bins `b` at tb:18:12: the number of bins is not a positive value"
+                ),
+                "{label}: {output:?}"
+            );
+        },
+    );
+}
+
+#[test]
+fn s45_d6_value_listed_twice() {
+    run_decision(
+        "S45-D6_value_listed_twice",
+        include_str!("fixtures/sim/lrm_decisions/S45-D6_value_listed_twice.out"),
+    );
+}
+
+#[test]
+fn s45_d7_unknown_values() {
+    run_decision(
+        "S45-D7_unknown_values",
+        include_str!("fixtures/sim/lrm_decisions/S45-D7_unknown_values.out"),
+    );
+}
+
+#[test]
+fn s45_d8_nonconsecutive_gap() {
+    run_decision(
+        "S45-D8_nonconsecutive_gap",
+        include_str!("fixtures/sim/lrm_decisions/S45-D8_nonconsecutive_gap.out"),
+    );
+}
+
+#[test]
+fn s45_d9_skipped_sample_history() {
+    run_decision(
+        "S45-D9_skipped_sample_history",
+        include_str!("fixtures/sim/lrm_decisions/S45-D9_skipped_sample_history.out"),
+    );
+}
+
+/// Each default-sequence count is an illegal-bin run-time error.
+#[test]
+fn s45_d10_default_sequence() {
+    sim_cli::run_case_checked_matrix(SUITE, "S45-D10_default_sequence", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            include_str!("fixtures/sim/lrm_decisions/S45-D10_default_sequence.out"),
+            "{label}"
+        );
+        let errors: Vec<String> = String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter(|line| line.starts_with("llg: runtime error:"))
+            .map(|line| {
+                let sampled = line.split(" sampled ").nth(1).unwrap_or_default();
+                let point = line.split(" coverpoint `").nth(1).unwrap_or_default();
+                format!(
+                    "{} {}",
+                    point.split('`').next().unwrap_or_default(),
+                    sampled.split(',').next().unwrap_or_default()
+                )
+            })
+            .collect();
+        assert_eq!(
+            errors,
+            ["v_a 7", "v_a 8", "q 9", "q 1", "q 9"],
+            "{label}: {output:?}"
+        );
+    });
+}
+
+#[test]
+fn s45_d11_length_zero_repetition() {
+    sim_cli::reject_case(
+        SUITE,
+        "S45-D11_length_zero_repetition",
+        "S45-D11_length_zero_repetition.sv:16:29: transition bins `t` of coverpoint `cp` in covergroup `g` specify a transition of length 0",
+    );
+}
+
+#[test]
+fn s45_d12_cross_empty_bins() {
+    run_decision(
+        "S45-D12_cross_empty_bins",
+        include_str!("fixtures/sim/lrm_decisions/S45-D12_cross_empty_bins.out"),
+    );
+}
+
+#[test]
+fn s45_d13_binsof_outside_cross() {
+    sim_cli::reject_case(
+        SUITE,
+        "S45-D13_binsof_outside_cross",
+        "S45-D13_binsof_outside_cross.sv:17:35: binsof in bins `sel` of cross `ab` in covergroup `g` names coverpoint `cd`, which the cross does not cross",
+    );
+}
+
+#[test]
+fn s45_d14_cross_needs_every_point() {
+    run_decision(
+        "S45-D14_cross_needs_every_point",
+        include_str!("fixtures/sim/lrm_decisions/S45-D14_cross_needs_every_point.out"),
+    );
+}
+
+#[test]
+fn s45_d15_overlapping_cross_products() {
+    run_decision(
+        "S45-D15_overlapping_cross_products",
+        include_str!("fixtures/sim/lrm_decisions/S45-D15_overlapping_cross_products.out"),
+    );
+}
+
+#[test]
+fn s45_d16_negated_bin_condition() {
+    run_decision(
+        "S45-D16_negated_bin_condition",
+        include_str!("fixtures/sim/lrm_decisions/S45-D16_negated_bin_condition.out"),
+    );
+}
+
+#[test]
+fn s45_d17_detect_overlap() {
+    sim_cli::run_case_checked_matrix(SUITE, "S45-D17_detect_overlap", &[], &|label, output| {
+        assert!(output.status.success(), "{label}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            include_str!("fixtures/sim/lrm_decisions/S45-D17_detect_overlap.out"),
+            "{label}"
+        );
+        let warnings: Vec<_> = String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter(|line| line.starts_with("llg: warning: covergroup"))
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(
+            warnings,
+            [
+                "llg: warning: covergroup `g` coverpoint `c1`: bins `lo` and `mid` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "llg: warning: covergroup `g` coverpoint `c2`: bins `r` and `r2` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+                "llg: warning: covergroup `g` coverpoint `c3`: bins `v` and `w` overlap (option.detect_overlap, IEEE 1800-2009 19.7)",
+            ],
+            "{label}"
+        );
+    });
+}
+
+#[test]
+fn s45_d18_merged_at_least() {
+    run_decision(
+        "S45-D18_merged_at_least",
+        include_str!("fixtures/sim/lrm_decisions/S45-D18_merged_at_least.out"),
+    );
+}
+
+#[test]
 fn s44_d10_named_block_return() {
     run_decision(
         "S44-D10_named_block_return",

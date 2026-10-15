@@ -211,11 +211,7 @@ access and stops the run after `before`.
 
 | Fixture | Rejected construct | Owner |
 | --- | --- | --- |
-| `neg_cross` | cross coverage | SIM-045 |
-| `neg_illegal_bins`, `neg_transition_bins` | non-value bins forms | SIM-045 |
-| `neg_argument_bins` | bins values that depend on covergroup arguments | SIM-045 |
 | `neg_strobe` | `type_option.strobe` in a coverpoint (Table 19-4) | frontend |
-| `neg_merge_instances` | `type_option.merge_instances = 1` | SIM-045 |
 | `neg_option_access` | `c.option.weight = 2` after instantiation | SIM-046 |
 | `neg_two_arg_query` | `get_inst_coverage(covered, total)` | SIM-046 |
 | `neg_wide_point` | an 80-bit coverpoint | llg limit (64 bits) |

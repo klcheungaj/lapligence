@@ -325,6 +325,12 @@ events. Decisions S44-D1-D9 are in `sim_lrm_decisions`; the runtime store probe 
 `runtime_coverage` in the `runtime` binary, and the capture unit test is
 `core::db::database::coverage::tests`.
 
+SIM-045's bins, transition, cross and option fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_045::)'`, with the same
+matrix and hand-derived percentages; decisions S45-D1-D18 are in
+`sim_lrm_decisions` (`-E 'test(/s45_d/)'`), and the transition automaton unit
+tests are `sim::codegen::lowering::coverage::transitions::tests`.
+
 SIM-047's waveform fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_047::)'` together with
 `-E 'test(/^sim_waveform::/) | test(/^sim_lrm_decisions::s47_/)'` and the

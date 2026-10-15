@@ -12,9 +12,11 @@ validation covers each variant and its cross-table constraints.
 row arity, scalar inputs and the unsigned one-bit result. Optimizer and execution
 walkers retain every input; row evaluation stays out of expression trees.
 
-`coverage.rs` holds functional coverage (SIM-044): `covergroups` and
+`coverage.rs` holds functional coverage (SIM-044, SIM-045): `covergroups` and
 `coverage_types` are static coverpoint bin tables (validated for width, key
-order and segment shape), `IrStmt::Coverage` creates, configures, samples and
+order and segment shape), transition automata (`IrCoverTransitions`) and
+crosses (`IrCoverCross`, select expressions as boxes of bin ranks);
+`IrCoverageType::merge` selects merged type coverage; `IrStmt::Coverage` creates, configures, samples and
 controls one instance's runtime record, `SampleRegistered` calls a covergroup's
 `sample` method for every registered instance, `Watch` starts the
 per-instance event waiter (a captured helper of the sample method) and

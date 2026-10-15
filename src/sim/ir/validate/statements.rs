@@ -1692,6 +1692,9 @@ impl Validator<'_> {
                     })
             }
             IrCoverageStmt::Option { value, site, .. } => !value.is_real() && !site.contains('\0'),
+            // A slot value keeps its own signedness for 19.5.6 and has at
+            // most 64 bits.
+            IrCoverageStmt::Slot { value, .. } => !value.is_real() && value.width <= 64,
             IrCoverageStmt::Sample { points, .. } => points
                 .iter()
                 .all(|sample| !sample.value.is_real() && sample.value.width <= 64),

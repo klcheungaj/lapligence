@@ -2607,7 +2607,8 @@ public:
     visitDefault(symbol);
     if constexpr (std::same_as<T, CovergroupType> ||
                   std::same_as<T, CoverpointSymbol> ||
-                  std::same_as<T, CoverageBinSymbol>)
+                  std::same_as<T, CoverageBinSymbol> ||
+                  std::same_as<T, CoverCrossSymbol>)
       captureCoverageRoles(id, symbol);
     // A prototype without an out-of-block body, and a pure constraint, bind
     // to an invalid constraint: such a block has no BODY (18.5.1, 18.5.2).
@@ -3632,8 +3633,23 @@ private:
       if (symbol.getCrossSelectExpr())
         auxiliary |= LLG_SLANG_COVERAGE_BIN_SELECT;
     }
-    if constexpr (std::same_as<T, CoverCrossSymbol>)
+    if constexpr (std::same_as<T, CoverCrossSymbol>) {
       subkind = LLG_SLANG_COVERAGE_CROSS;
+      // IEEE 1800-2009 A.2.11 crosses coverpoints and variables only; the
+      // frontend expands a crossed cross into its coverpoints.
+      const Scope* parent = symbol.getParentScope();
+      if (const auto* syntaxNode = symbol.getSyntax(); syntaxNode && parent) {
+        for (const auto* item :
+             syntaxNode->template as<syntax::CoverCrossSyntax>().items) {
+          if (item->kind != syntax::SyntaxKind::IdentifierName)
+            continue;
+          const Symbol* found = parent->find(
+              item->template as<syntax::IdentifierNameSyntax>().identifier.valueText());
+          if (found && found->kind == SymbolKind::CoverCross)
+            auxiliary |= LLG_SLANG_COVER_CROSS_OF_CROSS;
+        }
+      }
+    }
     auto& node = capture.output.semantic_nodes[static_cast<size_t>(id)];
     node.subkind = subkind;
     node.auxiliary = auxiliary;
@@ -3679,11 +3695,125 @@ private:
       uint32_t index = 0;
       for (const Expression* value : symbol.getValues())
         capture.semanticRole(id, value, LLG_SLANG_EDGE_OPERAND, index++);
+      // Transition sets and their range lists have no symbol identity; each
+      // becomes a synthetic node owned by the bin. Their items were visited
+      // with the bin's expressions and stay its children.
+      for (const auto& set : symbol.getTransList()) {
+        const uint64_t setId = coverageNode(id, LLG_SLANG_COVERAGE_TRANS_SET, 0);
+        capture.semanticEdge(id, LLG_SLANG_EDGE_OPERAND, setId, index++);
+        uint32_t step = 0;
+        for (const auto& range : set) {
+          uint64_t repeat = LLG_SLANG_COVER_REPEAT_NONE;
+          switch (range.repeatKind) {
+            case CoverageBinSymbol::TransRangeList::None: break;
+            case CoverageBinSymbol::TransRangeList::Consecutive:
+              repeat = LLG_SLANG_COVER_REPEAT_CONSECUTIVE;
+              break;
+            case CoverageBinSymbol::TransRangeList::Nonconsecutive:
+              repeat = LLG_SLANG_COVER_REPEAT_NONCONSECUTIVE;
+              break;
+            case CoverageBinSymbol::TransRangeList::GoTo:
+              repeat = LLG_SLANG_COVER_REPEAT_GOTO;
+              break;
+          }
+          const uint64_t rangeId =
+              coverageNode(id, LLG_SLANG_COVERAGE_TRANS_RANGE, repeat);
+          capture.semanticEdge(setId, LLG_SLANG_EDGE_OPERAND, rangeId, step++);
+          uint32_t item = 0;
+          for (const Expression* value : range.items)
+            capture.semanticEdge(rangeId, LLG_SLANG_EDGE_OPERAND,
+                                 capture.ensureSemantic(value), item++);
+          if (range.repeatFrom)
+            capture.semanticEdge(rangeId, LLG_SLANG_EDGE_LEFT,
+                                 capture.ensureSemantic(range.repeatFrom));
+          if (range.repeatTo)
+            capture.semanticEdge(rangeId, LLG_SLANG_EDGE_RIGHT,
+                                 capture.ensureSemantic(range.repeatTo));
+        }
+      }
       if (const Expression* count = symbol.getNumberOfBinsExpr())
         capture.semanticRole(id, count, LLG_SLANG_EDGE_WIDTH);
       if (const Expression* iff = symbol.getIffExpr())
         capture.semanticRole(id, iff, LLG_SLANG_EDGE_CONDITION);
+      if (const BinsSelectExpr* select = symbol.getCrossSelectExpr())
+        capture.semanticEdge(id, LLG_SLANG_EDGE_BODY, captureSelect(id, *select));
     }
+    if constexpr (std::same_as<T, CoverCrossSymbol>) {
+      uint32_t index = 0;
+      for (const CoverpointSymbol* target : symbol.targets)
+        capture.semanticEdge(id, LLG_SLANG_EDGE_ARGUMENT,
+                             capture.ensureSemantic(target), index++);
+      if (const Expression* iff = symbol.getIffExpr())
+        capture.semanticRole(id, iff, LLG_SLANG_EDGE_CONDITION);
+      index = 0;
+      for (const CoverageOptionSetter& option : symbol.options)
+        capture.semanticRole(id, &option.getExpression(), LLG_SLANG_EDGE_OPERAND, index++);
+    }
+  }
+
+  // A synthetic coverage node (transition set or range list) owned by `bin`.
+  uint64_t coverageNode(uint64_t bin, uint32_t subkind, uint64_t auxiliary) {
+    const uint64_t id = capture.newSyntheticSemantic();
+    const auto& owner = capture.output.semantic_nodes[static_cast<size_t>(bin)];
+    const LlgSlangSourceRange range = owner.range;
+    auto& node = capture.output.semantic_nodes[static_cast<size_t>(id)];
+    node.parent_id = bin;
+    node.kind = LLG_SLANG_SEMANTIC_COVERAGE;
+    node.subkind = subkind;
+    node.auxiliary = auxiliary;
+    node.range = range;
+    node.detail = storeString(capture.output, subkind == LLG_SLANG_COVERAGE_TRANS_SET
+                                                  ? "TransSet"
+                                                  : "TransRangeList");
+    return id;
+  }
+
+  // One cross bin select expression (19.6): a SELECT node per operator. The
+  // intersect items were visited with the bin's expressions.
+  uint64_t captureSelect(uint64_t bin, const BinsSelectExpr& select) {
+    const uint64_t id = capture.ensureSemantic(&select);
+    uint64_t kind = LLG_SLANG_COVER_SELECT_OTHER;
+    switch (select.kind) {
+      case BinsSelectExprKind::Condition: kind = LLG_SLANG_COVER_SELECT_CONDITION; break;
+      case BinsSelectExprKind::Unary: kind = LLG_SLANG_COVER_SELECT_NOT; break;
+      case BinsSelectExprKind::Binary:
+        kind = select.as<BinaryBinsSelectExpr>().op == BinaryBinsSelectExpr::And
+                   ? LLG_SLANG_COVER_SELECT_AND
+                   : LLG_SLANG_COVER_SELECT_OR;
+        break;
+      default: break;
+    }
+    {
+      const auto& owner = capture.output.semantic_nodes[static_cast<size_t>(bin)];
+      const LlgSlangSourceRange range = select.syntax
+                                            ? capture.span(select.syntax->sourceRange())
+                                            : owner.range;
+      auto& node = capture.output.semantic_nodes[static_cast<size_t>(id)];
+      node.parent_id = bin;
+      node.kind = LLG_SLANG_SEMANTIC_COVERAGE;
+      node.subkind = LLG_SLANG_COVERAGE_SELECT;
+      node.auxiliary = kind;
+      node.range = range;
+      node.detail = storeString(capture.output, toString(select.kind));
+    }
+    if (const auto* condition = select.as_if<ConditionBinsSelectExpr>()) {
+      capture.semanticEdge(id, LLG_SLANG_EDGE_REFERENCE,
+                           captureReferenceTarget(condition->target));
+      uint32_t index = 0;
+      for (const Expression* item : condition->intersects)
+        capture.semanticEdge(id, LLG_SLANG_EDGE_OPERAND,
+                             capture.ensureSemantic(item), index++);
+    }
+    else if (const auto* unary = select.as_if<UnaryBinsSelectExpr>()) {
+      capture.semanticEdge(id, LLG_SLANG_EDGE_OPERAND, captureSelect(bin, unary->expr), 0);
+    }
+    else if (const auto* binary = select.as_if<BinaryBinsSelectExpr>()) {
+      const uint64_t left = captureSelect(bin, binary->left);
+      const uint64_t right = captureSelect(bin, binary->right);
+      capture.semanticEdge(id, LLG_SLANG_EDGE_OPERAND, left, 0);
+      capture.semanticEdge(id, LLG_SLANG_EDGE_OPERAND, right, 1);
+    }
+    return id;
   }
 
   template<std::derived_from<Symbol> T>

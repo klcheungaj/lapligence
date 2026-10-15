@@ -10,8 +10,12 @@ use crate::ffi::slang::{
     COVERAGE_BIN_ARRAY, COVERAGE_BIN_DEFAULT, COVERAGE_BIN_DEFAULT_SEQUENCE,
     COVERAGE_BIN_KIND_MASK, COVERAGE_BIN_SELECT, COVERAGE_BIN_SET, COVERAGE_BIN_TRANSITION,
     COVERAGE_BIN_WILDCARD, COVERAGE_BIN_WITH, COVERGROUP_EMBEDDED, COVERGROUP_EXTENDS,
-    COVERGROUP_WITH_SAMPLE, SEMANTIC_COVERAGE_BIN, SEMANTIC_COVERAGE_BODY, SEMANTIC_COVERAGE_CROSS,
-    SEMANTIC_COVERAGE_GROUP, SEMANTIC_COVERAGE_POINT, SEMANTIC_TIMING_BLOCK_EVENT_LIST,
+    COVERGROUP_WITH_SAMPLE, COVER_CROSS_OF_CROSS, COVER_REPEAT_CONSECUTIVE, COVER_REPEAT_GOTO,
+    COVER_REPEAT_NONCONSECUTIVE, COVER_REPEAT_NONE, COVER_SELECT_AND, COVER_SELECT_CONDITION,
+    COVER_SELECT_NOT, COVER_SELECT_OR, SEMANTIC_COVERAGE_BIN, SEMANTIC_COVERAGE_BODY,
+    SEMANTIC_COVERAGE_CROSS, SEMANTIC_COVERAGE_GROUP, SEMANTIC_COVERAGE_POINT,
+    SEMANTIC_COVERAGE_SELECT, SEMANTIC_COVERAGE_TRANS_RANGE, SEMANTIC_COVERAGE_TRANS_SET,
+    SEMANTIC_TIMING_BLOCK_EVENT_LIST,
 };
 
 /// One covergroup type declaration (19.3).
@@ -109,9 +113,80 @@ pub struct CoverageBinInfo {
     pub select: bool,
     /// Open-range-list items (values or value ranges).
     pub values: Vec<NodeId>,
+    /// Transition sets (19.5.1): each a sequence of range lists.
+    pub transitions: Vec<Vec<CoverageTransRange>>,
+    /// The select expression of a cross bin (19.6).
+    pub select_expr: Option<CoverageSelect>,
     /// The `[N]` count expression.
     pub count: Option<NodeId>,
     pub iff: Option<NodeId>,
+}
+
+/// The repetition of one transition range list (19.5.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoverageRepeat {
+    /// No repetition: exactly one sample.
+    None,
+    /// `[* n]` / `[* n:m]`.
+    Consecutive,
+    /// `[= n]` / `[= n:m]`.
+    Nonconsecutive,
+    /// `[-> n]` / `[-> n:m]`.
+    GoTo,
+}
+
+/// One `trans_range_list` of a transition set.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CoverageTransRange {
+    /// The node that locates the range list in diagnostics.
+    pub node: NodeId,
+    /// Range-list items (values or value ranges).
+    pub items: Vec<NodeId>,
+    pub repeat: CoverageRepeat,
+    /// The repeat bounds; `to` is absent for a single count.
+    pub repeat_from: Option<NodeId>,
+    pub repeat_to: Option<NodeId>,
+}
+
+/// A cross bin select expression (19.6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CoverageSelect {
+    /// The node that locates the expression in diagnostics.
+    pub node: NodeId,
+    pub kind: CoverageSelectKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CoverageSelectKind {
+    /// `binsof(target) [intersect { items }]`: `target` is a coverpoint or
+    /// a bin of one.
+    Condition {
+        target: NodeId,
+        intersect: Vec<NodeId>,
+    },
+    Not(Box<CoverageSelect>),
+    And(Box<CoverageSelect>, Box<CoverageSelect>),
+    Or(Box<CoverageSelect>, Box<CoverageSelect>),
+    /// A later-edition or invalid form (set expression, `with` filter,
+    /// cross identifier).
+    Other,
+}
+
+/// One cross declaration (19.6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CoverageCrossInfo {
+    /// The covergroup type that declares the cross.
+    pub group: NodeId,
+    /// The crossed coverpoints, in source order (implicit coverpoints of
+    /// crossed variables included).
+    pub points: Vec<NodeId>,
+    pub iff: Option<NodeId>,
+    /// Cross-level option setters, in source order.
+    pub options: Vec<NodeId>,
+    /// Bins declarations, in source order.
+    pub bins: Vec<NodeId>,
+    /// A cross item named another cross (not 1800-2009 syntax).
+    pub crosses_cross: bool,
 }
 
 impl CoverageBinInfo {
@@ -135,8 +210,7 @@ pub struct CoverageTables {
     pub(super) groups: HashMap<NodeId, CovergroupInfo>,
     pub(super) points: HashMap<NodeId, CoverpointInfo>,
     pub(super) bins: HashMap<NodeId, CoverageBinInfo>,
-    /// Cross declaration -> owning group.
-    pub(super) crosses: HashMap<NodeId, NodeId>,
+    pub(super) crosses: HashMap<NodeId, CoverageCrossInfo>,
     pub(super) group_types: HashMap<TypeId, NodeId>,
 }
 
@@ -147,7 +221,7 @@ pub(super) struct CoverageImport {
     groups: Vec<(NodeId, CovergroupInfo)>,
     points: Vec<(NodeId, CoverpointInfo)>,
     bins: Vec<(NodeId, CoverageBinInfo)>,
-    crosses: Vec<NodeId>,
+    crosses: Vec<(NodeId, CoverageCrossInfo)>,
 }
 
 fn ordered_targets(
@@ -230,6 +304,20 @@ impl CoverageImport {
                         )))
                     }
                 };
+                let transition = flags & COVERAGE_BIN_TRANSITION != 0;
+                let operands = ordered_targets(ids, edges, SemanticEdgeRole::Operand)?;
+                let (values, transitions) = if transition {
+                    let sets = operands
+                        .iter()
+                        .map(|set| transition_set(snapshot, ids, *set))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    (Vec::new(), sets)
+                } else {
+                    (operands, Vec::new())
+                };
+                let select_expr = edge_target(ids, edges, SemanticEdgeRole::Body)?
+                    .map(|node| select_expression(snapshot, ids, node))
+                    .transpose()?;
                 self.bins.push((
                     id,
                     CoverageBinInfo {
@@ -239,18 +327,34 @@ impl CoverageImport {
                         wildcard: flags & COVERAGE_BIN_WILDCARD != 0,
                         default: flags & COVERAGE_BIN_DEFAULT != 0,
                         default_sequence: flags & COVERAGE_BIN_DEFAULT_SEQUENCE != 0,
-                        transition: flags & COVERAGE_BIN_TRANSITION != 0,
+                        transition,
                         with: flags & COVERAGE_BIN_WITH != 0,
                         set: flags & COVERAGE_BIN_SET != 0,
                         select: flags & COVERAGE_BIN_SELECT != 0,
-                        values: ordered_targets(ids, edges, SemanticEdgeRole::Operand)?,
+                        values,
+                        transitions,
+                        select_expr,
                         count: edge_target(ids, edges, SemanticEdgeRole::Width)?,
                         iff: edge_target(ids, edges, SemanticEdgeRole::Condition)?,
                     },
                 ));
             }
-            SEMANTIC_COVERAGE_CROSS => self.crosses.push(id),
-            SEMANTIC_COVERAGE_BODY => {}
+            SEMANTIC_COVERAGE_CROSS => self.crosses.push((
+                id,
+                CoverageCrossInfo {
+                    group: id,
+                    points: ordered_targets(ids, edges, SemanticEdgeRole::Argument)?,
+                    iff: edge_target(ids, edges, SemanticEdgeRole::Condition)?,
+                    options: ordered_targets(ids, edges, SemanticEdgeRole::Operand)?,
+                    bins: Vec::new(),
+                    crosses_cross: semantic.auxiliary & COVER_CROSS_OF_CROSS != 0,
+                },
+            )),
+            // Read through their bin.
+            SEMANTIC_COVERAGE_BODY
+            | SEMANTIC_COVERAGE_TRANS_SET
+            | SEMANTIC_COVERAGE_TRANS_RANGE
+            | SEMANTIC_COVERAGE_SELECT => {}
             other => {
                 return Err(DbError::InvalidSnapshot(format!(
                     "unknown coverage subkind {other}"
@@ -294,7 +398,7 @@ impl CoverageImport {
             }
             tables.points.insert(id, point);
         }
-        for id in self.crosses {
+        for (id, mut cross) in self.crosses {
             let Some(group) = owner(id, &|candidate| group_ids.contains(&candidate)) else {
                 return Err(DbError::InvalidSnapshot(format!(
                     "cross {} has no covergroup",
@@ -304,11 +408,10 @@ impl CoverageImport {
             if let Some(info) = tables.groups.get_mut(&group) {
                 info.crosses.push(id);
             }
-            tables.crosses.insert(id, group);
+            cross.group = group;
+            tables.crosses.insert(id, cross);
         }
         for (id, mut bin) in self.bins {
-            // Bins of a cross have no coverpoint owner; they stay unlinked
-            // and the cross itself is rejected by the simulator.
             let Some(point) = owner(id, &|candidate| {
                 tables.points.contains_key(&candidate) || tables.crosses.contains_key(&candidate)
             }) else {
@@ -319,6 +422,8 @@ impl CoverageImport {
             };
             bin.point = point;
             if let Some(info) = tables.points.get_mut(&point) {
+                info.bins.push(id);
+            } else if let Some(info) = tables.crosses.get_mut(&point) {
                 info.bins.push(id);
             }
             tables.bins.insert(id, bin);
@@ -331,8 +436,89 @@ impl CoverageImport {
         for point in tables.points.values_mut() {
             point.bins.sort_by_key(|id| id.index());
         }
+        for cross in tables.crosses.values_mut() {
+            cross.bins.sort_by_key(|id| id.index());
+        }
         Ok(tables)
     }
+}
+
+fn coverage_node(
+    snapshot: &SlangSnapshot,
+    node: NodeId,
+    subkind: u32,
+) -> Result<(&SemanticNode, &[crate::ffi::slang::SemanticEdge]), DbError> {
+    let semantic = snapshot
+        .semantic_nodes
+        .get(node.index())
+        .filter(|semantic| semantic.kind == SemanticKind::Coverage && semantic.subkind == subkind)
+        .ok_or_else(|| {
+            DbError::InvalidSnapshot(format!(
+                "coverage node {} is not of subkind {subkind}",
+                node.index()
+            ))
+        })?;
+    Ok((semantic, semantic_edges(snapshot, semantic)?))
+}
+
+/// The range lists of one transition set (19.5.1).
+fn transition_set(
+    snapshot: &SlangSnapshot,
+    ids: &SemanticIds,
+    set: NodeId,
+) -> Result<Vec<CoverageTransRange>, DbError> {
+    let (_, edges) = coverage_node(snapshot, set, SEMANTIC_COVERAGE_TRANS_SET)?;
+    ordered_targets(ids, edges, SemanticEdgeRole::Operand)?
+        .into_iter()
+        .map(|range| {
+            let (semantic, edges) = coverage_node(snapshot, range, SEMANTIC_COVERAGE_TRANS_RANGE)?;
+            let repeat = match semantic.auxiliary {
+                COVER_REPEAT_NONE => CoverageRepeat::None,
+                COVER_REPEAT_CONSECUTIVE => CoverageRepeat::Consecutive,
+                COVER_REPEAT_NONCONSECUTIVE => CoverageRepeat::Nonconsecutive,
+                COVER_REPEAT_GOTO => CoverageRepeat::GoTo,
+                other => {
+                    return Err(DbError::InvalidSnapshot(format!(
+                        "unknown transition repetition {other}"
+                    )))
+                }
+            };
+            Ok(CoverageTransRange {
+                node: range,
+                items: ordered_targets(ids, edges, SemanticEdgeRole::Operand)?,
+                repeat,
+                repeat_from: edge_target(ids, edges, SemanticEdgeRole::Left)?,
+                repeat_to: edge_target(ids, edges, SemanticEdgeRole::Right)?,
+            })
+        })
+        .collect()
+}
+
+/// One cross bin select expression (19.6).
+fn select_expression(
+    snapshot: &SlangSnapshot,
+    ids: &SemanticIds,
+    node: NodeId,
+) -> Result<CoverageSelect, DbError> {
+    let (semantic, edges) = coverage_node(snapshot, node, SEMANTIC_COVERAGE_SELECT)?;
+    let operand = |index: u32| -> Result<Box<CoverageSelect>, DbError> {
+        let child = edge_target_at(ids, edges, SemanticEdgeRole::Operand, index)?
+            .ok_or_else(|| DbError::InvalidSnapshot("select operand is missing".to_owned()))?;
+        Ok(Box::new(select_expression(snapshot, ids, child)?))
+    };
+    let kind = match semantic.auxiliary {
+        COVER_SELECT_CONDITION => CoverageSelectKind::Condition {
+            target: edge_target(ids, edges, SemanticEdgeRole::Reference)?.ok_or_else(|| {
+                DbError::InvalidSnapshot("binsof select has no target".to_owned())
+            })?,
+            intersect: ordered_targets(ids, edges, SemanticEdgeRole::Operand)?,
+        },
+        COVER_SELECT_NOT => CoverageSelectKind::Not(operand(0)?),
+        COVER_SELECT_AND => CoverageSelectKind::And(operand(0)?, operand(1)?),
+        COVER_SELECT_OR => CoverageSelectKind::Or(operand(0)?, operand(1)?),
+        _ => CoverageSelectKind::Other,
+    };
+    Ok(CoverageSelect { node, kind })
 }
 
 fn coverage_event(
@@ -508,5 +694,84 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(news.contains(&(info.type_id, 2)));
         assert_eq!(news.len(), 4);
+    }
+
+    #[test]
+    fn transitions_crosses_and_selects_are_typed() {
+        let db = compile(
+            "module top; bit [3:0] a, b, v; \
+             covergroup cg; \
+               ca: coverpoint a { bins t = (1, 2 => [3:4] => 5 [* 2:3]), (6 => 7 [-> 2]); \
+                 bins u[] = (8 => 9 [= 1:2] => 10); bins lo = {[0:3]}; bins hi = {[4:15]}; } \
+               cb: coverpoint b; \
+               x: cross ca, cb, v iff (a != 0) { option.weight = 3; \
+                 bins s = binsof(ca.lo) && !binsof(cb) intersect {[1:2], 9}; \
+                 ignore_bins i = binsof(v) || binsof(ca) intersect {7}; } \
+             endgroup \
+             cg c = new; \
+             endmodule",
+        );
+        let (cg, info) = group(&db, "cg");
+        let ca = db.coverpoint(info.coverpoints[0]).unwrap();
+        let bin = |id: NodeId| db.coverage_bin(id).unwrap();
+        let t = bin(ca.bins[0]);
+        assert!(t.transition && t.values.is_empty());
+        assert_eq!(t.transitions.len(), 2);
+        let first = &t.transitions[0];
+        assert_eq!(first.len(), 3);
+        assert_eq!(first[0].items.len(), 2);
+        assert_eq!(first[0].repeat, CoverageRepeat::None);
+        assert!(first[0].repeat_from.is_none());
+        assert_eq!(first[2].repeat, CoverageRepeat::Consecutive);
+        assert!(first[2].repeat_from.is_some() && first[2].repeat_to.is_some());
+        assert_eq!(t.transitions[1][1].repeat, CoverageRepeat::GoTo);
+        assert!(t.transitions[1][1].repeat_to.is_none());
+        let u = bin(ca.bins[1]);
+        assert!(u.array && u.transition);
+        assert_eq!(u.transitions[0][1].repeat, CoverageRepeat::Nonconsecutive);
+
+        // `v` is crossed as a variable: the frontend creates an implicit
+        // coverpoint for it (19.6).
+        assert_eq!(info.crosses.len(), 1);
+        let cross = db.coverage_cross(info.crosses[0]).unwrap();
+        assert_eq!(cross.group, cg);
+        assert_eq!(cross.points.len(), 3);
+        assert_eq!(cross.points[0], info.coverpoints[0]);
+        assert_eq!(db.node(cross.points[2]).name, "v");
+        assert!(db.coverpoint(cross.points[2]).is_some());
+        assert!(info.coverpoints.contains(&cross.points[2]));
+        assert!(cross.iff.is_some() && !cross.crosses_cross);
+        assert_eq!(cross.options.len(), 1);
+        assert_eq!(cross.bins.len(), 2);
+        let s = bin(cross.bins[0]);
+        assert_eq!(s.point, info.crosses[0]);
+        let Some(CoverageSelect {
+            kind: CoverageSelectKind::And(left, right),
+            ..
+        }) = &s.select_expr
+        else {
+            panic!("and expected: {:?}", s.select_expr);
+        };
+        assert!(matches!(
+            &left.kind,
+            CoverageSelectKind::Condition { target, intersect } if *target == ca.bins[2] && intersect.is_empty()
+        ));
+        let CoverageSelectKind::Not(inner) = &right.kind else {
+            panic!("not expected: {right:?}");
+        };
+        assert!(matches!(
+            &inner.kind,
+            CoverageSelectKind::Condition { target, intersect }
+                if *target == info.coverpoints[1] && intersect.len() == 2
+        ));
+        let i = bin(cross.bins[1]);
+        assert_eq!(i.kind, CoverageBinKind::Ignore);
+        assert!(matches!(
+            &i.select_expr,
+            Some(CoverageSelect {
+                kind: CoverageSelectKind::Or(..),
+                ..
+            })
+        ));
     }
 }

@@ -1,0 +1,28 @@
+sg 1: b2 0 b3 0 b5 0 b6 0 b7 0
+sg 2: b2 0 b3 0 b5 0 b6 0 b7 0
+sg 3: b2 0 b3 0 b5 0 b6 0 b7 0
+sg 4: b2 0 b3 0 b5 0 b6 0 b7 0
+sg 5: b2 0 b3 0 b5 0 b6 0 b7 0
+sg 6: b2 0 b3 1 b5 0 b6 0 b7 0
+sg 7: b2 0 b3 1 b5 0 b6 0 b7 0
+sg 8: b2 1 b3 1 b5 0 b6 0 b7 0
+sg 9: b2 1 b3 2 b5 0 b6 0 b7 0
+sg 10: b2 2 b3 2 b5 0 b6 0 b7 0
+sg 11: b2 2 b3 3 b5 0 b6 0 b7 0
+sg 12: b2 2 b3 3 b5 0 b6 1 b7 0
+sg 13: b2 2 b3 3 b5 0 b6 1 b7 1
+sg 14: b2 2 b3 3 b5 0 b6 1 b7 1
+sg 15: b2 2 b3 3 b5 1 b6 1 b7 1
+sg 16: b2 2 b3 3 b5 2 b6 1 b7 1
+sg 17: b2 2 b3 3 b5 3 b6 1 b7 1
+sg 18: b2 2 b3 3 b5 4 b6 1 b7 1
+cg 36.36 100.00 22.22
+removed 25.00
+removed 75.00
+instances 100.00 0.00 50.00
+skip 0.00 0.00
+skip 0.00 100.00
+stopped 0.00
+stopped 100.00
+x 0.00 100.00
+wild 50.00

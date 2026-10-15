@@ -25,7 +25,7 @@ and payloads; escaping or unproven cells retain stable heap owners. Feature guar
 | `input.rs`, `native_tasks.rs` | File/plusarg targets, text, queue/random calls and VPI arguments. |
 | `native_access.rs`, `references.rs`, `mailboxes.rs` | Member/ref resolution, retained identities and message transfers. |
 | `randomize.rs` | Static `llg_cr_problem_t` tables, per-site solver sessions and the solver-step primitives. |
-| `coverage.rs` | Static `llg_cov_type_t`/`llg_cov_group_t` coverpoint tables and the create/option/sample/control/query calls into `rt/coverage/coverage.c` (SIM-044); strobe trampolines and per-instance waiter spawns. |
+| `coverage.rs` | Static `llg_cov_type_t`/`llg_cov_group_t` coverpoint, transition and cross tables and the create/option/sample/control/query calls into `rt/coverage/coverage.c` (SIM-044, SIM-045); a sample opens with `llg_cov_sample_begin`, calls `llg_cov_skip` for a history coverpoint whose `iff` is false and `llg_cov_cross_hit` per cross; strobe trampolines and per-instance waiter spawns. |
 | `streaming.rs` | RHS snapshots, sequential selectors, bounds checks and publication. |
 | `tests.rs`, `tests/` | Structural, ownership-boundary and actual IR-to-C regressions. |
 

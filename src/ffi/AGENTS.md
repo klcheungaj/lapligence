@@ -56,6 +56,12 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   targets, auxiliary bit i = `begin`) and argument bit 2
   (`LLG_SLANG_ARGUMENT_COVERAGE_SAMPLE`). Declaration-only captures omit the
   coverage edges.
+- ABI v24 adds coverage subkinds TRANS_SET/TRANS_RANGE (synthetic nodes owned
+  by a transition bin: OPERAND[i] range lists, then items, LEFT/RIGHT repeat
+  bounds, auxiliary repeat kind) and SELECT (one cross-bin select operator,
+  auxiliary `LLG_SLANG_COVER_SELECT_*`), a bin BODY edge to its select
+  expression, and cross ARGUMENT[i] (crossed coverpoints), CONDITION and
+  OPERAND[i] option edges with the `LLG_SLANG_COVER_CROSS_OF_CROSS` bit.
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;

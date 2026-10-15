@@ -240,6 +240,8 @@ mod sim_043;
 #[path = "sim_feature_completion/sim_044.rs"]
 mod sim_044;
 
+#[path = "sim_feature_completion/sim_045.rs"]
+mod sim_045;
 #[path = "sim_feature_completion/sim_047.rs"]
 mod sim_047;
 

@@ -31,6 +31,16 @@
 #define LLG_MODEL_SHARED
 #endif
 
+// A runtime helper kept out of line so a hot caller does not take on its
+// registers and stack frame (a rare path of a per-sample call, for example).
+#if defined(__GNUC__) || defined(__clang__)
+#define LLG_NOINLINE __attribute__((noinline))
+#elif defined(_MSC_VER)
+#define LLG_NOINLINE __declspec(noinline)
+#else
+#define LLG_NOINLINE
+#endif
+
 // A model definition that may be unreferenced, such as the descriptor of a
 // process that only hosts runtime-called callbacks.
 #if defined(__GNUC__) || defined(__clang__)

@@ -2,7 +2,10 @@
 //! the statements and queries that drive `coverage/coverage.c`.
 use super::native::NativeKind;
 use super::*;
-use crate::sim::ir::{IrCoverBins, IrCoverageQuery, IrCoverageStmt};
+use crate::sim::ir::{
+    IrCoverAutomatic, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverCross,
+    IrCoverTransitions, IrCoverageQuery, IrCoverageStmt,
+};
 
 fn group_name(group: usize) -> String {
     format!("llg_cov_group_{group}")
@@ -12,14 +15,253 @@ fn type_name(coverage_type: usize) -> String {
     format!("llg_cov_type_{coverage_type}")
 }
 
+fn bound(bound: IrCoverBound) -> (&'static str, u64) {
+    match bound {
+        IrCoverBound::Key(key) => ("LLG_COV_BOUND_KEY", key),
+        IrCoverBound::Slot(slot) => ("LLG_COV_BOUND_SLOT", u64::from(slot)),
+        IrCoverBound::Min => ("LLG_COV_BOUND_MIN", 0),
+        IrCoverBound::Max => ("LLG_COV_BOUND_MAX", 0),
+    }
+}
+
+fn optional_string(value: Option<&str>) -> String {
+    value.map_or_else(|| "NULL".to_owned(), c_string_literal)
+}
+
+/// A static array named `name`, or `NULL` when it has no rows.
+fn static_array(out: &mut String, element: &str, name: &str, rows: Vec<String>) -> String {
+    if rows.is_empty() {
+        return "NULL".to_owned();
+    }
+    out.push_str(&format!(
+        "static const {element} {name}[] = {{\n    {}\n}};\n",
+        rows.join(",\n    ")
+    ));
+    name.to_owned()
+}
+
+fn item_rows(items: &[crate::sim::ir::IrCoverItem]) -> Vec<String> {
+    items
+        .iter()
+        .map(|item| {
+            let (lo_kind, lo) = bound(item.lo);
+            let (hi_kind, hi) = bound(item.hi);
+            format!(
+                "{{ UINT64_C({lo}), UINT64_C({hi}), {lo_kind}, {hi_kind}, {} }}",
+                optional_string(item.site.as_deref())
+            )
+        })
+        .collect()
+}
+
+/// The tables of one cross; returns the row of the group's cross array.
+fn cross_tables(out: &mut String, prefix: &str, cross: &IrCoverCross) -> String {
+    let dims = static_array(
+        out,
+        "uint32_t",
+        &format!("{prefix}_dims"),
+        cross
+            .points
+            .iter()
+            .map(|point| format!("{point}u"))
+            .collect(),
+    );
+    let items = static_array(
+        out,
+        "llg_cov_item_t",
+        &format!("{prefix}_items"),
+        item_rows(&cross.items),
+    );
+    let selects = static_array(
+        out,
+        "llg_cov_select_t",
+        &format!("{prefix}_selects"),
+        cross
+            .selects
+            .iter()
+            .map(|select| {
+                format!(
+                    "{{ .dim = {}u, .decl = {}, .intersect = {}u, .negate = {}u, .first_item = {}u, .n_items = {}u }}",
+                    select.dim,
+                    select.decl.map_or(-1, i64::from),
+                    u8::from(select.intersect),
+                    u8::from(select.negate),
+                    select.first_item,
+                    select.n_items
+                )
+            })
+            .collect(),
+    );
+    let mut boxes = Vec::new();
+    let mut box_selects = Vec::new();
+    let mut bins = Vec::with_capacity(cross.bins.len());
+    for bin in &cross.bins {
+        let first_box = boxes.len();
+        for conjunction in &bin.boxes {
+            boxes.push(format!(
+                "{{ .first_select = {}u, .n_selects = {}u }}",
+                box_selects.len(),
+                conjunction.len()
+            ));
+            box_selects.extend(conjunction.iter().map(|select| format!("{select}u")));
+        }
+        bins.push(format!(
+            "{{ .name = {}, .site = {}, .kind = {}u, .guard = {}, .first_box = {first_box}u, .n_boxes = {}u }}",
+            c_string_literal(&bin.name),
+            c_string_literal(&bin.site),
+            bin.kind.code(),
+            bin.guard.map_or(-1, i64::from),
+            bin.boxes.len()
+        ));
+    }
+    let n_boxes = boxes.len();
+    let boxes = static_array(out, "llg_cov_box_t", &format!("{prefix}_boxes"), boxes);
+    let box_selects = static_array(
+        out,
+        "uint32_t",
+        &format!("{prefix}_box_selects"),
+        box_selects,
+    );
+    let bins = static_array(out, "llg_cov_xbin_t", &format!("{prefix}_xbins"), bins);
+    format!(
+        "{{ .name = {}, .n_dims = {}u, .dims = {dims}, .n_selects = {}u, .selects = {selects}, .items = {items}, .n_boxes = {n_boxes}u, .boxes = {boxes}, .box_selects = {box_selects}, .n_bins = {}u, .bins = {bins}, .dynamic = {}u, .type_weight = INT64_C({}) }}",
+        c_string_literal(&cross.name),
+        cross.points.len(),
+        cross.selects.len(),
+        cross.bins.len(),
+        u8::from(cross.dynamic()),
+        cross.type_weight
+    )
+}
+
+/// The transition tables of one coverpoint; returns the table's name.
+fn transition_tables(out: &mut String, prefix: &str, tables: &IrCoverTransitions) -> String {
+    let u64_rows = |values: &[u64]| {
+        values
+            .iter()
+            .map(|value| format!("UINT64_C({value})"))
+            .collect::<Vec<_>>()
+    };
+    let u32_rows = |values: &[u32]| {
+        values
+            .iter()
+            .map(|value| format!("{value}u"))
+            .collect::<Vec<_>>()
+    };
+    let bounds = static_array(
+        out,
+        "uint64_t",
+        &format!("{prefix}_tbounds"),
+        u64_rows(&tables.bounds),
+    );
+    let accept = static_array(
+        out,
+        "uint64_t",
+        &format!("{prefix}_taccept"),
+        u64_rows(&tables.accept),
+    );
+    let steps = static_array(
+        out,
+        "llg_cov_step_t",
+        &format!("{prefix}_tsteps"),
+        tables
+            .steps
+            .iter()
+            .map(|step| {
+                format!(
+                    "{{ .repeat = {}u, .last = {}u, .lo = {}u, .hi = {}u, .state = {}u, .set = {}u }}",
+                    step.repeat.code(),
+                    u8::from(step.last),
+                    step.lo,
+                    step.hi,
+                    step.state,
+                    step.set
+                )
+            })
+            .collect(),
+    );
+    let sets = static_array(
+        out,
+        "llg_cov_tset_t",
+        &format!("{prefix}_tsets"),
+        tables
+            .sets
+            .iter()
+            .map(|set| {
+                format!(
+                    "{{ .bin = {}u, .first_step = {}u, .n_steps = {}u }}",
+                    set.bin, set.first_step, set.steps
+                )
+            })
+            .collect(),
+    );
+    let start_index = static_array(
+        out,
+        "uint32_t",
+        &format!("{prefix}_tstart_index"),
+        u32_rows(&tables.start_index),
+    );
+    let start_sets = static_array(
+        out,
+        "uint32_t",
+        &format!("{prefix}_tstart_sets"),
+        u32_rows(&tables.start_sets),
+    );
+    let bins = static_array(
+        out,
+        "llg_cov_tbin_t",
+        &format!("{prefix}_tbins"),
+        tables
+            .bins
+            .iter()
+            .map(|bin| {
+                format!(
+                    "{{ .name = {}, .site = {}, .kind = {}u, .array = {}u, .guard = {}, .coverable = UINT64_C({}) }}",
+                    c_string_literal(&bin.name),
+                    c_string_literal(&bin.site),
+                    bin.kind.code(),
+                    u8::from(bin.array),
+                    bin.guard.map_or(-1, i64::from),
+                    bin.coverable
+                )
+            })
+            .collect(),
+    );
+    let overlaps = static_array(
+        out,
+        "uint32_t",
+        &format!("{prefix}_toverlaps"),
+        tables
+            .overlaps
+            .iter()
+            .flat_map(|(a, b)| [format!("{a}u"), format!("{b}u")])
+            .collect(),
+    );
+    let name = format!("{prefix}_trans");
+    out.push_str(&format!(
+        "static const llg_cov_trans_t {name} = {{ .n_classes = {}u, .bounds = {bounds}, .words = {}u, .accept = {accept}, .n_steps = {}u, .steps = {steps}, .n_sets = {}u, .sets = {sets}, .start_index = {start_index}, .start_sets = {start_sets}, .n_states = {}u, .window = {}u, .n_bins = {}u, .bins = {bins}, .default_bin = {}, .n_overlaps = {}u, .overlaps = {overlaps} }};\n",
+        tables.bounds.len(),
+        tables.words,
+        tables.steps.len(),
+        tables.sets.len(),
+        tables.states,
+        tables.window,
+        tables.bins.len(),
+        tables.default_bin.map_or(-1, i64::from),
+        tables.overlaps.len()
+    ));
+    format!("&{name}")
+}
+
 /// Static metadata of every covergroup; nothing for a model without one.
 pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
     for (index, coverage_type) in model.coverage_types.iter().enumerate() {
         out.push_str(&format!(
-            "static LLG_MAYBE_UNUSED llg_cov_type_t {} = {{ {}, INT64_C({}), NULL, NULL, 0u, NULL, 0u }};\n",
+            "static LLG_MAYBE_UNUSED llg_cov_type_t {} = {{ .name = {}, .weight = INT64_C({}), .merge = {}u }};\n",
             type_name(index),
             c_string_literal(&coverage_type.name),
-            coverage_type.weight
+            coverage_type.weight,
+            u8::from(coverage_type.merge)
         ));
     }
     for (index, group) in model.covergroups.iter().enumerate() {
@@ -27,17 +269,13 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
         let mut points = Vec::with_capacity(group.points.len());
         for (point_index, point) in group.points.iter().enumerate() {
             let point_prefix = format!("{prefix}_{point_index}");
-            let (kind, n_bins, keys, segments, segment_bins, valued, n_valued) = match &point.bins {
-                IrCoverBins::Auto => (
-                    "LLG_COV_POINT_AUTO",
-                    0,
-                    "NULL".to_owned(),
-                    (0, "NULL".to_owned()),
-                    "NULL".to_owned(),
-                    "NULL".to_owned(),
-                    0,
-                ),
-                IrCoverBins::Enum(keys) => {
+            let (kind, keys) = match &point.automatic {
+                IrCoverAutomatic::Auto => ("LLG_COV_POINT_AUTO", None),
+                IrCoverAutomatic::Enum(keys) => ("LLG_COV_POINT_ENUM", Some(keys)),
+                IrCoverAutomatic::None => ("LLG_COV_POINT_EXPLICIT", None),
+            };
+            let keys_name = match keys {
+                Some(keys) => {
                     out.push_str(&format!(
                         "static const uint64_t {point_prefix}_keys[] = {{ {} }};\n",
                         keys.iter()
@@ -45,75 +283,78 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                             .collect::<Vec<_>>()
                             .join(", ")
                     ));
-                    (
-                        "LLG_COV_POINT_ENUM",
-                        keys.len(),
-                        format!("{point_prefix}_keys"),
-                        (0, "NULL".to_owned()),
-                        "NULL".to_owned(),
-                        "NULL".to_owned(),
-                        0,
-                    )
+                    format!("{point_prefix}_keys")
                 }
-                IrCoverBins::Explicit { segments, valued } => {
-                    let mut bins = Vec::new();
-                    let mut rows = Vec::with_capacity(segments.len());
-                    for segment in segments {
-                        rows.push(format!(
-                            "{{ UINT64_C({}), UINT64_C({}), {}u, {}u }}",
-                            segment.lo,
-                            segment.hi,
-                            bins.len(),
-                            segment.bins.len()
-                        ));
-                        bins.extend(segment.bins.iter().map(|bin| format!("{bin}u")));
-                    }
-                    let segments_name = if rows.is_empty() {
-                        "NULL".to_owned()
-                    } else {
-                        out.push_str(&format!(
-                            "static const llg_cov_segment_t {point_prefix}_segments[] = {{ {} }};\n",
-                            rows.join(", ")
-                        ));
-                        format!("{point_prefix}_segments")
-                    };
-                    let bins_name = if bins.is_empty() {
-                        "NULL".to_owned()
-                    } else {
-                        out.push_str(&format!(
-                            "static const uint32_t {point_prefix}_bins[] = {{ {} }};\n",
-                            bins.join(", ")
-                        ));
-                        format!("{point_prefix}_bins")
-                    };
-                    out.push_str(&format!(
-                        "static const uint8_t {point_prefix}_valued[] = {{ {} }};\n",
-                        valued
-                            .iter()
-                            .map(|valued| if *valued { "1u" } else { "0u" })
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
-                    (
-                        "LLG_COV_POINT_EXPLICIT",
-                        valued.len(),
-                        "NULL".to_owned(),
-                        (rows.len(), segments_name),
-                        bins_name,
-                        format!("{point_prefix}_valued"),
-                        valued.iter().filter(|valued| **valued).count(),
-                    )
-                }
+                None => "NULL".to_owned(),
             };
+            let items_name = static_array(
+                out,
+                "llg_cov_item_t",
+                &format!("{point_prefix}_items"),
+                item_rows(&point.items),
+            );
+            let bins_name = if point.bins.is_empty() {
+                "NULL".to_owned()
+            } else {
+                let rows = point
+                    .bins
+                    .iter()
+                    .map(|bin| {
+                        let (shape, count_is_slot, count) = match bin.shape {
+                            IrCoverBinShape::Scalar => ("LLG_COV_SHAPE_SCALAR", 0, 0),
+                            IrCoverBinShape::PerValue => ("LLG_COV_SHAPE_PER_VALUE", 0, 0),
+                            IrCoverBinShape::Count(IrCoverCount::Const(count)) => {
+                                ("LLG_COV_SHAPE_COUNT", 0, count)
+                            }
+                            IrCoverBinShape::Count(IrCoverCount::Slot(slot)) => {
+                                ("LLG_COV_SHAPE_COUNT", 1, u64::from(slot))
+                            }
+                        };
+                        format!(
+                            "{{ .name = {}, .site = {}, .kind = {}u, .shape = {shape}, .count_is_slot = {count_is_slot}u, .guard = {}, .count = UINT64_C({count}), .first_item = {}u, .n_items = {}u }}",
+                            c_string_literal(&bin.name),
+                            c_string_literal(&bin.site),
+                            bin.kind.code(),
+                            bin.guard.map_or(-1, i64::from),
+                            bin.first_item,
+                            bin.n_items
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                out.push_str(&format!(
+                    "static const llg_cov_bin_t {point_prefix}_bins[] = {{\n    {}\n}};\n",
+                    rows.join(",\n    ")
+                ));
+                format!("{point_prefix}_bins")
+            };
+            let trans = point.transitions.as_ref().map_or_else(
+                || "NULL".to_owned(),
+                |tables| transition_tables(out, &point_prefix, tables),
+            );
             points.push(format!(
-                "{{ {}, {}u, {}u, {kind}, {n_bins}u, {keys}, {}u, {}, {segment_bins}, {valued}, {n_valued}u }}",
+                "{{ .name = {}, .width = {}u, .is_signed = {}u, .kind = {kind}, .dynamic = {}u, .n_keys = {}u, .keys = {keys_name}, .n_bins = {}u, .bins = {bins_name}, .items = {items_name}, .trans = {trans}, .crossed = {}u, .type_weight = INT64_C({}) }}",
                 c_string_literal(&point.name),
                 point.width,
                 u8::from(point.signed),
-                segments.0,
-                segments.1
+                u8::from(point.dynamic()),
+                keys.map_or(0, Vec::len),
+                point.bins.len(),
+                u8::from(point.crossed),
+                point.type_weight,
             ));
         }
+        let crosses = group
+            .crosses
+            .iter()
+            .enumerate()
+            .map(|(index, cross)| cross_tables(out, &format!("{prefix}_x{index}"), cross))
+            .collect::<Vec<_>>();
+        let crosses_name = static_array(
+            out,
+            "llg_cov_cross_t",
+            &format!("{prefix}_crosses"),
+            crosses,
+        );
         let points_name = if points.is_empty() {
             "NULL".to_owned()
         } else {
@@ -137,9 +378,11 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
             }
         };
         out.push_str(&format!(
-            "// Unreferenced when every handle of the group stays null.\nstatic LLG_MAYBE_UNUSED llg_cov_group_t {prefix} = {{ {}, {}u, {points_name}, &{}, NULL, 0u, 0u, NULL, 0u, {strobe}, 0u }};\n",
+            "// Unreferenced when every handle of the group stays null.\nstatic LLG_MAYBE_UNUSED llg_cov_group_t {prefix} = {{ .name = {}, .n_points = {}u, .points = {points_name}, .n_crosses = {}u, .crosses = {crosses_name}, .n_slots = {}u, .type = &{}, .strobe_sample = {strobe} }};\n",
             c_string_literal(&group.name),
             group.points.len(),
+            group.crosses.len(),
+            group.slots,
             type_name(group.coverage_type)
         ));
     }
@@ -178,6 +421,17 @@ impl Frame<'_, '_> {
                 ));
                 self.discard(value);
             }
+            IrCoverageStmt::Slot {
+                record,
+                slot,
+                value,
+            } => {
+                let record = self.chandle(record)?;
+                let record = self.scalar("void*", record);
+                let value = self.expression(value)?;
+                self.line(format!("llg_cov_slot({record}, {slot}u, {});", value.code));
+                self.discard(value);
+            }
             IrCoverageStmt::Ready { record } => {
                 let record = self.chandle(record)?;
                 self.line(format!("llg_cov_ready({record});"));
@@ -189,9 +443,30 @@ impl Frame<'_, '_> {
                     group_name(*group)
                 ));
             }
-            IrCoverageStmt::Sample { record, points } => {
+            IrCoverageStmt::Sample {
+                record,
+                guards,
+                points,
+                crosses,
+            } => {
                 let record = self.chandle(record)?;
                 let record = self.scalar("void*", record);
+                // Bin guards are evaluated once per sample, before any value
+                // is counted (19.5).
+                let guard_array = if guards.is_empty() {
+                    "NULL".to_owned()
+                } else {
+                    let array = self.declare_array("uint8_t", "cov_guards", guards.len());
+                    for (index, guard) in guards.iter().enumerate() {
+                        let condition = self.condition(guard)?;
+                        self.line(format!("{array}[{index}] = (uint8_t)({condition});"));
+                    }
+                    array
+                };
+                if !crosses.is_empty() {
+                    // Crosses read the bins this sample's coverpoints count.
+                    self.line(format!("llg_cov_sample_begin({record});"));
+                }
                 for sample in points {
                     // The value is evaluated only when its guard holds.
                     let guarded = match &sample.iff {
@@ -206,11 +481,34 @@ impl Frame<'_, '_> {
                     // the borrow ends with the call.
                     let value = self.operand(&sample.value)?;
                     self.line(format!(
-                        "llg_cov_hit({record}, {}u, {});",
+                        "llg_cov_hit({record}, {}u, {}, {guard_array});",
                         sample.point,
                         value.address()
                     ));
                     self.discard(value);
+                    if guarded && sample.history {
+                        // A skipped sample ends the sequences in progress
+                        // (decision S45-D9).
+                        self.line("} else {");
+                        self.line(format!("llg_cov_skip({record}, {}u);", sample.point));
+                        self.line("}");
+                    } else if guarded {
+                        self.line("}");
+                    }
+                }
+                for cross in crosses {
+                    let guarded = match &cross.iff {
+                        Some(iff) => {
+                            let condition = self.condition(iff)?;
+                            self.line(format!("if ({condition}) {{"));
+                            true
+                        }
+                        None => false,
+                    };
+                    self.line(format!(
+                        "llg_cov_cross_hit({record}, {}u, {guard_array});",
+                        cross.cross
+                    ));
                     if guarded {
                         self.line("}");
                     }
