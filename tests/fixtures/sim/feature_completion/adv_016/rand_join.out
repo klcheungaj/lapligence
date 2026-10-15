@@ -1,0 +1,6 @@
+0.5: order errors 0, interleavings 60, first step uniform 1
+1.0: aA@b aAb@
+0.0: baA@
+integral 1: aA@b aAb@
+values: errors 0, several interleavings 1
+timed: total 8, s1 before s2 1, f1 before f2 1

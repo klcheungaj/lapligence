@@ -531,4 +531,43 @@ mod tests {
             ));
         }
     }
+
+    #[test]
+    fn each_production_is_reached_once_through_the_children_tree() {
+        // The productions are members of the statement's block scope, which
+        // is itself a child of the enclosing statement and of the module.
+        // Only the randsequence statement may own them as children, or tree
+        // walks (lint, analyses) see every code block several times.
+        let db = compile(
+            "module tb; int n; initial begin \
+               randsequence (main) \
+                 main : step ; \
+                 step : { n = 1; } ; \
+               endsequence \
+             end endmodule",
+        );
+        fn walk(db: &Db, id: NodeId, seen: &mut Vec<NodeId>) {
+            seen.push(id);
+            for child in db.node(id).children() {
+                walk(db, *child, seen);
+            }
+        }
+        let mut seen = Vec::new();
+        for top in db.tops() {
+            walk(&db, *top, &mut seen);
+        }
+        for name in ["main", "step"] {
+            let (id, _) = production(&db, name);
+            assert_eq!(seen.iter().filter(|seen| **seen == id).count(), 1, "{name}");
+            assert!(matches!(
+                db.node_kind(db.node(id).parent().expect("production parent")),
+                NodeKind::Stmt(StmtKind::Begin)
+            ));
+        }
+        let assignments = seen
+            .iter()
+            .filter(|id| matches!(db.node_kind(**id), NodeKind::Stmt(StmtKind::Assign { .. })))
+            .count();
+        assert_eq!(assignments, 1);
+    }
 }

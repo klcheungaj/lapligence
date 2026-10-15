@@ -1,0 +1,19 @@
+down 3
+down 2
+down 1
+bottom
+up 1
+up 2
+up 3
+fact=3628800 fib=610 parity=odd 320.0 8
+deep returned 9000
+unbalanced=0 max depth within bound=1 nested=1
+2 hop 4
+4 hop 3
+5 other process
+6 hop 2
+8 hop 1
+8 back 1
+8 back 2
+8 back 3
+8 back 4

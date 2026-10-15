@@ -1,0 +1,8 @@
+int -42 byte -5 real 3.750 shortreal 0.25 string word color BLUE
+packet a5beef bit 1
+wide 3e02468acf13579bde 000000000000000002
+n[1]=10 n[2]=20 n[3]=40 count=3
+sum3 60
+label xxx-yyy
+scaled 12 10
+choices 107 107
