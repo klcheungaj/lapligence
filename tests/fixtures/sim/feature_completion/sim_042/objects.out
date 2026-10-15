@@ -1,0 +1,52 @@
+scope=tb.main type=vpiNamedBegin
+module=tb
+top=tb def=tb top_module=1
+modules: u1:vpiModule
+internal: gen[0]:vpiGenScope gen[1]:vpiGenScope main:vpiNamedBegin
+variables: b:vpiByteVar:8 bv:vpiBitVar:4 grid:vpiRegArray:6 i:vpiIntVar:32 ii:vpiIntegerVar:32 mem:vpiRegArray:4 r:vpiRealVar t:vpiTimeVar:64 up:vpiReg:4 v:vpiReg:8
+nets: w:vpiNet:4
+reals: r:vpiRealVar
+u1 def=leaf parent=tb top_module=0
+u1.parameters: L:vpiParameter:32 P:vpiParameter:8 W:vpiParameter:32
+param L local=1 bin=00000000000000000000000000001000 dec=8
+param P local=0 bin=1010x1z0 dec=X
+param W local=0 bin=00000000000000000000000000000100 dec=4
+port a index=0 direction=1 size=4 low=tb.u1.a
+port y index=1 direction=2 size=4 low=tb.u1.y
+gen1 type=vpiGenScope name=gen[1] full=tb.gen[1]
+gen1.gv full=tb.gen[1].gv bin=01
+main.local_v full=tb.main.local_v bin=101
+relative miss=1
+tb.v type=vpiReg size=8 signed=0 natural=9 bin=00111100 hex=3c dec=60 int=60
+tb.up type=vpiReg size=4 signed=0 natural=9 bin=10xz hex=X dec=X int=8
+tb.w type=vpiNet size=4 signed=0 natural=9 bin=0011 hex=3 dec=3 int=3
+tb.r type=vpiRealVar size=-1 signed=0 natural=7 real=1.250 int=1
+tb.i type=vpiIntVar size=32 signed=1 natural=6 bin=11111111111111111111111111111011 hex=fffffffb dec=-5 int=-5
+tb.bv type=vpiBitVar size=4 signed=0 natural=9 bin=1010 hex=a dec=10 int=10
+tb.b type=vpiByteVar size=8 signed=1 natural=6 bin=11111110 hex=fe dec=-2 int=-2
+tb.ii type=vpiIntegerVar size=32 signed=1 natural=6 bin=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx hex=xxxxxxxx dec=x int=0
+tb.t type=vpiTimeVar size=64 signed=0 natural=11 bin=0000000000000000000000000000000000000000000000000000000001100100 hex=0000000000000064 dec=100 int=100
+t time=0:100
+v: [7:0]
+up: [0:3]
+bv: [5:2]
+mem type=vpiRegArray size=4 memory=1 array=1
+mem: [0:3]
+mem[2] type=vpiReg member=1 name=mem[2] full=tb.mem[2] index=2 size=8 bin=1x0z0000 hex=X0 dec=X
+mem[2] parent=mem
+mem[4]=null
+elements: mem[0]=11 mem[1]=22 mem[2]=X0 mem[3]=44
+grid size=6 memory=0
+ranges: [1:0] [2:0]
+grid[0][1] name=grid[0][1] type=vpiReg dec=-1 int=-1
+tb.grid[1][2]=3 same=0
+v[5:2] type=vpiPartSelect size=4 bin=1111
+v[5:2]: [5:2]
+v[0] type=vpiRegBit name=v[0] scalar=0
+up[2] scalar=x
+v bits: 0 0 1 1 1 1 0 0
+w[1] type=vpiNetBit
+mem[1][5] type=vpiRegBit scalar=1
+after: v=28 mem[3]=a5 up=10x1 bv=0001
+failures=0
+v=28 up=10x1 w=7 mem3=a5 grid10=77 r=3.50 i=-123 bv=0001 local=010 gv1=10

@@ -17,8 +17,20 @@ fn companion(directory: &sim_harness::TempDir, stem: &str) -> Option<String> {
 /// time. This is the route on Windows, where a DLL cannot import symbols from
 /// the model executable; it works on every host.
 fn static_companion(directory: &sim_harness::TempDir, stem: &str) -> String {
+    static_archive(SUITE, directory, stem, &[])
+}
+
+/// Build `tests/fixtures/sim/<suite>/<stem>.c` (with extra compiler `flags`)
+/// into a static archive in `directory` and return its path. Shared with the
+/// SIM-042 VPI fixtures, whose static route is the same `--dpi-lib` link.
+pub(super) fn static_archive(
+    suite: &str,
+    directory: &sim_harness::TempDir,
+    stem: &str,
+    flags: &[&str],
+) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let source = root.join(format!("tests/fixtures/sim/{SUITE}/{stem}.c"));
+    let source = root.join(format!("tests/fixtures/sim/{suite}/{stem}.c"));
     let compiler = c_compiler::host_c_compiler();
     let msvc = c_compiler::is_msvc(&compiler);
     let object = directory
@@ -40,7 +52,7 @@ fn static_companion(directory: &sim_harness::TempDir, stem: &str) -> String {
     if let Ok(flags) = std::env::var("LLG_CFLAGS") {
         compile.args(flags.split_whitespace());
     }
-    compile.arg(&source);
+    compile.args(flags).arg(&source);
     let output = sim_harness::run_command(&mut compile, std::time::Duration::from_secs(60))
         .expect("C compiler for the DPI fixture");
     assert!(

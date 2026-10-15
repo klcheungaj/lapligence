@@ -1,0 +1,46 @@
+get bogus: refused level=3 again=3 code=LLG_VPI_HANDLE
+get_str bogus: refused level=3 again=3 code=LLG_VPI_HANDLE
+get null: refused level=3 again=3 code=LLG_VPI_HANDLE
+lookup: ok level=0 again=0 code=-
+get unknown property: refused level=3 again=3 code=LLG_VPI_UNSUPPORTED
+get_str defname of reg: refused level=3 again=3 code=LLG_VPI_UNSUPPORTED
+relation lowconn of reg: refused level=3 again=3 code=LLG_VPI_RELATION
+iterate nets of reg: refused level=3 again=3 code=LLG_VPI_UNSUPPORTED
+iterate nets of tb: refused level=0 again=0 code=-
+iterate params of tb: ok level=0 again=0 code=-
+iterate modules of tb (none): refused level=0 again=0 code=-
+lookup missing: refused level=3 again=3 code=LLG_VPI_NOT_FOUND
+size of real: refused level=3 again=3 code=LLG_VPI_UNSUPPORTED
+bin of real: refused level=3 again=3 code=LLG_VPI_FORMAT
+unknown format: refused level=3 again=3 code=LLG_VPI_FORMAT
+value of whole array: refused level=3 again=3 code=LLG_VPI_VALUE
+index out of range: refused level=3 again=3 code=LLG_VPI_INDEX
+too many indices: refused level=3 again=3 code=LLG_VPI_INDEX
+bit index out of range: refused level=3 again=3 code=LLG_VPI_INDEX
+part select reversed: refused level=3 again=3 code=LLG_VPI_NOT_FOUND
+put to parameter: refused level=3 again=3 code=LLG_VPI_VALUE
+put to net array element: refused level=3 again=3 code=LLG_VPI_VALUE
+put bad flags: refused level=3 again=3 code=LLG_VPI_FLAGS
+put malformed decimal: refused level=3 again=3 code=LLG_VPI_VALUE
+cancel non-event: refused level=3 again=3 code=LLG_VPI_FLAGS
+systf call outside a call: refused level=3 again=3 code=LLG_VPI_RELATION
+register bad name: refused level=3 again=3 code=LLG_VPI_REGISTRATION
+register duplicate: refused level=3 again=3 code=LLG_VPI_DUPLICATE
+register bad function type: refused level=3 again=3 code=LLG_VPI_REGISTRATION
+element: ok level=0 again=0 code=-
+release element: ok level=0 again=0 code=-
+use released element: refused level=3 again=3 code=LLG_VPI_HANDLE
+release twice: refused level=3 again=3 code=LLG_VPI_HANDLE
+reused handle differs=1
+old handle after slot reuse: refused level=3 again=3 code=LLG_VPI_HANDLE
+scanned 4 elements
+scan finished iterator: refused level=3 again=3 code=LLG_VPI_HANDLE
+release catalog object: ok level=0 again=0 code=-
+catalog object stays valid: ok level=0 again=0 code=-
+kept argument type=39 value=91
+put to expression argument: refused level=3 again=3 code=LLG_VPI_VALUE
+argument after its call: refused level=3 again=3 code=LLG_VPI_HANDLE
+iterator after its call: refused level=3 again=3 code=LLG_VPI_HANDLE
+call handle persists: ok level=0 again=0 code=-
+arguments of an inactive call: refused level=3 again=3 code=LLG_VPI_RELATION
+stress live=20000 stale=40000

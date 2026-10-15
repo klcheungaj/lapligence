@@ -1,0 +1,33 @@
+sum call line=17 size=12 functype=5
+sum=15
+sum call line=19 size=12 functype=5
+sum=-2
+noret calltf puts nothing
+noret=0
+half string put -> null level=3
+half=0.25
+big size=64
+big=8589934597
+args call type=vpiSysTaskCall scope=tb.run name=$args
+arg0 type=vpiReg name=v size=8 bin=00000101
+arg0 put level=0
+arg1 type=vpiReg name=mem[1] size=8 bin=00000011
+arg1 put level=0
+arg2 type=vpiPartSelect name=v[3:0] size=4 bin=1001
+arg3 type=vpiConstant const=3 name=<null> size=3 bin=1x0
+arg3 put level=3
+arg4 type=vpiConstant const=6 name=<null> size=24 bin=011101000111100001110100
+arg4 string=txt
+arg5 type=vpiRealVar real=0.50
+arg6 type=vpiOperation name=<null> size=8 bin=00000110
+arg6 put level=3
+v=9 mem1=4
+count line=30 calls=1
+count line=30 calls=2
+count line=31 calls=1
+inactive put -> null level=0
+inactive get=<error 3>
+compiletf=5 sizetf=1
+systf name=$sum type=2 functype=5 registered=$sum user=1
+noret systf same=1
+noret userdata=null
