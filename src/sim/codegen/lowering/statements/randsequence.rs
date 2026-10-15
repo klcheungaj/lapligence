@@ -769,9 +769,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                     name: name.clone(),
                     init: Some(self.cg.lower_string(&self.path, rhs)?),
                 });
-                stores.push(
-                    self.lower_string_format_target(lhs, IrStringExpr::LocalRead(name))?,
-                );
+                stores.push(self.lower_string_format_target(lhs, IrStringExpr::LocalRead(name))?);
                 continue;
             }
             if !self.frame_storable(lhs) {
