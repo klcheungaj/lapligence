@@ -2104,7 +2104,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         iterator->iter_kind = ITER_BITS;
         iterator->object = row;
         iterator->element = element;
-        llg_vpi_model_object_t* object = row_object(row);
+        /* The catalog never moves, so `object` survives the slot growth. */
         iterator->count = object->width;
         iterator->aux = vpiBit;
         return encode_handle(index);
