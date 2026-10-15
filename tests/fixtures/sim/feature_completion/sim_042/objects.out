@@ -16,6 +16,7 @@ port y index=1 direction=2 size=4 low=tb.u1.y
 gen1 type=vpiGenScope name=gen[1] full=tb.gen[1]
 gen1.gv full=tb.gen[1].gv bin=01
 main.local_v full=tb.main.local_v bin=101
+vlog_info=1 product=lapligence argv0=set
 relative miss=1
 tb.v type=vpiReg size=8 signed=0 natural=9 bin=00111100 hex=3c dec=60 int=60
 tb.up type=vpiReg size=4 signed=0 natural=9 bin=10xz hex=X dec=X int=8

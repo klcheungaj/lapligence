@@ -2229,14 +2229,35 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   without being linked, or a user system task that was never registered (the
   frontend already rejects an unknown `$name`). Use VPI (`vlog_startup_routines`)
   or DPI-C instead. V ch.20–23, Annex E–F.
-- 🟨 **PLI/VPI bridge** — Generated metadata, registration,
-  `compiletf/sizetf/calltf`, scalar/vector/real values, hierarchy lookup/iteration,
-  plugin startup and start/end callbacks have paths; arguments use registered
-  snapshots. Full `vpi_`, arbitrary properties/iterators/regions/control
-  remain unsupported. Registered packed/real system-function calls have direct
-  expression-evaluation paths; foreign calls nested in proven read-only HDL
-  helpers remain unsupported. Direct calls do not establish those helper paths.
-  V ch.20–27 **[1995/2001]**.
+- 🟨 **PLI/VPI bridge** — A generated object catalog and the common VPI
+  routines (SIM-042): `vpi_handle_by_name` (full names from the top, names
+  relative to a scope, and constant element/bit/part selects in the name),
+  `vpi_handle_by_index`/`_multi_index`, `vpi_handle` (`vpiParent`, `vpiScope`,
+  `vpiModule`, `vpiLeftRange`/`vpiRightRange`, `vpiIndex`, `vpiLowConn`,
+  `vpiUserSystf`, `vpiSysTfCall`), `vpi_iterate`/`vpi_scan` (modules from NULL,
+  `vpiModule`, `vpiInternalScope`, `vpiVariables`, `vpiNet`, `vpiReg` and the
+  other variable types, `vpiParameter`, `vpiPort`, `vpiRange`, array elements,
+  `vpiBit`, `vpiArgument`), `vpi_get`/`vpi_get_str` type, name, size, range,
+  sign, direction, net type, array and port properties, `vpi_compare_objects`,
+  `vpi_release_handle`/`vpi_free_object` and `vpi_get_vlog_info`. Objects are
+  modules, interfaces, generate scopes (SV 27.4 names), named blocks, ports,
+  parameters, nets, variables with their exact types (`vpiIntVar`,
+  `vpiBitVar`, `vpiByteVar`, `vpiTimeVar`, ...), unpacked arrays and their
+  elements, bit-selects and part-selects. `vpi_get_value` serves every Table
+  38-3 format with exact X/Z; `vpi_put_value` writes through the storage APIs
+  with no delay, inertial, transport and pure-transport delays,
+  `vpiReturnEvent`/`vpiCancelEvent`, force and release. User system tasks and
+  functions run compiletf, sizetf (once per registration) and calltf with the
+  38.34 return conventions and per-call-site user data. Handles are
+  generation-checked: stale, released or invalid handles give a
+  `vpi_chk_error` level, never a use-after-free. Applications load from
+  `LLG_VPI_PLUGIN` or link as a static archive with `--dpi-lib` (the Windows
+  route). Decisions S42-D1..D13 in `docs/lrm_decisions.md`; limits in
+  `docs/known_issues.md` ("VPI object model limits"). Callbacks beyond start
+  and end of simulation are SIM-043. Registered packed/real system-function
+  calls have direct expression-evaluation paths; foreign calls nested in proven
+  read-only HDL helpers remain unsupported. SV ch.36-38, V ch.20–27
+  **[1995/2001]**.
 - ⬜ **Checkers** — Checker execution and checker bind are not implemented;
   module/interface structural bind and ordinary assertion instances do not imply
   checker support. SV **[SV-2009]**.

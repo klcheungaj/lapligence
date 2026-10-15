@@ -150,6 +150,11 @@ static void hierarchy(void) {
     vpi_printf("main.local_v full=%s bin=%s\n",
                local ? str(vpiFullName, local) : "<none>",
                local ? format_value(local, vpiBinStrVal) : "-");
+    s_vpi_vlog_info info;
+    memset(&info, 0, sizeof(info));
+    PLI_INT32 got = vpi_get_vlog_info(&info);
+    vpi_printf("vlog_info=%d product=%s argv0=%s\n", (int)got, text(info.product),
+               info.argc >= 1 && info.argv && info.argv[0] ? "set" : "missing");
     /* Relative lookup is confined to the scope (38.21). */
     vpi_printf("relative miss=%d\n", vpi_handle_by_name((PLI_BYTE8*)"v", u1) == NULL &&
                                          vpi_chk_error(NULL) == vpiError);

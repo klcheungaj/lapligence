@@ -33,6 +33,8 @@ checked against a run; no line was accepted only because the run printed it.
 - **Lookup.** `vpi_handle_by_name("gv", gen[1])` finds `tb.gen[1].gv`
   (relative to the scope, 38.21); `"v"` relative to `u1` is not found because a
   scoped lookup searches only that scope (S42-D11).
+- **Tool information.** `vpi_get_vlog_info` returns 1 with the model's
+  command line (`argv[0]` set) and the product name `lapligence` (38.17).
 - **Values.** `up` is `logic [0:3]` = `10xz`: `vpiIntVal` reads X/Z bits as 0
   (38.15, Table 38-3) so it is 8; its hex digit has an x and a z bit, so it is
   `X`. `vpiObjTypeVal` gives `vpiVectorVal` (9) for vectors, `vpiIntVal` (6)

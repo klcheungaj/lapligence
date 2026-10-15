@@ -612,10 +612,23 @@ never changes scheduler time. Integer queries use quotient/remainder, halves up;
 realtime is fractional. The runtime consumes integer design-precision ticks;
 codegen owns scaling.
 
-VPI handles are generation-checked; retain error records, real catalog width 0 and
-simulator-owned vector scratch valid until the next query/shutdown. Call-argument
-iterators carry owner identity and invalidate at every compiletf/sizetf/calltf exit.
-Tear down VPI/runtime queues before model storage.
+VPI handles (`llg_vpi.c`) are encodings of a slot index and a generation that the
+runtime decodes but never dereferences: catalog rows keep the model generation,
+dynamic slots (elements, selects, iterators, constants, calls, arguments, events,
+callbacks) bump theirs on release, so stale, released or forged handles are
+`vpi_chk_error` errors, never use-after-free. Every handle names static model
+storage (catalog rows and their cells); none names a collectable object, so no GC
+pin is needed. Keep model init O(1): the catalog is validated and indexed on the
+first VPI call. Slots made inside a compiletf/calltf (argument handles and
+iterators, element/select arguments) are owned by that invocation and released
+when it returns; the call handle itself persists per call site with its user
+data. sizetf runs once per registration after the first site's compiletf with no
+active call. Retain error records, real catalog width 0 and simulator-owned value
+buffers valid until the next query/shutdown. Puts go through `llg_ba`/`llg_ba_d`
+(no delay), NBA-region callbacks (delayed modes, `vpiSchedEvent` records) or the
+force table (`llg_force_value_parts`, `llg_force_real_value`, release through
+`llg_release_parts`/`llg_release_real`). Tear down VPI/runtime queues before
+model storage.
 
 Waveforms use one simulation-thread producer and one POSIX/Win32 writer owning the
 file. Ring events own values; release/acquire publication, condition-variable

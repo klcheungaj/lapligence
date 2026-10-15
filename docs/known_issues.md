@@ -1765,3 +1765,48 @@ one of the rejected built-in names is distinguished was not checked.
 
 None: the decision is to reject. Reproduce with the files in
 [adv_032](../tests/fixtures/sim/feature_completion/adv_032/readme.md).
+
+## VPI object model limits (SIM-042)
+
+**Status:** open; the supported surface is listed in `docs/sim_features.md`.
+
+### Symptom
+
+These VPI requests return NULL, `vpiUndefined` or 0 with a `vpi_chk_error`
+error (`LLG_VPI_UNSUPPORTED`, `LLG_VPI_INDEX` or `LLG_VPI_NOT_FOUND`) instead
+of a handle or value:
+
+- objects outside the generated catalog: sparse fixed arrays (stored in a keyed
+  container), dynamic arrays, queues, associative arrays, strings, class
+  objects and their properties, structure and union members (`vpiMember`),
+  interface ports and modports, automatic variables;
+- subarray handles: `vpi_handle_by_multi_index` with fewer indices than the
+  array has unpacked dimensions, and bit handles of a `vpiPackedArrayVar`;
+- expression structure: an argument that is not a whole object, a constant
+  element or select, or a literal is a `vpiOperation` value snapshot without
+  `vpiOperand` traversal. A variable converted to the formal's type (for
+  example an 8-bit variable passed to a 16-bit formal) is such a snapshot too,
+  because the owned database does not mark implicit conversions apart from
+  casts;
+- `vpi_handle(vpiUse, iterator)` and the relations not listed in
+  `docs/sim_features.md`;
+- callbacks other than `cbStartOfSimulation` and `cbEndOfSimulation` (SIM-043).
+
+Elements of a net array are read-only through VPI (they are published from
+their nets). A `vpiReleaseFlag` put on a variable that a continuous assignment
+drives leaves the forced value until that assignment's inputs change: the
+re-evaluation an HDL `release` triggers is generated for HDL release sites
+only.
+
+### Cause
+
+The catalog is emitted from the owned database's static storage; everything
+else would need runtime-owned handle targets with GC pins (containers, class
+objects) or descriptor tables the emitter does not produce yet.
+
+### Direction
+
+Extend the catalog per object family with the same generation-checked slots;
+pin collectable targets in the handle slot. Reproduce with
+[sim_042](../tests/fixtures/sim/feature_completion/sim_042/readme.md) and a
+plugin that asks for one of the objects above.
