@@ -66,6 +66,50 @@ struct llg_cov_layout {
     uint64_t n_coverable;
 };
 
+// One pending transition attempt: an automaton state of a set's step, the
+// sample its latest start was taken at, and whether it was pending before
+// the current sample.
+typedef struct {
+    uint32_t state;
+    uint32_t step;
+    uint64_t start;
+    uint8_t old;
+} llg_cov_attempt_t;
+
+// The count of one sequence of an array transition bin, named by its keys.
+typedef struct {
+    uint64_t hash;
+    uint64_t count;
+    uint64_t stamp;  // the sample that last counted it
+    size_t keys;     // offset into the history's key pool
+    uint32_t bin;
+    uint32_t length;  // zero marks an empty slot
+} llg_cov_sequence_t;
+
+// The transition history of one coverpoint of one instance (19.5.1): the
+// pending attempts, the bins completed by the current sample and the counts.
+typedef struct {
+    uint64_t serial;         // samples taken; attempts start at serial >= 1
+    uint64_t removal_start;  // latest start of a completed ignored/illegal sequence
+    uint8_t fresh;           // the next sample begins the history
+    uint32_t n_active, n_next, n_done;
+    llg_cov_attempt_t* active;
+    llg_cov_attempt_t* next;
+    uint64_t* state_stamp;  // per state: the sample that last reached it
+    uint32_t* state_slot;   // per state: its index in `next`
+    uint64_t* set_stamp;    // per set: the sample that last completed it
+    uint64_t* set_start;    // per set: the latest start completed at that sample
+    uint32_t* done;         // sets completed by the current sample
+    uint64_t* counts;       // per bin (scalar bins)
+    uint64_t* bin_stamp;    // per bin: the sample that last counted it
+    uint64_t* recent;       // the last `window` keys, by serial modulo window
+    uint64_t* sequence;     // scratch: one array-bin sequence in order
+    llg_cov_sequence_t* sequences;
+    size_t sequence_capacity, n_sequences;
+    uint64_t* pool;
+    size_t pool_used, pool_capacity;
+} llg_cov_history_t;
+
 typedef struct {
     int64_t weight;
     int64_t goal;
@@ -77,6 +121,7 @@ typedef struct {
     const llg_cov_layout_t* layout;  // set by llg_cov_ready
     uint64_t* dense;  // n_bins counters when n_bins <= LLG_COV_DENSE_BINS
     llg_cov_sparse_t sparse;
+    llg_cov_history_t* history;  // transition bins only
 } llg_cov_point_state_t;
 
 // One argument value a bins declaration reads (19.5), as given to `new`.
@@ -99,6 +144,8 @@ struct llg_cov_inst {
     llg_cov_slot_value_t* slots;
     llg_cov_point_state_t points[];
 };
+
+static llg_cov_history_t* llg_cov_history_new(const llg_cov_trans_t* trans);
 
 // Types that own at least one instance, for $get_coverage and cleanup.
 static llg_cov_type_t* llg_cov_types_used;
@@ -725,6 +772,8 @@ void llg_cov_ready(void* record) {
         if (state->layout->n_bins <= LLG_COV_DENSE_BINS)
             state->dense = (uint64_t*)llg_checked_calloc((size_t)state->layout->n_bins,
                                                          sizeof(uint64_t), "coverage bins");
+        const llg_cov_trans_t* trans = inst->group->points[i].trans;
+        if (trans) state->history = llg_cov_history_new(trans);
     }
 }
 
@@ -733,21 +782,27 @@ static int llg_cov_guard(const llg_cov_point_t* point, uint32_t decl, const uint
     return guard < 0 || !guards || guards[guard];
 }
 
+// A key as the signed or unsigned value it stands for.
+static void llg_cov_format_key(const llg_cov_point_t* point, uint64_t key, char* text,
+                               size_t size) {
+    uint64_t raw = key;
+    if (point->is_signed) raw ^= UINT64_C(1) << (point->width - 1u);
+    if (point->is_signed && ((raw >> (point->width - 1u)) & 1u)) {
+        uint64_t magnitude = (~raw & llg_cov_mask(point)) + 1u;
+        snprintf(text, size, "-%llu", (unsigned long long)magnitude);
+    } else {
+        snprintf(text, size, "%llu", (unsigned long long)raw);
+    }
+}
+
 // 19.5.5: an illegal value is a run-time error even when another bin also
 // holds it; the simulation continues and the value counts in no bin
 // (decision S45-D3).
 static void llg_cov_illegal(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
                             uint32_t decl, uint64_t key) {
     const llg_cov_bin_t* bin = &point->bins[decl];
-    uint64_t raw = key;
-    if (point->is_signed) raw ^= UINT64_C(1) << (point->width - 1u);
     char value[32];
-    if (point->is_signed && ((raw >> (point->width - 1u)) & 1u)) {
-        uint64_t magnitude = (~raw & llg_cov_mask(point)) + 1u;
-        snprintf(value, sizeof value, "-%llu", (unsigned long long)magnitude);
-    } else {
-        snprintf(value, sizeof value, "%llu", (unsigned long long)raw);
-    }
+    llg_cov_format_key(point, key, value, sizeof value);
     fprintf(stderr,
             "llg: runtime error: covergroup `%s` coverpoint `%s` sampled %s, a value of "
             "illegal_bins `%s` at %s (IEEE 1800-2009 19.5.5)\n",
@@ -766,16 +821,335 @@ static const llg_cov_seg_t* llg_cov_find(const llg_cov_layout_t* layout, uint64_
     return &layout->segments[lo];
 }
 
+// ── Transition bins (19.5.1) ─────────────────────────────────────────────
+
+static void llg_cov_history_reset(llg_cov_history_t* history) {
+    if (!history) return;
+    history->n_active = 0;
+    history->fresh = 1;
+}
+
+static int llg_cov_accepts(const llg_cov_trans_t* trans, uint32_t step, uint32_t cls) {
+    if (cls == UINT32_MAX) return 0;
+    uint64_t word = trans->accept[(size_t)step * trans->words + cls / 64u];
+    return (int)((word >> (cls % 64u)) & 1u);
+}
+
+// The class of a key: the last bound at or below it.
+static uint32_t llg_cov_class(const llg_cov_trans_t* trans, uint64_t key) {
+    uint32_t lo = 0, hi = trans->n_classes;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        if (trans->bounds[mid] <= key) lo = mid + 1u;
+        else hi = mid;
+    }
+    return lo - 1u;
+}
+
+// Keep one attempt per state for the next sample: the latest start gives
+// the shortest sequence, which every longer one contains (19.5.4 removal).
+static void llg_cov_attempt_put(llg_cov_history_t* history, uint32_t step, uint32_t state,
+                                uint64_t start, uint8_t old) {
+    if (history->state_stamp[state] == history->serial) {
+        llg_cov_attempt_t* attempt = &history->next[history->state_slot[state]];
+        if (start > attempt->start) attempt->start = start;
+        attempt->old |= old;
+        return;
+    }
+    history->state_stamp[state] = history->serial;
+    history->state_slot[state] = history->n_next;
+    history->next[history->n_next++] = (llg_cov_attempt_t){state, step, start, old};
+}
+
+static void llg_cov_step_done(const llg_cov_trans_t* trans, llg_cov_history_t* history,
+                              uint32_t step, uint64_t start, uint8_t old) {
+    const llg_cov_step_t* spec = &trans->steps[step];
+    if (!spec->last) {
+        llg_cov_attempt_put(history, step + 1u, trans->steps[step + 1u].state, start, old);
+        return;
+    }
+    uint32_t set = spec->set;
+    if (history->set_stamp[set] == history->serial) {
+        if (start > history->set_start[set]) history->set_start[set] = start;
+        return;
+    }
+    history->set_stamp[set] = history->serial;
+    history->set_start[set] = start;
+    history->done[history->n_done++] = set;
+}
+
+// Advance one thread at `step` with repetition count `count` by a sample of
+// class `cls` (UINT32_MAX for a value with X or Z bits, which no item holds).
+// Mirrors `Tables::consume` in the transition lowering.
+static void llg_cov_consume(const llg_cov_trans_t* trans, llg_cov_history_t* history,
+                            uint32_t step, uint32_t count, uint32_t cls, uint64_t start,
+                            uint8_t old) {
+    const llg_cov_step_t* spec = &trans->steps[step];
+    int accepted = llg_cov_accepts(trans, step, cls);
+    switch (spec->repeat) {
+    case LLG_COV_REPEAT_CONSECUTIVE:
+        if (!accepted) return;
+        if (count + 1u < spec->hi)
+            llg_cov_attempt_put(history, step, spec->state + count + 1u, start, old);
+        if (count + 1u >= spec->lo) llg_cov_step_done(trans, history, step, start, old);
+        return;
+    case LLG_COV_REPEAT_GOTO:
+        // Samples between occurrences do not hold the item.
+        if (!accepted) {
+            llg_cov_attempt_put(history, step, spec->state + count, start, old);
+            return;
+        }
+        if (count + 1u < spec->hi)
+            llg_cov_attempt_put(history, step, spec->state + count + 1u, start, old);
+        if (count + 1u >= spec->lo) llg_cov_step_done(trans, history, step, start, old);
+        return;
+    default: {
+        if (count < spec->lo) {
+            llg_cov_attempt_put(history, step, spec->state + count + (uint32_t)accepted, start,
+                                old);
+            return;
+        }
+        // Enough repetitions: the next item may occur at this sample, which
+        // ends the gap (decision S45-D8).
+        int begins = llg_cov_accepts(trans, step + 1u, cls);
+        if (begins) llg_cov_consume(trans, history, step + 1u, 0u, cls, start, old);
+        if (accepted) {
+            if (count < spec->hi)
+                llg_cov_attempt_put(history, step, spec->state + count + 1u, start, old);
+        } else if (!begins) {
+            llg_cov_attempt_put(history, step, spec->state + count, start, old);
+        }
+        return;
+    }
+    }
+}
+
+static llg_cov_history_t* llg_cov_history_new(const llg_cov_trans_t* trans) {
+    llg_cov_history_t* history =
+        (llg_cov_history_t*)llg_checked_calloc(1, sizeof(*history), "coverage transitions");
+    size_t states = trans->n_states ? trans->n_states : 1u;
+    size_t sets = trans->n_sets ? trans->n_sets : 1u;
+    size_t bins = trans->n_bins ? trans->n_bins : 1u;
+    history->active = (llg_cov_attempt_t*)llg_checked_calloc(states, sizeof(llg_cov_attempt_t),
+                                                             "coverage transitions");
+    history->next = (llg_cov_attempt_t*)llg_checked_calloc(states, sizeof(llg_cov_attempt_t),
+                                                           "coverage transitions");
+    history->state_stamp =
+        (uint64_t*)llg_checked_calloc(states, sizeof(uint64_t), "coverage transitions");
+    history->state_slot =
+        (uint32_t*)llg_checked_calloc(states, sizeof(uint32_t), "coverage transitions");
+    history->set_stamp = (uint64_t*)llg_checked_calloc(sets, sizeof(uint64_t), "coverage transitions");
+    history->set_start = (uint64_t*)llg_checked_calloc(sets, sizeof(uint64_t), "coverage transitions");
+    history->done = (uint32_t*)llg_checked_calloc(sets, sizeof(uint32_t), "coverage transitions");
+    history->counts = (uint64_t*)llg_checked_calloc(bins, sizeof(uint64_t), "coverage transitions");
+    history->bin_stamp = (uint64_t*)llg_checked_calloc(bins, sizeof(uint64_t), "coverage transitions");
+    if (trans->window) {
+        history->recent =
+            (uint64_t*)llg_checked_calloc(trans->window, sizeof(uint64_t), "coverage transitions");
+        history->sequence =
+            (uint64_t*)llg_checked_calloc(trans->window, sizeof(uint64_t), "coverage transitions");
+    }
+    history->fresh = 1;
+    return history;
+}
+
+static void llg_cov_history_free(llg_cov_history_t* history) {
+    if (!history) return;
+    free(history->active);
+    free(history->next);
+    free(history->state_stamp);
+    free(history->state_slot);
+    free(history->set_stamp);
+    free(history->set_start);
+    free(history->done);
+    free(history->counts);
+    free(history->bin_stamp);
+    free(history->recent);
+    free(history->sequence);
+    free(history->sequences);
+    free(history->pool);
+    free(history);
+}
+
+static uint64_t llg_cov_sequence_hash(uint32_t bin, const uint64_t* keys, uint32_t length) {
+    uint64_t hash = UINT64_C(0xcbf29ce484222325) ^ bin;
+    for (uint32_t i = 0; i < length; ++i) {
+        hash ^= keys[i];
+        hash *= UINT64_C(0x100000001b3);
+        hash ^= hash >> 29;
+    }
+    return hash ^ length;
+}
+
+static llg_cov_sequence_t* llg_cov_sequence_slot(llg_cov_sequence_t* table, size_t capacity,
+                                                 const uint64_t* pool, uint64_t hash, uint32_t bin,
+                                                 const uint64_t* keys, uint32_t length) {
+    size_t slot = (size_t)hash & (capacity - 1u);
+    for (;;) {
+        llg_cov_sequence_t* entry = &table[slot];
+        if (!entry->length) return entry;
+        if (entry->hash == hash && entry->bin == bin && entry->length == length &&
+            memcmp(pool + entry->keys, keys, length * sizeof(uint64_t)) == 0)
+            return entry;
+        slot = (slot + 1u) & (capacity - 1u);
+    }
+}
+
+// Count one sequence of an array bin once per sample; the table holds only
+// sequences that occurred.
+static void llg_cov_sequence_count(llg_cov_history_t* history, uint32_t bin,
+                                   const uint64_t* keys, uint32_t length) {
+    if ((history->n_sequences + 1u) * 2u > history->sequence_capacity) {
+        size_t capacity = history->sequence_capacity ? history->sequence_capacity * 2u : 16u;
+        llg_cov_sequence_t* table = (llg_cov_sequence_t*)llg_checked_calloc(
+            capacity, sizeof(llg_cov_sequence_t), "coverage transition bins");
+        for (size_t i = 0; i < history->sequence_capacity; ++i) {
+            llg_cov_sequence_t* entry = &history->sequences[i];
+            if (!entry->length) continue;
+            *llg_cov_sequence_slot(table, capacity, history->pool, entry->hash, entry->bin,
+                                   history->pool + entry->keys, entry->length) = *entry;
+        }
+        free(history->sequences);
+        history->sequences = table;
+        history->sequence_capacity = capacity;
+    }
+    uint64_t hash = llg_cov_sequence_hash(bin, keys, length);
+    llg_cov_sequence_t* entry = llg_cov_sequence_slot(history->sequences, history->sequence_capacity,
+                                                      history->pool, hash, bin, keys, length);
+    if (!entry->length) {
+        if (history->pool_used + length > history->pool_capacity) {
+            size_t capacity = history->pool_capacity ? history->pool_capacity * 2u : 64u;
+            while (capacity < history->pool_used + length) capacity *= 2u;
+            history->pool = llg_cov_grow(history->pool, capacity, sizeof(uint64_t),
+                                         "coverage transition bins");
+            history->pool_capacity = capacity;
+        }
+        memcpy(history->pool + history->pool_used, keys, length * sizeof(uint64_t));
+        *entry = (llg_cov_sequence_t){hash, 0u, 0u, history->pool_used, bin, length};
+        history->pool_used += length;
+        history->n_sequences++;
+    }
+    if (entry->stamp == history->serial) return;
+    entry->stamp = history->serial;
+    if (entry->count != UINT64_MAX) entry->count++;
+}
+
+static void llg_cov_illegal_transition(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
+                                       const llg_cov_tbin_t* bin, int known, uint64_t key) {
+    char value[32];
+    if (known) llg_cov_format_key(point, key, value, sizeof value);
+    else snprintf(value, sizeof value, "a value with X or Z bits");
+    const char* what = bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT
+                           ? "ending a transition no other bin holds, which is in"
+                           : "completing a transition of";
+    fprintf(stderr,
+            "llg: runtime error: covergroup `%s` coverpoint `%s` sampled %s, %s illegal_bins "
+            "`%s` at %s (IEEE 1800-2009 19.5.5)\n",
+            inst->group->name, point->name, value, what, bin->name, bin->site);
+    llg_rt_mark_failed();
+}
+
+// One sample of a coverpoint with transition bins. Every pending attempt
+// advances, attempts start at the sets whose first step holds the value,
+// and each completed bin counts at most once per sample (19.5.1). A covered
+// sequence that contains a completed ignored or illegal sequence counts in
+// no bin (19.5.4, 19.5.5).
+static void llg_cov_transitions(const llg_cov_inst_t* inst, llg_cov_history_t* history,
+                                const llg_cov_point_t* point, int known, uint64_t key,
+                                const uint8_t* guards) {
+    const llg_cov_trans_t* trans = point->trans;
+    history->serial++;
+    uint64_t serial = history->serial;
+    uint32_t cls = known ? llg_cov_class(trans, key) : UINT32_MAX;
+    history->n_next = 0;
+    history->n_done = 0;
+    for (uint32_t i = 0; i < history->n_active; ++i) {
+        llg_cov_attempt_t attempt = history->active[i];
+        llg_cov_consume(trans, history, attempt.step, attempt.state - trans->steps[attempt.step].state,
+                        cls, attempt.start, 1u);
+    }
+    // Leading gaps of goto and nonconsecutive first steps start at the
+    // first occurrence: an attempt begins only where its first step holds
+    // the value.
+    if (cls != UINT32_MAX) {
+        for (uint32_t i = trans->start_index[cls]; i < trans->start_index[cls + 1u]; ++i) {
+            const llg_cov_tset_t* set = &trans->sets[trans->start_sets[i]];
+            llg_cov_consume(trans, history, set->first_step, 0u, cls, serial, 0u);
+        }
+    }
+    uint8_t pending = 0;
+    for (uint32_t i = 0; i < history->n_next; ++i) pending |= history->next[i].old;
+    llg_cov_attempt_t* swap = history->active;
+    history->active = history->next;
+    history->next = swap;
+    history->n_active = history->n_next;
+    if (trans->window) history->recent[serial % trans->window] = key;
+
+    for (uint32_t i = 0; i < history->n_done; ++i) {
+        uint32_t set = history->done[i];
+        const llg_cov_tbin_t* bin = &trans->bins[trans->sets[set].bin];
+        if (bin->kind != LLG_COV_BIN_IGNORE && bin->kind != LLG_COV_BIN_ILLEGAL) continue;
+        if (history->set_start[set] > history->removal_start)
+            history->removal_start = history->set_start[set];
+        uint32_t index = trans->sets[set].bin;
+        if (bin->kind == LLG_COV_BIN_ILLEGAL && history->bin_stamp[index] != serial &&
+            (bin->guard < 0 || !guards || guards[bin->guard])) {
+            history->bin_stamp[index] = serial;
+            llg_cov_illegal_transition(inst, point, bin, known, key);
+        }
+    }
+    for (uint32_t i = 0; i < history->n_done; ++i) {
+        uint32_t set = history->done[i];
+        uint32_t index = trans->sets[set].bin;
+        const llg_cov_tbin_t* bin = &trans->bins[index];
+        if (bin->kind != LLG_COV_BIN_BINS) continue;
+        if (history->set_start[set] <= history->removal_start) continue;
+        if (bin->guard >= 0 && guards && !guards[bin->guard]) continue;
+        if (!bin->array) {
+            if (history->bin_stamp[index] == serial) continue;
+            history->bin_stamp[index] = serial;
+            if (history->counts[index] != UINT64_MAX) history->counts[index]++;
+            continue;
+        }
+        uint32_t length = trans->sets[set].n_steps;
+        for (uint32_t k = 0; k < length; ++k)
+            history->sequence[k] = history->recent[(serial - length + 1u + k) % trans->window];
+        llg_cov_sequence_count(history, index, history->sequence, length);
+    }
+    // 19.5.1: the default sequence counts when no other transition bin
+    // completes and no attempt pending before this sample still is
+    // (decision S45-D10).
+    if (trans->default_bin >= 0 && known && !history->fresh && !history->n_done && !pending) {
+        const llg_cov_tbin_t* bin = &trans->bins[trans->default_bin];
+        if (bin->guard < 0 || !guards || guards[bin->guard]) {
+            if (bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT) {
+                llg_cov_illegal_transition(inst, point, bin, known, key);
+            } else if (history->counts[trans->default_bin] != UINT64_MAX) {
+                history->counts[trans->default_bin]++;
+            }
+        }
+    }
+    history->fresh = 0;
+}
+
+void llg_cov_skip(void* record, uint32_t point_index) {
+    llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
+    if (!inst || point_index >= inst->group->n_points) return;
+    llg_cov_history_reset(inst->points[point_index].history);
+}
+
 void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value, const uint8_t* guards) {
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
     if (!inst || inst->stopped || point_index >= inst->group->n_points) return;
     llg_cov_point_state_t* state = &inst->points[point_index];
     if (state->stopped || !state->layout) return;
-    // Bins only hold 2-state values (19.5.2, 19.5.3, 19.5.6).
-    if (sv4_is_unknown(*value)) return;
     const llg_cov_point_t* point = &inst->group->points[point_index];
+    int known = !sv4_is_unknown(*value);
+    uint64_t key = known ? llg_cov_key(point, sv4_to_u64(*value)) : 0u;
+    if (state->history) llg_cov_transitions(inst, state->history, point, known, key, guards);
+    // Bins only hold 2-state values (19.5.2, 19.5.3, 19.5.6).
+    if (!known) return;
     const llg_cov_layout_t* layout = state->layout;
-    uint64_t key = llg_cov_key(point, sv4_to_u64(*value));
     if (layout->n_segments) {
         const llg_cov_seg_t* segment = llg_cov_find(layout, key);
         if (segment && segment->removed) {
@@ -832,8 +1206,16 @@ void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value, const u
 void llg_cov_control(void* record, int32_t point, int start) {
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
     if (!inst) return;
-    if (point < 0) inst->stopped = (uint8_t)!start;
-    else if ((uint32_t)point < inst->group->n_points) inst->points[point].stopped = (uint8_t)!start;
+    // A stop ends the transition sequences in progress (decision S45-D9).
+    if (point < 0) {
+        inst->stopped = (uint8_t)!start;
+        if (!start)
+            for (uint32_t i = 0; i < inst->group->n_points; ++i)
+                llg_cov_history_reset(inst->points[i].history);
+    } else if ((uint32_t)point < inst->group->n_points) {
+        inst->points[point].stopped = (uint8_t)!start;
+        if (!start) llg_cov_history_reset(inst->points[point].history);
+    }
 }
 
 void llg_cov_register(llg_cov_group_t* group, void* object) {
@@ -933,7 +1315,7 @@ void llg_cov_strobe_registered(llg_cov_group_t* group) {
 
 // Covered and defined bins of one coverpoint (19.11.1): only coverable bins
 // count; empty, ignored, illegal and default bins do not.
-static void llg_cov_point_bins(const llg_cov_inst_t* inst, uint32_t index, uint64_t* covered,
+static void llg_cov_value_bins(const llg_cov_inst_t* inst, uint32_t index, uint64_t* covered,
                                uint64_t* defined) {
     const llg_cov_point_state_t* state = &inst->points[index];
     uint64_t at_least = state->at_least < 0 ? 0u : (uint64_t)state->at_least;
@@ -958,6 +1340,42 @@ static void llg_cov_point_bins(const llg_cov_inst_t* inst, uint32_t index, uint6
         if (!key || state->sparse.counts[slot] < at_least) continue;
         if (llg_cov_cover_rank(layout, key - 1u) >= 0) (*covered)++;
     }
+}
+
+static uint64_t llg_cov_saturating_add(uint64_t a, uint64_t b) {
+    return b > UINT64_MAX - a ? UINT64_MAX : a + b;
+}
+
+// Covered and defined transition bins of one coverpoint: scalar bins with a
+// surviving sequence, and the sequences of array bins.
+static void llg_cov_transition_bins(const llg_cov_inst_t* inst, uint32_t index,
+                                    uint64_t* covered, uint64_t* defined) {
+    const llg_cov_point_state_t* state = &inst->points[index];
+    const llg_cov_trans_t* trans = inst->group->points[index].trans;
+    const llg_cov_history_t* history = state->history;
+    *covered = 0;
+    *defined = 0;
+    if (!trans || !history) return;
+    uint64_t at_least = state->at_least < 0 ? 0u : (uint64_t)state->at_least;
+    for (uint32_t b = 0; b < trans->n_bins; ++b) {
+        const llg_cov_tbin_t* bin = &trans->bins[b];
+        if (bin->kind != LLG_COV_BIN_BINS) continue;
+        *defined = llg_cov_saturating_add(*defined, bin->coverable);
+        if (at_least == 0) *covered = llg_cov_saturating_add(*covered, bin->coverable);
+        else if (!bin->array && bin->coverable && history->counts[b] >= at_least) (*covered)++;
+    }
+    if (at_least == 0) return;
+    for (size_t i = 0; i < history->sequence_capacity; ++i)
+        if (history->sequences[i].length && history->sequences[i].count >= at_least) (*covered)++;
+}
+
+static void llg_cov_point_bins(const llg_cov_inst_t* inst, uint32_t index, uint64_t* covered,
+                               uint64_t* defined) {
+    llg_cov_value_bins(inst, index, covered, defined);
+    uint64_t more_covered, more_defined;
+    llg_cov_transition_bins(inst, index, &more_covered, &more_defined);
+    *covered = llg_cov_saturating_add(*covered, more_covered);
+    *defined = llg_cov_saturating_add(*defined, more_defined);
 }
 
 // Weighted coverpoint average of one instance (19.11); `point` < 0 selects
@@ -1046,6 +1464,7 @@ void llg_cov_release_all(void) {
                 free(inst->points[i].dense);
                 free(inst->points[i].sparse.keys);
                 free(inst->points[i].sparse.counts);
+                llg_cov_history_free(inst->points[i].history);
             }
             free(inst->slots);
             free(inst);

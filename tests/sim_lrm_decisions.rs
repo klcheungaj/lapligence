@@ -2025,3 +2025,67 @@ fn s45_d6_value_listed_twice() {
         include_str!("fixtures/sim/lrm_decisions/S45-D6_value_listed_twice.out"),
     );
 }
+
+#[test]
+fn s45_d7_unknown_values() {
+    run_decision(
+        "S45-D7_unknown_values",
+        include_str!("fixtures/sim/lrm_decisions/S45-D7_unknown_values.out"),
+    );
+}
+
+#[test]
+fn s45_d8_nonconsecutive_gap() {
+    run_decision(
+        "S45-D8_nonconsecutive_gap",
+        include_str!("fixtures/sim/lrm_decisions/S45-D8_nonconsecutive_gap.out"),
+    );
+}
+
+#[test]
+fn s45_d9_skipped_sample_history() {
+    run_decision(
+        "S45-D9_skipped_sample_history",
+        include_str!("fixtures/sim/lrm_decisions/S45-D9_skipped_sample_history.out"),
+    );
+}
+
+/// Each default-sequence count is an illegal-bin run-time error.
+#[test]
+fn s45_d10_default_sequence() {
+    sim_cli::run_case_checked_matrix(SUITE, "S45-D10_default_sequence", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            include_str!("fixtures/sim/lrm_decisions/S45-D10_default_sequence.out"),
+            "{label}"
+        );
+        let errors: Vec<String> = String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter(|line| line.starts_with("llg: runtime error:"))
+            .map(|line| {
+                let sampled = line.split(" sampled ").nth(1).unwrap_or_default();
+                let point = line.split(" coverpoint `").nth(1).unwrap_or_default();
+                format!(
+                    "{} {}",
+                    point.split('`').next().unwrap_or_default(),
+                    sampled.split(',').next().unwrap_or_default()
+                )
+            })
+            .collect();
+        assert_eq!(
+            errors,
+            ["v_a 7", "v_a 8", "q 9", "q 1", "q 9"],
+            "{label}: {output:?}"
+        );
+    });
+}
+
+#[test]
+fn s45_d11_length_zero_repetition() {
+    sim_cli::reject_case(
+        SUITE,
+        "S45-D11_length_zero_repetition",
+        "S45-D11_length_zero_repetition.sv:16:29: transition bins `t` of coverpoint `cp` in covergroup `g` specify a transition of length 0",
+    );
+}

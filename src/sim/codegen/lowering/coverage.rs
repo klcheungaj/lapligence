@@ -15,14 +15,15 @@
 //! covergroup instances pays nothing.
 use super::*;
 use crate::core::db::{
-    CoverageBinKind, CoverageEvent, CovergroupInfo, CoverpointInfo, EventSpec, TypeId,
+    CoverageBinKind, CoverageEvent, CoverageRepeat, CovergroupInfo, CoverpointInfo, EventSpec,
+    TypeId,
 };
 use crate::sim::ir::{
     IrCapture, IrClass, IrClassField, IrClassFieldType, IrCoverAutomatic, IrCoverBin,
-    IrCoverBinKind, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverItem, IrCoverageOption,
-    IrCoverageQuery, IrCoverageSample, IrCoverageStmt, IrCoverageType, IrCovergroup, IrCoverpoint,
-    IrFormal, IrFunc, IrNativeAccessKind, IrObjectQuery, IrPreFn, IrProcess, IrShape,
-    IrUniquePriorityCheck,
+    IrCoverBinKind, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverItem, IrCoverRepeat,
+    IrCoverageOption, IrCoverageQuery, IrCoverageSample, IrCoverageStmt, IrCoverageType,
+    IrCovergroup, IrCoverpoint, IrFormal, IrFunc, IrNativeAccessKind, IrObjectQuery, IrPreFn,
+    IrProcess, IrShape, IrUniquePriorityCheck,
 };
 
 /// Lowering state of one constructed covergroup declaration.
@@ -118,6 +119,8 @@ const WILDCARD_RANGE_LIMIT: u64 = 1 << 12;
 pub(super) type CoverageTypeKey = (Option<std::sync::Arc<str>>, u32, u32);
 
 const COVERAGE_RECORD_FIELD: &str = "llg_cov_record";
+
+mod transitions;
 const COVERAGE_OWNER_FIELD: &str = "llg_cov_owner";
 const COVERAGE_BIND_FIELD: &str = "llg_cov_bind";
 
@@ -769,18 +772,255 @@ impl<'a> Codegen<'a> {
             }
         };
         let mut coverpoint = IrCoverpoint {
-            name: point_name,
+            name: point_name.clone(),
             width,
             signed,
             type_weight,
             automatic,
             bins: Vec::with_capacity(info.bins.len()),
             items: Vec::new(),
+            transitions: None,
         };
+        let mut transition_bins = Vec::new();
+        let mut transition_nodes = Vec::new();
         for bin in info.bins.iter().copied() {
+            let metadata = self
+                .db
+                .coverage_bin(bin)
+                .ok_or_else(|| self.coverage_error(bin, "bins declaration has no structure"))?;
+            if metadata.transition || metadata.default_sequence {
+                let spec =
+                    self.coverage_transition_bin(group_name, point, bin, width, signed, build)?;
+                if spec.sets.is_empty()
+                    && transition_bins
+                        .iter()
+                        .any(|other: &transitions::BinSpec| other.sets.is_empty())
+                {
+                    return Err(self.coverage_error(
+                        bin,
+                        format!(
+                            "coverpoint `{point_name}` in covergroup `{group_name}` has more than one `default sequence` bin"
+                        ),
+                    ));
+                }
+                transition_bins.push(spec);
+                transition_nodes.push(bin);
+                continue;
+            }
             self.coverage_value_bin(group_name, point, bin, &mut coverpoint, build)?;
         }
+        if !transition_bins.is_empty() {
+            let tables = transitions::build(width, transition_bins).map_err(|(index, message)| {
+                let bin = transition_nodes[index];
+                self.coverage_error(
+                    bin,
+                    format!(
+                        "transition bins `{}` of coverpoint `{point_name}` {message} (llg limitation)",
+                        self.node(bin).name
+                    ),
+                )
+            })?;
+            coverpoint.transitions = Some(tables);
+        }
         Ok(coverpoint)
+    }
+
+    /// One transition bins declaration (19.5.1): its sets as key ranges and
+    /// repetitions, checked against the clause's restrictions.
+    fn coverage_transition_bin(
+        &mut self,
+        group_name: &str,
+        point: NodeId,
+        bin: NodeId,
+        width: u32,
+        signed: bool,
+        build: &mut CoverageBuild,
+    ) -> Result<transitions::BinSpec, String> {
+        let metadata = self
+            .db
+            .coverage_bin(bin)
+            .cloned()
+            .ok_or_else(|| self.coverage_error(bin, "bins declaration has no structure"))?;
+        let bin_name = self.node(bin).name.clone();
+        let describe = format!(
+            "`{bin_name}` of coverpoint `{}` in covergroup `{group_name}`",
+            self.coverpoint_name(point)
+        );
+        if metadata.with || metadata.set || metadata.select {
+            return Err(self.coverage_error(
+                bin,
+                format!(
+                    "bins {describe} use a `with` clause, a set expression or a select expression, which IEEE 1800-2009 does not define for coverpoint bins"
+                ),
+            ));
+        }
+        let kind = match (metadata.kind, metadata.default_sequence) {
+            (CoverageBinKind::Bins, false) => IrCoverBinKind::Bins,
+            (CoverageBinKind::Ignore, false) => IrCoverBinKind::Ignore,
+            (CoverageBinKind::Illegal, false) => IrCoverBinKind::Illegal,
+            (CoverageBinKind::Bins, true) => IrCoverBinKind::Default,
+            (CoverageBinKind::Illegal, true) => IrCoverBinKind::IllegalDefault,
+            (CoverageBinKind::Ignore, true) => {
+                return Err(self.coverage_error(
+                    bin,
+                    format!("ignore_bins {describe} cannot specify `default sequence` (IEEE 1800-2009 19.5)"),
+                ))
+            }
+        };
+        let array = metadata.array && kind == IrCoverBinKind::Bins && !metadata.default_sequence;
+        if metadata.array && metadata.count.is_some() && !metadata.default_sequence {
+            return Err(self.coverage_error(
+                bin,
+                format!(
+                    "transition bins {describe} cannot have a number of bins; only `[]` creates one bin per sequence (IEEE 1800-2009 19.5.1)"
+                ),
+            ));
+        }
+        let guard = metadata.iff.map(|iff| {
+            build.guards.push(iff);
+            (build.guards.len() - 1) as u32
+        });
+        let mut sets = Vec::with_capacity(metadata.transitions.len());
+        for set in &metadata.transitions {
+            let mut steps = Vec::with_capacity(set.len());
+            for range in set {
+                let (repeat, lo, hi) = match range.repeat {
+                    CoverageRepeat::None => (IrCoverRepeat::Consecutive, 1, 1),
+                    repeat => {
+                        let repeat = match repeat {
+                            CoverageRepeat::GoTo => IrCoverRepeat::GoTo,
+                            CoverageRepeat::Nonconsecutive => IrCoverRepeat::Nonconsecutive,
+                            _ => IrCoverRepeat::Consecutive,
+                        };
+                        let from = range.repeat_from.ok_or_else(|| {
+                            self.coverage_error(range.node, "transition repetition has no count")
+                        })?;
+                        let lo = self.coverage_repeat_count(from, &describe)?;
+                        let hi = match range.repeat_to {
+                            Some(to) => self.coverage_repeat_count(to, &describe)?,
+                            None => lo,
+                        };
+                        if hi < lo {
+                            return Err(self.coverage_error(
+                                range.node,
+                                format!(
+                                    "the repetition range of transition bins {describe} is empty"
+                                ),
+                            ));
+                        }
+                        (repeat, lo, hi)
+                    }
+                };
+                let bounded = repeat == IrCoverRepeat::Consecutive;
+                if !bounded && array {
+                    return Err(self.coverage_error(
+                        range.node,
+                        format!(
+                            "transition bins {describe} with `[]` cannot use goto or nonconsecutive repetition, whose sequences have no fixed length (IEEE 1800-2009 19.5.1)"
+                        ),
+                    ));
+                }
+                if !bounded && kind != IrCoverBinKind::Bins {
+                    return Err(self.coverage_error(
+                        range.node,
+                        format!(
+                            "ignore_bins and illegal_bins {describe} cannot use goto or nonconsecutive repetition, whose sequences have no fixed length (IEEE 1800-2009 19.5.4, 19.5.5)"
+                        ),
+                    ));
+                }
+                let mut scratch = IrCoverpoint {
+                    name: String::new(),
+                    width,
+                    signed,
+                    type_weight: 0,
+                    automatic: IrCoverAutomatic::None,
+                    bins: Vec::new(),
+                    items: Vec::new(),
+                    transitions: None,
+                };
+                let max_key = if width == 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << width) - 1
+                };
+                let mut ranges = Vec::new();
+                for item in range.items.iter().copied() {
+                    scratch.items.clear();
+                    self.coverage_value_item(
+                        &bin_name,
+                        item,
+                        metadata.wildcard,
+                        &mut scratch,
+                        build,
+                    )?;
+                    for value in &scratch.items {
+                        let key = |bound: IrCoverBound| match bound {
+                            IrCoverBound::Key(key) => Some(key),
+                            IrCoverBound::Min => Some(0),
+                            IrCoverBound::Max => Some(max_key),
+                            IrCoverBound::Slot(_) => None,
+                        };
+                        match (key(value.lo), key(value.hi)) {
+                            (Some(lo), Some(hi)) => ranges.push((lo, hi)),
+                            _ => {
+                                return Err(self.coverage_error(
+                                    item,
+                                    format!(
+                                        "transition bins {describe} read a covergroup argument; llg supports only constant transition values (llg limitation)"
+                                    ),
+                                ))
+                            }
+                        }
+                    }
+                }
+                steps.push(transitions::StepSpec {
+                    ranges,
+                    repeat,
+                    lo,
+                    hi,
+                });
+            }
+            // 19.5.1: "Transition bin specifications of length 0 shall be
+            // illegal": one range list that one sample completes.
+            if steps.len() == 1 && steps[0].lo == 1 {
+                let node = set.first().map_or(bin, |range| range.node);
+                return Err(self.coverage_error(
+                    node,
+                    format!(
+                        "transition bins {describe} specify a transition of length 0: a single range list whose repetition can be 1 (IEEE 1800-2009 19.5.1)"
+                    ),
+                ));
+            }
+            sets.push(steps);
+        }
+        Ok(transitions::BinSpec {
+            name: bin_name,
+            site: Self::coverage_site(&build.path, self.node(bin)),
+            kind,
+            array,
+            guard,
+            sets,
+        })
+    }
+
+    /// One bound of a transition repetition: a positive constant.
+    fn coverage_repeat_count(&self, node: NodeId, describe: &str) -> Result<u32, String> {
+        let value = self.eval_bits(node).ok().and_then(|value| {
+            if value.signed {
+                value.to_i128()
+            } else {
+                value.to_u128().and_then(|value| i128::try_from(value).ok())
+            }
+        });
+        match value.and_then(|value| u32::try_from(value).ok()) {
+            Some(count) if count > 0 => Ok(count),
+            _ => Err(self.coverage_error(
+                node,
+                format!(
+                    "the repetition count of transition bins {describe} must be a positive constant"
+                ),
+            )),
+        }
     }
 
     /// One bins declaration of a coverpoint (19.5, 19.5.3-19.5.6).
@@ -809,15 +1049,6 @@ impl<'a> Codegen<'a> {
                 bin,
                 format!(
                     "bins {} use a `with` clause, a set expression or a select expression, which IEEE 1800-2009 does not define for coverpoint bins",
-                    describe(self)
-                ),
-            ));
-        }
-        if metadata.transition || metadata.default_sequence {
-            return Err(self.coverage_error(
-                bin,
-                format!(
-                    "transition bins ({}) are not supported yet (SIM-045)",
                     describe(self)
                 ),
             ));
@@ -1345,10 +1576,14 @@ impl<'a> Codegen<'a> {
                         .map(|iff| ctx.cg.lower_boolean_expr(&path, iff))
                         .transpose()
                         .map_err(|error| located(ctx.cg, metadata.iff.unwrap_or(point), error))?;
+                    let history = ctx.cg.model.covergroups[lowering.ir].points[index]
+                        .transitions
+                        .is_some();
                     samples.push(IrCoverageSample {
                         point: index as u32,
                         iff,
                         value,
+                        history,
                     });
                 }
                 let mut guards = Vec::with_capacity(lowering.build.guards.len());

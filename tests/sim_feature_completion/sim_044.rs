@@ -168,11 +168,6 @@ fn unsupported_coverage_forms_are_located_errors() {
     );
     sim_cli::reject_case(
         SUITE,
-        "neg_transition_bins",
-        "neg_transition_bins.sv:7:12: transition bins (`rise` of coverpoint `a` in covergroup `g`) are not supported yet (SIM-045)",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "neg_option_access",
         "neg_option_access.sv:10:5: covergroup options can only be set in the covergroup declaration",
     );

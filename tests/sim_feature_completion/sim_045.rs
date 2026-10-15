@@ -91,3 +91,58 @@ fn invalid_bins_forms_are_located_errors() {
         "neg_wide_argument.sv:6:35: bins values that read covergroup arguments must be integral values of at most 64 bits",
     );
 }
+
+#[test]
+fn transition_bins_follow_19_5_1() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_045/transitions.out");
+    sim_cli::run_case_checked_matrix(SUITE, "transitions", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert_eq!(llg_messages(output), Vec::<String>::new(), "{label}");
+    });
+}
+
+#[test]
+fn illegal_transitions_are_run_time_errors() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_045/transition_illegal.out");
+    let rest = "llg: runtime error: covergroup `g` coverpoint `cp` sampled 5, ending a transition no other bin holds, which is in illegal_bins `rest` at tb:13:20 (IEEE 1800-2009 19.5.5)";
+    let nine = rest.replace("sampled 5", "sampled 9");
+    sim_cli::run_case_checked_matrix(SUITE, "transition_illegal", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(1), "{label}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+        assert_eq!(
+            llg_messages(output),
+            [
+                "llg: runtime error: covergroup `g` coverpoint `cp` sampled 3, completing a transition of illegal_bins `bad` at tb:12:20 (IEEE 1800-2009 19.5.5)",
+                rest,
+                nine.as_str(),
+                nine.as_str(),
+            ],
+            "{label}"
+        );
+    });
+}
+
+#[test]
+fn invalid_transition_forms_are_located_errors() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_length0",
+        "neg_trans_length0.sv:6:29: transition bins `t` of coverpoint `cp` in covergroup `g` specify a transition of length 0: a single range list whose repetition can be 1 (IEEE 1800-2009 19.5.1)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_array_goto",
+        "neg_trans_array_goto.sv:6:29: transition bins `t` of coverpoint `cp` in covergroup `g` with `[]` cannot use goto or nonconsecutive repetition",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_ignore_goto",
+        "neg_trans_ignore_goto.sv:6:55: ignore_bins and illegal_bins `skip` of coverpoint `cp` in covergroup `g` cannot use goto or nonconsecutive repetition",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_trans_argument",
+        "neg_trans_argument.sv:6:39: transition bins `t` of coverpoint `cp` in covergroup `g` read a covergroup argument; llg supports only constant transition values (llg limitation)",
+    );
+}

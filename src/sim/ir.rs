@@ -89,7 +89,8 @@ pub use calls::{IrCall, IrCallArg, IrCallExpr, IrDepth, IrVirtualCall};
 mod coverage;
 pub use coverage::{
     IrCoverAutomatic, IrCoverBin, IrCoverBinKind, IrCoverBinShape, IrCoverBound, IrCoverCount,
-    IrCoverItem, IrCoverageOption, IrCoverageQuery, IrCoverageSample, IrCoverageStmt,
+    IrCoverItem, IrCoverRepeat, IrCoverTransBin, IrCoverTransSet, IrCoverTransStep,
+    IrCoverTransitions, IrCoverageOption, IrCoverageQuery, IrCoverageSample, IrCoverageStmt,
     IrCoverageType, IrCovergroup, IrCoverpoint,
 };
 mod randomize;

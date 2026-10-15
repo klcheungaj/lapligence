@@ -48,6 +48,89 @@ pub struct IrCoverpoint {
     pub(in crate::sim) bins: Vec<IrCoverBin>,
     /// Value items the bins name by range.
     pub(in crate::sim) items: Vec<IrCoverItem>,
+    /// Transition bins (19.5.1), when the coverpoint declares any.
+    pub(in crate::sim) transitions: Option<IrCoverTransitions>,
+}
+
+/// The transition bins of one coverpoint. Keys fall into classes: class `i`
+/// holds the keys from `bounds[i]` up to the next bound; each step accepts a
+/// set of classes. Each set is an automaton whose states are numbered from
+/// its steps' `state`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCoverTransitions {
+    /// Ascending class lower bounds; the first is key 0.
+    pub(in crate::sim) bounds: Vec<u64>,
+    /// Words of one step's class bitset.
+    pub(in crate::sim) words: u32,
+    /// `words` per step.
+    pub(in crate::sim) accept: Vec<u64>,
+    pub(in crate::sim) steps: Vec<IrCoverTransStep>,
+    pub(in crate::sim) sets: Vec<IrCoverTransSet>,
+    /// Offsets into `start_sets`, one per class plus the end.
+    pub(in crate::sim) start_index: Vec<u32>,
+    /// Per class: the sets whose first step accepts it.
+    pub(in crate::sim) start_sets: Vec<u32>,
+    /// Automaton states of all sets.
+    pub(in crate::sim) states: u32,
+    /// The longest sequence of an array bin: the recent keys an instance
+    /// keeps to name the sequence it counts.
+    pub(in crate::sim) window: u32,
+    pub(in crate::sim) bins: Vec<IrCoverTransBin>,
+    /// The `default sequence` bin.
+    pub(in crate::sim) default_bin: Option<u32>,
+}
+
+/// The repetition of a step; a step without repetition is `[* 1]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrCoverRepeat {
+    Consecutive,
+    /// `[-> m:n]`, and `[= m:n]` that ends its set.
+    GoTo,
+    /// `[= m:n]` followed by another step.
+    Nonconsecutive,
+}
+
+impl IrCoverRepeat {
+    pub(in crate::sim) fn code(self) -> u32 {
+        match self {
+            Self::Consecutive => 0,
+            Self::GoTo => 1,
+            Self::Nonconsecutive => 2,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCoverTransStep {
+    pub(in crate::sim) repeat: IrCoverRepeat,
+    /// The final step of its set.
+    pub(in crate::sim) last: bool,
+    pub(in crate::sim) lo: u32,
+    pub(in crate::sim) hi: u32,
+    /// The state of repetition count 0.
+    pub(in crate::sim) state: u32,
+    pub(in crate::sim) set: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCoverTransSet {
+    pub(in crate::sim) bin: u32,
+    pub(in crate::sim) first_step: u32,
+    pub(in crate::sim) steps: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCoverTransBin {
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) site: String,
+    /// `Default` and `IllegalDefault` are `default sequence` bins.
+    pub(in crate::sim) kind: IrCoverBinKind,
+    /// `b[]`: one bin per sequence.
+    pub(in crate::sim) array: bool,
+    pub(in crate::sim) guard: Option<u32>,
+    /// Bins that count toward coverage (19.11.1): 0 or 1 for a scalar bin,
+    /// the number of sequences of an array bin.
+    pub(in crate::sim) coverable: u64,
 }
 
 /// Keys order values numerically: the value masked to the coverpoint width,
@@ -174,6 +257,9 @@ pub struct IrCoverageSample {
     pub(in crate::sim) point: u32,
     pub(in crate::sim) iff: Option<IrExpr>,
     pub(in crate::sim) value: IrExpr,
+    /// The coverpoint has transition bins: a false `iff` ends the
+    /// sequences in progress (decision S45-D9).
+    pub(in crate::sim) history: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -299,8 +385,68 @@ impl IrCovergroup {
             if !items_valid || !bins_valid {
                 return Err(format!("coverpoint `{}` bins are invalid", point.name));
             }
+            if let Some(transitions) = &point.transitions {
+                if !transitions.valid(max, self.guards) {
+                    return Err(format!(
+                        "coverpoint `{}` transition bins are invalid",
+                        point.name
+                    ));
+                }
+            }
         }
         Ok(())
+    }
+}
+
+impl IrCoverTransitions {
+    /// The table invariants the runtime indexes by.
+    fn valid(&self, max_key: u64, guards: u32) -> bool {
+        let classes = self.bounds.len();
+        let words = self.words as usize;
+        let states = self.states as u64;
+        self.bounds.first() == Some(&0)
+            && self.bounds.windows(2).all(|pair| pair[0] < pair[1])
+            && self.bounds.iter().all(|bound| *bound <= max_key)
+            && words == classes.div_ceil(64)
+            && self.accept.len() == self.steps.len() * words
+            && self.start_index.len() == classes + 1
+            && self.start_index.windows(2).all(|pair| pair[0] <= pair[1])
+            && self.start_index.last().copied() == Some(self.start_sets.len() as u32)
+            && self
+                .start_sets
+                .iter()
+                .all(|set| (*set as usize) < self.sets.len())
+            && self.steps.iter().all(|step| {
+                let span = match step.repeat {
+                    IrCoverRepeat::Nonconsecutive => u64::from(step.hi) + 1,
+                    _ => u64::from(step.hi),
+                };
+                (1..=step.hi).contains(&step.lo)
+                    && u64::from(step.state) + span <= states
+                    && (step.set as usize) < self.sets.len()
+                    && (step.repeat != IrCoverRepeat::Nonconsecutive || !step.last)
+            })
+            && self.sets.iter().enumerate().all(|(index, set)| {
+                let end = set.first_step as usize + set.steps as usize;
+                set.steps > 0
+                    && (set.bin as usize) < self.bins.len()
+                    && end <= self.steps.len()
+                    && self.steps[set.first_step as usize..end]
+                        .iter()
+                        .enumerate()
+                        .all(|(offset, step)| {
+                            step.set as usize == index
+                                && step.last == (offset + 1 == set.steps as usize)
+                        })
+                    && (!self.bins[set.bin as usize].array || set.steps <= self.window)
+            })
+            && self
+                .bins
+                .iter()
+                .all(|bin| bin.guard.is_none_or(|guard| guard < guards))
+            && self
+                .default_bin
+                .is_none_or(|bin| (bin as usize) < self.bins.len())
     }
 }
 

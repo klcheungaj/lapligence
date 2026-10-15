@@ -60,6 +60,48 @@ are the register decisions
   or transition occurs, a run-time error is issued. Illegal bins take
   precedence over any other bins, that is, they will result in a run-time
   error even if they are also included in another bin."
+- 19.5.1, L32543-32544: value1 => value2 "represents the value of coverage
+  point at two successive sample points, that is, value1 followed by value2
+  at the next sample point."
+- 19.5.1, L32597-32600: "Any number of sample points can occur before the
+  first occurrence of the specified value and any number of sample points can
+  occur between each occurrence of the specified value. The transition
+  following the goto repetition must immediately follow the last occurrence
+  of the repetition."
+- 19.5.1, L32621-32622: "The transition following the nonconsecutive
+  repetition may occur after any number of sample points so long as the
+  repetition value does not occur again."
+- 19.5.1, L32668-32678: the `sa`/`sb`/`sc`/`allother` example: "The first
+  bins construct associates the following sequences with bin sa: 4=>5=>6, or
+  7=>11, 8=>11, 9=>11, 10=>11, 7=>12, 8=>12, 9=>12, 10=>12. The second bins
+  construct associates an individual bin with each of the above sequences"
+  and "The bin allother increments twice."
+- 19.5.1, L32690-32691: "A transition bin is incremented every time the
+  sequence of value transitions of its corresponding coverage point matches a
+  complete sequence, even when the sequences overlap."
+- 19.5.1, L32710-32733: the `b2`..`b7` example: "the above sequence causes
+  transition bin b2 to be incremented on the 8th sample (3 nonconsecutive
+  twos), and transition bin b3 to be incremented on the 6th sample (3
+  nonconsecutive threes). Likewise, transition bin b2 is incremented on the
+  10th sample, and transition bin b3 is incremented on the 9th and 11th
+  samples. Transition bin b5 is incremented on the 15th, 16th, 17th, and 18th
+  samples. Transition bin b6 is incremented on the 12th sample. Transition bin
+  b7 is incremented on the 13th sample. A transition bin is incremented at
+  most once per sample."
+- 19.5.1, L32735-32737: "Transition bin specifications of length 0 shall be
+  illegal."
+- 19.5.1, L32685-32688: "Transitions that specify sequences of unbounded or
+  undetermined varying length cannot be used with the multiple bins construct
+  (the [] notation). ... An attempt to specify multiple bins with such
+  sequences shall result in an error."
+- 19.5.4, L32812-32814: "For transition bins, any covered sequence is removed
+  when it cannot be matched without also matching an ignored sequence. (For
+  example, the ignored sequence 2=>3 would remove the covered sequence
+  1=>2=>3=>4.)" L32816-32817: "Ignored transition bins cannot specify a
+  sequence of unbounded or undetermined varying length."
+- 19.5.5, L32839-32843: illegal transitions are a run-time error; "Illegal
+  transition bins cannot specify a sequence of unbounded or undetermined
+  varying length."
 - 19.5.6, L32862-32863: "For wildcard bins, x and z values in b shall be
   treated as all possible 0 and 1 values prior to applying these rules."
   L32876-32884: "If a warning is issued for a bins element, the following
@@ -119,6 +161,38 @@ are the register decisions
   instance is constructed (S45-D5); `other` = {9} is the only bin: sample 9 is
   100.00. The run exits with status 1.
 
+`transitions.sv` (A02):
+
+- `sg` is the clause's `b2`..`b7` example: each bin at `at_least` 1 to 4, so
+  the line for each sample shows the bin's count so far: `b3` on samples 6,
+  9 and 11; `b2` on 8 and 10; `b6` on 12; `b7` on 13 only (S45-D8); `b5` on
+  15 to 18.
+- `cg` is the `sa`/`sb`/`sc` example with samples 4 5 7 11 8 12 2 2 3: `sa`
+  is hit (7=>11, 8=>12), `sb[]` has 1 + 8 = 9 bins of which 7=>11 and 8=>12
+  are hit, `sc` is hit (12=>2=>2=>3); `allother` does not count. `all`:
+  (1 + 2 + 1) / (1 + 9 + 1) = 36.36; `p_sa` 100.00; `p_sb` 2/9 = 22.22.
+- `g_removed`, ignored 2=>3: `long` (1=>2=>3=>4) and `mid` (2=>3=>4) always
+  contain it and are empty; `part` keeps 1=>3; `arr[]` keeps only `arr[1=>3]`;
+  `short` and `five` are untouched: 4 bins. Samples 1 2 3 4 hit `short` only
+  (2=>3 removes `part`'s 2=>3): 25.00. Samples 1 3 hit `part` and
+  `arr[1=>3]`: 75.00.
+- `g_inst`: `ia` samples 1 then 2 (100.00); `ib`, interleaved, samples 2
+  then 1 (0.00): histories are per instance. Type: 50.00.
+- `g_skip` (S45-D9): 1, a sample with `en` = 0, 2 matches neither `cp` (the
+  disabled sample ends the attempt) nor `guarded` (it sees 1 5 2). Then 1
+  with `en` = 0 and 2 with `en` = 1: `cp` still 0.00, `guarded` completes with
+  its guard true at the last sample: 100.00. `stopped`: 1, `stop()`,
+  `start()`, 2 matches nothing; 1 2 then does: 0.00, 100.00.
+- `g_x` (S45-D7): 1, `4'bxx01`, 2: `next` (1 => 2) fails at the X sample;
+  `later` (1 => 2 [-> 1]) lets it fall in the gap: 0.00, 100.00.
+- `g_wild`: 3 => 1 is `2'b1?` => `2'b0?`: `w` of {`w`, `other`}: 50.00.
+
+`transition_illegal.sv` (S45-D10): samples 1 2 3 complete `bad` (2=>3, a
+run-time error) and `up` (1=>2=>3), which contains it and is removed, so it
+is empty. 5 starts `pair` but ends nothing and nothing was pending: the
+illegal default sequence reports it; 6 completes `pair`; each 9 ends nothing
+with nothing pending: two more reports. Coverage: `pair` only, 100.00.
+
 ## Negative cases
 
 | Fixture | Error |
@@ -128,3 +202,7 @@ are the register decisions
 | `neg_bins_with` | a bins `with` filter, 1800-2012 syntax |
 | `neg_wildcard_wide` | a wildcard value that expands to more than 4096 ranges (llg limitation) |
 | `neg_wide_argument` | a bins value read from an argument wider than 64 bits (llg limitation) |
+| `neg_trans_length0` | `(3 [-> 1])`, a transition of length 0 (S45-D11) |
+| `neg_trans_array_goto` | `[]` transition bins with a goto repetition (19.5.1) |
+| `neg_trans_ignore_goto` | ignore_bins with a nonconsecutive repetition (19.5.4) |
+| `neg_trans_argument` | a transition value read from a covergroup argument (llg limitation) |

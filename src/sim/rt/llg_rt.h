@@ -2654,6 +2654,55 @@ typedef struct {
     uint64_t count;        /* COUNT: N, or its slot */
     uint32_t first_item, n_items;
 } llg_cov_bin_t;
+/* Transition bins (19.5.1). Keys fall into classes, maximal key ranges that
+ * every transition item holds entirely or not at all: class i holds the keys
+ * from bounds[i] up to the next bound. A step accepts a set of classes (a
+ * bitset of `words` words at `accept + step * words`); each set is an
+ * automaton over (step, repetition count) states numbered from the steps'
+ * `state`. A step without repetition is CONSECUTIVE [1:1]; a nonconsecutive
+ * repetition that ends its set is GOTO. */
+enum {
+    LLG_COV_REPEAT_CONSECUTIVE = 0,
+    LLG_COV_REPEAT_GOTO = 1,
+    LLG_COV_REPEAT_NONCONSECUTIVE = 2
+};
+typedef struct {
+    uint8_t repeat; /* LLG_COV_REPEAT_* */
+    uint8_t last;   /* the final step of its set */
+    uint32_t lo, hi;
+    uint32_t state; /* the state of repetition count 0 */
+    uint32_t set;
+} llg_cov_step_t;
+typedef struct {
+    uint32_t bin, first_step, n_steps;
+} llg_cov_tset_t;
+typedef struct {
+    const char* name;
+    const char* site;
+    uint8_t kind;  /* LLG_COV_BIN_*; DEFAULT and ILLEGAL_DEFAULT: `default sequence` */
+    uint8_t array; /* `b[]`: one bin per sequence */
+    int32_t guard;
+    /* Bins counted by coverage (19.11.1): 0 or 1 for a scalar bin, the
+     * number of sequences of an array bin. */
+    uint64_t coverable;
+} llg_cov_tbin_t;
+typedef struct {
+    uint32_t n_classes;
+    const uint64_t* bounds;
+    uint32_t words;
+    const uint64_t* accept;
+    uint32_t n_steps;
+    const llg_cov_step_t* steps;
+    uint32_t n_sets;
+    const llg_cov_tset_t* sets;
+    const uint32_t* start_index; /* n_classes + 1 offsets into start_sets */
+    const uint32_t* start_sets;  /* per class: sets whose first step accepts it */
+    uint32_t n_states;
+    uint32_t window; /* the longest array-bin sequence */
+    uint32_t n_bins;
+    const llg_cov_tbin_t* bins;
+    int32_t default_bin; /* the `default sequence` bin, or -1 */
+} llg_cov_trans_t;
 typedef struct {
     const char* name;
     uint32_t width;  /* 1..64 */
@@ -2663,8 +2712,9 @@ typedef struct {
     uint32_t n_keys;
     const uint64_t* keys; /* ENUM: ascending member keys, one bin each */
     uint32_t n_bins;
-    const llg_cov_bin_t* bins; /* declared bins, in source order */
+    const llg_cov_bin_t* bins; /* declared value bins, in source order */
     const llg_cov_item_t* items;
+    const llg_cov_trans_t* trans; /* transition bins, or NULL */
 } llg_cov_point_t;
 typedef struct llg_cov_inst llg_cov_inst_t;
 typedef struct llg_cov_layout llg_cov_layout_t;
@@ -2714,6 +2764,9 @@ void llg_cov_ready(void* inst);
  * of the sampled variable itself when the coverpoint is a plain read.
  * `guards` holds the group's bin `iff` results, or is NULL without any. */
 void llg_cov_hit(void* inst, uint32_t point, const sv4_t* value, const uint8_t* guards);
+/* The coverpoint's `iff` was false at a sample: the transition sequences in
+ * progress end (decision S45-D9). */
+void llg_cov_skip(void* inst, uint32_t point);
 void llg_cov_control(void* inst, int32_t point, int start);
 /* Objects sampled by the group's coverage event, pinned for the run. */
 void llg_cov_register(llg_cov_group_t* group, void* object);

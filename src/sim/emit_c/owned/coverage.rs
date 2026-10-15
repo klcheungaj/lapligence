@@ -3,7 +3,8 @@
 use super::native::NativeKind;
 use super::*;
 use crate::sim::ir::{
-    IrCoverAutomatic, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverageQuery, IrCoverageStmt,
+    IrCoverAutomatic, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverTransitions,
+    IrCoverageQuery, IrCoverageStmt,
 };
 
 fn group_name(group: usize) -> String {
@@ -25,6 +26,126 @@ fn bound(bound: IrCoverBound) -> (&'static str, u64) {
 
 fn optional_string(value: Option<&str>) -> String {
     value.map_or_else(|| "NULL".to_owned(), c_string_literal)
+}
+
+/// A static array named `name`, or `NULL` when it has no rows.
+fn static_array(out: &mut String, element: &str, name: &str, rows: Vec<String>) -> String {
+    if rows.is_empty() {
+        return "NULL".to_owned();
+    }
+    out.push_str(&format!(
+        "static const {element} {name}[] = {{\n    {}\n}};\n",
+        rows.join(",\n    ")
+    ));
+    name.to_owned()
+}
+
+/// The transition tables of one coverpoint; returns the table's name.
+fn transition_tables(out: &mut String, prefix: &str, tables: &IrCoverTransitions) -> String {
+    let u64_rows = |values: &[u64]| {
+        values
+            .iter()
+            .map(|value| format!("UINT64_C({value})"))
+            .collect::<Vec<_>>()
+    };
+    let u32_rows = |values: &[u32]| {
+        values
+            .iter()
+            .map(|value| format!("{value}u"))
+            .collect::<Vec<_>>()
+    };
+    let bounds = static_array(
+        out,
+        "uint64_t",
+        &format!("{prefix}_tbounds"),
+        u64_rows(&tables.bounds),
+    );
+    let accept = static_array(
+        out,
+        "uint64_t",
+        &format!("{prefix}_taccept"),
+        u64_rows(&tables.accept),
+    );
+    let steps = static_array(
+        out,
+        "llg_cov_step_t",
+        &format!("{prefix}_tsteps"),
+        tables
+            .steps
+            .iter()
+            .map(|step| {
+                format!(
+                    "{{ .repeat = {}u, .last = {}u, .lo = {}u, .hi = {}u, .state = {}u, .set = {}u }}",
+                    step.repeat.code(),
+                    u8::from(step.last),
+                    step.lo,
+                    step.hi,
+                    step.state,
+                    step.set
+                )
+            })
+            .collect(),
+    );
+    let sets = static_array(
+        out,
+        "llg_cov_tset_t",
+        &format!("{prefix}_tsets"),
+        tables
+            .sets
+            .iter()
+            .map(|set| {
+                format!(
+                    "{{ .bin = {}u, .first_step = {}u, .n_steps = {}u }}",
+                    set.bin, set.first_step, set.steps
+                )
+            })
+            .collect(),
+    );
+    let start_index = static_array(
+        out,
+        "uint32_t",
+        &format!("{prefix}_tstart_index"),
+        u32_rows(&tables.start_index),
+    );
+    let start_sets = static_array(
+        out,
+        "uint32_t",
+        &format!("{prefix}_tstart_sets"),
+        u32_rows(&tables.start_sets),
+    );
+    let bins = static_array(
+        out,
+        "llg_cov_tbin_t",
+        &format!("{prefix}_tbins"),
+        tables
+            .bins
+            .iter()
+            .map(|bin| {
+                format!(
+                    "{{ .name = {}, .site = {}, .kind = {}u, .array = {}u, .guard = {}, .coverable = UINT64_C({}) }}",
+                    c_string_literal(&bin.name),
+                    c_string_literal(&bin.site),
+                    bin.kind.code(),
+                    u8::from(bin.array),
+                    bin.guard.map_or(-1, i64::from),
+                    bin.coverable
+                )
+            })
+            .collect(),
+    );
+    let name = format!("{prefix}_trans");
+    out.push_str(&format!(
+        "static const llg_cov_trans_t {name} = {{ .n_classes = {}u, .bounds = {bounds}, .words = {}u, .accept = {accept}, .n_steps = {}u, .steps = {steps}, .n_sets = {}u, .sets = {sets}, .start_index = {start_index}, .start_sets = {start_sets}, .n_states = {}u, .window = {}u, .n_bins = {}u, .bins = {bins}, .default_bin = {} }};\n",
+        tables.bounds.len(),
+        tables.words,
+        tables.steps.len(),
+        tables.sets.len(),
+        tables.states,
+        tables.window,
+        tables.bins.len(),
+        tables.default_bin.map_or(-1, i64::from)
+    ));
+    format!("&{name}")
 }
 
 /// Static metadata of every covergroup; nothing for a model without one.
@@ -115,8 +236,12 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                 ));
                 format!("{point_prefix}_bins")
             };
+            let trans = point.transitions.as_ref().map_or_else(
+                || "NULL".to_owned(),
+                |tables| transition_tables(out, &point_prefix, tables),
+            );
             points.push(format!(
-                "{{ .name = {}, .width = {}u, .is_signed = {}u, .kind = {kind}, .dynamic = {}u, .n_keys = {}u, .keys = {keys_name}, .n_bins = {}u, .bins = {bins_name}, .items = {items_name} }}",
+                "{{ .name = {}, .width = {}u, .is_signed = {}u, .kind = {kind}, .dynamic = {}u, .n_keys = {}u, .keys = {keys_name}, .n_bins = {}u, .bins = {bins_name}, .items = {items_name}, .trans = {trans} }}",
                 c_string_literal(&point.name),
                 point.width,
                 u8::from(point.signed),
@@ -250,7 +375,13 @@ impl Frame<'_, '_> {
                         value.address()
                     ));
                     self.discard(value);
-                    if guarded {
+                    if guarded && sample.history {
+                        // A skipped sample ends the sequences in progress
+                        // (decision S45-D9).
+                        self.line("} else {");
+                        self.line(format!("llg_cov_skip({record}, {}u);", sample.point));
+                        self.line("}");
+                    } else if guarded {
                         self.line("}");
                     }
                 }
