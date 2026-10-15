@@ -304,16 +304,6 @@ impl<'a> Codegen<'a> {
                 }
             }
             let ty = ty.clone();
-            if ty.kind == "string" {
-                return Err(self.coverage_error(
-                    *formal,
-                    format!(
-                        "covergroup `{name}` formal `{}` of type `{}` is not supported; use an integral, real or class handle argument",
-                        self.node(*formal).name,
-                        ty.kind
-                    ),
-                ));
-            }
             let field_ty = self.coverage_field_type(*formal, &ty)?;
             let index = fields.len();
             fields.push(IrClassField {
@@ -417,6 +407,9 @@ impl<'a> Codegen<'a> {
         formal: NodeId,
         ty: &crate::core::model::TypeInfo,
     ) -> Result<IrClassFieldType, String> {
+        if ty.kind == "string" {
+            return Ok(IrClassFieldType::String);
+        }
         if is_real_kind(&ty.kind) {
             return Ok(IrClassFieldType::Real {
                 shortreal: ty.kind == "shortreal",
@@ -593,7 +586,7 @@ impl<'a> Codegen<'a> {
             }
             ("type_option", "merge_instances") if group_level && constant_zero() => Ok(()),
             ("type_option", "merge_instances") => {
-                unsupported("(merged type coverage) is not supported yet (SIM-046)")
+                unsupported("(merged type coverage) is not supported yet (SIM-045)")
             }
             _ => unsupported("is not a coverage option"),
         }
@@ -606,7 +599,7 @@ impl<'a> Codegen<'a> {
         point: NodeId,
         info: &CoverpointInfo,
     ) -> Result<IrCoverpoint, String> {
-        let point_name = self.node(point).name.clone();
+        let point_name = self.coverpoint_name(point);
         let integral = !is_real_kind(&info.ty.kind)
             && !matches!(
                 info.ty.kind.as_str(),
@@ -661,6 +654,17 @@ impl<'a> Codegen<'a> {
             type_weight,
             bins,
         })
+    }
+
+    /// A coverpoint's label, or its position for an unlabeled coverpoint
+    /// whose expression is not a plain variable.
+    fn coverpoint_name(&self, point: NodeId) -> String {
+        let name = &self.node(point).name;
+        if !name.is_empty() {
+            return name.clone();
+        }
+        let node = self.node(point);
+        format!("<coverpoint at {}:{}>", node.line, node.col)
     }
 
     fn coverage_key(value: i128, width: u32, signed: bool) -> u64 {
@@ -766,7 +770,7 @@ impl<'a> Codegen<'a> {
                     bin,
                     format!(
                         "{shape} (`{bin_name}` of coverpoint `{}` in covergroup `{group_name}`) are not supported yet (SIM-045)",
-                        self.node(point).name
+                        self.coverpoint_name(point)
                     ),
                 ));
             }
@@ -1011,7 +1015,7 @@ impl<'a> Codegen<'a> {
                             node,
                             format!(
                                 "coverpoint `{}` cannot be sampled: {error}",
-                                cg.node(point).name
+                                cg.coverpoint_name(point)
                             ),
                         )
                     };
@@ -1682,10 +1686,10 @@ impl<'a> Codegen<'a> {
                         IrExpr::new(
                             IrExprKind::CastToReal {
                                 a: Box::new(value),
-                                shortreal: false,
+                                shortreal,
                             },
                             REAL_EXPR_WIDTH,
-                            false,
+                            true,
                             None,
                         )
                     };
@@ -1720,8 +1724,10 @@ impl<'a> Codegen<'a> {
                     });
                 }
                 IrClassFieldType::String => {
-                    return Err(self
-                        .coverage_error(*actual, "string covergroup arguments are not supported"))
+                    let value = self.lower_string(path, *actual)?;
+                    body.push(IrStmt::Object(Box::new(
+                        crate::sim::ir::IrObjectStmt::StringAssignLocal(target, value),
+                    )));
                 }
             }
         }
