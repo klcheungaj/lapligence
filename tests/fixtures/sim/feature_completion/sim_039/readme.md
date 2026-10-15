@@ -213,6 +213,48 @@ and a named block of the action extends it. Lines: module-level unlabeled
 `procedural-action tb.ib.pc.pact`. A function or task attached to a match
 prints its own name (`tb.f`), covered by the portable S39-D10 case.
 
+## named_action_blocks
+
+A concurrent assertion's action is any statement: "assert property (
+property_spec ) action_block" and "cover property ( property_spec )
+statement_or_null" (16.15, L26410-26418), with "action_block ::=
+statement_or_null | [ statement ] else statement_or_null" (16.3,
+L21051-21053), and "the fail statement, like the pass statement, is any legal
+SystemVerilog procedural statement" (16.3, L21162). "A named block creates a
+new hierarchy scope" (9.3.4, L11572); "An unnamed block creates a new hierarchy
+scope only if it directly contains a block item declaration" (L11578). "The
+disable statement shall terminate the activity of a task or a named block.
+Execution shall resume at the statement following the block" (9.6.2,
+L12387-12388). "Setting the initial value of a static variable as part of the
+variable declaration ... shall occur before any initial or always procedures
+are started" (6.8, L5286-5287). Assert and assume run "the pass statements of
+the action block" when true and "the fail statements" when false (16.15.1,
+L26430-26432; 16.15.2, L26478-26479); a cover runs its pass statement "once for
+each successful evaluation attempt" (16.15.3, L26605) and a `cover sequence`
+"with multiplicity, for each match" (L26628).
+
+Ticks at 5, 15, 25 and 35; sampled `a` = 1, 1, 0, 1 and `b` = 0, 1, 1, 0.
+
+- `ma`: the passes at 5, 15 and 35 increment the static `n` once each (1, 2,
+  3) and print from the nested named block `inner`; the fail block prints at
+  25.
+- `md`: fails at 5 and 35; `disable d_blk` skips the second display.
+- `mc` (`cover sequence s`, `s` = `a`): matches at 5, 15 and 35; the action
+  waits `#1`, so it prints at 6, 16 and 36.
+- `mu`: an assume with only a named fail block fails at 5 and 35.
+- The unlabeled `cover property (a ##1 b)` matches at 15 (attempt 5) and 25
+  (attempt 15); its action scope is `tb.ua_blk`.
+- `ld`: an unnamed action block that declares `w`, and a `for` loop that
+  declares `k`, print `k=0` and `k=1` at 15 and 25.
+- Generate block `g`: `gc` (a named sequence under `cover property`) at 5, 15
+  and 35; `ga` fails at 25; in the nested `for` generate, `n[0].gs` and
+  `n[1].gs` (`b ##1 a`) both match at 35 (attempt 25).
+
+`neg_deferred_named_action` is the nearest illegal shape. For deferred
+assertions, "Action blocks may only contain a single subroutine call" (16.4,
+L21208), which "implies that no begin-end construct shall surround the pass or
+fail statements" (L21227-21228). Slang rejects it.
+
 ## match_native
 
 `(a, x = x + d)[*2]` in cycles 1-2 gives 3 at 25 and in cycles 2-3 gives 6 at
@@ -234,3 +276,4 @@ current `d` (2 at 25, 4 at 35).
 | `neg_match_call_output` | Slang | a match-item call with an output argument (16.11) |
 | `neg_match_call_timing` | llg | a match-item task with a timing control: it would not run within the Reactive region; the message names the assertion (`tb.c1`, `c1`) and its location, never the hidden host |
 | `neg_property_local` | llg | a property local read by a later property operand (`always`): unsupported form |
+| `neg_deferred_named_action` | Slang | a named block as a deferred assertion's action (16.4, see `named_action_blocks`) |

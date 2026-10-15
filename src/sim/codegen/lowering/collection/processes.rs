@@ -1810,12 +1810,14 @@ impl<'a> Codegen<'a> {
                         NodeKind::Stmt(StmtKind::Empty)
                         | NodeKind::Var { .. }
                         | NodeKind::FuncArg { .. } => true,
-                        // Slang keeps a named assertion declaration scope as
-                        // an otherwise-empty begin child of its synthetic
-                        // process. It carries no executable statements.
+                        // Slang keeps a labeled assertion's scope symbol as a
+                        // begin child of its synthetic process. The scope
+                        // holds only declarations, including the scopes of
+                        // named blocks inside the action blocks
+                        // (`begin : act ... end`); their statements live in
+                        // the assertion's own action `Block`s.
                         NodeKind::Stmt(StmtKind::Begin) => {
                             self.db.semantic_detail(*child) == Some("StatementBlock")
-                                && self.node(*child).children.is_empty()
                         }
                         _ => false,
                     });
