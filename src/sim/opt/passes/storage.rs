@@ -482,10 +482,15 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             init: Some(init), ..
         } => collect_expr_reads(init, model, rw),
         IrStmt::ClockingDrive {
-            lhs, rhs, cycles, ..
+            lhs,
+            rhs,
+            specs,
+            cycles,
+            ..
         } => {
             collect_lhs_rw(lhs, model, rw);
             collect_expr_reads(rhs, model, rw);
+            collect_wait_specs_rw(specs, model, rw);
             if let Some(cycles) = cycles {
                 collect_expr_reads(cycles, model, rw);
             }
@@ -545,12 +550,14 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         IrStmt::NonblockingEventAssignWhen {
             lhs,
             rhs,
+            specs,
             repeat,
             captures,
             ..
         } => {
             collect_lhs_rw(lhs, model, rw);
             collect_expr_reads(rhs, model, rw);
+            collect_wait_specs_rw(specs, model, rw);
             if let Some(repeat) = repeat {
                 collect_expr_reads(repeat, model, rw);
             }
@@ -656,65 +663,26 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         IrStmt::EventTrigger { ev }
         | IrStmt::ClockingEventTrigger { ev }
         | IrStmt::NonblockingEventTrigger { ev, .. }
-        | IrStmt::NonblockingEventTriggerWhen { ev, .. }
         | IrStmt::EventCapture { source: ev, .. } => collect_event_reads(ev, model, rw),
+        // `->> repeat(n) @(posedge c) ev` registers its wait sources and
+        // evaluates the count when it is issued.
+        IrStmt::NonblockingEventTriggerWhen { ev, specs, repeat } => {
+            collect_event_reads(ev, model, rw);
+            collect_wait_specs_rw(specs, model, rw);
+            if let Some(repeat) = repeat {
+                collect_expr_reads(repeat, model, rw);
+            }
+        }
         IrStmt::EventAssign { target, source } => {
             collect_event_reads(target, model, rw);
             if let Some(source) = source {
                 collect_event_reads(source, model, rw);
             }
         }
-        // Event-control and combinational wait sources are reads of the
-        // named signal globals (lowering emits their addresses into the wait
-        // arrays; a signal referenced only here still needs its storage).
-        // Named-event entries (`IrWaitSrc::Event`) are NOT storage — the
-        // event globals are always emitted, so they are simply skipped.
-        IrStmt::WaitEvents { specs, .. } => {
-            for (src, _) in specs {
-                match src {
-                    IrWaitSrc::Sig(name) => {
-                        mark_dependency_read(&IrDependency::scalar(name), model, rw)
-                    }
-                    IrWaitSrc::Real(name) => {
-                        mark_dependency_read(&IrDependency::real(name), model, rw)
-                    }
-                    IrWaitSrc::Evaluated { reads, .. } | IrWaitSrc::EvaluatedReal { reads, .. } => {
-                        for dependency in reads {
-                            mark_dependency_read(dependency, model, rw);
-                        }
-                    }
-                    // An event-array index or handle expression is evaluated
-                    // when the wait is armed.
-                    IrWaitSrc::Event(event) | IrWaitSrc::FilteredEvent { event, .. } => {
-                        event.expressions(&mut |child| collect_expr_reads(child, model, rw))
-                    }
-                    _ => {}
-                }
-            }
-        }
+        IrStmt::WaitEvents { specs, .. } => collect_wait_specs_rw(specs, model, rw),
         IrStmt::ClockingCycleWait { count, specs } => {
             collect_expr_reads(count, model, rw);
-            for (src, _) in specs {
-                match src {
-                    IrWaitSrc::Sig(name) => {
-                        mark_dependency_read(&IrDependency::scalar(name), model, rw)
-                    }
-                    IrWaitSrc::Real(name) => {
-                        mark_dependency_read(&IrDependency::real(name), model, rw)
-                    }
-                    IrWaitSrc::Evaluated { reads, .. } | IrWaitSrc::EvaluatedReal { reads, .. } => {
-                        for dependency in reads {
-                            mark_dependency_read(dependency, model, rw);
-                        }
-                    }
-                    // An event-array index or handle expression is evaluated
-                    // when the wait is armed.
-                    IrWaitSrc::Event(event) | IrWaitSrc::FilteredEvent { event, .. } => {
-                        event.expressions(&mut |child| collect_expr_reads(child, model, rw))
-                    }
-                    _ => {}
-                }
-            }
+            collect_wait_specs_rw(specs, model, rw);
         }
         IrStmt::WaitAny { sens, .. } => {
             for dependency in sens {
@@ -834,6 +802,36 @@ fn collect_mailbox_target_rw(
         if let Some(i) = model.signals.iter().position(|sg| sg.c_name == name) {
             rw.read(i);
             rw.write(i);
+        }
+    }
+}
+
+/// Event-control wait sources are reads of the named signal globals:
+/// lowering emits their addresses into the runtime wait arrays, so a signal
+/// referenced only here still needs its storage. A named event is not signal
+/// storage, but an event-array index or handle expression is evaluated when
+/// the wait is armed.
+fn collect_wait_specs_rw(
+    specs: &[(IrWaitSrc, crate::sim::ir::IrEdge)],
+    model: &IrModel,
+    rw: &mut Rw,
+) {
+    for (src, _) in specs {
+        match src {
+            IrWaitSrc::Sig(name) => mark_dependency_read(&IrDependency::scalar(name), model, rw),
+            IrWaitSrc::Real(name) => mark_dependency_read(&IrDependency::real(name), model, rw),
+            IrWaitSrc::Evaluated { reads, .. } | IrWaitSrc::EvaluatedReal { reads, .. } => {
+                for dependency in reads {
+                    mark_dependency_read(dependency, model, rw);
+                }
+            }
+            IrWaitSrc::Event(event) | IrWaitSrc::FilteredEvent { event, .. } => {
+                collect_event_reads(event, model, rw)
+            }
+            // Formal and native-local sources name activation storage.
+            IrWaitSrc::RefFormal { .. }
+            | IrWaitSrc::NativeRefFormal { .. }
+            | IrWaitSrc::SharedNative { .. } => {}
         }
     }
 }

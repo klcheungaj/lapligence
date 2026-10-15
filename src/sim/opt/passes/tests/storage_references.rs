@@ -104,3 +104,36 @@ fn unused_storage_keeps_event_handle_indices_of_call_arguments() {
     run(&mut model, &storage_only());
     assert_only_first_omitted(&model);
 }
+
+#[test]
+fn unused_storage_keeps_wait_sources_of_clocked_nonblocking_operations() {
+    // `->> repeat(n) @(posedge c) ev`, `a <= @(posedge c) b` and a clocking
+    // drive register their wait sources when issued.
+    let posedge = |signal: usize| (IrWaitSrc::Sig(format!("G_s{signal}")), IrEdge::Posedge);
+    let body = vec![
+        IrStmt::NonblockingEventTriggerWhen {
+            ev: IrEventRef::Static(0),
+            specs: vec![posedge(1)],
+            repeat: Some(read(2)),
+        },
+        IrStmt::NonblockingEventAssignWhen {
+            lhs: IrLhs::Whole(3),
+            rhs: Box::new(konst(0, 8)),
+            specs: vec![posedge(4)],
+            repeat: None,
+            action: "a_t_nba_0".to_string(),
+            frame: crate::sim::ir::FrameId::new(0),
+            captures: Vec::new(),
+        },
+        IrStmt::ClockingDrive {
+            lhs: IrLhs::Whole(5),
+            rhs: konst(0, 8),
+            ticks: crate::sim::ir::IrDelay::Constant(0),
+            specs: vec![posedge(6)],
+            cycles: None,
+        },
+    ];
+    let mut model = with_event_array(model_with(body, sigs(7)));
+    run(&mut model, &storage_only());
+    assert_only_first_omitted(&model);
+}
