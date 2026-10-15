@@ -168,25 +168,38 @@ static char* wave_strdup(const char* s) {
     return copy;
 }
 
+// One stdio call per report: the writer thread reports while the simulation
+// thread may print, and separate calls could interleave within a line.
+static void wave_report(const char* prefix, const char* fmt, va_list ap) {
+    char line[2048];
+    int used = snprintf(line, sizeof(line), "%s", prefix);
+    if (used < 0) return;
+    if ((size_t)used < sizeof(line) - 2u) {
+        int written = vsnprintf(line + used, sizeof(line) - 1u - (size_t)used, fmt, ap);
+        if (written > 0) used += written;
+        if ((size_t)used > sizeof(line) - 2u) used = (int)(sizeof(line) - 2u);
+    }
+    line[used] = '\n';
+    line[used + 1] = 0;
+    fputs(line, stderr);
+}
+
 static void wave_error(const char* fmt, ...) {
     if (!llg_atomic_int_cas(&g_wave.error, 0, 1)) return;
     va_list ap;
     va_start(ap, fmt);
-    fputs("llg: waveform: ", stderr);
-    vfprintf(stderr, fmt, ap);
-    fputc('\n', stderr);
+    wave_report("llg: waveform: ", fmt, ap);
     va_end(ap);
 }
 
-// Ignored controls warn once per kind and leave the dump running.
+// Ignored controls warn once per kind and leave the dump running. Times are
+// written like VCD timestamps, in design precision ticks.
 static void wave_warning(int* once, const char* fmt, ...) {
     if (*once) return;
     *once = 1;
     va_list ap;
     va_start(ap, fmt);
-    fputs("llg: waveform: warning: ", stderr);
-    vfprintf(stderr, fmt, ap);
-    fputc('\n', stderr);
+    wave_report("llg: waveform: warning: ", fmt, ap);
     va_end(ap);
 }
 
@@ -1269,7 +1282,7 @@ void llg_wave_file(const char* path, uint64_t now) {
     if (!require_producer("$dumpfile") || g_wave.driver_selection || !path) return;
     if (g_wave.dump_state == DUMP_ON || g_wave.dump_state == DUMP_OFF) {
         wave_warning(&g_wave.warned_dumpfile,
-                     "$dumpfile(\"%s\") ignored: the dump started at time %llu",
+                     "$dumpfile(\"%s\") ignored: the dump started at #%llu",
                      path, (unsigned long long)g_wave.dump_start_time);
         return;
     }
@@ -1297,7 +1310,7 @@ void llg_wave_dumpvars_select(uint64_t now, uint32_t depth,
         // All $dumpvars calls shall execute at the same simulation time
         // (IEEE 1364-2001 18.1.2); a later call cannot change the header.
         wave_warning(&g_wave.warned_dumpvars,
-                     "$dumpvars at time %llu ignored: the dump started at time %llu",
+                     "$dumpvars at #%llu ignored: the dump started at #%llu",
                      (unsigned long long)now,
                      (unsigned long long)g_wave.dump_start_time);
         return;

@@ -332,7 +332,7 @@ fn dumpvars_calls_of_one_step_add_up_and_later_calls_are_ignored() {
         );
         assert_eq!(
             runtime_stderr(&output),
-            ["llg: waveform: warning: $dumpvars at time 1 ignored: the dump started at time 0"],
+            ["llg: waveform: warning: $dumpvars at #1 ignored: the dump started at #0"],
             "{label}"
         );
         let vcd = read_vcd(&label, &dir, "trace.vcd");
@@ -479,7 +479,7 @@ fn dump_controls_record_end_of_step_values() {
         );
         assert_eq!(
             runtime_stderr(&output),
-            ["llg: waveform: warning: $dumpfile(\"late.vcd\") ignored: the dump started at time 0"],
+            ["llg: waveform: warning: $dumpfile(\"late.vcd\") ignored: the dump started at #0"],
             "{label}"
         );
         assert!(

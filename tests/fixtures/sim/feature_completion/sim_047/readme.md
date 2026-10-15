@@ -103,7 +103,7 @@ variable has two ordinary records in one step (S47-D2).
   `(1, tb.u1)` selects `u1.i` and `u1.m` but not `u1.l`; `(0, tb.g[1].l)`
   selects that instance; `(0, tb.mem, tb.b)` selects both elements and `b`.
   The `$dumpvars(0, tb)` at step 1 is ignored with the warning
-  `$dumpvars at time 1 ignored: the dump started at time 0`. Traces: `b`
+  `$dumpvars at #1 ignored: the dump started at #0`. Traces: `b`
   11@0, 10@1; `u1.i`/`u1.m` 00@0, 01@1; `g[1].l.i` (a+1) 01@0, 10@1;
   `g[1].l.r` (~i) 10@0, 01@1; `mem[0]` 00010000@0; `mem[1]` 00010001@0,
   00100010@1.
