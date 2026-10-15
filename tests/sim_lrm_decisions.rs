@@ -1906,3 +1906,134 @@ fn s44_d4_type_without_instances() {
         include_str!("fixtures/sim/lrm_decisions/S44-D4_type_without_instances.out"),
     );
 }
+
+#[test]
+fn s47_d1_dumpvars_end_of_step() {
+    run_decision(
+        "S47-D1_dumpvars_end_of_step",
+        include_str!("fixtures/sim/lrm_decisions/S47-D1_dumpvars_end_of_step.out"),
+    );
+}
+
+#[test]
+fn s47_d2_one_record_per_step() {
+    run_decision(
+        "S47-D2_one_record_per_step",
+        include_str!("fixtures/sim/lrm_decisions/S47-D2_one_record_per_step.out"),
+    );
+}
+
+#[test]
+fn s47_d3_dumpvars_calls_combine() {
+    run_decision(
+        "S47-D3_dumpvars_calls_combine",
+        include_str!("fixtures/sim/lrm_decisions/S47-D3_dumpvars_calls_combine.out"),
+    );
+}
+
+#[test]
+fn s47_d4_dumpvars_levels_without_scope() {
+    run_decision(
+        "S47-D4_dumpvars_levels_without_scope",
+        include_str!("fixtures/sim/lrm_decisions/S47-D4_dumpvars_levels_without_scope.out"),
+    );
+}
+
+#[test]
+fn s47_d5_dump_controls_by_state() {
+    run_decision(
+        "S47-D5_dump_controls_by_state",
+        include_str!("fixtures/sim/lrm_decisions/S47-D5_dump_controls_by_state.out"),
+    );
+}
+
+#[test]
+fn s47_d6_dumpoff_real_nan() {
+    run_decision(
+        "S47-D6_dumpoff_real_nan",
+        include_str!("fixtures/sim/lrm_decisions/S47-D6_dumpoff_real_nan.out"),
+    );
+}
+
+#[test]
+fn s47_d7_dumpfile_name() {
+    run_decision(
+        "S47-D7_dumpfile_name",
+        include_str!("fixtures/sim/lrm_decisions/S47-D7_dumpfile_name.out"),
+    );
+}
+
+#[test]
+fn s47_d8_dumplimit_header_whole() {
+    run_decision(
+        "S47-D8_dumplimit_header_whole",
+        include_str!("fixtures/sim/lrm_decisions/S47-D8_dumplimit_header_whole.out"),
+    );
+}
+
+#[test]
+fn s47_d9_dynamic_objects_not_dumped() {
+    run_decision(
+        "S47-D9_dynamic_objects_not_dumped",
+        include_str!("fixtures/sim/lrm_decisions/S47-D9_dynamic_objects_not_dumped.out"),
+    );
+}
+
+#[test]
+fn s47_d10_loop_generate_scope_names() {
+    run_decision(
+        "S47-D10_loop_generate_scope_names",
+        include_str!("fixtures/sim/lrm_decisions/S47-D10_loop_generate_scope_names.out"),
+    );
+}
+
+#[test]
+fn s47_d12_value_formats() {
+    run_decision(
+        "S47-D12_value_formats",
+        include_str!("fixtures/sim/lrm_decisions/S47-D12_value_formats.out"),
+    );
+}
+
+#[test]
+fn s47_d13_catalog_encoding() {
+    run_decision(
+        "S47-D13_catalog_encoding",
+        include_str!("fixtures/sim/lrm_decisions/S47-D13_catalog_encoding.out"),
+    );
+}
+
+#[test]
+fn s47_d9_named_string_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!("fixtures/sim/lrm_decisions/S47-D9_named_string_rejected.out").is_empty());
+    sim_cli::reject_case(
+        SUITE,
+        "S47-D9_named_string_rejected",
+        "`$dumpvars` argument `tb.label` in `tb` has no VCD/FST representation",
+    );
+}
+
+#[test]
+fn s47_d11_dump_open_error() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S47-D11_dump_open_error.out");
+    sim_cli::run_case_checked_matrix(SUITE, "S47-D11_dump_open_error", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+        let reports = String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter(|line| line.starts_with("llg: waveform: "))
+            .count();
+        assert_eq!(
+            reports,
+            1,
+            "{label}: one output-error report: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("llg: waveform: cannot open `S47-D11-missing/dump.vcd`: "),
+            "{label}"
+        );
+    });
+}

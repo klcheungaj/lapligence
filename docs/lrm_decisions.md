@@ -390,6 +390,28 @@ case.
 | S44-D3 | **Dropped instances keep counting.** An instance outlives the last handle to it and to its embedding object: an event-sampled instance keeps sampling and every instance contributes to type coverage until the end of simulation. | 19.3 L32103-32104; 19.11 L33759-33760 | `S44-D3_dropped_instance_keeps_counting` | llg choice (the text is silent on lifetime) |
 | S44-D4 | **A type without instances** returns 0.0 from `get_coverage()` (weight 1) and does not contribute to `$get_coverage()`, which is 100.0 when no type has an instance. | 19.11 L33808-33811, L33817-33818 | `S44-D4_type_without_instances` | llg reading of the zero-denominator rule for an empty instance sum |
 
+## Waveform dumping (SIM-047)
+
+Clause lines are in `SystemVerilog-1800-2009.txt`; IEEE 1364-2001 18.1-18.2 has
+the same wording. Each case also writes a dump file to compare by hand: VCD
+headers differ between simulators, so the `.out` files hold `$display` values.
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S47-D1 | **The dump starts at the end of the `$dumpvars` time step**: the `$dumpvars` checkpoint holds the step's final values. | 21.7.1.3 L37832-37833 | `S47-D1_dumpvars_end_of_step` | LRM text (llg previously wrote the values at the call) |
+| S47-D2 | **One record per changed variable per time step**, with its end-of-step value; a variable that changed and returned is recorded once; final procedures' writes are recorded at the end time. | 21.7.1.4 L37887-37888 | `S47-D2_one_record_per_step` | llg reading (the text does not say how many records a step gives) |
+| S47-D3 | **`$dumpvars` calls of one step add their selections; a later call is ignored with a warning.** | 21.7.1.2 L37768-37769 | `S47-D3_dumpvars_calls_combine` | LRM text for one step; ignoring a later call is an llg choice |
+| S47-D4 | **`$dumpvars(levels)` without scopes counts the levels below every top-level instance**; `$dumpvars(0)` is the whole model. | 21.7.1.2 L37786, L37788-37789 | `S47-D4_dumpvars_levels_without_scope` | llg reading (the text does not say where an unnamed scope list starts) |
+| S47-D5 | **Controls act on the dump state**: before the first `$dumpvars`, `$dumpoff`/`$dumpon`/`$dumpall`/`$dumpflush` do nothing; `$dumpon` only resumes a dump `$dumpoff` stopped; a repeated `$dumpoff` and a `$dumpall` while off write nothing; a `$dumpoff` in the first `$dumpvars` step starts the dump off. | 21.7.1.3 L37844-37846; 21.7.1.6 L37961 | `S47-D5_dump_controls_by_state` | LRM example for `$dumpon`; the rest is an llg choice (the text is silent) |
+| S47-D6 | **`$dumpoff` writes a real variable as `rNaN`**, four-state variables as x. | 21.7.1.3 L37844-37845; 21.7.2.1 L38065 | `S47-D6_dumpoff_real_nan` | llg choice (a real has no x) |
+| S47-D7 | **The last `$dumpfile` name before the dump starts is used**, the file is created only when the dump starts, a later `$dumpfile` warns and is ignored, and every name but `*.fst` is VCD; `$dumpfile` without a name is `dump.vcd`. | 21.7.1.1 L37757-37759 | `S47-D7_dumpfile_name` | LRM text for the default; the rest is an llg choice |
+| S47-D8 | **`$dumplimit` never truncates the header**; the first record past the limit stops the dump, an open checkpoint gets its `$end` and a `dump limit reached` comment follows (beyond the limit). | 21.7.1.5 L37901-37903 | `S47-D8_dumplimit_header_whole` | LRM text for the comment; header and placement are llg choices |
+| S47-D9 | **Only packed and real variables and nets, fixed arrays of them and unpacked structure members of instance and generate scopes are dumped**; strings, handles, events, dynamic/queue/associative arrays, automatic and block/subroutine variables are left out of scope dumps, and naming one in `$dumpvars` is a compile error. | 21.7.1.2 L37790-37791; 21.7.2.1 L38065-38066, L38022-38031 | `S47-D9_dynamic_objects_not_dumped`, `S47-D9_named_string_rejected` | llg choice (no VCD value format exists for these objects) |
+| S47-D10 | **A loop generate instance is the scope `g[i]`** of the enclosing scope in dump and VPI names, with no level for the loop construct. | 27.4 L46317-46320, L46327 | `S47-D10_loop_generate_scope_names` | LRM text (llg previously added a `g` level) |
+| S47-D11 | **An output error is reported once**, dumping stops, the simulation runs to its end and exits with status 1. | 21.7.1.1 L37757-37758 (silent) | `S47-D11_dump_open_error` | llg choice |
+| S47-D12 | **Reals use `%.17g` and vectors their full width.** | 21.7.2.1 L38068-38070; 21.7.2.2 L38090-38091 | `S47-D12_value_formats` | llg choice: 16 digits do not round-trip every double, and full-width values read the same (Table 21-9) |
+| S47-D13 | **Catalog encoding**: packed storage is `wire` of its width, reals `real 64`; fixed array elements are variables `name[i]`; unpacked structure members are variables of a `module` scope named after the structure; nets merged through inout ports share one identifier code. | 21.7.2.1 L38066, L38010-38015; 23.3.3.7 L41595-41597 | `S47-D13_catalog_encoding` | llg choice (memories are "not dumped" by the text; merging is permitted) |
+
 ## Memory files (SIM-027)
 
 The settled Q02 cases are conformance tests in

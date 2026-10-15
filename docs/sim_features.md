@@ -1850,11 +1850,21 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 
 ### Waveforms
 
-- 🟨 **VCD/FST** — `$dumpfile` selects `.vcd`/`.fst`; `$dumpvars` filters depth,
-  scope and variables before the fixed header. Packed values, array elements
-  with declared bounds, real values, X/Z, aliases, hierarchy and femtosecond
-  timestamps are represented. `$dumpon/$dumpoff/$dumplimit`, `$dumpall`
-  snapshots and synchronous `$dumpflush` are supported.
+- 🟨 **VCD/FST** — `$dumpfile` names the file (`.fst` selects FST, any other
+  name VCD; default `dump.vcd`); `$dumpvars` calls of one time step combine
+  their depth, scope and variable selections, and the dump starts at the end
+  of that step. Each changed variable is recorded once per time step with its
+  end-of-step value. Packed values, array elements with declared bounds, real
+  values, X/Z, aliases (one identifier code per merged net), hierarchy with
+  `g[i]` loop generate scopes and femtosecond timestamps are represented;
+  strings, handles, events, dynamic containers and block or subroutine
+  variables are not dumped and naming one in `$dumpvars` is an error.
+  `$dumpon/$dumpoff/$dumplimit`, `$dumpall` snapshots and synchronous
+  `$dumpflush` follow the dump state; an output error is reported, stops the
+  dump and fails the run (decisions S47-D1..D13; [SIM-047
+  fixtures](../tests/fixtures/sim/feature_completion/sim_047/readme.md), read
+  by an independent VCD reader and GTKWave's FST reader). Remaining gaps are
+  listed in [known issues](known_issues.md#waveform-dump-coverage-limits-sim-047).
   V ch.18 **[1995/2001]**.
 - 🚫 **Extended VCD port dumping** — `$dumpports` and `$dumpportsoff/on/all/
   limit/flush` are unsupported by design and stop the run with `unsupported:

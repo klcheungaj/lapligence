@@ -317,6 +317,20 @@ S44-D1-D4 are in `sim_lrm_decisions`; the runtime store probe is
 `runtime_coverage` in the `runtime` binary, and the capture unit test is
 `core::db::database::coverage::tests`.
 
+SIM-047's waveform fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_047::)'` together with
+`-E 'test(/^sim_waveform::/) | test(/^sim_lrm_decisions::s47_/)'` and the
+waveform probes `runtime_value_storage::dynamic_storage_and_waveform`. Every VCD
+is read by the independent reader `support/vcd.rs` and compared with
+hand-derived end-of-step traces in both optimizer modes; `trace_values` also
+compares the VCD bytes on every value backend, FST goes through GTKWave's
+reader built from the bundled libfst, `excluded` runs under `LLG_GC_STRESS=1`,
+`flush_read` needs `LLG_ALLOW_SYSTEM=1` (set by the test), and
+`the_storage_pass_never_changes_a_dump` builds and runs any model the
+unused-storage pass changes. Decisions S47-D1-D13 are in `sim_lrm_decisions`.
+Under ASan run the set with `LLG_CC=gcc LLG_CFLAGS='-fsanitize=address,undefined
+-fno-omit-frame-pointer'`.
+
 SIM-037's sequence-composition fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_037::)'`. `exhaustive` compares
 36 sequences on all 1024 two-signal traces of length 5 with the test-side

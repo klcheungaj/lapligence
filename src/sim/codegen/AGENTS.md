@@ -744,7 +744,9 @@ name model storage (static formals and locals included); activation-bound storag
 handle-selected storage or `%p` a class object sets `IrStmt::MonitorSet::poll`:
 the runtime then re-evaluates it at every settled slot (`LLG_MONITOR_READ_POLL`).
 Deferred callbacks need owned environments. Waveform controls preserve source/depth
-identity against the fixed catalog; omit waveform/libfst when unused, reject
+identity against the fixed catalog; a `$dumpvars` argument naming a variable must
+match waveform storage after lowering (S47-D9), and waveform names drop the loop
+generate construct level (`tb.g[0]`, S47-D10); omit waveform/libfst when unused, reject
 `$dumpports`, warn/skip `$displayon`/`$displayoff`. Packed string literals remain
 unsigned MSB-first byte vectors (empty is one zero byte), with normal pad/truncate;
 SystemVerilog strings remain separate native owners.

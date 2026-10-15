@@ -30,5 +30,11 @@ snapshot destruction, and execution after Db destruction at native O0/O3. Its
 expected output remains the caller's independent fixture oracle. Missing tools
 fail mandatory acceptance; see [feature completion slices](../readme.md#feature-completion-slices).
 
+`vcd.rs` is an independent four-state VCD reader (IEEE 1800-2009 Syntax
+21-20, Table 21-9) for waveform suites: it shares no code with the runtime
+writer and rejects unbalanced scopes, illegal types, alias width mismatches,
+non-increasing times, unclosed checkpoints and non-x `$dumpoff` values. Its
+helpers return declarations, alias groups and end-of-step traces.
+
 `c_compiler.rs` identifies real GNU GCC (macOS `gcc` is Apple Clang) so GCC-only
 diagnostics are requested only from GCC.
