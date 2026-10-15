@@ -61,6 +61,9 @@ pub(crate) struct DriverOptions {
     pub wave: Option<sim::codegen::WaveformOptions>,
     pub generator: Option<String>,
     pub dpi_libraries: Vec<PathBuf>,
+    /// Write the model executable's import library here and stop
+    /// (`--dpi-import-lib`, command line only).
+    pub dpi_import_lib: Option<PathBuf>,
     pub launcher: Option<String>,
     pub cc: Option<String>,
     pub cflags: Option<String>,
@@ -406,6 +409,13 @@ pub(crate) fn resolve(
         || cli.cmake.is_some()
         || cli.build_jobs.is_some()
         || cli.runtime_cache.is_some();
+    if cli.dpi_import_lib.is_some() && cli.gen_only == Some(true) {
+        return Err(SettingsError(
+            "--dpi-import-lib builds the import library with CMake and cannot be combined \
+             with --gen-only"
+                .to_owned(),
+        ));
+    }
     // A linked application (`--dpi-lib`) may be a VPI application.
     let vpi = cli.vpi || !dpi_libraries.is_empty();
 
@@ -462,7 +472,11 @@ pub(crate) fn resolve(
             env.runtime_cache.clone(),
             config.output.runtime_cache.clone(),
         ),
-        gen_only: cli.gen_only.or(config.build.gen_only).unwrap_or(false),
+        // The import library needs a configured project, so it overrides a
+        // configured `gen_only`.
+        gen_only: cli.dpi_import_lib.is_none()
+            && cli.gen_only.or(config.build.gen_only).unwrap_or(false),
+        dpi_import_lib: cli.dpi_import_lib,
         no_opt: !cli.optimize.or(config.simulator.optimize).unwrap_or(true),
         vpi,
         stop_policy: cli
@@ -549,6 +563,37 @@ files = ["a.sv"]
         assert!(flag.vpi);
         let linked = resolve_no_env(cli(&["--dpi-lib", "app.a", "x.sv"]), None).unwrap();
         assert!(linked.vpi, "a linked library may be a VPI application");
+    }
+
+    #[test]
+    fn import_library_request_is_command_line_only_and_excludes_gen_only() {
+        let plain = resolve_no_env(cli(&["x.sv"]), None).unwrap();
+        assert_eq!(plain.dpi_import_lib, None);
+        let dir = temp("import_lib");
+        let configured = config(&dir, "schema_version = 1\n[build]\ngen_only = true\n");
+        let request = resolve_no_env(
+            cli(&["--dpi-import-lib", "sim.lib", "x.sv"]),
+            Some(&configured),
+        )
+        .unwrap();
+        assert_eq!(request.dpi_import_lib, Some(PathBuf::from("sim.lib")));
+        assert!(
+            !request.gen_only,
+            "a configured gen_only yields to the request"
+        );
+        let error = resolve_no_env(
+            cli(&["--dpi-import-lib", "sim.lib", "--gen-only", "x.sv"]),
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            error.0.contains("cannot be combined with --gen-only"),
+            "{}",
+            error.0
+        );
+        assert!(parse_args(vec!["--dpi-import-lib".to_owned()]).is_err());
+        assert!(parse_args(vec!["--dpi-import-lib".to_owned(), String::new()]).is_err());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

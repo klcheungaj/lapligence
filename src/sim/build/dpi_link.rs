@@ -25,7 +25,7 @@ const IMPORT_MARKER: &str = "/* llg DPI-C import: c_name=";
 /// version, scope, user-data, caller and disable set: the time services and
 /// the deprecated SV3.1a representation (H.13, which an implementation need
 /// not provide).
-const UNPROVIDED_ROUTINES: &[&str] = &[
+pub(super) const UNPROVIDED_ROUTINES: &[&str] = &[
     "svGetTime",
     "svGetTimeUnit",
     "svGetTimePrecision",

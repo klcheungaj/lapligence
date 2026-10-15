@@ -7,7 +7,7 @@
 //! generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi  --stop-policy <resume|exit>
 //! lint:     --lint-only  --no-lint-only  --lint-json [<path>]  -Werror  -Wno-error
 //! wave:     --wave <file.vcd|file.fst>  --wave-depth <N>  --no-wave
-//! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
+//! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --dpi-import-lib <path>  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
 //! output:   --out-dir <dir>  --runtime-cache <dir>
 //! append:   --append-<list> <value>  (source, include-dir, define, param-override, define-system-task, libmap, libfile, library-order, dpi-lib, plusarg)
 //! ```
@@ -156,6 +156,7 @@ fn run(options: DriverOptions) -> i32 {
         wave,
         generator,
         dpi_libraries,
+        dpi_import_lib,
         launcher,
         cc,
         cflags,
@@ -336,6 +337,12 @@ fn run(options: DriverOptions) -> i32 {
     // The cache follows --out-dir unless the flag, the environment or the
     // config file (resolved in `settings`) moves it.
     let runtime_cache_dir = runtime_cache.unwrap_or_else(|| out_root.join("llg-runtime-cache"));
+    // Windows finds the DLL behind a `--dpi-lib` import library through PATH.
+    let dll_search_path = if cfg!(windows) {
+        sim::build::dll_search_path(&dpi_libraries, std::env::var_os("PATH").as_deref())
+    } else {
+        None
+    };
     let opts = sim::build::CmakeBuildOpts {
         generator,
         dpi_libraries,
@@ -349,6 +356,9 @@ fn run(options: DriverOptions) -> i32 {
         value_config,
         gmp_root: None,
     };
+    if let Some(destination) = dpi_import_lib {
+        return write_import_library(&out_dir, &model, &opts, &destination);
+    }
     let exe = match sim::build::build_model_cmake_with_opts(&out_dir, &model, &opts) {
         Ok(e) => e,
         Err(e) => {
@@ -360,11 +370,14 @@ fn run(options: DriverOptions) -> i32 {
     // 6. Run the simulator; propagate its exit code. The generated model
     // reads this explicit policy without inheriting an ambient setting from
     // the driver's parent process.
-    let status = match Command::new(&exe)
+    let mut command = Command::new(&exe);
+    command
         .args(&runtime_args)
-        .env("LLG_STOP_POLICY", stop_policy.env_value())
-        .status()
-    {
+        .env("LLG_STOP_POLICY", stop_policy.env_value());
+    if let Some(path) = dll_search_path {
+        command.env("PATH", path);
+    }
+    let status = match command.status() {
         Ok(s) => s,
         Err(e) => {
             eprintln!("llg: failed to run {}: {e}", exe.display());
@@ -376,6 +389,32 @@ fn run(options: DriverOptions) -> i32 {
         eprintln!("llg: {report}");
     }
     code
+}
+
+/// Build the model executable's import library (`--dpi-import-lib`) and copy
+/// it to `destination`, whose path is printed; the model is not linked or run.
+fn write_import_library(
+    out_dir: &std::path::Path,
+    model: &[(&str, &str)],
+    opts: &sim::build::CmakeBuildOpts,
+    destination: &std::path::Path,
+) -> i32 {
+    let library = match sim::build::build_model_import_library(out_dir, model, opts) {
+        Ok(library) => library,
+        Err(e) => {
+            eprintln!("llg: {e}");
+            return 1;
+        }
+    };
+    if let Err(e) = std::fs::copy(&library, destination) {
+        eprintln!(
+            "llg: cannot write the import library {}: {e}",
+            destination.display()
+        );
+        return 1;
+    }
+    println!("{}", destination.display());
+    0
 }
 
 /// The signal that ended the model, where the platform has signals.

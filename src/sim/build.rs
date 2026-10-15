@@ -87,6 +87,7 @@
 
 mod compiler_probe;
 mod dpi_link;
+mod import_library;
 mod legacy_pli;
 mod timings;
 mod toolchain_seed;
@@ -94,6 +95,7 @@ mod tree_template;
 mod value;
 mod vpi_static;
 
+pub use import_library::IMPORT_TARGET;
 pub use timings::ENV as BUILD_TIMINGS_ENV;
 
 pub use compiler_probe::MEMO_DIR as COMPILER_PROBE_DIR;
@@ -166,7 +168,7 @@ else()
 endif()
 {WAVE_SETUP}
 {DPI_LINK}
-"#;
+{IMPORT_LIBRARY}"#;
 
 /// Per-source options for generated model translation units. GCC's
 /// `-Wmisleading-indentation` costs time quadratic in file size (13.6 of 70.9 s
@@ -464,6 +466,10 @@ pub enum BuildError {
         unresolved: Vec<String>,
         output: String,
     },
+    /// An import library for the model executable was requested from a
+    /// toolchain other than MSVC, whose shared libraries resolve the model's
+    /// symbols when they are loaded and need none.
+    ImportLibraryUnsupported { compiler: String },
     /// CMake succeeded but no simulator executable was produced.
     ExecutableNotFound { directory: PathBuf, listing: String },
     /// CMake succeeded but no cached runtime archive was produced.
@@ -558,6 +564,13 @@ impl fmt::Display for BuildError {
                 }
                 write!(f, "\n{output}")
             }
+            Self::ImportLibraryUnsupported { compiler } => write!(
+                f,
+                "an import library for the model executable is built only by MSVC toolchains \
+                 (C compiler `{compiler}`); ELF and Mach-O shared libraries resolve the svdpi.h \
+                 and VPI routines and the DPI-C exports from the model when they are loaded, \
+                 so link them without one"
+            ),
             Self::ExecutableNotFound { directory, listing } => write!(
                 f,
                 "sim executable not found under {}: {listing}",
@@ -603,16 +616,37 @@ pub fn build_model_cmake_with_opts(
 ) -> Result<PathBuf, BuildError> {
     let started = Instant::now();
     let mut timings = timings::BuildTimings::default();
-    let result = build_model_cmake_timed(out_dir, extra, opts, &mut timings);
+    let result = build_model_cmake_timed(out_dir, extra, opts, &mut timings, None);
     timings.finish(out_dir, started, result.is_ok());
     result
 }
 
+/// Generate and configure the model in `out_dir` as
+/// [`build_model_cmake_with_opts`] does, but build only the model
+/// executable's import library ([`IMPORT_TARGET`], MSVC only) and return its
+/// path. A Windows DPI-C or VPI DLL links against it to call the `svdpi.h`
+/// and VPI routines and the design's DPI-C exports in `sim.exe`; the model
+/// itself is not linked, so the DLL's own import library can be given to a
+/// later model build with `--dpi-lib`.
+pub fn build_model_import_library(
+    out_dir: &Path,
+    extra: &[(&str, &str)],
+    opts: &CmakeBuildOpts,
+) -> Result<PathBuf, BuildError> {
+    let started = Instant::now();
+    let mut timings = timings::BuildTimings::default();
+    let result = build_model_cmake_timed(out_dir, extra, opts, &mut timings, Some(IMPORT_TARGET));
+    timings.finish(out_dir, started, result.is_ok());
+    result
+}
+
+/// Build the model (`target` `None`) or one named target of its project.
 fn build_model_cmake_timed(
     out_dir: &Path,
     extra: &[(&str, &str)],
     opts: &CmakeBuildOpts,
     timings: &mut timings::BuildTimings,
+    target: Option<&str>,
 ) -> Result<PathBuf, BuildError> {
     let phase = Instant::now();
     validate_dpi_libraries(opts)?;
@@ -671,7 +705,7 @@ fn build_model_cmake_timed(
 
     // Build.
     let phase = Instant::now();
-    let mut build_cmd = build_command(&cmake_prog, &build_dir, jobs, None);
+    let mut build_cmd = build_command(&cmake_prog, &build_dir, jobs, target);
     let output = build_cmd.output().map_err(launch_error);
     timings.record("build", phase);
     let mut output = output?;
@@ -691,7 +725,7 @@ fn build_model_cmake_timed(
             )?;
             timings.note("template", "failed-build");
             let phase = Instant::now();
-            let mut build_cmd = build_command(&cmake_prog, &build_dir, jobs, None);
+            let mut build_cmd = build_command(&cmake_prog, &build_dir, jobs, target);
             let retried = build_cmd.output().map_err(launch_error);
             timings.record("build", phase);
             output = retried?;
@@ -708,6 +742,16 @@ fn build_model_cmake_timed(
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        if target.is_some() {
+            if transcript.contains(import_library::UNSUPPORTED_MARKER) {
+                return Err(BuildError::ImportLibraryUnsupported {
+                    compiler: cc.clone(),
+                });
+            }
+            return Err(BuildError::Compile {
+                output: output_tail(&output),
+            });
+        }
         if let Some(missing) =
             dpi_link::missing_dpi_symbols(out_dir, &transcript, !opts.dpi_libraries.is_empty())
         {
@@ -723,6 +767,15 @@ fn build_model_cmake_timed(
         });
     }
 
+    if target.is_some() {
+        let library = build_dir.join(import_library::IMPORT_LIBRARY);
+        if !library.is_file() {
+            return Err(BuildError::Compile {
+                output: format!("{} was not written", library.display()),
+            });
+        }
+        return Ok(library);
+    }
     find_sim_exe(&build_dir.join("bin"))
 }
 
@@ -778,7 +831,7 @@ pub fn generate_model_sources_with_opts(
 
 /// File names [`super::write_sim_sources`] always writes (must mirror its
 /// fixed list there) plus this module's own `CMakeLists.txt`.
-const FIXED_SOURCE_NAMES: [&str; 25] = [
+const FIXED_SOURCE_NAMES: [&str; 26] = [
     "llg_rt.h",
     "llg_rt.c",
     "llg_value.h",
@@ -804,6 +857,7 @@ const FIXED_SOURCE_NAMES: [&str; 25] = [
     "llg_platform_native.h",
     "CMakeLists.txt",
     "llg_value_build.h",
+    import_library::DEF_FILE,
 ];
 
 /// Delete every direct child of `out_dir` that is neither a current source
@@ -1103,6 +1157,7 @@ fn write_cmakelists(
             &runtime_source_names_for(waveform, opts.value_config.backend).join(" "),
         )
         .replace("{WAVE_SETUP}", if waveform { WAVE_CMAKE } else { "" })
+        .replace("{IMPORT_LIBRARY}", import_library::CMAKE)
         .replace("{DPI_LINK}", &dpi_link_setup(opts)?)
         + &value::cmake_setup(opts, "sim")?;
     let cmakelists_path = out_dir.join("CMakeLists.txt");
@@ -1110,6 +1165,14 @@ fn write_cmakelists(
         action: "write",
         path: cmakelists_path,
         source,
+    })?;
+    let definition_path = out_dir.join(import_library::DEF_FILE);
+    std::fs::write(&definition_path, import_library::module_definition(extra)).map_err(|source| {
+        BuildError::Io {
+            action: "write",
+            path: definition_path,
+            source,
+        }
     })
 }
 
@@ -1238,6 +1301,37 @@ fn dpi_link_setup(opts: &CmakeBuildOpts) -> Result<String, BuildError> {
         setup.push_str("\ntarget_compile_definitions(sim PRIVATE LLG_VPI_STATIC_STARTUP=1)");
     }
     Ok(setup)
+}
+
+/// `PATH` for running a model on Windows: the directory of each `--dpi-lib`
+/// library, once and in order, before `current`. A model linked against a
+/// DLL's import library `x.lib` loads `x.dll` when it starts, and Windows
+/// searches the executable's directory and `PATH` for it (there is no run
+/// path), so a DLL beside its import library is found. Relative library
+/// paths are resolved against the current directory. `None` when there is
+/// no library or a directory cannot be joined into a path list (it contains
+/// the list separator).
+pub fn dll_search_path(
+    libraries: &[PathBuf],
+    current: Option<&std::ffi::OsStr>,
+) -> Option<std::ffi::OsString> {
+    let mut directories: Vec<PathBuf> = Vec::new();
+    for library in libraries {
+        let absolute = crate::ffi::platform::canonicalize(library)
+            .unwrap_or_else(|_| std::path::absolute(library).unwrap_or_else(|_| library.clone()));
+        if let Some(parent) = absolute.parent() {
+            if !directories.iter().any(|known| known == parent) {
+                directories.push(parent.to_path_buf());
+            }
+        }
+    }
+    if directories.is_empty() {
+        return None;
+    }
+    let inherited = current
+        .map(|value| std::env::split_paths(value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    std::env::join_paths(directories.into_iter().chain(inherited)).ok()
 }
 
 /// Whether a `--dpi-lib` static archive carries a VPI application's
@@ -2040,6 +2134,81 @@ mod tests {
             assert!(!directory.join("gmp").exists());
             std::fs::remove_dir_all(&directory).unwrap();
         }
+    }
+
+    #[test]
+    fn generated_project_exports_the_definition_file_and_keeps_it() {
+        let directory = std::env::temp_dir().join(format!("llg-import-def-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let model = "/* llg DPI-C export: c_name=ex_inc */\nint ex_inc(int a);\n";
+        // Not `model.c`, which would need the value-ABI guards.
+        let extra = [("exports.c", model)];
+        generate_model_sources_with_opts(&directory, &extra, &CmakeBuildOpts::default()).unwrap();
+        let definition = std::fs::read_to_string(directory.join(import_library::DEF_FILE))
+            .expect("sim.def beside the model");
+        assert!(definition.contains("\n    ex_inc\n"), "{definition}");
+        assert!(definition.contains("\n    svGetScope\n"), "{definition}");
+        let cmake = std::fs::read_to_string(directory.join("CMakeLists.txt")).unwrap();
+        assert!(cmake.contains(import_library::CMAKE), "{cmake}");
+        // The export setup follows the executable's definition.
+        assert!(
+            cmake.find("add_executable(sim").unwrap() < cmake.find("/DEF:").unwrap(),
+            "{cmake}"
+        );
+        // A later generation keeps the definition file (no stale pruning).
+        generate_model_sources_with_opts(&directory, &extra, &CmakeBuildOpts::default()).unwrap();
+        assert!(directory.join(import_library::DEF_FILE).is_file());
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn dll_search_path_puts_each_library_directory_first_once() {
+        let root = std::env::temp_dir().join(format!("llg-dll-path-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for directory in ["a", "b"] {
+            std::fs::create_dir_all(root.join(directory)).unwrap();
+        }
+        for library in ["a/one.lib", "a/two.lib", "b/three.lib"] {
+            std::fs::write(root.join(library), "").unwrap();
+        }
+        let root = crate::ffi::platform::canonicalize(&root).unwrap();
+        let libraries = [
+            root.join("a/one.lib"),
+            root.join("b/three.lib"),
+            root.join("a/two.lib"),
+        ];
+        let inherited =
+            std::env::join_paths([PathBuf::from("/usr/bin"), PathBuf::from("/bin")]).unwrap();
+        let joined = dll_search_path(&libraries, Some(&inherited)).unwrap();
+        assert_eq!(
+            std::env::split_paths(&joined).collect::<Vec<_>>(),
+            [
+                root.join("a"),
+                root.join("b"),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/bin")
+            ]
+        );
+        let alone = dll_search_path(&libraries[..1], None).unwrap();
+        assert_eq!(
+            std::env::split_paths(&alone).collect::<Vec<_>>(),
+            [root.join("a")]
+        );
+        assert_eq!(dll_search_path(&[], Some(&inherited)), None);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn import_library_errors_name_the_toolchain() {
+        let message = BuildError::ImportLibraryUnsupported {
+            compiler: "cc".to_owned(),
+        }
+        .to_string();
+        assert!(
+            message.contains("only by MSVC toolchains (C compiler `cc`)"),
+            "{message}"
+        );
     }
 
     #[test]
