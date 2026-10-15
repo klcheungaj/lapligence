@@ -1130,6 +1130,47 @@ fn unused_storage_keeps_event_array_index_reads() {
 }
 
 #[test]
+fn unused_storage_keeps_mailbox_retrieval_targets() {
+    // `box.get(v)` and `box.try_peek(v)` write through `&G_s<n>`; a signal
+    // written only there still needs its storage.
+    use crate::sim::ir::{IrChandleExpr, IrMailboxTarget, IrObjectQuery, IrObjectStmt};
+    let packed = |name: &str| IrMailboxTarget::Packed {
+        addr: format!("&{name}"),
+        width: 32,
+        signed: true,
+        two_state: true,
+    };
+    let try_peek = IrExpr::new(
+        IrExprKind::ObjectQuery(Box::new(IrObjectQuery::MailboxTryGet {
+            mailbox: IrChandleExpr::Null,
+            target: IrMailboxTarget::Typed {
+                type_id: 7,
+                target: Box::new(packed("G_s2")),
+            },
+            peek: true,
+        })),
+        32,
+        true,
+        None,
+    );
+    let body = vec![
+        IrStmt::Object(Box::new(IrObjectStmt::MailboxGet(
+            0,
+            IrChandleExpr::Null,
+            packed("G_s1"),
+            false,
+        ))),
+        // Any expression position; the statement only evaluates it.
+        IrStmt::PlusArg(try_peek),
+    ];
+    let mut m = model_with(body, sigs(3));
+    run(&mut m, &storage_only());
+    assert!(m.signals[0].omit, "untouched signal is still omitted");
+    assert!(!m.signals[1].omit, "get target keeps its storage");
+    assert!(!m.signals[2].omit, "try_peek target keeps its storage");
+}
+
+#[test]
 fn unused_storage_handles_mixed_event_wait_sources() {
     // A mixed @(a or ev) wait keeps the signal half's storage (its
     // address is emitted into the wait table); the named-event half is

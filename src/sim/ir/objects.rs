@@ -1286,6 +1286,20 @@ impl IrMailboxValue {
 }
 
 impl IrMailboxTarget {
+    /// The C lvalue address the retrieval writes through, or `None` for a
+    /// lexical native value (SIM-017), which names no model signal.
+    pub(in crate::sim) fn address(&self) -> Option<&str> {
+        match self {
+            Self::Typed { target, .. } => target.address(),
+            Self::Native { .. } => None,
+            Self::Packed { addr, .. }
+            | Self::Ref { addr }
+            | Self::Real { addr, .. }
+            | Self::String { addr }
+            | Self::Handle { addr } => Some(addr),
+        }
+    }
+
     pub(in crate::sim) fn validate(&self) -> Result<(), super::IrValidationError> {
         if let Self::Typed { type_id, target } = self {
             if *type_id == 0 {
@@ -1369,6 +1383,14 @@ impl IrMailboxExpr {
 }
 
 impl IrObjectQuery {
+    /// The destination of a `try_get`/`try_peek` query.
+    pub(in crate::sim) fn mailbox_target(&self) -> Option<&IrMailboxTarget> {
+        match self {
+            Self::MailboxTryGet { target, .. } => Some(target),
+            _ => None,
+        }
+    }
+
     pub(in crate::sim) fn validate(
         &self,
         model: &super::IrModel,
@@ -1585,6 +1607,17 @@ impl IrObjectQuery {
 }
 
 impl IrObjectStmt {
+    /// The destination of a mailbox `get`/`peek`/`try_get`/`try_peek`.
+    pub(in crate::sim) fn mailbox_target(&self) -> Option<&IrMailboxTarget> {
+        match self {
+            Self::MailboxGet(_, _, target, _)
+            | Self::MailboxGetLocal(_, _, target, _)
+            | Self::MailboxTryGet(_, _, target, _)
+            | Self::MailboxTryGetLocal(_, _, target, _) => Some(target),
+            _ => None,
+        }
+    }
+
     pub(in crate::sim) fn validate(
         &self,
         model: &super::IrModel,

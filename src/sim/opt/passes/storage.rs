@@ -466,6 +466,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             }
         }
         IrStmt::Object(operation) => {
+            if let Some(target) = operation.mailbox_target() {
+                collect_mailbox_target_rw(target, model, rw);
+            }
             operation.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
         IrStmt::PlusArg(expression) => collect_expr_reads(expression, model, rw),
@@ -796,6 +799,24 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
     }
 }
 
+/// A mailbox retrieval writes through a C address (`&G_sig`); like an
+/// output argument it counts as a read and a write of the named signal, so
+/// the storage stays even when nothing else reads it (function-scope names
+/// never match).
+fn collect_mailbox_target_rw(
+    target: &crate::sim::ir::IrMailboxTarget,
+    model: &IrModel,
+    rw: &mut Rw,
+) {
+    if let Some(addr) = target.address() {
+        let name = addr.trim_start_matches('&');
+        if let Some(i) = model.signals.iter().position(|sg| sg.c_name == name) {
+            rw.read(i);
+            rw.write(i);
+        }
+    }
+}
+
 fn collect_stream_selector_reads(selector: &IrStreamSelector, model: &IrModel, rw: &mut Rw) {
     match selector {
         IrStreamSelector::Index(index) => collect_expr_reads(index, model, rw),
@@ -1053,6 +1074,9 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             operation.expressions(&mut |child| collect_expr_reads(child, model, rw));
         }
         IrExprKind::ObjectQuery(query) => {
+            if let Some(target) = query.mailbox_target() {
+                collect_mailbox_target_rw(target, model, rw);
+            }
             query.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
         IrExprKind::EnumMethod(query) => {
