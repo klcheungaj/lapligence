@@ -68,10 +68,10 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 0 | 7 |
 | 10. System tasks/functions | 12 | 8 | 2 | 4 | 0 | 0 | 26 |
 | 11. Compiler directives | 6 | 1 | 0 | 1 | 0 | 0 | 8 |
-| 12. Verification/foreign interfaces | 1 | 13 | 0 | 1 | 3 | 0 | 18 |
-| **Total** | **48** | **78** | **6** | **8** | **3** | **1** | **144** |
+| 12. Verification/foreign interfaces | 1 | 14 | 0 | 1 | 3 | 0 | 19 |
+| **Total** | **48** | **79** | **6** | **8** | **3** | **1** | **145** |
 
-**127 rows have some source implementation; 78 of those remain partial and one
+**128 rows have some source implementation; 79 of those remain partial and one
 is accepted.** The accepted row (`always_ff` and writer rules) carries
 post-change HDL execution evidence from RTL-013 and RTL-099; other rows have no
 row-level acceptance promotion yet, which does not mean they lack passing tests.
@@ -2282,12 +2282,15 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   Registered packed/real system-function calls have direct
   expression-evaluation paths and may be `$strobe`/`$monitor` arguments (their
   design writes are rejected there); other read-only evaluators (event
-  controls, force re-evaluation) still reject them. SV ch.36-38, V ch.20–27
-  **[1995/2001]**.
+  controls, force re-evaluation) still reject them. Assertion handles,
+  their coverage counters and the coverage operations of `vpi_control`
+  (SIM-046) are described under the coverage control API; other assertion
+  objects and assertion callbacks (SV 39.4, 39.5) are not implemented.
+  SV ch.36-38, V ch.20–27 **[1995/2001]**.
 - ⬜ **Checkers** — Checker execution and checker bind are not implemented;
   module/interface structural bind and ordinary assertion instances do not imply
   checker support. SV **[SV-2009]**.
-- 🟨 **Functional coverage** (SIM-044, SIM-045) — Covergroup declarations in modules,
+- 🟨 **Functional coverage** (SIM-044, SIM-045, SIM-046) — Covergroup declarations in modules,
   interfaces, packages and classes (embedded, constructed only by the class
   `new`), instances created by `new` with `input` (integral, real, string and
   class handle) and `ref` arguments, and sampling by explicit `sample()`, a
@@ -2316,17 +2319,46 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   `type_option.merge_instances` with `option.get_inst_coverage` (19.11.3,
   S45-D18). `get_coverage()` (type, per source declaration, S44-D1),
   `get_inst_coverage()`, `start()`, `stop()`, `set_inst_name()` (no report)
-  and `$get_coverage()` follow 19.11. Instances outlive their last handle
+  and `$get_coverage()` follow 19.11; the two-argument forms of 19.8 assign
+  the covered and total bins (S46-D7). Options are read through an
+  instance, coverpoint, cross or type name and written procedurally where
+  19.7 allows it (writes of definition-only options are compile errors);
+  `option.name` defaults to a unique `<scope>.<group>#<k>` (S46-D1).
+  `$set_coverage_db_name` saves every covergroup's coverage at the end of the
+  run, after `final` procedures, to a versioned, checksummed, host-independent
+  llg database; `$load_coverage_db` adds a saved run to type coverage, joining
+  the live instance of the same name (S46-D2). A missing, corrupt or foreign
+  database (other covergroups, bins or options layout) is a located run-time
+  error that changes nothing (S46-D3). Instances outlive their last handle
   (S44-D3). Value counters are dense up to 4096 bins and sparse beyond, and
   crosses keep only the products hit, so a sample costs the bins it hits, not
-  the bins defined. Rejected with located diagnostics: options set through an
-  instance and the two-argument queries (SIM-046); coverpoints over 64 bits;
-  block events on subroutines without a body; 1800-2012 forms (`with`
+  the bins defined. Rejected with located diagnostics: coverpoints over 64
+  bits; block events on subroutines without a body; 1800-2012 forms (`with`
   filters, set expressions); and the limits in
   [known issues](known_issues.md#functional-coverage-limits-sim-044-sim-045).
-  Coverage databases are not written.
   `cover` assertions and waveform/VPI observation are separate capabilities.
   SV 19 **[SV-2005]**.
+- 🟨 **Coverage control API** (SIM-046) — `$coverage_control`,
+  `$coverage_get_max`, `$coverage_get`, `$coverage_merge` and
+  `$coverage_save` (SV 40.3.2) with the `SV_COV_*` constants and statuses of
+  Tables 40-1 and 40-2, for **assertion coverage** only: every concurrent
+  `assert`/`assume`/`cover property`, `cover sequence` and immediate or
+  deferred assertion statement instance is an item with the 40.5.3 counters
+  (attempts, successes, vacuous successes, failures, disabled and killed
+  attempts, S46-D8, S46-D9). Scopes are an instance (`SV_COV_MODULE` or
+  `SV_COV_HIER`), `$root` or a module definition name (S46-D6); an item is
+  covered by a nonvacuous success (S46-D4); `$coverage_save` and
+  `$coverage_merge` write and add an llg database whose item table must match
+  (S46-D11). VPI reaches the same data: assertion handles from
+  `vpi_iterate(vpiAssertion, ...)` and `vpi_handle_by_name`, their 40.5.3
+  counter properties, `vpi_get(vpiAssertCoverage, instance)` and
+  `vpi_control(vpiCoverageStart/Stop/Reset/Check/Merge/Save)` (S46-D10), with
+  the constants in the shipped `sv_vpi_user.h`. **Statement, toggle and FSM
+  state coverage are not implemented**: nothing is instrumented, CHECK and
+  START report `SV_COV_NOCOV`, queries return 0, `$coverage_save` writes
+  nothing and VPI reports `LLG_VPI_UNSUPPORTED` (S46-D5). Covergroups are not
+  a 40.3.1 coverage type and are reached only through the 19.8 and 19.9
+  methods and tasks. SV 40 **[SV-2005]**.
 - 🟨 **Constrained randomization** — `rand` and `randc` packed integral and
   enum class properties (instance and static, inherited, with virtual
   `randomize()`), one-dimensional random fixed arrays, dynamic arrays and

@@ -366,14 +366,15 @@ located fatal error; use `LLG_GC_STRESS=1 LLG_GC_VERIFY=1` when adding a root
 source. Mailboxes, semaphores, events and pinned process handles stay
 model-lifetime ([known issue](../../../docs/known_issues.md#collected-objects-keep-some-runtime-objects-and-defer-collection)).
 
-## Functional coverage (SIM-044, SIM-045)
+## Functional coverage (SIM-044, SIM-045, SIM-046)
 
 `coverage/coverage.c` is the coverage store (IEEE 1800-2009 19). Generated
 code owns the static metadata (`llg_cov_point_t`, one `llg_cov_group_t` per
 elaborated declaration, one mutable `llg_cov_type_t` per declaration
 identity); the runtime owns instance records (`llg_cov_new`), which outlive the
 covergroup object and are freed only by `llg_cov_release_all` in
-`llg_rt_cleanup`. Options apply between `llg_cov_new` and `llg_cov_ready`,
+`llg_rt_cleanup`, after `final` procedures (which may still query them) and
+after `llg_cov_end_of_run` saves the 19.9 database. Options apply between `llg_cov_new` and `llg_cov_ready`,
 which resolves group defaults and sizes counters: dense `uint64_t` arrays up to
 `LLG_COV_DENSE_BINS`, otherwise an open-addressed table of hit bins. A sample
 (`llg_cov_hit`) is O(1) for automatic bins, O(log n) for enum and explicit
@@ -396,6 +397,8 @@ products; automatic products are dense up to `LLG_COV_DENSE_BINS` and sparse
 beyond, so a sample costs the bins it hits. With `merge_instances`, type
 coverage is the union of instance bins by 19.11.3 name and a merged bin uses
 the largest `at_least` (S45-D18); merged crosses need equal layouts.
+Option values that 19.7 lets code write live in the mutable instance and
+type records, and queries read them at call time.
 `llg_cov_hit` reads its value through a `const sv4_t*` only during the call,
 so generated code passes a plain variable's storage without a copy.
 Its rare paths (transitions, segment walks, the default bin, illegal-value
@@ -413,6 +416,38 @@ without drawing from any stream. It skips its sample while
 registry per time slot and flushed by one Postponed region callback, which
 calls the group's `strobe_sample` trampoline with each object; the sample
 method then only reads design state.
+
+### Coverage database and assertion coverage (SIM-046)
+
+`coverage/database.c` owns the llg coverage database: a little-endian,
+field-by-field format (never `fwrite` of structs) with a version, a section
+mask, one identity hash per section (FNV-1a over the static metadata that
+shapes counters, never options or source sites) and an FNV-1a checksum of
+every preceding byte. Each present section is framed by its byte length, so
+a reader validates the frame before parsing. Loads are atomic: read the
+whole file (at most `LLG_COV_DB_MAX_BYTES`), check the frame, parse every
+record into unlinked staging records with every count and index
+range-checked, and publish only when all of them validated; any failure is
+a located run-time error that changes nothing. Saves write `<name>.tmp<pid>`
+and replace the target through `llg_platform.h`; a failed save removes both.
+Keep this order when adding fields: a format change bumps
+`LLG_COV_DB_VERSION`.
+
+`coverage/assertions.c` holds the assertion coverage items (40.2.2, 40.5.3):
+a generated table of `llg_acov_item_t` sorted by statement identity and the
+instance table (path, definition, parent), installed by `llg_acov_model`.
+Generation emits them only when the design calls a `$coverage_*` function or
+the VPI catalog exists, so other models are unchanged and every counting
+hook is one NULL test. Concurrent assertions bind their item at registration
+(`expect` and end points have none); immediate assertions call
+`llg_acov_check`; deferred reports count when they mature or are killed.
+`end_assertion_attempts` counts the attempts a disable or kill ends, using
+`assertion_attempts_in_progress`. A stopped item counts nothing.
+`llg_coverage_call` implements the five 40.3.2 functions with Table 40-1
+statuses; the VPI accessors (`llg_acov_item_at`, `llg_coverage_control_vpi`,
+`llg_coverage_file_vpi`) are the only way `llg_vpi.c` reaches the items.
+Statement, toggle and FSM coverage are not implemented and must keep
+returning the not-available statuses (S46-D5), never `SV_COV_OK` from CHECK.
 
 ## Stop, synchronization and assertions
 

@@ -1894,8 +1894,6 @@ legal forms remain outside them.
 
 These covergroups reject with located diagnostics:
 
-- options read or written through an instance or type
-  (`c.option.weight = 2`) and `get_coverage(covered, total)` (SIM-046);
 - a coverpoint wider than 64 bits, or a bins value read from a covergroup
   argument wider than 64 bits;
 - a `wildcard` bins value whose don't-care bits expand to more than 4096
@@ -1919,9 +1917,10 @@ At run time:
   budget of explored sequence pairs, so a very large transition coverpoint
   may miss a warning.
 
-`set_inst_name`, `option.name`, `option.comment`, `option.per_instance`,
-`option.cross_num_print_missing` and `type_option.goal` and `comment` are
-accepted with no effect: llg writes no coverage report or database.
+`option.per_instance`, `option.cross_num_print_missing`, `option.goal`,
+`type_option.goal` and the `comment` options are stored (names and comments
+also in the coverage database) but change nothing else: llg writes no
+coverage report.
 
 ### Cause
 
@@ -1929,19 +1928,75 @@ accepted with no effect: llg writes no coverage report or database.
 are 64-bit runtime keys. Transition bins are compiled to fixed automata, so
 their values must be constants. Crosses address coverpoint bins by value
 rank, so transition bins have no coordinate. Merged cross bins are matched
-by layout, not by the 19.11.3 `<binname1,...,binnameN>` names. The coverage
-database is a later item.
+by layout (coverpoint-bin coordinates and select signatures), not by the
+19.11.3 `<binname1,...,binnameN>` names; a name-keyed cross merge would need
+the bin names of every dimension per instance, which the store does not keep.
 Instances, and the per-instance event waiters that hold them, live until the
 end of simulation (S44-D3, S44-D5), so memory grows with every covergroup
 object created.
 
 ### Intended direction
 
-SIM-046 for the query, control and database services. The other limits
-have no owner yet.
+None of these limits has an owner yet; the query, control and database
+services of SIM-046 have their own limits below.
 
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_044/neg_*.sv`,
 `tests/fixtures/sim/feature_completion/sim_045/neg_*.sv` and
 `merge_cross.sv`.
+
+## Coverage API and database limits (SIM-046)
+
+**Status:** open. SIM-046 provides the 19.8-19.9 query and database
+services for covergroups and the 40.3.2 coverage API, with its VPI
+counterpart, for assertion coverage.
+
+### Symptom
+
+- **Statement, toggle and FSM state coverage are not implemented.**
+  `$coverage_control` CHECK and START report `SV_COV_NOCOV`, STOP and RESET
+  report `SV_COV_OK` and do nothing, `$coverage_get` and
+  `$coverage_get_max` return 0, `$coverage_save` returns `SV_COV_NOCOV` and
+  writes nothing, and the VPI coverage properties of those kinds are
+  `vpiUndefined` with `LLG_VPI_UNSUPPORTED` (S46-D5). A NOCOV status is not
+  a claim of support.
+- A string scope argument names a module definition only; nested
+  definition notation (`"top.sub"` naming a definition inside another) is
+  `SV_COV_ERROR` (S46-D6).
+- The database is llg's own versioned format, not UCIS or another
+  simulator's: a database is read only by a model with the same
+  covergroups (and, for `$coverage_merge`, the same assertion items). A
+  different model is rejected as a whole; records are not matched by name
+  across designs.
+- Type options (`type_option.weight`, `goal`, `comment`,
+  `merge_instances`) are not saved; a loaded run uses the current model's
+  type options.
+- VPI: assertion handles answer the static 39.3.2 properties and the 40.5.3
+  counters, but not source location (`vpiFile`/`vpiLineNo`), clocking or
+  expressions; assertion callbacks (`cbAssertionStart` and the 39.4/39.5
+  system callbacks) are not implemented. An assertion label that is also
+  listed by the object catalog as a named block is found as the assertion
+  by `vpi_handle_by_name`.
+- `vpi_get(vpiAssertCoverage, instance)` and `vpi_control` with an
+  instance handle select that instance's own assertions only, as
+  `SV_COV_MODULE` (S46-D10).
+
+### Cause
+
+Statement, toggle and FSM coverage need per-statement, per-bit or
+per-state instrumentation of every process; the orchestrator's condition
+(no cost when disabled, an opt-in flag) was not met within SIM-046. The
+database stores counters by compile-time index under an identity hash of
+the model's coverage metadata, which keeps loads exact and atomic.
+
+### Intended direction
+
+No owner. Code coverage needs its own plan entry with an opt-in `llg` flag.
+
+### Reproduce
+
+`tests/fixtures/sim/lrm_decisions/S46-D5_unavailable_kinds.sv`,
+`S46-D6_string_scope_is_definition.sv`;
+`tests/fixtures/sim/feature_completion/sim_046/db_errors.sv` (`-G W=3`
+reads a database of the W = 4 model).

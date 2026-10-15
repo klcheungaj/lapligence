@@ -331,6 +331,14 @@ matrix and hand-derived percentages; decisions S45-D1-D18 are in
 `sim_lrm_decisions` (`-E 'test(/s45_d/)'`), and the transition automaton unit
 tests are `sim::codegen::lowering::coverage::transitions::tests`.
 
+SIM-046's query, database and coverage-API fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_046::)'`. Database tests run a
+model several times in one scratch directory (`sim_cli::run_case_sequence`),
+and the corrupt-database cases are built in Rust from the format documented
+in `src/sim/rt/coverage/database.c`; `vpi_coverage` loads a VPI application
+from `LLG_VPI_PLUGIN`. Decisions S46-D1-D12 are in `sim_lrm_decisions`
+(`-E 'test(/s46_d/)'`).
+
 SIM-047's waveform fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_047::)'` together with
 `-E 'test(/^sim_waveform::/) | test(/^sim_lrm_decisions::s47_/)'` and the
