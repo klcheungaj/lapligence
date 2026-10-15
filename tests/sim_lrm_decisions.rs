@@ -1653,6 +1653,14 @@ fn ah_d1_initial_block_assertions_single_attempt() {
     );
 }
 
+#[test]
+fn f2_d1_program_concurrent_assertions() {
+    run_decision(
+        "F2-D1_program_concurrent_assertions",
+        include_str!("fixtures/sim/lrm_decisions/F2-D1_program_concurrent_assertions.out"),
+    );
+}
+
 /// Build the `.c` VPI application of a decision case into a static archive
 /// that the model links (`--dpi-lib`); its `vlog_startup_routines` table runs
 /// at startup. Static linking works on every host, so these cases need no
