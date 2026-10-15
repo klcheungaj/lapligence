@@ -1105,6 +1105,31 @@ fn unused_storage_keeps_wait_event_sources() {
 }
 
 #[test]
+fn unused_storage_keeps_event_array_index_reads() {
+    // `@(events[i])` evaluates `i` when the wait is armed; a signal read
+    // only there still needs its storage.
+    let body = vec![IrStmt::WaitEvents {
+        specs: vec![(
+            IrWaitSrc::Event(IrEventRef::Array {
+                array: 0,
+                indices: vec![IrExpr::new(IrExprKind::SigRead(1), 32, false, None)],
+            }),
+            IrEdge::Any,
+        )],
+        refresh: false,
+    }];
+    let mut m = model_with(body, sigs(3));
+    m.events.push(crate::sim::ir::IrEvent {
+        c_name: "E_tb_events".to_string(),
+        array_dims: None,
+        array_elements: Vec::new(),
+    });
+    run(&mut m, &storage_only());
+    assert!(m.signals[0].omit, "untouched signal is still omitted");
+    assert!(!m.signals[1].omit, "event-array index keeps its storage");
+}
+
+#[test]
 fn unused_storage_handles_mixed_event_wait_sources() {
     // A mixed @(a or ev) wait keeps the signal half's storage (its
     // address is emitted into the wait table); the named-event half is

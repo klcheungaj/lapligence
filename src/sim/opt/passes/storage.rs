@@ -659,6 +659,11 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                             mark_dependency_read(dependency, model, rw);
                         }
                     }
+                    // An event-array index or handle expression is evaluated
+                    // when the wait is armed.
+                    IrWaitSrc::Event(event) | IrWaitSrc::FilteredEvent { event, .. } => {
+                        event.expressions(&mut |child| collect_expr_reads(child, model, rw))
+                    }
                     _ => {}
                 }
             }
@@ -677,6 +682,11 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                         for dependency in reads {
                             mark_dependency_read(dependency, model, rw);
                         }
+                    }
+                    // An event-array index or handle expression is evaluated
+                    // when the wait is armed.
+                    IrWaitSrc::Event(event) | IrWaitSrc::FilteredEvent { event, .. } => {
+                        event.expressions(&mut |child| collect_expr_reads(child, model, rw))
                     }
                     _ => {}
                 }
