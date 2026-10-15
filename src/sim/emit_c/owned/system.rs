@@ -26,7 +26,8 @@ impl Frame<'_, '_> {
             IrSysFunc::RandStep { .. }
             | IrSysFunc::RandCallReady { .. }
             | IrSysFunc::RandValue { .. }
-            | IrSysFunc::RandCyclic { .. } => self.rand_function(function, expr)?,
+            | IrSysFunc::RandCyclic { .. }
+            | IrSysFunc::RandInst { .. } => self.rand_function(function, expr)?,
             IrSysFunc::VpiCall { site, name, args } => self
                 .vpi_call(*site, name, args, Some((expr.width, expr.signed)))?
                 .ok_or_else(|| "VPI function returned no value".to_owned())?,

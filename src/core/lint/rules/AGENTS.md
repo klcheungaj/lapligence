@@ -53,7 +53,8 @@ native traversal or I/O.
   non-`const` `ref` actuals of any call are drivers: DPI imports, tasks,
   `$sscanf`/`$fscanf`/`$fgets`/`$fread`/`$readmem*`/`$sformat` destinations and
   `std::randomize` arguments (Slang wraps each written actual in an assignment
-  operation), plus the `$random` seed. Top-level
+  operation), plus the `$random` seed. Constraint `foreach` loop variables
+  are bound by the solver and never reported. Top-level
   external inputs/inouts, explicitly open child ports, implicit nets,
   and intrinsic pull/supply nets are skipped.
   Input/inout actual expressions are read through the owned port

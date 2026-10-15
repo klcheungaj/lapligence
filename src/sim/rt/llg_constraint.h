@@ -420,6 +420,9 @@ void llg_cr_set_array(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32
 void llg_cr_set_elem(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
                      const uint64_t* words, int input_state);
 const uint64_t* llg_cr_ivalue(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
+/* Whether variable `var` (array `array`) of `inst` took part as random. */
+int llg_cr_iactive(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
+int llg_cr_array_active(const llg_cr_session_t* s, uint32_t inst, uint32_t array);
 const uint64_t* llg_cr_icyclic(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
 uint32_t llg_cr_array_size(const llg_cr_session_t* s, uint32_t inst, uint32_t array);
 const uint64_t* llg_cr_elem_value(const llg_cr_session_t* s, uint32_t inst, uint32_t array,

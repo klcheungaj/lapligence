@@ -1654,11 +1654,48 @@ impl Validator<'_> {
             IrRandStmt::SetBlock { block, .. } => (*block as usize) < problem.blocks.len(),
             IrRandStmt::SetLeaf { leaf, .. } => (*leaf as usize) < problem.leaves.len(),
             IrRandStmt::SetCallResult { call, .. } => (*call as usize) < problem.calls.len(),
-            IrRandStmt::SetCyclic { var, .. } => problem
+            IrRandStmt::SetCyclic { var, .. } | IrRandStmt::ISetCyclic { var, .. } => problem
                 .vars
                 .get(*var as usize)
                 .is_some_and(|variable| variable.cyclic),
+            IrRandStmt::InstRoot { .. } => !problem.units.is_empty(),
+            IrRandStmt::ISetVar { var, .. } => (*var as usize) < problem.vars.len(),
+            IrRandStmt::ISetBlock { block, .. } => (*block as usize) < problem.blocks.len(),
+            IrRandStmt::ISetLeaf { leaf, .. } => (*leaf as usize) < problem.leaves.len(),
+            IrRandStmt::SetArray { array, .. } | IrRandStmt::SetElem { array, .. } => {
+                (*array as usize) < problem.arrays.len()
+            }
+            IrRandStmt::Link { slot, unit, .. } => {
+                (*slot as usize) < problem.slots.len() && (*unit as usize) < problem.units.len()
+            }
         };
+        if !problem.units.is_empty() || !matches!(operation, IrRandStmt::Begin { .. }) {
+            // Instance statements need a problem with units.
+            let instance = matches!(
+                operation,
+                IrRandStmt::InstRoot { .. }
+                    | IrRandStmt::ISetVar { .. }
+                    | IrRandStmt::ISetBlock { .. }
+                    | IrRandStmt::ISetLeaf { .. }
+                    | IrRandStmt::ISetCyclic { .. }
+                    | IrRandStmt::SetArray { .. }
+                    | IrRandStmt::SetElem { .. }
+                    | IrRandStmt::Link { .. }
+            );
+            if instance && problem.units.is_empty() {
+                return self.fail(path, "instance statement of a problem without units");
+            }
+        }
+        for (index, handle) in operation.chandles().into_iter().enumerate() {
+            let mut result = Ok(());
+            handle.expressions(&mut |child| {
+                if result.is_ok() {
+                    result =
+                        self.validate_expr(child, formals, &format!("{path}.handles[{index}]"));
+                }
+            });
+            result?;
+        }
         if !in_range {
             return self.fail(path, "randomize statement index is out of range");
         }

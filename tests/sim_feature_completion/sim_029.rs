@@ -107,33 +107,8 @@ fn names_source_position(fixture: &str) {
     );
 }
 
-/// SIM-030 implements `randc`, `dist`, `solve...before`, random divisors,
-/// random select indices and `**` (see `sim_030.rs`); `foreach` constraints
-/// remain a located error until its array support lands.
-#[test]
-fn sim_030_constructs_are_located_errors() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_foreach",
-        "`foreach` constraints are not supported (planned for SIM-030) at ",
-    );
-    names_source_position("neg_foreach");
-}
-
 #[test]
 fn unsupported_random_variables_are_located_errors() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_rand_array",
-        "random property `v` of class `c_c` is not a packed integral value",
-    );
-    names_source_position("neg_rand_array");
-    sim_cli::reject_case(
-        SUITE,
-        "neg_rand_handle",
-        "random property `l` of class `c_c` is not a packed integral value",
-    );
-    names_source_position("neg_rand_handle");
     sim_cli::reject_case(
         SUITE,
         "neg_enum_struct",

@@ -981,7 +981,8 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             IrSysFunc::RandStep { .. }
             | IrSysFunc::RandCallReady { .. }
             | IrSysFunc::RandValue { .. }
-            | IrSysFunc::RandCyclic { .. } => {
+            | IrSysFunc::RandCyclic { .. }
+            | IrSysFunc::RandInst { .. } => {
                 return Err("randomize requires the ownership-aware emitter".to_owned())
             }
             IrSysFunc::Math { kind, args } => {

@@ -10,15 +10,22 @@
 //! 11.6, 11.8), and operands are converted explicitly, so the solver never
 //! re-derives an expression type.
 
+use crate::core::db::NodeId;
 use crate::sim::ir::{
-    IrBinOp, IrConst, IrExpr, IrExprKind, IrInsideItem, IrRandCall, IrRandDist, IrRandDistItem,
-    IrRandLeaf, IrRandNode, IrRandOp, IrRandOrder, IrRandProblem, IrRandVar, IrUnOp,
+    IrBinOp, IrConst, IrExpr, IrExprKind, IrInsideItem, IrRandArrayKind, IrRandCall, IrRandDist,
+    IrRandDistItem, IrRandLeaf, IrRandNode, IrRandOp, IrRandOrder, IrRandProblem, IrRandVar,
+    IrUnOp,
 };
 use std::collections::HashMap;
 
 /// Prefix of the placeholder locals that stand for random variables while a
 /// constraint is lowered. They never reach emission.
 pub(super) const PLACEHOLDER_PREFIX: &str = "_llg_randvar_";
+
+/// Prefix of the placeholders that stand for template nodes (array
+/// elements, sizes, reductions, loop indices, object members) of a problem
+/// with units; they share [`PLACEHOLDER_PREFIX`] so they are never leaves.
+pub(super) const TEMPLATE_PREFIX: &str = "_llg_randvar_t";
 
 /// A state value evaluated before solving, with its source description.
 pub(super) struct LeafPlan {
@@ -43,6 +50,19 @@ pub(super) struct ProblemBuilder {
     /// `solve...before` pairs of the block being translated; `add_block`
     /// assigns them to it.
     pending_orders: Vec<(u32, u32)>,
+    /// Template placeholder name -> template node (problems with units).
+    templates: HashMap<String, u32>,
+    /// Property declaration -> its problem-wide variable (problems with
+    /// units share one variable per property among all units).
+    pub(super) decl_vars: HashMap<NodeId, u32>,
+    /// The unit whose constraints are being translated, and its first leaf
+    /// (leaves are unit ranges, so they are shared only within a unit).
+    pub(super) unit: u32,
+    leaf_first: usize,
+    loops: u32,
+    /// Objects, arrays and loops (`templates.rs`); `None` for a problem
+    /// without units.
+    pub(super) units: Option<Box<super::templates::UnitState>>,
 }
 
 /// One lowered `dist` item (18.5.4).
@@ -98,7 +118,95 @@ impl ProblemBuilder {
             var_nodes: Vec::new(),
             item: String::new(),
             pending_orders: Vec::new(),
+            templates: HashMap::new(),
+            decl_vars: HashMap::new(),
+            unit: 0,
+            leaf_first: 0,
+            loops: 0,
+            units: None,
         }
+    }
+
+    /// Start translating the constraints of unit `unit`.
+    pub(super) fn begin_unit(&mut self, unit: u32) {
+        self.unit = unit;
+        self.leaf_first = self.leaves.len();
+    }
+
+    /// A template node and the placeholder that stands for it.
+    pub(super) fn template(
+        &mut self,
+        op: IrRandOp,
+        signed: bool,
+        width: u32,
+        operands: [u32; 3],
+    ) -> u32 {
+        let [a, b, c] = operands;
+        self.push(op, signed, width, a, b, c)
+    }
+
+    /// The placeholder read standing for template node `node`.
+    pub(super) fn template_placeholder(&mut self, node: u32) -> IrExpr {
+        let name = format!("{TEMPLATE_PREFIX}{}", self.templates.len());
+        self.templates.insert(name.clone(), node);
+        let (_, width, signed) = self.ty(node);
+        IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
+    }
+
+    /// Whether `expr` reads a template placeholder.
+    pub(super) fn has_template(&self, expr: &IrExpr) -> bool {
+        placeholders_in(expr)
+            .iter()
+            .any(|name| self.templates.contains_key(name))
+    }
+
+    /// Append operand list `items` to the problem's args; returns its first.
+    pub(super) fn push_args(&mut self, items: &[u32]) -> u32 {
+        let first = self.problem.args.len() as u32;
+        self.problem.args.extend_from_slice(items);
+        first
+    }
+
+    pub(super) fn new_loop(&mut self) -> u32 {
+        self.loops += 1;
+        self.loops - 1
+    }
+
+    /// Width and signedness of node `node`.
+    pub(super) fn node_type(&self, node: u32) -> (u32, bool) {
+        let n = &self.problem.nodes[node as usize];
+        (n.width, n.signed)
+    }
+
+    /// The 0-based position of declared index `index` of an array whose
+    /// declared bounds are `left`/`right` (a fixed array) or none (dynamic
+    /// arrays and queues are indexed by position), as a 64-bit signed node.
+    pub(super) fn position(
+        &mut self,
+        kind: IrRandArrayKind,
+        left: i32,
+        right: i32,
+        index: u32,
+    ) -> Result<u32, String> {
+        let (index, w, s) = self.ty(index);
+        if kind != IrRandArrayKind::Fixed || (left <= right && left == 0) {
+            return Ok(index);
+        }
+        if w > 64 {
+            return Err("an array index wider than 64 bits is not supported in constraints".into());
+        }
+        let wide = self.coerce_own(index, w, s, 64);
+        let base = self.constant_u64(i64::from(left) as u64, 64, true);
+        Ok(if left <= right {
+            self.push(IrRandOp::Sub, true, 64, wide, base, 0)
+        } else {
+            self.push(IrRandOp::Sub, true, 64, base, wide, 0)
+        })
+    }
+
+    /// `left == right` in their common type (for `inside` an array).
+    pub(super) fn equal(&mut self, left: u32, right: u32) -> u32 {
+        self.compare(IrRandOp::Eq, left, right)
     }
 
     /// Add a candidate variable; returns its index and placeholder name.
@@ -430,8 +538,12 @@ impl ProblemBuilder {
                 return Ok(self.coerce(node, expr.width, expr.signed));
             }
         }
-        let index = match self.leaves.iter().position(|leaf| leaf.template == *expr) {
-            Some(index) => index,
+        let first = self.leaf_first;
+        let index = match self.leaves[first..]
+            .iter()
+            .position(|leaf| leaf.template == *expr)
+        {
+            Some(index) => first + index,
             None => {
                 self.leaves.push(LeafPlan {
                     template: expr.clone(),
@@ -475,6 +587,9 @@ impl ProblemBuilder {
         }
         match &expr.kind {
             IrExprKind::LocalRead(name) => {
+                if let Some(node) = self.templates.get(name) {
+                    return Ok(*node);
+                }
                 let var = *self
                     .placeholders
                     .get(name)
@@ -716,6 +831,15 @@ impl ProblemBuilder {
 
     fn inside(&mut self, value: &IrExpr, items: &[IrInsideItem]) -> Result<u32, String> {
         let value = self.expr(value)?;
+        self.inside_node(value, items)
+    }
+
+    /// `value inside { items }` for a translated value; no items is false.
+    pub(super) fn inside_node(
+        &mut self,
+        value: u32,
+        items: &[IrInsideItem],
+    ) -> Result<u32, String> {
         let mut any = None;
         for item in items {
             let matched =
@@ -851,6 +975,18 @@ impl ProblemBuilder {
     fn call(&mut self, expr: &IrExpr) -> Result<u32, String> {
         if expr.width == 0 {
             return Err("a real-valued function is not supported in constraints".into());
+        }
+        if self.unit != 0 {
+            return Err(
+                "a function call in a constraint of an object reached through a `rand` handle is not supported"
+                    .into(),
+            );
+        }
+        if self.has_template(expr) {
+            return Err(
+                "a function call argument that reads an array element, array size, loop index or another object's variable is not supported in constraints"
+                    .into(),
+            );
         }
         let mut args = Vec::new();
         for name in placeholders_in(expr) {

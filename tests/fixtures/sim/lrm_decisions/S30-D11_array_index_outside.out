@@ -1,0 +1,2 @@
+guarded: sorted=1 outside=0
+unguarded: ok=0 size=3

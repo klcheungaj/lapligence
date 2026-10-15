@@ -1,0 +1,25 @@
+heap: bad=0
+pre pair
+pre 1
+post pair a=1
+post 1 x_ok=1
+null: ok=1 same=1
+pre pair
+pre 1
+pre 2
+post pair a=1
+post 1 x_ok=1
+post 2 x_ok=1
+objects: ok=1 a=1 b=1 plain=2
+pre pair
+pre 1
+pre 2
+post pair a=1
+post 1 x_ok=1
+post 2 x_ok=1
+inactive: ok=1 t=13 b=13
+shared: bad=0
+inline: ok=1 a=14
+randc: seen=1111
+list: ok=1 step=1
+cycle: ok=0

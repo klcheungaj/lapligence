@@ -20,6 +20,7 @@ use crate::sim::ir::{
 mod modes;
 mod problems;
 mod sites;
+mod templates;
 
 use modes::ModeCall;
 
@@ -40,6 +41,28 @@ pub(super) struct RandLowering {
     receiver: Option<IrChandleExpr>,
     /// Random-variable declaration -> its placeholder read.
     placeholders: HashMap<NodeId, IrExpr>,
+    /// Problems with units: constraint expression node -> the placeholder
+    /// of its template node (array elements, sizes, reductions, `inside`
+    /// an array, other objects' variables; `templates.rs`).
+    templates: HashMap<NodeId, IrExpr>,
+    /// Loop variable or `with` iterator declaration -> its placeholder.
+    bindings: HashMap<NodeId, IrExpr>,
+}
+
+impl RandLowering {
+    fn new(
+        classes: HashSet<usize>,
+        receiver: Option<IrChandleExpr>,
+        placeholders: HashMap<NodeId, IrExpr>,
+    ) -> Self {
+        Self {
+            classes,
+            receiver,
+            placeholders,
+            templates: HashMap::new(),
+            bindings: HashMap::new(),
+        }
+    }
 }
 
 fn packed_const(value: u64, width: u32, signed: bool) -> IrExpr {
@@ -121,6 +144,19 @@ impl Codegen<'_> {
     /// The placeholder standing for a random variable that `node` names
     /// through the implicit or explicit `this` of the randomized object.
     pub(super) fn random_placeholder(&self, node: NodeId) -> Option<IrExpr> {
+        if let Some(lowering) = self.rand_lowering.as_ref() {
+            if let Some(template) = lowering.templates.get(&node) {
+                return Some(template.clone());
+            }
+            if let NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) = self.kind(node)
+            {
+                if let Some(binding) = lowering.bindings.get(target) {
+                    return Some(binding.clone());
+                }
+            }
+        }
         let target = match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),

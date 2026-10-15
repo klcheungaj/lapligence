@@ -8,7 +8,7 @@ use super::*;
 use crate::sim::ir::{IrRandOp, IrSysFunc, RAND_STEP_NEED_CALLS};
 
 /// Which variables a class randomize call randomizes (18.11).
-enum RandSelection {
+pub(super) enum RandSelection {
     /// Every active `rand` property (`rand_mode`).
     Default,
     /// Exactly these properties, whatever their qualifier or mode.
@@ -18,29 +18,29 @@ enum RandSelection {
 }
 
 /// How generated code reads and writes one candidate variable.
-struct VarPlan {
-    index: u32,
-    width: u32,
-    signed: bool,
-    two_state: bool,
-    current: IrExpr,
-    lhs: IrLhs,
-    active: IrExpr,
+pub(super) struct VarPlan {
+    pub(super) index: u32,
+    pub(super) width: u32,
+    pub(super) signed: bool,
+    pub(super) two_state: bool,
+    pub(super) current: IrExpr,
+    pub(super) lhs: IrLhs,
+    pub(super) active: IrExpr,
     /// Storage key a constraint must not read directly (see
     /// `check_direct_reads`).
-    direct: DirectRead,
+    pub(super) direct: DirectRead,
     /// The cycle state of a `randc` variable (18.4.2, S30-D3).
-    cyclic: Option<CyclicPlan>,
+    pub(super) cyclic: Option<CyclicPlan>,
 }
 
 /// Where a `randc` variable's cycle state lives (a hidden field or signal).
-struct CyclicPlan {
-    read: IrExpr,
-    target: IrLhs,
+pub(super) struct CyclicPlan {
+    pub(super) read: IrExpr,
+    pub(super) target: IrLhs,
 }
 
 #[derive(PartialEq)]
-enum DirectRead {
+pub(super) enum DirectRead {
     Field(usize, usize),
     Signal(usize),
     Local(String),
@@ -240,7 +240,7 @@ impl Codegen<'_> {
 
     /// The user-defined `pre_randomize`/`post_randomize` in effect for an
     /// object of `class` (the most derived definition, 18.6.2).
-    fn randomize_hook(&self, class: NodeId, name: &str) -> Option<NodeId> {
+    pub(super) fn randomize_hook(&self, class: NodeId, name: &str) -> Option<NodeId> {
         self.class_chain(class).into_iter().find_map(|member| {
             self.class_method_nodes(member).into_iter().find(|method| {
                 // Slang's implicit hooks have a body but no source position.
@@ -251,7 +251,7 @@ impl Codegen<'_> {
         })
     }
 
-    fn hook_call(
+    pub(super) fn hook_call(
         &mut self,
         path: &str,
         node: NodeId,
@@ -310,6 +310,19 @@ impl Codegen<'_> {
             RandSelection::List(declarations) => declarations.clone(),
             _ => Vec::new(),
         };
+        let effective = self.effective_blocks(&chain);
+        // Arrays, objects reached through `rand` handles and loops make the
+        // problem a template with units (templates.rs); other problems keep
+        // the flat form.
+        if self.class_needs_units(&chain, &effective, inline, selection) {
+            let tag = format!(
+                "_llg_rand_{}_{}",
+                node.index(),
+                self.class_nodes.get(&class).copied().unwrap_or(0)
+            );
+            builder.units =
+                Some(self.unit_state(tag, Some(class), Some(object.clone()), selection));
+        }
         for member in chain.iter().rev().copied() {
             for child in self.node(member).children.clone() {
                 // Any property kind (scalars, arrays, handles) may be random.
@@ -331,6 +344,11 @@ impl Codegen<'_> {
                     RandSelection::Checker => false,
                 };
                 let name = self.node(child).name.clone();
+                if builder.units.is_some()
+                    && self.root_unit_property(path, node, &mut builder, child, randomized)?
+                {
+                    continue;
+                }
                 if qualifier == RandQualifier::RandC
                     && randomized
                     && !self.randc_states.contains_key(&child)
@@ -352,7 +370,7 @@ impl Codegen<'_> {
                         return Err(self.rand_error(
                             node,
                             path,
-                            &format!("random property `{name}` of class `{}` is not a packed integral value, or is a structure with enum or tagged-union members (arrays, handles and other types are planned for SIM-030)", self.node(member).name),
+                            &format!("random property `{name}` of class `{}` is not a packed integral value, a one-dimensional array of packed integral elements or a class handle, or is a structure with enum or tagged-union members", self.node(member).name),
                         ));
                     }
                     continue;
@@ -378,30 +396,26 @@ impl Codegen<'_> {
             .iter()
             .filter_map(|member| self.class_nodes.get(member).copied())
             .collect::<HashSet<_>>();
-        // Effective blocks: a derived block replaces an inherited block of
-        // the same name (18.5.2).
-        let mut seen = HashSet::new();
-        let mut effective = Vec::new();
-        for member in &chain {
-            for child in self.node(*member).children.clone() {
-                if let NodeKind::ConstraintBlock(info) = self.kind(child) {
-                    if seen.insert(self.node(child).name.clone()) {
-                        effective.push((child, *info));
-                    }
-                }
-            }
-        }
-        // Root-first order keeps block numbering stable across classes.
-        effective.reverse();
-        let saved = self.rand_lowering.replace(RandLowering {
+        let saved = self.rand_lowering.replace(RandLowering::new(
             classes,
-            receiver: Some(object.clone()),
+            Some(object.clone()),
             placeholders,
-        });
+        ));
         let lowered =
             self.lower_class_blocks(path, &mut builder, &vars, object, &effective, inline);
         self.rand_lowering = saved;
         let blocks = lowered?;
+        if builder.units.is_some() {
+            // Instance variables of the object are unit 0's; static ones
+            // are global.
+            let own = vars
+                .iter()
+                .filter(|var| !matches!(var.direct, DirectRead::Signal(_)))
+                .map(|var| var.index)
+                .collect::<Vec<_>>();
+            self.lower_units(path, node, &mut builder)?;
+            self.finish_units(&mut builder, own);
+        }
         let pre = self.randomize_hook(class, "pre_randomize");
         let post = self.randomize_hook(class, "post_randomize");
         let pre = pre
@@ -424,13 +438,36 @@ impl Codegen<'_> {
             result,
             site,
             post.into_iter().collect(),
-        ));
+        )?);
         Ok(statements)
+    }
+
+    /// Effective constraint blocks of an object whose class has `chain`
+    /// (most derived first): a derived block replaces an inherited block of
+    /// the same name (18.5.2). Root-first order keeps block numbering
+    /// stable across classes.
+    pub(super) fn effective_blocks(
+        &self,
+        chain: &[NodeId],
+    ) -> Vec<(NodeId, crate::core::db::ConstraintBlockInfo)> {
+        let mut seen = HashSet::new();
+        let mut effective = Vec::new();
+        for member in chain {
+            for child in self.node(*member).children.clone() {
+                if let NodeKind::ConstraintBlock(info) = self.kind(child) {
+                    if seen.insert(self.node(child).name.clone()) {
+                        effective.push((child, *info));
+                    }
+                }
+            }
+        }
+        effective.reverse();
+        effective
     }
 
     /// The candidate-variable plan of class property `child`, or `None`
     /// when it is not packed integral storage.
-    fn class_var_plan(
+    pub(super) fn class_var_plan(
         &mut self,
         builder: &mut ProblemBuilder,
         child: NodeId,
@@ -511,7 +548,25 @@ impl Codegen<'_> {
             None => None,
         };
         let name = self.node(child).name.clone();
+        // Problems with units share one variable per property.
+        if let Some(index) = builder.decl_vars.get(&child).copied() {
+            return Ok(Some((
+                VarPlan {
+                    index,
+                    width,
+                    signed,
+                    two_state,
+                    current,
+                    lhs,
+                    active,
+                    direct,
+                    cyclic,
+                },
+                local_read(&format!("{PLACEHOLDER_PREFIX}{index}"), width, signed),
+            )));
+        }
         let (index, placeholder) = builder.add_var(name, width, signed);
+        builder.decl_vars.insert(child, index);
         if let Some(metadata) = self.enum_metadata_for_expr(child).cloned() {
             let values = metadata
                 .members
@@ -539,7 +594,7 @@ impl Codegen<'_> {
         )))
     }
 
-    fn lower_class_blocks(
+    pub(super) fn lower_class_blocks(
         &mut self,
         path: &str,
         builder: &mut ProblemBuilder,
@@ -579,7 +634,7 @@ impl Codegen<'_> {
     /// conjunction of the enclosing implication and `if` conditions, which
     /// scopes the weights of a `dist` (S30-D1).
     #[allow(clippy::too_many_arguments)]
-    fn constraint_item(
+    pub(super) fn constraint_item(
         &mut self,
         path: &str,
         builder: &mut ProblemBuilder,
@@ -663,11 +718,13 @@ impl Codegen<'_> {
                 // An ordering is not a value constraint (18.5.9).
                 Ok(builder.constant_u64(1, 1, false))
             }
-            ConstraintKind::Foreach { .. } => Err(self.rand_error(
-                item,
-                path,
-                "`foreach` constraints are not supported (planned for SIM-030)",
-            )),
+            ConstraintKind::Foreach {
+                array,
+                vars: loop_vars,
+                body,
+            } => self.constraint_foreach(
+                path, builder, vars, object, item, array, &loop_vars, body, guard,
+            ),
             ConstraintKind::Uniqueness { .. } | ConstraintKind::DisableSoft { .. } => {
                 Err(self.rand_error(item, path, "this constraint is not part of IEEE 1800-2009"))
             }
@@ -731,9 +788,11 @@ impl Codegen<'_> {
                 "a `default` dist item is not part of IEEE 1800-2009",
             ));
         }
+        self.template_forms(path, builder, left)?;
         let value = self
             .lower_expr(path, left)
             .map_err(|error| self.rand_error(left, path, &format!("in a constraint: {error}")))?;
+        self.check_template_uses(path, expr, &value, builder)?;
         self.check_direct_reads(path, left, &value, vars, object)?;
         let names = placeholders_in(&value);
         if names.is_empty() {
@@ -806,9 +865,11 @@ impl Codegen<'_> {
             }
             _ => {}
         }
+        self.template_forms(path, builder, expr)?;
         let lowered = self
             .lower_expr(path, expr)
             .map_err(|error| self.rand_error(expr, path, &format!("in a constraint: {error}")))?;
+        self.check_template_uses(path, expr, &lowered, builder)?;
         self.check_direct_reads(path, expr, &lowered, vars, object)?;
         // Run-time diagnostics name the constraint like other run-time
         // sites: instance path, line and column.
@@ -880,6 +941,7 @@ impl Codegen<'_> {
         let mut builder = ProblemBuilder::new(site.clone());
         let mut vars = Vec::new();
         let mut placeholders = HashMap::new();
+        let mut arguments = Vec::new();
         for argument in self.randomize_arguments(node, inline) {
             let target = match self.kind(argument) {
                 NodeKind::Expr(ExprKind::Ref {
@@ -889,22 +951,46 @@ impl Codegen<'_> {
                     return Err(self.rand_error(
                         argument,
                         path,
-                        "a std::randomize() argument must be a variable name (selects and members are planned for SIM-030)",
+                        "a std::randomize() argument must be a variable name (a select or member is not supported)",
                     ))
                 }
             };
-            if placeholders.contains_key(&target) {
+            if arguments.iter().any(|(_, named)| *named == target) {
                 return Err(self.rand_error(
                     argument,
                     path,
                     "a std::randomize() argument is named twice",
                 ));
             }
-            if self.db.array_meta(target).is_some() || self.random_aggregate_unsupported(target) {
+            arguments.push((argument, target));
+        }
+        let targets = arguments
+            .iter()
+            .map(|(_, target)| *target)
+            .collect::<Vec<_>>();
+        let randoms = targets.iter().copied().collect::<HashSet<_>>();
+        if targets
+            .iter()
+            .any(|target| self.db.array_meta(*target).is_some())
+            || inline.is_some_and(|inline| self.constraint_needs_units(inline, &randoms))
+        {
+            builder.units = Some(self.unit_state(
+                format!("_llg_rand_{}_s", node.index()),
+                None,
+                None,
+                &RandSelection::List(targets.clone()),
+            ));
+        }
+        for (argument, target) in arguments {
+            if self.db.array_meta(target).is_some() && builder.units.is_some() {
+                self.scope_unit_array(path, &mut builder, argument, target)?;
+                continue;
+            }
+            if self.random_aggregate_unsupported(target) {
                 return Err(self.rand_error(
                     argument,
                     path,
-                    "std::randomize() of an array, or of a structure with enum or tagged-union members, is not supported (planned for SIM-030)",
+                    "std::randomize() of a structure with enum or tagged-union members is not supported",
                 ));
             }
             let current = self
@@ -973,11 +1059,9 @@ impl Codegen<'_> {
                 .as_ref()
                 .and_then(|function| function.class_receiver.clone())
                 .unwrap_or(IrChandleExpr::Null);
-            let saved = self.rand_lowering.replace(RandLowering {
-                classes: HashSet::new(),
-                receiver: None,
-                placeholders,
-            });
+            let saved =
+                self.rand_lowering
+                    .replace(RandLowering::new(HashSet::new(), None, placeholders));
             let lowered = self
                 .constraint_item(path, &mut builder, &vars, &receiver, inline, None)
                 .map(|root| builder.truth(root));
@@ -986,12 +1070,17 @@ impl Codegen<'_> {
             builder.add_block("with".to_owned(), root);
             blocks.push(packed_const(1, 1, false));
         }
+        if builder.units.is_some() {
+            // std::randomize arguments are global variables.
+            self.lower_units(path, node, &mut builder)?;
+            self.finish_units(&mut builder, Vec::new());
+        }
         let plan = ProblemPlan {
             builder,
             vars,
             blocks,
         };
-        Ok(self.feed_problem(node, plan, None, result, &site, Vec::new()))
+        self.feed_problem(node, plan, None, result, &site, Vec::new())
     }
 
     /// Feed, solve and commit one problem; `result` receives the outcome.
@@ -1003,19 +1092,37 @@ impl Codegen<'_> {
         result: &str,
         site: &str,
         after_commit: Vec<IrStmt>,
-    ) -> Vec<IrStmt> {
+    ) -> Result<Vec<IrStmt>, String> {
         let ProblemPlan {
             builder,
             vars,
             blocks,
         } = plan;
         let problem = self.model.rand_problems.len();
-        let leaves = builder.leaves;
+        let mut leaves = builder.leaves;
         let calls = builder.calls;
+        let units = builder.units;
         self.model.rand_problems.push(builder.problem);
         let tag = format!("_llg_rand_{}_{problem}", node.index());
         let rand = |statement: IrRandStmt| IrStmt::Randomize(Box::new(statement));
         let mut statements = vec![rand(IrRandStmt::Begin { problem })];
+        // Problems with units: the instance walk feeds the other units'
+        // leaves; it runs after unit 0 is fed.
+        let code = match units {
+            Some(state) => {
+                if let Some(handle) = state.root_object() {
+                    statements.push(rand(IrRandStmt::InstRoot { problem, handle }));
+                }
+                let first = state.root_leaf_count();
+                let rest = leaves.split_off(first);
+                self.unit_statements(problem, &tag, *state, rest)?
+            }
+            None => super::templates::UnitCode {
+                walk: Vec::new(),
+                commit: Vec::new(),
+                posts: Vec::new(),
+            },
+        };
         for var in &vars {
             let active = format!("{tag}_a{}", var.index);
             statements.push(IrStmt::DeclLocal {
@@ -1047,8 +1154,9 @@ impl Codegen<'_> {
             }));
         }
         for (index, leaf) in leaves.into_iter().enumerate() {
-            statements.push(self.guarded_leaf(problem, index as u32, leaf.template));
+            statements.push(self.guarded_leaf(problem, None, index as u32, leaf.template));
         }
+        statements.extend(code.walk);
         let step = || {
             IrExpr::new(
                 IrExprKind::SysFunc(Box::new(IrSysFunc::RandStep {
@@ -1208,20 +1316,31 @@ impl Codegen<'_> {
                 check: IrUniquePriorityCheck::None,
             });
         }
+        // Arrays and other instances commit after unit 0's variables; the
+        // randomized object's post_randomize runs first, then the other
+        // random objects' in registration order (S30-D7).
+        commit.extend(code.commit);
         commit.extend(after_commit);
+        commit.extend(code.posts);
         statements.push(IrStmt::If {
             cond: local_read(result, 32, true),
             then_: commit,
             els: None,
             check: IrUniquePriorityCheck::None,
         });
-        statements
+        Ok(statements)
     }
 
     /// Set state leaf `leaf`; a handle the value is read through that is
     /// null is reported to the solver instead of being dereferenced, so a
     /// guard can still eliminate the constraint (18.5.12).
-    fn guarded_leaf(&self, problem: usize, leaf: u32, template: IrExpr) -> IrStmt {
+    pub(super) fn guarded_leaf(
+        &self,
+        problem: usize,
+        inst: Option<&IrExpr>,
+        leaf: u32,
+        template: IrExpr,
+    ) -> IrStmt {
         let mut handles = Vec::new();
         let mut copy = template.clone();
         crate::sim::opt::walk_expr_mut(&mut copy, &mut |expr| {
@@ -1229,11 +1348,22 @@ impl Codegen<'_> {
                 self.collect_required_handles(name, &mut handles);
             }
         });
-        let mut statement = IrStmt::Randomize(Box::new(IrRandStmt::SetLeaf {
-            problem,
-            leaf,
-            value: Some(template),
-        }));
+        let set = |value: Option<IrExpr>| {
+            IrStmt::Randomize(Box::new(match inst {
+                Some(inst) => IrRandStmt::ISetLeaf {
+                    problem,
+                    inst: inst.clone(),
+                    leaf,
+                    value,
+                },
+                None => IrRandStmt::SetLeaf {
+                    problem,
+                    leaf,
+                    value,
+                },
+            }))
+        };
+        let mut statement = set(Some(template));
         for handle in handles.into_iter().rev() {
             statement = IrStmt::If {
                 cond: super::super::objects::object_query(
@@ -1241,11 +1371,7 @@ impl Codegen<'_> {
                     1,
                     false,
                 ),
-                then_: vec![IrStmt::Randomize(Box::new(IrRandStmt::SetLeaf {
-                    problem,
-                    leaf,
-                    value: None,
-                }))],
+                then_: vec![set(None)],
                 els: Some(vec![statement]),
                 check: IrUniquePriorityCheck::None,
             };

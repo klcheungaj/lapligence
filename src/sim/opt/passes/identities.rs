@@ -274,6 +274,14 @@ fn ident_children(e: &mut IrExpr) {
             IrSysFunc::RandCallReady { .. }
             | IrSysFunc::RandValue { .. }
             | IrSysFunc::RandCyclic { .. } => {}
+            IrSysFunc::RandInst { inst, index, .. } => {
+                if let Some(inst) = inst {
+                    ident_expr(inst);
+                }
+                if let Some(index) = index {
+                    ident_expr(index);
+                }
+            }
             IrSysFunc::Math { args, .. } => {
                 for arg in args {
                     ident_expr(arg);

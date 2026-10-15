@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use crate::core::db::{Db, NodeId, NodeKind};
+use crate::core::db::{ConstraintKind, Db, NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
     all_nodes, collect_driver_writes, collect_reads, connected_port_link_drivers,
     gate_terminal_drivers, gate_terminal_reads, is_signal, port_link_reads, signal_scope_path,
@@ -32,6 +32,19 @@ impl LintRule for UndrivenSignalRule {
         let (reads, drivers) = design_activity(db);
         let mut exempt = top_external_port_signals(db);
         exempt.extend(unconnected_port_signals(db));
+        // A constraint `foreach` loop variable is bound by the solver's
+        // iteration (SV 18.5.8.1), not driven by a process.
+        exempt.extend(
+            db.node_ids()
+                .filter_map(|id| match db.node_kind(id) {
+                    NodeKind::Constraint(ConstraintKind::Foreach { vars, .. }) => {
+                        Some(vars.clone())
+                    }
+                    _ => None,
+                })
+                .flatten()
+                .flatten(),
+        );
 
         // `all_nodes` follows owned reference bases as well as structural
         // children, so a declaration can occur more than once in that walk.
@@ -410,6 +423,16 @@ mod tests {
         let names = undriven_names(
             "module top;\n  int a;\n  bit [3:0] b;\n  int ok;\n\
                initial begin\n    ok = std::randomize(a, b);\n    $display(a, b, ok);\n  end\nendmodule\n",
+            "top",
+        );
+        assert!(names.is_empty(), "{names:?}");
+    }
+
+    #[test]
+    fn constraint_foreach_loop_variables_are_not_signals() {
+        let names = undriven_names(
+            "module top;\n  int a[];\n  int ok;\n\
+               initial begin\n    ok = std::randomize(a) with { foreach (a[i]) a[i] == i; };\n    $display(ok);\n  end\nendmodule\n",
             "top",
         );
         assert!(names.is_empty(), "{names:?}");

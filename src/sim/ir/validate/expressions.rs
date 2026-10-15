@@ -1335,6 +1335,66 @@ impl Validator<'_> {
                         return self.fail(path, "randc state of a variable that is not randc");
                     }
                 }
+                IrSysFunc::RandInst {
+                    problem,
+                    query,
+                    inst,
+                    index,
+                } => {
+                    use crate::sim::ir::IrRandQuery;
+                    let Some(p) = self
+                        .model
+                        .rand_problems
+                        .get(*problem)
+                        .filter(|p| !p.units.is_empty())
+                    else {
+                        return self.fail(path, "instance query of a problem without units");
+                    };
+                    let needs_inst = !matches!(query, IrRandQuery::NextInst | IrRandQuery::Count);
+                    let needs_index = matches!(query, IrRandQuery::Elem(_));
+                    let ty = match query {
+                        IrRandQuery::NextInst
+                        | IrRandQuery::Count
+                        | IrRandQuery::Unit
+                        | IrRandQuery::ArraySize(_) => Some((32, true)),
+                        IrRandQuery::Pre
+                        | IrRandQuery::Random
+                        | IrRandQuery::Active(_)
+                        | IrRandQuery::ArrayActive(_) => Some((1, false)),
+                        IrRandQuery::Value(var) => {
+                            p.vars.get(*var as usize).map(|v| (v.width, v.signed))
+                        }
+                        IrRandQuery::Cyclic(var) => p
+                            .vars
+                            .get(*var as usize)
+                            .filter(|v| v.cyclic)
+                            .map(|v| (crate::sim::ir::rand_cyclic_state_width(v.width), false)),
+                        IrRandQuery::Elem(array) => p
+                            .arrays
+                            .get(*array as usize)
+                            .map(|a| (a.elem_width, a.elem_signed)),
+                    };
+                    let in_range = match query {
+                        IrRandQuery::Active(var) => (*var as usize) < p.vars.len(),
+                        IrRandQuery::ArraySize(array) | IrRandQuery::ArrayActive(array) => {
+                            (*array as usize) < p.arrays.len()
+                        }
+                        _ => true,
+                    };
+                    if ty != Some((expr.width, expr.signed))
+                        || !in_range
+                        || inst.is_some() != needs_inst
+                        || index.is_some() != needs_index
+                    {
+                        return self.fail(path, "invalid randomize instance query");
+                    }
+                    for operand in inst.iter().chain(index.iter()) {
+                        self.validate_expr(operand, formals, &format!("{path}.instance"))?;
+                        if operand.is_real() {
+                            return self.fail(path, "randomize instance operands must be packed");
+                        }
+                    }
+                }
                 IrSysFunc::Math { kind, args } => {
                     if args.len() != kind.arity() || !expr.is_real() {
                         return self.fail(

@@ -633,7 +633,9 @@ uint32_t llg_cr_link(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t
     if (id == LLG_CR_NONE) {
         id = cr_inst_add(t, child, unit, random);
     } else {
-        if (t->inst[id].unit != unit) cr_fatal("object linked with two units");
+        /* The randomized object reached again keeps unit 0, which has
+         * every variable, array and slot of its class's own unit. */
+        if (id != 0u && t->inst[id].unit != unit) cr_fatal("object linked with two units");
         if (random && !t->inst[id].random) {
             /* Reached again through a random handle: feed it again. */
             t->inst[id].random = 1;
@@ -2178,6 +2180,18 @@ static const uint64_t* cr_tpl_value(const cr_tpl_t* t, uint32_t inst, uint32_t v
 const uint64_t* llg_cr_ivalue(const llg_cr_session_t* s, uint32_t inst, uint32_t var) {
     if (!s->tpl) cr_fatal("not a problem with units");
     return cr_tpl_value(s->tpl, inst, var);
+}
+
+int llg_cr_iactive(const llg_cr_session_t* s, uint32_t inst, uint32_t var) {
+    const cr_tpl_t* t = s->tpl;
+    if (!t || var >= t->vc) cr_fatal("variable out of range");
+    if (inst == LLG_CR_NONE || t->global[var]) return t->g_active[var];
+    const cr_inst_t* in = cr_inst_get(s, inst);
+    return in->random && in->var_active[cr_inst_var(t, in, var)];
+}
+
+int llg_cr_array_active(const llg_cr_session_t* s, uint32_t inst, uint32_t array) {
+    return cr_inst_get(s, inst)->random && cr_inst_array(s, inst, array)->active;
 }
 
 uint32_t llg_cr_array_size(const llg_cr_session_t* s, uint32_t inst, uint32_t array) {

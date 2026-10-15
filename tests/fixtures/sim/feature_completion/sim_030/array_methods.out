@@ -1,0 +1,5 @@
+reduce: bad=0 wrap=1
+ops: bad=0
+empty: ok=1 size=0 x=0
+inside: bad=0 five=1
+index: bad=0 outside=0 k0=1

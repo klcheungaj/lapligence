@@ -1493,6 +1493,30 @@ fn s30_d4_random_divisor_excluded() {
 }
 
 #[test]
+fn s30_d5_sizes_first() {
+    run_decision(
+        "S30-D5_sizes_first",
+        include_str!("fixtures/sim/lrm_decisions/S30-D5_sizes_first.out"),
+    );
+}
+
+#[test]
+fn s30_d6_empty_reductions() {
+    run_decision(
+        "S30-D6_empty_reductions",
+        include_str!("fixtures/sim/lrm_decisions/S30-D6_empty_reductions.out"),
+    );
+}
+
+#[test]
+fn s30_d7_hook_order() {
+    run_decision(
+        "S30-D7_hook_order",
+        include_str!("fixtures/sim/lrm_decisions/S30-D7_hook_order.out"),
+    );
+}
+
+#[test]
 fn s30_d8_negative_weight_error() {
     let expected = include_str!("fixtures/sim/lrm_decisions/S30-D8_negative_weight_error.out");
     sim_cli::run_case_checked_matrix(
@@ -1505,6 +1529,24 @@ fn s30_d8_negative_weight_error() {
                 output,
                 expected,
                 "negative or unevaluated dist weight",
+            );
+        },
+    );
+}
+
+#[test]
+fn s30_d11_array_index_outside() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S30-D11_array_index_outside.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S30-D11_array_index_outside",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "select index out of range in a constraint",
             );
         },
     );
