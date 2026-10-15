@@ -142,6 +142,9 @@ fn read_fixture_vcd(fixture: &str, optimized: bool) -> (sim_harness::TempDir, St
     let path = dir.path().join("trace.vcd");
     let vcd = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    if let Err(error) = crate::vcd::parse(&vcd) {
+        panic!("{fixture}, optimized={optimized}: malformed VCD: {error}\n{vcd}");
+    }
     (dir, vcd)
 }
 
@@ -492,6 +495,9 @@ fn read_fixture_vcd_with_defines(
         "{fixture}, optimized={optimized} wrote runtime diagnostics: {diagnostics}"
     );
     let vcd = std::fs::read_to_string(dir.path().join("trace.vcd")).expect("read generated VCD");
+    if let Err(error) = crate::vcd::parse(&vcd) {
+        panic!("{fixture}, optimized={optimized}: malformed VCD: {error}");
+    }
     (dir, vcd)
 }
 
@@ -591,6 +597,7 @@ fn checked_in_vcd_byte_limit_applies_to_whole_wide_records() {
             format!("{}{STOPPED}", &full[..exact]),
             "exact-fit limit"
         );
+        crate::vcd::parse(&limited).expect("limited VCD stays well-formed");
 
         // One byte less rejects the whole second record, not a prefix of it.
         let define = format!("LIMIT={}", exact - 1);
@@ -600,6 +607,7 @@ fn checked_in_vcd_byte_limit_applies_to_whole_wide_records() {
             format!("{}{STOPPED}", &full[..record_starts[1]]),
             "partial record kept"
         );
+        crate::vcd::parse(&limited).expect("limited VCD stays well-formed");
     }
 }
 
@@ -988,7 +996,14 @@ fn run_fixture_with_args(fixture: &str, optimized: bool, args: &[&str]) -> sim_h
 }
 
 fn read_text(path: &Path) -> String {
-    std::fs::read_to_string(path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    if path.extension().is_some_and(|extension| extension == "vcd") {
+        if let Err(error) = crate::vcd::parse(&text) {
+            panic!("{}: malformed VCD: {error}\n{text}", path.display());
+        }
+    }
+    text
 }
 
 /// The value-change records of the VCD variable `id`, as `(time, value)`.
