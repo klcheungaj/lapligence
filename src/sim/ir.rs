@@ -91,7 +91,8 @@ pub use coverage::{
     IrCoverAutomatic, IrCoverBin, IrCoverBinKind, IrCoverBinShape, IrCoverBound, IrCoverCount,
     IrCoverCross, IrCoverCrossBin, IrCoverItem, IrCoverRepeat, IrCoverSelect, IrCoverTransBin,
     IrCoverTransSet, IrCoverTransStep, IrCoverTransitions, IrCoverageCrossSample, IrCoverageOption,
-    IrCoverageQuery, IrCoverageSample, IrCoverageStmt, IrCoverageType, IrCovergroup, IrCoverpoint,
+    IrCoverageQuery, IrCoverageSample, IrCoverageStmt, IrCoverageText, IrCoverageTextQuery,
+    IrCoverageType, IrCoverageTypeItem, IrCoverageTypeOption, IrCovergroup, IrCoverpoint,
 };
 mod randomize;
 pub use randomize::{

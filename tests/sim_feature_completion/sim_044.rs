@@ -163,16 +163,6 @@ fn null_covergroup_handle_is_a_runtime_error() {
 fn unsupported_coverage_forms_are_located_errors() {
     sim_cli::reject_case(
         SUITE,
-        "neg_option_access",
-        "neg_option_access.sv:10:5: covergroup options can only be set in the covergroup declaration",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_two_arg_query",
-        "neg_two_arg_query.sv:12:9: `get_inst_coverage` with covered and total bin arguments is not supported yet (SIM-046)",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "neg_strobe",
         "neg_strobe.sv:8:19 no member named 'strobe'",
     );

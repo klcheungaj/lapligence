@@ -1077,6 +1077,9 @@ fn collect_statement_expression_effects(
             for expression in operation.expressions() {
                 collect_expression_effects(ir, expression, effects, visited_calls);
             }
+            for value in operation.strings() {
+                collect_string_effects(ir, value, effects, visited_calls);
+            }
             for handle in operation.chandles() {
                 collect_chandle_effects(ir, handle, effects, visited_calls);
             }
@@ -1819,6 +1822,29 @@ fn collect_expression_effects(
                     }
                 }
             }
+            IrSysFunc::CoverageCounts {
+                query,
+                covered,
+                total,
+            } => {
+                if let Some(record) = query.chandle() {
+                    collect_chandle_effects(ir, record, effects, visited_calls);
+                }
+                effects.push(ExecutionEffect::ImmediateStore);
+                for target in [covered, total] {
+                    match target {
+                        crate::sim::ir::IrPlusArgTarget::Packed { lhs, .. }
+                        | crate::sim::ir::IrPlusArgTarget::Real { lhs, .. } => {
+                            collect_lhs_expression_effects(ir, lhs, effects, visited_calls)
+                        }
+                        crate::sim::ir::IrPlusArgTarget::String { .. } => {}
+                        crate::sim::ir::IrPlusArgTarget::Element { read, .. } => {
+                            effects.push(ExecutionEffect::RuntimeService);
+                            collect_expression_effects(ir, read, effects, visited_calls)
+                        }
+                    }
+                }
+            }
             IrSysFunc::System(command) => {
                 effects.push(ExecutionEffect::RuntimeService);
                 if let Some(command) = command {
@@ -2451,6 +2477,11 @@ fn collect_string_effects(
         }
         IrStringExpr::LocalRead(name) => {
             collect_native_access_effects(ir, name, effects, visited_calls)
+        }
+        IrStringExpr::CoverageText(query) => {
+            if let Some(record) = query.chandle() {
+                collect_chandle_effects(ir, record, effects, visited_calls);
+            }
         }
         IrStringExpr::Literal(_) | IrStringExpr::Read(_) | IrStringExpr::FormalRead(_) => {}
     }

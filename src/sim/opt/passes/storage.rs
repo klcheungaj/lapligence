@@ -830,6 +830,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             for expression in operation.expressions() {
                 collect_expr_reads(expression, model, rw);
             }
+            for value in operation.strings() {
+                value.expressions(&mut |child| collect_expr_reads(child, model, rw));
+            }
             for handle in operation.chandles() {
                 handle.expressions(&mut |child| collect_expr_reads(child, model, rw));
             }
@@ -1414,6 +1417,27 @@ fn collect_expr_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                     crate::sim::ir::IrPlusArgTarget::String { .. } => {}
                     crate::sim::ir::IrPlusArgTarget::Element { read, .. } => {
                         collect_expr_reads(read, model, rw)
+                    }
+                }
+            }
+            IrSysFunc::CoverageCounts {
+                query,
+                covered,
+                total,
+            } => {
+                if let Some(record) = query.chandle() {
+                    record.expressions(&mut |child| collect_expr_reads(child, model, rw));
+                }
+                for target in [covered, total] {
+                    match target {
+                        crate::sim::ir::IrPlusArgTarget::Packed { lhs, .. }
+                        | crate::sim::ir::IrPlusArgTarget::Real { lhs, .. } => {
+                            collect_lhs_rw(lhs, model, rw)
+                        }
+                        crate::sim::ir::IrPlusArgTarget::String { .. } => {}
+                        crate::sim::ir::IrPlusArgTarget::Element { read, .. } => {
+                            collect_expr_reads(read, model, rw)
+                        }
                     }
                 }
             }

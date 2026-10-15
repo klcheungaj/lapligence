@@ -878,6 +878,24 @@ fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target
                         | NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. })
                 )
         }
+        NodeKind::SysCall { name }
+            if matches!(
+                name.as_str(),
+                "$coverage_control" | "$coverage_get_max" | "$coverage_get"
+            ) =>
+        {
+            // The hierarchy argument of 40.3.2 names a module instance or
+            // `$root`; it is resolved during lowering, never read.
+            let position = if name == "$coverage_control" { 3 } else { 2 };
+            owner_node.children().get(position) == Some(&reference)
+                && (matches!(
+                    db.node_kind(target),
+                    NodeKind::ModuleInst {
+                        is_interface: false,
+                        ..
+                    }
+                ) || db.semantic_detail(target) == Some("Root"))
+        }
         NodeKind::SysCall { name } if name == "$printtimescale" => {
             // The single optional operand names the instance or `$unit`
             // whose time scale is printed (SV 20.4.1); it is never read.

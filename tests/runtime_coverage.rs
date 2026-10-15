@@ -106,8 +106,10 @@ int main(void) {
     llg_rt_init();
     NEAR(llg_cov_total_coverage(), 100.0);
     /* No instance: the type weight is nonzero, so 0.0 (19.11). */
-    NEAR(llg_cov_type_coverage(&type_a, -1, 1), 0.0);
-    NEAR(llg_cov_type_coverage(&type_a, -1, 0), 100.0);
+    NEAR(llg_cov_type_coverage(&type_a, -1), 0.0);
+    type_a.weight = 0;
+    NEAR(llg_cov_type_coverage(&type_a, -1), 100.0);
+    type_a.weight = 1;
 
     void* a = llg_cov_new(&group_a);
     option(a, 1, LLG_COV_OPTION_AUTO_BIN_MAX, 3);
@@ -174,7 +176,7 @@ int main(void) {
     hit(b2, 0, 0, 2);
     hit(b2, 0, 1, 2);
     NEAR(llg_cov_inst_coverage(b2, -1), 50.0);
-    NEAR(llg_cov_type_coverage(&type_b, -1, 3), (1.0 * 25.0 + 3.0 * 50.0) / 4.0);
+    NEAR(llg_cov_type_coverage(&type_b, -1), (1.0 * 25.0 + 3.0 * 50.0) / 4.0);
 
     /* A coverpoint without valued bins is excluded: 0.0, or 100.0 at weight 0. */
     void* e = llg_cov_new(&group_empty);
@@ -185,17 +187,17 @@ int main(void) {
     option(e0, -1, LLG_COV_OPTION_WEIGHT, 0);
     llg_cov_ready(e0);
     NEAR(llg_cov_inst_coverage(e0, -1), 100.0);
-    NEAR(llg_cov_type_coverage(&type_empty, -1, 1), 0.0);
+    NEAR(llg_cov_type_coverage(&type_empty, -1), 0.0);
 
     /* $get_coverage: types weighted by type_option.weight; the empty type
      * does not contribute. */
-    double total = (1.0 * llg_cov_type_coverage(&type_a, -1, 1) +
-                    3.0 * llg_cov_type_coverage(&type_b, -1, 3)) / 4.0;
+    double total = (1.0 * llg_cov_type_coverage(&type_a, -1) +
+                    3.0 * llg_cov_type_coverage(&type_b, -1)) / 4.0;
     NEAR(llg_cov_total_coverage(), total);
 
     /* A negative weight is an error that keeps the previous value. */
     option(b2, -1, LLG_COV_OPTION_WEIGHT, -1);
-    NEAR(llg_cov_type_coverage(&type_b, -1, 3), (1.0 * 25.0 + 3.0 * 50.0) / 4.0);
+    NEAR(llg_cov_type_coverage(&type_b, -1), (1.0 * 25.0 + 3.0 * 50.0) / 4.0);
 
     /* Per-instance layouts: slot 0 is 3 in one instance and 12 in another;
      * `high` starts at the slot value, so 3 is in both bins of the first. */

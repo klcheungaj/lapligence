@@ -10,6 +10,7 @@ METADATA = {
     'rt/container/queues.c': ('changes',),
     # Coverpoint tables: `width` and `is_signed` describe the bin key.
     'rt/coverage/coverage.c': ('point',),
+    'rt/coverage/database.c': ('point',),
     'rt/llg_container_prelude.c': ('record',),
     # llg_dpi_type_t layout tables: `width` is a DPI payload bit count.
     'rt/llg_dpi.c': ('element', 'type', 'type->element', 'type->members[m].type'),

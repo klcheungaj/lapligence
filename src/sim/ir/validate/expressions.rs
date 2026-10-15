@@ -101,9 +101,8 @@ impl Validator<'_> {
                     IrObjectQuery::SemaphoreTryGet(..) => Some((32, true)),
                     IrObjectQuery::ProcessEq(..) => Some((1, false)),
                     IrObjectQuery::StringGetc(..) => Some((8, true)),
-                    IrObjectQuery::StringAtoreal(..) | IrObjectQuery::Coverage(..) => {
-                        Some((0, true))
-                    }
+                    IrObjectQuery::StringAtoreal(..) => Some((0, true)),
+                    IrObjectQuery::Coverage(query) => Some(query.result_type()),
                     IrObjectQuery::StringInside { .. } => Some((1, false)),
                     IrObjectQuery::StringPacked(..) => None,
                     IrObjectQuery::ProcessStatus(..) => Some((32, true)),
@@ -119,10 +118,8 @@ impl Validator<'_> {
                     return self.fail(path, "object query result type mismatch");
                 }
                 if (expr.width == 0
-                    && !matches!(
-                        query.as_ref(),
-                        IrObjectQuery::StringAtoreal(_) | IrObjectQuery::Coverage(_)
-                    ))
+                    && !matches!(query.as_ref(), IrObjectQuery::StringAtoreal(_))
+                    && !matches!(query.as_ref(), IrObjectQuery::Coverage(query) if query.result_type().0 == 0))
                     || expr.fill.is_some()
                 {
                     return self.fail(path, "object query has an invalid result shape");
@@ -1194,6 +1191,60 @@ impl Validator<'_> {
                                 formals,
                                 &format!("{path}.target"),
                             )?;
+                        }
+                    }
+                }
+                IrSysFunc::CoverageCounts {
+                    query,
+                    covered,
+                    total,
+                } => {
+                    if !matches!(
+                        query.as_ref(),
+                        crate::sim::ir::IrCoverageQuery::Instance { .. }
+                            | crate::sim::ir::IrCoverageQuery::Type { .. }
+                    ) || (expr.width, expr.signed) != (0, true)
+                    {
+                        return self.fail(path, "invalid two-argument coverage query");
+                    }
+                    if query
+                        .coverage_type()
+                        .is_some_and(|index| index >= self.model.coverage_types.len())
+                    {
+                        return self.fail(path, "coverage query names an unknown covergroup type");
+                    }
+                    if let Some(record) = query.chandle() {
+                        let mut result = Ok(());
+                        record.expressions(&mut |child| {
+                            result = result
+                                .clone()
+                                .and_then(|_| self.validate_expr(child, formals, path));
+                        });
+                        result?;
+                    }
+                    for (name, target) in [("covered", covered), ("total", total)] {
+                        let IrPlusArgTarget::Packed {
+                            lhs,
+                            width,
+                            signed,
+                            two_state,
+                        } = target
+                        else {
+                            return self.fail(
+                                format!("{path}.{name}"),
+                                "coverage bin count target must be packed storage",
+                            );
+                        };
+                        self.validate_lhs(lhs, formals, &format!("{path}.{name}"))?;
+                        if (*width, *signed) != (32, true)
+                            || self.lhs_packed_width(lhs) != Some(*width)
+                            || lhs_signed(self.model, lhs) != Some(*signed)
+                            || lhs_two_state(self.model, lhs) != Some(*two_state)
+                        {
+                            return self.fail(
+                                format!("{path}.{name}"),
+                                "coverage bin count target must be an int lvalue",
+                            );
                         }
                     }
                 }

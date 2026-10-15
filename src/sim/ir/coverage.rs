@@ -8,7 +8,8 @@
 use super::*;
 
 /// One covergroup declaration identity. Type coverage merges every instance
-/// of every [`IrCovergroup`] naming the same type (19.11.3).
+/// of every [`IrCovergroup`] naming the same type (19.11.3). The values are
+/// the declaration's; procedural writes change the runtime copy (19.7.1).
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrCoverageType {
     pub(in crate::sim) name: String,
@@ -16,12 +17,31 @@ pub struct IrCoverageType {
     pub(in crate::sim) weight: i64,
     /// `type_option.merge_instances` (19.11.3).
     pub(in crate::sim) merge: bool,
+    /// `type_option.goal`.
+    pub(in crate::sim) goal: i64,
+    /// `type_option.comment`.
+    pub(in crate::sim) comment: String,
+    /// `type_option.strobe`.
+    pub(in crate::sim) strobe: bool,
+    /// The type options of each coverpoint, then each cross.
+    pub(in crate::sim) items: Vec<IrCoverageTypeItem>,
+}
+
+/// The type options of one coverpoint or cross (Table 19-4).
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCoverageTypeItem {
+    pub(in crate::sim) weight: i64,
+    pub(in crate::sim) goal: i64,
+    pub(in crate::sim) comment: String,
 }
 
 /// One elaborated covergroup declaration.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrCovergroup {
     pub(in crate::sim) name: String,
+    /// The hierarchical path of the declaration's scope, the base of default
+    /// instance names (decision S46-D1).
+    pub(in crate::sim) path: String,
     pub(in crate::sim) coverage_type: usize,
     pub(in crate::sim) points: Vec<IrCoverpoint>,
     /// Crosses (19.6); coverage items are numbered points first, then
@@ -44,8 +64,6 @@ pub struct IrCoverpoint {
     /// 1..=64 bits.
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
-    /// `type_option.weight` of the coverpoint (Table 19-3).
-    pub(in crate::sim) type_weight: i64,
     /// The automatic bins of a coverpoint that declares no `bins` (19.5.2).
     pub(in crate::sim) automatic: IrCoverAutomatic,
     /// Declared bins in source order, `ignore_bins` and `illegal_bins`
@@ -67,8 +85,6 @@ pub struct IrCoverCross {
     pub(in crate::sim) name: String,
     /// The crossed coverpoints, by index.
     pub(in crate::sim) points: Vec<u32>,
-    /// `type_option.weight` of the cross (Table 19-3).
-    pub(in crate::sim) type_weight: i64,
     pub(in crate::sim) selects: Vec<IrCoverSelect>,
     pub(in crate::sim) bins: Vec<IrCoverCrossBin>,
     /// `intersect` values, resolved against the crossed coverpoint's type.
@@ -292,8 +308,7 @@ impl IrCoverpoint {
     }
 }
 
-/// Instance-specific options a covergroup body may set (Table 19-1). Only
-/// options that change coverage values reach the runtime.
+/// The integral instance-specific options (Table 19-1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IrCoverageOption {
     Weight,
@@ -302,6 +317,8 @@ pub enum IrCoverageOption {
     AutoBinMax,
     DetectOverlap,
     GetInstCoverage,
+    PerInstance,
+    CrossNumPrintMissing,
 }
 
 impl IrCoverageOption {
@@ -313,8 +330,73 @@ impl IrCoverageOption {
             Self::AutoBinMax => 3,
             Self::DetectOverlap => 4,
             Self::GetInstCoverage => 5,
+            Self::PerInstance => 6,
+            Self::CrossNumPrintMissing => 7,
         }
     }
+
+    /// The option's member type in `option` (19.10): `bit` or `int`.
+    pub(in crate::sim) fn is_bit(self) -> bool {
+        matches!(
+            self,
+            Self::DetectOverlap | Self::GetInstCoverage | Self::PerInstance
+        )
+    }
+}
+
+/// The integral type options (Table 19-3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrCoverageTypeOption {
+    Weight,
+    Goal,
+    Strobe,
+    MergeInstances,
+}
+
+impl IrCoverageTypeOption {
+    pub(in crate::sim) fn code(self) -> u32 {
+        match self {
+            Self::Weight => 0,
+            Self::Goal => 1,
+            Self::Strobe => 2,
+            Self::MergeInstances => 3,
+        }
+    }
+
+    /// The option's member type in `type_option` (19.10).
+    pub(in crate::sim) fn is_bit(self) -> bool {
+        matches!(self, Self::Strobe | Self::MergeInstances)
+    }
+}
+
+/// The string instance options (Table 19-1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrCoverageText {
+    Name,
+    Comment,
+}
+
+impl IrCoverageText {
+    pub(in crate::sim) fn code(self) -> u32 {
+        match self {
+            Self::Name => 0,
+            Self::Comment => 1,
+        }
+    }
+}
+
+/// A string option read (19.7, 19.7.1).
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrCoverageTextQuery {
+    Instance {
+        record: IrChandleExpr,
+        point: Option<u32>,
+        which: IrCoverageText,
+    },
+    Type {
+        coverage_type: usize,
+        point: Option<u32>,
+    },
 }
 
 /// One coverpoint sample: `value` counts unless `iff` is false or unknown.
@@ -350,6 +432,32 @@ pub enum IrCoverageStmt {
         value: IrExpr,
         site: String,
     },
+    /// Set a string option of the record: the declaration's `option.name`
+    /// or `option.comment`, a procedural write, or `set_inst_name` (19.8).
+    Text {
+        record: IrChandleExpr,
+        point: Option<u32>,
+        which: IrCoverageText,
+        value: IrStringExpr,
+    },
+    /// A procedural write of a type option (19.7.1).
+    TypeOption {
+        coverage_type: usize,
+        point: Option<u32>,
+        option: IrCoverageTypeOption,
+        value: IrExpr,
+        site: String,
+    },
+    /// A procedural write of `type_option.comment`.
+    TypeText {
+        coverage_type: usize,
+        point: Option<u32>,
+        value: IrStringExpr,
+    },
+    /// `$set_coverage_db_name` (19.9).
+    SetDbName { name: IrStringExpr },
+    /// `$load_coverage_db` (19.9).
+    LoadDb { name: IrStringExpr, site: String },
     /// Store argument value `slot` that bins of the record read.
     Slot {
         record: IrChandleExpr,
@@ -572,9 +680,29 @@ impl IrCoverTransitions {
 }
 
 impl IrCoverageStmt {
+    /// The string operands, whose own expressions [`Self::expressions`]
+    /// does not include.
+    pub(in crate::sim) fn strings(&self) -> Vec<&IrStringExpr> {
+        match self {
+            Self::Text { value, .. } | Self::TypeText { value, .. } => vec![value],
+            Self::SetDbName { name } | Self::LoadDb { name, .. } => vec![name],
+            _ => Vec::new(),
+        }
+    }
+
+    pub(in crate::sim) fn strings_mut(&mut self) -> Vec<&mut IrStringExpr> {
+        match self {
+            Self::Text { value, .. } | Self::TypeText { value, .. } => vec![value],
+            Self::SetDbName { name } | Self::LoadDb { name, .. } => vec![name],
+            _ => Vec::new(),
+        }
+    }
+
     pub(in crate::sim) fn expressions(&self) -> Vec<&IrExpr> {
         match self {
-            Self::Option { value, .. } | Self::Slot { value, .. } => vec![value],
+            Self::Option { value, .. }
+            | Self::Slot { value, .. }
+            | Self::TypeOption { value, .. } => vec![value],
             Self::Sample {
                 guards,
                 points,
@@ -595,13 +723,19 @@ impl IrCoverageStmt {
             | Self::Control { .. }
             | Self::SampleRegistered { .. }
             | Self::Watch { .. }
-            | Self::SampleInstance { .. } => Vec::new(),
+            | Self::SampleInstance { .. }
+            | Self::Text { .. }
+            | Self::TypeText { .. }
+            | Self::SetDbName { .. }
+            | Self::LoadDb { .. } => Vec::new(),
         }
     }
 
     pub(in crate::sim) fn expressions_mut(&mut self) -> Vec<&mut IrExpr> {
         match self {
-            Self::Option { value, .. } | Self::Slot { value, .. } => vec![value],
+            Self::Option { value, .. }
+            | Self::Slot { value, .. }
+            | Self::TypeOption { value, .. } => vec![value],
             Self::Sample {
                 guards,
                 points,
@@ -623,33 +757,49 @@ impl IrCoverageStmt {
             | Self::Control { .. }
             | Self::SampleRegistered { .. }
             | Self::Watch { .. }
-            | Self::SampleInstance { .. } => Vec::new(),
+            | Self::SampleInstance { .. }
+            | Self::Text { .. }
+            | Self::TypeText { .. }
+            | Self::SetDbName { .. }
+            | Self::LoadDb { .. } => Vec::new(),
         }
     }
 
     pub(in crate::sim) fn chandles(&self) -> Vec<&IrChandleExpr> {
         match self {
             Self::Option { record, .. }
+            | Self::Text { record, .. }
             | Self::Slot { record, .. }
             | Self::Ready { record }
             | Self::Sample { record, .. }
             | Self::Control { record, .. } => vec![record],
             Self::Register { object, .. } | Self::Watch { object, .. } => vec![object],
             Self::SampleInstance { record, object, .. } => vec![record, object],
-            Self::Create { .. } | Self::SampleRegistered { .. } => Vec::new(),
+            Self::Create { .. }
+            | Self::SampleRegistered { .. }
+            | Self::TypeOption { .. }
+            | Self::TypeText { .. }
+            | Self::SetDbName { .. }
+            | Self::LoadDb { .. } => Vec::new(),
         }
     }
 
     pub(in crate::sim) fn chandles_mut(&mut self) -> Vec<&mut IrChandleExpr> {
         match self {
             Self::Option { record, .. }
+            | Self::Text { record, .. }
             | Self::Slot { record, .. }
             | Self::Ready { record }
             | Self::Sample { record, .. }
             | Self::Control { record, .. } => vec![record],
             Self::Register { object, .. } | Self::Watch { object, .. } => vec![object],
             Self::SampleInstance { record, object, .. } => vec![record, object],
-            Self::Create { .. } | Self::SampleRegistered { .. } => Vec::new(),
+            Self::Create { .. }
+            | Self::SampleRegistered { .. }
+            | Self::TypeOption { .. }
+            | Self::TypeText { .. }
+            | Self::SetDbName { .. }
+            | Self::LoadDb { .. } => Vec::new(),
         }
     }
 
@@ -673,7 +823,7 @@ impl IrCoverageStmt {
     }
 }
 
-/// A real-valued coverage query (19.8, 19.9).
+/// A coverage query (19.8, 19.9) or an integral option read (19.7).
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrCoverageQuery {
     /// `get_inst_coverage()` of one instance (or one of its coverpoints).
@@ -681,30 +831,76 @@ pub enum IrCoverageQuery {
         record: IrChandleExpr,
         point: Option<u32>,
     },
-    /// `get_coverage()`: type coverage of a declaration identity. `weight`
-    /// is the queried scope's `type_option.weight`, which decides the
-    /// zero-denominator result.
+    /// `get_coverage()`: type coverage of a declaration identity.
     Type {
         coverage_type: usize,
         point: Option<u32>,
-        weight: i64,
     },
     /// `$get_coverage()`.
     Total,
+    /// `option.member` of an instance, coverpoint or cross.
+    Option {
+        record: IrChandleExpr,
+        point: Option<u32>,
+        option: IrCoverageOption,
+    },
+    /// `type_option.member` of a type, coverpoint or cross.
+    TypeOption {
+        coverage_type: usize,
+        point: Option<u32>,
+        option: IrCoverageTypeOption,
+    },
 }
 
 impl IrCoverageQuery {
     pub(in crate::sim) fn chandle(&self) -> Option<&IrChandleExpr> {
         match self {
+            Self::Instance { record, .. } | Self::Option { record, .. } => Some(record),
+            Self::Type { .. } | Self::Total | Self::TypeOption { .. } => None,
+        }
+    }
+
+    pub(in crate::sim) fn chandle_mut(&mut self) -> Option<&mut IrChandleExpr> {
+        match self {
+            Self::Instance { record, .. } | Self::Option { record, .. } => Some(record),
+            Self::Type { .. } | Self::Total | Self::TypeOption { .. } => None,
+        }
+    }
+
+    /// The coverage type a query names.
+    pub(in crate::sim) fn coverage_type(&self) -> Option<usize> {
+        match self {
+            Self::Type { coverage_type, .. } | Self::TypeOption { coverage_type, .. } => {
+                Some(*coverage_type)
+            }
+            _ => None,
+        }
+    }
+
+    /// `(width, signed)` of the result: `real` (width 0) for coverage, the
+    /// member type of 19.10 for an option.
+    pub(in crate::sim) fn result_type(&self) -> (u32, bool) {
+        match self {
+            Self::Instance { .. } | Self::Type { .. } | Self::Total => (0, true),
+            Self::Option { option, .. } if option.is_bit() => (1, false),
+            Self::TypeOption { option, .. } if option.is_bit() => (1, false),
+            Self::Option { .. } | Self::TypeOption { .. } => (32, true),
+        }
+    }
+}
+
+impl IrCoverageTextQuery {
+    pub(in crate::sim) fn chandle(&self) -> Option<&IrChandleExpr> {
+        match self {
             Self::Instance { record, .. } => Some(record),
-            Self::Type { .. } | Self::Total => None,
+            Self::Type { .. } => None,
         }
     }
 
     pub(in crate::sim) fn chandle_mut(&mut self) -> Option<&mut IrChandleExpr> {
         match self {
             Self::Instance { record, .. } => Some(record),
-            Self::Type { .. } | Self::Total => None,
+            Self::Type { .. } => None,
         }
     }
 }

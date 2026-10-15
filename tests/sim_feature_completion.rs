@@ -242,6 +242,9 @@ mod sim_044;
 
 #[path = "sim_feature_completion/sim_045.rs"]
 mod sim_045;
+
+#[path = "sim_feature_completion/sim_046.rs"]
+mod sim_046;
 #[path = "sim_feature_completion/sim_047.rs"]
 mod sim_047;
 

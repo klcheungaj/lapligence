@@ -224,6 +224,23 @@ fn ident_children(e: &mut IrExpr) {
                     crate::sim::ir::IrPlusArgTarget::Element { read, .. } => ident_expr(read),
                 }
             }
+            IrSysFunc::CoverageCounts {
+                query,
+                covered,
+                total,
+            } => {
+                if let Some(record) = query.chandle_mut() {
+                    record.expressions_mut(&mut |child| ident_expr(child));
+                }
+                for target in [covered, total] {
+                    match target {
+                        crate::sim::ir::IrPlusArgTarget::Packed { lhs, .. }
+                        | crate::sim::ir::IrPlusArgTarget::Real { lhs, .. } => ident_lhs(lhs),
+                        crate::sim::ir::IrPlusArgTarget::String { .. } => {}
+                        crate::sim::ir::IrPlusArgTarget::Element { read, .. } => ident_expr(read),
+                    }
+                }
+            }
             IrSysFunc::System(Some(command)) => {
                 command.expressions_mut(&mut |child| ident_expr(child));
             }

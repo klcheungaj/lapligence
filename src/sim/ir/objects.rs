@@ -212,6 +212,9 @@ pub enum IrStringExpr {
         then: Box<IrStringExpr>,
         otherwise: Box<IrStringExpr>,
     },
+    /// A string coverage option (`option.name`, `option.comment`,
+    /// `type_option.comment`, 19.7).
+    CoverageText(Box<super::IrCoverageTextQuery>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -908,6 +911,17 @@ impl IrStringExpr {
                 ))
             }
             Self::Pattern(pattern) => pattern.validate(model, "string.pattern"),
+            Self::CoverageText(query) => match query.as_ref() {
+                super::IrCoverageTextQuery::Type { coverage_type, .. }
+                    if *coverage_type >= model.coverage_types.len() =>
+                {
+                    Err(super::IrValidationError::new(
+                        "coverage",
+                        "type option read names an unknown covergroup type",
+                    ))
+                }
+                _ => Ok(()),
+            },
             _ => Ok(()),
         }
     }
@@ -986,6 +1000,11 @@ impl IrStringExpr {
                 then.visit_expressions(typed_call_args, visit);
                 otherwise.visit_expressions(typed_call_args, visit);
             }
+            Self::CoverageText(query) => {
+                if let Some(record) = query.chandle() {
+                    record.expressions(visit);
+                }
+            }
         }
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
@@ -1053,6 +1072,11 @@ impl IrStringExpr {
                 visit(predicate);
                 then.expressions_mut(visit);
                 otherwise.expressions_mut(visit);
+            }
+            Self::CoverageText(query) => {
+                if let Some(record) = query.chandle_mut() {
+                    record.expressions_mut(visit);
+                }
             }
         }
     }
@@ -1489,8 +1513,8 @@ impl IrObjectQuery {
                 handle.validate(model, formals, chandle_return)
             }
             Self::Coverage(query) => {
-                if let super::IrCoverageQuery::Type { coverage_type, .. } = query.as_ref() {
-                    if *coverage_type >= model.coverage_types.len() {
+                if let Some(coverage_type) = query.coverage_type() {
+                    if coverage_type >= model.coverage_types.len() {
                         return Err(super::IrValidationError::new(
                             "coverage",
                             "type coverage query names an unknown covergroup type",

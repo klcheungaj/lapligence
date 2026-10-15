@@ -935,6 +935,9 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             IrSysFunc::ValuePlusArgs { format, target } => {
                 render_value_plusargs(ctx, format, target, e.width, e.signed)?
             }
+            IrSysFunc::CoverageCounts { .. } => {
+                return Err("functional coverage requires the ownership-aware emitter".to_owned())
+            }
             IrSysFunc::System(command) => {
                 let (command, has_command) = match command.as_ref() {
                     Some(command) => (super::objects::string(ctx, command)?, 1),

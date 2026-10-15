@@ -52,6 +52,13 @@ impl EmitCtx<'_, '_> {
         op: Operation,
         force_blocking: bool,
     ) -> Result<IrStmt, String> {
+        // Procedural covergroup option writes (19.7, SIM-046).
+        if let Some(statement) = self
+            .cg
+            .lower_coverage_option_write(&self.path, lhs, rhs, blocking, op)?
+        {
+            return Ok(statement);
+        }
         // Tagged unions with string, real or handle members (SIM-007): a
         // tagged construction sets the tag and one member; a member write
         // happens only while that member is active.

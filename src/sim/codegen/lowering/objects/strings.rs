@@ -17,6 +17,10 @@ impl Codegen<'_> {
         if let Some(value) = self.lower_object_random_state(path, node)? {
             return Ok(value);
         }
+        // Covergroup string options (SIM-046).
+        if let Some(value) = self.lower_coverage_text(path, node)? {
+            return Ok(value);
+        }
         if let Some(value) = self.native_tagged_string(path, node)? {
             return Ok(value);
         }

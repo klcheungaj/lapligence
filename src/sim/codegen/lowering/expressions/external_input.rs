@@ -87,7 +87,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn lower_plusarg_target(
+    pub(in super::super) fn lower_plusarg_target(
         &mut self,
         scope_path: &str,
         node: NodeId,

@@ -32,6 +32,22 @@ impl LintRule for UndrivenSignalRule {
         let (reads, drivers) = design_activity(db);
         let mut exempt = top_external_port_signals(db);
         exempt.extend(unconnected_port_signals(db));
+        // The built-in `option` and `type_option` members of covergroups,
+        // coverpoints and crosses (SV 19.10) are coverage settings the
+        // simulator holds, not signals.
+        for info in db.covergroups().values() {
+            let scopes = info
+                .body
+                .into_iter()
+                .chain(info.coverpoints.iter().copied())
+                .chain(info.crosses.iter().copied());
+            for scope in scopes {
+                exempt.extend(db.node(scope).children().iter().copied().filter(|child| {
+                    matches!(db.node_kind(*child), NodeKind::Var { .. })
+                        && matches!(db.node(*child).name.as_str(), "option" | "type_option")
+                }));
+            }
+        }
         // A constraint `foreach` loop variable is bound by the solver's
         // iteration (SV 18.5.8.1), not driven by a process.
         exempt.extend(

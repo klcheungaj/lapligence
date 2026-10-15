@@ -31,6 +31,7 @@
 
 #if defined(_WIN32)
 #include <direct.h>
+#include <process.h>
 #include <sys/stat.h>
 #else
 #include <fcntl.h>
@@ -172,6 +173,36 @@ static inline int llg_path_is_dir(const char* dir) {
     struct stat info;
     return stat(dir, &info) == 0 && S_ISDIR(info.st_mode);
 #endif
+}
+
+// The current process identifier, for temporary file names.
+static inline unsigned long llg_process_id(void) {
+#if defined(_WIN32)
+    return (unsigned long)_getpid();
+#else
+    return (unsigned long)getpid();
+#endif
+}
+
+// Remove the file `path`, never a directory (POSIX remove() also removes an
+// empty directory); 0 on success.
+static inline int llg_remove_file(const char* path) {
+#if defined(_WIN32)
+    return remove(path);  // the Windows C runtime removes files only
+#else
+    return unlink(path);
+#endif
+}
+
+// Replace `to` by the file `from`; 0 on success, -1 with errno set otherwise.
+// POSIX rename replaces atomically. The Windows C runtime's rename refuses an
+// existing target, so `to` is removed first: a crash between the two calls
+// leaves `from` complete and `to` missing, never a partial `to`.
+static inline int llg_replace_file(const char* from, const char* to) {
+#if defined(_WIN32)
+    if (llg_remove_file(to) != 0 && errno != ENOENT) return -1;
+#endif
+    return rename(from, to);
 }
 
 // ── Host stack ──────────────────────────────────────────────────────────────

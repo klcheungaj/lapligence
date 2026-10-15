@@ -134,6 +134,8 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
             include_str!("scheduler/output.c"),
             include_str!("scheduler/destinations.c"),
             include_str!("coverage/coverage.c"),
+            include_str!("coverage/database.c"),
+            include_str!("coverage/assertions.c"),
         ),
     )
 }

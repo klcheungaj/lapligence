@@ -246,6 +246,9 @@ impl Codegen<'_> {
     }
 
     pub(in super::super) fn is_string_expr(&self, path: &str, node: NodeId) -> bool {
+        if self.is_coverage_text(node) {
+            return true;
+        }
         if self.class_field_target(node).is_some_and(
             |field| matches!(self.kind(field), NodeKind::Var { ty } if ty.kind == "string"),
         ) {

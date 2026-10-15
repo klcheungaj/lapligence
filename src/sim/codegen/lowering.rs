@@ -1269,6 +1269,9 @@ struct Codegen<'a> {
     covergroups: HashMap<NodeId, coverage::CovergroupLowering>,
     /// Covergroup declaration identity → `model.coverage_types` index.
     coverage_types: HashMap<coverage::CoverageTypeKey, usize>,
+    /// Built-in `option`/`type_option` members of every covergroup,
+    /// coverpoint and cross (19.10) -> their owners.
+    coverage_option_vars: HashMap<NodeId, coverage::CoverageOptionOwner>,
     /// Subroutine → covergroups its block event samples `(group, begin)`.
     coverage_block_events: HashMap<NodeId, Vec<(NodeId, bool)>>,
     /// Subroutines whose bodies received their block-event samplers.
@@ -1786,6 +1789,7 @@ impl<'a> Codegen<'a> {
             fork_branch_receiver: None,
             covergroups: HashMap::new(),
             coverage_types: HashMap::new(),
+            coverage_option_vars: HashMap::new(),
             coverage_block_events: HashMap::new(),
             coverage_block_events_applied: HashSet::new(),
             coverage_scope: None,

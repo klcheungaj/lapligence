@@ -1698,13 +1698,41 @@ impl Validator<'_> {
             IrCoverageStmt::Sample { points, .. } => points
                 .iter()
                 .all(|sample| !sample.value.is_real() && sample.value.width <= 64),
-            IrCoverageStmt::Ready { .. } | IrCoverageStmt::Control { .. } => true,
+            IrCoverageStmt::TypeOption {
+                coverage_type,
+                value,
+                site,
+                ..
+            } => {
+                *coverage_type < self.model.coverage_types.len()
+                    && !value.is_real()
+                    && !site.contains('\0')
+            }
+            IrCoverageStmt::TypeText { coverage_type, .. } => {
+                *coverage_type < self.model.coverage_types.len()
+            }
+            IrCoverageStmt::LoadDb { site, .. } => !site.contains('\0'),
+            IrCoverageStmt::Ready { .. }
+            | IrCoverageStmt::Control { .. }
+            | IrCoverageStmt::Text { .. }
+            | IrCoverageStmt::SetDbName { .. } => true,
         };
         if !valid {
             return self.fail(path, "invalid coverage statement");
         }
         for (index, expression) in operation.expressions().into_iter().enumerate() {
             self.validate_expr(expression, formals, &format!("{path}.values[{index}]"))?;
+        }
+        for (index, value) in operation.strings().into_iter().enumerate() {
+            value.validate(self.model, self.string_return.get())?;
+            let mut result = Ok(());
+            value.expressions(&mut |child| {
+                if result.is_ok() {
+                    result =
+                        self.validate_expr(child, formals, &format!("{path}.strings[{index}]"));
+                }
+            });
+            result?;
         }
         for (index, handle) in operation.chandles().into_iter().enumerate() {
             let mut result = Ok(());

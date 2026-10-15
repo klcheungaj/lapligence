@@ -209,11 +209,12 @@ access and stops the run after `before`.
 
 ## Negative cases
 
+Option access through an instance and the two-argument queries, rejected
+here before SIM-046, are covered positively by `sim_046/options.sv`.
+
 | Fixture | Rejected construct | Owner |
 | --- | --- | --- |
 | `neg_strobe` | `type_option.strobe` in a coverpoint (Table 19-4) | frontend |
-| `neg_option_access` | `c.option.weight = 2` after instantiation | SIM-046 |
-| `neg_two_arg_query` | `get_inst_coverage(covered, total)` | SIM-046 |
 | `neg_wide_point` | an 80-bit coverpoint | llg limit (64 bits) |
 | `neg_import_event` | a block event on an imported function, which has no body | llg limit |
 | `neg_embedded_outside_new` | embedded `new` outside the class `new` (19.4) | frontend |

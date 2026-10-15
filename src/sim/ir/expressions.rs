@@ -809,6 +809,15 @@ pub enum IrSysFunc {
         format: IrPlusArgText,
         target: IrPlusArgTarget,
     },
+    /// The two-argument `get_coverage`/`get_inst_coverage` (19.8): the real
+    /// coverage of `query` (an `Instance` or `Type` query), storing the
+    /// covered and total bin numbers into the two `ref int` actuals. The
+    /// targets are `Packed` or `Element` destinations of 32 signed bits.
+    CoverageCounts {
+        query: Box<super::IrCoverageQuery>,
+        covered: IrPlusArgTarget,
+        total: IrPlusArgTarget,
+    },
     /// `$system` executes an optional owned host command through the generated
     /// model's explicitly permitted runtime and returns the host `system()`
     /// status. `None` preserves the standard's omitted-argument

@@ -1,0 +1,307 @@
+//! SIM-046: coverage queries, options, the coverage database and the
+//! coverage control API (IEEE 1800-2009 §§19.7-19.11, 20.14, 40.3). Every
+//! expected count and percentage is derived by hand in the fixture readme;
+//! positive cases run in both optimizer modes on the legacy,
+//! compact/portable and compact/GMP value backends.
+use super::sim_cli;
+use std::process::Output;
+
+const SUITE: &str = "feature_completion/sim_046";
+
+fn assert_stdout(label: &str, output: &Output, expected: &str) {
+    assert!(
+        output.status.success(),
+        "{label}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+}
+
+/// The `llg:` lines of a run's stderr other than the `$finish` report.
+fn llg_messages(output: &Output) -> Vec<String> {
+    String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .filter(|line| line.starts_with("llg: ") && !line.starts_with("llg: $finish"))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn options_names_and_two_argument_queries_follow_19_7_and_19_8() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_046/options.out");
+    sim_cli::run_case_checked_matrix(SUITE, "options", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert!(llg_messages(output).is_empty(), "{label}");
+    });
+}
+
+#[test]
+fn saved_runs_load_and_merge_into_type_coverage() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_046/database.out");
+    for optimized in [false, true] {
+        for (backend, controls) in sim_cli::backend_matrix() {
+            let envs = controls
+                .iter()
+                .map(|(name, value)| (*name, value.as_str()))
+                .collect::<Vec<_>>();
+            let (directory, outputs) = sim_cli::run_case_sequence(
+                SUITE,
+                "database",
+                optimized,
+                &envs,
+                &[],
+                &[(&[], &["+first"]), (&[], &["+second"]), (&[], &["+third"])],
+            );
+            let label = format!("{SUITE}/database, {backend}, optimized={optimized}");
+            let mut stdout = String::new();
+            for output in &outputs {
+                assert!(
+                    output.status.success(),
+                    "{label}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(llg_messages(output).is_empty(), "{label}");
+                stdout.push_str(&String::from_utf8_lossy(&output.stdout));
+            }
+            assert_eq!(stdout, expected, "{label}");
+            // The third run sets no database name, so it saves nothing; the
+            // first two left exactly their files.
+            let mut files = std::fs::read_dir(directory.path())
+                .expect("run directory")
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.contains(".db"))
+                .collect::<Vec<_>>();
+            files.sort();
+            assert_eq!(files, ["cov.db", "cov2.db"], "{label}");
+        }
+    }
+}
+
+/// FNV-1a 64, the checksum of the database format (readme.md).
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+fn u32_at(bytes: &[u8], at: usize) -> usize {
+    u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize
+}
+
+fn u64_at(bytes: &[u8], at: usize) -> u64 {
+    u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap())
+}
+
+/// A database with `payload` and the header of `template` (its version,
+/// sections and schema hashes), framed and checksummed as the format says.
+fn database_with_payload(template: &[u8], payload: &[u8]) -> Vec<u8> {
+    let mut bytes = template[..32].to_vec();
+    bytes.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(payload);
+    let checksum = fnv1a(&bytes);
+    bytes.extend_from_slice(&checksum.to_le_bytes());
+    bytes
+}
+
+/// The single record of the `db_errors` database `good` (one type `g`, one
+/// record of one automatic coverpoint without transitions): its bytes and
+/// the offset of its first counter entry's bin index within them.
+fn single_record(good: &[u8]) -> (Vec<u8>, usize) {
+    assert_eq!(&good[..8], b"LLGCOVDB");
+    let payload = &good[40..good.len() - 8];
+    assert_eq!(u64_at(good, 32) as usize, payload.len());
+    assert_eq!(u32_at(payload, 0), 1, "one type");
+    let name = u32_at(payload, 4);
+    assert_eq!(u32_at(payload, 8 + name), 1, "one record");
+    let record = payload[12 + name..].to_vec();
+    // hash, name, comment, five options, two flags, slots, items
+    let mut at = 8;
+    at += 4 + u32_at(&record, at);
+    at += 4 + u32_at(&record, at);
+    at += 40 + 2;
+    assert_eq!(u32_at(&record, at), 0, "no argument slots");
+    at += 4;
+    assert_eq!(u32_at(&record, at), 1, "one coverpoint");
+    at += 4;
+    // weight, goal, at_least, has_at_least, auto_bin_max, comment, entries
+    at += 24 + 1 + 8;
+    at += 4 + u32_at(&record, at);
+    assert_eq!(u64_at(&record, at), 1, "one counter entry");
+    (record, at + 8)
+}
+
+fn functional_payload(records: &[&[u8]]) -> Vec<u8> {
+    let mut payload = 1u32.to_le_bytes().to_vec();
+    payload.extend_from_slice(&1u32.to_le_bytes());
+    payload.push(b'g');
+    payload.extend_from_slice(&(records.len() as u32).to_le_bytes());
+    for record in records {
+        payload.extend_from_slice(record);
+    }
+    payload
+}
+
+#[test]
+fn corrupt_and_foreign_databases_change_nothing() {
+    let error = |reason: &str| {
+        format!(
+            "llg: runtime error: $load_coverage_db at tb:21:40: coverage database `bad.db` was not loaded: {reason}; no coverage changed"
+        )
+    };
+    for optimized in [false, true] {
+        let label = format!("{SUITE}/db_errors, optimized={optimized}");
+        let (directory, outputs) = sim_cli::run_case_sequence(
+            SUITE,
+            "db_errors",
+            optimized,
+            &[],
+            &[],
+            &[(&[], &["+save=good.db"])],
+        );
+        assert_stdout(&label, &outputs[0], "type 1 16 6.250000\n");
+        let good = std::fs::read(directory.path().join("good.db")).expect("saved database");
+        let (record, bin_at) = single_record(&good);
+        // A valid second record under another name, then one whose counter
+        // lies outside its 16 bins.
+        let mut other = record.clone();
+        let name_at = 12;
+        assert_eq!(&other[name_at..name_at + 6], b"tb.g#1");
+        other[name_at..name_at + 6].copy_from_slice(b"other1");
+        other[bin_at..bin_at + 8].copy_from_slice(&5u64.to_le_bytes());
+        let mut outside = record.clone();
+        outside[bin_at..bin_at + 8].copy_from_slice(&16u64.to_le_bytes());
+        let valid = database_with_payload(&good, &functional_payload(&[&record, &other]));
+        let mut flipped = good.clone();
+        flipped[50] ^= 1;
+        let cases: Vec<(&str, Vec<u8>, String)> = vec![
+            ("two valid records", valid, String::new()),
+            (
+                "truncated",
+                good[..30].to_vec(),
+                error("the file is not an llg coverage database"),
+            ),
+            (
+                "flipped bit",
+                flipped,
+                error("the checksum does not match (the file is corrupt)"),
+            ),
+            (
+                "foreign magic",
+                [b"NOTCOVDB".as_slice(), &good[8..]].concat(),
+                error("the file is not an llg coverage database"),
+            ),
+            (
+                "counter outside its bins",
+                database_with_payload(&good, &functional_payload(&[&other, &outside])),
+                error("a counter is outside its bins"),
+            ),
+        ];
+        for (case, bytes, message) in cases {
+            let (_rerun, outputs) = sim_cli::run_case_sequence(
+                SUITE,
+                "db_errors",
+                optimized,
+                &[],
+                &[("bad.db", &bytes)],
+                &[(&[], &["+load=bad.db"])],
+            );
+            let output = &outputs[0];
+            let label = format!("{label}, {case}");
+            if message.is_empty() {
+                // Both records published: the second one is its own member.
+                assert_stdout(&label, output, "type 2 32 6.250000\n");
+                continue;
+            }
+            assert_eq!(output.status.code(), Some(1), "{label}");
+            // Nothing was published: the earlier valid record is not counted.
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                "type 1 16 6.250000\n",
+                "{label}"
+            );
+            assert_eq!(llg_messages(output), [message], "{label}");
+        }
+        // The same database read by a model whose coverpoint is narrower.
+        let (_rerun, outputs) = sim_cli::run_case_sequence(
+            SUITE,
+            "db_errors",
+            optimized,
+            &[],
+            &[("bad.db", &good)],
+            &[(&["-G", "W=3"], &["+load=bad.db"])],
+        );
+        assert_eq!(outputs[0].status.code(), Some(1), "{label}");
+        assert_eq!(
+            String::from_utf8_lossy(&outputs[0].stdout),
+            "type 1 8 12.500000\n",
+            "{label}"
+        );
+        assert_eq!(
+            llg_messages(&outputs[0]),
+            [error("it was saved by a model with different covergroups")],
+            "{label}"
+        );
+        // A missing database, and one in a directory that does not exist.
+        let (rerun, outputs) = sim_cli::run_case_sequence(
+            SUITE,
+            "db_errors",
+            optimized,
+            &[],
+            &[],
+            &[(&[], &["+load=missing.db", "+save=nodir/x.db"])],
+        );
+        assert_eq!(outputs[0].status.code(), Some(1), "{label}");
+        let messages = llg_messages(&outputs[0]);
+        assert_eq!(messages.len(), 2, "{label}: {messages:?}");
+        assert!(
+            messages[0].starts_with(
+                "llg: runtime error: $load_coverage_db at tb:21:40: coverage database `missing.db` was not loaded: "
+            ),
+            "{label}: {messages:?}"
+        );
+        assert!(
+            messages[1].starts_with(
+                "llg: runtime error: end of simulation: coverage database `nodir/x.db` was not saved: "
+            ),
+            "{label}: {messages:?}"
+        );
+        // Neither the database nor its temporary file was left behind.
+        let left = std::fs::read_dir(rerun.path())
+            .expect("run directory")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".db") || name.starts_with("nodir"))
+            .collect::<Vec<_>>();
+        assert!(left.is_empty(), "{label}: {left:?}");
+    }
+}
+
+#[test]
+fn definition_only_options_and_partial_counts_are_rejected() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_option_definition",
+        "neg_option_definition.sv:10:27 the 'per_instance' option cannot be modified outside of the covergroup definition",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_auto_bin_max",
+        "neg_auto_bin_max.sv:10:30 the 'auto_bin_max' option cannot be modified outside of the covergroup definition",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_type_strobe",
+        "neg_type_strobe.sv:10:27 the 'strobe' option cannot be modified outside of the covergroup definition",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_option_compound",
+        "neg_option_compound.sv:11:5: option.weight can only be written by a plain blocking assignment (llg limitation)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_count_args",
+        "neg_count_args.sv:12:9: `get_inst_coverage` takes either no arguments or both covered and total bin arguments (IEEE 1800-2009 19.8)",
+    );
+}

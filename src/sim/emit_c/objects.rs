@@ -20,7 +20,8 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
         | IrStringExpr::Pattern(_)
         | IrStringExpr::BitStream { .. }
         | IrStringExpr::ProcessRandState(_)
-        | IrStringExpr::ObjectRandState(_) => {
+        | IrStringExpr::ObjectRandState(_)
+        | IrStringExpr::CoverageText(_) => {
             return Err("string conditionals require whole-model ownership emission".to_owned())
         }
         IrStringExpr::Literal(bytes) => {

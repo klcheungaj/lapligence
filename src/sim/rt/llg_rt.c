@@ -48,3 +48,5 @@
 #include "scheduler/output.c"
 #include "scheduler/destinations.c"
 #include "coverage/coverage.c"
+#include "coverage/database.c"
+#include "coverage/assertions.c"

@@ -2290,3 +2290,74 @@ fn s44_d10_named_block_return() {
         include_str!("fixtures/sim/lrm_decisions/S44-D10_named_block_return.out"),
     );
 }
+
+#[test]
+fn s46_d1_default_instance_names() {
+    run_decision(
+        "S46-D1_default_instance_names",
+        include_str!("fixtures/sim/lrm_decisions/S46-D1_default_instance_names.out"),
+    );
+}
+
+#[test]
+fn s46_d2_loaded_runs_join_instances() {
+    // Two runs in one directory: the first saves, the second (+load) loads.
+    let expected = include_str!("fixtures/sim/lrm_decisions/S46-D2_loaded_runs_join_instances.out");
+    for optimized in [false, true] {
+        for (backend, controls) in sim_cli::backend_matrix() {
+            let envs = controls
+                .iter()
+                .map(|(name, value)| (*name, value.as_str()))
+                .collect::<Vec<_>>();
+            let (_directory, outputs) = sim_cli::run_case_sequence(
+                SUITE,
+                "S46-D2_loaded_runs_join_instances",
+                optimized,
+                &envs,
+                &[],
+                &[(&[], &[]), (&[], &["+load"])],
+            );
+            let label = format!("S46-D2, {backend}, optimized={optimized}");
+            let mut stdout = String::new();
+            for output in &outputs {
+                assert!(
+                    output.status.success(),
+                    "{label}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                stdout.push_str(&String::from_utf8_lossy(&output.stdout));
+            }
+            assert_eq!(stdout, expected, "{label}");
+        }
+    }
+}
+
+#[test]
+fn s46_d3_failed_load_changes_nothing() {
+    let expected =
+        include_str!("fixtures/sim/lrm_decisions/S46-D3_failed_load_changes_nothing.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S46-D3_failed_load_changes_nothing",
+        &[],
+        &|label, output| {
+            assert_eq!(output.status.code(), Some(1), "{label}");
+            assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains(
+                    "llg: runtime error: $load_coverage_db at tb:21:5: coverage database `s46_d3_no_such_coverage_database` was not loaded: "
+                ),
+                "{label}: {stderr}"
+            );
+        },
+    );
+}
+
+#[test]
+fn s46_d7_merged_bin_counts() {
+    run_decision(
+        "S46-D7_merged_bin_counts",
+        include_str!("fixtures/sim/lrm_decisions/S46-D7_merged_bin_counts.out"),
+    );
+}

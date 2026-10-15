@@ -280,6 +280,25 @@ pub(in crate::sim) fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrEx
                     crate::sim::ir::IrPlusArgTarget::Element { read, .. } => walk_expr_mut(read, f),
                 }
             }
+            IrSysFunc::CoverageCounts {
+                query,
+                covered,
+                total,
+            } => {
+                if let Some(record) = query.chandle_mut() {
+                    record.expressions_mut(&mut |child| walk_expr_mut(child, f));
+                }
+                for target in [covered, total] {
+                    match target {
+                        crate::sim::ir::IrPlusArgTarget::Packed { lhs, .. }
+                        | crate::sim::ir::IrPlusArgTarget::Real { lhs, .. } => walk_lhs_mut(lhs, f),
+                        crate::sim::ir::IrPlusArgTarget::String { .. } => {}
+                        crate::sim::ir::IrPlusArgTarget::Element { read, .. } => {
+                            walk_expr_mut(read, f)
+                        }
+                    }
+                }
+            }
             IrSysFunc::System(Some(command)) => {
                 command.expressions_mut(&mut |child| walk_expr_mut(child, f));
             }
@@ -464,6 +483,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::Coverage(operation) => {
             for expression in operation.expressions_mut() {
                 walk_expr_mut(expression, f);
+            }
+            for value in operation.strings_mut() {
+                value.expressions_mut(&mut |child| walk_expr_mut(child, f));
             }
             for handle in operation.chandles_mut() {
                 handle.expressions_mut(&mut |child| walk_expr_mut(child, f));

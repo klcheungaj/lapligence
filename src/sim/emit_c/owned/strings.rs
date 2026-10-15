@@ -52,6 +52,7 @@ impl Frame<'_, '_> {
             RandomState => {
                 self.native_value(NativeKind::String, "llg_process_get_randstate()".to_owned())
             }
+            CoverageText(query) => self.coverage_text(query)?,
             ProcessRandState(target) => {
                 let target = self.process_value(target)?;
                 let value = self.native_value(

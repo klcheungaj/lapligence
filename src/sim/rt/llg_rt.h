@@ -2623,8 +2623,20 @@ enum {
     LLG_COV_OPTION_AT_LEAST = 2,
     LLG_COV_OPTION_AUTO_BIN_MAX = 3,
     LLG_COV_OPTION_DETECT_OVERLAP = 4,
-    LLG_COV_OPTION_GET_INST_COVERAGE = 5
+    LLG_COV_OPTION_GET_INST_COVERAGE = 5,
+    LLG_COV_OPTION_PER_INSTANCE = 6,
+    LLG_COV_OPTION_CROSS_NUM_PRINT_MISSING = 7
 };
+/* Covergroup type options (Table 19-3), at the group or an item. */
+enum {
+    LLG_COV_TYPE_OPTION_WEIGHT = 0,
+    LLG_COV_TYPE_OPTION_GOAL = 1,
+    LLG_COV_TYPE_OPTION_STROBE = 2,
+    LLG_COV_TYPE_OPTION_MERGE_INSTANCES = 3
+};
+/* String options: option.name (group only) and option.comment or
+ * type_option.comment (19.10). */
+enum { LLG_COV_TEXT_NAME = 0, LLG_COV_TEXT_COMMENT = 1 };
 /* The keyword of a declared bin (19.5); DEFAULT is `bins b = default`. */
 enum {
     LLG_COV_BIN_BINS = 0,
@@ -2768,11 +2780,26 @@ typedef struct {
 } llg_cov_cross_t;
 typedef struct llg_cov_inst llg_cov_inst_t;
 typedef struct llg_cov_layout llg_cov_layout_t;
+/* The declared type options of one coverpoint or cross (Table 19-3, 19-4). */
+typedef struct {
+    int64_t weight;
+    int64_t goal;
+    const char* comment; /* NULL is "" */
+} llg_cov_type_decl_t;
+/* The same options once a procedural write changed one of them (19.7.1). */
+typedef struct {
+    int64_t weight;
+    int64_t goal;
+    char* comment; /* runtime-owned; NULL is "" */
+} llg_cov_type_item_t;
 /* One covergroup declaration identity: every instance ever created, for
- * type coverage (19.11.3). Mutable model storage owned by the runtime. */
+ * type coverage (19.11.3). Mutable model storage owned by the runtime;
+ * generated code initializes every current value to its declared value. */
 typedef struct llg_cov_type {
     const char* name;
-    int64_t weight; /* type_option.weight */
+    /* type_option.weight, goal and merge_instances: procedural writes change
+     * them (19.7.1); llg_cov_release_all restores the declared values. */
+    int64_t weight;
     llg_cov_inst_t* first;
     llg_cov_inst_t* last;
     uint64_t n_instances;
@@ -2780,11 +2807,29 @@ typedef struct llg_cov_type {
     uint8_t used;
     uint8_t merge;       /* type_option.merge_instances (19.11.3) */
     uint8_t merge_error; /* a merged cross limitation was reported */
+    uint8_t strobe;      /* type_option.strobe */
+    int64_t declared_weight;
+    uint8_t declared_merge;
+    int64_t goal;
+    int64_t declared_goal;
+    const char* declared_comment;
+    char* comment;       /* a procedurally written comment */
+    uint8_t comment_set; /* `comment` replaces declared_comment */
+    /* Item type options: the declaration's, then a runtime copy on the
+     * first procedural write. */
+    uint32_t n_items;
+    const llg_cov_type_decl_t* declared_items;
+    llg_cov_type_item_t* items;
+    /* Records loaded by $load_coverage_db (19.9), in the instance list. */
+    uint64_t n_loaded;
 } llg_cov_type_t;
 /* One elaborated covergroup declaration: its coverpoints and the objects its
  * coverage event samples. */
 typedef struct llg_cov_group {
     const char* name;
+    /* Hierarchical declaration path, the base of default instance names. */
+    const char* path;
+    uint64_t created; /* instances created in this run */
     uint32_t n_points;
     const llg_cov_point_t* points;
     /* Coverage items are numbered points first, then crosses, wherever an
@@ -2844,10 +2889,40 @@ int llg_cov_sampling(const void* inst);
 void llg_cov_strobe(llg_cov_group_t* group, void* inst, void* object);
 void llg_cov_strobe_registered(llg_cov_group_t* group);
 void* llg_cov_registered_at(const llg_cov_group_t* group, size_t index);
-/* Coverage percentages (19.11); `point` < 0 selects the whole group. */
+/* Coverage percentages (19.11); `point` < 0 selects the whole group.
+ * With non-NULL `covered` and `total`, also store the bin numbers of the
+ * two-argument forms of 19.8 (saturated to int, decision S46-D7). */
 double llg_cov_inst_coverage(const void* inst, int32_t point);
-double llg_cov_type_coverage(const llg_cov_type_t* type, int32_t point, int64_t type_weight);
+double llg_cov_inst_coverage_counts(const void* inst, int32_t point, int32_t* covered,
+                                    int32_t* total);
+/* Type coverage of one declaration identity: its live instances and the
+ * records $load_coverage_db read. */
+double llg_cov_type_coverage(llg_cov_type_t* type, int32_t point);
+double llg_cov_type_coverage_counts(llg_cov_type_t* type, int32_t point, int32_t* covered,
+                                    int32_t* total);
 double llg_cov_total_coverage(void);
+/* Procedural option access (19.7, 19.7.1). Integer options read as int,
+ * flags as bit (19.10). */
+int64_t llg_cov_option_get(const void* inst, int32_t point, uint32_t option);
+void llg_cov_type_option(llg_cov_type_t* type, int32_t point, uint32_t option, sv4_t value,
+                         const char* site);
+int64_t llg_cov_type_option_get(const llg_cov_type_t* type, int32_t point, uint32_t option);
+/* String options (option.name, option.comment, type_option.comment):
+ * writes consume `value`; reads return an owned string. */
+void llg_cov_text(void* inst, int32_t point, uint32_t which, llg_string_t value);
+llg_string_t llg_cov_text_get(const void* inst, int32_t point, uint32_t which);
+void llg_cov_type_text(llg_cov_type_t* type, int32_t point, llg_string_t value);
+llg_string_t llg_cov_type_text_get(const llg_cov_type_t* type, int32_t point);
+/* The coverage database (19.9): every covergroup declaration and type of the
+ * model, registered at startup. The declarations identify the database's
+ * schema; the types are restored to their declared options at cleanup. */
+void llg_cov_model(llg_cov_group_t* const* groups, size_t n_groups, llg_cov_type_t* const* types,
+                   size_t n_types);
+void llg_cov_set_db_name(llg_string_t name);
+void llg_cov_load_db(llg_string_t name, const char* site);
+/* Save the database named by $set_coverage_db_name, once per run, after
+ * final procedures (19.9); called by llg_rt_cleanup. */
+void llg_cov_end_of_run(void);
 void llg_cov_release_all(void);
 
 #ifdef __cplusplus

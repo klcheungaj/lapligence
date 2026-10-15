@@ -18,6 +18,7 @@ impl Frame<'_, '_> {
                     | IrSysFunc::Urandom { .. }
                     | IrSysFunc::UrandomRange { .. }
                     | IrSysFunc::RandStep { .. }
+                    | IrSysFunc::CoverageCounts { .. }
             )
         {
             return Err(pending(
@@ -239,6 +240,11 @@ impl Frame<'_, '_> {
             }
             IrSysFunc::TestPlusArgs { pattern } => self.test_plusargs(pattern)?,
             IrSysFunc::ValuePlusArgs { format, target } => self.value_plusargs(format, target)?,
+            IrSysFunc::CoverageCounts {
+                query,
+                covered,
+                total,
+            } => self.coverage_counts(query, covered, total)?,
             IrSysFunc::FileInput(input) => self.file_input(input)?,
             IrSysFunc::FileOpen { .. }
             | IrSysFunc::FileTell(_)

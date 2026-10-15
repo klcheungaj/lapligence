@@ -4,7 +4,7 @@ use super::native::NativeKind;
 use super::*;
 use crate::sim::ir::{
     IrCoverAutomatic, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverCross,
-    IrCoverTransitions, IrCoverageQuery, IrCoverageStmt,
+    IrCoverTransitions, IrCoverageQuery, IrCoverageStmt, IrCoverageTextQuery, IrPlusArgTarget,
 };
 
 fn group_name(group: usize) -> String {
@@ -26,6 +26,11 @@ fn bound(bound: IrCoverBound) -> (&'static str, u64) {
 
 fn optional_string(value: Option<&str>) -> String {
     value.map_or_else(|| "NULL".to_owned(), c_string_literal)
+}
+
+/// A comment option: `NULL` stands for the default "".
+fn comment(value: &str) -> String {
+    optional_string(Some(value).filter(|value| !value.is_empty()))
 }
 
 /// A static array named `name`, or `NULL` when it has no rows.
@@ -124,13 +129,12 @@ fn cross_tables(out: &mut String, prefix: &str, cross: &IrCoverCross) -> String 
     );
     let bins = static_array(out, "llg_cov_xbin_t", &format!("{prefix}_xbins"), bins);
     format!(
-        "{{ .name = {}, .n_dims = {}u, .dims = {dims}, .n_selects = {}u, .selects = {selects}, .items = {items}, .n_boxes = {n_boxes}u, .boxes = {boxes}, .box_selects = {box_selects}, .n_bins = {}u, .bins = {bins}, .dynamic = {}u, .type_weight = INT64_C({}) }}",
+        "{{ .name = {}, .n_dims = {}u, .dims = {dims}, .n_selects = {}u, .selects = {selects}, .items = {items}, .n_boxes = {n_boxes}u, .boxes = {boxes}, .box_selects = {box_selects}, .n_bins = {}u, .bins = {bins}, .dynamic = {}u }}",
         c_string_literal(&cross.name),
         cross.points.len(),
         cross.selects.len(),
         cross.bins.len(),
         u8::from(cross.dynamic()),
-        cross.type_weight
     )
 }
 
@@ -256,12 +260,34 @@ fn transition_tables(out: &mut String, prefix: &str, tables: &IrCoverTransitions
 /// Static metadata of every covergroup; nothing for a model without one.
 pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
     for (index, coverage_type) in model.coverage_types.iter().enumerate() {
+        let name = type_name(index);
+        let items = static_array(
+            out,
+            "llg_cov_type_decl_t",
+            &format!("{name}_items"),
+            coverage_type
+                .items
+                .iter()
+                .map(|item| {
+                    format!(
+                        "{{ INT64_C({}), INT64_C({}), {} }}",
+                        item.weight,
+                        item.goal,
+                        comment(&item.comment)
+                    )
+                })
+                .collect(),
+        );
+        // Current values start at the declared ones (19.7.1).
         out.push_str(&format!(
-            "static LLG_MAYBE_UNUSED llg_cov_type_t {} = {{ .name = {}, .weight = INT64_C({}), .merge = {}u }};\n",
-            type_name(index),
+            "static LLG_MAYBE_UNUSED llg_cov_type_t {name} = {{ .name = {}, .weight = INT64_C({weight}), .merge = {merge}u, .strobe = {}u, .declared_weight = INT64_C({weight}), .declared_merge = {merge}u, .goal = INT64_C({goal}), .declared_goal = INT64_C({goal}), .declared_comment = {}, .n_items = {}u, .declared_items = {items} }};\n",
             c_string_literal(&coverage_type.name),
-            coverage_type.weight,
-            u8::from(coverage_type.merge)
+            u8::from(coverage_type.strobe),
+            comment(&coverage_type.comment),
+            coverage_type.items.len(),
+            weight = coverage_type.weight,
+            merge = u8::from(coverage_type.merge),
+            goal = coverage_type.goal,
         ));
     }
     for (index, group) in model.covergroups.iter().enumerate() {
@@ -332,7 +358,7 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                 |tables| transition_tables(out, &point_prefix, tables),
             );
             points.push(format!(
-                "{{ .name = {}, .width = {}u, .is_signed = {}u, .kind = {kind}, .dynamic = {}u, .n_keys = {}u, .keys = {keys_name}, .n_bins = {}u, .bins = {bins_name}, .items = {items_name}, .trans = {trans}, .crossed = {}u, .type_weight = INT64_C({}) }}",
+                "{{ .name = {}, .width = {}u, .is_signed = {}u, .kind = {kind}, .dynamic = {}u, .n_keys = {}u, .keys = {keys_name}, .n_bins = {}u, .bins = {bins_name}, .items = {items_name}, .trans = {trans}, .crossed = {}u }}",
                 c_string_literal(&point.name),
                 point.width,
                 u8::from(point.signed),
@@ -340,7 +366,6 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
                 keys.map_or(0, Vec::len),
                 point.bins.len(),
                 u8::from(point.crossed),
-                point.type_weight,
             ));
         }
         let crosses = group
@@ -378,14 +403,53 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
             }
         };
         out.push_str(&format!(
-            "// Unreferenced when every handle of the group stays null.\nstatic LLG_MAYBE_UNUSED llg_cov_group_t {prefix} = {{ .name = {}, .n_points = {}u, .points = {points_name}, .n_crosses = {}u, .crosses = {crosses_name}, .n_slots = {}u, .type = &{}, .strobe_sample = {strobe} }};\n",
+            "// Unreferenced when every handle of the group stays null.\nstatic LLG_MAYBE_UNUSED llg_cov_group_t {prefix} = {{ .name = {}, .path = {}, .n_points = {}u, .points = {points_name}, .n_crosses = {}u, .crosses = {crosses_name}, .n_slots = {}u, .type = &{}, .strobe_sample = {strobe} }};\n",
             c_string_literal(&group.name),
+            c_string_literal(&group.path),
             group.points.len(),
             group.crosses.len(),
             group.slots,
             type_name(group.coverage_type)
         ));
     }
+    if model.coverage_types.is_empty() {
+        return;
+    }
+    // The database schema and the option reset of llg_rt_cleanup (19.9).
+    let groups = (0..model.covergroups.len())
+        .map(|index| format!("&{}", group_name(index)))
+        .collect::<Vec<_>>();
+    let types = (0..model.coverage_types.len())
+        .map(|index| format!("&{}", type_name(index)))
+        .collect::<Vec<_>>();
+    if !groups.is_empty() {
+        out.push_str(&format!(
+            "static llg_cov_group_t* const llg_model_cov_groups[] = {{ {} }};\n",
+            groups.join(", ")
+        ));
+    }
+    out.push_str(&format!(
+        "static llg_cov_type_t* const llg_model_cov_types[] = {{ {} }};\n",
+        types.join(", ")
+    ));
+}
+
+/// The startup call that registers the model's coverage declarations, or
+/// nothing for a model without covergroup types.
+pub(in crate::sim::emit_c) fn startup(model: &IrModel) -> String {
+    if model.coverage_types.is_empty() {
+        return String::new();
+    }
+    let groups = if model.covergroups.is_empty() {
+        "NULL"
+    } else {
+        "llg_model_cov_groups"
+    };
+    format!(
+        "    llg_cov_model({groups}, {}u, llg_model_cov_types, {}u);\n",
+        model.covergroups.len(),
+        model.coverage_types.len()
+    )
 }
 
 fn point_index(point: Option<u32>) -> String {
@@ -420,6 +484,69 @@ impl Frame<'_, '_> {
                     c_string_literal(site)
                 ));
                 self.discard(value);
+            }
+            IrCoverageStmt::Text {
+                record,
+                point,
+                which,
+                value,
+            } => {
+                let record = self.chandle(record)?;
+                let record = self.scalar("void*", record);
+                let value = self.string(value)?;
+                self.line(format!(
+                    "llg_cov_text({record}, {}, {}u, {});",
+                    point_index(*point),
+                    which.code(),
+                    value.take_string()
+                ));
+                self.native_discard(value);
+            }
+            IrCoverageStmt::TypeOption {
+                coverage_type,
+                point,
+                option,
+                value,
+                site,
+            } => {
+                let value = self.expression(value)?;
+                self.line(format!(
+                    "llg_cov_type_option(&{}, {}, {}u, {}, {});",
+                    type_name(*coverage_type),
+                    point_index(*point),
+                    option.code(),
+                    value.code,
+                    c_string_literal(site)
+                ));
+                self.discard(value);
+            }
+            IrCoverageStmt::TypeText {
+                coverage_type,
+                point,
+                value,
+            } => {
+                let value = self.string(value)?;
+                self.line(format!(
+                    "llg_cov_type_text(&{}, {}, {});",
+                    type_name(*coverage_type),
+                    point_index(*point),
+                    value.take_string()
+                ));
+                self.native_discard(value);
+            }
+            IrCoverageStmt::SetDbName { name } => {
+                let name = self.string(name)?;
+                self.line(format!("llg_cov_set_db_name({});", name.take_string()));
+                self.native_discard(name);
+            }
+            IrCoverageStmt::LoadDb { name, site } => {
+                let name = self.string(name)?;
+                self.line(format!(
+                    "llg_cov_load_db({}, {});",
+                    name.take_string(),
+                    c_string_literal(site)
+                ));
+                self.native_discard(name);
             }
             IrCoverageStmt::Slot {
                 record,
@@ -613,6 +740,7 @@ impl Frame<'_, '_> {
     }
 
     pub(super) fn coverage_query(&mut self, query: &IrCoverageQuery) -> Result<Value, String> {
+        let (width, signed) = query.result_type();
         let code = match query {
             IrCoverageQuery::Instance { record, point } => {
                 let record = self.chandle(record)?;
@@ -621,14 +749,118 @@ impl Frame<'_, '_> {
             IrCoverageQuery::Type {
                 coverage_type,
                 point,
-                weight,
             } => format!(
-                "llg_cov_type_coverage(&{}, {}, INT64_C({weight}))",
+                "llg_cov_type_coverage(&{}, {})",
                 type_name(*coverage_type),
                 point_index(*point)
             ),
             IrCoverageQuery::Total => "llg_cov_total_coverage()".to_owned(),
+            IrCoverageQuery::Option {
+                record,
+                point,
+                option,
+            } => {
+                let record = self.chandle(record)?;
+                format!(
+                    "sv4_from_u64((uint64_t)llg_cov_option_get({record}, {}, {}u), {width}, {})",
+                    point_index(*point),
+                    option.code(),
+                    u8::from(signed)
+                )
+            }
+            IrCoverageQuery::TypeOption {
+                coverage_type,
+                point,
+                option,
+            } => format!(
+                "sv4_from_u64((uint64_t)llg_cov_type_option_get(&{}, {}, {}u), {width}, {})",
+                type_name(*coverage_type),
+                point_index(*point),
+                option.code(),
+                u8::from(signed)
+            ),
         };
-        Ok(self.value(code, 0, true))
+        Ok(self.value(code, width, signed))
+    }
+
+    /// The two-argument coverage methods (19.8): the coverage, then the
+    /// covered and total bin numbers stored into the `ref int` actuals.
+    pub(super) fn coverage_counts(
+        &mut self,
+        query: &IrCoverageQuery,
+        covered: &IrPlusArgTarget,
+        total: &IrPlusArgTarget,
+    ) -> Result<Value, String> {
+        let (
+            IrPlusArgTarget::Packed {
+                lhs: covered_lhs, ..
+            },
+            IrPlusArgTarget::Packed { lhs: total_lhs, .. },
+        ) = (covered, total)
+        else {
+            return Err("coverage bin counts need packed targets".to_owned());
+        };
+        let covered_count = self.scalar("int32_t", "0".to_owned());
+        let total_count = self.scalar("int32_t", "0".to_owned());
+        let code = match query {
+            IrCoverageQuery::Instance { record, point } => {
+                let record = self.chandle(record)?;
+                format!(
+                    "llg_cov_inst_coverage_counts({record}, {}, &{covered_count}, &{total_count})",
+                    point_index(*point)
+                )
+            }
+            IrCoverageQuery::Type {
+                coverage_type,
+                point,
+            } => format!(
+                "llg_cov_type_coverage_counts(&{}, {}, &{covered_count}, &{total_count})",
+                type_name(*coverage_type),
+                point_index(*point)
+            ),
+            _ => return Err("coverage bin counts need a coverage query".to_owned()),
+        };
+        let result = self.value(code, 0, true);
+        for (lhs, count) in [(covered_lhs, &covered_count), (total_lhs, &total_count)] {
+            let target = self.target(lhs)?;
+            let value = self.value(
+                format!("sv4_from_u64((uint64_t)(int64_t){count}, 32, 1)"),
+                32,
+                true,
+            );
+            self.store(&target, value, false, "0")?;
+            self.release_target(target);
+        }
+        Ok(result)
+    }
+
+    /// A string option read (19.7, 19.7.1).
+    pub(super) fn coverage_text(
+        &mut self,
+        query: &IrCoverageTextQuery,
+    ) -> Result<super::native::NativeValue, String> {
+        let code = match query {
+            IrCoverageTextQuery::Instance {
+                record,
+                point,
+                which,
+            } => {
+                let record = self.chandle(record)?;
+                format!(
+                    "llg_cov_text_get({record}, {}, {}u)",
+                    point_index(*point),
+                    which.code()
+                )
+            }
+            IrCoverageTextQuery::Type {
+                coverage_type,
+                point,
+            } => format!(
+                "llg_cov_type_text_get(&{}, {})",
+                type_name(*coverage_type),
+                point_index(*point)
+            ),
+        };
+        Ok(self.native_value(NativeKind::String, code))
     }
 }

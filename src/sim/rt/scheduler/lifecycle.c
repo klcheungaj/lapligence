@@ -249,7 +249,12 @@ static void free_mailboxes(void) {
 void llg_rt_cleanup(void) {
     gc_release_registrations();
     llg_cr_session_release_all();
-    llg_cov_release_all();
+    // Final procedures may still query or sample coverage: the end-of-run
+    // database (19.9) and the release follow them.
+    if (!llg_file_defer_cleanup) {
+        llg_cov_end_of_run();
+        llg_cov_release_all();
+    }
     value_scopes_unwind(NULL);
     while (root_reference_top) llg_ref_scope_end(root_reference_top);
     for (int i = 0; i < g.force_count; i++) force_free_entry(&g.force_table[i]);

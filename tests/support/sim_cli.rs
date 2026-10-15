@@ -367,6 +367,73 @@ pub(crate) fn run_case_keeping_dir(
     (directory, output)
 }
 
+/// Run one fixture several times in one working directory, once per entry
+/// of `runs` (`llg` arguments, then the model's runtime arguments), after
+/// writing `files` into it.
+/// Each run rebuilds the model in place, so later runs see the files earlier
+/// runs wrote (a coverage database saved by one run and loaded by the next).
+pub(crate) fn run_case_sequence(
+    suite: &str,
+    fixture: &str,
+    optimized: bool,
+    envs: &[(&str, &str)],
+    files: &[(&str, &[u8])],
+    runs: &[(&[&str], &[&str])],
+) -> (sim_harness::TempDir, Vec<Output>) {
+    let source = fixture_path(suite, fixture);
+    let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
+    for (name, contents) in files {
+        std::fs::write(directory.path().join(name), contents)
+            .unwrap_or_else(|error| panic!("{suite}/{fixture}: write {name}: {error}"));
+    }
+    let outputs = runs
+        .iter()
+        .enumerate()
+        .map(|(index, (args, runtime_args))| {
+            let label = format!("{suite}/{fixture}, run {index}, optimized={optimized}");
+            run_fixture_command(&source, &label, |lint_args| {
+                let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+                command.current_dir(directory.path()).args(["--top", "tb"]);
+                if !optimized {
+                    command.arg("--no-opt");
+                }
+                command
+                    .args(*args)
+                    .args(lint_args)
+                    .arg(&source)
+                    .arg("--")
+                    .args(*runtime_args);
+                command.envs(envs.iter().copied());
+                command
+            })
+        })
+        .collect();
+    (directory, outputs)
+}
+
+/// The value backends of [`run_case_checked_matrix`] as child-process
+/// environment controls.
+pub(crate) fn backend_matrix() -> Vec<(String, Vec<(&'static str, String)>)> {
+    let gmp = sim_harness::test_gmp_root();
+    [
+        ("legacy", "portable"),
+        ("compact", "portable"),
+        ("compact", "gmp"),
+    ]
+    .into_iter()
+    .map(|(backend, kernel)| {
+        (
+            format!("{backend}/{kernel}"),
+            vec![
+                ("LLG_DEV_VALUE_BACKEND", backend.to_owned()),
+                ("LLG_DEV_COMPACT_KERNELS", kernel.to_owned()),
+                ("GMP_ROOT", gmp.clone()),
+            ],
+        )
+    })
+    .collect()
+}
+
 fn invoke(suite: &str, fixture: &str, optimized: bool) -> Output {
     invoke_with_args(suite, fixture, optimized, &[])
 }

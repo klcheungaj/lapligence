@@ -22,9 +22,10 @@ use crate::sim::ir::{
     IrCapture, IrClass, IrClassField, IrClassFieldType, IrCoverAutomatic, IrCoverBin,
     IrCoverBinKind, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverCross, IrCoverCrossBin,
     IrCoverItem, IrCoverRepeat, IrCoverSelect, IrCoverageCrossSample, IrCoverageOption,
-    IrCoverageQuery, IrCoverageSample, IrCoverageStmt, IrCoverageType, IrCovergroup, IrCoverpoint,
-    IrFormal, IrFunc, IrNativeAccessKind, IrObjectQuery, IrPreFn, IrProcess, IrShape,
-    IrUniquePriorityCheck,
+    IrCoverageQuery, IrCoverageSample, IrCoverageStmt, IrCoverageText, IrCoverageTextQuery,
+    IrCoverageType, IrCoverageTypeItem, IrCoverageTypeOption, IrCovergroup, IrCoverpoint, IrFormal,
+    IrFunc, IrNativeAccessKind, IrObjectQuery, IrPlusArgTarget, IrPreFn, IrProcess, IrShape,
+    IrStringExpr, IrUniquePriorityCheck,
 };
 
 /// Lowering state of one constructed covergroup declaration.
@@ -131,6 +132,33 @@ mod transitions;
 const COVERAGE_OWNER_FIELD: &str = "llg_cov_owner";
 const COVERAGE_BIND_FIELD: &str = "llg_cov_bind";
 
+/// The covergroup, coverpoint or cross a built-in `option` or
+/// `type_option` member belongs to.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct CoverageOptionOwner {
+    group: NodeId,
+    point: Option<NodeId>,
+    type_option: bool,
+}
+
+/// One procedural option access (19.7, 19.7.1).
+#[derive(Clone, Debug)]
+struct CoverageOptionAccess {
+    owner: CoverageOptionOwner,
+    member: String,
+    /// The instance handle of an `option` access.
+    handle: Option<NodeId>,
+}
+
+/// The type options a declaration sets (Table 19-3).
+struct CoverageTypeDeclared {
+    weight: i64,
+    goal: i64,
+    comment: String,
+    strobe: bool,
+    merge: bool,
+}
+
 /// The built-in coverage method `callee` names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CoverageMethod {
@@ -140,6 +168,32 @@ enum CoverageMethod {
     Start,
     Stop,
     SetInstName,
+}
+
+/// The integral instance option a member of `option` names (19.10).
+fn coverage_instance_option(member: &str) -> Option<IrCoverageOption> {
+    Some(match member {
+        "weight" => IrCoverageOption::Weight,
+        "goal" => IrCoverageOption::Goal,
+        "at_least" => IrCoverageOption::AtLeast,
+        "auto_bin_max" => IrCoverageOption::AutoBinMax,
+        "detect_overlap" => IrCoverageOption::DetectOverlap,
+        "get_inst_coverage" => IrCoverageOption::GetInstCoverage,
+        "per_instance" => IrCoverageOption::PerInstance,
+        "cross_num_print_missing" => IrCoverageOption::CrossNumPrintMissing,
+        _ => return None,
+    })
+}
+
+/// The integral type option a member of `type_option` names (19.10).
+fn coverage_type_option(member: &str) -> Option<IrCoverageTypeOption> {
+    Some(match member {
+        "weight" => IrCoverageTypeOption::Weight,
+        "goal" => IrCoverageTypeOption::Goal,
+        "strobe" => IrCoverageTypeOption::Strobe,
+        "merge_instances" => IrCoverageTypeOption::MergeInstances,
+        _ => return None,
+    })
 }
 
 impl<'a> Codegen<'a> {
@@ -183,42 +237,107 @@ impl<'a> Codegen<'a> {
             return *index;
         }
         let index = self.model.coverage_types.len();
-        let weight = self
+        let (options, coverpoints, crosses) = self
             .db
             .covergroup(group)
-            .map(|info| info.options.clone())
-            .unwrap_or_default()
-            .into_iter()
-            .find_map(|option| {
-                let (scope, member, value) = self.coverage_option_parts(option)?;
-                (scope == "type_option" && member == "weight")
-                    .then(|| self.eval_bound_i128(value).ok())
-                    .flatten()
+            .map(|info| {
+                (
+                    info.options.clone(),
+                    info.coverpoints.clone(),
+                    info.crosses.clone(),
+                )
             })
-            .and_then(|weight| i64::try_from(weight).ok())
-            .unwrap_or(1);
-        let merge = self
-            .db
-            .covergroup(group)
-            .map(|info| info.options.clone())
-            .unwrap_or_default()
-            .into_iter()
-            .any(|option| {
-                self.coverage_option_parts(option)
-                    .is_some_and(|(scope, member, value)| {
-                        scope == "type_option"
-                            && member == "merge_instances"
-                            && self.eval_bound_i128(value).is_ok_and(|value| value != 0)
-                    })
-            });
+            .unwrap_or_default();
+        let declared = self.coverage_type_declared(&options);
+        let items = coverpoints
+            .iter()
+            .map(|point| {
+                self.db
+                    .coverpoint(*point)
+                    .map(|metadata| metadata.options.clone())
+                    .unwrap_or_default()
+            })
+            .chain(crosses.iter().map(|cross| {
+                self.db
+                    .coverage_cross(*cross)
+                    .map(|metadata| metadata.options.clone())
+                    .unwrap_or_default()
+            }))
+            .map(|setters| {
+                let item = self.coverage_type_declared(&setters);
+                IrCoverageTypeItem {
+                    weight: item.weight,
+                    goal: item.goal,
+                    comment: item.comment,
+                }
+            })
+            .collect();
         let name = self.covergroup_name(group);
         self.model.coverage_types.push(IrCoverageType {
             name,
-            weight,
-            merge,
+            weight: declared.weight,
+            merge: declared.merge,
+            goal: declared.goal,
+            comment: declared.comment,
+            strobe: declared.strobe,
+            items,
         });
         self.coverage_types.insert(key, index);
         index
+    }
+
+    /// The type options one covergroup, coverpoint or cross declares
+    /// (Table 19-3); the frontend requires constant values (19.7.1).
+    fn coverage_type_declared(&self, setters: &[NodeId]) -> CoverageTypeDeclared {
+        let mut declared = CoverageTypeDeclared {
+            weight: 1,
+            goal: 100,
+            comment: String::new(),
+            strobe: false,
+            merge: false,
+        };
+        for setter in setters {
+            let Some((scope, member, value)) = self.coverage_option_parts(*setter) else {
+                continue;
+            };
+            if scope != "type_option" {
+                continue;
+            }
+            let number = || {
+                self.eval_bound_i128(value)
+                    .ok()
+                    .and_then(|value| i64::try_from(value).ok())
+            };
+            match member.as_str() {
+                "weight" => declared.weight = number().unwrap_or(1),
+                "goal" => declared.goal = number().unwrap_or(100),
+                "strobe" => declared.strobe = number().is_some_and(|value| value != 0),
+                "merge_instances" => declared.merge = number().is_some_and(|value| value != 0),
+                "comment" => {
+                    declared.comment = self.coverage_constant_text(value).unwrap_or_default()
+                }
+                _ => {}
+            }
+        }
+        declared
+    }
+
+    /// The value of a constant string expression: a literal or a string
+    /// parameter.
+    fn coverage_constant_text(&self, node: NodeId) -> Option<String> {
+        let node = self.p30_unwrap_cast(node);
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Constant { value, .. }) => decoded_string_bytes(value)
+                .ok()
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => match self.param_vals.get(target)? {
+                Val::Str(text) => Some(text.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// `(option or type_option, member, value)` of one option setter.
@@ -243,43 +362,376 @@ impl<'a> Codegen<'a> {
         Some((scope.clone(), member.clone(), *value))
     }
 
-    /// Options read or written through an instance or type name
-    /// (`c.option.weight = 2`, 19.7) are not implemented; the setters in the
-    /// declaration itself are.
-    fn check_option_access(&self) -> Result<(), String> {
-        let mut options = HashSet::new();
-        for info in self.db.covergroups().values() {
+    /// Record the built-in `option` and `type_option` members of every
+    /// covergroup, coverpoint and cross, which procedural option accesses
+    /// name (19.7, 19.7.1).
+    fn collect_option_vars(&mut self) {
+        let mut owners = HashMap::new();
+        for (group, info) in self.db.covergroups() {
             let scopes = info
                 .body
+                .map(|body| (body, None))
                 .into_iter()
-                .chain(info.coverpoints.iter().copied());
-            for scope in scopes {
-                options.extend(self.node(scope).children.iter().copied().filter(|child| {
-                    matches!(self.kind(*child), NodeKind::Var { .. })
-                        && matches!(self.node(*child).name.as_str(), "option" | "type_option")
-                }));
+                .chain(info.coverpoints.iter().map(|point| (*point, Some(*point))))
+                .chain(info.crosses.iter().map(|cross| (*cross, Some(*cross))));
+            for (scope, point) in scopes {
+                for child in &self.node(scope).children {
+                    if !matches!(self.kind(*child), NodeKind::Var { .. }) {
+                        continue;
+                    }
+                    let type_option = match self.node(*child).name.as_str() {
+                        "option" => false,
+                        "type_option" => true,
+                        _ => continue,
+                    };
+                    owners.insert(
+                        *child,
+                        CoverageOptionOwner {
+                            group: *group,
+                            point,
+                            type_option,
+                        },
+                    );
+                }
             }
         }
-        let mut sites = self
-            .db
-            .node_ids()
-            .filter(|id| match self.kind(*id) {
-                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
-                    .iter()
-                    .skip(1)
-                    .flatten()
-                    .any(|target| options.contains(target)),
-                _ => false,
-            })
-            .collect::<Vec<_>>();
-        sites.sort_by_key(|site| site.index());
-        match sites.first() {
-            None => Ok(()),
-            Some(site) => Err(self.coverage_error(
-                *site,
-                "covergroup options can only be set in the covergroup declaration; access through an instance or type name is not supported yet (SIM-046)",
-            )),
+        self.coverage_option_vars = owners;
+    }
+
+    /// The option a hierarchical name selects: `h.option.m`,
+    /// `h.cp.option.m`, `cg::type_option.m` or `cg::cp::type_option.m`.
+    fn coverage_option_access(&self, node: NodeId) -> Option<CoverageOptionAccess> {
+        if self.coverage_option_vars.is_empty() {
+            return None;
         }
+        let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) else {
+            return None;
+        };
+        let at = refs.iter().position(|target| {
+            target.is_some_and(|target| self.coverage_option_vars.contains_key(&target))
+        })?;
+        let owner = self.coverage_option_vars[&refs[at]?];
+        // Only a member is an option; the whole structure is not.
+        if at + 2 != parts.len() {
+            return None;
+        }
+        let member = parts[at + 1].clone();
+        // An instance option names the instance before the coverpoint.
+        let prefix = at.checked_sub(usize::from(owner.point.is_some()));
+        let handle = match prefix {
+            Some(prefix) if prefix > 0 && !owner.type_option => {
+                let mut current = node;
+                loop {
+                    current = *self.node(current).children.first()?;
+                    match self.kind(current) {
+                        NodeKind::Expr(ExprKind::HierPath { parts, .. })
+                            if parts.len() > prefix =>
+                        {
+                            continue
+                        }
+                        NodeKind::Expr(ExprKind::HierPath { parts, .. })
+                            if parts.len() == prefix =>
+                        {
+                            break Some(current)
+                        }
+                        NodeKind::Expr(ExprKind::HierPath { .. }) => return None,
+                        _ if prefix == 1 => break Some(current),
+                        _ => return None,
+                    }
+                }
+            }
+            _ => None,
+        };
+        Some(CoverageOptionAccess {
+            owner,
+            member,
+            handle,
+        })
+    }
+
+    /// Whether `node` reads a string coverage option (`option.name`,
+    /// `option.comment`, `type_option.comment`).
+    pub(in super::super) fn is_coverage_text(&self, node: NodeId) -> bool {
+        self.coverage_option_access(node)
+            .is_some_and(|access| matches!(access.member.as_str(), "name" | "comment"))
+    }
+
+    /// The index of a coverpoint or cross among the group's coverage items
+    /// (coverpoints, then crosses).
+    fn coverage_item_position(
+        &self,
+        node: NodeId,
+        group: NodeId,
+        point: Option<NodeId>,
+    ) -> Result<Option<u32>, String> {
+        let Some(point) = point else {
+            return Ok(None);
+        };
+        self.db
+            .covergroup(group)
+            .and_then(|info| {
+                info.coverpoints
+                    .iter()
+                    .chain(&info.crosses)
+                    .position(|id| *id == point)
+            })
+            .map(|index| Some(index as u32))
+            .ok_or_else(|| self.coverage_error(node, "coverpoint is not in its covergroup"))
+    }
+
+    /// The runtime record of the instance an `option` access names.
+    fn coverage_option_record(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        access: &CoverageOptionAccess,
+    ) -> Result<IrChandleExpr, String> {
+        let handle_node = access.handle.ok_or_else(|| {
+            self.coverage_error(
+                node,
+                "covergroup instance options can only be accessed through a covergroup instance outside the covergroup (llg limitation)",
+            )
+        })?;
+        let handle = self.lower_chandle(path, handle_node)?;
+        let object = IrChandleExpr::Required {
+            handle: Box::new(handle),
+            site: self.source_site("covergroup option access", path, node),
+        };
+        self.coverage_record(access.owner.group, object)
+    }
+
+    /// An integral option read (19.7, 19.10).
+    fn lower_coverage_option_read(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let Some(access) = self.coverage_option_access(node) else {
+            return Ok(None);
+        };
+        let point = self.coverage_item_position(node, access.owner.group, access.owner.point)?;
+        let query = if access.owner.type_option {
+            let option = coverage_type_option(&access.member).ok_or_else(|| {
+                self.coverage_error(
+                    node,
+                    format!(
+                        "type_option.{} is not an integral coverage option",
+                        access.member
+                    ),
+                )
+            })?;
+            IrCoverageQuery::TypeOption {
+                coverage_type: self.coverage_type_index(access.owner.group),
+                point,
+                option,
+            }
+        } else {
+            let option = coverage_instance_option(&access.member).ok_or_else(|| {
+                self.coverage_error(
+                    node,
+                    format!(
+                        "option.{} is not an integral coverage option",
+                        access.member
+                    ),
+                )
+            })?;
+            let record = self.coverage_option_record(path, node, &access)?;
+            IrCoverageQuery::Option {
+                record,
+                point,
+                option,
+            }
+        };
+        let (width, signed) = query.result_type();
+        Ok(Some(IrExpr::new(
+            IrExprKind::ObjectQuery(Box::new(IrObjectQuery::Coverage(Box::new(query)))),
+            width,
+            signed,
+            None,
+        )))
+    }
+
+    /// A string option read: `option.name`, `option.comment` or
+    /// `type_option.comment` (19.7, 19.10).
+    pub(in super::super) fn lower_coverage_text(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrStringExpr>, String> {
+        let Some(access) = self.coverage_option_access(node) else {
+            return Ok(None);
+        };
+        let point = self.coverage_item_position(node, access.owner.group, access.owner.point)?;
+        let query = match (access.owner.type_option, access.member.as_str()) {
+            (true, "comment") => IrCoverageTextQuery::Type {
+                coverage_type: self.coverage_type_index(access.owner.group),
+                point,
+            },
+            (false, "name" | "comment") => {
+                let which = if access.member == "name" {
+                    IrCoverageText::Name
+                } else {
+                    IrCoverageText::Comment
+                };
+                let record = self.coverage_option_record(path, node, &access)?;
+                IrCoverageTextQuery::Instance {
+                    record,
+                    point,
+                    which,
+                }
+            }
+            _ => {
+                return Err(self.coverage_error(
+                    node,
+                    format!("coverage option `{}` is not a string", access.member),
+                ))
+            }
+        };
+        Ok(Some(IrStringExpr::CoverageText(Box::new(query))))
+    }
+
+    /// A procedural option write (19.7, 19.7.1), or `None` when `lhs` names
+    /// no option.
+    pub(in super::super) fn lower_coverage_option_write(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        blocking: bool,
+        op: Operation,
+    ) -> Result<Option<IrStmt>, String> {
+        let Some(access) = self.coverage_option_access(lhs) else {
+            return Ok(None);
+        };
+        let scope = if access.owner.type_option {
+            "type_option"
+        } else {
+            "option"
+        };
+        let member = access.member.as_str();
+        if !blocking || op != Operation::Assignment {
+            return Err(self.coverage_error(
+                lhs,
+                format!(
+                    "{scope}.{member} can only be written by a plain blocking assignment (llg limitation)"
+                ),
+            ));
+        }
+        let definition_only = if access.owner.type_option {
+            (member == "strobe").then_some("19.7.1")
+        } else {
+            matches!(
+                member,
+                "per_instance" | "get_inst_coverage" | "auto_bin_max" | "detect_overlap"
+            )
+            .then_some("19.7")
+        };
+        if let Some(clause) = definition_only {
+            return Err(self.coverage_error(
+                lhs,
+                format!(
+                    "{scope}.{member} can only be set in the covergroup definition (IEEE 1800-2009 {clause})"
+                ),
+            ));
+        }
+        let point = self.coverage_item_position(lhs, access.owner.group, access.owner.point)?;
+        let site = self.source_site(&format!("{scope}.{member}"), path, lhs);
+        let text = matches!(member, "name" | "comment");
+        let statement = match (access.owner.type_option, text) {
+            (true, true) => IrCoverageStmt::TypeText {
+                coverage_type: self.coverage_type_index(access.owner.group),
+                point,
+                value: self.lower_string(path, rhs)?,
+            },
+            (true, false) => {
+                let option = coverage_type_option(member).ok_or_else(|| {
+                    self.coverage_error(
+                        lhs,
+                        format!("type_option.{member} is not a coverage option"),
+                    )
+                })?;
+                let value = self.lower_coverage_option_value(path, rhs, scope, member)?;
+                IrCoverageStmt::TypeOption {
+                    coverage_type: self.coverage_type_index(access.owner.group),
+                    point,
+                    option,
+                    value,
+                    site,
+                }
+            }
+            (false, true) => {
+                let record = self.coverage_option_record(path, lhs, &access)?;
+                IrCoverageStmt::Text {
+                    record,
+                    point,
+                    which: if member == "name" {
+                        IrCoverageText::Name
+                    } else {
+                        IrCoverageText::Comment
+                    },
+                    value: self.lower_string(path, rhs)?,
+                }
+            }
+            (false, false) => {
+                let option = coverage_instance_option(member).ok_or_else(|| {
+                    self.coverage_error(lhs, format!("option.{member} is not a coverage option"))
+                })?;
+                let record = self.coverage_option_record(path, lhs, &access)?;
+                let value = self.lower_coverage_option_value(path, rhs, scope, member)?;
+                IrCoverageStmt::Option {
+                    record,
+                    point,
+                    option,
+                    value,
+                    site,
+                }
+            }
+        };
+        Ok(Some(IrStmt::Coverage(Box::new(statement))))
+    }
+
+    fn lower_coverage_option_value(
+        &mut self,
+        path: &str,
+        value: NodeId,
+        scope: &str,
+        member: &str,
+    ) -> Result<IrExpr, String> {
+        let lowered = self
+            .lower_expr(path, value)
+            .map_err(|error| self.coverage_error(value, error))?;
+        if lowered.is_real() {
+            return Err(
+                self.coverage_error(value, format!("{scope}.{member} needs an integral value"))
+            );
+        }
+        Ok(lowered)
+    }
+
+    /// `$set_coverage_db_name(name)` and `$load_coverage_db(name)` (19.9).
+    pub(in super::super) fn lower_coverage_db_task(
+        &mut self,
+        path: &str,
+        name: &str,
+        node: NodeId,
+        args: &[NodeId],
+    ) -> Result<IrStmt, String> {
+        let [file] = args else {
+            return Err(self.coverage_error(
+                node,
+                format!("{name} takes one string argument (IEEE 1800-2009 19.9)"),
+            ));
+        };
+        let file_name = self.lower_string(path, *file)?;
+        let statement = if name == "$set_coverage_db_name" {
+            IrCoverageStmt::SetDbName { name: file_name }
+        } else {
+            IrCoverageStmt::LoadDb {
+                name: file_name,
+                site: self.source_site(name, path, node),
+            }
+        };
+        Ok(IrStmt::Coverage(Box::new(statement)))
     }
 
     /// Lowered covergroups: every declaration a `new` or an instance method
@@ -298,6 +750,11 @@ impl<'a> Codegen<'a> {
                     .coverage_call(id)
                     .filter(|(_, _, method)| *method != CoverageMethod::GetCoverage)
                     .map(|(group, _, _)| group),
+                // So does an instance option access.
+                NodeKind::Expr(ExprKind::HierPath { .. }) => self
+                    .coverage_option_access(id)
+                    .filter(|access| !access.owner.type_option)
+                    .map(|access| access.owner.group),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -313,7 +770,7 @@ impl<'a> Codegen<'a> {
         if self.db.covergroups().is_empty() {
             return Ok(());
         }
-        self.check_option_access()?;
+        self.collect_option_vars();
         for group in self.constructed_covergroups() {
             self.collect_covergroup(group)?;
         }
@@ -455,6 +912,7 @@ impl<'a> Codegen<'a> {
         let ir = self.model.covergroups.len();
         self.model.covergroups.push(IrCovergroup {
             name: name.clone(),
+            path: format!("{}.{name}", build.path),
             coverage_type,
             points,
             crosses,
@@ -779,19 +1237,11 @@ impl<'a> Codegen<'a> {
             }
         };
         let signed = info.ty.signed;
-        let mut type_weight = 1;
         for setter in &info.options {
             let (scope, member, value) = self.coverage_option_parts(*setter).ok_or_else(|| {
                 self.coverage_error(*setter, "coverage option setter has no option member")
             })?;
             self.check_option(group_name, &scope, &member, value, *setter, false)?;
-            if scope == "type_option" && member == "weight" {
-                type_weight = self
-                    .eval_bound_i128(value)
-                    .ok()
-                    .and_then(|value| i64::try_from(value).ok())
-                    .unwrap_or(1);
-            }
         }
         // 19.5.2: automatic bins only for a coverpoint without `bins`
         // declarations; ignore_bins and illegal_bins alone keep them.
@@ -812,7 +1262,6 @@ impl<'a> Codegen<'a> {
             name: point_name.clone(),
             width,
             signed,
-            type_weight,
             automatic,
             bins: Vec::with_capacity(info.bins.len()),
             items: Vec::new(),
@@ -922,24 +1371,15 @@ impl<'a> Codegen<'a> {
                 format!("{describe} must cross at least two coverpoints (IEEE 1800-2009 19.6)"),
             ));
         }
-        let mut type_weight = 1;
         for setter in &metadata.options {
             let (scope, member, value) = self.coverage_option_parts(*setter).ok_or_else(|| {
                 self.coverage_error(*setter, "coverage option setter has no option member")
             })?;
             self.check_option(group_name, &scope, &member, value, *setter, false)?;
-            if scope == "type_option" && member == "weight" {
-                type_weight = self
-                    .eval_bound_i128(value)
-                    .ok()
-                    .and_then(|value| i64::try_from(value).ok())
-                    .unwrap_or(1);
-            }
         }
         let mut table = IrCoverCross {
             name: cross_name,
             points: dims.clone(),
-            type_weight,
             selects: Vec::new(),
             bins: Vec::with_capacity(metadata.bins.len()),
             items: Vec::new(),
@@ -1065,7 +1505,6 @@ impl<'a> Codegen<'a> {
                     name: String::new(),
                     width: point.width,
                     signed: point.signed,
-                    type_weight: 0,
                     automatic: IrCoverAutomatic::None,
                     bins: Vec::new(),
                     items: Vec::new(),
@@ -1262,7 +1701,6 @@ impl<'a> Codegen<'a> {
                     name: String::new(),
                     width,
                     signed,
-                    type_weight: 0,
                     automatic: IrCoverAutomatic::None,
                     bins: Vec::new(),
                     items: Vec::new(),
@@ -2461,6 +2899,9 @@ impl<'a> Codegen<'a> {
         if let Some(read) = self.coverage_ref_read(path, node)? {
             return Ok(Some(read));
         }
+        if let Some(read) = self.lower_coverage_option_read(path, node)? {
+            return Ok(Some(read));
+        }
         let Some((group, point, method)) = self.coverage_call(node) else {
             return Ok(None);
         };
@@ -2473,75 +2914,79 @@ impl<'a> Codegen<'a> {
                 format!("covergroup method `{}` has no value", self.node(node).name),
             ));
         }
-        // Defaulted `covered_bins`/`total_bins` actuals are the declaration's
-        // shared default expressions; only explicit ones belong to the call.
-        if self
-            .call_argument_nodes(node)
-            .iter()
-            .any(|arg| self.node(*arg).parent == Some(node))
-        {
-            return Err(self.coverage_error(
-                node,
-                format!(
-                    "`{}` with covered and total bin arguments is not supported yet (SIM-046)",
-                    self.node(node).name
-                ),
-            ));
-        }
         let point_index = match point {
             Some(point) => Some(match self.coverage_point_index(group, Some(point)) {
                 Some(index) => index,
                 None => self
-                    .db
-                    .covergroup(group)
-                    .and_then(|info| {
-                        info.coverpoints
-                            .iter()
-                            .chain(&info.crosses)
-                            .position(|id| *id == point)
-                    })
-                    .ok_or_else(|| {
-                        self.coverage_error(node, "coverpoint is not in its covergroup")
-                    })? as u32,
+                    .coverage_item_position(node, group, Some(point))?
+                    .unwrap_or_default(),
             }),
             None => None,
         };
-        if method == CoverageMethod::GetCoverage {
-            let coverage_type = self.coverage_type_index(group);
-            let weight = match point {
-                None => self.model.coverage_types[coverage_type].weight,
-                Some(point) => self
-                    .db
-                    .coverpoint(point)
-                    .map(|info| info.options.clone())
-                    .or_else(|| {
-                        self.db
-                            .coverage_cross(point)
-                            .map(|info| info.options.clone())
-                    })
-                    .unwrap_or_default()
-                    .into_iter()
-                    .find_map(|setter| {
-                        let (scope, member, value) = self.coverage_option_parts(setter)?;
-                        (scope == "type_option" && member == "weight")
-                            .then(|| self.eval_bound_i128(value).ok())
-                            .flatten()
-                    })
-                    .and_then(|weight| i64::try_from(weight).ok())
-                    .unwrap_or(1),
-            };
-            return Ok(Some(real(IrCoverageQuery::Type {
-                coverage_type,
+        let query = if method == CoverageMethod::GetCoverage {
+            IrCoverageQuery::Type {
+                coverage_type: self.coverage_type_index(group),
                 point: point_index,
-                weight,
-            })));
+            }
+        } else {
+            let object = self.coverage_receiver(path, node, point)?;
+            let record = self.coverage_record(group, object)?;
+            IrCoverageQuery::Instance {
+                record,
+                point: point_index,
+            }
+        };
+        // Defaulted `covered_bins`/`total_bins` actuals are the declaration's
+        // shared default expressions; only explicit ones belong to the call.
+        let explicit = self
+            .call_argument_nodes(node)
+            .into_iter()
+            .filter(|arg| self.node(*arg).parent == Some(node))
+            .collect::<Vec<_>>();
+        if explicit.is_empty() {
+            return Ok(Some(real(query)));
         }
-        let object = self.coverage_receiver(path, node, point)?;
-        let record = self.coverage_record(group, object)?;
-        Ok(Some(real(IrCoverageQuery::Instance {
-            record,
-            point: point_index,
-        })))
+        let [covered, total] = explicit.as_slice() else {
+            return Err(self.coverage_error(
+                node,
+                format!(
+                    "`{}` takes either no arguments or both covered and total bin arguments (IEEE 1800-2009 19.8)",
+                    self.node(node).name
+                ),
+            ));
+        };
+        let mut targets = Vec::with_capacity(2);
+        for actual in [*covered, *total] {
+            let target = self
+                .lower_plusarg_target(path, actual, "coverage bin count")
+                .map_err(|error| self.coverage_error(actual, error))?;
+            if !matches!(
+                target,
+                IrPlusArgTarget::Packed {
+                    width: 32,
+                    signed: true,
+                    ..
+                }
+            ) {
+                return Err(self.coverage_error(
+                    actual,
+                    "covered and total bin arguments must be int variables (IEEE 1800-2009 19.8)",
+                ));
+            }
+            targets.push(target);
+        }
+        let total = targets.pop().ok_or("coverage bin count target vanished")?;
+        let covered = targets.pop().ok_or("coverage bin count target vanished")?;
+        Ok(Some(IrExpr::new(
+            IrExprKind::SysFunc(Box::new(IrSysFunc::CoverageCounts {
+                query: Box::new(query),
+                covered,
+                total,
+            })),
+            REAL_EXPR_WIDTH,
+            true,
+            None,
+        )))
     }
 
     /// The actual a `ref` formal names while a covergroup body or waiter
@@ -2591,16 +3036,23 @@ impl<'a> Codegen<'a> {
                 Ok(Some(IrStmt::Nop))
             }
             CoverageMethod::SetInstName => {
-                // The instance name only labels coverage reports, which llg
-                // does not write; the receiver must still
-                // be a valid instance.
+                // 19.8: the instance name (option.name) becomes the argument.
                 let object = self.coverage_receiver(path, node, None)?;
-                Ok(Some(IrStmt::Object(Box::new(
-                    crate::sim::ir::IrObjectStmt::ChandleDeclareLocal(
-                        format!("_llg_cov_name_{}", node.index()),
-                        Some(object),
-                    ),
-                ))))
+                let record = self.coverage_record(group, object)?;
+                let args = self.call_argument_nodes(node);
+                let [name_arg] = args.as_slice() else {
+                    return Err(self.coverage_error(
+                        node,
+                        "`set_inst_name` takes one string argument (IEEE 1800-2009 19.8)",
+                    ));
+                };
+                let value = self.lower_string(path, *name_arg)?;
+                Ok(Some(IrStmt::Coverage(Box::new(IrCoverageStmt::Text {
+                    record,
+                    point: None,
+                    which: IrCoverageText::Name,
+                    value,
+                }))))
             }
             CoverageMethod::Start | CoverageMethod::Stop => {
                 let object = self.coverage_receiver(path, node, point)?;
@@ -2867,14 +3319,28 @@ impl<'a> Codegen<'a> {
                     let Some((scope, member, value)) = self.coverage_option_parts(setter) else {
                         continue;
                     };
-                    let option = match (scope.as_str(), member.as_str()) {
-                        ("option", "weight") => IrCoverageOption::Weight,
-                        ("option", "goal") => IrCoverageOption::Goal,
-                        ("option", "at_least") => IrCoverageOption::AtLeast,
-                        ("option", "auto_bin_max") => IrCoverageOption::AutoBinMax,
-                        ("option", "detect_overlap") => IrCoverageOption::DetectOverlap,
-                        ("option", "get_inst_coverage") => IrCoverageOption::GetInstCoverage,
-                        _ => continue,
+                    if scope != "option" {
+                        continue;
+                    }
+                    if matches!(member.as_str(), "name" | "comment") {
+                        let which = if member == "name" {
+                            IrCoverageText::Name
+                        } else {
+                            IrCoverageText::Comment
+                        };
+                        let value = self
+                            .lower_string(path, value)
+                            .map_err(|error| self.coverage_error(value, error))?;
+                        statements.push(IrStmt::Coverage(Box::new(IrCoverageStmt::Text {
+                            record: record.clone(),
+                            point,
+                            which,
+                            value,
+                        })));
+                        continue;
+                    }
+                    let Some(option) = coverage_instance_option(&member) else {
+                        continue;
                     };
                     let lowered = self
                         .lower_expr(path, value)
