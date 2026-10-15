@@ -2085,3 +2085,11 @@ fn s44_d9_strobe_block_event() {
         include_str!("fixtures/sim/lrm_decisions/S44-D9_strobe_block_event.out"),
     );
 }
+
+#[test]
+fn s44_d10_named_block_return() {
+    run_decision(
+        "S44-D10_named_block_return",
+        include_str!("fixtures/sim/lrm_decisions/S44-D10_named_block_return.out"),
+    );
+}

@@ -2298,8 +2298,9 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   instance rather than by the constructing process (S44-D5, S44-D6).
   `type_option.strobe` samples once per time slot in the Postponed region
   (not for block events, S44-D9). An `end` block event also samples after
-  `return` (S44-D7), not after a disable or a jump out of a named block
-  (S44-D8). Coverpoints of at most
+  `return` (S44-D7), not after a disable or a jump (`break`, `continue`,
+  `return`) out of a named block, nested named blocks included (S44-D8,
+  S44-D10). Coverpoints of at most
   64 bits with automatic bins (enum cardinality, `auto_bin_max`, numeric order
   for signed values, decision S44-D2), explicit single-value and range bins
   resolved by 19.5.6 with its warnings, and `iff` guards. Instance options

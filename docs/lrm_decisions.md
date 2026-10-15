@@ -395,6 +395,7 @@ case.
 | S44-D7 | **An `end` block event also samples after `return`**: a task or function that leaves through `return` samples after the return statement (after a function's return value is set), as one that runs to its end does; only a disable suppresses the sample. | 19.3 L32116-32119 | `S44-D7_end_event_after_return` | llg reading (the text does not say whether a subroutine that returns early "executes its last statement") |
 | S44-D8 | **A jump out of a named block skips its `end` event**: the `end` event of a named block samples only when the block runs to the end of its last statement; `break` or `continue` out of it does not sample (nor does a disable). The `begin` event samples before the first statement of every execution. | 19.3 L32113-32119 | `S44-D8_named_block_jump_out` | llg choice (the text is silent on jumps out of a block) |
 | S44-D9 | **`type_option.strobe` does not apply to block events**: a `@@(end f)` sample is taken when `f` finishes, not in the Postponed region. | 19.3 L32105-32109, L32111; 19.7.1 L33423-33424 | `S44-D9_strobe_block_event` | llg reading (the text limits strobe to clocking events and procedural `sample()`; block events are not named) |
+| S44-D10 | **A `return` out of a named block skips its `end` event**, as `break` and `continue` do (S44-D8), for every named block it leaves, nested ones included; the subroutine's own `end` event still samples (S44-D7). | 19.3 L32116-32119 | `S44-D10_named_block_return` | llg choice (the text is silent on jumps out of a block) |
 
 ## Waveform dumping (SIM-047)
 
