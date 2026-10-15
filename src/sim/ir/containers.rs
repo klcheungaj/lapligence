@@ -1521,7 +1521,17 @@ impl IrContainerExpr {
             Self::GetString { key, .. }
             | Self::GetStringReal { key, .. }
             | Self::ExistsString { key, .. } => key.expressions(visit),
-            _ => {}
+            Self::Size(_)
+            | Self::Reduce { .. }
+            | Self::ReduceWith { .. }
+            | Self::AssocTraverse { .. }
+            | Self::AssocTraverseString { .. }
+            | Self::AssocTraverseStringLocal { .. }
+            | Self::QueueFront(_)
+            | Self::QueueBack(_)
+            | Self::QueuePopFront(_)
+            | Self::QueuePopBack(_)
+            | Self::Equal { .. } => {}
         }
     }
 
@@ -1542,7 +1552,17 @@ impl IrContainerExpr {
             Self::GetString { key, .. }
             | Self::GetStringReal { key, .. }
             | Self::ExistsString { key, .. } => key.expressions_mut(visit),
-            _ => {}
+            Self::Size(_)
+            | Self::Reduce { .. }
+            | Self::ReduceWith { .. }
+            | Self::AssocTraverse { .. }
+            | Self::AssocTraverseString { .. }
+            | Self::AssocTraverseStringLocal { .. }
+            | Self::QueueFront(_)
+            | Self::QueueBack(_)
+            | Self::QueuePopFront(_)
+            | Self::QueuePopBack(_)
+            | Self::Equal { .. } => {}
         }
     }
 

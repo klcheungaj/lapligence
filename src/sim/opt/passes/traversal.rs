@@ -5,27 +5,9 @@ use super::*;
 // ── Expression walking (every slot, recursively into statements) ─────────────
 
 pub(super) fn walk_lhs_mut(l: &mut IrLhs, f: &mut impl FnMut(&mut IrExpr)) {
-    match l {
-        IrLhs::Bit(_, idx, _) => walk_expr_mut(idx, f),
-        IrLhs::IdxPart(_, base, width, _, _, _) => {
-            walk_expr_mut(base, f);
-            walk_expr_mut(width, f);
-        }
-        IrLhs::ArrayElem {
-            indices, elem_sel, ..
-        } => {
-            for i in indices {
-                walk_expr_mut(i, f);
-            }
-            elem_sel.expressions_mut(&mut |idx| walk_expr_mut(idx, f));
-        }
-        IrLhs::Stream { parts, .. } => {
-            for (part, _) in parts {
-                walk_lhs_mut(part, f);
-            }
-        }
-        _ => {}
-    }
+    // `IrLhs::expressions_mut` is exhaustive over the lvalue forms, so a new
+    // form fails to compile there until its selector slots are classified.
+    l.expressions_mut(&mut |child| walk_expr_mut(child, f));
 }
 
 fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
@@ -274,6 +256,17 @@ pub(in crate::sim) fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrEx
                 walk_expr_mut(value, f);
             }
         }
+        IrExprKind::EventTriggered(event) => {
+            event.expressions_mut(&mut |child| walk_expr_mut(child, f))
+        }
+        IrExprKind::FixedArrayCompare { .. }
+        | IrExprKind::Const(_)
+        | IrExprKind::SigRead(_)
+        | IrExprKind::LocalRead(_)
+        | IrExprKind::FormalRead(_)
+        | IrExprKind::RuntimeQuery(_)
+        | IrExprKind::Fill(_)
+        | IrExprKind::Verbatim { .. } => {}
         IrExprKind::SysFunc(sf) => match &mut **sf {
             IrSysFunc::TestPlusArgs { pattern } => {
                 pattern.expressions_mut(&mut |expression| walk_expr_mut(expression, f))
@@ -379,7 +372,6 @@ pub(in crate::sim) fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrEx
             }
             IrSysFunc::Sampled(call) => walk_expr_mut(&mut call.argument, f),
         },
-        _ => {}
     }
     f(e);
 }
@@ -479,7 +471,12 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             walk_expr_mut(count, f);
             walk_stmts_mut(body, f);
         }
-        IrStmt::ClockingCycleWait { count, .. } => walk_expr_mut(count, f),
+        IrStmt::ClockingCycleWait { count, specs, .. } => {
+            walk_expr_mut(count, f);
+            for (source, _) in specs {
+                walk_wait_src_mut(source, f);
+            }
+        }
         IrStmt::DeclLocal {
             init: Some(init), ..
         }
@@ -494,12 +491,19 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             order.expressions_mut(&mut |child| walk_expr_mut(child, f))
         }
         IrStmt::ClockingDrive {
-            lhs, rhs, cycles, ..
+            lhs,
+            rhs,
+            cycles,
+            specs,
+            ..
         } => {
             walk_lhs_mut(lhs, f);
             walk_expr_mut(rhs, f);
             if let Some(cycles) = cycles {
                 walk_expr_mut(cycles, f);
+            }
+            for (source, _) in specs {
+                walk_wait_src_mut(source, f);
             }
         }
         IrStmt::Assign { lhs, rhs, .. }
@@ -559,12 +563,16 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             rhs,
             repeat,
             captures,
+            specs,
             ..
         } => {
             walk_lhs_mut(lhs, f);
             walk_expr_mut(rhs, f);
             if let Some(repeat) = repeat {
                 walk_expr_mut(repeat, f);
+            }
+            for (source, _) in specs {
+                walk_wait_src_mut(source, f);
             }
             for capture in captures {
                 walk_expr_mut(capture.initial_mut(), f);
@@ -620,10 +628,19 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             walk_expr_mut(cond, f);
             walk_stmts_mut(body, f);
         }
-        IrStmt::WaitEventTriggered { body, .. } => walk_stmts_mut(body, f),
+        IrStmt::WaitEventTriggered { event, body, .. } => {
+            event.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            walk_stmts_mut(body, f);
+        }
         IrStmt::WaitOrder {
-            success, failure, ..
+            events,
+            success,
+            failure,
+            ..
         } => {
+            for event in events {
+                event.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            }
             walk_stmts_mut(success, f);
             walk_stmts_mut(failure, f);
         }
@@ -725,7 +742,100 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             }
         }
         IrStmt::Return { value: Some(value) } => walk_expr_mut(value, f),
-        _ => {}
+        IrStmt::Release { lhs } => walk_lhs_mut(lhs, f),
+        IrStmt::DeclString { init, .. } | IrStmt::SharedString { init, .. } => {
+            if let Some(init) = init {
+                init.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            }
+        }
+        IrStmt::EventAssign { target, source } => {
+            target.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            if let Some(source) = source {
+                source.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            }
+        }
+        IrStmt::EventCapture { source: ev, .. }
+        | IrStmt::EventTrigger { ev }
+        | IrStmt::ClockingEventTrigger { ev }
+        | IrStmt::NonblockingEventTrigger { ev, .. } => {
+            ev.expressions_mut(&mut |child| walk_expr_mut(child, f));
+        }
+        IrStmt::NonblockingEventTriggerWhen {
+            ev, specs, repeat, ..
+        } => {
+            ev.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            for (source, _) in specs {
+                walk_wait_src_mut(source, f);
+            }
+            if let Some(repeat) = repeat {
+                walk_expr_mut(repeat, f);
+            }
+        }
+        IrStmt::WaitEvents { specs, .. } => {
+            for (source, _) in specs {
+                walk_wait_src_mut(source, f);
+            }
+        }
+        // `unlocated_mut` above already stripped the wrapper.
+        IrStmt::Located { statement, .. } => walk_stmt_mut(statement, f),
+        // Statements with no expression slot: storage, scope and process
+        // control by index or name, constant payloads and markers.
+        IrStmt::FixedArrayCopy { .. }
+        | IrStmt::FixedArrayDeclare(_)
+        | IrStmt::NativeValueDeclare(_)
+        | IrStmt::NativeValueSharedDeclare(_)
+        | IrStmt::NativeValueCopy { .. }
+        | IrStmt::EventDeclare { .. }
+        | IrStmt::Delay { .. }
+        | IrStmt::ClockingSample { .. }
+        | IrStmt::SampledClockTick { .. }
+        | IrStmt::WaitAny { .. }
+        | IrStmt::Fork { .. }
+        | IrStmt::DisableTarget { .. }
+        | IrStmt::DeferredAssertionDisable { .. }
+        | IrStmt::WaitFork
+        | IrStmt::DisableFork
+        | IrStmt::Expect { .. }
+        | IrStmt::MonitorEnable(_)
+        | IrStmt::WaveFile(_)
+        | IrStmt::WaveDumpVars(_)
+        | IrStmt::WaveOn
+        | IrStmt::WaveOff
+        | IrStmt::WaveDumpAll
+        | IrStmt::WaveFlush
+        | IrStmt::Finish
+        | IrStmt::FinishControl { .. }
+        | IrStmt::ProgramExit
+        | IrStmt::StopControl { .. }
+        | IrStmt::PrintTimescale { .. }
+        | IrStmt::Label(_)
+        | IrStmt::Goto(_)
+        | IrStmt::Nop
+        | IrStmt::System(None)
+        | IrStmt::DeclLocal { init: None, .. }
+        | IrStmt::SharedLocal { init: None, .. }
+        | IrStmt::MonitorSet {
+            descriptor: None, ..
+        }
+        | IrStmt::FileControl {
+            descriptor: None, ..
+        }
+        | IrStmt::Return { value: None } => {}
+    }
+}
+
+fn walk_wait_src_mut(source: &mut IrWaitSrc, f: &mut impl FnMut(&mut IrExpr)) {
+    match source {
+        IrWaitSrc::Event(event) | IrWaitSrc::FilteredEvent { event, .. } => {
+            event.expressions_mut(&mut |child| walk_expr_mut(child, f));
+        }
+        IrWaitSrc::Evaluated { .. }
+        | IrWaitSrc::EvaluatedReal { .. }
+        | IrWaitSrc::Sig(_)
+        | IrWaitSrc::Real(_)
+        | IrWaitSrc::RefFormal { .. }
+        | IrWaitSrc::NativeRefFormal { .. }
+        | IrWaitSrc::SharedNative { .. } => {}
     }
 }
 
@@ -837,7 +947,14 @@ pub(super) fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut 
             crate::sim::ir::IrInitStep::Execute { body, .. } => {
                 walk_stmts_mut(std::slice::from_mut(body.as_mut()), f);
             }
-            _ => {}
+            crate::sim::ir::IrInitStep::FillArrayX(_)
+            | crate::sim::ir::IrInitStep::FillArrayZ(_)
+            | crate::sim::ir::IrInitStep::SetArrayElem { .. }
+            | crate::sim::ir::IrInitStep::SetScalar { .. }
+            | crate::sim::ir::IrInitStep::RegisterSampled(_)
+            | crate::sim::ir::IrInitStep::RegisterSampledHistory { .. }
+            | crate::sim::ir::IrInitStep::RegisterSampledValue(_)
+            | crate::sim::ir::IrInitStep::WriteNet { .. } => {}
         }
     }
     for assertion in &mut model.assertions {

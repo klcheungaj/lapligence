@@ -2366,7 +2366,14 @@ impl IrChandleExpr {
                     key.expressions(visit);
                 }
             }
-            _ => {}
+            Self::Null
+            | Self::Construct(_)
+            | Self::InterfaceInstance { .. }
+            | Self::Verbatim(_)
+            | Self::Read(_)
+            | Self::LocalRead(_)
+            | Self::FormalRead(_)
+            | Self::QueuePop { .. } => {}
         }
     }
 
@@ -2406,7 +2413,14 @@ impl IrChandleExpr {
                     key.expressions_mut(visit);
                 }
             }
-            _ => {}
+            Self::Null
+            | Self::Construct(_)
+            | Self::InterfaceInstance { .. }
+            | Self::Verbatim(_)
+            | Self::Read(_)
+            | Self::LocalRead(_)
+            | Self::FormalRead(_)
+            | Self::QueuePop { .. } => {}
         }
     }
 }

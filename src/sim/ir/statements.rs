@@ -1102,6 +1102,8 @@ impl IrStmt {
             Self::Delay { ticks }
             | Self::DelayedAssign { ticks, .. }
             | Self::ClockingDrive { ticks, .. }
+            | Self::DelayedStringAssign { ticks, .. }
+            | Self::DelayedChandleAssign { ticks, .. }
             | Self::NonblockingEventTrigger {
                 ticks: Some(ticks), ..
             } => ticks.expression_mut(),

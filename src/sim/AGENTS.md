@@ -48,7 +48,10 @@ arithmetic. Shape-guard identities. Prune only proven branches/cases: never pass
 an unknown item or select default until all items are proven unmatched. Omit
 unused storage without renumbering indices.
 
-Unused-storage collection matches every IR enum and the model and call records
+The optimizer's expression walker (`opt/passes/traversal.rs`) and the IR-owned
+`expressions()`/`chandles()` visitors of chandle, container and randomize
+nodes likewise have no wildcard arm: a new kind states whether it has
+expression slots. Unused-storage collection matches every IR enum and the model and call records
 without a wildcard arm or rest pattern: classify a new kind there, including
 references that are not expression reads (wait sources, event-handle indices,
 call receivers, C-address actuals, runtime registrations). `Predicate`
