@@ -226,3 +226,36 @@ fn unused_storage_keeps_registrations_fills_and_runtime_dependencies() {
     run(&mut model, &storage_only());
     assert_only_first_omitted(&model);
 }
+
+#[test]
+fn unused_storage_resolves_named_references_to_the_first_signal_with_that_name() {
+    // Address actuals and dependencies name C storage; a name shared by two
+    // signals resolves to the first, as the emitter declares it once.
+    let mut signals = sigs(4);
+    signals[3].c_name = "G_s1".to_string();
+    let body = vec![
+        IrStmt::Call(Box::new(IrCall::new(
+            0,
+            vec![IrCallArg::OutAddr("&G_s1".to_string())],
+            IrDepth::PROC,
+            Vec::new(),
+            Vec::new(),
+        ))),
+        IrStmt::WaitAny {
+            sens: vec![IrDependency::scalar("G_s2")],
+            refresh: false,
+        },
+    ];
+    let mut model = model_with(body, signals);
+    run(&mut model, &storage_only());
+    assert!(model.signals[0].omit);
+    assert!(
+        !model.signals[1].omit,
+        "address actual keeps the first match"
+    );
+    assert!(!model.signals[2].omit, "dependency keeps its signal");
+    assert!(
+        model.signals[3].omit,
+        "a later duplicate name is not a match"
+    );
+}

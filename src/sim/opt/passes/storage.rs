@@ -10,56 +10,112 @@
 //! compile here until it is classified. Nested payloads are walked through
 //! their IR-owned `expressions()` visitors.
 
+use std::collections::HashMap;
+
 use super::*;
 
 // ── Pass: unused_storage ──────────────────────────────────────────────────────
 
-#[derive(Default)]
+/// Signals referenced so far, plus a name index: lowering spells some
+/// references as C names (`&G_x` actuals, wait sources, dependencies), and a
+/// linear search per reference made the pass quadratic in the signal count.
 pub(super) struct Rw {
-    pub(super) reads: HashSet<usize>,
-    pub(super) writes: HashSet<usize>,
+    reads: Vec<bool>,
+    writes: Vec<bool>,
+    names: SignalNames,
 }
 
 impl Rw {
+    fn new(signals: &[crate::sim::ir::IrSignal]) -> Self {
+        Self {
+            reads: vec![false; signals.len()],
+            writes: vec![false; signals.len()],
+            names: SignalNames::new(signals),
+        }
+    }
     pub(super) fn read(&mut self, i: usize) {
-        self.reads.insert(i);
+        if let Some(read) = self.reads.get_mut(i) {
+            *read = true;
+        }
     }
     fn write(&mut self, i: usize) {
-        self.writes.insert(i);
+        if let Some(write) = self.writes.get_mut(i) {
+            *write = true;
+        }
+    }
+    fn referenced(&self, i: usize) -> bool {
+        self.reads[i] || self.writes[i]
+    }
+    /// Count an address actual (`&G_sig` or `G_sig`) as a read and, unless it
+    /// is read-only, a write. Function-scope names match no signal.
+    fn address(&mut self, address: &str, write: bool) {
+        if let Some(i) = self.names.get(address.trim_start_matches('&')) {
+            self.read(i);
+            if write {
+                self.write(i);
+            }
+        }
+    }
+}
+
+/// The first signal with each C name, like a front-to-back search.
+struct SignalNames(HashMap<String, usize>);
+
+impl SignalNames {
+    fn new(signals: &[crate::sim::ir::IrSignal]) -> Self {
+        let mut names = HashMap::with_capacity(signals.len());
+        for (index, signal) in signals.iter().enumerate() {
+            names.entry(signal.c_name.clone()).or_insert(index);
+        }
+        Self(names)
+    }
+
+    fn get(&self, name: &str) -> Option<usize> {
+        self.0.get(name).copied()
+    }
+
+    /// The signal a scalar, real or packed-range dependency names.
+    fn dependency(
+        &self,
+        dependency: &IrDependency,
+        signals: &[crate::sim::ir::IrSignal],
+    ) -> Option<usize> {
+        match dependency {
+            IrDependency::PackedRange { storage, .. } => self.dependency(storage, signals),
+            IrDependency::Scalar(name) | IrDependency::Real(name) => name
+                .strip_prefix("llg_net_alias_")
+                .and_then(|name| name.strip_suffix(".visible"))
+                .and_then(|index| index.parse::<usize>().ok())
+                .filter(|index| {
+                    signals
+                        .get(*index)
+                        .is_some_and(|signal| !signal.net_alias.is_empty())
+                })
+                .or_else(|| self.get(name)),
+            // Arrays, containers, objects and activation storage are not
+            // signals.
+            IrDependency::ArrayElement { .. }
+            | IrDependency::ArrayContents(_)
+            | IrDependency::ContainerContents(_)
+            | IrDependency::ContainerShape(_)
+            | IrDependency::Object(_)
+            | IrDependency::SharedCell { .. }
+            | IrDependency::SharedNative { .. }
+            | IrDependency::RefFormal { .. }
+            | IrDependency::NativeRefFormal { .. }
+            | IrDependency::NativeAccess(_) => None,
+        }
     }
 }
 
 fn mark_dependency_read(dependency: &IrDependency, model: &IrModel, rw: &mut Rw) {
-    if let Some(i) = dependency_signal(dependency, &model.signals) {
+    if let Some(i) = rw.names.dependency(dependency, &model.signals) {
         rw.read(i);
     }
 }
 
-/// The signal a scalar, real or packed-range dependency names.
-fn dependency_signal(
-    dependency: &IrDependency,
-    signals: &[crate::sim::ir::IrSignal],
-) -> Option<usize> {
-    if let IrDependency::PackedRange { storage, .. } = dependency {
-        return dependency_signal(storage, signals);
-    }
-    let (IrDependency::Scalar(name) | IrDependency::Real(name)) = dependency else {
-        return None;
-    };
-    let alias_index = name
-        .strip_prefix("llg_net_alias_")
-        .and_then(|name| name.strip_suffix(".visible"))
-        .and_then(|index| index.parse::<usize>().ok())
-        .filter(|index| {
-            signals
-                .get(*index)
-                .is_some_and(|signal| !signal.net_alias.is_empty())
-        });
-    alias_index.or_else(|| signals.iter().position(|signal| signal.c_name == *name))
-}
-
 pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess]>) {
-    let mut rw = Rw::default();
+    let mut rw = Rw::new(&model.signals);
     // Every table is named, without a rest pattern, so a new table fails to
     // compile here until it is classified as signal-referencing or not.
     let IrModel {
@@ -293,10 +349,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         .iter()
         .enumerate()
         .map(|(i, sig)| {
-            !(waveform && sig.hdl_name.is_some())
-                && !vpi_visible[i]
-                && !rw.reads.contains(&i)
-                && !rw.writes.contains(&i)
+            !(waveform && sig.hdl_name.is_some()) && !vpi_visible[i] && !rw.referenced(i)
         })
         .collect();
     // Alias source cells are retained for descriptor refreshes and debug/
@@ -320,10 +373,13 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
     // A writer analysis may name leaves no statement touches (a record bound
     // whole to a native `ref` formal whose callee writes only some members,
     // SIM-008); omitted storage leaves the process write lists.
+    let names = rw.names;
     let signals = &model.signals;
     for process in &mut model.processes {
         process.writes.retain(|write| {
-            dependency_signal(write, signals).is_none_or(|index| !signals[index].omit)
+            names
+                .dependency(write, signals)
+                .is_none_or(|index| !signals[index].omit)
         });
     }
 }
@@ -455,7 +511,7 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         }
         IrStmt::Object(operation) => {
             if let Some(target) = operation.mailbox_target() {
-                collect_mailbox_target_rw(target, model, rw);
+                collect_mailbox_target_rw(target, rw);
             }
             operation.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
@@ -845,17 +901,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
 /// output argument it counts as a read and a write of the named signal, so
 /// the storage stays even when nothing else reads it (function-scope names
 /// never match).
-fn collect_mailbox_target_rw(
-    target: &crate::sim::ir::IrMailboxTarget,
-    model: &IrModel,
-    rw: &mut Rw,
-) {
+fn collect_mailbox_target_rw(target: &crate::sim::ir::IrMailboxTarget, rw: &mut Rw) {
     if let Some(addr) = target.address() {
-        let name = addr.trim_start_matches('&');
-        if let Some(i) = model.signals.iter().position(|sg| sg.c_name == name) {
-            rw.read(i);
-            rw.write(i);
-        }
+        rw.address(addr, true);
     }
 }
 
@@ -989,15 +1037,7 @@ fn collect_call_args_rw(function: usize, args: &[IrCallArg], model: &IrModel, rw
             IrCallArg::NativeCall { call, .. } | IrCallArg::RealArrayCall { call, .. } => {
                 collect_call_rw(call, model, rw)
             }
-            IrCallArg::OutAddr(addr) => {
-                // `&G_sig` / `G_sig`: a passed output/inout actual both reads
-                // and writes its target (function-scope names never match).
-                let name = addr.trim_start_matches('&');
-                if let Some(i) = model.signals.iter().position(|sg| sg.c_name == name) {
-                    rw.read(i);
-                    rw.write(i);
-                }
-            }
+            IrCallArg::OutAddr(addr) => rw.address(addr, true),
             IrCallArg::RefAddr { lhs, read, .. } => {
                 collect_expr_reads(read, model, rw);
                 if call_formal(model, function, index).is_none_or(|formal| !formal.is_const_ref()) {
@@ -1005,15 +1045,9 @@ fn collect_call_args_rw(function: usize, args: &[IrCallArg], model: &IrModel, rw
                 }
             }
             IrCallArg::StringOutAddr(addr) | IrCallArg::StringRefAddr { addr, .. } => {
-                let name = addr.trim_start_matches('&');
-                if let Some(i) = model.signals.iter().position(|sg| sg.c_name == name) {
-                    rw.read(i);
-                    if call_formal(model, function, index)
-                        .is_none_or(|formal| !formal.is_const_ref())
-                    {
-                        rw.write(i);
-                    }
-                }
+                let write =
+                    call_formal(model, function, index).is_none_or(|formal| !formal.is_const_ref());
+                rw.address(addr, write);
             }
             IrCallArg::OutTemp {
                 init,
@@ -1202,7 +1236,7 @@ fn collect_expr_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
         }
         IrExprKind::ObjectQuery(query) => {
             if let Some(target) = query.mailbox_target() {
-                collect_mailbox_target_rw(target, model, rw);
+                collect_mailbox_target_rw(target, rw);
             }
             query.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
