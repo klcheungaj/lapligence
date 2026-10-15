@@ -11,10 +11,6 @@ use super::sim_cli;
 
 const SUITE: &str = "feature_completion/adv_016";
 
-fn parity(fixture: &str, expected: &str) {
-    sim_cli::run_case_backend_parity(SUITE, fixture, expected, &[], &[]);
-}
-
 /// Exit status 1 after exactly `expected` on stdout, with every diagnostic
 /// present the given number of times.
 fn runtime_failure(label: &str, output: &Output, expected: &str, diagnostics: &[(&str, usize)]) {
@@ -34,9 +30,12 @@ fn runtime_failure(label: &str, output: &Output, expected: &str, diagnostics: &[
 
 #[test]
 fn the_clause_examples_produce_their_listed_outcomes() {
-    parity(
+    sim_cli::run_case_backend_parity(
+        SUITE,
         "lrm_examples",
         include_str!("../fixtures/sim/feature_completion/adv_016/lrm_examples.out"),
+        &[],
+        &[],
     );
 }
 
@@ -62,7 +61,7 @@ fn rule_frequencies_stay_inside_the_predeclared_chi_square_bound() {
     expected.push_str("failures=0\n");
     let fixture = include_str!("../fixtures/sim/feature_completion/adv_016/frequency.out");
     assert_eq!(expected, fixture);
-    parity("frequency", fixture);
+    sim_cli::run_case_backend_parity(SUITE, "frequency", fixture, &[], &[]);
 }
 
 /// The trace depends on the generator, so the oracle is a relation: the same
@@ -95,33 +94,45 @@ fn a_seed_replays_the_same_trace_in_every_mode() {
 
 #[test]
 fn typed_arguments_and_results_pass_between_productions() {
-    parity(
+    sim_cli::run_case_backend_parity(
+        SUITE,
         "results",
         include_str!("../fixtures/sim/feature_completion/adv_016/results.out"),
+        &[],
+        &[],
     );
 }
 
 #[test]
 fn recursive_productions_keep_each_generation_apart() {
-    parity(
+    sim_cli::run_case_backend_parity(
+        SUITE,
         "recursion",
         include_str!("../fixtures/sim/feature_completion/adv_016/recursion.out"),
+        &[],
+        &[],
     );
 }
 
 #[test]
 fn rand_join_keeps_sequence_order_and_follows_the_ratio() {
-    parity(
+    sim_cli::run_case_backend_parity(
+        SUITE,
         "rand_join",
         include_str!("../fixtures/sim/feature_completion/adv_016/rand_join.out"),
+        &[],
+        &[],
     );
 }
 
 #[test]
 fn a_large_shared_production_returns_to_each_caller() {
-    parity(
+    sim_cli::run_case_backend_parity(
+        SUITE,
         "big_production",
         include_str!("../fixtures/sim/feature_completion/adv_016/big_production.out"),
+        &[],
+        &[],
     );
 }
 
@@ -129,17 +140,23 @@ fn a_large_shared_production_returns_to_each_caller() {
 
 #[test]
 fn break_return_if_case_and_repeat_follow_the_clause() {
-    parity(
+    sim_cli::run_case_backend_parity(
+        SUITE,
         "control",
         include_str!("../fixtures/sim/feature_completion/adv_016/control.out"),
+        &[],
+        &[],
     );
 }
 
 #[test]
 fn randsequence_runs_in_functions_tasks_methods_and_always_blocks() {
-    parity(
+    sim_cli::run_case_backend_parity(
+        SUITE,
         "contexts",
         include_str!("../fixtures/sim/feature_completion/adv_016/contexts.out"),
+        &[],
+        &[],
     );
 }
 
@@ -148,9 +165,12 @@ fn randsequence_runs_in_functions_tasks_methods_and_always_blocks() {
 /// frames and strings of killed generations are released.
 #[test]
 fn a_suspended_production_can_be_killed_or_disabled() {
-    parity(
+    sim_cli::run_case_backend_parity(
+        SUITE,
         "suspend_kill",
         include_str!("../fixtures/sim/feature_completion/adv_016/suspend_kill.out"),
+        &[],
+        &[],
     );
 }
 
@@ -203,77 +223,83 @@ fn invalid_weights_counts_and_ratios_are_located_runtime_errors() {
 
 #[test]
 fn unsupported_grammars_are_located_compile_errors() {
-    for (fixture, diagnostic) in [
-        (
-            "neg_output_formal",
-            "neg_output_formal.sv:7:5: formal `o` is not an input; llg supports only input \
-             production arguments",
-        ),
-        (
-            "neg_join_duplicate",
-            "neg_join_duplicate.sv:4:24: production `a` is interleaved more than once",
-        ),
-        (
-            "neg_join_reach",
-            "neg_join_reach.sv:5:22: production `a` generates `b`, which the same rand join \
-             interleaves",
-        ),
-        (
-            "neg_join_recursive",
-            "neg_join_recursive.sv:5:22: production `a` is recursive or generates a recursive \
-             production",
-        ),
-        (
-            "neg_recursive_handle_frame",
-            "neg_recursive_handle_frame.sv:11:7: `h` has a type llg cannot save across a \
-             recursive generation",
-        ),
-        (
-            "neg_recursive_string_array_frame",
-            "neg_recursive_string_array_frame.sv:6:12: `w` has a type llg cannot save across a \
-             recursive generation",
-        ),
-    ] {
-        sim_cli::reject_case(SUITE, fixture, diagnostic);
-    }
+    sim_cli::reject_case(
+        SUITE,
+        "neg_output_formal",
+        "neg_output_formal.sv:7:5: formal `o` is not an input; llg supports only input \
+         production arguments",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_join_duplicate",
+        "neg_join_duplicate.sv:4:24: production `a` is interleaved more than once",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_join_reach",
+        "neg_join_reach.sv:5:22: production `a` generates `b`, which the same rand join \
+         interleaves",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_join_recursive",
+        "neg_join_recursive.sv:5:22: production `a` is recursive or generates a recursive \
+         production",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_recursive_handle_frame",
+        "neg_recursive_handle_frame.sv:11:7: `h` has a type llg cannot save across a \
+         recursive generation",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_recursive_string_array_frame",
+        "neg_recursive_string_array_frame.sv:6:12: `w` has a type llg cannot save across a \
+         recursive generation",
+    );
 }
 
 #[test]
 fn illegal_rules_weights_and_results_are_rejected_by_the_frontend() {
-    for (fixture, diagnostic) in [
-        (
-            "neg_continue",
-            "neg_continue.sv:6:16 statement can only be used inside a loop",
-        ),
-        (
-            "neg_void_return_value",
-            "neg_void_return_value.sv:5:11 value of type 'int' cannot be assigned to type 'void'",
-        ),
-        (
-            "neg_missing_return_value",
-            "neg_missing_return_value.sv:6:15 must provide a return value for non-void production",
-        ),
-        (
-            "neg_result_type",
-            "neg_result_type.sv:8:26 value of type 'C' cannot be assigned to type 'int'",
-        ),
-        (
-            "neg_real_weight",
-            "neg_real_weight.sv:4:18 expression type 'real' is not integral",
-        ),
-        (
-            "neg_real_repeat_count",
-            "neg_real_repeat_count.sv:4:20 expression type 'real' is not integral",
-        ),
-        (
-            "neg_undeclared_production",
-            "neg_undeclared_production.sv:4:14 use of undeclared identifier 'missing'",
-        ),
-        (
-            "neg_void_result_read",
-            "neg_void_result_read.sv:5:32 use of undeclared identifier 'a'",
-        ),
-    ] {
-        sim_cli::reject_case(SUITE, fixture, diagnostic);
-    }
+    sim_cli::reject_case(
+        SUITE,
+        "neg_continue",
+        "neg_continue.sv:6:16 statement can only be used inside a loop",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_void_return_value",
+        "neg_void_return_value.sv:5:11 value of type 'int' cannot be assigned to type 'void'",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_missing_return_value",
+        "neg_missing_return_value.sv:6:15 must provide a return value for non-void production",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_result_type",
+        "neg_result_type.sv:8:26 value of type 'C' cannot be assigned to type 'int'",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_real_weight",
+        "neg_real_weight.sv:4:18 expression type 'real' is not integral",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_real_repeat_count",
+        "neg_real_repeat_count.sv:4:20 expression type 'real' is not integral",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_undeclared_production",
+        "neg_undeclared_production.sv:4:14 use of undeclared identifier 'missing'",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_void_result_read",
+        "neg_void_result_read.sv:5:32 use of undeclared identifier 'a'",
+    );
 }

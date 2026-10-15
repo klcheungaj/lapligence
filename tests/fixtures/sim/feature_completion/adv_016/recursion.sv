@@ -20,7 +20,19 @@ module tb;
     return open == 0;
   endfunction
 
+  // A string argument bound from its own previous value, in a function.
+  function automatic string path(input int n);
+    string out;
+    randsequence (top)
+      top : walk(n, "x") { out = walk; } ;
+      string walk (int k, string s) : { if (k == 0) return s; } walk(k - 1, {s, "y"})
+        { return {s, "|", walk}; } ;
+    endsequence
+    return out;
+  endfunction
+
   initial begin
+    $display("path %s", path(3));
     randsequence (top)
       top : count(3) fact(10) fib(15) parity(7, 2.5, 100'h1)
         { $display("fact=%0d fib=%0d parity=%s", fact, fib, parity); } ;

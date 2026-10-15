@@ -776,6 +776,47 @@ route the seed writeback through the native member writer.
 instance that gains a `$urandom` initializer; for the seed,
 `struct { integer s; } st; initial r = $random(st.s);`.
 
+## randsequence limits (ADV-016)
+
+**Status:** open (ADV-016); the forms below stop code generation with a
+located error, and everything else in SV 18.17 runs.
+
+### Symptom
+
+- A production argument that is not `input` (`output`, `inout`, `ref`) is
+  rejected: "formal `o` is not an input; llg supports only input production
+  arguments".
+- `rand join` requires distinct productions that are not recursive and do not
+  generate another production of the same join.
+- A recursive production (one that can generate itself) saves its arguments,
+  its rules' implicit variables and its result for every active generation;
+  only packed, real and string values can be saved, so a class handle,
+  chandle, unpacked array (including the implicit array of a repeated
+  value-returning production) or unpacked structure there is rejected.
+- Recursion deeper than 10000 active generations of recursive productions is a
+  fatal run-time error (exit status 1) located at the production item.
+
+### Cause
+
+Productions are expanded into the enclosing process's continuation, so
+arguments are copied in once and nothing is written back. A joined sequence is
+interleaved element by element from the enclosing process, which needs each
+joined production expanded in place. Recursive generations push their values
+onto a packed queue and a string queue held in the activation frame; other
+storage classes have no saved form yet.
+
+### Intended direction
+
+Copy-out of output arguments at production exit, a segmented join driver for
+recursive joined productions, and frame entries for handles and unpacked
+values through the native container element writers.
+
+### Reproduce
+
+```sh
+scripts/run-tests.sh -E 'binary(sim_feature_completion) & test(adv_016::)'
+```
+
 ## Anonymous program members draw a spurious shadowing warning
 
 **Status:** open (SIM-032); cosmetic.

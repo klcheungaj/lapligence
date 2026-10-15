@@ -2355,9 +2355,25 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   [sim_029](../tests/fixtures/sim/feature_completion/sim_029/readme.md) and
   [sim_030](../tests/fixtures/sim/feature_completion/sim_030/readme.md).
   SV ch.18 **[SV-2005]**.
-- ⬜ **Structured randomization** — `randsequence` is not implemented.
-  `randcase` is implemented (see the random-number row). SV §18.17
-  **[SV-2005]**.
+- 🟨 **Structured randomization** — `randsequence` (SV §18.17) generates
+  productions with weighted rules (weights evaluated when the production is
+  selected, one draw from the calling process's stream like `randcase`),
+  if/else, case and repeat productions, `rand join` with its length ratio,
+  `break` and `return`, typed results and implicit variables (arrays for
+  repeated productions), input arguments with defaults, and code blocks that
+  wait, fork or call timed tasks in any procedural context. Productions run on
+  the ordinary stackless continuations: small productions are expanded in
+  place, recursive or large shared ones run in a dispatch loop whose recursive
+  generations keep their packed, real and string values in heap frames, with a
+  located fatal error past 10000 active generations. A single rule needs no
+  weight evaluation or draw; negative or unknown weights and repeat counts and
+  a join ratio outside 0.0 to 1.0 are located run-time errors
+  ([adv_016](../tests/fixtures/sim/feature_completion/adv_016/readme.md),
+  decisions S16-D1 to S16-D9 in [lrm_decisions](lrm_decisions.md)). Output
+  arguments, rand join of recursive or overlapping productions and recursive
+  handle or array values are located errors
+  ([known issues](known_issues.md#randsequence-limits-adv-016)).
+  SV §18.17 **[SV-2005]**.
 
 ## Source and regression evidence
 
