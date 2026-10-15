@@ -1041,7 +1041,9 @@ typedef struct {
   uint64_t target_id;
   uint64_t edge_start;
   uint64_t edge_count;
-  /* A zero unit means this node has no applicable time scale. Magnitudes are
+  /* A zero unit means this node has no applicable time scale. A compilation
+   * unit reports one only when it declares `timeunit`/`timeprecision`
+   * (3.14.2.3); otherwise its scale is the consumer's default. Magnitudes are
    * exactly 1, 10, or 100 when the corresponding unit is nonzero. */
   uint32_t time_unit;
   uint32_t time_unit_magnitude;

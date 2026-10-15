@@ -1558,6 +1558,9 @@ struct Codegen<'a> {
     /// Design time precision in ps: the finest precision across every module,
     /// which sets the scheduler tick unit (1 tick = `design_precision_fs` fs).
     design_precision_fs: u64,
+    /// Scale of `$unit` code when the compilation unit declares no
+    /// `timeunit`/`timeprecision` (see `collect_timescales`).
+    unit_default_timescale: Timescale,
     /// Whole-net continuous assignment node -> synthetic signal index carrying
     /// that wired net driver's distinct runtime slot.
     wired_driver_sites: HashMap<NodeId, usize>,
@@ -1881,6 +1884,7 @@ impl<'a> Codegen<'a> {
             proc_seq: 0,
             frame_seq: 0,
             design_precision_fs: Timescale::DEFAULT.precision_fs,
+            unit_default_timescale: Timescale::DEFAULT,
             wired_driver_sites: HashMap::new(),
             clocking_net_drivers: HashMap::new(),
             feedback_storage: None,

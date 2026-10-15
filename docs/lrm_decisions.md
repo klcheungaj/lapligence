@@ -466,6 +466,12 @@ enum and malformed-token cases remain characterizations in
 | S22-D6 | **Let names bind where the let is declared.** Free names of a let body and names in a formal's default actual resolve in the declaring scope; actual arguments resolve at the use; a formal shadows an outer name. | 11.13 L16778-16779 (examples a and b) | `S22-D6_let_name_binding` | LRM text |
 | S22-D7 | **Static class properties initialize once with any value.** A static property's initializer (constant, other static property, string expression, constructed object) runs once before any procedure, and the property is shared by every object and the class scope. | 8.8 L9870-9871, L9887, L9893; 6.8 L5286-5287 | `S22-D7_static_property_initializers` | LRM text (changed: non-constant numeric, string-expression and non-null handle initializers were rejected) |
 
+## Time scales (follow-ups)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| F2-D2 | **`$unit` time scale.** A compilation unit without `timeunit`/`timeprecision` uses the default unit 1ns whatever `timescale directive precedes its declarations. Its precision is the finest precision the design declares, capped at 1ns (1ps when nothing is declared), so a `$unit` class does not make the global precision finer than the declared scales. | 3.14.2.3 L2956-2960, L2962; 3.14.3 L2978-2980 | `F2-D2_unit_default_timescale` | LRM text for the unit; llg choice for the implementation-specific default precision (llg formerly used 1ps, which made the design tick 1ps) |
+
 ## Earlier decisions
 
 These predate the register. Their evidence lives in the feature fixtures named

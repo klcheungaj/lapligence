@@ -1,4 +1,4 @@
-1000 count=1 total=4 ratio=1.00 label=c1
-2000 count=2 total=6 ratio=1.50 label=c2
-3000 count=3 total=12 ratio=3.00 label=c3
-4000 count=4 total=19 ratio=4.75 label=c4
+1 count=1 total=4 ratio=1.00 label=c1
+2 count=2 total=6 ratio=1.50 label=c2
+3 count=3 total=12 ratio=3.00 label=c3
+4 count=4 total=19 ratio=4.75 label=c4

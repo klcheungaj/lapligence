@@ -1661,6 +1661,14 @@ fn f2_d1_program_concurrent_assertions() {
     );
 }
 
+#[test]
+fn f2_d2_unit_default_timescale() {
+    run_decision(
+        "F2-D2_unit_default_timescale",
+        include_str!("fixtures/sim/lrm_decisions/F2-D2_unit_default_timescale.out"),
+    );
+}
+
 /// Build the `.c` VPI application of a decision case into a static archive
 /// that the model links (`--dpi-lib`); its `vlog_startup_routines` table runs
 /// at startup. Static linking works on every host, so these cases need no

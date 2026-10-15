@@ -429,15 +429,15 @@ fn dynamic_objects_are_excluded_while_the_collector_reclaims_them() {
             "tb.count",
             &[
                 (0, "0000"),
-                (1000, "0001"),
-                (2000, "0010"),
-                (3000, "0011"),
-                (4000, "0100"),
+                (1, "0001"),
+                (2, "0010"),
+                (3, "0011"),
+                (4, "0100"),
             ],
         );
         let total = |value: u32| format!("{value:032b}");
-        let totals = [(0, 0), (1000, 4), (2000, 6), (3000, 12), (4000, 19)]
-            .map(|(time, value)| (time, total(value)));
+        let totals =
+            [(0, 0), (1, 4), (2, 6), (3, 12), (4, 19)].map(|(time, value)| (time, total(value)));
         let totals: Vec<(u64, &str)> = totals
             .iter()
             .map(|(time, value)| (*time, value.as_str()))
@@ -447,13 +447,7 @@ fn dynamic_objects_are_excluded_while_the_collector_reclaims_them() {
             &label,
             &vcd,
             "tb.ratio",
-            &[
-                (0, "0"),
-                (1000, "1"),
-                (2000, "1.5"),
-                (3000, "3"),
-                (4000, "4.75"),
-            ],
+            &[(0, "0"), (1, "1"), (2, "1.5"), (3, "3"), (4, "4.75")],
         );
     }
 }

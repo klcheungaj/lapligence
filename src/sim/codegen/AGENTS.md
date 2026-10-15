@@ -725,7 +725,10 @@ agnostic. `$time`/`$stime` round to calling units with halves upward; `$realtime
 keeps fractions. `%t` carries physical units through runtime `$timeformat`;
 `$printtimescale` reports its instance/`$unit` operand, or the scope containing
 the call, in the SV 20.4.1 format. Code-bearing packages and `$unit` join the
-design tick. Frontend owns inheritance.
+design tick. A `$unit` without `timeunit`/`timeprecision` has no recorded scale
+(a `timescale directive does not set it, SV 3.14.2.3): it uses unit 1ns and the
+finest declared precision capped at 1ns, or 1ps when nothing is declared
+(decision F2-D2). Frontend owns inheritance.
 
 Real/shortreal use typed doubles and f32 rounding at shortreal writes. Real-to-packed
 rounds nearest, ties away; packed-to-real zeroes X/Z positions at actual width.

@@ -185,6 +185,8 @@ impl Db {
             };
             // A class takes the scale of the nearest enclosing module,
             // package or compilation unit (Slang's `Scope::getTimeScale`).
+            // A compilation unit without a time unit declaration reports
+            // none, and neither do its classes.
             let scale = if namespace(semantic) {
                 semantic.time_scale()
             } else if semantic.kind == SemanticKind::Class {

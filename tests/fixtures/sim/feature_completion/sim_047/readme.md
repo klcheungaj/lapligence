@@ -75,8 +75,9 @@ portable case in `tests/fixtures/sim/lrm_decisions/`.
 
 ## Fixtures and independent traces
 
-Times below are VCD ticks: `trace_values.sv` and `excluded.sv` have 1 ps
-precision (`#1` is 1000), the others 1 ns (`#1` is 1). A trace lists the
+Times below are VCD ticks: `trace_values.sv` has 1 ps precision (`#1` is
+1000), the others 1 ns (`#1` is 1). The `$unit` class of `excluded.sv` does not
+make the precision finer (decision F2-D2). A trace lists the
 end-of-step value of each step with a record; the reader also checks that no
 variable has two ordinary records in one step (S47-D2).
 

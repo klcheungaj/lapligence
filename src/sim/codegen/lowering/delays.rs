@@ -194,8 +194,10 @@ impl<'a> Codegen<'a> {
             // nodes are detached from their declaring scope, so the Db
             // records the scale they inherited.
             if self.is_runtime_environment(id) || matches!(self.kind(id), NodeKind::ClassDef) {
+                // A scope with no recorded scale is `$unit` (or a class in
+                // it) without a time unit declaration.
                 return self.db.declaration_time_scale(id).map_or(
-                    Timescale::DEFAULT,
+                    self.unit_default_timescale,
                     |(unit, precision)| Timescale {
                         unit_fs: time_exponent_to_fs(unit),
                         precision_fs: time_exponent_to_fs(precision),
@@ -271,16 +273,42 @@ impl<'a> Codegen<'a> {
         // namespace precision, so the tick must resolve it. Namespaces that
         // declare no code cannot observe or schedule time and leave the
         // tick (and the default `$timeformat` units) coarser.
-        for namespace in self
+        let namespaces = self
             .db
             .node_ids()
-            .filter(|id| self.is_runtime_environment(*id))
-            .collect::<Vec<_>>()
-        {
-            if self.namespace_has_code(namespace) {
-                let ts = self.timescale_of_node(namespace);
-                self.design_precision_fs = self.design_precision_fs.min(ts.precision_fs);
+            .filter(|id| self.is_runtime_environment(*id) && self.namespace_has_code(*id))
+            .collect::<Vec<_>>();
+        let mut undeclared_unit = false;
+        for namespace in namespaces {
+            match self.db.declaration_time_scale(namespace) {
+                Some(_) => {
+                    let ts = self.timescale_of_node(namespace);
+                    self.design_precision_fs = self.design_precision_fs.min(ts.precision_fs);
+                }
+                None => undeclared_unit = true,
             }
+        }
+        // A `$unit` without `timeunit`/`timeprecision` takes the default
+        // time unit; a `timescale directive does not set it (SV 3.14.2.3).
+        // Its precision is implementation-specific: llg uses the finest
+        // precision the design declares, but never one coarser than the
+        // default unit, so the design tick stays that of the declared
+        // scales (SV 3.14.3) while `$unit` delays keep whole-unit
+        // resolution. With nothing declared it is the default precision.
+        // Decision F2-D2.
+        let declared_precision = self.design_precision_fs;
+        self.unit_default_timescale = Timescale {
+            unit_fs: Timescale::DEFAULT.unit_fs,
+            precision_fs: if declared_precision == u64::MAX {
+                Timescale::DEFAULT.precision_fs
+            } else {
+                declared_precision.min(Timescale::DEFAULT.unit_fs)
+            },
+        };
+        if undeclared_unit {
+            self.design_precision_fs = self
+                .design_precision_fs
+                .min(self.unit_default_timescale.precision_fs);
         }
         if self.design_precision_fs == u64::MAX {
             // No source files at all (should not happen for a real design).
