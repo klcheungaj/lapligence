@@ -2658,8 +2658,10 @@ void* llg_cov_new(llg_cov_group_t* group);
 /* `point` < 0 selects the group scope. Invalid values report at `site`. */
 void llg_cov_option(void* inst, int32_t point, uint32_t option, sv4_t value, const char* site);
 void llg_cov_ready(void* inst);
-/* Count one sampled value; X/Z values and stopped scopes count nothing. */
-void llg_cov_hit(void* inst, uint32_t point, sv4_t value);
+/* Count one sampled value; X/Z values and stopped scopes count nothing.
+ * `value` is only read during the call, so generated code passes the address
+ * of the sampled variable itself when the coverpoint is a plain read. */
+void llg_cov_hit(void* inst, uint32_t point, const sv4_t* value);
 void llg_cov_control(void* inst, int32_t point, int start);
 /* Objects sampled by the group's coverage event, pinned for the run. */
 void llg_cov_register(llg_cov_group_t* group, void* object);

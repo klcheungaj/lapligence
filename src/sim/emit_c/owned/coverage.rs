@@ -189,10 +189,13 @@ impl Frame<'_, '_> {
                         }
                         None => false,
                     };
-                    let value = self.expression(&sample.value)?;
+                    // A plain read is passed by address without a copy;
+                    // the borrow ends with the call.
+                    let value = self.operand(&sample.value)?;
                     self.line(format!(
                         "llg_cov_hit({record}, {}u, {});",
-                        sample.point, value.code
+                        sample.point,
+                        value.address()
                     ));
                     self.discard(value);
                     if guarded {

@@ -222,15 +222,15 @@ void llg_cov_ready(void* record) {
     }
 }
 
-void llg_cov_hit(void* record, uint32_t point_index, sv4_t value) {
+void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value) {
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
     if (!inst || inst->stopped || point_index >= inst->group->n_points) return;
     llg_cov_point_state_t* state = &inst->points[point_index];
     if (state->stopped || !state->n_bins) return;
     // Bins only hold 2-state values (19.5.2, 19.5.6).
-    if (sv4_is_unknown(value)) return;
+    if (sv4_is_unknown(*value)) return;
     const llg_cov_point_t* point = &inst->group->points[point_index];
-    uint64_t key = llg_cov_key(point, sv4_to_u64(value));
+    uint64_t key = llg_cov_key(point, sv4_to_u64(*value));
     switch (point->kind) {
     case LLG_COV_POINT_AUTO:
         llg_cov_count(state, llg_cov_auto_bin(point, state->n_bins, key));
