@@ -47,9 +47,8 @@ impl Codegen<'_> {
         pre_fns.extend(std::mem::take(&mut self.pending_container_pre_fns));
         let writes = self.ir_process_writes(self.collect_process_writes(node)?);
         let name = self.new_fn_name(&label, "match_call");
-        self.model
-            .processes
-            .push(IrProcess::new_with_kind_and_writes(
+        self.model.processes.push(
+            IrProcess::new_with_kind_and_writes(
                 name.clone(),
                 label,
                 IrProcessKind::Synthetic,
@@ -58,7 +57,9 @@ impl Codegen<'_> {
                 pre_fns,
                 Vec::new(),
                 self.origin(node),
-            ));
+            )
+            .into_callback_host(),
+        );
         self.assertion_action_procs.insert(name);
         Ok(IrExpr::new(
             IrExprKind::MatchCall(Box::new(action)),

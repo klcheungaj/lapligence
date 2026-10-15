@@ -478,6 +478,25 @@ fn render_coroutine_branches(
     Ok(artifacts)
 }
 
+/// Descriptors of processes that only host runtime-called callbacks
+/// ([`crate::sim::ir::IrProcess::callback_host`]); nothing references them.
+fn callback_host_descs(model: &IrModel) -> BTreeSet<String> {
+    model
+        .processes
+        .iter()
+        .filter(|process| process.callback_host())
+        .map(|process| format!("{}_desc", process.c_name()))
+        .collect()
+}
+
+fn desc_attributes(hosts: &BTreeSet<String>, desc: &str) -> &'static str {
+    if hosts.contains(desc) {
+        " LLG_MAYBE_UNUSED"
+    } else {
+        ""
+    }
+}
+
 fn render_coroutine_metadata(
     artifact: &CoroutineArtifact,
     analysis: &ExecutionAnalysis,
@@ -537,8 +556,9 @@ fn render_coroutine_metadata(
         .strip_suffix("_desc")
         .ok_or_else(|| format!("invalid coroutine descriptor name {}", artifact.desc_name))?;
     out.push_str(&format!(
-        "static const llg_co_desc_t {} = {{ {}, {}, sizeof({}), {}_sites, {}, 0 }};\n",
+        "static const llg_co_desc_t {}{} = {{ {}, {}, sizeof({}), {}_sites, {}, 0 }};\n",
         artifact.desc_name,
+        desc_attributes(&callback_host_descs(model), &artifact.desc_name),
         artifact.shared_entry.as_deref().unwrap_or(entry),
         c_string_literal(&artifact.display_name),
         artifact.frame_type,
@@ -793,6 +813,7 @@ fn render_model(
 ) -> Result<BoundedIdentifiers, String> {
     let artifact_stage = crate::profile::Stage::new("render.artifacts");
     let constants = super::constants::PackedConstants::default();
+    let host_descs = callback_host_descs(execution.ir());
     let (mut coroutine_functions, frame_upper_bounds) =
         render_coroutine_functions(&execution, config.backend, &constants)?;
     let mut coroutine_processes = render_coroutine_processes(
@@ -916,8 +937,9 @@ fn render_model(
             ));
         }
         out.push_str(&format!(
-            "static const llg_co_desc_t {};\n",
-            artifact.desc_name
+            "static const llg_co_desc_t {}{};\n",
+            artifact.desc_name,
+            desc_attributes(&host_descs, &artifact.desc_name)
         ));
     }
     for frame_type in &frame_types {

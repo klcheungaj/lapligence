@@ -188,6 +188,7 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
             origin: crate::sim::semantic::Origin::Synthetic {
                 reason: "optimizer fixture".to_owned(),
             },
+            callback_host: false,
         }],
         init_steps: Vec::new(),
         spawns: Vec::new(),
